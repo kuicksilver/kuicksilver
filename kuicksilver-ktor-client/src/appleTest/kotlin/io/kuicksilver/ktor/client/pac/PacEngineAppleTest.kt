@@ -17,7 +17,8 @@ import io.kuicksilver.ktor.client.PAC_UNSUPPORTED
 import io.kuicksilver.ktor.client.PacOutcome
 import io.kuicksilver.ktor.client.ProxyException
 import io.kuicksilver.ktor.client.ResolvedProxy
-import io.kuicksilver.ktor.client.pacTarget
+import io.kuicksilver.ktor.client.SystemProxySettings
+import io.kuicksilver.ktor.client.applePacTarget
 import io.kuicksilver.ktor.client.pickCfProxyWithPac
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
@@ -109,21 +110,37 @@ class PacEngineAppleTest {
     private val ok = "function FindProxyForURL(url, host) { return 'PROXY ok.test:1'; }"
 
     /**
-     * RFC 6455 section 4.1: "the URI to pass the function MUST be constructed from /host/, /port/, /resource name/, and
-     * the /secure/ flag using the definition of a WebSocket URI": the script gets the whole `wss://` URI, its resource
-     * name and query included (CFNetwork's own engine dropped them).
+     * The script of a PAC entry gets the origin of a `wss` URL (CVE-2016-3763, CVE-2016-5134; Chromium sends the same),
+     * and the whole URI (RFC 6455 section 4.1) only with the opt-in and only when the entry is the PAC the settings
+     * name; a script WPAD found never does. Before, every script got the whole `wss://` URI.
      */
-    @Test fun theScriptGetsTheWholeWebSocketUri() =
+    @Test fun negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn() =
         runBlocking {
-            val target = pacTarget(Url("wss://h.test:8443/chat?room=1"))
-            assertEquals("wss://h.test:8443/chat?room=1", target)
+            val url = Url("wss://h.test:8443/chat?token=secret")
+            val inline = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = echo)
+            val byUrl = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = "http://cfg.test/proxy.pac")
+            val wpad = CfProxy(CfProxy.Type.AutoConfiguration, null, null, wpad = true)
+            val named = SystemProxySettings(false, emptyList(), pacEnabled = true, pacUrl = "http://cfg.test/proxy.pac", pacScript = echo)
+            assertEquals("wss://h.test:8443/", applePacTarget(url, inline, named, fullWebSocketUrl = false))
+            assertEquals("wss://h.test:8443/chat?token=secret", applePacTarget(url, inline, named, fullWebSocketUrl = true))
+            assertEquals("wss://h.test:8443/chat?token=secret", applePacTarget(url, byUrl, named, fullWebSocketUrl = true))
+            assertEquals("wss://h.test:8443/", applePacTarget(url, wpad, named, fullWebSocketUrl = true))
+            val other = SystemProxySettings(true, emptyList(), pacEnabled = true, pacUrl = "http://other.test/p.pac")
+            assertEquals("wss://h.test:8443/", applePacTarget(url, byUrl, other, fullWebSocketUrl = true))
+            val off = SystemProxySettings(true, emptyList(), pacEnabled = false, pacUrl = "http://cfg.test/proxy.pac")
+            assertEquals("wss://h.test:8443/", applePacTarget(url, byUrl, off, fullWebSocketUrl = true))
+            assertEquals("https://h.test:8443/", applePacTarget(Url("https://h.test:8443/a?b"), byUrl, named, fullWebSocketUrl = true))
+            // what the script itself sees, end to end
             val answer =
                 assertIs<PacOutcome.Answer>(
-                    evaluatePac(CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = echo), target, "h.test"),
+                    evaluatePac(inline, applePacTarget(url, inline, named, fullWebSocketUrl = false), "h.test"),
                 )
-            assertEquals("wss---h-test-8443-chat-room-1.h.test", answer.proxies[0].host)
-            assertEquals(3128, answer.proxies[0].port)
-            assertEquals(CfProxy.Type.None, answer.proxies[1].type)
+            assertEquals("wss---h-test-8443-.h.test", answer.proxies[0].host)
+            val whole =
+                assertIs<PacOutcome.Answer>(
+                    evaluatePac(inline, applePacTarget(url, inline, named, fullWebSocketUrl = true), "h.test"),
+                )
+            assertEquals("wss---h-test-8443-chat-token-secret.h.test", whole.proxies[0].host)
         }
 
     @Test fun pacFileIsReadAndRun() =

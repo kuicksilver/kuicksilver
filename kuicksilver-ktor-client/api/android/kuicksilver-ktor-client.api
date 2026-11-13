@@ -231,6 +231,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getMaxConnectionsCount ()I
 	public final fun getMaxConnectionsPerRoute ()I
 	public final fun getMaxIdleConnectionsPerRoute ()I
+	public final fun getPacFullWebSocketUrl ()Z
 	public final fun getProxyCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
 	public final fun getProxyResolver ()Lio/kuicksilver/ktor/client/ProxyResolver;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
@@ -250,6 +251,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setMaxConnectionsCount (I)V
 	public final fun setMaxConnectionsPerRoute (I)V
 	public final fun setMaxIdleConnectionsPerRoute (I)V
+	public final fun setPacFullWebSocketUrl (Z)V
 	public final fun setProxyCredentials (Lio/kuicksilver/ktor/client/ProxyCredentials;)V
 	public final fun setProxyResolver (Lio/kuicksilver/ktor/client/ProxyResolver;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V

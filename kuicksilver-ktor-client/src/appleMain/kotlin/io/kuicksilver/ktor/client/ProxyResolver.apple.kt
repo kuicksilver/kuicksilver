@@ -39,44 +39,89 @@ internal actual val platformSystemProxyResolver: ProxyResolver = AppleSystemProx
  * The system's proxy settings (`CFNetworkCopySystemProxySettings`) applied to the URL by `CFNetworkCopyProxiesForURL`,
  * which honours the exceptions list and "exclude simple host names". A PAC entry (a script's URL or the script itself),
  * and WPAD's discovery when the settings say "auto discover" and CFNetwork gives no PAC entry, is run by the engine's
- * own PAC engine ([evaluatePac]: the script downloaded by the engine, run on JavaScriptCore) with the URI of [pacTarget],
- * whose resource name the script sees, within [PAC_TIMEOUT_MILLIS]; a script that fails is skipped with a warning. The
- * system calls run on [Dispatchers.IO].
+ * own PAC engine ([evaluatePac]: the script downloaded by the engine, run on JavaScriptCore) with the URI of
+ * [applePacTarget] (for `https` and `wss` the origin only, unless the opt-in and the entry allow more), within
+ * [PAC_TIMEOUT_MILLIS]; a script that fails is skipped with a warning. The system calls run on [Dispatchers.IO].
  */
 internal object AppleSystemProxyResolver : WarningProxyResolver {
     override suspend fun proxyFor(
         url: Url,
         warn: (String) -> Unit,
+    ): ResolvedProxy? = proxyFor(url, warn, pacFullWebSocketUrl = false)
+
+    override suspend fun proxyFor(
+        url: Url,
+        warn: (String) -> Unit,
+        pacFullWebSocketUrl: Boolean,
     ): ResolvedProxy? {
         val host = socketHost(url.host)
         if (isLoopback(host)) return null
         val target = "${if (url.protocol.isSecure()) "https" else "http"}://${uriHost(host)}:${url.port}/"
-        val pacTarget = pacTarget(url)
-        val (autoDiscover, entries) = withContext(Dispatchers.IO) { systemProxySettings(target) }
+        val settings = withContext(Dispatchers.IO) { systemProxySettings(target) }
+        val entries = settings.entries
         val all =
-            if (autoDiscover && entries.none { it.type == CfProxy.Type.AutoConfiguration }) {
+            if (settings.autoDiscover && entries.none { it.type == CfProxy.Type.AutoConfiguration }) {
                 listOf(CfProxy(CfProxy.Type.AutoConfiguration, null, null, wpad = true)) + entries
             } else {
                 entries
             }
-        return pickCfProxyWithPac(all, { evaluatePac(it, pacTarget, host) }, warn)
+        return pickCfProxyWithPac(all, { evaluatePac(it, applePacTarget(url, it, settings, pacFullWebSocketUrl), host) }, warn)
     }
 }
 
-/** Whether the settings say "auto discover" (WPAD), and what CFNetwork says for [urlString], in its order. */
-internal fun systemProxySettings(urlString: String): Pair<Boolean, List<CfProxy>> {
-    val settings = CFNetworkCopySystemProxySettings() ?: return false to emptyList()
+/**
+ * The URI [entry]'s script gets for [url] ([pacTarget]): a `wss` URI whole only with [fullWebSocketUrl] and only when the
+ * entry is the PAC the settings name, its URL or its script the settings' own (`ProxyAutoConfigURLString`,
+ * `ProxyAutoConfigJavaScript`, with `ProxyAutoConfigEnable` on); a script WPAD found, or an entry CFNetwork gave that
+ * the settings do not name, gets the origin only.
+ */
+internal fun applePacTarget(
+    url: Url,
+    entry: CfProxy,
+    settings: SystemProxySettings,
+    fullWebSocketUrl: Boolean,
+): String {
+    val named =
+        !entry.wpad &&
+            settings.pacEnabled &&
+            (
+                (entry.pacUrl != null && entry.pacUrl == settings.pacUrl) ||
+                    (entry.pacScript != null && entry.pacScript == settings.pacScript)
+            )
+    return pacTarget(url, fullWebSocketUrl && named)
+}
+
+/**
+ * What [systemProxySettings] read: whether they say "auto discover" (WPAD), the PAC they name ([pacEnabled]: a script's
+ * URL or the script), and what CFNetwork says for the URL, in its order.
+ */
+internal class SystemProxySettings(
+    val autoDiscover: Boolean,
+    val entries: List<CfProxy>,
+    val pacEnabled: Boolean = false,
+    val pacUrl: String? = null,
+    val pacScript: String? = null,
+)
+
+/** The system's proxy settings and what CFNetwork says for [urlString] under them. */
+internal fun systemProxySettings(urlString: String): SystemProxySettings {
+    val settings = CFNetworkCopySystemProxySettings() ?: return SystemProxySettings(false, emptyList())
     try {
         val dict = CFBridgingRelease(CFRetain(settings)) as? Map<*, *>
-        val auto = (dict?.get("ProxyAutoDiscoveryEnable") as? Number)?.toInt() == 1
-        return auto to proxiesFor(urlString, settings)
+        return SystemProxySettings(
+            autoDiscover = (dict?.get("ProxyAutoDiscoveryEnable") as? Number)?.toInt() == 1,
+            entries = proxiesFor(urlString, settings),
+            pacEnabled = (dict?.get("ProxyAutoConfigEnable") as? Number)?.toInt() == 1,
+            pacUrl = dict?.get("ProxyAutoConfigURLString") as? String,
+            pacScript = dict?.get("ProxyAutoConfigJavaScript") as? String,
+        )
     } finally {
         CFRelease(settings)
     }
 }
 
 /** What CFNetwork says for [urlString], in its order. */
-internal fun systemProxies(urlString: String): List<CfProxy> = systemProxySettings(urlString).second
+internal fun systemProxies(urlString: String): List<CfProxy> = systemProxySettings(urlString).entries
 
 /** `CFNetworkCopyProxiesForURL` of [urlString] under [settings] (read once per lookup). */
 private fun proxiesFor(

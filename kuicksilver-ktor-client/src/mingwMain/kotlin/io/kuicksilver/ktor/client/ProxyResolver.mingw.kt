@@ -49,11 +49,18 @@ internal object WindowsSystemProxyResolver : WarningProxyResolver {
     override suspend fun proxyFor(
         url: Url,
         warn: (String) -> Unit,
+    ): ResolvedProxy? = proxyFor(url, warn, pacFullWebSocketUrl = false)
+
+    override suspend fun proxyFor(
+        url: Url,
+        warn: (String) -> Unit,
+        pacFullWebSocketUrl: Boolean,
     ): ResolvedProxy? {
         if (isLoopback(socketHost(url.host))) return null
         val s = withContext(Dispatchers.IO) { ieProxySettings() } ?: return null
         // windowsProxyFor asks for the answer only when detection or a script URL is set
-        val answer = if (s.autoDetect || s.autoConfigUrl != null) bounded.run { winHttpPac(s, url, wpad) } else null
+        val answer =
+            if (s.autoDetect || s.autoConfigUrl != null) bounded.run { winHttpPac(s, url, wpad, pacFullWebSocketUrl) } else null
         return windowsProxyFor(s, url, { answer ?: WinPacAnswer.Failed }, warn)
     }
 }
@@ -62,22 +69,24 @@ internal object WindowsSystemProxyResolver : WarningProxyResolver {
  * Runs the automatic detection (DHCP, then DNS) and the PAC URL of [s] for [url] with `WinHttpGetProxyForUrl`, WinHTTP's
  * own PAC engine, in [runWinPac]'s order, on a session of its own whose timeouts are [PAC_TIMEOUT_MILLIS] (they bound
  * each step of the script's download; detection and the script's run have none of WinHTTP's, the caller's [BoundedPac]
- * bounds the wait). The URI given to the script is [pacTarget]'s; WinHTTP knows only `http` and `https`, so a
- * WebSocket's `ws://`/`wss://` URI it refuses as an unknown scheme goes again as `http://`/`https://` with the same
- * host, port and resource name.
+ * bounds the wait). The URI given to the script is [winPacTarget]'s: for `https` and `wss` the origin only, a `wss`
+ * URI whole only for the settings' PAC URL with [fullWebSocketUrl], never for a script automatic detection found.
+ * WinHTTP knows only `http` and `https`, so a WebSocket's `ws://`/`wss://` URI it refuses as an unknown scheme goes
+ * again as `http://`/`https://` with the same host, port and resource name.
  */
 internal fun winHttpPac(
     s: IeProxySettings,
     url: Url,
     wpad: WpadFailures,
+    fullWebSocketUrl: Boolean = false,
 ): WinPacAnswer {
     val session =
         WinHttpOpen("Kuicksilver", WINHTTP_ACCESS_TYPE_NO_PROXY.toUInt(), null, null, 0u) ?: return WinPacAnswer.Failed
     try {
         val t = PAC_TIMEOUT_MILLIS.toInt()
         WinHttpSetTimeouts(session, t, t, t, t)
-        val target = pacTarget(url)
         return runWinPac(s, wpad) { detect, configUrl, autoLogon ->
+            val target = winPacTarget(url, detect, fullWebSocketUrl)
             val (answer, error) = winHttpProxyForUrl(session, detect, configUrl, autoLogon, target)
             if (error == ERROR_WINHTTP_UNRECOGNIZED_SCHEME.toUInt() && (target.startsWith("ws://") || target.startsWith("wss://"))) {
                 val (again, againError) = winHttpProxyForUrl(session, detect, configUrl, autoLogon, "http" + target.removePrefix("ws"))

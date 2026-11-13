@@ -420,16 +420,75 @@ class ProxyResolverTest {
         }
 
     /**
-     * RFC 6455 section 4.1: "For the purpose of proxy autoconfiguration scripts, the URI to pass the function MUST be
-     * constructed from /host/, /port/, /resource name/, and the /secure/ flag using the definition of a WebSocket URI".
+     * The URI a PAC script gets for a secure URL (`https`, `wss`) is its origin only, `scheme://host[:port]/`, as Chromium
+     * sends it (net/docs/proxy.md: "the path, query, fragment, and identity portions of the URL are stripped"; a default
+     * port is left out): a script from WPAD or a plain-http PAC URL could otherwise read the path and query (tokens) and
+     * send them out through `dnsResolve` (CVE-2016-3763, CVE-2016-5134). Before, `wss` gave the whole URI.
      */
-    @Test fun pacTargetIsTheWebSocketUri() {
-        assertEquals("wss://h.test:8443/chat?room=1", pacTarget(Url("wss://h.test:8443/chat?room=1")))
-        assertEquals("ws://h.test:80/", pacTarget(Url("ws://h.test")))
-        assertEquals("ws://[::1]:8080/a", pacTarget(Url("ws://[::1]:8080/a")))
-        assertEquals("https://h.test:443/", pacTarget(Url("https://h.test/a/b?q")))
-        assertEquals("http://h.test:8080/", pacTarget(Url("http://h.test:8080/a")))
+    @Test fun negative_pacTargetOfASecureUrlIsItsOriginOnly() {
+        assertEquals("wss://h.test:8443/", pacTarget(Url("wss://h.test:8443/chat?room=1")))
+        assertEquals("wss://h.test/", pacTarget(Url("wss://user:secret@h.test:443/chat?token=1#f")))
+        assertEquals("wss://[2001:db8::1]:8443/", pacTarget(Url("wss://[2001:db8::1]:8443/a?b")))
+        assertEquals("https://h.test/", pacTarget(Url("https://h.test/a/b?q")))
+        assertEquals("https://h.test:8443/", pacTarget(Url("https://h.test:8443/a/b?q")))
+        // the opt-in gives the whole URI for wss only; https stays the origin (the answers are kept per scheme, host, port)
+        assertEquals("https://h.test/", pacTarget(Url("https://h.test/a/b?q"), fullWebSocketUrl = true))
     }
+
+    /**
+     * RFC 6455 section 4.1: "For the purpose of proxy autoconfiguration scripts, the URI to pass the function MUST be
+     * constructed from /host/, /port/, /resource name/, and the /secure/ flag using the definition of a WebSocket URI":
+     * met for `ws` (not secure, as Chromium and Android keep the path of plain URLs), and for `wss` only on opt-in.
+     */
+    @Test fun pacTargetOfAWebSocketCarriesItsResourceName() {
+        assertEquals("ws://h.test/", pacTarget(Url("ws://h.test")))
+        assertEquals("ws://h.test/chat?room=1", pacTarget(Url("ws://u:p@h.test:80/chat?room=1#frag")))
+        assertEquals("ws://[::1]:8080/a", pacTarget(Url("ws://[::1]:8080/a")))
+        assertEquals("wss://h.test:8443/chat?room=1", pacTarget(Url("wss://h.test:8443/chat?room=1"), fullWebSocketUrl = true))
+        assertEquals("wss://h.test/", pacTarget(Url("wss://h.test"), fullWebSocketUrl = true))
+        assertEquals("http://h.test:8080/", pacTarget(Url("http://h.test:8080/a")))
+        assertEquals("http://h.test/", pacTarget(Url("http://h.test/a?b")))
+    }
+
+    /** Windows: a script WinHTTP's automatic detection (WPAD) found never gets the whole `wss` URI, opt-in or not. */
+    @Test fun negative_wpadScriptOnWindowsGetsTheOriginOnly() {
+        val url = Url("wss://h.test/chat?token=1")
+        assertEquals("wss://h.test/", winPacTarget(url, detect = true, fullWebSocketUrl = true))
+        assertEquals("wss://h.test/", winPacTarget(url, detect = false, fullWebSocketUrl = false))
+        assertEquals("wss://h.test/chat?token=1", winPacTarget(url, detect = false, fullWebSocketUrl = true))
+    }
+
+    /** The engine's `pacFullWebSocketUrl` reaches the system resolver; off by default. */
+    @Test fun pacFullWebSocketUrlReachesTheSystemResolver() =
+        runBlocking {
+            val seen = ArrayList<Boolean>()
+            val resolver =
+                object : WarningProxyResolver {
+                    override suspend fun proxyFor(
+                        url: Url,
+                        warn: (String) -> Unit,
+                    ): ResolvedProxy? = error("the routing asks with the PAC options")
+
+                    override suspend fun proxyFor(
+                        url: Url,
+                        warn: (String) -> Unit,
+                        pacFullWebSocketUrl: Boolean,
+                    ): ResolvedProxy? {
+                        seen += pacFullWebSocketUrl
+                        return null
+                    }
+                }
+            assertFalse(KuicksilverEngineConfig().pacFullWebSocketUrl)
+            ProxyRouting(KuicksilverEngineConfig().apply { proxyResolver = resolver }, NoLog).lookup(Url("wss://a.test/x"))
+            ProxyRouting(
+                KuicksilverEngineConfig().apply {
+                    proxyResolver = resolver
+                    pacFullWebSocketUrl = true
+                },
+                NoLog,
+            ).lookup(Url("wss://a.test/x"))
+            assertEquals(listOf(false, true), seen)
+        }
 
     /** A WebSocket's resource name is part of the PAC input, so the answer is kept per resource for ws and wss only. */
     @Test fun webSocketAnswersAreKeptPerResource() =

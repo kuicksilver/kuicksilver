@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.http.Url
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -64,6 +65,16 @@ internal class WpadFailures(
         const val NEVER = Long.MIN_VALUE
     }
 }
+
+/**
+ * The URI WinHTTP hands the script for [url] ([pacTarget]): a script found by automatic detection ([detect], WPAD) never
+ * gets a `wss` URL whole, whatever [fullWebSocketUrl] says; the script of the settings' PAC URL gets it with it.
+ */
+internal fun winPacTarget(
+    url: Url,
+    detect: Boolean,
+    fullWebSocketUrl: Boolean,
+): String = pacTarget(url, fullWebSocketUrl && !detect)
 
 /**
  * Windows' proxy auto-configuration as WinHTTP and Internet Explorer run it: automatic detection (WPAD) first, then the

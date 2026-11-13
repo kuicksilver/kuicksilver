@@ -372,6 +372,19 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
 
+    /**
+     * Whether a proxy auto-configuration (PAC) script the system settings name, by its URL or inline, gets a `wss://`
+     * WebSocket's whole URI with its resource name (path and query), as RFC 6455 section 4.1 asks, on Apple platforms
+     * and Windows ([ProxyResolvers.System]). Off by default: such a script gets `wss://host[:port]/` only, as Chrome,
+     * Firefox and Android give `https` and `wss` URLs to PAC scripts, since a script can send what it is given out
+     * through `dnsResolve` (CVE-2016-3763, CVE-2016-5134). A script found by WPAD (automatic detection) never gets more
+     * than that, whatever this says; `ws://` URIs reach every script whole, `http` and `https` ones as their origin.
+     * Turn it on only when the settings' PAC script is yours and served over `https` or from a file.
+     * docs/guide/ktor.md, "Proxies".
+     */
+    @ExperimentalKuicksilverApi
+    public var pacFullWebSocketUrl: Boolean = false
+
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null
