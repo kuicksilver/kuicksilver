@@ -301,12 +301,16 @@ proxies and scanners): any client can then end up on TLS 1.2.
   first, then ChaCha20-Poly1305 (first when the client prefers it), then AES-128-GCM.
 - An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
   RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
-  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more).
+  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With `http2 = true` the start
+  logs a warning for a TLS 1.2 connector whose own certificate has no RSA key (identities an `sniSelector` returns are
+  not checked).
 - With `http2 = true`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
   ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
 - Client certificates, `sniSelector` and tickets work as over TLS 1.3. A TLS 1.2 session resumes for at most
-  `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default), however often its ticket is
-  renewed (TLS 1.2 has no fresh key exchange on resumption; RFC 9325 section 3.4).
+  `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default, at most half of `rotateEvery`),
+  however often its ticket is renewed (TLS 1.2 has no fresh key exchange on resumption; RFC 9325 section 3.4). With
+  explicit ticket keys the library does not rotate them: replace them at least every `rotateEvery`, as that option
+  promises.
 - HTTP/3 on the same port stays TLS 1.3 (QUIC allows nothing else).
 
 ### HTTP/3 on the server

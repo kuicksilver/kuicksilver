@@ -24,6 +24,7 @@ import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.ServerTlsOverride
+import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.Dispatchers
@@ -315,4 +316,56 @@ class ServerTls12Test {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
+     * a connector serving HTTP/2 over TLS 1.2 with a certificate whose key is not RSA is logged at startup, one with an RSA
+     * key is not, and neither is one without TLS 1.2.
+     */
+    @Test fun negative_http2OverTls12WithoutRsaCertificateIsLogged() =
+        serverTest {
+            suspend fun warned(
+                rsa: Boolean,
+                versions: TlsVersions,
+            ): Boolean {
+                val log = CapturedLog()
+                val identity =
+                    if (rsa) TlsIdentity.fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf()) else ServerFixtures.identity()
+                val server =
+                    kuicksilverServer(log, configure = {
+                        http3 = false
+                        http2 = true
+                        tlsConnector(identity) {
+                            host = "127.0.0.1"
+                            port = 0
+                            this.versions = versions
+                        }
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                server.startSuspend(wait = false)
+                try {
+                    server.engine.resolvedConnectors()
+                    return log.lines.any { it.level == "WARN" && "the certificate has no RSA key" in it.message }
+                } finally {
+                    server.stop(100, 500)
+                }
+            }
+            assertTrue(warned(rsa = false, TlsVersions.Tls12And13), "an ECDSA certificate with HTTP/2 over TLS 1.2 is logged")
+            assertTrue(!warned(rsa = true, TlsVersions.Tls12And13), "control: an RSA certificate")
+            assertTrue(!warned(rsa = false, TlsVersions.Tls13), "control: no TLS 1.2")
+        }
+
+    @Test fun certificateKeyTypeIsRead() {
+        assertEquals(
+            true,
+            io.kuicksilver.tls
+                .Certificate(RsaTestCert.leaf)
+                .hasRsaKey(),
+        )
+        assertEquals(
+            false,
+            io.kuicksilver.tls
+                .Certificate(TestCerts.server)
+                .hasRsaKey(),
+        )
+    }
 }

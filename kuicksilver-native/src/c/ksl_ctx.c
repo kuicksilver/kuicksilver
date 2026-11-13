@@ -323,7 +323,9 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
     /* RFC 9325 section 4.2.1 (TLS12_PROFILE_SERVER): in TLS 1.2 the server's order decides, unless the client put ChaCha20-Poly1305
-       first. The TLS 1.2 suite is chosen after this callback (tls_post_process_client_hello); TLS 1.3 keeps the client's order. */
+       first. The TLS 1.2 suite is chosen after this callback (tls_post_process_client_hello); a TLS 1.3 suite before it
+       (tls_early_post_process_client_hello), so TLS 1.3 keeps the client's order, and the version check keeps the option off a
+       TLS 1.3 session altogether. Set on the context instead, it would reorder TLS 1.3 too (tcp_tls12_server_suite_choice). */
     if (SSL_version(ssl) < TLS1_3_VERSION)
         SSL_set_options(ssl, SSL_OP_CIPHER_SERVER_PREFERENCE | SSL_OP_PRIORITIZE_CHACHA);
     return SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) ? SSL_TLSEXT_ERR_OK : SSL_TLSEXT_ERR_NOACK;

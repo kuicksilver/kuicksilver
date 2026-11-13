@@ -557,13 +557,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- TLS 1.2 cipher suite order (RFC 9325 section 4.2.1): a client now offers TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 first
-  (it offered the ECDSA variant first), and a TLS 1.2 server picks by its own order, AES-256-GCM, then ChaCha20-Poly1305,
+- TLS 1.2 cipher suite order (RFC 9325 section 4.2.1): a client now offers TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 as its
+  first TLS 1.2 suite (it offered the ECDSA variant first), and a TLS 1.2 server picks by its own order, AES-256-GCM, then ChaCha20-Poly1305,
   then AES-128-GCM, keeping ChaCha20-Poly1305 for a client that puts it first (it took the client's order, so a client
   that listed AES-128 before AES-256 got AES-128). TLS 1.3 is unchanged.
-- Ktor server on the JVM: the `enabledProtocols` of Ktor's `sslConnector` (`ktor.security.ssl.enabledProtocols`) were
-  ignored; now they choose the TLS versions, and a list other than `TLSv1.3` or `TLSv1.2` with `TLSv1.3` (TLS 1.2 alone,
-  TLS 1.0 or 1.1) fails the start with `TlsException.Config` instead of silently serving TLS 1.3 only.
+- Ktor server on the JVM (breaking): the `enabledProtocols` of Ktor's `sslConnector` (`ktor.security.ssl.enabledProtocols`)
+  were ignored, and every such connector served TLS 1.3 only; now they choose the TLS versions. A configuration with
+  `["TLSv1.2", "TLSv1.3"]` now turns TLS 1.2 on for a connector that was TLS 1.3-only, and one with any other list, such as
+  `["TLSv1.1", "TLSv1.2", "TLSv1.3"]` or `["TLSv1.2"]`, now fails the start with `TlsException.Config`. Unset, or
+  `["TLSv1.3"]`, stays TLS 1.3 only.
+- RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
+  nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
+  no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
+  libssl support for it.
+- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate whose key is not RSA logs a warning at
+  startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
   1.3-only one when `alpn` holds `h3`.
 

@@ -208,6 +208,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val limits = TcpLimits(configuration.maxTcpConnections, configuration.maxTcpConnectionsPerIp)
         tcpLimitsForProbe += limits
         val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
+        l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2, environment.log) }
         // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
         val scheme = if (l.tls != null) "https" else "http"

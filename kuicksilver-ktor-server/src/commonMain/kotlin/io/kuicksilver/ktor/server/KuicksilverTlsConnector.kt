@@ -128,10 +128,13 @@ public class KuicksilverTlsConnector private constructor(
          * with a `protocol_version` alert (RFC 9846 appendix E.2); [TlsVersions.Tls12And13] also serves TLS 1.2 clients (RFC
          * 9325 section 3.1.1: "Implementations MUST support TLS 1.2"), and a client that offers TLS 1.3 still gets it. TLS 1.2
          * runs under the RFC 9325 profile: ECDHE with AES-GCM or ChaCha20-Poly1305 only (no static RSA, no CBC, no SHA-1 MAC),
-         * Extended Master Secret required, no renegotiation, no compression, and resumption for at most two
-         * [SessionTicketConfig.rotateEvery][io.kuicksilver.tls.SessionTicketConfig.rotateEvery] periods after the full
-         * handshake. HTTP/2 (when on) is offered over TLS 1.2 as well (RFC 9113 section 9.2). HTTP/3 stays TLS 1.3 (RFC 9001
-         * section 4.2).
+         * Extended Master Secret required, no renegotiation, no compression; a TLS 1.2 session resumes for at most
+         * [SessionTicketConfig.ticketLifetime][io.kuicksilver.tls.SessionTicketConfig.ticketLifetime] after its full handshake,
+         * however often its ticket is renewed (at most half a
+         * [rotateEvery][io.kuicksilver.tls.SessionTicketConfig.rotateEvery] period; explicit ticket keys are rotated by the
+         * application, which then keeps that period itself). HTTP/2 (when on) is offered over TLS 1.2 as well (RFC 9113
+         * section 9.2); with a certificate whose key is not RSA the start logs a warning, since RFC 9113 section 9.2.2 asks
+         * such deployments to support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256. HTTP/3 stays TLS 1.3 (RFC 9001 section 4.2).
          */
         @ExperimentalKuicksilverApi
         public var versions: TlsVersions = TlsVersions.Tls13

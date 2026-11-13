@@ -2380,13 +2380,14 @@ static void test_tls12_server_suite_choice(void) {
         all = all && tls12_suite_with(rsa, refused[i], &alert) == NULL && alert == SSL_AD_HANDSHAKE_FAILURE;
     CHECK(all,
           "negative: a TLS 1.2 client offering only static RSA, CBC or SHA-1 suites is refused with handshake_failure");
-    /* TLS 1.3 keeps the client's order (the suites are all AEAD; RFC 9325 section 4.3 states no server preference) */
+    /* TLS 1.3 keeps the client's order (the suites are all AEAD; RFC 9325 section 4.3 states no server preference). The server's
+       TLS 1.3 list puts AES-128 first, so a server order leaking into TLS 1.3 would answer this AES-256-first client with AES-128 */
     ksl_ctx *cc = client_ctx(NULL, KSL_VERIFY_NONE);
-    ksl_ctx_set_ciphers(cc, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384", NULL);
+    ksl_ctx_set_ciphers(cc, "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256", NULL);
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(ec, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && SSL_version(s->ssl) == TLS1_3_VERSION &&
-              same(SSL_CIPHER_get_name(SSL_get_current_cipher(s->ssl)), "TLS_AES_128_GCM_SHA256"),
-          "control: TLS 1.3 takes the client's first suite");
+              same(SSL_CIPHER_get_name(SSL_get_current_cipher(s->ssl)), "TLS_AES_256_GCM_SHA384"),
+          "TLS 1.3 takes the client's first suite, not the server's");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     ksl_ctx_free(cc);

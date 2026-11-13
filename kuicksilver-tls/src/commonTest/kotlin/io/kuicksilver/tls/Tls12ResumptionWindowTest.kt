@@ -65,19 +65,24 @@ class Tls12ResumptionWindowTest {
                             ticketLifetime = 2.seconds,
                         )
                 }
-            val started = TimeSource.Monotonic.markNow()
             var (reused, session) = tls12(server, 0L)
+            // from after the full handshake, and each attempt timed from its start: a slow handshake on a busy host makes the
+            // measured age smaller, never larger, than the session's
+            val started = TimeSource.Monotonic.markNow()
             assertEquals(0, reused, "a full handshake")
             assertNotEquals(0L, session, "a TLS 1.2 ticket was issued")
             var resumptions = 0
             var refusedAt: Duration? = null
             while (started.elapsedNow() < 8.seconds) {
+                // not a synchronization: the session's age is the condition under test, and only the wall clock ages it
+                // (OpenSSL's session time and the ticket checks read the real clock, which no test clock can move)
                 delay(250.milliseconds)
+                val attemptAt = started.elapsedNow()
                 val (r, next) = tls12(server, session)
                 Ksl.sessionFree(session)
                 session = next
                 if (r == 0) {
-                    refusedAt = started.elapsedNow()
+                    refusedAt = attemptAt
                     break
                 }
                 assertEquals(1, r, "the handshake completed")

@@ -126,6 +126,9 @@ class ServerTls12JdkClientTest {
                     "444f574e47524401",
                     fromServer.copyOfRange(35, 43).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') },
                 )
+                // RFC 9325 section 3.5: "TLS 1.2 clients and servers MUST implement the renegotiation_info extension, as
+                // defined in [RFC5746]": the ServerHello answers the client's offer with it (type 0xff01)
+                assertTrue(0xff01 in serverHelloExtensions(fromServer), "renegotiation_info in the ServerHello")
             } finally {
                 server.stop(100, 500)
             }
@@ -169,6 +172,68 @@ class ServerTls12JdkClientTest {
                         if (offered.isEmpty()) continue // a JDK that dropped them all cannot offer them
                         val e = assertFailsWith<SSLHandshakeException>("$offered") { jdkTls12(port, "http/1.1", offered).close() }
                         assertContains(e.message.orEmpty(), "handshake_failure", message = "$offered")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+     * [TLS-ECDHE] with the P-256 elliptic curve": with an RSA certificate, a client that offers only that suite gets HTTP/2.
+     */
+    @Test fun rsaConnectorServesTheMandatoryHttp2Tls12Suite() =
+        serverTest {
+            val server =
+                kuicksilverServer(null, configure = {
+                    http3 = false
+                    http2 = true
+                    tlsConnector(
+                        io.kuicksilver.tls.TlsIdentity
+                            .fromDer(listOf(RsaTestCert.leaf), RsaTestCert.key.copyOf()),
+                    ) {
+                        host = "127.0.0.1"
+                        port = 0
+                        versions = TlsVersions.Tls12And13
+                    }
+                }) { routing { get("/") { call.respondText("rsa") } } }
+            server.startSuspend(wait = false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                // the RSA leaf is not under the test CA, and which CA signed it is beside the point: the client trusts any
+                val trustAny =
+                    object : X509TrustManager {
+                        override fun checkClientTrusted(
+                            c: Array<X509Certificate>,
+                            a: String,
+                        ) = error("client side only")
+
+                        override fun checkServerTrusted(
+                            c: Array<X509Certificate>,
+                            a: String,
+                        ) = Unit
+
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                    }
+                val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAny), null) }
+                withContext(Dispatchers.IO) {
+                    (ctx.socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket).use { s ->
+                        s.soTimeout = 20_000
+                        s.sslParameters =
+                            s.sslParameters.apply {
+                                protocols = arrayOf("TLSv1.2")
+                                applicationProtocols = arrayOf("h2")
+                                cipherSuites = arrayOf("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256")
+                            }
+                        s.startHandshake()
+                        assertEquals("TLSv1.2", s.session.protocol)
+                        assertEquals("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", s.session.cipherSuite)
+                        assertEquals("h2", s.applicationProtocol)
                     }
                 }
             } finally {
@@ -315,6 +380,24 @@ class ServerTls12JdkClientTest {
             listener.close()
         }
         return synchronized(captured) { captured.toByteArray() }
+    }
+
+    /**
+     * The extension types of the ServerHello at the start of [bytes] (RFC 5246 section 7.4.1.3: version, random,
+     * session_id, cipher_suite, compression_method, extensions).
+     */
+    private fun serverHelloExtensions(bytes: ByteArray): List<Int> {
+        fun u16(at: Int) = ((bytes[at].toInt() and 0xff) shl 8) or (bytes[at + 1].toInt() and 0xff)
+        var at = 5 + 4 + 2 + 32 // record header, handshake header, version, random
+        at += 1 + (bytes[at].toInt() and 0xff) + 2 + 1 // session_id, cipher_suite, compression_method
+        val end = at + 2 + u16(at)
+        at += 2
+        val out = ArrayList<Int>()
+        while (at + 4 <= end) {
+            out += u16(at)
+            at += 4 + u16(at + 2)
+        }
+        return out
     }
 
     /** The content type and length of each TLS record in [bytes] (RFC 5246 section 6.2.1: type, version, 16-bit length). */
