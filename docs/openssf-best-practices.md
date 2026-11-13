@@ -2,13 +2,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # OpenSSF Best Practices: answers for the passing level
 
-Prepared answers for the [OpenSSF Best Practices](https://www.bestpractices.dev/) questionnaire, passing level, so the
-entry can be filled in from one place. The project has **not been submitted yet**; the maintainer submits it, then adds
-the badge to the README (a commented placeholder is there).
+Answers for the [OpenSSF Best Practices](https://www.bestpractices.dev/) questionnaire, passing level, kept in one
+place. Status: **passing, 2026-11-13**; the entry is <https://www.bestpractices.dev/projects/16654>, and its badge is in
+the README.
 
 Each criterion has an answer (**Met**, **Unmet**, **N/A**, or **Owner** where only the maintainer can answer) and the
 evidence in this repository. Where the answer depends on how the criterion is read, the note says so. Re-check every
-answer against the repository when submitting; this file is not kept in sync by any tool.
+answer against the repository when updating the entry; this file is not kept in sync by any tool.
 
 ## Basics
 
