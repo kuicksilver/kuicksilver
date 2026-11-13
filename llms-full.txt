@@ -835,7 +835,7 @@ What each mode buys: handshakes (most of a server's CPU) and the work of many co
 In-process routing keeps receiving sequential: one receive system call per datagram on Darwin, so a bulk transfer over
 many connections gains less than handshakes do, and the gain stops where that one receiver is saturated. One connection
 never runs faster with more loops: it lives on one loop, by design. More loops than cores gain nothing. Measured on an
-M4 Max with in-process routing ([Benchmarks: Several loops on one socket](https://github.com/kuicksilver/kuicksilver/blob/main/docs/benchmarks.md#several-loops-on-one-socket-s34-2026-11-07)):
+Apple Silicon Mac with in-process routing ([Benchmarks: Several loops on one socket](https://github.com/kuicksilver/kuicksilver/blob/main/docs/benchmarks.md#several-loops-on-one-socket-s34-2026-11-07)):
 4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes, where the
 receiver's one `recvmsg` per datagram is saturated.
 
@@ -2335,13 +2335,17 @@ server.start(wait = true)
   The engine cannot act as a CONNECT proxy (not supported in 0.3.0): a CONNECT reaches the application, but a 2xx answer
   goes out as `501 Not Implemented` with a warning in the application log, since a 2xx would promise a tunnel; every
   CONNECT ends its connection (RFC 9931 section 8). The engine's own 400 has the fixed body `Bad Request`
-  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
+  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`. A
+  connector speaks TLS 1.3 only unless it allows TLS 1.2: [TLS 1.2 on the server](#tls-12-on-the-server).
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
 - On the JVM, Ktor's `sslConnector(keyStore, alias, ...) {}` (and the `ktor.security.ssl.*` keys) is accepted: the key
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
-  Netty and Jetty engines. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
+  Netty and Jetty engines. Its `enabledProtocols` (`ktor.security.ssl.enabledProtocols`) choose the TLS versions:
+  unset or `TLSv1.3` alone is TLS 1.3 only, `TLSv1.2` with `TLSv1.3` allows TLS 1.2 as well ([TLS 1.2 on the
+  server](#tls-12-on-the-server)); anything else (TLS 1.2 alone, TLS 1.0 or 1.1) fails the start with
+  `TlsException.Config`. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
 - `call.request.local.remoteAddress` and `remoteHost` (and `localAddress`, `localHost`) are IP literals over HTTP/1.1,
   HTTP/2 and HTTP/3: the engine makes no reverse DNS lookup for a connection. `remoteAddress` and `localAddress` are
   literals in Ktor's Netty and CIO engines as well; their `remoteHost` and `localHost` are host names looked up on first
@@ -2413,6 +2417,35 @@ is given up after the abort wait, so for that moment the descriptors in use can 
   `kuicksilver.quicAcceptQueue`. Behind a NAT or `kube-proxy` raise the per-address one
   ([deployment guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md#quic-connection-limits)); `engine.http3Stats` counts the clients they refused.
 
+#### TLS 1.2 on the server
+
+A TLS connector speaks TLS 1.3 only by default: a client without it is refused with a `protocol_version` alert.
+`versions = TlsVersions.Tls12And13` (*experimental*, since 0.3.0) on `tlsConnector(identity) { … }`, the `EngineMain`
+key `kuicksilver.tls.versions = tls12And13` for the deployment port, or `enabledProtocols = listOf("TLSv1.2",
+"TLSv1.3")` on Ktor's `sslConnector` (JVM) serves TLS 1.2 clients too (RFC 9325 section 3.1.1: "Implementations MUST
+support TLS 1.2"). Turn it on only for clients that have no TLS 1.3 (older devices, embedded HTTP stacks, some
+proxies and scanners): any client can then end up on TLS 1.2.
+
+- A client that offers TLS 1.3 still gets it; a TLS 1.2 ServerHello carries the RFC 9846 downgrade sentinel, so a
+  TLS 1.3 client notices an attacker who removed 1.3 from its offer.
+- TLS 1.2 runs under the RFC 9325 profile: ECDHE with AES-GCM or ChaCha20-Poly1305 only (no static RSA, no CBC, no
+  SHA-1 MAC, no finite-field DHE), Extended Master Secret required (a client without it is refused with
+  `handshake_failure`), no renegotiation, no compression. Among the suites a client offers, the server picks AES-256-GCM
+  first, then ChaCha20-Poly1305 (first when the client prefers it), then AES-128-GCM.
+- An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
+  RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
+  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With `http2 = true` the start
+  logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
+  not checked).
+- With `http2 = true`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
+  ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
+- Client certificates, `sniSelector` and tickets work as over TLS 1.3. A TLS 1.2 session resumes for at most
+  `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default, at most half of `rotateEvery`),
+  however often its ticket is renewed (TLS 1.2 has no fresh key exchange on resumption; RFC 9325 section 3.4). With
+  explicit ticket keys the library does not rotate them: replace them at least every `rotateEvery`, as that option
+  promises.
+- HTTP/3 on the same port stays TLS 1.3 (QUIC allows nothing else).
+
 #### HTTP/3 on the server
 
 Every TLS connector also serves HTTP/3 on UDP on the same port number; the two sockets are bound as a pair, so with
@@ -2451,7 +2484,8 @@ arrive over HTTP/3): [Deploying the HTTP/3 server](https://github.com/kuicksilve
 offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
 `http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
 is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
-TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
+section 9.2).
 
 ```kotlin
 // guide:ktor:http2-server
@@ -2721,6 +2755,41 @@ dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certi
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
 
+#### Misdirected requests
+
+A TLS connector answers `421 Misdirected Request` to a request whose host the certificate of its connection does not
+name (whatever scheme the request names: the application would see it as https), over HTTP/1.1, HTTP/2 and HTTP/3. The
+engine answers it itself: neither routing nor plugins such as StatusPages or CallLogging see that request (RFC 9110
+section 7.4: such a request "MUST be rejected"). Browsers send these: they reuse an HTTP/2 or HTTP/3 connection for another host at
+the same address, and a 421 makes them retry on a connection of its own. On HTTP/2 and HTTP/3 only that request's stream
+ends; the connection serves the others.
+
+The host is checked as a client checks it: against the subjectAltName of the certificate that connection presented (the
+`sniSelector`'s choice, or the identity current at its handshake when a `TlsIdentity.Reloadable` rotates), a wildcard
+`*.example.com` for one whole left-most label, an IP literal against the certificate's IP addresses, never the subject CN.
+The port is not checked: a certificate names none. On a connector with an `sniSelector`, which may give each name its own
+certificate, client-certificate requirement and trust, a request must also be for the name the connection was set up for
+(its SNI name, or an IP address when the client sent no SNI), so a request cannot reach a name that requires a client
+certificate over a connection that asked for none. So a certificate must name every host the server is reached under,
+`localhost` and the addresses included where clients use them.
+
+Behind a gateway that terminates TLS and forwards requests for names the certificate here does not carry (it re-encrypts
+with an internal certificate), turn the check off for that connector only. RFC 9110 allows it for connections "from a
+trusted gateway", so the connector must accept no other clients:
+
+```kotlin
+// guide:ktor:trusted-gateway
+tlsConnector(internalIdentity) {
+    port = 8443
+    trustedGateway = true // every client of this port is the gateway
+}
+```
+
+A plain connector has no certificate at all, so a request whose target is an absolute `https://` URI
+(`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
+a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
+port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+
 #### Certificate rotation
 
 A renewed certificate can be put in place without a restart (experimental). Give the connector a
@@ -2864,6 +2933,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
 | `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
 | `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
+| `kuicksilver.tls.versions` | the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
@@ -3107,7 +3177,9 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   HTTP/1.1; an origin last seen on HTTP/1.1 does not make them wait. A connection
   without requests for `idleTimeout`, or past `maxConnectionLifetime`, is sent GOAWAY and closes once its requests are
   done; a server's GOAWAY moves new requests to a new connection.
-- **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
+- **HTTP/3.** One QUIC connection per origin carries all requests, also when the origin is reached under several
+  names (its host, an `Alt-Svc` alternative, an HTTPS-record target) that resolve to the same address and port: as RFC
+  9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins never share one. When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
@@ -5313,7 +5385,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
 | `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
 | `http3` | `Boolean` | `true` | 0.2.0 | serve HTTP/3 on every TLS connector |
-| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
+| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
 | `webSocketsOverHttp2` (*experimental*) | `Boolean` | `true` | 0.3.0 | with `http2`: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#websockets-over-http2)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | 0.3.0 | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
 | `http2RepeatOffenderPenalty` (*experimental*) | `Duration` | `Duration.ZERO` (off) | 0.3.0 | not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
@@ -5357,16 +5429,28 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
+| `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
+| `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`) and `kuicksilver.tls.clientCa` (the PEM file of the CAs
-client certificates are verified against; set together),
+client certificates are verified against; set together), `kuicksilver.tls.versions` (`tls13` or `tls12And13`),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
+
+#### Plain connector
+
+`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with one more option:
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
+| `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
+| `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 
 ### ktor-network
 
@@ -5441,7 +5525,9 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
+| `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
+| a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
 
 ### Getting more information
@@ -6000,6 +6086,18 @@ this one until then. That queue does not count against the connect timeout of th
 started at once to one address connect one after another, bounded only by each call's request timeout (`HttpTimeout`)
 or its cancellation.
 
+#### A TLS 1.2 client cannot connect to the server
+
+A client without TLS 1.3 (an older Android or JDK, an embedded HTTP stack, some scanners) gets a `protocol_version`
+alert: a TLS connector speaks TLS 1.3 only unless it allows TLS 1.2 with `versions = TlsVersions.Tls12And13`, the
+`EngineMain` key `kuicksilver.tls.versions = tls12And13`, or Ktor's `enabledProtocols = listOf("TLSv1.2", "TLSv1.3")`
+([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)). A TLS 1.2 client that still gets `handshake_failure` offers
+none of the profile's suites (only CBC, SHA-1 or static RSA ones), offers only RSA suites to a server with an ECDSA
+certificate, or leaves out Extended Master Secret: these are refused on purpose (RFC 9325 sections 3.5, 4.1 and 4.2).
+At startup, "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain" means the key was set
+next to `-sslPort`: set `ktor.security.ssl.enabledProtocols` for that port instead; and "the Kuicksilver engine serves
+[TLSv1.3] or [TLSv1.2, TLSv1.3]" means `enabledProtocols` asked for TLS 1.2 alone or an older version.
+
 #### A chunked body fails with "Whitespace before the end of a chunk size line"
 
 The peer wrote a chunk-size line with SP or HTAB right before its CRLF (`5 \r\n`). RFC 9112 section 7.1 allows
@@ -6051,6 +6149,33 @@ that `altSvc` is on so clients learn about HTTP/3 ([Deploying the HTTP/3 server]
 the network in front of the server). `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
 CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean `engine.http3Advertising` is `Clear` or `Drain`
 ([Ktor: Turning HTTP/3 off on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-on-the-server)).
+
+#### The server answers `421 Misdirected Request`
+
+Since 0.3.0 a TLS connector answers 421 to a request whose host the certificate of its connection does not name, and
+the application never sees the request (neither routing nor plugins such as CallLogging) (RFC 9110 section 7.4 requires the rejection). Browsers that reuse a connection
+for another host retry on a new connection and need nothing; the other causes are configuration. The engine logs each 421
+at debug level with the reason:
+
+- "421 Misdirected Request for <host>: the certificate of this connection does not name it": the certificate's
+  subjectAltName must list every host and address clients use, `localhost`, `127.0.0.1` and the server's IP addresses
+  included (as IP entries: a DNS entry `127.0.0.1` does not count). Wildcards cover one label (`*.example.com` covers
+  `api.example.com`, not `example.com` or `a.b.example.com`), and the subject CN is never used. Clients that pin the
+  key or use `TrustConfig.ExpectedName` to accept a certificate that names something else get 421 too: reissue the
+  certificate with the name they connect to.
+- "421 Misdirected Request for <host>: the sniSelector chose this connection's TLS settings for another name": with an
+  `sniSelector`, a request must be for the connection's SNI name, or an address when the client sent no SNI. A client
+  that sends one name in TLS and another in `Host` (some test tools, `curl --resolve` set up for another name) gets this;
+  send the same name in both.
+- "421 Misdirected Request for <host>: an https request over a plain connection": a plain connector received
+  `GET https://… HTTP/1.1`. Send origin-form requests, or terminate TLS here.
+- "421 Misdirected Request for <host>: not a valid host name or address": an internationalised name must arrive as an
+  A-label (`xn--…`).
+
+Only when every client of a connector is a trusted gateway, such as a TLS-terminating proxy that re-encrypts with an
+internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
+`tlsConnector { trustedGateway = true }` or `plainConnector { trustedGateway = true }`
+([Ktor: Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)). Never set it on a connector that clients reach directly.
 
 ### Key logging is refused
 
