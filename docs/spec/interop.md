@@ -239,9 +239,12 @@ Findings:
    pool (OkHttp, the JDK's HttpClient), idle or just answered: the server sent its close_notify and then waited up to
    3 s for the client's, which such a client never sends, as it reads nothing until its next request. RFC 8446 section
    6.1: "Both parties need not wait to receive a "close_notify" alert before closing their read side of the
-   connection"; RFC 9112 section 9.6 asks for a staged close of the write side first, which still happens. A stopping
-   server now closes without that wait (`StopWithPooledClientsJvmTest`); the bench's graceful stop tests bound the
-   stop's duration.
+   connection". A stopping server now closes without that wait (`StopWithPooledClientsJvmTest`); the bench's graceful
+   stop tests bound the stop's duration. Of RFC 9112 section 9.6's staged close only the first half remains during a
+   stop: the write side closes first (everything queued, close_notify, FIN), then the read side stops at once, as for a
+   refusal. The section's "reasonably certain that its own TCP stack has received the client's acknowledgement" is not
+   checked: bytes a client sends after our close (a pipelined request, a late WINDOW_UPDATE) can make the kernel reset
+   the connection, and the close goes without a reset only while the client sends nothing more.
 4. **Ktor's Netty engine over HTTP/3.** After our client abandons a response with STOP_SENDING (in its qlog), the
    server application's write never fails: Ktor's handler stays suspended until the connection ends (our server reports
    `H3_REQUEST_CANCELLED` to its application at once). RFC 9000 section 3.5: "An endpoint that receives a STOP_SENDING

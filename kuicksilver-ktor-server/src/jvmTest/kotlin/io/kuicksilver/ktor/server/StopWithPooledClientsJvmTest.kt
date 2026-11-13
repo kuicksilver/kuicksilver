@@ -31,7 +31,9 @@ import kotlin.time.TimeSource
  * packet(s) containing the server's last response"; RFC 8446 section 6.1 lets it close its read side without the
  * peer's close_notify ("Both parties need not wait to receive a "close_notify" alert before closing their read side of
  * the connection"). The stop must not wait for a client that never answers, and the client must still read the whole
- * last response.
+ * last response. During a stop only the first half of section 9.6's staged close remains: the write side closes first,
+ * then the read side stops at once (the acknowledgement is not awaited), so bytes the client sends after the close (a
+ * pipelined request) can make the kernel reset the connection; these clients send nothing more, so there is none.
  */
 class StopWithPooledClientsJvmTest {
     private fun clientSocket(
@@ -108,7 +110,7 @@ class StopWithPooledClientsJvmTest {
             withTimeout(5.seconds) { server.stopSuspend(30_000, 40_000) }
             val took = start.elapsedNow()
             assertTrue(took < 2.seconds, "tls=$tls read=$readsTheResponseFirst: the stop took $took")
-            // the client still gets the whole last response: the server's close was no reset that destroys it
+            // the client still gets the whole last response: with nothing more from the client, the server's close was no reset
             val response = first ?: s.getInputStream().readResponse()
             assertTrue(response.startsWith("HTTP/1.1 200") && response.endsWith("ok"), response)
         }
