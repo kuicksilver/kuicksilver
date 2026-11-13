@@ -8,7 +8,8 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * Whether this certificate's subjectAltName names [host] (RFC 9525 section 6.3), the name check a client makes before it
  * attributes authority for [host] to a server presenting it (RFC 9110 section 4.3.4); trust in the chain is not looked at.
  *
- * An IP literal (IP-ID) matches an iPAddress entry of the same bytes. A DNS name (DNS-ID) matches a dNSName entry equal to it
+ * An IP literal (IP-ID) matches an iPAddress entry of the same bytes; an IPv4 literal written with leading zeros
+ * (`127.000.000.001`) is a reg-name in RFC 3986 section 3.2.2, not the address, and matches nothing. A DNS name (DNS-ID) matches a dNSName entry equal to it
  * after ASCII lower-casing and removal of one trailing dot, or a wildcard entry whose left-most label is `*` alone and which
  * has at least two more labels (`*.example.com`): the `*` stands for exactly one non-empty label. Partial wildcards
  * (`f*.example.com`) and wildcards anywhere else never match, as with OpenSSL's `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, which
@@ -47,13 +48,21 @@ public fun Certificate.matchesHost(host: HostName): Boolean {
     }
 }
 
-/** The bytes of a normalized IPv4 (4) or IPv6 (16, RFC 4291 section 2.2) literal, or null. */
+/**
+ * The bytes of a normalized IPv4 (4) or IPv6 (16, RFC 4291 section 2.2) literal, or null. An IPv4 part is a `dec-octet`
+ * of RFC 3986 section 3.2.2, without leading zeros: `127.000.000.001` is a reg-name there, not the address.
+ */
 private fun ipLiteralBytes(s: String): ByteArray? {
     if (':' !in s) {
         val parts = s.split('.')
         if (parts.size != 4) return null
         return ByteArray(4) { i ->
-            (parts[i].takeIf { it.length in 1..3 && it.all(Char::isDigit) }?.toInt()?.takeIf { it <= 255 } ?: return null).toByte()
+            (
+                parts[i]
+                    .takeIf { it.length in 1..3 && it.all(Char::isDigit) && (it.length == 1 || it[0] != '0') }
+                    ?.toInt()
+                    ?.takeIf { it <= 255 } ?: return null
+            ).toByte()
         }
     }
     val doubleColon = s.indexOf("::")

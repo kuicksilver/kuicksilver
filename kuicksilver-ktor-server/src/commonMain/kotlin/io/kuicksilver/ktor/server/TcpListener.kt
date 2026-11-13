@@ -35,6 +35,8 @@ import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.splitAbsoluteForm
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
@@ -449,6 +451,30 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
     altSvc: () -> String?,
 ) {
     with(scope) {
+        // final statuses the head alone determines, answered by the engine as over HTTP/2 and HTTP/3: no call is made, so
+        // neither the application's routing nor its send pipeline (StatusPages, logging, compression) runs, and no 100 goes
+        // out before them (RFC 9110 section 10.1.1)
+        // RFC 9110 section 7.4: the target URI's authority is the absolute-form's, else Host (RFC 9112 section 3.3), and its
+        // scheme the absolute-form's, else the connection's; CONNECT's authority-form names a tunnel's destination, not an
+        // origin
+        val absolute = splitAbsoluteForm(request.uri.toString())
+        val targetScheme = if (absolute != null) request.uri.toString().substringBefore(':') else scheme
+        val misdirected =
+            if (request.method.value == "CONNECT") {
+                null
+            } else {
+                authorityCheck.rejection(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
+            }
+        if (misdirected != null) {
+            environment.log.debug(misdirected)
+            return respondFromEngine(scope, request, MisdirectedRequestStatus)
+        }
+        // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
+        if (request.headers[EARLY_DATA_FIELD] != null &&
+            request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
+        ) {
+            return respondFromEngine(scope, request, HttpStatusCode.TooEarly)
+        }
         withContext(userDispatcher) requestContext@{
             val call =
                 H1Call(
@@ -474,27 +500,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
             var failure: Throwable? = null
             try {
                 addHandlerForExpectedHeader(call)
-                // RFC 9110 section 7.4: the target URI is https (the absolute-form's scheme, else the connection's) and its
-                // authority the absolute-form's, else Host (RFC 9112 section 3.3); CONNECT's authority-form names a tunnel's
-                // destination, not an origin
-                val absolute = splitAbsoluteForm(request.uri.toString())
-                val targetScheme = if (absolute != null) request.uri.toString().substringBefore(':') else scheme
-                val misdirected =
-                    if (request.method.value == "CONNECT") {
-                        null
-                    } else {
-                        authorityCheck.rejection(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
-                    }
-                if (misdirected != null) {
-                    environment.log.debug(misdirected)
-                    call.respond(MisdirectedRequestStatus) // a final status the head determines: no 100 before it
-                } else if (
-                    // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
-                    request.headers[EARLY_DATA_FIELD] != null &&
-                    request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
-                ) {
-                    call.respond(HttpStatusCode.TooEarly) // a final status the head determines: no 100 before it
-                } else {
+                run {
                     // RFC 9110 section 10.1.1: an HTTP/1.1 request with content and `Expect: 100-continue` gets "an immediate
                     // 100 (Continue) response" unless its head alone determines a final status (those went out before the
                     // application was asked: 400, 413, 431, 421, 425 above). Before, it went out only when the application first
@@ -514,6 +520,33 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                 call.release()
             }
         }
+    }
+}
+
+/**
+ * Answers [request] with [status] and no content from the engine itself, the way the HTTP/2 and HTTP/3 paths answer it:
+ * `Date` (RFC 9110 section 6.6.1), `Content-Length: 0`, and `Connection: close` when the connection ends after it (the
+ * server stopping, or the request's own close, RFC 9112 section 9.6), which [H1RequestScope.endsConnection] reports to the
+ * pipeline. Content the request carries is drained by the pipeline as for any response that left it unread.
+ */
+private suspend fun respondFromEngine(
+    scope: H1RequestScope,
+    request: Request,
+    status: HttpStatusCode,
+) {
+    try {
+        val close =
+            scope.closing() ||
+                requestEndsConnection(HttpProtocolVersion.parse(request.version), scope.fields.getAll(HttpHeaders.Connection).orEmpty())
+        val head =
+            "HTTP/1.1 ${status.value} ${status.description}\r\nDate: ${httpDateNow()}\r\nContent-Length: 0\r\n" +
+                (if (close) "Connection: close\r\n" else "") + "\r\n"
+        scope.output.writeStringUtf8(head)
+        scope.output.flush()
+        scope.endsConnection?.complete(close)
+    } finally {
+        scope.output.flushAndClose()
+        request.release()
     }
 }
 

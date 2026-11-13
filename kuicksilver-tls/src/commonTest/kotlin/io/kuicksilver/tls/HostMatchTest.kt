@@ -46,6 +46,11 @@ class HostMatchTest {
         }
     }
 
+    /** RFC 3986 section 3.2.2: `dec-octet` has no leading zeros; such a host is a reg-name, never the address. */
+    @Test fun negative_ipv4WithLeadingZerosIsNoAddress() {
+        for (h in listOf("127.000.000.001", "127.0.0.01")) assertFalse(server.matches(h), h)
+    }
+
     /** RFC 9525 section 6.3: no partial wildcards (OpenSSL's NO_PARTIAL_WILDCARDS, as the client verifier). */
     @Test fun negative_partialWildcardMatchesNothing() {
         val partial = Certificate(TestCerts.serverPartialWildcard)

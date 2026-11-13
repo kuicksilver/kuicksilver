@@ -29,7 +29,10 @@ class ServerEarlyDataHeaderTest {
 
     private var unsafeCalls = 0
 
+    private var sendPipelines = 0
+
     private val routes: Application.() -> Unit = {
+        sendPipeline.intercept(io.ktor.server.response.ApplicationSendPipeline.Before) { sendPipelines++ }
         routing {
             get("/e") { call.respondText("early=${call.request.receivedEarly}") }
             post("/p") {
@@ -65,7 +68,9 @@ class ServerEarlyDataHeaderTest {
                         "POST /p HTTP/1.1\r\nHost: server.test\r\nEarly-Data: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                     )
                 assertTrue(resp.startsWith("HTTP/1.1 425"), resp)
+                assertTrue("\r\nDate: " in resp, resp)
                 assertEquals(0, unsafeCalls, "the application processed a request that may be a replay")
+                assertEquals(0, sendPipelines, "the 425 is the engine's own, as over HTTP/2 and HTTP/3")
             } finally {
                 server.stop(100, 500)
             }
@@ -94,6 +99,7 @@ class ServerEarlyDataHeaderTest {
                                 },
                             )
                         assertEquals(425, post.status)
+                        assertTrue(post.headers["date"] != null, "RFC 9110 section 6.6.1: Date on a 4xx")
                         post.body.readFullBody()
                         assertEquals(0, unsafeCalls, "the application processed a request that may be a replay")
                     } finally {

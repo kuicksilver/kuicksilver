@@ -1627,10 +1627,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
-- Ktor server (RFC 9110 section 7.4): a request for an `https` URI whose host the certificate of its connection does not
-  name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
+- Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
+  host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong
-  identity. Such a request now gets `421 Misdirected Request` before the application sees it, over HTTP/1.1, HTTP/2 and
+  identity. Such a request now gets `421 Misdirected Request` from the engine (with `Date`; neither routing nor the
+  send pipeline runs), as does now the 425 for a non-replayable request a gateway forwarded from early data, which
+  over HTTP/1.1 used to go through the application's send pipeline and over HTTP/3 lacked `Date` (RFC 9110 section
+  6.6.1), over HTTP/1.1, HTTP/2 and
   HTTP/3; on HTTP/2 and HTTP/3 only its stream ends. The host is checked against the subjectAltName of the certificate
   that connection presented (the `sniSelector` choice, or the identity current at its handshake), as a client checks it:
   wildcards for one whole left-most label only, IP literals against iPAddress entries, never the subject CN, the port not

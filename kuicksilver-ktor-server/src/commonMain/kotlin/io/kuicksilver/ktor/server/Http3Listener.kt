@@ -11,6 +11,7 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
 import io.kuicksilver.quic.AdmissionDecision
@@ -255,14 +256,15 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     // and never reaches the application; the stream ends, the connection serves the client's other requests
     authorityCheck.rejection(req.scheme, req.authority)?.let { why ->
         environment.log.debug(why)
-        runCatching { req.respond(MISDIRECTED_REQUEST).finish() }
+        runCatching { req.respond(MISDIRECTED_REQUEST, io.kuicksilver.http3.Http3Headers(listOf("date" to httpDateNow()))).finish() }
         return
     }
     // forwarded from early data by a gateway (RFC 8470 section 5.1): what the early-data policy does not declare replayable
     // cannot be made safe by waiting for this hop's handshake, so it gets 425 Too Early and never reaches the application
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     if (req.headers[EARLY_DATA_FIELD.lowercase()] != null && !configuration.http3Settings.earlyData.replayable(req)) {
-        runCatching { req.respond(425).finish() }
+        // RFC 9110 section 6.6.1: Date on every 2xx to 4xx
+        runCatching { req.respond(425, io.kuicksilver.http3.Http3Headers(listOf("date" to httpDateNow()))).finish() }
         return
     }
     withContext(userDispatcher) requestContext@{

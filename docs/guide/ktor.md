@@ -582,9 +582,10 @@ prints `ok` on the page and the Gradle run passes once the page has posted its r
 
 ### Misdirected requests
 
-A TLS connector answers `421 Misdirected Request` to a request for an `https` URI whose host the certificate of its
-connection does not name, over HTTP/1.1, HTTP/2 and HTTP/3, and the application never sees that request (RFC 9110 section
-7.4: such a request "MUST be rejected"). Browsers send these: they reuse an HTTP/2 or HTTP/3 connection for another host at
+A TLS connector answers `421 Misdirected Request` to a request whose host the certificate of its connection does not
+name (whatever scheme the request names: the application would see it as https), over HTTP/1.1, HTTP/2 and HTTP/3. The
+engine answers it itself: neither routing nor plugins such as StatusPages or CallLogging see that request (RFC 9110
+section 7.4: such a request "MUST be rejected"). Browsers send these: they reuse an HTTP/2 or HTTP/3 connection for another host at
 the same address, and a 421 makes them retry on a connection of its own. On HTTP/2 and HTTP/3 only that request's stream
 ends; the connection serves the others.
 

@@ -112,11 +112,6 @@ public class TlsConnection private constructor(
      */
     public val peerCertificates: List<Certificate> get() = presented
 
-    /**
-     * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
-     * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
-     * resumption, the identity chosen for the resumed handshake. Empty without one, or before the handshake chose it.
-     */
     @Volatile private var selectedFor: String? = null
 
     /**
@@ -127,6 +122,11 @@ public class TlsConnection private constructor(
     @InternalKuicksilverApi
     public val sniSelectedFor: String? get() = selectedFor
 
+    /**
+     * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
+     * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
+     * resumption, the identity chosen for the resumed handshake. Empty without one, or before the handshake chose it.
+     */
     @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = (overrideCtx?.ctx ?: ctx).localChain
 

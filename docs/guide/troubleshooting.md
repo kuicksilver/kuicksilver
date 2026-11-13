@@ -649,8 +649,8 @@ CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean `engine.http3Advertising` 
 
 ### The server answers `421 Misdirected Request`
 
-Since 0.3.0 a TLS connector answers 421 to an `https` request whose host the certificate of its connection does not name,
-and the application never sees the request (RFC 9110 section 7.4 requires the rejection). Browsers that reuse a connection
+Since 0.3.0 a TLS connector answers 421 to a request whose host the certificate of its connection does not name, and
+the application never sees the request (neither routing nor plugins such as CallLogging) (RFC 9110 section 7.4 requires the rejection). Browsers that reuse a connection
 for another host retry on a new connection and need nothing; the other causes are configuration. The engine logs each 421
 at debug level with the reason:
 

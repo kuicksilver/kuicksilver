@@ -10,6 +10,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.engine.connector
+import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -30,14 +31,38 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.coroutineScope
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+
+/** The calls an application saw: authority, protocol and remote port of each, so a count that is off names the call. */
+@OptIn(ExperimentalAtomicApi::class)
+internal class Seen {
+    private val calls = kotlin.concurrent.atomics.AtomicReference(emptyList<String>())
+
+    fun record(call: io.ktor.server.application.ApplicationCall) {
+        val r = call.request.local
+        val line = "${r.serverHost}:${r.serverPort} ${call.request.httpVersion} ${r.scheme} from port ${r.remotePort}"
+        while (true) {
+            val now = calls.load()
+            if (calls.compareAndSet(now, now + line)) break
+        }
+    }
+
+    val count: Int get() = calls.load().size
+
+    override fun toString(): String = calls.load().toString()
+}
+
+/** [expected] calls reached the application; the message lists them. */
+internal fun assertCalls(
+    expected: Int,
+    seen: Seen,
+    message: String = "calls the application saw",
+) = assertEquals(expected, seen.count, "$message: $seen")
 
 /**
  * RFC 9110 section 7.4: "a request for an "https" resource MUST be rejected unless it has been received over a connection
@@ -55,8 +80,8 @@ class ServerMisdirectedRequestTest {
         connector: KuicksilverTlsConnector.Builder.() -> Unit = {},
         http2: Boolean = false,
         http3: Boolean = false,
-    ): Triple<Server, Int, AtomicInt> {
-        val seen = AtomicInt(0)
+    ): Triple<Server, Int, Seen> {
+        val seen = Seen()
         val (server, port) =
             tlsServer(
                 configure = {
@@ -65,7 +90,7 @@ class ServerMisdirectedRequestTest {
                 },
                 connector = connector,
             ) {
-                intercept(ApplicationCallPipeline.Setup) { seen.incrementAndFetch() }
+                intercept(ApplicationCallPipeline.Setup) { seen.record(context) }
                 routing { get("/") { call.respondText("ok") } }
             }
         return Triple(server, port, seen)
@@ -92,7 +117,12 @@ class ServerMisdirectedRequestTest {
             misdirected(leaf, "https", "a.wild.test", trustedGateway = false, sni = SniChoice("server.test")),
         )
         assertEquals(null, misdirected(leaf, "https", "other.test", trustedGateway = true))
-        assertEquals(null, misdirected(leaf, "http", "other.test", trustedGateway = false))
+        // over TLS every request with an authority is checked, whatever its scheme: the call reports the connection's https
+        assertEquals(
+            "421 Misdirected Request for other.test: the certificate of this connection does not name it",
+            misdirected(leaf, "http", "other.test", trustedGateway = false),
+        )
+        assertEquals(null, misdirected(emptyList(), "http", "other.test", trustedGateway = false), "plain: http is served")
     }
 
     private fun status(response: String): String = response.substringAfter("HTTP/1.1 ").substringBefore(' ')
@@ -112,7 +142,7 @@ class ServerMisdirectedRequestTest {
                             "GET / HTTP/1.1\r\nHost: server.test:$port\r\nConnection: close\r\n\r\n",
                     )
                 assertEquals(listOf("421", "200"), statuses(raw), raw)
-                assertEquals(1, seen.load(), "the misdirected request never reached the application")
+                assertCalls(1, seen, "the misdirected request never reached the application")
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -131,7 +161,7 @@ class ServerMisdirectedRequestTest {
                 // absolute-form: its authority is the target's (RFC 9112 section 3.2.2), whatever Host says
                 val abs = rawHttp(port, "GET https://server.test/ HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n")
                 assertEquals("200", status(abs), abs)
-                assertEquals(named.size + 1, seen.load())
+                assertCalls(named.size + 1, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -150,6 +180,8 @@ class ServerMisdirectedRequestTest {
                         "127.0.0.2:$port",
                         "[::2]",
                         "xn--bcher-kva.test",
+                        "127.000.000.001:$port", // a reg-name (RFC 3986 dec-octet has no leading zeros), not the address
+                        "127.0.0.1.", // likewise: an IPv4address has no trailing dot
                     )
                 for (host in unnamed) {
                     val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n")
@@ -157,7 +189,7 @@ class ServerMisdirectedRequestTest {
                 }
                 val abs = rawHttp(port, "GET https://other.test/ HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertEquals("421", status(abs), abs)
-                assertEquals(0, seen.load(), "no misdirected request reached the application")
+                assertCalls(0, seen, "no misdirected request reached the application")
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -170,7 +202,7 @@ class ServerMisdirectedRequestTest {
             try {
                 val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n")
                 assertEquals("200", status(r), r)
-                assertEquals(1, seen.load())
+                assertCalls(1, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -203,7 +235,7 @@ class ServerMisdirectedRequestTest {
                 // the default identity (SNI server.test) still serves server.test, and not proxy.internal
                 assertEquals("200", status(rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")))
                 assertEquals("421", status(rawHttp(port, "GET / HTTP/1.1\r\nHost: proxy.internal\r\nConnection: close\r\n\r\n")))
-                assertEquals(2, seen.load())
+                assertCalls(2, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -217,11 +249,11 @@ class ServerMisdirectedRequestTest {
                 port = 0
             }
         },
-    ): Triple<Server, Int, AtomicInt> {
-        val seen = AtomicInt(0)
+    ): Triple<Server, Int, Seen> {
+        val seen = Seen()
         val server =
             kuicksilverServer(null, configure = { connector() }) {
-                intercept(ApplicationCallPipeline.Setup) { seen.incrementAndFetch() }
+                intercept(ApplicationCallPipeline.Setup) { seen.record(context) }
                 routing { get("/") { call.respondText("ok") } }
             }
         server.startSuspend(wait = false)
@@ -246,12 +278,12 @@ class ServerMisdirectedRequestTest {
                     val r = rawHttp(port, "GET $target HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n", tls = null)
                     assertEquals("421", status(r), "$target\n$r")
                 }
-                assertEquals(0, seen.load(), "no https request reached the application")
+                assertCalls(0, seen, "no https request reached the application")
                 for (head in listOf("GET / HTTP/1.1\r\nHost: other.test", "GET http://other.test/ HTTP/1.1\r\nHost: other.test")) {
                     val r = rawHttp(port, "$head\r\nConnection: close\r\n\r\n", tls = null)
                     assertEquals("200", status(r), "$head\n$r")
                 }
-                assertEquals(2, seen.load())
+                assertCalls(2, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -271,7 +303,7 @@ class ServerMisdirectedRequestTest {
             try {
                 val r = rawHttp(port, "GET https://other.test/ HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n", tls = null)
                 assertEquals("200", status(r), r)
-                assertEquals(1, seen.load())
+                assertCalls(1, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -285,6 +317,7 @@ class ServerMisdirectedRequestTest {
         port: Int,
         tls: io.kuicksilver.tls.TlsConfig,
         authorities: List<String>,
+        scheme: String = "https",
     ): List<Int> {
         val selector = SelectorManager(Dispatchers.IO)
         try {
@@ -304,7 +337,7 @@ class ServerMisdirectedRequestTest {
                 val out =
                     authorities.map { authority ->
                         assertTrue(c.tryReserve())
-                        val st = c.open("GET", "https", authority, "/", emptyList(), endStream = true)
+                        val st = c.open("GET", scheme, authority, "/", emptyList(), endStream = true)
                         try {
                             st.response().status
                         } finally {
@@ -333,7 +366,7 @@ class ServerMisdirectedRequestTest {
                         listOf("other.test", "a.b.wild.test:$port", "server.test:$port", "a.wild.test"),
                     ),
                 )
-                assertEquals(2, seen.load(), "the misdirected requests never reached the application")
+                assertCalls(2, seen, "the misdirected requests never reached the application")
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -346,7 +379,7 @@ class ServerMisdirectedRequestTest {
     private suspend fun sniPolicyServer(
         http2: Boolean = false,
         trustedGateway: Boolean = false,
-    ): Triple<Server, Int, AtomicInt> {
+    ): Triple<Server, Int, Seen> {
         val identity = ServerFixtures.identity()
         val strict =
             ServerTlsOverride(
@@ -391,7 +424,7 @@ class ServerMisdirectedRequestTest {
             try {
                 assertEquals("421", h1Status(port, "a.wild.test", via("server.test")))
                 assertEquals("421", h1Status(port, "a.wild.test", via("127.0.0.1")), "a connection without SNI")
-                assertEquals(0, seen.load())
+                assertCalls(0, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -404,7 +437,7 @@ class ServerMisdirectedRequestTest {
             try {
                 assertEquals("421", h1Status(port, "server.test", via("a.wild.test", withCertificate = true)))
                 assertEquals("421", h1Status(port, "127.0.0.1:$port", via("a.wild.test", withCertificate = true)))
-                assertEquals(0, seen.load())
+                assertCalls(0, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -420,7 +453,7 @@ class ServerMisdirectedRequestTest {
                 assertEquals("200", h1Status(port, "127.0.0.1:$port", via("127.0.0.1")))
                 assertEquals("421", h1Status(port, "server.test", via("127.0.0.1")), "a name on a connection without SNI")
                 assertEquals("421", h1Status(port, "127.0.0.1", via("server.test")), "an address on a connection with SNI")
-                assertEquals(3, seen.load())
+                assertCalls(3, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -436,7 +469,7 @@ class ServerMisdirectedRequestTest {
                     listOf(421, 200),
                     h2Statuses(port, via("a.wild.test", withCertificate = true, alpn = "h2"), listOf("server.test", "a.wild.test:$port")),
                 )
-                assertEquals(2, seen.load())
+                assertCalls(2, seen)
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -448,7 +481,78 @@ class ServerMisdirectedRequestTest {
             val (server, port, seen) = sniPolicyServer(trustedGateway = true)
             try {
                 assertEquals("200", h1Status(port, "a.wild.test", via("server.test")))
-                assertEquals(1, seen.load())
+                assertCalls(1, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /**
+     * A target URI with another scheme than https on a TLS connection: the application still sees an https call for that
+     * host, so the host is checked as for https (over HTTP/1.1 an absolute-form `http://` target).
+     */
+    @Test fun negative_h1HttpTargetOnTlsConnectionIsChecked() =
+        serverTest {
+            val (server, port, seen) = countingServer()
+            try {
+                val r = rawHttp(port, "GET http://other.test/ HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n")
+                assertEquals("421", status(r), r)
+                assertCalls(0, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** The same over HTTP/2 (`:scheme` http). */
+    @Test fun negative_h2HttpSchemeOnTlsConnectionIsChecked() =
+        serverTest {
+            val (server, port, seen) = countingServer(http2 = true)
+            try {
+                assertEquals(
+                    listOf(421, 200),
+                    h2Statuses(port, ServerFixtures.clientTls(alpn = listOf("h2")), listOf("other.test", "server.test"), scheme = "http"),
+                )
+                assertCalls(1, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** A request for an mTLS name with `http://` must not slip past the SNI policy either. */
+    @Test fun negative_h1HttpTargetForStricterSniPolicyGets421() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer()
+            try {
+                val r =
+                    rawHttp(port, "GET http://a.wild.test/ HTTP/1.1\r\nHost: a.wild.test\r\nConnection: close\r\n\r\n", via("server.test"))
+                assertEquals("421", status(r), r)
+                assertCalls(0, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /**
+     * Over HTTP/1.1 the 421 is the engine's own, as over HTTP/2 and HTTP/3: the application's send pipeline (StatusPages,
+     * logging, compression) never runs for it, and it carries Date (RFC 9110 section 6.6.1).
+     */
+    @Test fun negative_h1MisdirectedNeverRunsTheApplicationPipelines() =
+        serverTest {
+            val sent = Seen()
+            val (server, port) =
+                tlsServer {
+                    sendPipeline.intercept(io.ktor.server.response.ApplicationSendPipeline.Before) { sent.record(context) }
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            try {
+                val r =
+                    rawHttp(
+                        port,
+                        "GET / HTTP/1.1\r\nHost: other.test\r\n\r\nGET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n",
+                    )
+                assertEquals(listOf("421", "200"), statuses(r), r)
+                assertTrue(r.substringBefore("HTTP/1.1 200").contains("\r\nDate: "), r)
+                assertCalls(1, sent, "send pipelines")
             } finally {
                 server.stopSuspend(0, 1000)
             }
@@ -462,14 +566,17 @@ class ServerMisdirectedRequestTest {
             try {
                 val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
                 try {
-                    assertEquals(421, c.request(http3Request("GET", "other.test", "/")).status)
+                    val misdirected = c.request(http3Request("GET", "other.test", "/"))
+                    assertEquals(421, misdirected.status)
+                    assertTrue(misdirected.headers["date"] != null, "RFC 9110 section 6.6.1: Date on a 4xx")
+                    assertEquals(421, c.request(http3Request("GET", "other.test", "/") { scheme = "http" }).status, ":scheme http")
                     assertEquals(421, c.request(http3Request("GET", "127.0.0.2:$port", "/")).status)
                     assertEquals(200, c.request(http3Request("GET", "server.test:$port", "/")).status)
                     assertEquals(200, c.request(http3Request("GET", "a.wild.test", "/")).status)
                 } finally {
                     c.close()
                 }
-                assertEquals(2, seen.load(), "the misdirected requests never reached the application")
+                assertCalls(2, seen, "the misdirected requests never reached the application")
             } finally {
                 ep.close()
                 server.stopSuspend(0, 1000)

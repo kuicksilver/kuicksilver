@@ -62,10 +62,14 @@ internal class SniChoice(
  * Why a request must be rejected with 421 (the text the engine logs at debug level), or null when it is served (RFC 9110 section 7.4): "a request for an "https" resource
  * MUST be rejected unless it has been received over a connection that has been secured via a certificate valid for that
  * target URI's origin". [scheme] is the target URI's scheme, [authority] its authority (`:authority`, or `Host`); [local] is
- * the chain this connection presented, as the handshake chose it (SNI override or identity snapshot).
+ * the chain this connection presented, as the handshake chose it (SNI override or identity snapshot). On a TLS
+ * connection every request with an authority is checked, whatever its scheme: the call reports the connection's scheme,
+ * `https`, so an `http://` target (absolute form, or `:scheme http`) for another host would reach the application as an
+ * https call for it.
  *
  * The host is matched against the leaf's subjectAltName as a client checks it (RFC 9110 section 4.3.4, RFC 9525:
- * [matchesHost]); the port plays no part, a certificate names none. Not rejected: a scheme other than `https`, a request
+ * [matchesHost]); the port plays no part, a certificate names none. Not rejected: on a plain connection a scheme other
+ * than `https`, a request
  * without an authority (its target URI takes the server's own, RFC 9112 section 3.3), and a connection from a trusted
  * gateway ([KuicksilverTlsConnector.trustedGateway], the exception section 7.4 makes). An authority whose host is no valid
  * reference identifier (not ASCII, malformed) cannot be valid for the certificate and is rejected. On a connection an
@@ -78,19 +82,27 @@ internal fun misdirected(
     trustedGateway: Boolean,
     sni: SniChoice? = null,
 ): String? {
-    if (trustedGateway || !scheme.equals("https", ignoreCase = true) || authority.isNullOrEmpty()) return null
+    if (trustedGateway || authority.isNullOrEmpty()) return null
     val prefix = "421 Misdirected Request for $authority"
-    // an https request on a connection secured by no certificate (plain)
-    val leaf = local.firstOrNull() ?: return "$prefix: an https request over a plain connection"
+    // a plain connection: only an https target is misdirected (no certificate secures it); http targets are its own
+    val leaf =
+        local.firstOrNull()
+            ?: return if (scheme.equals("https", ignoreCase = true)) "$prefix: an https request over a plain connection" else null
+    val text = authorityHost(authority)
     val host =
         try {
-            HostName.normalize(authorityHost(authority))
+            HostName.normalize(text)
         } catch (_: TlsException) {
             return "$prefix: not a valid host name or address"
         }
     return when {
-        !leaf.matchesHost(host) -> "$prefix: the certificate of this connection does not name it"
+        // `127.0.0.1.` is a reg-name (RFC 3986 section 3.2.2: an IPv4address has no trailing dot), not the address
+        !leaf.matchesHost(
+            host,
+        ) || (host.isIpLiteral && text.endsWith('.')) -> "$prefix: the certificate of this connection does not name it"
+
         sni != null && !sni.allows(host) -> "$prefix: the sniSelector chose this connection's TLS settings for another name"
+
         else -> null
     }
 }
