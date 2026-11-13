@@ -1196,6 +1196,28 @@ Where a request's proxy comes from:
 | Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
+What a PAC script sees. A PAC script is code from the network: whoever answers WPAD on the local network, or serves a
+plain-`http` PAC URL, writes it, and it can send any string it is given out through
+`dnsResolve("<data>.attacker.example")`. So the URL the engine passes `FindProxyForURL` is built as Chrome builds it (no
+user info or fragment, the default port left out), and for secure URLs it is the origin only, as in Chrome (since 52,
+CVE-2016-5134), Android (CVE-2016-3763) and Firefox (which strips the path of every URL by default):
+
+| Request | On Apple platforms and Windows the script gets | On the JVM and Android `ProxySelector.select` gets |
+|---|---|---|
+| `https://h/p?q` | `https://h/` | `https://h:443/` |
+| `wss://h:8443/p?q` | `wss://h:8443/` (with `pacFullWebSocketUrl` and the settings' own script: `wss://h:8443/p?q`; WinHTTP: as `https://` when it refuses `wss`) | `https://h:8443/p?q` (Android's selector cuts it to `https://h:8443/` before its PAC runs; the JDK's passes the OS only scheme and host) |
+| `ws://h/p?q` | `ws://h/p?q` (WinHTTP: as `http://` when it refuses `ws`) | `http://h:80/p?q` |
+| `http://h/p?q` | `http://h/` | `http://h:80/` |
+
+RFC 6455 section 4.1 asks for a WebSocket's whole URI, resource name included; for `wss` the engine departs from that
+by default for this reason. `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the
+script the system settings name, by URL (Windows: the "Use setup script" address; Apple: the PAC URL) or inline, and
+never to one WPAD found. Turn it on only when that script is yours and reaches the device over `https` or as a file.
+On Apple platforms the engine's own runner also bounds the script: 2 s per run, 20 distinct names resolved per run (as
+Chrome), an answer of at most 64 KiB of ASCII, a script of at most 1 MiB; an answer entry it cannot read is skipped,
+and an answer with none left counts as a failed script. JavaScriptCore's public API has no memory limit: a script that
+allocates without end is stopped only by the time limit (its thread is given up, threat model 3.20.3).
+
 `ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,
 `http_proxy` (lower case only) for `http` and `ws`, then `all_proxy`/`ALL_PROXY`; `no_proxy`/`NO_PROXY` exempts `*`,
 names with their subdomains (`example.com` covers `a.example.com`, not `badexample.com`), IP addresses and CIDR ranges;
