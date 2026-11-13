@@ -122,7 +122,7 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 ### 3.9 Version and protocol downgrade
 
 - **Threats:** a forged Version Negotiation; TLS downgrade.
-- **Mitigations:** VN is accepted only before the first received packet; QUIC uses only TLS 1.3 (OpenSSL enforces it with `SSL_set_quic_tls_cbs`); TCP uses 1.2 only explicitly; RFC 9368 compatible version negotiation with its downgrade check (`version_information`: `negative_downgradeAfterVersionNegotiation`, `negative_clientChosenVersionNotInAvailableRejected`, `negative_availableVersionZeroRejected`).
+- **Mitigations:** VN is accepted only before the first received packet; QUIC uses only TLS 1.3 (OpenSSL enforces it with `SSL_set_quic_tls_cbs`); TCP uses 1.2 only explicitly (the Ktor server's connectors since 0.3.0 with `versions = TlsVersions.Tls12And13`, which lets any client without TLS 1.3 connect over TLS 1.2: a server that negotiates TLS 1.2 sets the RFC 9846 §4.1.3 downgrade sentinel in its ServerHello.random, so a TLS 1.3 client detects a stripped offer, `ServerTls12JdkClientTest.tls12ServerHelloCarriesTheDowngradeSentinel`; the TLS 1.2 profile keeps forward secrecy, ECDHE only, and a TLS 1.2 session resumes for at most the ticket lifetime after its full handshake); RFC 9368 compatible version negotiation with its downgrade check (`version_information`: `negative_downgradeAfterVersionNegotiation`, `negative_clientChosenVersionNotInAvailableRejected`, `negative_availableVersionZeroRejected`).
 - **Verification:** **negative controls**: a VN after the Initial reply is ignored; the server never processes an incoming VN (msquic CVE-2023-38171); a VN listing our own version is dropped (§6.2).
 
 ### 3.10 Parsing errors and memory

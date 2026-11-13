@@ -43,6 +43,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
+| a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
 
 ## Getting more information
@@ -600,6 +601,18 @@ WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so th
 this one until then. That queue does not count against the connect timeout of the WebSockets in it: many WebSockets
 started at once to one address connect one after another, bounded only by each call's request timeout (`HttpTimeout`)
 or its cancellation.
+
+### A TLS 1.2 client cannot connect to the server
+
+A client without TLS 1.3 (an older Android or JDK, an embedded HTTP stack, some scanners) gets a `protocol_version`
+alert: a TLS connector speaks TLS 1.3 only unless it allows TLS 1.2 with `versions = TlsVersions.Tls12And13`, the
+`EngineMain` key `kuicksilver.tls.versions = tls12And13`, or Ktor's `enabledProtocols = listOf("TLSv1.2", "TLSv1.3")`
+([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)). A TLS 1.2 client that still gets `handshake_failure` offers
+none of the profile's suites (only CBC, SHA-1 or static RSA ones), offers only RSA suites to a server with an ECDSA
+certificate, or leaves out Extended Master Secret: these are refused on purpose (RFC 9325 sections 3.5, 4.1 and 4.2).
+At startup, "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain" means the key was set
+next to `-sslPort`: set `ktor.security.ssl.enabledProtocols` for that port instead; and "the Kuicksilver engine serves
+[TLSv1.3] or [TLSv1.2, TLSv1.3]" means `enabledProtocols` asked for TLS 1.2 alone or an older version.
 
 ### A chunked body fails with "Whitespace before the end of a chunk size line"
 

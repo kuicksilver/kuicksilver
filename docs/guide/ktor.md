@@ -206,13 +206,17 @@ server.start(wait = true)
   The engine cannot act as a CONNECT proxy (not supported in 0.3.0): a CONNECT reaches the application, but a 2xx answer
   goes out as `501 Not Implemented` with a warning in the application log, since a 2xx would promise a tunnel; every
   CONNECT ends its connection (RFC 9931 section 8). The engine's own 400 has the fixed body `Bad Request`
-  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
+  (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`. A
+  connector speaks TLS 1.3 only unless it allows TLS 1.2: [TLS 1.2 on the server](#tls-12-on-the-server).
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
 - On the JVM, Ktor's `sslConnector(keyStore, alias, ...) {}` (and the `ktor.security.ssl.*` keys) is accepted: the key
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
-  Netty and Jetty engines. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
+  Netty and Jetty engines. Its `enabledProtocols` (`ktor.security.ssl.enabledProtocols`) choose the TLS versions:
+  unset or `TLSv1.3` alone is TLS 1.3 only, `TLSv1.2` with `TLSv1.3` allows TLS 1.2 as well ([TLS 1.2 on the
+  server](#tls-12-on-the-server)); anything else (TLS 1.2 alone, TLS 1.0 or 1.1) fails the start with
+  `TlsException.Config`. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
   authentication). Ktor has no equivalent. Requiring client certificates, and presenting one from the client:
   [Mutual TLS](#mutual-tls-client-certificates).
@@ -280,6 +284,35 @@ is given up after the abort wait, so for that moment the descriptors in use can 
   `kuicksilver.quicAcceptQueue`. Behind a NAT or `kube-proxy` raise the per-address one
   ([deployment guide](deployment.md#quic-connection-limits)); `engine.http3Stats` counts the clients they refused.
 
+### TLS 1.2 on the server
+
+A TLS connector speaks TLS 1.3 only by default: a client without it is refused with a `protocol_version` alert.
+`versions = TlsVersions.Tls12And13` (*experimental*, since 0.3.0) on `tlsConnector(identity) { … }`, the `EngineMain`
+key `kuicksilver.tls.versions = tls12And13` for the deployment port, or `enabledProtocols = listOf("TLSv1.2",
+"TLSv1.3")` on Ktor's `sslConnector` (JVM) serves TLS 1.2 clients too (RFC 9325 section 3.1.1: "Implementations MUST
+support TLS 1.2"). Turn it on only for clients that have no TLS 1.3 (older devices, embedded HTTP stacks, some
+proxies and scanners): any client can then end up on TLS 1.2.
+
+- A client that offers TLS 1.3 still gets it; a TLS 1.2 ServerHello carries the RFC 9846 downgrade sentinel, so a
+  TLS 1.3 client notices an attacker who removed 1.3 from its offer.
+- TLS 1.2 runs under the RFC 9325 profile: ECDHE with AES-GCM or ChaCha20-Poly1305 only (no static RSA, no CBC, no
+  SHA-1 MAC, no finite-field DHE), Extended Master Secret required (a client without it is refused with
+  `handshake_failure`), no renegotiation, no compression. Among the suites a client offers, the server picks AES-256-GCM
+  first, then ChaCha20-Poly1305 (first when the client prefers it), then AES-128-GCM.
+- An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
+  RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
+  TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With `http2 = true` the start
+  logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
+  not checked).
+- With `http2 = true`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
+  ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.
+- Client certificates, `sniSelector` and tickets work as over TLS 1.3. A TLS 1.2 session resumes for at most
+  `SessionTicketConfig.ticketLifetime` after its full handshake (12 hours by default, at most half of `rotateEvery`),
+  however often its ticket is renewed (TLS 1.2 has no fresh key exchange on resumption; RFC 9325 section 3.4). With
+  explicit ticket keys the library does not rotate them: replace them at least every `rotateEvery`, as that option
+  promises.
+- HTTP/3 on the same port stays TLS 1.3 (QUIC allows nothing else).
+
 ### HTTP/3 on the server
 
 Every TLS connector also serves HTTP/3 on UDP on the same port number; the two sockets are bound as a pair, so with
@@ -318,7 +351,8 @@ arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
 offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
 `http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
 is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
-TLS 1.3 only, which is all the server engine negotiates (RFC 9113 section 9.2).
+TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
+section 9.2).
 
 ```kotlin
 // guide:ktor:http2-server
@@ -766,6 +800,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.reloadInterval` | how often those PEM files, and the `kuicksilver.tls.clientCa` file, are checked for a renewed certificate or CA bundle (`30m`, `1h`; `0` or unset: never; at least `1s`); see [Certificate rotation](#certificate-rotation) |
 | `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
 | `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
+| `kuicksilver.tls.versions` | the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |

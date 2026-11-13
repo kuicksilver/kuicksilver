@@ -211,6 +211,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val limits = TcpLimits(configuration.maxTcpConnections, configuration.maxTcpConnectionsPerIp)
         tcpLimitsForProbe += limits
         val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
+        l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2, environment.log) }
         // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
         val scheme = if (l.tls != null) "https" else "http"
@@ -412,19 +413,18 @@ internal const val H2_ALPN = "h2"
 /**
  * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
- * `http/1.1` alone. HTTP/2 is offered only over TLS 1.3, so the TLS 1.2 rules of RFC 9113 sections 9.2.1 and 9.2.2 do not
- * arise here (the client keeps them: a renegotiation is a connection error of type PROTOCOL_ERROR there); the server
- * negotiates TLS 1.3 only, so this holds for every connector. The handshake has no deadline of its own (`TlsConfig`'s
+ * `http/1.1` alone. A connector with `versions = TlsVersions.Tls12And13` offers `h2` over TLS 1.2 too: RFC 9113 section 9.2,
+ * "Implementations of HTTP/2 MUST use TLS version 1.2 [TLS12] or higher", and the TLS 1.2 profile meets sections 9.2.1 and
+ * 9.2.2 (compression and renegotiation off, a renegotiation attempt a connection error of type PROTOCOL_ERROR in [serveH2];
+ * only ECDHE suites with an AEAD, none of them on the Appendix A list; groups of 255 bits and more, no finite-field DHE; and
+ * TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256 for an RSA certificate). The handshake has no deadline of its own (`TlsConfig`'s
  * 10 s): it is part of the first request's head, which [KuicksilverApplicationEngine.Configuration.requestHeaderTimeoutSeconds]
  * bounds from the accepted connection on. With the 10 s of its own a client on a slow, lossy path (200 ms, 5 % loss)
  * whose Finished needed retransmissions was cut at 10 s after it had sent its request, well inside the documented 30 s.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig {
-    val h1 = tls.tlsConfig(listOf("http/1.1"), Duration.INFINITE)
-    if (!configuration.http2 || h1.versions != io.kuicksilver.tls.TlsVersions.Tls13) return h1
-    return tls.tlsConfig(listOf(H2_ALPN, "http/1.1"), Duration.INFINITE)
-}
+internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig =
+    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, "http/1.1") else listOf("http/1.1"), Duration.INFINITE, quic = false)
 
 /**
  * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as `http3Advertising` says at

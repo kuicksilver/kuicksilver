@@ -194,6 +194,8 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
     final val type // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type|{}type[0]
         final fun <get-type>(): io.ktor.server.engine/ConnectorType // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type.<get-type>|<get-type>(){}[0]
+    final val versions // io.kuicksilver.ktor.server/KuicksilverTlsConnector.versions|{}versions[0]
+        final fun <get-versions>(): io.kuicksilver.tls/TlsVersions // io.kuicksilver.ktor.server/KuicksilverTlsConnector.versions.<get-versions>|<get-versions>(){}[0]
 
     final fun tlsConfig(kotlin.collections/List<kotlin/String>): io.kuicksilver.tls/TlsConfig // io.kuicksilver.ktor.server/KuicksilverTlsConnector.tlsConfig|tlsConfig(kotlin.collections.List<kotlin.String>){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverTlsConnector.toString|toString(){}[0]
@@ -229,6 +231,9 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final var trustedGateway // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway|{}trustedGateway[0]
             final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
             final fun <set-trustedGateway>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway.<set-trustedGateway>|<set-trustedGateway>(kotlin.Boolean){}[0]
+        final var versions // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.versions|{}versions[0]
+            final fun <get-versions>(): io.kuicksilver.tls/TlsVersions // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.versions.<get-versions>|<get-versions>(){}[0]
+            final fun <set-versions>(io.kuicksilver.tls/TlsVersions) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.versions.<set-versions>|<set-versions>(io.kuicksilver.tls.TlsVersions){}[0]
 
         final fun build(): io.kuicksilver.ktor.server/KuicksilverTlsConnector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.build|build(){}[0]
     }

@@ -16,6 +16,7 @@ import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlin.time.Duration
@@ -60,17 +61,28 @@ public class KuicksilverTlsConnector private constructor(
      */
     @ExperimentalKuicksilverApi
     public val trustedGateway: Boolean,
+    /** The TLS versions of the TCP side; QUIC is always TLS 1.3. See [Builder.versions]. */
+    @ExperimentalKuicksilverApi
+    public val versions: TlsVersions,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
 
-    /** The server TLS configuration for [alpn] (`http/1.1` on TCP, `h3` on QUIC). */
-    public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null)
+    /**
+     * The server TLS configuration for [alpn]: with `h3` among them the QUIC one (TLS 1.3 only, RFC 9001 section 4.2), else the
+     * TCP one with [versions].
+     */
+    public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null, quic = "h3" in alpn)
 
-    /** [tlsConfig] with the TLS-over-TCP handshake deadline [handshakeTimeout] (null: `TlsConfig`'s default). */
+    /**
+     * [tlsConfig] with the TLS-over-TCP handshake deadline [handshakeTimeout] (null: `TlsConfig`'s default); [quic] keeps it at
+     * TLS 1.3 whatever [versions] says.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
     internal fun tlsConfig(
         alpn: List<String>,
         handshakeTimeout: Duration?,
+        quic: Boolean,
     ): TlsConfig =
         tlsConfig(TlsRole.Server) {
             handshakeTimeout?.let { this.handshakeTimeout = it }
@@ -81,11 +93,24 @@ public class KuicksilverTlsConnector private constructor(
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
             sniSelector = this@KuicksilverTlsConnector.sniSelector
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
+            if (!quic) versions = this@KuicksilverTlsConnector.versions
         }
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
+    @OptIn(ExperimentalKuicksilverApi::class)
     public fun withPort(port: Int): KuicksilverTlsConnector =
-        KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling, trustedGateway)
+        KuicksilverTlsConnector(
+            host,
+            port,
+            identity,
+            clientAuth,
+            trust,
+            cipherSuites,
+            sniSelector,
+            ocspStapling,
+            trustedGateway,
+            versions,
+        )
 
     /** For logs. */
     override fun toString(): String = "HTTPS (Kuicksilver TLS) $host:$port"
@@ -143,10 +168,38 @@ public class KuicksilverTlsConnector private constructor(
         @ExperimentalKuicksilverApi
         public var trustedGateway: Boolean = false
 
+        /**
+         * The TLS versions TCP connections may negotiate: [TlsVersions.Tls13] (the default) refuses a client without TLS 1.3
+         * with a `protocol_version` alert (RFC 9846 appendix E.2); [TlsVersions.Tls12And13] also serves TLS 1.2 clients (RFC
+         * 9325 section 3.1.1: "Implementations MUST support TLS 1.2"), and a client that offers TLS 1.3 still gets it. TLS 1.2
+         * runs under the RFC 9325 profile: ECDHE with AES-GCM or ChaCha20-Poly1305 only (no static RSA, no CBC, no SHA-1 MAC),
+         * Extended Master Secret required, no renegotiation, no compression; a TLS 1.2 session resumes for at most
+         * [SessionTicketConfig.ticketLifetime][io.kuicksilver.tls.SessionTicketConfig.ticketLifetime] after its full handshake,
+         * however often its ticket is renewed (at most half a
+         * [rotateEvery][io.kuicksilver.tls.SessionTicketConfig.rotateEvery] period; explicit ticket keys are rotated by the
+         * application, which then keeps that period itself). HTTP/2 (when on) is offered over TLS 1.2 as well (RFC 9113
+         * section 9.2); with a certificate without an rsaEncryption key (an EC or an RSA-PSS one) the start logs a warning, since RFC 9113 section 9.2.2 asks
+         * such deployments to support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256. HTTP/3 stays TLS 1.3 (RFC 9001 section 4.2).
+         */
+        @ExperimentalKuicksilverApi
+        public var versions: TlsVersions = TlsVersions.Tls13
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
+        @OptIn(ExperimentalKuicksilverApi::class)
         public fun build(): KuicksilverTlsConnector {
             require(port in 0..65_535) { "port must be 0..65535" }
-            return KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling, trustedGateway)
+            return KuicksilverTlsConnector(
+                host,
+                port,
+                identity,
+                clientAuth,
+                trust,
+                cipherSuites,
+                sniSelector,
+                ocspStapling,
+                trustedGateway,
+                versions,
+            )
         }
     }
 }

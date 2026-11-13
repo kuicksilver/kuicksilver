@@ -587,6 +587,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   sections 4.5.4 and 7.1.3): the decoder reports it (`Http3Headers.neverIndexed`), and fields named with
   `Http3Headers.withNeverIndexed(...)` (or the engines' `neverIndex`) go as literals with the bit, never inserted nor
   referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit.
+- Ktor server: TLS 1.2 on request (RFC 9325 section 3.1.1, "Implementations MUST support TLS 1.2"). The experimental
+  `versions` option of `tlsConnector(identity) { … }` (`TlsVersions.Tls13` by default, `TlsVersions.Tls12And13` to serve
+  TLS 1.2 clients over TCP), the `EngineMain` key `kuicksilver.tls.versions` (`tls13` or `tls12And13`, for the deployment
+  port; refused next to `-sslPort`) and, on the JVM, Ktor's own `enabledProtocols` on `sslConnector` (`TLSv1.2` with
+  `TLSv1.3`). TLS 1.2 runs under the RFC 9325 profile of the TLS layer (ECDHE with AES-GCM or ChaCha20-Poly1305,
+  Extended Master Secret required, no renegotiation, no compression); a client with TLS 1.3 still gets it, and HTTP/3 on
+  the same port stays TLS 1.3. With `http2`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
+  renegotiation attempt on an HTTP/2 connection ends it with GOAWAY PROTOCOL_ERROR (section 9.2.1). The default connector
+  still refuses a TLS 1.2 client with `protocol_version` (docs/guide/ktor.md, "TLS 1.2 on the server").
 
 ### Changed
 
@@ -651,6 +660,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the older connection and close the newer before any request used it. WebTransport sessions still take a connection each (session pooling is
   separate work). Different origins still get a connection each, and `Alt-Svc` bookkeeping stays
   per alternative (a 421 removes, a failure marks broken, the alternative the request used).
+- TLS 1.2 cipher suite order (RFC 9325 section 4.2.1): a client now offers TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 as its
+  first TLS 1.2 suite (it offered the ECDSA variant first), and a TLS 1.2 server picks by its own order, AES-256-GCM, then ChaCha20-Poly1305,
+  then AES-128-GCM, keeping ChaCha20-Poly1305 for a client that puts it first (it took the client's order, so a client
+  that listed AES-128 before AES-256 got AES-128). TLS 1.3 is unchanged.
+- Ktor server on the JVM (breaking): the `enabledProtocols` of Ktor's `sslConnector` (`ktor.security.ssl.enabledProtocols`)
+  were ignored, and every such connector served TLS 1.3 only; now they choose the TLS versions. A configuration with
+  `["TLSv1.2", "TLSv1.3"]` now turns TLS 1.2 on for a connector that was TLS 1.3-only, and one with any other list, such as
+  `["TLSv1.1", "TLSv1.2", "TLSv1.3"]` or `["TLSv1.2"]`, now fails the start with `TlsException.Config`. Unset, or
+  `["TLSv1.3"]`, stays TLS 1.3 only.
+- RFC 9325 section 4.2 recommends deterministic ECDSA (RFC 6979); handshake ECDSA signatures keep OpenSSL's default
+  nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
+  no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
+  libssl support for it.
+- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
+  startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
+- `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
+  1.3-only one when `alpn` holds `h3`.
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.

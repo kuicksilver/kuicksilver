@@ -390,6 +390,88 @@ class EngineMainTest {
         ) + extra
     }
 
+    @Test fun tlsVersionsKeyParsed() {
+        assertNull(EngineMain.parseTlsVersions(null))
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, EngineMain.parseTlsVersions("tls13"))
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, EngineMain.parseTlsVersions(" tls12And13 "))
+        assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, EngineMain.parseTlsVersions("TLS12AND13"))
+        for (bad in listOf(
+            "tls12",
+            "1.2",
+            "",
+        )) {
+            assertFailsWith<IllegalArgumentException>("negative: $bad") { EngineMain.parseTlsVersions(bad) }
+        }
+    }
+
+    /**
+     * `kuicksilver.tls.versions = tls12And13` serves the JDK's TLS 1.2 client on the deployment port (RFC 9325 section 3.1.1);
+     * it needs the identity files, and is refused next to Ktor's `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`.
+     */
+    @Test fun tlsVersionsKeyServesTls12() =
+        serverTest {
+            val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.versions=tls12And13"))
+            assertEquals(io.kuicksilver.tls.TlsVersions.Tls12And13, server.engine.configuration.tlsVersions)
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    (jdkContext().socketFactory.createSocket(java.net.InetAddress.getLoopbackAddress(), port) as javax.net.ssl.SSLSocket)
+                        .use { s ->
+                            s.soTimeout = 20_000
+                            s.sslParameters = s.sslParameters.apply { protocols = arrayOf("TLSv1.2") }
+                            s.startHandshake()
+                            assertEquals("TLSv1.2", s.session.protocol)
+                        }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+            val e =
+                assertFailsWith<IllegalArgumentException> {
+                    EngineMain
+                        .createServer(
+                            arrayOf(
+                                "-host=127.0.0.1",
+                                "-port=0",
+                                "-P:ktor.application.modules.size=1",
+                                "-P:ktor.application.modules.0=$module",
+                                "-P:kuicksilver.tls.versions=tls12And13",
+                            ),
+                        ).engine
+                }
+            assertTrue("certificateChain" in e.message.orEmpty(), e.message)
+        }
+
+    @Test fun negative_tlsVersionsKeyWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "versions-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:kuicksilver.tls.versions=tls12And13",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue("ktor.security.ssl.enabledProtocols" in e.message.orEmpty(), e.message)
+            server.stop(0, 0)
+        }
+
     @Test fun clientAuthKeyParsed() {
         assertEquals(ClientAuth.None, EngineMain.parseClientAuth(null))
         assertEquals(ClientAuth.None, EngineMain.parseClientAuth("none"))

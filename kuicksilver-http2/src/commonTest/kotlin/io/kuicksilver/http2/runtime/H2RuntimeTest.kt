@@ -1117,6 +1117,48 @@ class H2RuntimeTest {
             a.release()
         }
 
+    /**
+     * The same on a server (RFC 9113 section 9.2.1: a client's TLS 1.2 renegotiation is a connection error of type
+     * PROTOCOL_ERROR): GOAWAY with that code and the transport's reason goes out, not the INTERNAL_ERROR of a lost connection.
+     */
+    @Test fun negative_serverTransportFailureMappedToAConnectionErrorSendsGoAway() =
+        runTest {
+            class Renegotiated : kotlinx.io.IOException("the peer attempted a TLS renegotiation")
+            val w = Wire()
+            val server =
+                H2ServerConnection.start(
+                    w.toServer,
+                    w.toClient,
+                    Http2Settings(),
+                    backgroundScope,
+                    { w.close() },
+                    clock(),
+                    connectionErrorOf = { e ->
+                        if (generateSequence(e) { it.cause }.any { it is Renegotiated }) Http2ErrorCode.PROTOCOL_ERROR else null
+                    },
+                )
+            w.toServer.writeFully(H2.PREFACE)
+            w.toServer.writeFully(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            w.toServer.flush()
+            runCurrent()
+            w.toServer.cancel(Renegotiated()) // the TLS layer failed the input; the output stays open
+            runCurrent()
+            val dec = FrameDecoder(H2.MAX_MAX_FRAME_SIZE)
+            val buf = ByteArray(65_536)
+            val frames = mutableListOf<Frame>()
+            while (w.toClient.availableForReadCompat() > 0) {
+                val n = w.toClient.readAvailable(buf, 0, buf.size)
+                var p = 0
+                while (p < n) {
+                    p += dec.feed(buf, p, n - p)
+                    while (true) frames += dec.next() ?: break
+                }
+            }
+            val goAway = frames.filterIsInstance<Frame.GoAway>().single()
+            assertEquals(Http2ErrorCode.PROTOCOL_ERROR.code, goAway.errorCode)
+            assertTrue("renegotiation" in goAway.debug.decodeToString(), "the reason goes out as debug data")
+        }
+
     @Test fun negative_pingTimeoutClosesConnection() =
         runTest {
             val (srv, deferred) = raw(pingInterval = 1.seconds)

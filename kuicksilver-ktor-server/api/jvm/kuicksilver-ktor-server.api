@@ -147,6 +147,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getTrustedGateway ()Z
 	public fun getType ()Lio/ktor/server/engine/ConnectorType;
+	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
 	public final fun tlsConfig (Ljava/util/List;)Lio/kuicksilver/tls/TlsConfig;
 	public fun toString ()Ljava/lang/String;
 	public final fun withPort (I)Lio/kuicksilver/ktor/server/KuicksilverTlsConnector;
@@ -164,6 +165,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getTrustedGateway ()Z
+	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setHost (Ljava/lang/String;)V
@@ -178,6 +180,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 public final class io/kuicksilver/ktor/server/NeverIndexedKt {
 	public static final fun getNeverIndexedHeaders (Lio/ktor/server/request/ApplicationRequest;)Ljava/util/List;
 	public static final fun neverIndex (Lio/ktor/server/response/ApplicationResponse;[Ljava/lang/String;)V
+	public final fun setVersions (Lio/kuicksilver/tls/TlsVersions;)V
 }
 
 public final class io/kuicksilver/ktor/server/PeerCertificatesKt {

@@ -103,7 +103,7 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
         .apply {
             server =
                 QuicServerConfig
-                    .Builder(tls.tlsConfig(listOf(Http3Endpoint.H3)))
+                    .Builder(tls.tlsConfig(listOf(Http3Endpoint.H3), null, quic = true))
                     .apply {
                         this.quic = quic
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

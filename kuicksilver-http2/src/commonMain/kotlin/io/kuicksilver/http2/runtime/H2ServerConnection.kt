@@ -119,7 +119,10 @@ public class H2ServerConnection private constructor(
          * monotonic nanoseconds. [ownResponseFields] go on the responses the connection makes itself (the 431 for a field
          * section above the limit): an origin server's `date` (RFC 9110 section 6.6.1), say. [enableConnectProtocol]: our
          * SETTINGS carry SETTINGS_ENABLE_CONNECT_PROTOCOL = 1 and Extended CONNECT requests are taken (RFC 8441 section 3;
-         * the request's [H2ServerStream.protocol]).
+         * the request's [H2ServerStream.protocol]). [connectionErrorOf] maps a failure of [input] to the code of a connection
+         * error (RFC 9113 section 5.4.1) when the transport reports something the protocol makes one, a TLS 1.2 renegotiation
+         * (section 9.2.1: PROTOCOL_ERROR): GOAWAY with that code goes out on [output]; null (the default) takes the failure for
+         * a lost connection.
          */
         public fun start(
             input: ByteReadChannel,
@@ -130,6 +133,7 @@ public class H2ServerConnection private constructor(
             clock: () -> Long = monotonicNanos(),
             ownResponseFields: () -> List<Pair<String, String>> = { emptyList() },
             enableConnectProtocol: Boolean = false,
+            connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
         ): H2ServerConnection {
             val ch = Channel<H2ServerStream>(Channel.UNLIMITED) // bounded by our SETTINGS_MAX_CONCURRENT_STREAMS in the core
             val c = H2ServerConnection(ch)
@@ -169,6 +173,7 @@ public class H2ServerConnection private constructor(
                     },
                     ownResponseFields = ownResponseFields,
                     enableConnectProtocol = enableConnectProtocol,
+                    connectionErrorOf = connectionErrorOf,
                 )
             c.rt = rt
             rt.start()
