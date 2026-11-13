@@ -82,7 +82,20 @@ rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
 cd "$work"
 # shellcheck disable=SC2086
 ./Configure "$cfg" $flags --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
-make -j"$JOBS" build_libs >"$out/build/$target.make.log" 2>&1
+# The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the
+# compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
+# no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer
+# than what it is generated from.
+make crypto/buildinf.h >"$out/build/$target.make.log" 2>&1
+perl -0777 -ne '
+  my ($plat) = /#define PLATFORM "platform: (.*?)"/ or die "no PLATFORM in buildinf.h\n";
+  my ($body) = /compiler_flags\[\] = \{(.*?)\};/s or die "no compiler_flags in buildinf.h\n";
+  my $s = join "", map { (my $c = $_) =~ s/\\(.)/$1/; $c } ($body =~ /\x27((?:\\.|[^\\\x27])*)\x27,/g);
+  $s =~ s/^compiler: // or die "no compiler: line in buildinf.h\n";
+  my @t = grep { !m{/} } split /\s+/, $s; unshift @t, "cc" if !@t || $t[0] =~ /^-/;
+  print join(" ", @t), "\n", $plat, "\n";' crypto/buildinf.h > "$out/build/$target.buildinf.txt"
+perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
+make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"
 cp libcrypto.a libssl.a "$cache/lib/"
 cp -R include/openssl "$cache/include/"
