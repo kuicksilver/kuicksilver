@@ -15,12 +15,12 @@ import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.awaitReceivedAllForTest
 import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -196,7 +196,7 @@ class ConnectionEndTest {
                 val chunks = 80
                 repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flushAndClose()
-                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) } // the FIN is in
+                withTimeout(5.seconds) { req.stream.awaitReceivedAllForTest() } // the FIN is in
                 c.close(Http3ErrorCode.NO_ERROR, "")
                 withTimeout(5.seconds) { server.closed.await() }
                 // the session's end and its (zero) grace ran before these
@@ -228,7 +228,7 @@ class ConnectionEndTest {
                 val chunks = 80 // more than the body channel takes before its writer waits for the handler
                 repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flushAndClose()
-                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
+                withTimeout(5.seconds) { req.stream.awaitReceivedAllForTest() }
                 c.close(Http3ErrorCode.NO_ERROR, "")
                 withTimeout(5.seconds) { server.closed.await() }
                 withTimeout(5.seconds) {
@@ -298,7 +298,7 @@ class ConnectionEndTest {
                 assertTrue(!req.stream.receivedAll, "the FIN is still in the network")
                 q.net.drop = null
                 for ((from, to, bytes) in held) q.net.deliver(from, to, bytes)
-                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
+                withTimeout(5.seconds) { req.stream.awaitReceivedAllForTest() }
                 gated.gate.complete(Unit)
                 withTimeout(5.seconds) { closing.await() }
                 withTimeout(5.seconds) {
@@ -330,7 +330,7 @@ class ConnectionEndTest {
                 val chunks = 80
                 repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flushAndClose()
-                withTimeout(5.seconds) { while (!r.stream.receivedAll) delay(5) }
+                withTimeout(5.seconds) { r.stream.awaitReceivedAllForTest() }
                 s.close(Http3ErrorCode.NO_ERROR, "")
                 withTimeout(5.seconds) { client.closed.await() }
                 withTimeout(5.seconds) { r.pump.join() }

@@ -88,7 +88,22 @@ internal class StreamRuntime(
 
     /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
     internal fun updateReceivedAll() {
-        if (!receivedAll && current && conn.core.streamReceivedAll(id)) receivedAll = true
+        if (!receivedAll && current && conn.core.streamReceivedAll(id)) {
+            receivedAll = true
+            receivedAllWaiter?.complete(Unit)
+        }
+    }
+
+    /** Made only by a test that waits ([awaitReceivedAllForTest]): nothing otherwise. */
+    @Volatile private var receivedAllWaiter: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+    /** Suspends until [receivedAll] is true (a test hook). */
+    internal suspend fun awaitReceivedAllForTest() {
+        val waiter = receivedAllWaiter ?: kotlinx.coroutines.CompletableDeferred<Unit>().also { receivedAllWaiter = it }
+        // the loop sets the flag before it reads the waiter, and this reads the flag after it published the waiter: one of
+        // the two sees the other
+        if (receivedAll) return
+        waiter.await()
     }
 
     /** Completes when both halves are done (our data acknowledged or reset, the peer's consumed) or the connection ended. */

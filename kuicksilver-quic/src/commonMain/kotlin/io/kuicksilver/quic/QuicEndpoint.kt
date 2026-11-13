@@ -245,3 +245,12 @@ public suspend fun QuicStream.sendCredit(): Long = (this as? io.kuicksilver.quic
 @InternalKuicksilverApi
 public val QuicStream.receivedAll: Boolean
     get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.receivedAll ?: false
+
+/**
+ * Test hook: suspends until [receivedAll] is true for [this] stream, without polling; returns at once for streams of other
+ * implementations, whose [receivedAll] never turns true.
+ */
+@InternalKuicksilverApi
+public suspend fun QuicStream.awaitReceivedAllForTest() {
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.awaitReceivedAllForTest()
+}
