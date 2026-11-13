@@ -365,6 +365,44 @@ class ServerH1Test {
         }
 
     /**
+     * Over IPv6 the connection point's addresses are RFC 5952 literals (`::1`, as over HTTP/2 and HTTP/3; java.net's own
+     * text is `0:0:0:0:0:0:0:1`), and without a Host field `serverHost` is the local one in brackets, as a Host field
+     * writes it (RFC 9110 section 7.2).
+     */
+    @Test fun connectionPointHasIpv6Literals() =
+        serverTest {
+            val server =
+                embeddedServer(Kuicksilver, configure = {
+                    connector {
+                        host = "::1"
+                        port = 0
+                    }
+                }) {
+                    routing {
+                        get("/") {
+                            val l = call.request.local
+                            call.respondText("${l.remoteAddress}|${l.remoteHost}|${l.localAddress}|${l.localHost}|${l.serverHost}")
+                        }
+                    }
+                }
+            if (runCatching { server.startSuspend(false) }.isFailure) {
+                println("connectionPointHasIpv6Literals skipped: needs an IPv6 loopback")
+                return@serverTest
+            }
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val resp = rawHttp(port, "GET / HTTP/1.0\r\n\r\n", tls = null, host = "::1")
+                assertTrue(resp.endsWith("::1|::1|::1|::1|[::1]"), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * A connector on `::1` listens on `::1` only: an IPv4 connect to its port (another address of this host) is refused.
      */
     @Test fun negative_ipv6ConnectorListensOnItsAddressOnly() =

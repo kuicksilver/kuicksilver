@@ -22,6 +22,7 @@ import io.kuicksilver.ktor.server.h1.RequestBodyTimeout
 import io.kuicksilver.ktor.server.h3.authorityHost
 import io.kuicksilver.ktor.server.h3.authorityPort
 import io.kuicksilver.ktor.server.h3.defaultPort
+import io.kuicksilver.ktor.server.uriHost
 import io.kuicksilver.quic.ipLiteral
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Source
@@ -75,7 +76,10 @@ internal class H2ConnectionPoint(
     override val localPort: Int get() = localAddr?.port ?: 0
     override val serverPort: Int get() = h2.authority?.let(::authorityPort) ?: defaultPort(scheme)
     override val localHost: String get() = localAddr?.ipLiteral() ?: "localhost"
-    override val serverHost: String get() = h2.authority?.let(::authorityHost) ?: localHost
+
+    // without an authority the connection's address, an IPv6 one in brackets as an authority writes it
+    override val serverHost: String get() = h2.authority?.let(::authorityHost) ?: uriHost(localHost)
+
     override val localAddress: String get() = localAddr?.ipLiteral() ?: "localhost"
     override val remoteHost: String get() = remoteAddr?.ipLiteral() ?: "unknown" // the literal, not a reverse lookup per request
     override val remotePort: Int get() = remoteAddr?.port ?: 0

@@ -60,18 +60,7 @@ internal object AddressClass {
     fun addressOf(
         ip: ByteArray,
         port: Int,
-    ): InetSocketAddress =
-        InetSocketAddress(
-            if (ip.size ==
-                4
-            ) {
-                ip.joinToString(".") { (it.toInt() and 0xff).toString() }
-            } else {
-                io.kuicksilver.quic.KslDatagramIo
-                    .ipv6Text(ip, 0)
-            },
-            port,
-        )
+    ): InetSocketAddress = InetSocketAddress(io.kuicksilver.quic.ipText(ip), port)
 
     /**
      * Where a client must never be sent by a public server (threat-model 3.14, as `AltSvcDestination` rules): loopback, link-local,

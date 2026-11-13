@@ -19,17 +19,15 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.server.engine.BaseApplicationRequest
 import io.ktor.server.request.RequestCookies
 import io.ktor.server.request.encodeParameters
-import io.ktor.util.network.NetworkAddress
-import io.ktor.util.network.address
-import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.ktor.server.failureIsNoEnd
+import io.kuicksilver.ktor.server.uriHost
 
 internal class H1Request(
     call: PipelineCall,
-    remoteAddress: NetworkAddress?,
-    localAddress: NetworkAddress?,
+    remoteAddress: H1Address?,
+    localAddress: H1Address?,
     private val input: ByteReadChannel,
     private val request: Request,
     scheme: String,
@@ -76,8 +74,8 @@ internal class H1Request(
 }
 
 internal class H1ConnectionPoint(
-    private val remoteNetworkAddress: NetworkAddress?,
-    private val localNetworkAddress: NetworkAddress?,
+    private val remoteEnd: H1Address?,
+    private val localEnd: H1Address?,
     override val version: String,
     override val uri: String,
     private val hostHeaderValue: String?,
@@ -89,22 +87,15 @@ internal class H1ConnectionPoint(
     /** The Host field split into `uri-host` and the port text after it, if any (RFC 9110 section 7.2). */
     private val hostAndPort: Pair<String, String?>? = hostHeaderValue?.let(::splitHostField)
 
-    @Deprecated("Use localPort or serverPort instead")
-    override val host: String
-        get() =
-            localNetworkAddress?.address // the literal, as localHost: `hostname` would be a reverse DNS lookup on the JVM
-                ?: hostAndPort?.first
-                ?: "localhost"
+    // as over HTTP/2 and HTTP/3 (and as Ktor's deprecation says): the server's name and port the request asked for
+    @Deprecated("Use localHost or serverHost instead")
+    override val host: String get() = serverHost
 
     @Deprecated("Use localPort or serverPort instead")
-    override val port: Int
-        get() =
-            localNetworkAddress?.port
-                ?: hostAndPort?.let { it.second?.toIntOrNull() ?: defaultPort }
-                ?: defaultPort
+    override val port: Int get() = serverPort
 
     override val localPort: Int
-        get() = localNetworkAddress?.port ?: defaultPort
+        get() = localEnd?.port ?: defaultPort
 
     override val serverPort: Int
         get() =
@@ -112,24 +103,26 @@ internal class H1ConnectionPoint(
                 ?.let { (_, port) -> if (port.isNullOrEmpty()) defaultPort else port.toIntOrNull() }
                 ?: localPort
 
-    // the literals (TcpListener's toNetworkAddress): `hostname` would look the name up (a reverse DNS query on the JVM)
+    // the literals (TcpListener's toH1Address): `hostname` would look the name up (a reverse DNS query on the JVM and
+    // Android)
     override val localHost: String
-        get() = localNetworkAddress?.address ?: "localhost"
+        get() = localEnd?.host ?: "localhost"
 
+    // without a Host field the connection's address, an IPv6 one in brackets as a Host field writes it
     override val serverHost: String
-        get() = hostAndPort?.first ?: localHost
+        get() = hostAndPort?.first ?: uriHost(localHost)
 
     override val localAddress: String
-        get() = localNetworkAddress?.address ?: "localhost"
+        get() = localEnd?.host ?: "localhost"
 
     override val remoteHost: String
-        get() = remoteNetworkAddress?.address ?: "unknown"
+        get() = remoteEnd?.host ?: "unknown"
 
     override val remotePort: Int
-        get() = remoteNetworkAddress?.port ?: 0
+        get() = remoteEnd?.port ?: 0
 
     override val remoteAddress: String
-        get() = remoteNetworkAddress?.address ?: "unknown"
+        get() = remoteEnd?.host ?: "unknown"
 
     override fun toString(): String =
         "H1ConnectionPoint(uri=$uri, method=$method, version=$version, localAddress=$localAddress, " +

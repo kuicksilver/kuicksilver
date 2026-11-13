@@ -3,7 +3,7 @@
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HttpMethod
-import io.ktor.util.network.NetworkAddress
+import io.kuicksilver.ktor.server.uriHost
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -46,28 +46,57 @@ class H1ConnectionPointTest {
     }
 
     /**
-     * The local and remote hosts, and the deprecated `host`, are the literals of the connection's addresses: read through
-     * Ktor's `NetworkAddress.hostname` they were reverse DNS lookups on the JVM and Android (127.0.0.1 read "localhost").
-     * The loopback has a name on every usual host, so the old code fails here; the fixed one passes whatever the host's
-     * resolver says.
+     * The local and remote hosts are the connection's literals as the listener hands them over (`ipLiteral()`, never a
+     * name lookup); the deprecated `host` and `port` are `serverHost` and `serverPort`, as over HTTP/2 and HTTP/3.
      */
     @Test fun hostsAreTheAddressLiterals() {
         val p =
             H1ConnectionPoint(
-                NetworkAddress("127.0.0.1", 8443),
-                NetworkAddress("127.0.0.1", 50000),
+                H1Address("127.0.0.2", 50000),
+                H1Address("127.0.0.1", 8443),
                 "HTTP/1.1",
                 "/",
-                "example.com",
+                "example.com:8080",
                 HttpMethod.Get,
                 "https",
             )
         assertEquals("127.0.0.1", p.localHost)
         assertEquals("127.0.0.1", p.localAddress)
-        @Suppress("DEPRECATION")
-        assertEquals("127.0.0.1", p.host)
+        assertEquals(8443, p.localPort)
+        assertEquals("127.0.0.2", p.remoteHost)
+        assertEquals("127.0.0.2", p.remoteAddress)
+        assertEquals(50000, p.remotePort)
         assertEquals("example.com", p.serverHost)
-        assertEquals("127.0.0.1", p.remoteHost)
-        assertEquals("127.0.0.1", p.remoteAddress)
+        @Suppress("DEPRECATION")
+        assertEquals("example.com", p.host)
+        @Suppress("DEPRECATION")
+        assertEquals(8080, p.port)
+    }
+
+    /**
+     * Without a Host field `serverHost` is the local address as a Host field writes it: an IPv6 literal in brackets (RFC
+     * 9110 section 7.2 `uri-host`, RFC 3986 section 3.2.2 `IP-literal`), a zone ID as `%25` (RFC 6874 section 2).
+     */
+    @Test fun ipv6LiteralsWithoutHostField() {
+        val p = H1ConnectionPoint(H1Address("::1", 50000), H1Address("::1", 8443), "HTTP/1.0", "/", null, HttpMethod.Get, "http")
+        assertEquals("::1", p.localHost)
+        assertEquals("::1", p.localAddress)
+        assertEquals("::1", p.remoteHost)
+        assertEquals("[::1]", p.serverHost)
+        assertEquals(8443, p.serverPort)
+        @Suppress("DEPRECATION")
+        assertEquals("[::1]", p.host)
+        @Suppress("DEPRECATION")
+        assertEquals(8443, p.port)
+        val v4 = H1ConnectionPoint(H1Address("10.0.0.2", 1), H1Address("10.0.0.1", 80), "HTTP/1.0", "/", null, HttpMethod.Get, "http")
+        assertEquals("10.0.0.1", v4.serverHost)
+    }
+
+    @Test fun uriHostBracketsIpv6Only() {
+        assertEquals("[::1]", uriHost("::1"))
+        assertEquals("[fe80::1%25en0]", uriHost("fe80::1%en0"))
+        assertEquals("[::1]", uriHost("[::1]"))
+        assertEquals("10.0.0.1", uriHost("10.0.0.1"))
+        assertEquals("example.com", uriHost("example.com"))
     }
 }

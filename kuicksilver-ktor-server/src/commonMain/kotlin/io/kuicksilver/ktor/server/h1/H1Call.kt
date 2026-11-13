@@ -9,7 +9,6 @@ import io.ktor.http.cio.CIOHeaders
 import io.ktor.http.cio.Request
 import io.ktor.server.application.Application
 import io.ktor.server.engine.BaseApplicationCall
-import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.ktor.server.PeerCertificatesKey
@@ -29,8 +28,8 @@ internal class H1Call(
     engineDispatcher: CoroutineContext,
     appDispatcher: CoroutineContext,
     upgraded: CompletableDeferred<Boolean>?,
-    remoteAddress: NetworkAddress?,
-    localAddress: NetworkAddress?,
+    remoteAddress: H1Address?,
+    localAddress: H1Address?,
     override val coroutineContext: CoroutineContext,
     scheme: String,
     peerCertificates: List<Certificate>,

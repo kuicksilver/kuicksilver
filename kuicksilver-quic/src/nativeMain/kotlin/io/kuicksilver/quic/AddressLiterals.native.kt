@@ -6,6 +6,13 @@ import io.ktor.network.sockets.InetSocketAddress
 
 internal actual fun InetSocketAddress.ipBytesNoDns(): ByteArray? = parseIpLiteral(hostname)
 
+// the `%zone` of the IPv6 literal the address was made with (RFC 4007 section 11), brackets aside
+internal actual fun InetSocketAddress.ipZoneNoDns(): String? {
+    val text = hostname.removePrefix("[").removeSuffix("]")
+    val at = text.indexOf('%')
+    return if (at < 0 || ':' !in text) null else text.substring(at + 1).ifEmpty { null }
+}
+
 /** The bytes of an IPv4 dotted quad (decimal octets without leading zeros) or an IPv6 literal (ASCII hex digits only) (RFC 4291 section 2.2, optionally bracketed, a zone ID ignored); null for anything else. */
 internal fun parseIpLiteral(text: String): ByteArray? {
     var s = text

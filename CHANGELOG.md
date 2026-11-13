@@ -716,6 +716,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   are now the IP literals, as over HTTP/2 and HTTP/3, and no lookup is made. `remoteAddress` and `localAddress` are the
   literals in Ktor's Netty and CIO engines too; their `remoteHost` and `localHost` are names (a reverse lookup on
   first use), ours stay literals on every protocol, by decision. Found by the engine interop bench.
+- Ktor server engine: over HTTP/1.1 on the JVM and Android the connection point wrote an IPv6 address as java.net
+  does, `0:0:0:0:0:0:0:1`; it is now the RFC 5952 text (`::1`), as over HTTP/2 and HTTP/3. The deprecated `host` was
+  still a reverse DNS lookup of the local address there; it and the deprecated `port` are now `serverHost` and
+  `serverPort`, as over HTTP/2 and HTTP/3, and `host` names its replacements as Ktor does ("Use localHost or serverHost
+  instead"). On Kotlin/Native the HTTP/1.1 accept path no longer calls `getaddrinfo` to build a connection's addresses.
+  Without a Host field (HTTP/1.1) or `:authority` (HTTP/2, HTTP/3), `serverHost` is the local address as a Host field
+  writes it, an IPv6 literal in brackets (RFC 9110 section 7.2 `uri-host`, RFC 3986 section 3.2.2, a zone ID as `%25`
+  per RFC 6874); it was the bare literal.
+- QUIC: the IP literal of an address (the engines' connection points, token store keys, the error of an invalid
+  `PreferredAddress`) never calls a resolver: on Kotlin/Native it called `getaddrinfo`, so a `PreferredAddress` given a
+  host name failed with the resolver's error instead of `IllegalArgumentException`, and on the JVM and Android the error
+  named the address by a reverse DNS lookup. An IPv6 zone ID is kept (`fe80::1%en0`, as java.net and Netty write it),
+  and an IPv4-mapped or IPv4-translated address is written in mixed notation (`::ffff:192.0.2.1`, RFC 5952 section 5) on
+  every platform.
+- Testing (`kuicksilver-testing`, not published): `MemoryNetwork` named an ephemeral-port socket after a reverse DNS
+  lookup of its host on the JVM and Android (a lookup per bind; `localAddress` carried the name), and
+  `Simulator.rebindClient` did the same to the client's address; both keep the literal now. Both compare addresses by
+  their bytes, so two spellings of one IPv6 address (`::1`, `0:0:0:0:0:0:0:1`) are one address on Kotlin/Native too.
+  Found when CI runners whose resolver names private addresses failed three tests.
 - Ktor server engine: a graceful stop took 3 s longer while an HTTP/1.1 client over TLS kept its connection in a pool,
   reading nothing until its next request (OkHttp, the JDK's HttpClient), idle or just answered: after its own
   close_notify the server waited up to 3 s for the client's. A stopping server now closes without waiting for it (RFC

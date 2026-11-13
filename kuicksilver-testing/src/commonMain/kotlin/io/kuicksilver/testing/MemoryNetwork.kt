@@ -52,8 +52,8 @@ public class MemoryNetwork
             require(receiveBuffer >= 1) { "receiveBuffer must be at least 1" }
         }
 
-        private val sockets = AtomicReference<Map<InetSocketAddress, MemorySocket>>(emptyMap())
-        private val cutAddresses = AtomicReference<Set<InetSocketAddress>>(emptySet())
+        private val sockets = AtomicReference<Map<AddressKey, MemorySocket>>(emptyMap())
+        private val cutAddresses = AtomicReference<Set<AddressKey>>(emptySet())
         private val droppedCount = AtomicLong(0)
         private val nextEphemeral = AtomicLong(EPHEMERAL_FIRST.toLong())
 
@@ -75,33 +75,33 @@ public class MemoryNetwork
             while (true) {
                 val current = sockets.load()
                 val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.ipLiteral(), current) else local
-                check(address !in current) { "$address is already bound on this MemoryNetwork" }
+                check(key(address) !in current) { "$address is already bound on this MemoryNetwork" }
                 val socket = MemorySocket(this, address, receiveBuffer)
-                if (sockets.compareAndSet(current, current + (address to socket))) return socket
+                if (sockets.compareAndSet(current, current + (key(address) to socket))) return socket
             }
         }
 
         /** The next free port of [host] in 49152..65535 (RFC 6335 dynamic ports), wrapping around. */
         private fun ephemeral(
             host: String,
-            bound: Map<InetSocketAddress, MemorySocket>,
+            bound: Map<AddressKey, MemorySocket>,
         ): InetSocketAddress {
             repeat(EPHEMERAL_COUNT) {
                 val port = EPHEMERAL_FIRST + (nextEphemeral.fetchAndIncrement() - EPHEMERAL_FIRST).mod(EPHEMERAL_COUNT.toLong()).toInt()
                 val candidate = InetSocketAddress(host, port)
-                if (candidate !in bound) return candidate
+                if (key(candidate) !in bound) return candidate
             }
             throw IllegalStateException("no free ephemeral port on $host")
         }
 
         /** From now on nothing reaches [address] and nothing it sends arrives: the address went dark (a dead Wi-Fi). */
         public fun cut(address: InetSocketAddress) {
-            update(cutAddresses) { it + address }
+            update(cutAddresses) { it + key(address) }
         }
 
         /** Undoes [cut]. */
         public fun restore(address: InetSocketAddress) {
-            update(cutAddresses) { it - address }
+            update(cutAddresses) { it - key(address) }
         }
 
         internal fun deliver(
@@ -110,8 +110,9 @@ public class MemoryNetwork
             bytes: ByteArray,
         ) {
             val cut = cutAddresses.load()
-            val target = sockets.load()[to]
-            if (from in cut || to in cut || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
+            val toKey = key(to)
+            val target = sockets.load()[toKey]
+            if (key(from) in cut || toKey in cut || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
         }
 
         internal fun countDrop() {
@@ -120,15 +121,28 @@ public class MemoryNetwork
 
         internal fun unbind(socket: MemorySocket) {
             update(sockets) {
-                if (it[socket.localAddress] ===
+                if (it[key(socket.localAddress)] ===
                     socket
                 ) {
-                    it - socket.localAddress
+                    it - key(socket.localAddress)
                 } else {
                     it
                 }
             }
         }
+
+        /**
+         * An address as the network compares it: the IP literal's normal text ([ipLiteral]: its bytes, never a lookup) and the
+         * port, so `::1` and `0:0:0:0:0:0:0:1` name one socket on every platform (Kotlin/Native's InetSocketAddress compares
+         * the text it was made with). A host name stays its text.
+         */
+        private data class AddressKey(
+            val host: String,
+            val port: Int,
+        )
+
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        private fun key(a: InetSocketAddress): AddressKey = AddressKey(a.ipLiteral(), a.port)
 
         private companion object {
             const val DEFAULT_RECEIVE_BUFFER = 256

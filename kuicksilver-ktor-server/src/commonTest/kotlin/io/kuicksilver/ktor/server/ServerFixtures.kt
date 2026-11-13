@@ -103,6 +103,7 @@ internal suspend fun rawHttp(
     port: Int,
     request: String,
     tls: TlsConfig? = ServerFixtures.clientTls(),
+    host: String = "127.0.0.1",
 ): String {
     val selector = SelectorManager(Dispatchers.IO)
     try {
@@ -113,7 +114,7 @@ internal suspend fun rawHttp(
                 .connectTcp(
                     selector,
                     io.ktor.network.sockets
-                        .InetSocketAddress("127.0.0.1", port),
+                        .InetSocketAddress(host, port),
                 )
         val socket: Socket = if (tls != null) tcp.tls(tls) else tcp
         try {

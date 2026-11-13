@@ -18,7 +18,6 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
 import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
-import io.ktor.util.network.NetworkAddress
 import io.ktor.util.pipeline.PipelinePhase
 import io.ktor.util.pipeline.execute
 import io.ktor.utils.io.ByteWriteChannel
@@ -33,6 +32,7 @@ import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.setCloseTimeout
 import io.kuicksilver.ktor.network.stopAwaitingPeerCloseOn
 import io.kuicksilver.ktor.network.tlsServer
+import io.kuicksilver.ktor.server.h1.H1Address
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
@@ -361,8 +361,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         H1Connection(
                                             sock.openDeliveringReadChannel(),
                                             sock.openWriteChannel(),
-                                            sock.remoteAddress.toNetworkAddress(),
-                                            sock.localAddress.toNetworkAddress(),
+                                            sock.remoteAddress.toH1Address(),
+                                            sock.localAddress.toH1Address(),
                                         )
                                     startH1Pipeline(
                                         connection,
@@ -512,11 +512,11 @@ private fun addHandlerForExpectedHeader(call: H1Call) {
 }
 
 // the IP literal, as over HTTP/2 and HTTP/3: `hostname` is a reverse DNS lookup on the JVM and Android (per connection, on
-// the accept path); Ktor's Netty and CIO engines report the literal as remoteAddress too
+// the accept path); Ktor's Netty and CIO engines report the literal as remoteAddress too. Not a NetworkAddress ([H1Address])
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-private fun SocketAddress.toNetworkAddress(): NetworkAddress? =
+private fun SocketAddress.toH1Address(): H1Address? =
     (this as? InetSocketAddress)?.let {
-        NetworkAddress(it.ipLiteral(), it.port)
+        H1Address(it.ipLiteral(), it.port)
     }
 
 /** The pause after the first of consecutive failed accepts; it doubles per failure up to [ACCEPT_BACKOFF_MAX]. */

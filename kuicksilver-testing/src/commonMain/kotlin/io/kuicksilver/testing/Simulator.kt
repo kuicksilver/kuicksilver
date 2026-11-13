@@ -311,7 +311,8 @@ public class Simulator(
             for (i in 0 until n) {
                 val bytes = batch.buffer(i).toByteArray(batch.length(i))
                 // a client datagram to the server's preferred address takes that address's link
-                (if (preferred != null && batch.address(i) == preferred) c2sPreferred else link).send(bytes, batch.ecn(i), now)
+                val toPreferred = preferred?.let { p -> batch.address(i)?.let { sameAddress(it, p) } } == true
+                (if (toPreferred) c2sPreferred else link).send(bytes, batch.ecn(i), now)
             }
         }
         batch.clear()
@@ -330,7 +331,7 @@ public class Simulator(
             for (i in 0 until n) {
                 val bytes = batch.buffer(i).toByteArray(batch.length(i))
                 if (batch.path(i) == preferredSocket) {
-                    if (batch.address(i) == clientAddress) s2cPreferred.send(bytes, batch.ecn(i), now) else misrouted++
+                    if (sameAddress(batch.address(i)!!, clientAddress)) s2cPreferred.send(bytes, batch.ecn(i), now) else misrouted++
                 } else {
                     routeToClient(bytes, batch.ecn(i), batch.address(i)!!)
                 }
@@ -346,12 +347,12 @@ public class Simulator(
         ecn: Ecn,
         to: InetSocketAddress,
     ) {
-        if (to == clientAddress) {
+        if (sameAddress(to, clientAddress)) {
             s2c.send(bytes, ecn, now)
             return
         }
         for (p in extraPaths) {
-            if (p.local == to) {
+            if (sameAddress(p.local, to)) {
                 p.s2c.send(bytes, ecn, now)
                 return
             }
@@ -444,3 +445,13 @@ public class Simulator(
         return SimResult(done(), now - start, traceHash, invariants.violations.toList())
     }
 }
+
+/**
+ * One address on every platform: the same port and IP literal (`ipLiteral()`: its bytes, never a lookup), however its text
+ * was written (Kotlin/Native's InetSocketAddress compares the text it was made with, `::1` against `0:0:0:0:0:0:0:1` say).
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+internal fun sameAddress(
+    a: InetSocketAddress,
+    b: InetSocketAddress,
+): Boolean = a.port == b.port && a.ipLiteral() == b.ipLiteral()

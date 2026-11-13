@@ -13,6 +13,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.PreferredAddress
 import io.kuicksilver.quic.endpoint.EndpointPair
+import io.kuicksilver.quic.ipBytesNoDns
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.KslQuicCrypto
@@ -145,6 +146,21 @@ class PreferredAddressTest {
         assertEquals("ipv4 is not an IPv4 literal: ::1", v6.message)
         val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, InetSocketAddress("127.0.0.1", 4433)) }
         assertEquals("ipv6 is not an IPv6 literal: 127.0.0.1", v4.message)
+    }
+
+    /**
+     * A host name is refused naming that name, on every platform, and never looked up for the message: on Kotlin/Native
+     * the literal was built with `resolveAddress()`, a `getaddrinfo` call that failed for a name that does not resolve.
+     * java.net resolves a name when the address is built, so on the JVM and Android this holds where the name stays
+     * unresolved (a resolver that answers for `.invalid`, RFC 6761 section 6.4, makes it an address).
+     */
+    @Test fun negative_nameIsRefusedByItsName() {
+        val name = InetSocketAddress("preferred.invalid", 4433)
+        if (name.ipBytesNoDns() != null) return
+        val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(name, null) }
+        assertEquals("ipv4 is not an IPv4 literal: preferred.invalid", v4.message)
+        val v6 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, name) }
+        assertEquals("ipv6 is not an IPv6 literal: preferred.invalid", v6.message)
     }
 
     @Test fun negative_preferredAddressUnspecifiedOrMulticastIgnored() {

@@ -227,7 +227,8 @@ class MemoryNetworkTest {
         try {
             assertTrue(a.localAddress.port != 0, "port 0 binds an ephemeral port: ${a.localAddress}")
             assertTrue(a.localAddress.port != b.localAddress.port, "two sockets, two ports")
-            assertEquals("10.0.0.5", a.localAddress.ipLiteral()) // the bytes: `hostname` is a reverse lookup on the JVM
+            // the bytes: `hostname` is a reverse lookup on the JVM and Android
+            assertEquals("10.0.0.5", a.localAddress.ipLiteral())
         } finally {
             a.close()
             b.close()
@@ -244,9 +245,38 @@ class MemoryNetworkTest {
         val net = MemoryNetwork()
         val a = net.open(InetSocketAddress("127.0.0.1", 0))
         try {
+            assertTrue(a.localAddress.port in 49152..65535, "an ephemeral port: ${a.localAddress}")
+            assertEquals("127.0.0.1", a.localAddress.ipLiteral())
             assertEquals(InetSocketAddress("127.0.0.1", a.localAddress.port).toString(), a.localAddress.toString())
         } finally {
             a.close()
+        }
+    }
+
+    /**
+     * An address is its bytes, however its text is written: `::1` and `0:0:0:0:0:0:0:1` are one socket on every platform
+     * (Kotlin/Native's InetSocketAddress compares the text it was made with), for binding, delivery and [MemoryNetwork.cut].
+     */
+    @Test fun ipv6SpellingsAreOneAddress() {
+        val net = MemoryNetwork()
+        val rx = net.open(InetSocketAddress("2001:db8::1", 443))
+        val tx = net.open(InetSocketAddress("2001:db8::2", 0))
+        val batch = PacketBatch(1)
+        try {
+            assertEquals("2001:db8::2", tx.localAddress.ipLiteral())
+            assertFailsWith<IllegalStateException> { net.open(InetSocketAddress("2001:DB8:0:0:0:0:0:1", 443)) }
+            batch.buffer(0).copyFrom(ByteArray(10) { 7 }, 0, 0, 10)
+            batch.setLength(0, 10)
+            batch.setAddress(0, InetSocketAddress("2001:db8:0:0:0:0:0:1", 443))
+            assertEquals(1, tx.trySend(batch))
+            assertEquals(0L, net.dropped, "delivered to the socket at 2001:db8::1")
+            net.cut(InetSocketAddress("2001:0db8::1", 443))
+            assertEquals(1, tx.trySend(batch))
+            assertEquals(1L, net.dropped, "the cut address, in another spelling")
+        } finally {
+            batch.close()
+            rx.close()
+            tx.close()
         }
     }
 
