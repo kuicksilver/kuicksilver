@@ -18,12 +18,13 @@ probe='#include <stdio.h>
 #include <stdlib.h>
 #include "ksl.h"
 int main(int argc, char **argv) { int rc = ksl_init(); printf("ksl_init=%d version=\"%s\"\n", rc, rc == KSL_OK ? ksl_version() : ""); return argc > 1 ? (rc == atoi(argv[1]) ? 0 : 1) : (rc == KSL_OK ? 0 : 1); }'
+# An apt failure in either container prints apt's log and exits 4, apart from the probe's own exit codes (0, 1, 3).
 build() { # image: compiles the probe against the image's libssl headers into build/sys-openssl/
   mkdir -p "$root/build/sys-openssl"
-  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y gcc libc6-dev libssl-dev >/dev/null 2>&1 || { echo apt-get install gcc libc6-dev libssl-dev failed; exit 1; }; echo '$probe' > /tmp/probe.c; gcc -std=c11 -DKSL_SYSTEM_OPENSSL -DKSL_SYSTEM_OPENSSL_MAX_MAJOR=$maxmajor -Ikuicksilver-native/src/c /tmp/probe.c kuicksilver-native/src/c/ksl_*.c -lssl -lcrypto -lresolv -ldl -o build/sys-openssl/probe && dpkg -s libssl-dev | grep ^Version"
+  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w "$1" bash -c "{ apt-get -qq update && apt-get -qq install -y gcc libc6-dev libssl-dev; } >/tmp/apt.log 2>&1 || { echo 'apt-get install gcc libc6-dev libssl-dev failed:'; cat /tmp/apt.log; exit 4; }; echo '$probe' > /tmp/probe.c; gcc -std=c11 -DKSL_SYSTEM_OPENSSL -DKSL_SYSTEM_OPENSSL_MAX_MAJOR=$maxmajor -Ikuicksilver-native/src/c /tmp/probe.c kuicksilver-native/src/c/ksl_*.c -lssl -lcrypto -lresolv -ldl -o build/sys-openssl/probe && dpkg -s libssl-dev | grep ^Version"
 }
 run() { # image expected-code [env]: runs the probe built above against the image's runtime libssl
-  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w ${3:+-e "$3"} "$1" bash -c "apt-get -qq update >/dev/null && apt-get -qq install -y libssl${maxmajor}t64 >/dev/null 2>&1 || apt-get -qq install -y libssl$maxmajor >/dev/null 2>&1; if [ $maxmajor != 3 ]; then ls /usr/lib/*/libssl.so.$maxmajor >/dev/null || { echo no libssl.so.$maxmajor in the image; exit 3; }; fi; build/sys-openssl/probe $2"
+  docker run --rm --platform linux/amd64 -v "$root:/w" -w /w ${3:+-e "$3"} "$1" bash -c "{ apt-get -qq update && { apt-get -qq install -y libssl${maxmajor}t64 || apt-get -qq install -y libssl$maxmajor; }; } >/tmp/apt.log 2>&1 || { echo 'apt-get install libssl${maxmajor}t64 (or libssl$maxmajor) failed:'; cat /tmp/apt.log; exit 4; }; if [ $maxmajor != 3 ]; then ls /usr/lib/*/libssl.so.$maxmajor >/dev/null || { echo no libssl.so.$maxmajor in the image; exit 3; }; fi; build/sys-openssl/probe $2"
 }
 echo "== build against ubuntu:26.04 headers (OpenSSL 3.5)"; build "$U2604"
 echo "== ubuntu:26.04 runtime: expect KSL_OK (0)"; run "$U2604" 0
