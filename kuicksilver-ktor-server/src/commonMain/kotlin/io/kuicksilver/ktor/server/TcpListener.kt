@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
@@ -506,7 +507,13 @@ private fun addHandlerForExpectedHeader(call: H1Call) {
     }
 }
 
-private fun SocketAddress.toNetworkAddress(): NetworkAddress? = (this as? InetSocketAddress)?.let { NetworkAddress(it.hostname, it.port) }
+// the IP literal, as over HTTP/2 and HTTP/3: `hostname` is a reverse DNS lookup on the JVM and Android (per connection, on
+// the accept path), and the connection point's addresses are IPs in Ktor's Netty and CIO engines too
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+private fun SocketAddress.toNetworkAddress(): NetworkAddress? =
+    (this as? InetSocketAddress)?.let {
+        NetworkAddress(it.ipLiteral(), it.port)
+    }
 
 /** The pause after the first of consecutive failed accepts; it doubles per failure up to [ACCEPT_BACKOFF_MAX]. */
 internal val ACCEPT_BACKOFF_MIN: Duration = 5.milliseconds

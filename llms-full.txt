@@ -2252,6 +2252,8 @@ server.start(wait = true)
 - On the JVM, Ktor's `sslConnector(keyStore, alias, ...) {}` (and the `ktor.security.ssl.*` keys) is accepted: the key
   and chain under the alias become the identity, and a trust store makes client certificates required, as in Ktor's
   Netty and Jetty engines. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
+- `call.request.local.remoteAddress` and `remoteHost` (and `localAddress`, `localHost`) are IP literals over HTTP/1.1,
+  HTTP/2 and HTTP/3, as in Ktor's Netty and CIO engines: the engine makes no reverse DNS lookup for a connection.
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
   authentication). Ktor has no equivalent. Requiring client certificates, and presenting one from the client:
   [Mutual TLS](#mutual-tls-client-certificates).

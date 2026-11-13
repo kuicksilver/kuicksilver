@@ -113,8 +113,9 @@ internal class H1ConnectionPoint(
                 ?.let { (_, port) -> if (port.isNullOrEmpty()) defaultPort else port.toIntOrNull() }
                 ?: localPort
 
+    // the literals (TcpListener's toNetworkAddress): `hostname` would look the name up (a reverse DNS query on the JVM)
     override val localHost: String
-        get() = localNetworkAddress?.hostname ?: "localhost"
+        get() = localNetworkAddress?.address ?: "localhost"
 
     override val serverHost: String
         get() = hostAndPort?.first ?: localHost
@@ -123,7 +124,7 @@ internal class H1ConnectionPoint(
         get() = localNetworkAddress?.address ?: "localhost"
 
     override val remoteHost: String
-        get() = remoteNetworkAddress?.hostname ?: "unknown"
+        get() = remoteNetworkAddress?.address ?: "unknown"
 
     override val remotePort: Int
         get() = remoteNetworkAddress?.port ?: 0

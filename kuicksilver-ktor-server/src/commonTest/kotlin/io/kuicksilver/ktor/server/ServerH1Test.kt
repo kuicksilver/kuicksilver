@@ -75,6 +75,30 @@ class ServerH1Test {
             }
         }
 
+    /**
+     * Found by the engine interop bench (kuicksilver-engine-interop): over HTTP/1.1 the remote and local addresses are the
+     * IP literals, as over HTTP/2 and HTTP/3 and in Ktor's Netty and CIO engines, not a name from a reverse DNS lookup
+     * (127.0.0.1 read "localhost"), and accepting a connection performs no such lookup.
+     */
+    @Test fun connectionPointHasIpLiterals() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/") {
+                            val l = call.request.local
+                            call.respondText("${l.remoteAddress}|${l.remoteHost}|${l.localAddress}")
+                        }
+                    }
+                }
+            try {
+                val resp = rawHttp(port, get)
+                assertTrue(resp.endsWith("127.0.0.1|127.0.0.1|127.0.0.1"), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun keepAliveTwoRequests() =
         serverTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("p=${call.request.local.remotePort}") } } }

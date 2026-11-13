@@ -704,6 +704,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client engine: over HTTP/2 a response body that a request timeout or the caller's exception cut short failed
   with the stream's own `CancellationException` ("the call ended") instead of the call's cause
   (`HttpRequestTimeoutException`), as HTTP/1.1 and HTTP/3 already reported it. Found by the engine interop bench.
+- Ktor server engine: over HTTP/1.1 the connection point's addresses came from a reverse DNS lookup made for every
+  accepted connection on the JVM and Android (`remoteAddress` and `remoteHost` read `localhost` for 127.0.0.1); they
+  are now the IP literals, as over HTTP/2 and HTTP/3 and in Ktor's Netty and CIO engines, and no lookup is made. Found
+  by the engine interop bench.
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume
