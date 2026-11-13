@@ -520,12 +520,10 @@ class ClientH2WebSocketTest {
      * that reads nothing (a 64 KiB window), the session's output waits in its flush with at most 64 KiB and one piece
      * flushed and not taken by the stream, however much the application sends.
      *
-     * The application sends without end, so its session has a bounded outgoing channel ([OUTGOING_CAPACITY] frames, the
-     * sender suspends): with Ktor's default, an unlimited one, every frame the held writer did not take yet stays queued
-     * in the session, and a sender that never suspends queued ~1 GB/s (16 KiB frames, measured on a macOS host). That
-     * filled the 512 MiB heap of the test JVM whenever the check below came late by half a second (windows-jvm, 546d3f7f4:
-     * OutOfMemoryError, then a JVM that hung until the job's timeout). The sender is held too: it gets no further than the
-     * channels, the writer and the window hold.
+     * The application sends without end, so its session's outgoing channel is bounded ([OUTGOING_CAPACITY] frames, the
+     * sender suspends): with Ktor's default, an unlimited channel, the frames the held writer does not take pile up in the
+     * session as fast as the sender makes them, until the test JVM is out of heap. The sender is held too: once the
+     * writer waits, it sends no more.
      */
     @Test fun negative_clientWriterIsHeldAtTheWindowAndTheLead() =
         clientTest {
@@ -568,12 +566,14 @@ class ClientH2WebSocketTest {
                             }
                         }
                         assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
-                        // and so is the sender: past the window and the lead, Ktor's writer takes up to 1 024 frames into its
-                        // serializer, and its session and our outgoing channel hold some more (1 041 frames in all on a macOS
-                        // host); a sender that is not held is past 300 000 frames 300 ms on (one array shared by its frames,
-                        // so that costs the heap little)
-                        delay(300.milliseconds)
-                        assertTrue(sent.load() <= 2_048, "${sent.load()} frames sent")
+                        // and so is the sender: settled, it sends nothing more (one array shared by its frames, so one
+                        // that is not held costs the heap little while this waits: it is past 300 000 frames 300 ms on)
+                        delay(100.milliseconds)
+                        val settled = sent.load()
+                        delay(250.milliseconds)
+                        val later = sent.load()
+                        assertEquals(settled, later, "the sender went on: $settled frames sent, then $later")
+                        assertTrue(later <= HELD_SENDER_MAX_FRAMES, "$later frames sent")
                     }
                 }
             }
@@ -783,3 +783,10 @@ private fun CoroutineScope.cancel() = coroutineContext[kotlinx.coroutines.Job]!!
 
 /** The outgoing channel of a session whose application sends without end: it suspends once this many frames wait. */
 private const val OUTGOING_CAPACITY = 4
+
+/**
+ * The most frames a held sender gets out past a window that never opens: on the JVM, Ktor's writer takes up to 1 024 frames
+ * into its serializer and the channels, the lead and the window some 20 more (1 041 measured); Kotlin/Native's writer (Ktor's
+ * common one) takes one frame at a time, so far fewer there. Twice the JVM's serializer: a sender not held is far past it.
+ */
+private const val HELD_SENDER_MAX_FRAMES = 2 * 1_024
