@@ -173,7 +173,7 @@ class TransportParametersTest {
 
     @Test fun greaseQuicBitWithValueRejected() = expect(0x08, raw(0x2ab2L to byteArrayOf(1)))
 
-    /** draft-ietf-quic-reliable-stream-reset-11 section 3: 0x1d; the pre-IANA 0x17f7586d2cb571 (Chrome, quiche) is accepted too. */
+    /** draft-ietf-quic-reliable-stream-reset-11 section 3: 0x1d; the earlier drafts' 0x17f7586d2cb571 (quic-go sends both) is accepted too. */
     @Test fun resetStreamAtBothCodepoints() {
         for (id in listOf(0x1dL, 0x17f7586d2cb571L)) {
             assertTrue(TransportParametersCodec.decode(raw(id to ByteArray(0)), TlsRole.Server).resetStreamAt, "0x${id.toString(16)}")
@@ -181,9 +181,12 @@ class TransportParametersTest {
         }
         val tp = TransportParameters().also { it.resetStreamAt = true }
         val sent = TransportParametersCodec.encode(tp, TlsRole.Client, 27)
-        // both go out: 0x1d for current peers (quic-go, neqo), the old one for Chrome and quiche
+        // both go out, as quic-go sends them: 0x1d, and the old one for implementations of the earlier drafts
         assertTrue(TransportParametersCodec.decode(sent, TlsRole.Client).resetStreamAt)
         assertTrue(sent.toList().windowed(2).any { it == listOf(0x1d.toByte(), 0.toByte()) })
+        // 0x17f7586d2cb571 as an 8-byte varint, then the empty length
+        val legacy = listOf(0xc0, 0x17, 0xf7, 0x58, 0x6d, 0x2c, 0xb5, 0x71, 0x00).map { it.toByte() }
+        assertTrue(sent.toList().windowed(legacy.size).any { it == legacy }, "the old codepoint is sent too")
     }
 
     @Test fun reservedParametersIgnored() {

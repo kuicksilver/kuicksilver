@@ -106,7 +106,7 @@ internal suspend fun readResponseHeadBytes(
 }
 
 /**
- * [line] as a status line `HTTP-version SP 3DIGIT [SP reason-phrase]` (RFC 9112 section 4), else [ParserException];
+ * [line] as a status line `HTTP-version SP status-code SP [ reason-phrase ]` (RFC 9112 section 4), else [ParserException];
  * Ktor's parser took `HTTP/1.1 20` for status 20. The SP before an absent reason phrase may be missing, as Go and OkHttp
  * accept. `HTTP/1.x` with x above 1 is returned as `HTTP/1.1`, the highest minor version this client conforms to (RFC
  * 9110 section 6.2 SHOULD); another major version fails. Three digits outside 100..599 are an invalid status code, and

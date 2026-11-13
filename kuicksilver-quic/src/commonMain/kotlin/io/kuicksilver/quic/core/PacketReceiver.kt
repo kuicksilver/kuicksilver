@@ -383,8 +383,14 @@ internal class PacketReceiver(
             // PING and PADDING whose SCID is the DCID we send to is processed (its ACK gives the RTT sample and stops resending
             // what arrived) but does not fix the SCID. Any other Initial does, an ACK-only one included: quic-go answers half a
             // ClientHello with an ACK-only Initial from its real SCID, and dropping it left the client on the 1 s initial PTO
-            // until quic-go's 5 s handshake idle timeout ended the attempt (interop amplificationlimit). The provisional packet's
-            // number and ECN mark are not recorded: it asks for no ACK, and the Initial that fixes the SCID numbers on its own
+            // until quic-go's 5 s handshake idle timeout ended the attempt (interop amplificationlimit). Only the two section 7.2
+            // MUSTs are departed from: the provisional packet's number is recorded (section 12.3: a copy is a duplicate; msquic
+            // numbers all packets of the connection from one counter, so its later Initials continue above it) and acknowledged
+            // like any other (section 13.2.1: one with a PING at once; the ACK goes to the DCID, which msquic still accepts).
+            // After a Retry the DCID is the Retry SCID, and the exception stays: msquic makes the connection from the Initial
+            // that carries its Retry token (binding.c, QuicBindingCreateConnection) exactly as from a first Initial, so it sends
+            // from the Retry SCID until its listener accepts. A server that keeps its Retry SCID gets the same treatment for an
+            // ACK-only Initial; its SCID equals the DCID, so nothing changes until its next Initial fixes it
             provisional = c.remoteCid.contentEquals(data, hv.scidOff, hv.scidLen) && onlyAcks()
             if (!provisional) {
                 val scid =
@@ -449,7 +455,7 @@ internal class PacketReceiver(
             }
         c.packetsReceived++
         c.qlog?.packetReceived(space, pn, hv.packetEnd - headerStart(), now)
-        if (provisional || closing) return true
+        if (closing) return true
         sp.ack.onEcn(datagramEcn) // RFC 9000 section 13.4.1 / 21.10: only processed packets move the ECN counts
         // PING-only packets beyond a PTO pair (RFC 9002 section 6.2.4: two probes, both PING when nothing is left to resend) within one RTT
         // are a glitch

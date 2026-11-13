@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # draft-ietf-quic-reliable-stream-reset — QUIC Stream Resets with Partial Delivery (draft-ietf-quic-reliable-stream-reset-11, RESET_STREAM_AT)
 
-Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for this document. Each section gives the requirement, how Kuicksilver meets it (with the files), the tests that pin it, its history, notes on peers and the open items. Status: ✅ met · 🔶 feature subset · ⬜ planned · ❌ not planned; "since" is the release from which the current behaviour holds (history below and in [CHANGELOG.md](../../../CHANGELOG.md)).
+Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for this document. Each section gives the requirement, how Kuicksilver meets it (with the files), the tests that pin it, its history, notes on peers and the open items. Status: ✅ met · 🔶 feature subset or accepted deviation · ⬜ planned · ❌ not planned; "since" is the release from which the current behaviour holds (history below and in [CHANGELOG.md](../../../CHANGELOG.md)).
 
 ## <a id="reset-stream-at"></a>RESET_STREAM_AT
 
@@ -40,6 +40,6 @@ Quoted: "MUST NOT change the Application Error Code".
 
 **Peer interop notes.**
 
-- `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d, and as the pre-IANA 0x17f7586d2cb571 for Chrome and quiche (both are accepted; quic-go and neqo use 0x1d)
+- `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) does the same and names the old one draft-07's. No peer is known to need the old codepoint (Cloudflare quiche 4ebd213 implements neither; Chrome was not checked); it stays until one is shown to need it or not ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
 
 **Open items.** See the roadmap ([docs/roadmap.md](../../roadmap.md)).

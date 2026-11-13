@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Format check of the RFC compliance summary, docs/spec/rfc-compliance.md. Every table there must have the columns
 # | RFC | Section / topic | Status | Since | Summary | Details |, and every row of it:
-#   - Status is exactly one of ✅ (met), 🔶 (feature subset), ⬜ (planned), ❌ (not planned);
+#   - Status is exactly one of ✅ (met), 🔶 (feature subset or accepted deviation), ⬜ (planned), ❌ (not planned);
 #   - Since is one version token (0.2.0, 0.3.x), or — for a ⬜ row not scheduled yet and for a ❌ row;
 #   - Summary is one sentence (it ends with a full stop and has no second one) and names no test;
 #   - Details is one link [details](rfc/<file>.md#<anchor>) to an existing file under docs/spec/rfc/ and an anchor in it

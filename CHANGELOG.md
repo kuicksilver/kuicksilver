@@ -135,6 +135,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hashes to, and only it answers a Stateless Reset, within the rate limit, for an ID of the current or previous
   configuration that decrypts to this server's ID (decryptions have their own rate limit). `ksl_key_lb`,
   `ksl_key_lb_dup`, `ksl_key_lb_derive` and `ksl_key_ecb16` are additive under ABI 7. See docs/guide/quic.md, "Behind a load balancer".
+- Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
+  standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
+  `reset_stream_at` codepoint, msquic's provisional Initial SCID, quiche's FIN handling, lenient HTTP/1.1 and SOCKS5
+  replies), each with its peers, the standard text, where it lives, its default, tests,
+  risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
   and executions per target, soak results (duration, resource trends, flatness verdicts), the count of `negative_*`
@@ -435,7 +440,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   WebTransport Extended CONNECT, refuses a foreign `origin` with 403 (`sameHostOrigin` by default), picks the
   protocol, and closes the session when the handler returns (code 0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`).
 - QUIC (experimental): RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset-11). `QuicConfig.resetStreamAt` advertises
-  `reset_stream_at` (0x1d, and the pre-IANA codepoint Chrome and quiche use); `QuicStream.resetAt(code, reliableSize)` and `ConnectionCore.resetStreamAt` reset a stream while
+  `reset_stream_at` (0x1d, and the unregistered codepoint of earlier drafts, as quic-go does); `QuicStream.resetAt(code, reliableSize)` and `ConnectionCore.resetStreamAt` reset a stream while
   still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
@@ -549,6 +554,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
+  (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
+  was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
+- RFC compliance: the RFC 9000 §7.2 row is 🔶 instead of ✅. The client processes an ACK-only Initial that msquic sends
+  from the client's own DCID without fixing the server's SCID (msquic takes its real SCID only once its listener accepts
+  the connection), which departs from two MUSTs of §7.2 ("MUST discard any subsequent packet ... with a different
+  Source Connection ID", "MUST change the Destination Connection ID ... in response to only the first received
+  Initial"). The exception, there since 0.2.1, stays as an accepted deviation until msquic answers from its own SCID
+  (docs/spec/rfc/9000.md, docs/spec/compat-shims.md).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
@@ -830,6 +844,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client: the provisional server Initial (ACK-only, from the client's own DCID, as msquic sends before its listener
+  accepts) has its packet number recorded and is acknowledged like any other Initial. Before, a copy of it was processed
+  again (RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has
+  not processed another packet with the same packet number") and one carrying a PING was never acknowledged (section
+  13.2.1: "MUST acknowledge all ack-eliciting Initial and Handshake packets immediately").
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume

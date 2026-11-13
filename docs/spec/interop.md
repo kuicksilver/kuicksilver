@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, WebSockets over HTTP/2 against Node.js and Chrome, and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors. What Kuicksilver does only to work with a peer that lags behind or breaks a standard is listed, with its removal condition, in [compat-shims.md](compat-shims.md).
 
 ## Interop matrix (0.2.0, QUIC Interop Runner 740c05a, 2026-10-13)
 

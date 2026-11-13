@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # draft-ietf-webtrans-http3 — WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16)
 
-Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for this document. Each section gives the requirement, how Kuicksilver meets it (with the files), the tests that pin it, its history, notes on peers and the open items. Status: ✅ met · 🔶 feature subset · ⬜ planned · ❌ not planned; "since" is the release from which the current behaviour holds (history below and in [CHANGELOG.md](../../../CHANGELOG.md)).
+Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for this document. Each section gives the requirement, how Kuicksilver meets it (with the files), the tests that pin it, its history, notes on peers and the open items. Status: ✅ met · 🔶 feature subset or accepted deviation · ⬜ planned · ❌ not planned; "since" is the release from which the current behaviour holds (history below and in [CHANGELOG.md](../../../CHANGELOG.md)).
 
 ## <a id="webtransport"></a>WebTransport
 
@@ -30,7 +30,7 @@ given WebTransport session".
 
 **Peer interop notes.**
 
-- draft-16 on the wire, the codepoints of draft-02 and draft-14 accepted for browsers
+- draft-16 on the wire, the codepoints of draft-02 and draft-14 accepted for browsers ([compatibility shims](../compat-shims.md#1-webtransport-draft-02-and-draft-14), shims 1 to 3)
 - Safari speaks draft-14 (second-hand), which needs `reset_stream_at` on both sides; WebKit bugs 303152 and 305006 suggest Safari 26.4 and later sends it (not verified here: the Safari check in [interop.md](../interop.md) is not run yet); a Safari that announces draft-02 too but not `reset_stream_at` gets a draft-02 session when its CONNECT is a draft-02 request, while its draft-14 CONNECT, or one from a Safari that announces draft-14 alone, is refused
 
 **Open items.** None.

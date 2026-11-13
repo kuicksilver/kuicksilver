@@ -80,6 +80,31 @@ class ClientProxyTest {
         }
 
     /**
+     * The CONNECT carries no Proxy-Connection: RFC 9112 appendix C.2.2, "clients are encouraged not to send the
+     * Proxy-Connection header field in any requests".
+     */
+    @Test fun negative_connectCarriesNoProxyConnection() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
+            try {
+                tunnelProxy(port) { proxyPort, connectHead ->
+                    testClient(engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }).use { c ->
+                        assertEquals("through", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        val head = connectHead()
+                        assertTrue(head.first().startsWith("CONNECT "), "$head")
+                        assertEquals(
+                            emptyList(),
+                            head.filter { it.startsWith("Proxy-Connection:", ignoreCase = true) },
+                            "the CONNECT sent Proxy-Connection",
+                        )
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * A client MUST ignore Content-Length and Transfer-Encoding in a 2xx response to CONNECT (RFC 9110 section 9.3.6): the
      * bytes after the head are the tunnel's. A proxy that sends `Content-Length: 5` must not make the client wait for five
      * bytes before its ClientHello.

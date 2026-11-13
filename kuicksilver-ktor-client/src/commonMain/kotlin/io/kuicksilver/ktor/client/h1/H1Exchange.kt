@@ -550,7 +550,8 @@ private suspend fun readResponseHead(
  * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin or a WebSocket. The proxy's response
  * head is limited to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); interim 1xx heads before it are skipped, at
  * most [MAX_INTERIM_HEAD_BYTES] in all; any final status but 2xx, 101 included, fails the tunnel with a ProxyException
- * carrying it (407: the proxy wants credentials; not retried).
+ * carrying it (407: the proxy wants credentials; not retried). No `Proxy-Connection`: RFC 9112 appendix C.2.2,
+ * "clients are encouraged not to send the Proxy-Connection header field in any requests".
  */
 internal suspend fun startTunnel(
     url: Url,
@@ -564,7 +565,6 @@ internal suspend fun startTunnel(
         val hostWithPort = url.hostWithPort
         builder.requestLine(HttpMethod("CONNECT"), hostWithPort, HttpProtocolVersion.HTTP_1_1.toString())
         builder.headerLine(HttpHeaders.Host, hostWithPort)
-        builder.headerLine("Proxy-Connection", "Keep-Alive")
         userAgent?.let { builder.headerLine(HttpHeaders.UserAgent, it) }
         proxyAuthorization?.let { builder.headerLine(HttpHeaders.ProxyAuthorization, it) }
         builder.emptyLine()
