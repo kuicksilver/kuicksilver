@@ -247,10 +247,11 @@ public val QuicStream.receivedAll: Boolean
     get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.receivedAll ?: false
 
 /**
- * Test hook: suspends until [receivedAll] is true for [this] stream, without polling; returns at once for streams of other
- * implementations, whose [receivedAll] never turns true.
+ * Test hook: suspends until [receivedAll] is true for [this] stream, without polling. Fails for a stream of another
+ * implementation, whose [receivedAll] never turns true: a test never passes on a stream it cannot watch.
  */
 @InternalKuicksilverApi
 public suspend fun QuicStream.awaitReceivedAllForTest() {
-    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.awaitReceivedAllForTest()
+    val s = this as? io.kuicksilver.quic.runtime.StreamRuntime ?: error("not a runtime stream: ${this::class}")
+    s.awaitReceivedAllForTest()
 }

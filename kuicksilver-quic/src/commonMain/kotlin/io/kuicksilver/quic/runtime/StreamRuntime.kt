@@ -87,20 +87,26 @@ internal class StreamRuntime(
         }
 
     /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal fun updateReceivedAll() {
         if (!receivedAll && current && conn.core.streamReceivedAll(id)) {
             receivedAll = true
-            receivedAllWaiter?.complete(Unit)
+            receivedAllWaiter.load()?.complete(Unit)
         }
     }
 
-    /** Made only by a test that waits ([awaitReceivedAllForTest]): nothing otherwise. */
-    @Volatile private var receivedAllWaiter: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    /** Made only by a test that waits ([awaitReceivedAllForTest]), once for all its waiters: nothing otherwise. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val receivedAllWaiter =
+        kotlin.concurrent.atomics.AtomicReference<kotlinx.coroutines.CompletableDeferred<Unit>?>(null)
 
     /** Suspends until [receivedAll] is true (a test hook). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal suspend fun awaitReceivedAllForTest() {
-        val waiter = receivedAllWaiter ?: kotlinx.coroutines.CompletableDeferred<Unit>().also { receivedAllWaiter = it }
-        // the loop sets the flag before it reads the waiter, and this reads the flag after it published the waiter: one of
+        // one deferred for every waiter: two that race publish the first one made, so the loop's completion reaches both
+        val made = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val waiter = if (receivedAllWaiter.compareAndSet(null, made)) made else receivedAllWaiter.load()!!
+        // the loop sets the flag before it reads the waiter, and this reads the flag after the waiter was published: one of
         // the two sees the other
         if (receivedAll) return
         waiter.await()

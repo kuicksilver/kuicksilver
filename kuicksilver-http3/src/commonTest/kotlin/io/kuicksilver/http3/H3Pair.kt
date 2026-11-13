@@ -55,6 +55,9 @@ internal class MemoryNet {
         return io
     }
 
+    /** Sees every datagram (from, to, bytes) when the endpoint at `to` takes it from its socket, past [drop] and [delay]. */
+    @Volatile var taken: ((InetSocketAddress, InetSocketAddress, ByteArray) -> Unit)? = null
+
     /** Datagrams it returns true for are lost (after [tap] saw them): an attacker who keeps the client's flight. */
     @Volatile var drop: ((InetSocketAddress, InetSocketAddress, ByteArray) -> Boolean)? = null
 
@@ -90,6 +93,7 @@ internal class MemoryIo(
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
         val (bytes, from) = inbox.receive()
+        net.taken?.invoke(from, localAddress, bytes)
         val i = into.count
         into.buffer(i).copyFrom(bytes, 0, 0, bytes.size)
         into.setLength(i, bytes.size)

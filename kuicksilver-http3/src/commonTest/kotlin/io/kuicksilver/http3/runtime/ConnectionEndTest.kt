@@ -277,9 +277,9 @@ class ConnectionEndTest {
                 val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
                 val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
                 val chunks = 80 // more than the body channel takes before its writer waits for the handler
-                // the bytes the network handed to the server, counted as it hands them over
+                // the bytes the server's endpoint took from its socket, counted as it takes them
                 val toServer = MutableStateFlow(0L)
-                q.net.tap = { _, to, bytes -> if (to == q.server.localAddress) toServer.update { it + bytes.size } }
+                q.net.taken = { _, to, bytes -> if (to == q.server.localAddress) toServer.update { it + bytes.size } }
                 repeat(chunks - 1) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flush()
                 withTimeout(5.seconds) { toServer.first { it >= (chunks - 1).toLong() * chunk.size } }
@@ -381,9 +381,9 @@ class ConnectionEndTest {
                 st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
                 st.output.flush()
                 val r = withTimeout(5.seconds) { response.await() } as ResponseImpl
-                // the bytes the network handed to the client, counted as it hands them over
+                // the bytes the client's endpoint took from its socket, counted as it takes them
                 val toClient = MutableStateFlow(0L)
-                q.net.tap = { _, to, bytes -> if (to == q.client.localAddress) toClient.update { it + bytes.size } }
+                q.net.taken = { _, to, bytes -> if (to == q.client.localAddress) toClient.update { it + bytes.size } }
                 // more than the body channel holds before its writer waits: the pump waits on a reader that never comes
                 val chunk = ByteArray(16 * 1024)
                 repeat(256) { st.output.writeFully(raw.data(chunk)) }
