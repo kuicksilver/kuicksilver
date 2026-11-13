@@ -253,45 +253,179 @@ class ServerMisdirectedRequestTest {
             }
         }
 
+    /**
+     * The statuses of GET requests for [authorities], in order, on one HTTP/2 connection made with [tls]; the connection
+     * must still be usable after them.
+     */
+    private suspend fun h2Statuses(
+        port: Int,
+        tls: io.kuicksilver.tls.TlsConfig,
+        authorities: List<String>,
+    ): List<Int> {
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+            val t = tcp.tls(tls)
+            assertEquals("h2", t.negotiatedAlpn)
+            return coroutineScope {
+                val c =
+                    H2ClientConnection.start(
+                        t.openReadChannel(),
+                        t.openWriteChannel(),
+                        Http2Settings(),
+                        this,
+                        Duration.INFINITE,
+                        { t.close() },
+                    )
+                val out =
+                    authorities.map { authority ->
+                        assertTrue(c.tryReserve())
+                        val st = c.open("GET", "https", authority, "/", emptyList(), endStream = true)
+                        try {
+                            st.response().status
+                        } finally {
+                            st.release()
+                        }
+                    }
+                assertTrue(c.isUsable, "the connection still serves requests")
+                c.abort(kotlinx.io.IOException("done"))
+                out
+            }
+        } finally {
+            selector.close()
+        }
+    }
+
     /** RFC 9113 section 9.1.1: a coalesced HTTP/2 request for an unnamed host gets 421 on its stream; the connection goes on. */
     @Test fun negative_h2CoalescedRequestGets421AndConnectionStaysUsable() =
         serverTest {
             val (server, port, seen) = countingServer(http2 = true)
-            val selector = SelectorManager(Dispatchers.IO)
             try {
-                val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
-                val t = tcp.tls(ServerFixtures.clientTls(alpn = listOf("h2")))
-                assertEquals("h2", t.negotiatedAlpn)
-                coroutineScope {
-                    val c =
-                        H2ClientConnection.start(
-                            t.openReadChannel(),
-                            t.openWriteChannel(),
-                            Http2Settings(),
-                            this,
-                            Duration.INFINITE,
-                            { t.close() },
-                        )
-
-                    suspend fun get(authority: String): Int {
-                        assertTrue(c.tryReserve())
-                        val s = c.open("GET", "https", authority, "/", emptyList(), endStream = true)
-                        try {
-                            return s.response().status
-                        } finally {
-                            s.release()
-                        }
-                    }
-                    assertEquals(421, get("other.test"))
-                    assertEquals(421, get("a.b.wild.test:$port"))
-                    assertEquals(200, get("server.test:$port"), "the connection still serves the hosts it is authoritative for")
-                    assertEquals(200, get("a.wild.test"))
-                    assertTrue(c.isUsable)
-                    c.abort(kotlinx.io.IOException("done"))
-                }
+                assertEquals(
+                    listOf(421, 421, 200, 200),
+                    h2Statuses(
+                        port,
+                        ServerFixtures.clientTls(alpn = listOf("h2")),
+                        listOf("other.test", "a.b.wild.test:$port", "server.test:$port", "a.wild.test"),
+                    ),
+                )
                 assertEquals(2, seen.load(), "the misdirected requests never reached the application")
             } finally {
-                selector.close()
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /**
+     * A connector whose `sniSelector` gives `a.wild.test` its own TLS policy (a client certificate required) and every other
+     * name the default (none); the one certificate names both `server.test` and `a.wild.test`.
+     */
+    private suspend fun sniPolicyServer(
+        http2: Boolean = false,
+        trustedGateway: Boolean = false,
+    ): Triple<Server, Int, AtomicInt> {
+        val identity = ServerFixtures.identity()
+        val strict =
+            ServerTlsOverride(
+                identity,
+                clientAuth = io.kuicksilver.tls.ClientAuth.Required,
+                trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa)),
+            )
+        val open = ServerTlsOverride(identity)
+        return countingServer(http2 = http2, connector = {
+            sniSelector = { if (it.serverName == "a.wild.test") strict else open }
+            this.trustedGateway = trustedGateway
+        })
+    }
+
+    /** A client of [sniPolicyServer] for [serverName] (an IP literal sends no SNI), with the client certificate when [withCertificate]. */
+    private fun via(
+        serverName: String,
+        withCertificate: Boolean = false,
+        alpn: String = "http/1.1",
+    ) = tlsConfig(TlsRole.Client) {
+        this.alpn = listOf(alpn)
+        this.serverName = serverName
+        trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+        if (withCertificate) identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+    }
+
+    private suspend fun h1Status(
+        port: Int,
+        host: String,
+        tls: io.kuicksilver.tls.TlsConfig,
+    ): String = status(rawHttp(port, "GET / HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n", tls))
+
+    /**
+     * RFC 9110 section 7.4 lets the server reject a request whose "connection context" is not appropriate for it, and
+     * section 15.5.20 makes 421 the answer for a target URI that "does not match the connection context over which the
+     * request was received". A connection made for `server.test`, without a client certificate, must not carry a request
+     * for `a.wild.test`, whose TLS policy requires one, although the certificate names it.
+     */
+    @Test fun negative_h1RequestForStricterSniPolicyOnLaxConnectionGets421() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer()
+            try {
+                assertEquals("421", h1Status(port, "a.wild.test", via("server.test")))
+                assertEquals("421", h1Status(port, "a.wild.test", via("127.0.0.1")), "a connection without SNI")
+                assertEquals(0, seen.load())
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** And the other way round: a request for `server.test` on `a.wild.test`'s connection gets 421 too. */
+    @Test fun negative_h1RequestForAnotherSniPolicyOnStrictConnectionGets421() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer()
+            try {
+                assertEquals("421", h1Status(port, "server.test", via("a.wild.test", withCertificate = true)))
+                assertEquals("421", h1Status(port, "127.0.0.1:$port", via("a.wild.test", withCertificate = true)))
+                assertEquals(0, seen.load())
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** Each connection serves the name its TLS settings were chosen for; one without SNI serves address literals. */
+    @Test fun sniPolicyConnectionsServeTheirOwnName() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer()
+            try {
+                assertEquals("200", h1Status(port, "server.test:$port", via("server.test")))
+                assertEquals("200", h1Status(port, "A.Wild.Test.", via("a.wild.test", withCertificate = true)))
+                assertEquals("200", h1Status(port, "127.0.0.1:$port", via("127.0.0.1")))
+                assertEquals("421", h1Status(port, "server.test", via("127.0.0.1")), "a name on a connection without SNI")
+                assertEquals("421", h1Status(port, "127.0.0.1", via("server.test")), "an address on a connection with SNI")
+                assertEquals(3, seen.load())
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** The same over HTTP/2: the stream gets 421, the connection goes on. (HTTP/3 never runs on a connector with an `sniSelector`.) */
+    @Test fun negative_h2RequestForAnotherSniPolicyGets421() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer(http2 = true)
+            try {
+                assertEquals(listOf(421, 200), h2Statuses(port, via("server.test", alpn = "h2"), listOf("a.wild.test", "server.test")))
+                assertEquals(
+                    listOf(421, 200),
+                    h2Statuses(port, via("a.wild.test", withCertificate = true, alpn = "h2"), listOf("server.test", "a.wild.test:$port")),
+                )
+                assertEquals(2, seen.load())
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** A trusted gateway's connections are not checked against SNI either. */
+    @Test fun trustedGatewayConnectorServesAnyNameOverSniPolicy() =
+        serverTest {
+            val (server, port, seen) = sniPolicyServer(trustedGateway = true)
+            try {
+                assertEquals("200", h1Status(port, "a.wild.test", via("server.test")))
+                assertEquals(1, seen.load())
+            } finally {
                 server.stopSuspend(0, 1000)
             }
         }

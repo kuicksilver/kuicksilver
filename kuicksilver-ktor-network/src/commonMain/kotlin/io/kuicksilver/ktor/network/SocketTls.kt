@@ -98,6 +98,10 @@ public class TlsSocket private constructor(
     @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = tls.localCertificates
 
+    /** See [TlsConnection.sniSelectedFor]. */
+    @InternalKuicksilverApi
+    public val sniSelectedFor: String? get() = tls.sniSelectedFor
+
     /** The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated. */
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn
 

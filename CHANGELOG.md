@@ -1627,7 +1627,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   HTTP/3; on HTTP/2 and HTTP/3 only its stream ends. The host is checked against the subjectAltName of the certificate
   that connection presented (the `sniSelector` choice, or the identity current at its handshake), as a client checks it:
   wildcards for one whole left-most label only, IP literals against iPAddress entries, never the subject CN, the port not
-  at all. A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
+  at all. On a connector with an `sniSelector`, which may give each name its own client-certificate policy, a request
+  must also be for the connection's SNI name (or an address when there was no SNI), else 421, so a request for a name
+  that requires a client certificate cannot ride a connection that asked for none, nor the other way round (as nginx and
+  Caddy do with client authentication). A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
   requests are served as before. A connector whose every client is a trusted gateway turns the check off with the new
   `tlsConnector { trustedGateway = true }`, or with the new `plainConnector { trustedGateway = true }` in place of Ktor's
   `connector { }` (docs/guide/ktor.md, "Misdirected requests"). New for the check and for servers

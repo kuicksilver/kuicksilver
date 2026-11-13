@@ -304,6 +304,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 val sock: Socket
                                 val peer: List<Certificate>
                                 val own: List<Certificate>
+                                var sni: SniChoice? = null
                                 val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
@@ -333,6 +334,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     sock = t
                                     peer = t.peerCertificates
                                     own = t.localCertificates
+                                    if (l.tls.sniSelector != null) sni = SniChoice(t.sniSelectedFor)
                                 } else {
                                     sock = client
                                     peer = emptyList()
@@ -340,7 +342,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                                 // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name, or over a plain
                                 // connection, gets 421
-                                val authorityCheck = AuthorityCheck(own, l.trustedGateway)
+                                val authorityCheck = AuthorityCheck(own, l.trustedGateway, sni)
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(

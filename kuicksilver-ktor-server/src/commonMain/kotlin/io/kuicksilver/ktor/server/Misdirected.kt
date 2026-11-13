@@ -22,12 +22,40 @@ internal val MisdirectedRequestStatus = HttpStatusCode(MISDIRECTED_REQUEST, "Mis
 internal class AuthorityCheck(
     private val local: List<Certificate>,
     private val trustedGateway: Boolean,
+    private val sni: SniChoice? = null,
 ) {
     /** [misdirected] for a request whose target URI has [scheme] and [authority]. */
     fun misdirected(
         scheme: String?,
         authority: String?,
-    ): Boolean = misdirected(local, scheme, authority, trustedGateway)
+    ): Boolean = misdirected(local, scheme, authority, trustedGateway, sni)
+}
+
+/**
+ * A connection whose identity and TLS settings (client certificates, their trust) a connector's `sniSelector` chose for the
+ * ClientHello's server_name [serverName] (null: it carried none). The selector may give every name a policy of its own,
+ * and which one another name would get is not known without asking it again, so a request on this connection must be for
+ * the name the policy was chosen for: a DNS name equal to [serverName], or an IP literal when there was no SNI (a client
+ * sends none for an address, RFC 6066 section 3). Otherwise a client could reach a name that requires a client
+ * certificate over a connection that asked for none, or the other way round: the connection context does not match the
+ * request (RFC 9110 sections 7.4 and 15.5.20). nginx (`ssl_verify_client`) and Caddy (`strict_sni_host`) reject such
+ * requests with 421 when client authentication is configured.
+ */
+internal class SniChoice(
+    val serverName: String?,
+) {
+    private val name: HostName? =
+        serverName?.let {
+            try {
+                HostName.normalize(it)
+            } catch (_: TlsException) {
+                null
+            }
+        }
+    private val valid = serverName == null || name != null
+
+    /** Whether a request for [host] may use this connection. */
+    fun allows(host: HostName): Boolean = valid && if (host.isIpLiteral) serverName == null else host == name
 }
 
 /**
@@ -40,13 +68,15 @@ internal class AuthorityCheck(
  * [matchesHost]); the port plays no part, a certificate names none. Not rejected: a scheme other than `https`, a request
  * without an authority (its target URI takes the server's own, RFC 9112 section 3.3), and a connection from a trusted
  * gateway ([KuicksilverTlsConnector.trustedGateway], the exception section 7.4 makes). An authority whose host is no valid
- * reference identifier (not ASCII, malformed) cannot be valid for the certificate and is rejected.
+ * reference identifier (not ASCII, malformed) cannot be valid for the certificate and is rejected. On a connection an
+ * `sniSelector` set up ([sni]), the host must also be the name it was set up for ([SniChoice]).
  */
 internal fun misdirected(
     local: List<Certificate>,
     scheme: String?,
     authority: String?,
     trustedGateway: Boolean,
+    sni: SniChoice? = null,
 ): Boolean {
     if (trustedGateway || !scheme.equals("https", ignoreCase = true) || authority.isNullOrEmpty()) return false
     val leaf = local.firstOrNull() ?: return true // an https request on a connection secured by no certificate (plain)
@@ -56,5 +86,5 @@ internal fun misdirected(
         } catch (_: TlsException) {
             return true
         }
-    return !leaf.matchesHost(host)
+    return !leaf.matchesHost(host) || (sni != null && !sni.allows(host))
 }

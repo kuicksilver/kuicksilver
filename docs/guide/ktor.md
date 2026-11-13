@@ -591,7 +591,10 @@ ends; the connection serves the others.
 The host is checked as a client checks it: against the subjectAltName of the certificate that connection presented (the
 `sniSelector`'s choice, or the identity current at its handshake when a `TlsIdentity.Reloadable` rotates), a wildcard
 `*.example.com` for one whole left-most label, an IP literal against the certificate's IP addresses, never the subject CN.
-The port is not checked: a certificate names none. So a certificate must name every host the server is reached under,
+The port is not checked: a certificate names none. On a connector with an `sniSelector`, which may give each name its own
+certificate, client-certificate requirement and trust, a request must also be for the name the connection was set up for
+(its SNI name, or an IP address when the client sent no SNI), so a request cannot reach a name that requires a client
+certificate over a connection that asked for none. So a certificate must name every host the server is reached under,
 `localhost` and the addresses included where clients use them.
 
 Behind a gateway that terminates TLS and forwards requests for names the certificate here does not carry (it re-encrypts
