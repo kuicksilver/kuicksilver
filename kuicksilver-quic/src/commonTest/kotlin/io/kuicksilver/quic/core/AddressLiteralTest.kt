@@ -79,6 +79,34 @@ class AddressLiteralTest {
         assertTrue(InetSocketAddress("fe80::1%1", 443).sameIpAs(InetSocketAddress("fe80:0:0:0:0:0:0:1%1", 443)))
     }
 
+    /** An IPv4-mapped address is its IPv4 address on every platform (java.net makes it one, Kotlin/Native keeps 16 bytes). */
+    @Test fun sameIpAsUnmapsIpv4MappedAddresses() {
+        assertTrue(InetSocketAddress("::ffff:10.0.0.1", 443).sameIpAs(InetSocketAddress("10.0.0.1", 443)))
+        assertTrue(InetSocketAddress("10.0.0.1", 443).sameIpAs(InetSocketAddress("0:0:0:0:0:ffff:a00:1", 443)))
+        assertFalse(InetSocketAddress("::ffff:10.0.0.1", 443).sameIpAs(InetSocketAddress("10.0.0.2", 443)))
+        assertFalse(InetSocketAddress("::10.0.0.1", 443).sameIpAs(InetSocketAddress("10.0.0.1", 443))) // IPv4-compatible is not
+    }
+
+    /** The zone comparison agrees with the literal ([ipLiteral]): the text of the zone decides, `%0` included. */
+    @Test fun sameIpAsAgreesWithTheLiteralOnZones() {
+        val cases =
+            listOf(
+                "fe80::1" to "fe80::1",
+                "fe80::1%0" to "fe80::1",
+                "fe80::1%0" to "fe80::1%0",
+                "fe80::1%1" to "fe80::1%1",
+                "fe80::1%1" to "fe80::1%0",
+                "fe80::1%en0" to "fe80::1%en0",
+                "fe80::1%en0" to "fe80::1%1",
+            )
+        for ((x, y) in cases) {
+            val a = InetSocketAddress(x, 443)
+            val b = InetSocketAddress(y, 443)
+            assertEquals(a.ipLiteral() == b.ipLiteral(), a.sameIpAs(b), "$x vs $y: ${a.ipLiteral()} / ${b.ipLiteral()}")
+            assertEquals(a.ipLiteral() == b.ipLiteral(), b.sameIpAs(a), "$y vs $x")
+        }
+    }
+
     /** 16 zero bytes with the given (index, value) set. */
     private fun ip16(vararg set: Pair<Int, Int>): ByteArray = ByteArray(16).also { b -> for ((i, v) in set) b[i] = v.toByte() }
 

@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.core
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.util.PlatformUtils
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -151,11 +152,15 @@ class PreferredAddressTest {
     /**
      * A host name is refused naming that name, on every platform, and never looked up for the message: on Kotlin/Native
      * the literal was built with `resolveAddress()`, a `getaddrinfo` call that failed for a name that does not resolve.
-     * java.net resolves a name when the address is built, so where a resolver answers for `.invalid` (RFC 6761 section
-     * 6.4 asks it not to) the address is an IP address and this test has nothing to check: it says so and stops. The JVM
-     * variant, `PreferredAddressJvmTest`, builds an unresolved address and needs no resolver.
+     * On the JVM and Android java.net resolves a name when the address is built (a real DNS query), so this test does not
+     * run there: `PreferredAddressJvmTest` builds an unresolved address instead. Where a Kotlin/Native resolver still made
+     * the name an address, the test says so and stops.
      */
     @Test fun negative_nameIsRefusedByItsName() {
+        if (PlatformUtils.IS_JVM) {
+            println("negative_nameIsRefusedByItsName skipped on the JVM: PreferredAddressJvmTest covers it without a lookup")
+            return
+        }
         val name = InetSocketAddress("preferred.invalid", 4433)
         if (name.ipBytesNoDns() != null) {
             println("negative_nameIsRefusedByItsName skipped: this host's resolver answers for preferred.invalid")

@@ -49,7 +49,9 @@ internal expect fun InetSocketAddress.ipZoneNoDns(): String?
 /**
  * Whether this address and [other] are one IP address and port, however their text was written (Kotlin/Native's
  * InetSocketAddress compares the text it was made with: `::1` against `0:0:0:0:0:0:0:1`): equal addresses at once, else
- * the same port, address bytes and IPv6 zone ID. Never a resolver call; a host name only equals the same text.
+ * the same port, address bytes and IPv6 zone ID ([sameZoneAs]). An IPv4-mapped IPv6 address (`::ffff:10.0.0.1`, RFC 4291
+ * section 2.5.5.2) is its IPv4 address (java.net makes it one; Kotlin/Native keeps 16 bytes). Never a resolver call; a
+ * host name only equals the same text.
  */
 @InternalKuicksilverApi
 public fun InetSocketAddress.sameIpAs(other: InetSocketAddress): Boolean {
@@ -58,10 +60,29 @@ public fun InetSocketAddress.sameIpAs(other: InetSocketAddress): Boolean {
     if (this == other) return sameZoneAs(other)
     val a = ipBytesNoDns() ?: return false
     val b = other.ipBytesNoDns() ?: return false
-    return a.contentEquals(b) && sameZoneAs(other)
+    return sameUnmapped(a, b) && sameZoneAs(other)
 }
 
-/** Whether both addresses have the same IPv6 zone ID (or none); no text is built on the JVM and Android. */
+/** Whether [a] and [b] (4 or 16 bytes) are one address, an IPv4-mapped one (`::ffff:0:0/96`) counting as its IPv4 address. */
+private fun sameUnmapped(
+    a: ByteArray,
+    b: ByteArray,
+): Boolean {
+    if (a.size == b.size) return a.contentEquals(b)
+    val (v4, v6) = if (a.size == 4) a to b else b to a
+    if (v4.size != 4 || v6.size != 16) return false
+    for (i in 0 until 10) if (v6[i].toInt() != 0) return false
+    if (v6[10].toInt() != -1 || v6[11].toInt() != -1) return false
+    for (i in 0 until 4) if (v6[12 + i] != v4[i]) return false
+    return true
+}
+
+/**
+ * Whether both addresses have the same IPv6 zone ID (or none), as [ipZoneNoDns] writes it: the text decides, so
+ * `fe80::1%en0` and `fe80::1%4` (en0's index) are two zones here, as their literals differ, and an explicit `%0` is not
+ * the absence of a zone. On the JVM and Android an address with no zone builds no text unless both have scope 0 and no
+ * interface, where only java.net's text tells `%0` from nothing.
+ */
 internal expect fun InetSocketAddress.sameZoneAs(other: InetSocketAddress): Boolean
 
 /**

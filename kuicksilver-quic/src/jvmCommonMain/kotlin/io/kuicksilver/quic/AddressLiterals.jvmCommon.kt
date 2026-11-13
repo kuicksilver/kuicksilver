@@ -10,11 +10,18 @@ internal actual fun InetSocketAddress.ipBytesNoDns(): ByteArray? = resolveAddres
 
 // the scope as java.net's own literal (getHostAddress) writes it: the interface name, else the numeric scope ID whenever one
 // was given, an explicit `%0` included (getScopeId() is 0 both for `%0` and for no scope; only the text tells them apart)
+// as ipZoneNoDns's text compares: the interface name when there is one (else none), the scope ID, and for scope 0 with no
+// interface whether the literal writes `%0`
 internal actual fun InetSocketAddress.sameZoneAs(other: InetSocketAddress): Boolean {
     val a = (toJavaAddress() as? java.net.InetSocketAddress)?.address as? java.net.Inet6Address
     val b = (other.toJavaAddress() as? java.net.InetSocketAddress)?.address as? java.net.Inet6Address
     if (a == null || b == null) return a == null && b == null
-    return a.scopeId == b.scopeId && a.scopedInterface?.name == b.scopedInterface?.name
+    val ia = a.scopedInterface?.name
+    if (ia != b.scopedInterface?.name) return false
+    if (ia != null) return true
+    if (a.scopeId != b.scopeId) return false
+    if (a.scopeId != 0) return true
+    return ('%' in a.hostAddress.orEmpty()) == ('%' in b.hostAddress.orEmpty())
 }
 
 internal actual fun InetSocketAddress.ipZoneNoDns(): String? {

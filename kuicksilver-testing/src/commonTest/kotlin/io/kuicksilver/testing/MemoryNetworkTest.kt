@@ -280,6 +280,54 @@ class MemoryNetworkTest {
         }
     }
 
+    /**
+     * `fe80::1%1` and `fe80::1%2` are two addresses (RFC 4007 section 6: one per zone), though java.net's equality leaves
+     * the zone out: each binds its own socket, a datagram reaches the one of its zone, and cut and restore act on one zone.
+     */
+    @Test fun ipv6ZonesAreDistinctAddresses() {
+        val z1 = InetSocketAddress("fe80::1%1", 443)
+        val z2 = InetSocketAddress("fe80::1%2", 443)
+        if ('%' !in z1.ipLiteral() || '%' !in z2.ipLiteral()) {
+            println("ipv6ZonesAreDistinctAddresses skipped: scoped addresses cannot be built here (${z1.ipLiteral()})")
+            return
+        }
+        val net = MemoryNetwork()
+        val a = net.open(z1)
+        val b = net.open(z2)
+        val tx = net.open(InetSocketAddress("fe80::9%1", 5000))
+        val batch = PacketBatch(1)
+
+        fun send(to: InetSocketAddress) {
+            batch.buffer(0).copyFrom(ByteArray(10) { 7 }, 0, 0, 10)
+            batch.setLength(0, 10)
+            batch.setAddress(0, to)
+            assertEquals(1, tx.trySend(batch))
+        }
+        try {
+            assertFailsWith<IllegalStateException> { net.open(InetSocketAddress("fe80:0:0:0:0:0:0:1%2", 443)) }
+            send(z2)
+            send(z1)
+            assertEquals(0L, net.dropped, "each zone has its socket")
+            net.cut(z1)
+            send(z2)
+            assertEquals(0L, net.dropped, "the other zone is not cut")
+            send(z1)
+            assertEquals(1L, net.dropped, "the cut zone")
+            net.restore(z1)
+            send(z1)
+            assertEquals(1L, net.dropped, "restored")
+            b.close()
+            send(z2)
+            assertEquals(2L, net.dropped, "no socket in zone 2 now, though zone 1 has one")
+            send(z1)
+            assertEquals(2L, net.dropped)
+        } finally {
+            batch.close()
+            a.close()
+            tx.close()
+        }
+    }
+
     @Test fun openTwiceOnSameAddressFails() {
         val net = MemoryNetwork()
         val io = net.open(clientAddr)

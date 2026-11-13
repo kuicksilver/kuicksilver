@@ -12,7 +12,8 @@ import kotlin.test.assertNull
  * A [PreferredAddress] given a host name is refused naming that name, and the literal of an unresolved address is its
  * text: built with `createUnresolved`, the address needs no resolver, so this runs the same on every host (the common
  * test's address is resolved by java.net where a resolver answers for `.invalid`). Ktor's constructor from a java.net
- * address is internal to Ktor (Kotlin `internal`, public in the bytecode), hence the reflection.
+ * address is internal to Ktor (Kotlin `internal`, public in the bytecode), hence the reflection: a NoSuchMethodException
+ * here means a Ktor upgrade changed that constructor, not that the code under test broke.
  */
 class PreferredAddressJvmTest {
     private val name: InetSocketAddress =
