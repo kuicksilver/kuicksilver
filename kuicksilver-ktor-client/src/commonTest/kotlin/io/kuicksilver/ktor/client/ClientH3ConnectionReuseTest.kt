@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.get
+import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.request.httpVersion
@@ -16,6 +17,8 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -199,6 +202,47 @@ class ClientH3ConnectionReuseTest {
                     val r = c.get(url)
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version, "not over the connection to 127.0.0.1")
                     assertTrue(altUsed.tryReceive().getOrNull() != "elsewhere.test:$port")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A setup of the origin still in its handshake is waited for one Connection Attempt Delay at most: one that stalls (a
+     * black-holed alternative) does not hold another destination of the origin up for its whole connect timeout.
+     */
+    @Test fun negative_aStalledSiblingSetupHoldsAnotherDestinationOnlyBriefly() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
+                    connectTimeout = 60.seconds
+                }).use { c ->
+                    val h3 = (c.engine as KuicksilverEngine).h3
+                    val setups = kotlin.concurrent.atomics.AtomicInt(0)
+                    val inSetup = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    val stalled = kotlinx.coroutines.CompletableDeferred<Unit>()
+                    h3.beforeSetupForTest = {
+                        if (setups.addAndFetch(1) == 1) {
+                            inSetup.complete(Unit)
+                            stalled.await()
+                        }
+                    }
+                    val data =
+                        io.ktor.client.request
+                            .HttpRequestBuilder()
+                            .apply { url("https://server.test:$port/") }
+                            .build()
+                    kotlinx.coroutines.coroutineScope {
+                        val first = async { h3.connection(H3Target("server.test", "server.test", port), data) }
+                        inSetup.await()
+                        val second = withTimeout(10.seconds) { h3.connection(H3Target("server.test", "alias.test", port), data) }
+                        assertTrue(!second.closed.isCompleted)
+                        stalled.complete(Unit)
+                        first.await()
+                    }
                 }
             } finally {
                 server.stop(100, 500)

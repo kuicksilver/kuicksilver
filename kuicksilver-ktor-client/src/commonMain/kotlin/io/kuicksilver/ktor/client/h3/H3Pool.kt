@@ -544,7 +544,6 @@ internal class H3Pool(
         val drained = ArrayList<Pair<H3Entry, Http3Connection>>()
         lock.withLock {
             for (e in connections.values.distinct()) {
-                if (e in retired) continue
                 val c = e.deferred.getCompletedOrNull()
                 if (c != null) {
                     e.drain()
@@ -552,7 +551,7 @@ internal class H3Pool(
                 } else if (!e.deferred.isCompleted) {
                     e.retire()
                 }
-                retired += e
+                if (e !in retired) retired += e
             }
             connections.clear()
         }
@@ -590,6 +589,17 @@ internal class H3Pool(
 
     private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
 
+    /**
+     * Under the lock: [e] takes no new requests and finishes the ones it has ([H3Entry.retire]); it leaves the map under
+     * every key it was filed under (a connection [shareSameAddress] shares is filed under several), so a retired entry is
+     * never in the map and [goAwayAll] and [evictExpired] see it only in [retired].
+     */
+    private fun retireUnderEveryKey(e: H3Entry) {
+        connections.entries.removeAll { it.value === e }
+        if (e !in retired) retired += e
+        e.retire()
+    }
+
     /** Test hook: the connections [shareSameAddress] let a destination share (one per sharing). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val sharedForTest = kotlin.concurrent.atomics.AtomicInt(0)
@@ -606,7 +616,8 @@ internal class H3Pool(
      * pool's. The address compared is that of the connection's active path, where the race's winner and any migration
      * left it (a client migration changes only the local side; a server's preferred address moves it); the destination's
      * addresses are those of its current answers, the NAT64 synthesis of an IPv6-only network included. A setup of the
-     * same origin still in its handshake is waited for first. Nothing is resolved when the origin has no other connection.
+     * same origin still in its handshake is waited for first, for one Connection Attempt Delay at most. Nothing is resolved
+     * when the origin has no other connection.
      */
     private suspend fun shareSameAddress(
         t: H3Target,
@@ -634,17 +645,16 @@ internal class H3Pool(
             } catch (_: Throwable) {
                 return // the setup resolves again and reports the failure
             }
-        // a sibling still in its handshake has no address yet: its outcome is waited for (bounded by its own connect timeout),
-        // so two names of one address set up at once do not end as two connections
-        for (e in candidates) {
-            if (!e.deferred.isCompleted) {
-                try {
-                    e.deferred.await()
-                } catch (x: CancellationException) {
-                    if (!e.deferred.isCancelled) throw x // our own cancellation; a cancelled setup is only no candidate
-                } catch (_: Throwable) {
-                    // its setup failed: no candidate
-                }
+
+        // a sibling still in its handshake has no address yet: its outcome is waited for, for one Connection Attempt Delay
+        // at most (RFC 8305 section 5, 250 ms by default), so two names of one address set up at once end as one
+        // connection, while a sibling whose handshake stalls (a black-holed alternative) does not hold this one up longer
+        // than Happy Eyeballs holds up its next address
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val waitAtMost = config.connectionAttemptDelay
+        withTimeoutOrNull(waitAtMost) {
+            for (e in candidates) {
+                e.deferred.join() // completes failed or not: a failed setup is only no candidate
             }
         }
         val match =
@@ -665,8 +675,7 @@ internal class H3Pool(
             // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it
             val old = existing?.deferred?.getCompletedOrNull()
             if (existing != null && old != null && old.usable()) {
-                if (existing !in retired) retired += existing
-                existing.retire()
+                retireUnderEveryKey(existing)
             }
             connections[t.key] = match
             sharedForTest.addAndFetch(1)
@@ -724,8 +733,7 @@ internal class H3Pool(
                 } else {
                     // past its lifetime with requests in flight: it finishes them first ([evictExpired] closes it)
                     if (existing != null && done != null && done.usable()) {
-                        if (existing !in retired) retired += existing
-                        existing.retire()
+                        retireUnderEveryKey(existing)
                     }
                     H3Entry(CompletableDeferred(), clock()).also { connections[t.key] = it } to true
                 }
