@@ -120,7 +120,7 @@ class PacUtilsAppleTest {
         // (h1, h2): h1 <= hour < h2
         assertEquals("false", js("var h = new Date().getUTCHours(); timeRange(h, h, 'GMT')"))
         assertEquals("true", js("var h = new Date().getUTCHours(); h == 23 || timeRange(h, h + 1, 'GMT')"))
-        assertEquals("false", js("var h = new Date().getUTCHours(); h == 0 || timeRange(h - 1, h, 'GMT')"))
+        assertEquals("false", js("var h = new Date().getUTCHours(); h != 0 && timeRange(h - 1, h, 'GMT')"))
         // (h1, m1, h2, m2): the end minute is whole
         assertEquals(
             "true",
