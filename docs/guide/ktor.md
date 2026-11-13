@@ -216,7 +216,11 @@ server.start(wait = true)
   Netty and Jetty engines. Its `enabledProtocols` (`ktor.security.ssl.enabledProtocols`) choose the TLS versions:
   unset or `TLSv1.3` alone is TLS 1.3 only, `TLSv1.2` with `TLSv1.3` allows TLS 1.2 as well ([TLS 1.2 on the
   server](#tls-12-on-the-server)); anything else (TLS 1.2 alone, TLS 1.0 or 1.1) fails the start with
-  `TlsException.Config`. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
+  `TlsException.Config`. Ktor's connector cannot express a stapled OCSP response or a trusted gateway: it staples
+  nothing and answers `421 Misdirected Request` for hosts its certificate does not name; for either, set `ocspStapling`
+  or `trustedGateway` on `tlsConnector(identity)` in code, or serve the port with the `kuicksilver.tls.*` keys of
+  `EngineMain` ([below](#enginemain-and-configuration-keys)). Any other HTTPS connector type fails with
+  `TlsException.Config` rather than serving cleartext.
 - `call.request.local.remoteAddress` and `remoteHost` (and `localAddress`, `localHost`) are IP literals over HTTP/1.1,
   HTTP/2 and HTTP/3: the engine makes no reverse DNS lookup for a connection. `remoteAddress` and `localAddress` are
   literals in Ktor's Netty and CIO engines as well; their `remoteHost` and `localHost` are host names looked up on first
@@ -805,6 +809,8 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.clientAuth` | ask for a client certificate on the deployment port: `none` (unset), `optional` or `required`; anything but `none` needs `kuicksilver.tls.clientCa` |
 | `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
 | `kuicksilver.tls.versions` | the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
+| `kuicksilver.tls.ocspStapling` | a file with a DER OCSP response (RFC 6960) for the identity's certificate, read once at startup and stapled on TCP and QUIC when it is fresh and for the certificate sent; needs the identity files, and is refused next to `-sslPort`; a newer response needs a restart, or `OcspStapling.update` on a `tlsConnector` set up in code; see [Certificate revocation](tls.md#certificate-revocation) |
+| `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway, so no request is answered `421 Misdirected Request` for a host its certificate does not name (`false`); needs the identity files, and is refused next to `-sslPort`; see [Misdirected requests](#misdirected-requests) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |

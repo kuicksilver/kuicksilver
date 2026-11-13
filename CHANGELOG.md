@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read at startup, stapled on TCP and
+  QUIC) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port) set what
+  `tlsConnector`'s `ocspStapling` and `trustedGateway` set in code; both need the identity files and are refused next to
+  Ktor's `-sslPort` connector, which cannot express them.
 - Certificate revocation (RFC 9325 section 7.5), experimental. Clients ask for a stapled OCSP response and check it
   (RFC 6960 section 3.2; RFC 6066 section 8) where `ksl` verifies the chain (`AnchoredCa`, `Platform` on Linux Native):
   `TlsConfig.revocation` (`RevocationPolicy.Off`, `StapledIfPresent` (the default: a server without a staple passes),

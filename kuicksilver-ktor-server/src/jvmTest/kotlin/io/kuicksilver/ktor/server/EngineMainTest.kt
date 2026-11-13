@@ -25,6 +25,7 @@ import java.security.cert.CertificateFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
@@ -389,6 +390,109 @@ class EngineMainTest {
             "-P:kuicksilver.altSvc=false",
         ) + extra
     }
+
+    /** A request over TLS on the deployment port for [host], its status line. */
+    private suspend fun statusFor(
+        port: Int,
+        host: String,
+    ): String =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            (jdkContext().socketFactory.createSocket(java.net.InetAddress.getLoopbackAddress(), port) as javax.net.ssl.SSLSocket)
+                .use { s ->
+                    s.soTimeout = 20_000
+                    s.outputStream.write("GET / HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n".toByteArray())
+                    s.inputStream.bufferedReader().readLine()
+                }
+        }
+
+    /**
+     * `kuicksilver.tls.trustedGateway = true` takes requests for a host the certificate does not name on the deployment port
+     * (RFC 9110 section 7.4, the trusted-gateway exception); without it they get 421. It needs the identity files.
+     */
+    @Test fun trustedGatewayKeyTakesOtherHosts() =
+        serverTest {
+            for ((args, want) in listOf(clientCaArgs() to "421", clientCaArgs("-P:kuicksilver.tls.trustedGateway=true") to "200")) {
+                val server = EngineMain.createServer(args)
+                server.startSuspend(false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val line = statusFor(port, "elsewhere.test")
+                    assertTrue(line.startsWith("HTTP/1.1 $want"), line)
+                } finally {
+                    server.stop(100, 500)
+                }
+            }
+            val e =
+                assertFailsWith<IllegalArgumentException> {
+                    EngineMain
+                        .createServer(
+                            arrayOf(
+                                "-host=127.0.0.1",
+                                "-port=0",
+                                "-P:ktor.application.modules.size=1",
+                                "-P:ktor.application.modules.0=$module",
+                                "-P:kuicksilver.tls.trustedGateway=true",
+                            ),
+                        ).engine
+                }
+            assertTrue("certificateChain" in e.message.orEmpty(), e.message)
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.trustedGateway=yes"),
+                    ).engine
+            }
+        }
+
+    /** `kuicksilver.tls.ocspStapling` reads a DER OCSP response file into the deployment port's stapling; a file that is no DER SEQUENCE is refused. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun ocspStaplingKeyReadsTheResponse() =
+        serverTest {
+            val der = byteArrayOf(0x30, 0x03, 0x02, 0x01, 0x00) // SEQUENCE { INTEGER 0 }: what the setter checks
+            val file = File(dir, "ocsp.der").apply { writeBytes(der) }
+            val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.ocspStapling=${file.path}"))
+            assertContentEquals(
+                der,
+                server.engine.configuration.tlsOcspStapling
+                    ?.current,
+            )
+            server.stop(0, 0)
+            val bad = File(dir, "ocsp-bad.der").apply { writeBytes("not der".toByteArray()) }
+            assertFailsWith<io.kuicksilver.tls.TlsException.Config> {
+                EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.ocspStapling=${bad.path}")).engine
+            }
+        }
+
+    /** Ktor's `-sslPort` connector cannot staple or trust a gateway: the two keys are refused next to it, naming the way out. */
+    @Test fun negative_ocspStaplingAndTrustedGatewayKeysWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "gateway-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:kuicksilver.tls.trustedGateway=true",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue("tlsConnector(identity)" in e.message.orEmpty(), e.message)
+            server.stop(0, 0)
+        }
 
     @Test fun tlsVersionsKeyParsed() {
         assertNull(EngineMain.parseTlsVersions(null))

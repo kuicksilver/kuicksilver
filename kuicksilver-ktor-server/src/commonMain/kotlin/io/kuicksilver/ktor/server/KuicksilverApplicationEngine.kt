@@ -185,6 +185,13 @@ public class KuicksilverApplicationEngine(
         /** Set by `EngineMain` (`kuicksilver.tls.versions`): the TLS versions of the connectors [identity] serves. */
         internal var tlsVersions: TlsVersions = TlsVersions.Tls13
 
+        /** Set by `EngineMain` (`kuicksilver.tls.ocspStapling`): the OCSP response the connectors [identity] serves staple. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
+
+        /** Set by `EngineMain` (`kuicksilver.tls.trustedGateway`): the connectors [identity] serves take every host. */
+        internal var tlsTrustedGateway: Boolean = false
+
         /**
          * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
          * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
@@ -612,7 +619,9 @@ public class KuicksilverApplicationEngine(
                             clientAuth = configuration.clientAuth
                             trust = configuration.clientTrust
                             @OptIn(ExperimentalKuicksilverApi::class)
-                            trustedGateway = (c as? KuicksilverPlainConnector)?.trustedGateway ?: false
+                            trustedGateway = ((c as? KuicksilverPlainConnector)?.trustedGateway ?: false) || configuration.tlsTrustedGateway
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            ocspStapling = configuration.tlsOcspStapling
                             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                             versions = configuration.tlsVersions
                         }.build()
@@ -635,6 +644,14 @@ public class KuicksilverApplicationEngine(
                     throw TlsException.Config(
                         "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain, not to $c: " +
                             "use ktor.security.ssl.enabledProtocols there",
+                    )
+                }
+                // Ktor's sslConnector has no stapled OCSP response and no trusted-gateway switch: tlsConnector(identity) has both
+                if (configuration.tlsOcspStapling != null || configuration.tlsTrustedGateway) {
+                    throw TlsException.Config(
+                        "kuicksilver.tls.ocspStapling and kuicksilver.tls.trustedGateway apply to the port of " +
+                            "kuicksilver.tls.certificateChain, not to $c: Ktor's sslConnector cannot express them; serve that port " +
+                            "with the kuicksilver.tls keys, or set ocspStapling and trustedGateway on tlsConnector(identity) in code",
                     )
                 }
                 platformTlsConnector(c)?.let { Listener(it, it) }
