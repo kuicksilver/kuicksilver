@@ -558,6 +558,45 @@ class ServerMisdirectedRequestTest {
             }
         }
 
+    /**
+     * A misdirected request that expects 100-continue gets the 421 without a 100 (a final status the head determines, RFC
+     * 9110 section 10.1.1), and since its content may still come, the connection closes after it and says so (RFC 9112
+     * section 9.6).
+     */
+    @Test fun negative_h1MisdirectedWithExpectContinueSendsNo100AndCloses() =
+        serverTest {
+            val (server, port, seen) = countingServer()
+            try {
+                val r = rawHttp(port, "POST / HTTP/1.1\r\nHost: other.test\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n")
+                assertTrue(r.startsWith("HTTP/1.1 421 "), r)
+                assertTrue("100 Continue" !in r, r)
+                assertTrue("\r\nConnection: close\r\n" in r, r)
+                assertTrue("\r\nDate: " in r, r)
+                assertCalls(0, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** A misdirected request's content is read past, and the request pipelined after it is served on the same connection. */
+    @Test fun negative_h1MisdirectedWithContentThenPipelinedRequest() =
+        serverTest {
+            val (server, port, seen) = countingServer()
+            try {
+                val r =
+                    rawHttp(
+                        port,
+                        "POST / HTTP/1.1\r\nHost: other.test\r\nContent-Length: 5\r\n\r\nhello" +
+                            "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n",
+                    )
+                assertEquals(listOf("421", "200"), statuses(r), r)
+                assertTrue(r.endsWith("ok"), r)
+                assertCalls(1, seen)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
     /** RFC 9114 section 3.3: the same over HTTP/3. */
     @Test fun negative_h3CoalescedRequestGets421AndConnectionStaysUsable() =
         h3ServerTest {
