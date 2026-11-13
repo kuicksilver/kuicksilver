@@ -867,14 +867,6 @@ internal class H3Pool(
         return e to d.await()
     }
 
-    /**
-     * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
-     * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
-     * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
-     * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
-     * path validation): a refusal is a [MigrationEvent.Failed] that leaves [c] where it is.
-     */
-
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val preferredMovesForTest = kotlin.concurrent.atomics.AtomicInt(0)
@@ -925,6 +917,13 @@ internal class H3Pool(
         c.closed.invokeOnCompletion { job.cancel() }
     }
 
+    /**
+     * Lets [c] follow the network with `http3.connectionMigration`, if set (docs/guide/ktor.md, "Connection migration"): once
+     * its handshake has completed (RFC 9000 section 9: no migration before; a 0-RTT connection is handed out earlier), the
+     * hook's migrator is started with its events going to the listener, and it is closed when [c] ends or the client
+     * closes. The transport enforces the rest of section 9 (confirmation, `disable_active_migration`, zero-length IDs,
+     * path validation): a refusal is a [MigrationEvent.Failed] that leaves [c] where it is.
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun followNetwork(
         c: Http3Connection,
