@@ -25,8 +25,10 @@ import io.kuicksilver.http3.qpack.QpackDecoder
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.acceptBidi
+import io.kuicksilver.http3.runtime.awaitOutputStopped
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
+import io.kuicksilver.http3.runtime.peerStopped
 import io.kuicksilver.http3.runtime.readControlFrame
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
@@ -286,8 +288,14 @@ class WebTransportSessionTest {
                 launch {
                     val st = withTimeout(5.seconds) { s.acceptBidi() }
                     assertEquals("\"chat\"", readHeaders(st)["wt-available-protocols"])
-                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "wt-protocol" to "\"other\"")))
-                    st.output.flush()
+                    // the client aborts the stream on these HEADERS at once, reset and STOP_SENDING both WT_ALPN_ERROR, and on
+                    // a slow host the stop lands before this flush returns (the write itself sends; the channel auto-flushes):
+                    // that order is the one tested, and only that stop is tolerated
+                    peerStopped(Http3ErrorCode.WT_ALPN_ERROR) {
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "wt-protocol" to "\"other\"")))
+                        awaitOutputStopped(st)
+                        st.output.flush()
+                    }
                     assertEquals(Http3ErrorCode.WT_ALPN_ERROR, resetCode(st))
                 }
                 val e = assertFailsWith<WebTransportException.Alpn> { client.webTransport(wtReq(), listOf("chat")) }
@@ -468,10 +476,6 @@ class WebTransportSessionTest {
                 assertEquals("early", st.input.readAllBytes().decodeToString())
             }
         }
-}
-
-private suspend fun kotlinx.coroutines.flow.StateFlow<Int>.awaitValue(n: Int) {
-    first { it == n }
 
     /** RFC 9297 section 3.2: a CONNECT with content-type rules out capsules: 400, never 200 and then a reset. */
     @Test fun negative_capsuleIncompatibleRequestIs400() =
@@ -489,4 +493,8 @@ private suspend fun kotlinx.coroutines.flow.StateFlow<Int>.awaitValue(n: Int) {
                 assertEquals("400", readHeaders(st)[":status"])
             }
         }
+}
+
+private suspend fun kotlinx.coroutines.flow.StateFlow<Int>.awaitValue(n: Int) {
+    first { it == n }
 }

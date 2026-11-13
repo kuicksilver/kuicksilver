@@ -175,11 +175,14 @@ class SessionStartTest {
                 val (c, s) = q.connect()
                 val raw = RawPeer(s)
                 raw.openControl()
-                raw.control.output.writeFully(
-                    raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)) +
-                        raw.frame(FrameType.SETTINGS, ByteArray(0)),
-                )
-                raw.control.output.flush()
+                // the client closes the connection on the second SETTINGS, which can land before the flush returns
+                peerMayHaveClosed {
+                    raw.control.output.writeFully(
+                        raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)) +
+                            raw.frame(FrameType.SETTINGS, ByteArray(0)),
+                    )
+                    raw.control.output.flush()
+                }
                 val e = assertFailsWith<Http3Exception.Protocol> { withTimeout(10.seconds) { Http3Connection.client(c) } }
                 assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, e.h3Code)
                 assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, peerSawClose(s))

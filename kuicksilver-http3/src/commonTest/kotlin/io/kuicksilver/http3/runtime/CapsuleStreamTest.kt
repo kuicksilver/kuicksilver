@@ -620,8 +620,14 @@ class CapsuleStreamTest {
                 val connect = async { runCatching { client.connect(connectReq(), "test-capsules") } }
                 val st = withTimeout(5.seconds) { s.acceptBidi() }
                 val head = listOf(":status" to "200", "capsule-protocol" to "?1", "content-type" to "text/plain")
-                st.output.writeFully(raw.headers(st.id, head))
-                st.output.flush()
+                // the client aborts the stream on these HEADERS at once, reset and STOP_SENDING both H3_MESSAGE_ERROR, and on a
+                // slow host the stop lands before this flush returns (the write itself sends; the channel auto-flushes): that
+                // order is the one tested, and only that stop is tolerated
+                peerStopped(Http3ErrorCode.MESSAGE_ERROR) {
+                    st.output.writeFully(raw.headers(st.id, head))
+                    awaitOutputStopped(st)
+                    st.output.flush()
+                }
                 assertIs<Http3Exception.MessageError>(withTimeout(5.seconds) { connect.await() }.exceptionOrNull())
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(st))
             }
