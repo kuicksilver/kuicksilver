@@ -69,9 +69,13 @@ jobs:
       - name: 'lint: action/image pins'
         run: bash tools/check/pins.sh .
       - name: 'lint: documentation references'
-        run: bash tools/check/doc-refs.sh
+        run: |
+          bash tools/check/doc-refs.sh
+          python3 -I tools/check/code-refs.py   # the source lines docs/spec cites, against tools/check/code-refs.lock
       - name: 'lint: doc-refs negative controls'
-        run: bash tools/check/doc-refs-test.sh
+        run: |
+          bash tools/check/doc-refs-test.sh
+          bash tools/check/code-refs-test.sh
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'

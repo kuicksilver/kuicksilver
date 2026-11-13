@@ -75,8 +75,9 @@ This is a practice of review, not a check a tool runs. The same six QUIC stacks 
   [section 5](spec/threat-model.md#5-negative-controls--release-gate-checklist) the negative controls the release gate
   runs. A change that touches a threat updates it in the same commit.
 - [`tools/check/doc-refs.sh`](../tools/check/doc-refs.sh) checks that every file, anchor, `negative_*` test, C symbol,
-  Kotlin member and Gradle task the documentation names exists; [`tools/check/links.sh`](../tools/check/links.sh)
-  checks the relative links.
+  Kotlin member and Gradle task the documentation names exists; [`tools/check/code-refs.py`](../tools/check/code-refs.py)
+  that every source line `docs/spec` cites (`File.kt:N`) is still the line recorded in `tools/check/code-refs.lock`;
+  [`tools/check/links.sh`](../tools/check/links.sh) checks the relative links.
 
 ## 5. Integration and the local gate
 

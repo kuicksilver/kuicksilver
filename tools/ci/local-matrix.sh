@@ -176,8 +176,8 @@ aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
-step "lint: documentation references"          bash tools/check/doc-refs.sh
-step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.sh
+step "lint: documentation references"          bash -c 'bash tools/check/doc-refs.sh && python3 -I tools/check/code-refs.py'
+step "lint: doc-refs negative controls"         bash -c 'bash tools/check/doc-refs-test.sh && bash tools/check/code-refs-test.sh'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh

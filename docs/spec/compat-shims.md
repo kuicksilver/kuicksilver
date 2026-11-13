@@ -85,7 +85,7 @@ section); only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this
 **Standard text.** None: draft-16 has no such field. RFC 9110 §5.1 lets a recipient ignore an unknown field, so the field
 costs other clients nothing.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:482`; the name and
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:494`; the name and
 value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:153`.
 
 **On by default.** No, as shim 1; then always for a request with the draft-02 field.
@@ -220,7 +220,7 @@ duplicate and never woke the application for the FIN (`kuicksilver->quiche:hands
 sum of the Offset and Length fields of a STREAM frame with a FIN flag" — the FIN of a duplicate frame still gives the
 final size.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:182`.
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:191-194`.
 
 **On by default.** Yes; no switch.
 

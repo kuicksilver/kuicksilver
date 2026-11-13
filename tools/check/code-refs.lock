@@ -1,0 +1,30 @@
+# The source lines docs/spec cites, as tools/check/code-refs.py --write recorded them: <path>:<line>\t<text>
+kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:158	if (blockDependency == id && !peerNoRfc7540Priorities) {
+kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:190	if (blockDependency == id && !peerNoRfc7540Priorities) {
+kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:276	if (f.dependency == f.streamId && !peerNoRfc7540Priorities) {
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22	const val WT_MAX_SESSIONS_DRAFT14: Long = 0x14e9cd29
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:25	const val ENABLE_WEBTRANSPORT_DRAFT02: Long = 0x2b603742
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236	throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:494	add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:447	if (version != WtVersion.Draft16) add(WtTokens.DRAFT02_REQUEST_FIELD to "1")
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:12	internal enum class WtVersion {
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:38	fun offeredIn(settings: Map<Long, Long>): Set<WtVersion> =
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:92	internal fun wtClientVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> {
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:109	internal fun wtServerVersion(
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:133	fun ours(isServer: Boolean): List<Pair<Long, Long>> =
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:147	const val LEGACY: String = "webtransport"
+kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:153	const val DRAFT02_RESPONSE_FIELD: String = "sec-webtransport-http3-draft"
+kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient.kt:113	private fun request(st: QuicStream, url: String) { val req = "GET ${Url.parse(url).path}\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size) }
+kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt:125	if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
+kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78	// RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204	/** Sequence 0 of the peer: adopted from the first Initial; replaced while it is still the only one (an ACK-only Initial before the ServerHello may carry a provisional SCID, msquic). */
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380	// Section 7.2: the first Initial from the server fixes its SCID. One exception, for msquic: until it has the whole
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:497	private fun onlyAcks(): Boolean {
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:267	(old.resetStreamAt && !tp.resetStreamAt)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:191	// a resent range never carries the FIN: one still in flight needs no copy, a lost one goes as an empty frame of
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:192	// its own. quiche's receiver takes the final size from a frame whose bytes it already read, drops the frame as a
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:193	// duplicate and never wakes the application for the FIN (interop run 20261015-170940, kuicksilver->quiche:handshakeloss)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:194	out.fin = false
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:43	private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:132	empty(RESET_STREAM_AT_LEGACY)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/wire/TransportParametersCodec.kt:331	RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {
