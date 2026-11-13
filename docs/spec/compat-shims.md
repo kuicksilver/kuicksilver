@@ -27,7 +27,6 @@ behaviour that is legal but unusual. A borderline entry says why it is listed.
 | 6 | [A resent STREAM range never carries the FIN](#6-a-resent-stream-range-never-carries-the-fin) | quiche | yes | sender choice inside RFC 9000 (borderline) |
 | 7 | [HTTP/1.1 status line without the SP before an absent reason](#7-http11-status-line-without-the-sp-before-an-absent-reason) | servers that break RFC 9112 §4 | yes (client) | lenient parsing the RFC allows (borderline) |
 | 8 | [SOCKS5 username/password reply with VER 5](#8-socks5-usernamepassword-reply-with-ver-5) | some SOCKS5 proxies | yes (client) | accepts a value RFC 1929 does not define |
-| 9 | [`Proxy-Connection: Keep-Alive` on CONNECT](#9-proxy-connection-keep-alive-on-connect) | HTTP/1.0 proxies | yes (client) | a field RFC 9112 encourages clients not to send |
 | T1 | [Interop client: request and FIN in one STREAM frame](#t1-interop-client-request-and-fin-in-one-stream-frame) | quiche's hq server | test only | not shipped in the library |
 
 ## 1. WebTransport draft-02 and draft-14
@@ -270,30 +269,6 @@ by STATUS.
 
 **Removal.** None planned; the proxies are not tracked.
 
-## 9. `Proxy-Connection: Keep-Alive` on CONNECT
-
-**What it does.** The CONNECT request that opens a tunnel through an HTTP proxy carries `Proxy-Connection: Keep-Alive`.
-The field never reaches the origin (a request's own `Proxy-Connection` is dropped inside the tunnel).
-
-**Peers.** HTTP/1.0 proxies; OkHttp 5.3.2 sends the same field on its CONNECT, "For HTTP/1.0 proxies like Squid"
-(`RealRoutePlanner`).
-
-**Standard text.** RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any
-requests"; RFC 9110 §7.6.1 lists it among the fields an intermediary removes before forwarding.
-
-**Where.** `kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Exchange.kt:545`
-(`startTunnel`).
-
-**On by default.** Yes, on every CONNECT to an HTTP proxy; no switch.
-
-**Tests.** None pins the field on the CONNECT; `ClientProxyTest.negative_proxyCredentialsStayOnTheConnect` pins that it
-does not reach the origin.
-
-**Risk.** Low: a hop-by-hop hint to the proxy only. A CONNECT tunnel does not depend on keep-alive (the connection
-becomes the tunnel), so the field has no effect on a conforming proxy.
-
-**Removal.** Open: it has no recorded peer of its own and no test; it can go unless a proxy is found that needs it.
-
 ## Test-only
 
 ### T1. Interop client: request and FIN in one STREAM frame
@@ -318,6 +293,14 @@ the data.
 **Risk.** None: test code.
 
 **Removal.** When quiche's hq server answers a request whose FIN comes alone.
+
+## Removed
+
+- **`Proxy-Connection: Keep-Alive` on CONNECT** (0.3.0). The CONNECT that opens a tunnel through an HTTP proxy carried the
+  field for HTTP/1.0 proxies, as OkHttp 5.3.2 does (`RealRoutePlanner`, "For HTTP/1.0 proxies like Squid"), against RFC
+  9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests". No peer
+  was recorded that needed it, and a CONNECT tunnel does not depend on keep-alive; the CONNECT now carries none —
+  `ClientProxyTest.negative_connectCarriesNoProxyConnection`.
 
 ## Considered and not listed
 

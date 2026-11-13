@@ -95,7 +95,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
   standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
   `reset_stream_at` codepoint, msquic's provisional Initial SCID, quiche's FIN handling, lenient HTTP/1.1 and SOCKS5
-  replies, `Proxy-Connection` on CONNECT), each with its peers, the standard text, where it lives, its default, tests,
+  replies), each with its peers, the standard text, where it lives, its default, tests,
   risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
@@ -481,6 +481,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
+  (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
+  was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
 - RFC compliance: the RFC 9000 §7.2 row is 🔶 instead of ✅. The client processes an ACK-only Initial that msquic sends
   from the client's own DCID without fixing the server's SCID (msquic takes its real SCID only once its listener accepts
   the connection), which departs from two MUSTs of §7.2 ("MUST discard any subsequent packet ... with a different
