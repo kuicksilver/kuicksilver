@@ -994,7 +994,9 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   HTTP/1.1; an origin last seen on HTTP/1.1 does not make them wait. A connection
   without requests for `idleTimeout`, or past `maxConnectionLifetime`, is sent GOAWAY and closes once its requests are
   done; a server's GOAWAY moves new requests to a new connection.
-- **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
+- **HTTP/3.** One QUIC connection per origin carries all requests, also when the origin is reached under several
+  names (its host, an `Alt-Svc` alternative, an HTTPS-record target) that resolve to the same address and port: as RFC
+  9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins never share one. When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's

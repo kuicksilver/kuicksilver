@@ -205,6 +205,19 @@ internal class RequestDns private constructor(
         throw kotlinx.io.IOException("$name could not be resolved" + (failure?.message?.let { ": $it" } ?: ""), failure)
     }
 
+    /**
+     * [answered], plus the addresses a connection to them goes to on an IPv6-only network with NAT64 (the IPv6 addresses
+     * synthesized for its IPv4 answers, RFC 8305 section 7): every address a connection to [host] could have now.
+     */
+    suspend fun answeredDestinations(
+        host: String,
+        port: Int,
+    ): List<TcpAddress> {
+        val found = answered(host, port)
+        if (!nat64.ipv6OnlyNetwork()) return found
+        return found + found.filter { it.bytes.size == 4 }.flatMap { nat64.synthesize(it.bytes, port) }
+    }
+
     private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null)
 
     /** One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. */

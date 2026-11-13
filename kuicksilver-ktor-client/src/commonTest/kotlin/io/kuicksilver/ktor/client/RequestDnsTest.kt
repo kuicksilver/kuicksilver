@@ -268,6 +268,16 @@ class RequestDnsTest {
             assertEquals(listOf("[64:ff9b::5db8:d822]:443"), name.addresses(false).map { it.toString() })
         }
 
+    /** The HTTP/3 pool compares a connection's address with these: the A answer and, on an IPv6-only network, its synthesis. */
+    @Test fun answeredDestinationsAddTheNat64Synthesis() =
+        runTest {
+            val dns = RequestDns(nat64(), dual) { _, v6 -> if (v6) emptyList() else listOf(global) }
+            assertEquals(
+                listOf("93.184.216.34:443", "[64:ff9b::5db8:d822]:443"),
+                dns.answeredDestinations("a.example", 443).map { it.toString() },
+            )
+        }
+
     @Test fun negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4() =
         runTest {
             val dns = RequestDns(nat64(), dual) { _, _ -> error("not looked up") }

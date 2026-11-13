@@ -62,6 +62,7 @@ import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.activePath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -92,6 +93,26 @@ internal class H3Target(
 ) {
     val key: String get() = "$originHost|$host:$port"
 }
+
+/** The origin host of an [H3Target.key]. */
+private fun originOfKey(key: String): String = key.substringBefore('|')
+
+/**
+ * The address bytes of [a] (4 or 16), an IPv4-mapped IPv6 address as its IPv4 one. The pool connects to address literals
+ * only, so the bytes are at hand: its text, else (the JVM can report a reverse name for it) the address the socket holds.
+ */
+private fun addressBytes(a: InetSocketAddress): ByteArray? =
+    (
+        io.kuicksilver.ktor.client
+            .parseIpLiteral(a.hostname) ?: runCatching { a.resolveAddress() }.getOrNull()
+    )?.let(::unmapped)
+
+private fun unmapped(b: ByteArray): ByteArray =
+    if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) {
+        b.copyOfRange(12, 16)
+    } else {
+        b
+    }
 
 /** A failure that happened before the request could have reached the server: safe to repeat on HTTP/1.1. */
 internal class H3NotSent(
@@ -177,7 +198,8 @@ internal class H3Entry(
 }
 
 /**
- * HTTP/3 connections of one engine: one client endpoint, one connection per (origin, alternative) reused while it is open.
+ * HTTP/3 connections of one engine: one client endpoint, one connection per (origin, alternative) reused while it is open,
+ * and alternatives of one origin at the same address and port share one ([shareSameAddress], RFC 9114 section 3.3).
  * That is the per-origin cap: requests multiplex on it, and when the peer's MAX_STREAMS credit is used up a request waits
  * for the next StreamsAvailable inside `openBidi` (bounded by the request timeout) instead of opening another
  * connection or failing. A connection without requests for `idleTimeout`, or past `maxConnectionLifetime` once its
@@ -301,7 +323,7 @@ internal class H3Pool(
     /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
     internal suspend fun dropConnectionsForTest(): List<Http3Connection> =
         lock.withLock {
-            val l = connections.values.mapNotNull { it.deferred.getCompletedOrNull() }
+            val l = connections.values.distinct().mapNotNull { it.deferred.getCompletedOrNull() }
             connections.clear()
             l
         }
@@ -309,14 +331,14 @@ internal class H3Pool(
     /** Test hook: the open connections. */
     internal suspend fun connectionsForTest(): List<Http3Connection> =
         lock.withLock {
-            connections.values.mapNotNull { it.deferred.getCompletedOrNull() }
+            connections.values.distinct().mapNotNull { it.deferred.getCompletedOrNull() }
         }
 
     /** Entries of the connection map, retired ones included, open or not (the resource probe). */
-    internal suspend fun connectionsForProbe(): Int = lock.withLock { connections.size + retired.size }
+    internal suspend fun connectionsForProbe(): Int = lock.withLock { (connections.values + retired).distinct().size }
 
     /** Test hook: the (origin, alternative) entries tracked, retired ones included. */
-    internal suspend fun entryCountForTest(): Int = lock.withLock { connections.size + retired.size }
+    internal suspend fun entryCountForTest(): Int = lock.withLock { (connections.values + retired).distinct().size }
 
     /** Test hook: whether the endpoint is bound. */
     internal val endpointBoundForTest: Boolean get() = endpoint != null
@@ -521,7 +543,8 @@ internal class H3Pool(
     suspend fun goAwayAll(scope: CoroutineScope) {
         val drained = ArrayList<Pair<H3Entry, Http3Connection>>()
         lock.withLock {
-            for (e in connections.values) {
+            for (e in connections.values.distinct()) {
+                if (e in retired) continue
                 val c = e.deferred.getCompletedOrNull()
                 if (c != null) {
                     e.drain()
@@ -567,6 +590,89 @@ internal class H3Pool(
 
     private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
 
+    /** Test hook: the connections [shareSameAddress] let a destination share (one per sharing). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val sharedForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /**
+     * RFC 9114 section 3.3: "Clients SHOULD NOT open more than one HTTP/3 connection to a given IP address and UDP port,
+     * where the IP address and port might be derived from a URI, a selected alternative service ([ALTSVC]), a configured
+     * proxy, or name resolution of any of these" and "SHOULD avoid creating multiple connections with the same
+     * configuration". Before [t] gets a connection of its own, a live connection of the same origin to another destination
+     * name (the origin's host, an `Alt-Svc` or HTTPS-record target, an address literal) is looked for whose current remote
+     * address and port are among the addresses [t]'s name resolves to now; when one is found, [t] is filed under it and
+     * shares it. The same origin means the same configuration: the TLS configuration (server_name, the name the
+     * certificate is checked against, trust, client identity) is the origin's, ALPN, QUIC and HTTP/3 settings are the
+     * pool's. The address compared is that of the connection's active path, where the race's winner and any migration
+     * left it (a client migration changes only the local side; a server's preferred address moves it); the destination's
+     * addresses are those of its current answers, the NAT64 synthesis of an IPv6-only network included. A setup of the
+     * same origin still in its handshake is waited for first. Nothing is resolved when the origin has no other connection.
+     */
+    private suspend fun shareSameAddress(
+        t: H3Target,
+        dns: RequestDns,
+    ) {
+        val now = clock()
+
+        fun H3Entry.shareable(): Http3Connection? = deferred.getCompletedOrNull()?.takeIf { it.usable() && !drained && !pastLifetime(now) }
+        val candidates =
+            lock.withLock {
+                val existing = connections[t.key]
+                if (existing != null && (!existing.deferred.isCompleted || existing.shareable() != null)) return
+                connections.entries
+                    .filter { (k, e) ->
+                        k != t.key && originOfKey(k) == t.originHost && (!e.deferred.isCompleted || e.shareable() != null)
+                    }.map { it.value }
+                    .distinct()
+            }
+        if (candidates.isEmpty()) return
+        val addresses =
+            try {
+                dns.answeredDestinations(t.host, t.port).map { unmapped(it.bytes) to it.port }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                return // the setup resolves again and reports the failure
+            }
+        // a sibling still in its handshake has no address yet: its outcome is waited for (bounded by its own connect timeout),
+        // so two names of one address set up at once do not end as two connections
+        for (e in candidates) {
+            if (!e.deferred.isCompleted) {
+                try {
+                    e.deferred.await()
+                } catch (x: CancellationException) {
+                    if (!e.deferred.isCancelled) throw x // our own cancellation; a cancelled setup is only no candidate
+                } catch (_: Throwable) {
+                    // its setup failed: no candidate
+                }
+            }
+        }
+        val match =
+            candidates.firstOrNull { e ->
+                val remote =
+                    e
+                        .shareable()
+                        ?.quic
+                        ?.let { it.activePath ?: it.paths.firstOrNull() }
+                        ?.remoteAddress
+                val bytes = remote?.let(::addressBytes)
+                bytes != null && addresses.any { (b, port) -> port == remote.port && b.contentEquals(bytes) }
+            } ?: return
+        lock.withLock {
+            val existing = connections[t.key]
+            if (existing != null && (!existing.deferred.isCompleted || existing.shareable() != null)) return
+            if (match.shareable() == null || connections.values.none { it === match }) return
+            // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it
+            val old = existing?.deferred?.getCompletedOrNull()
+            if (existing != null && old != null && old.usable()) {
+                if (existing !in retired) retired += existing
+                existing.retire()
+            }
+            connections[t.key] = match
+            sharedForTest.addAndFetch(1)
+        }
+    }
+
     /** An open connection to [t], connecting (once, shared by concurrent callers) when needed. */
     suspend fun connection(
         t: H3Target,
@@ -606,6 +712,7 @@ internal class H3Pool(
         dns: RequestDns,
     ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
+        shareSameAddress(t, dns)
         val (e, connect) =
             lock.withLock {
                 val existing = connections[t.key]
@@ -617,7 +724,7 @@ internal class H3Pool(
                 } else {
                     // past its lifetime with requests in flight: it finishes them first ([evictExpired] closes it)
                     if (existing != null && done != null && done.usable()) {
-                        retired += existing
+                        if (existing !in retired) retired += existing
                         existing.retire()
                     }
                     H3Entry(CompletableDeferred(), clock()).also { connections[t.key] = it } to true
@@ -867,7 +974,7 @@ internal class H3Pool(
                 }
             }
         }
-        toClose.forEach { it.close() }
+        toClose.distinct().forEach { it.close() }
         return next
     }
 
