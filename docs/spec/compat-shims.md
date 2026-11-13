@@ -168,7 +168,11 @@ copy is a duplicate, RFC 9000 §12.3) and it is acknowledged, at once when a PIN
 IsInitial source CID, `src/core/connection.c`), and takes its own SCID only when the listener accepts the connection
 (`QuicConnGenerateNewSourceCid` in `src/core/listener.c`): one connection, two SCIDs, every packet numbered from one
 counter (`Send.NextPacketNumber`), and every sent packet, ACK-only ones included, tracked as sent
-(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic.
+(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic. After a Retry the same
+holds with the Retry SCID as the DCID: msquic makes the connection from the Initial that carries its Retry token
+(`QuicBindingCreateConnection`, `src/core/binding.c`) as from a first Initial. Any server that keeps its Retry SCID (ours
+by default) therefore gets the exception for an ACK-only Initial too; its SCID is the DCID already, so it changes nothing
+there.
 
 **Standard text.** RFC 9000 §7.2: "Once a client has received a valid Initial packet from the server, it MUST discard
 any subsequent packet it receives on that connection with a different Source Connection ID." and "A client MUST change
@@ -178,7 +182,7 @@ owner keeps it for 0.3.0 as an approved deviation; the §7.2 row of the summary 
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380` (the decision, with
-`onlyAcks` at :493), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
+`onlyAcks` at :497), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.

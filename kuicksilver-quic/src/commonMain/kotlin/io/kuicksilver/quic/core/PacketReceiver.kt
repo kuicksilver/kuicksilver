@@ -386,7 +386,11 @@ internal class PacketReceiver(
             // until quic-go's 5 s handshake idle timeout ended the attempt (interop amplificationlimit). Only the two section 7.2
             // MUSTs are departed from: the provisional packet's number is recorded (section 12.3: a copy is a duplicate; msquic
             // numbers all packets of the connection from one counter, so its later Initials continue above it) and acknowledged
-            // like any other (section 13.2.1: one with a PING at once; the ACK goes to the DCID, which msquic still accepts)
+            // like any other (section 13.2.1: one with a PING at once; the ACK goes to the DCID, which msquic still accepts).
+            // After a Retry the DCID is the Retry SCID, and the exception stays: msquic makes the connection from the Initial
+            // that carries its Retry token (binding.c, QuicBindingCreateConnection) exactly as from a first Initial, so it sends
+            // from the Retry SCID until its listener accepts. A server that keeps its Retry SCID gets the same treatment for an
+            // ACK-only Initial; its SCID equals the DCID, so nothing changes until its next Initial fixes it
             provisional = c.remoteCid.contentEquals(data, hv.scidOff, hv.scidLen) && onlyAcks()
             if (!provisional) {
                 val scid =
