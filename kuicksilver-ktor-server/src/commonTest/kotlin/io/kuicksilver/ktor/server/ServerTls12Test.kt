@@ -319,7 +319,7 @@ class ServerTls12Test {
 
     /**
      * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
-     * a connector serving HTTP/2 over TLS 1.2 with a certificate whose key is not RSA is logged at startup, one with an RSA
+     * a connector serving HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key is logged at startup, one with an RSA
      * key is not, and neither is one without TLS 1.2.
      */
     @Test fun negative_http2OverTls12WithoutRsaCertificateIsLogged() =
@@ -344,7 +344,7 @@ class ServerTls12Test {
                 server.startSuspend(wait = false)
                 try {
                     server.engine.resolvedConnectors()
-                    return log.lines.any { it.level == "WARN" && "the certificate has no RSA key" in it.message }
+                    return log.lines.any { it.level == "WARN" && "the certificate has no rsaEncryption key" in it.message }
                 } finally {
                     server.stop(100, 500)
                 }

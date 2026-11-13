@@ -133,7 +133,7 @@ public class KuicksilverTlsConnector private constructor(
          * however often its ticket is renewed (at most half a
          * [rotateEvery][io.kuicksilver.tls.SessionTicketConfig.rotateEvery] period; explicit ticket keys are rotated by the
          * application, which then keeps that period itself). HTTP/2 (when on) is offered over TLS 1.2 as well (RFC 9113
-         * section 9.2); with a certificate whose key is not RSA the start logs a warning, since RFC 9113 section 9.2.2 asks
+         * section 9.2); with a certificate without an rsaEncryption key (an EC or an RSA-PSS one) the start logs a warning, since RFC 9113 section 9.2.2 asks
          * such deployments to support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256. HTTP/3 stays TLS 1.3 (RFC 9001 section 4.2).
          */
         @ExperimentalKuicksilverApi

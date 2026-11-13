@@ -9,7 +9,7 @@ import io.kuicksilver.tls.TlsVersions
 /**
  * RFC 9113 section 9.2.2: "deployments of HTTP/2 that use TLS 1.2 MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
  * [TLS-ECDHE] with the P-256 elliptic curve [RFC8422]". That suite needs an RSA certificate; a connector that serves HTTP/2
- * over TLS 1.2 with another key is logged at startup, since TLS 1.2 clients that offer only RSA suites cannot connect to it.
+ * over TLS 1.2 with a key other than rsaEncryption (an EC key, or an RSA-PSS one, which serves that suite only to clients that offer the RSA-PSS signature schemes) is logged at startup, since TLS 1.2 clients that offer only RSA suites cannot connect to it.
  * Only the connector's own identity is looked at: identities an `sniSelector` returns are not known before their handshakes.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -22,9 +22,11 @@ internal fun warnTls12H2WithoutRsa(
     val leaf = tls.identity.chain.firstOrNull() ?: return
     if (leaf.hasRsaKey() != false) return
     log.warn(
-        "HTTP/2 over TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no RSA key, so the suite RFC 9113 section 9.2.2 " +
-            "requires of such deployments (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) cannot be negotiated, and TLS 1.2 clients " +
-            "that offer only RSA suites cannot connect; serve them with an RSA certificate (docs/guide/ktor.md, \"TLS 1.2 on the server\")",
+        "HTTP/2 over TLS 1.2 on ${tls.host}:${tls.port}: the certificate has no rsaEncryption key (an RSA-PSS key serves " +
+            "that suite only to clients that also offer the RSA-PSS signature schemes), so the suite RFC 9113 section 9.2.2 " +
+            "requires of such deployments (TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256) cannot be negotiated with every client, " +
+            "and TLS 1.2 clients that offer only RSA suites may not connect; serve them with an rsaEncryption certificate " +
+            "(docs/guide/ktor.md, \"TLS 1.2 on the server\")",
     )
 }
 

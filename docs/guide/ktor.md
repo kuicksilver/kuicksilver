@@ -302,7 +302,7 @@ proxies and scanners): any client can then end up on TLS 1.2.
 - An ECDSA certificate serves the TLS 1.2 clients that offer an ECDHE-ECDSA suite (most do); a client that offers only
   RSA suites, such as `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, the suite RFC 9113 makes mandatory for HTTP/2 over
   TLS 1.2 deployments, needs a connector with an RSA certificate (2048 bits or more). With `http2 = true` the start
-  logs a warning for a TLS 1.2 connector whose own certificate has no RSA key (identities an `sniSelector` returns are
+  logs a warning for a TLS 1.2 connector whose own certificate has no rsaEncryption key (an EC or an RSA-PSS key; identities an `sniSelector` returns are
   not checked).
 - With `http2 = true`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2); a client's attempt to renegotiate
   ends an HTTP/2 connection with GOAWAY PROTOCOL_ERROR, an HTTP/1.1 one goes on with the renegotiation refused.

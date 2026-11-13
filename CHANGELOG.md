@@ -570,7 +570,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   nonce, derived from the private key, the message digest and fresh random bytes, since OpenSSL 3.5's TLS code asks for
   no other. Recorded as a deviation in docs/spec/rfc/9325.md, until OpenSSL offers a built-in deterministic provider or
   libssl support for it.
-- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate whose key is not RSA logs a warning at
+- Ktor server: a connector that serves HTTP/2 over TLS 1.2 with a certificate without an rsaEncryption key (an EC or an RSA-PSS key) logs a warning at
   startup (RFC 9113 section 9.2.2: such deployments "MUST support TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256").
 - `KuicksilverTlsConnector.tlsConfig(alpn)` returns the TCP configuration with the connector's `versions`, or a TLS
   1.3-only one when `alpn` holds `h3`.
