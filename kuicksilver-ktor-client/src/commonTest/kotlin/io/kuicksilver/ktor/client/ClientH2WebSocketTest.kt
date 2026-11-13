@@ -35,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -566,10 +567,24 @@ class ClientH2WebSocketTest {
                             }
                         }
                         assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
-                        // and so is the sender: settled, it sends nothing more (one array shared by its frames, so one
-                        // that is not held costs the heap little while this waits: it is past 300 000 frames 300 ms on)
-                        delay(100.milliseconds)
-                        val settled = sent.load()
+                        // and so is the sender: it settles (two reads 50 ms apart agree) within the cap, and then sends
+                        // nothing more. One that is not held never settles; it is past the cap within milliseconds, where the
+                        // wait stops (its frames share one array, so they cost the heap little meanwhile)
+                        val settled =
+                            withTimeoutOrNull(5.seconds) {
+                                var previous = sent.load()
+                                while (previous <= HELD_SENDER_MAX_FRAMES) {
+                                    delay(50.milliseconds)
+                                    val now = sent.load()
+                                    if (now == previous) break
+                                    previous = now
+                                }
+                                previous
+                            }
+                        assertTrue(
+                            settled != null && settled <= HELD_SENDER_MAX_FRAMES,
+                            "the sender did not settle: ${sent.load()} frames sent",
+                        )
                         delay(250.milliseconds)
                         val later = sent.load()
                         assertEquals(settled, later, "the sender went on: $settled frames sent, then $later")
