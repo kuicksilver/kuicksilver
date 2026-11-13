@@ -35,6 +35,7 @@ public interface QuicConnection : AutoCloseable {
      * The certificate chain this side presented in the handshake, leaf first (a server's identity snapshot taken for this
      * connection); empty without one. A server checks the requests it serves against it (RFC 9110 section 7.4).
      */
+    @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = emptyList()
 
     /**

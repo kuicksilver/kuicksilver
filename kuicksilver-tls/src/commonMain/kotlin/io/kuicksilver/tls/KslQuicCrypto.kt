@@ -559,6 +559,7 @@ internal class KslQuicTlsSession(
         }
     }
 
+    @ExperimentalKuicksilverApi
     override val localCertificates: List<Certificate> get() = ctx.localChain
 
     override val peerCertificates: List<Certificate> get() =

@@ -117,6 +117,7 @@ public class TlsConnection private constructor(
      * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
      * resumption, the identity chosen for the resumed handshake. Empty without one, or before the handshake chose it.
      */
+    @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = (overrideCtx?.ctx ?: ctx).localChain
 
     /** The application protocol both sides agreed on (RFC 7301), or null when ALPN was not negotiated. */

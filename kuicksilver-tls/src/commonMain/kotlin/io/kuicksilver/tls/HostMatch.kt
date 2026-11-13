@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+
 /**
  * Whether this certificate's subjectAltName names [host] (RFC 9525 section 6.3), the name check a client makes before it
  * attributes authority for [host] to a server presenting it (RFC 9110 section 4.3.4); trust in the chain is not looked at.
@@ -13,6 +15,7 @@ package io.kuicksilver.tls
  * the client verifier uses. The subject common name is never used (RFC 9110 section 4.3.4: no CN-ID). A certificate whose
  * names cannot be read matches nothing.
  */
+@ExperimentalKuicksilverApi
 public fun Certificate.matchesHost(host: HostName): Boolean {
     val (dns, ips) =
         try {

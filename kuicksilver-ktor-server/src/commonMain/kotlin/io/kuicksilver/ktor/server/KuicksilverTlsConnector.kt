@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorConfig
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.ClientAuth
@@ -49,6 +50,7 @@ public class KuicksilverTlsConnector private constructor(
      * Whether every connection to this connector comes from a trusted gateway, the one exception RFC 9110 section 7.4 makes
      * to rejecting misdirected requests; see [Builder.trustedGateway].
      */
+    @ExperimentalKuicksilverApi
     public val trustedGateway: Boolean,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
@@ -122,6 +124,7 @@ public class KuicksilverTlsConnector private constructor(
          * 7.4: "Unless the connection is from a trusted gateway") that forwards requests for names this certificate does
          * not carry, such as a TLS-terminating proxy that re-encrypts with an internal certificate.
          */
+        @ExperimentalKuicksilverApi
         public var trustedGateway: Boolean = false
 
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */

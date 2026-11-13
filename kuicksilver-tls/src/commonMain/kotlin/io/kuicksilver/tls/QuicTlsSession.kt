@@ -275,6 +275,7 @@ public interface QuicTlsSession : AutoCloseable {
      * The chain this side presents, leaf first: a server's identity snapshot taken for this handshake, a client's certificate;
      * empty without one. The default (an implementation without certificates) is empty.
      */
+    @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = emptyList()
 
     /** The application protocol agreed through ALPN (RFC 7301), or null before the handshake completes. */
