@@ -488,8 +488,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   from the client's own DCID without fixing the server's SCID (msquic takes its real SCID only once its listener accepts
   the connection), which departs from two MUSTs of §7.2 ("MUST discard any subsequent packet ... with a different
   Source Connection ID", "MUST change the Destination Connection ID ... in response to only the first received
-  Initial"). The behaviour is that of 0.2.1 and stays, as a deviation approved for this release, until msquic answers
-  from its own SCID (docs/spec/rfc/9000.md, docs/spec/compat-shims.md).
+  Initial"). The exception, there since 0.2.1, stays as an accepted deviation until msquic answers from its own SCID
+  (docs/spec/rfc/9000.md, docs/spec/compat-shims.md).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
@@ -744,6 +744,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client: the provisional server Initial (ACK-only, from the client's own DCID, as msquic sends before its listener
+  accepts) has its packet number recorded and is acknowledged like any other Initial. Before, a copy of it was processed
+  again (RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has
+  not processed another packet with the same packet number") and one carrying a PING was never acknowledged (section
+  13.2.1: "MUST acknowledge all ack-eliciting Initial and Handshake packets immediately").
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume
