@@ -14,7 +14,7 @@ and [When QUIC does not help](#when-quic-does-not-help) too.
 
 <!-- why-quic:begin env -->
 - Measured 2026-11-09T01:48:12Z on commit `4c246665652e`.
-- Host: Apple M4 Max, 14 CPUs, Darwin 25.6.0; Docker: server 29.9.2, linux/arm64 (Docker Desktop, kernel 7.0.14-linuxkit, 14 CPUs, 15690371072 bytes).
+- Host: an Apple Silicon Mac (arm64), 14 CPUs, a recent macOS; Docker: server 29.9.2, linux/arm64 (Docker Desktop, kernel 7.0.14-linuxkit, 14 CPUs, 15690371072 bytes).
 - openjdk version "21.0.12.1" 2026-08-18; OkHttp `okhttp-jvm-5.3.2`.
 - TCP: congestion control cubic, cubic hystart 1 (detect 3); libksl linux-aarch_64/libksl_7_linux_aarch_64.so sha256 c59eb480e6df4cdbe49f5884b0c4c6e6c7156ecd90f7f7a0fb31e6f5657f2f27; kuicksilver-soak jar sha256 7209450e1d0343a51a0bd86191450316ad364fcfd47c55c2df4135f89f3a60c5.
 - Network: loopback, MTU 1500, TSO/GSO/UDP segmentation off, tcp_no_metrics_save=1, netem delay RTT/2 per crossing (RTT/4 for rebind), loss 1-in-N per packet on ingress, rate 200mbit end to end (twice that per crossing for rebind), netem queue = the rate's bytes in twice the one-way delay + 50 ms (at least 1000 packets); 0 packets dropped by the kernel's input backlog during the run (VM netdev_max_backlog 100000 for the run).

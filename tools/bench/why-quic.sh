@@ -165,7 +165,7 @@ run() {
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     dirty=$(git -C "$root" status --porcelain --untracked-files=no | awk '{print $2}' | paste -sd ' ' -)
     echo "commit: $(git -C "$root" rev-parse HEAD)${dirty:+ (the tree had uncommitted edits to: $dirty)}"
-    echo "host: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs, $(uname -sr)"
+    echo "host: $(uname -s) $(uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs"   # the kind of host only: no CPU model or OS build (published with the results)
     echo "docker: $(docker version -f 'server {{.Server.Version}}, {{.Server.Os}}/{{.Server.Arch}}') ($(docker info -f '{{.OperatingSystem}}, kernel {{.KernelVersion}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes'))"
     echo "image: $image $(docker image inspect -f '{{.Id}}' "$image")"
     echo "java: $(docker exec "$name" java -version 2>&1 | head -1)"

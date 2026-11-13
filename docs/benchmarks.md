@@ -19,7 +19,7 @@ Docker and every image digest). `tools/bench/run-table.sh` regenerates all of it
 
 ## Read this first
 
-- **The amd64 peers run emulated.** The host is an Apple Silicon Mac (M4 Max, 14 cores) with Docker Desktop (arm64
+- **The amd64 peers run emulated.** The host is an Apple Silicon Mac (14 cores) with Docker Desktop (arm64
   Linux VM, 14 vCPUs, 15 GB). The quiche and msquic interop images exist only for amd64, so they ran under Rosetta 2
   emulation inside the VM; quinn's image, Kuicksilver's images and the runner's simulator are native arm64. Every
   number of an emulated implementation is a lower bound on what it does on real amd64 hardware. To size the
@@ -279,7 +279,7 @@ off the Native server and 0.3 off the JVM server in that session (a first form o
 above replaced).
 
 - **Kotlin/Native code generation in the QUIC core.** The core benchmark (`CoreThroughputBenchmark`: two cores back to
-  back in memory, one thread, M4 Max) moves 2371 MiB/s on the JVM and 586 MiB/s on Kotlin/Native with the Null crypto
+  back in memory, one thread, an Apple Silicon Mac) moves 2371 MiB/s on the JVM and 586 MiB/s on Kotlin/Native with the Null crypto
   (802 and 472 MiB/s with AES-128-GCM through `ksl`, which costs the JVM more: its JNI calls take direct buffers). In
   the Native profile, 16 % of the time was `PacketBuffer.get`/`set`, which called the shared range check with a `String`
   argument per byte; with the check inline, 747 and 542 MiB/s. Next in that profile: `Duration` arithmetic on the
@@ -315,7 +315,7 @@ the same load, 12 000 handshakes, 3 940 samples):
 
 - **The key share is not the explanation.** The handshake client (Kuicksilver's) offers X25519MLKEM768 and X25519.
   Kuicksilver's server picks the hybrid; quinn's and msquic's interop servers pick X25519 (`key_share` group 0x11EC vs
-  0x001D in the ServerHello; msquic also picks AES-256-GCM). In OpenSSL alone (`tools/bench/ksl-ctx-bench.sh`, M4 Max,
+  0x001D in the ServerHello; msquic also picks AES-256-GCM). In OpenSSL alone (`tools/bench/ksl-ctx-bench.sh`, an Apple Silicon Mac,
   three runs) the server's share of a handshake is 131 µs with the hybrid and 102 µs with X25519: ML-KEM-768 costs the
   server 29 µs, 3 % of 0.92 ms, plus a ClientHello in two datagrams. The per-session `SSL_CTX` costs 53 µs more; 0.3.0
   shares one per server configuration ([0.3.0 work in progress](#030-work-in-progress)).
@@ -339,7 +339,7 @@ did, not how Kuicksilver compares. The rate against quinn (the handshake table a
 `HandshakeBenchmark` runs whole QUIC connections between two `ConnectionCore`s under virtual time (a full 1-RTT
 handshake with ksl crypto, the client's close, both cores closed); `EndpointHandshakeBenchmark` runs them through two
 endpoints over a `MemoryNetwork` (the runtimes, coroutines and timers of both sides included). Both measure client and
-server together in one process. Medians of three runs each, before and after interleaved, M4 Max with other builds
+server together in one process. Medians of three runs each, before and after interleaved, an Apple Silicon Mac with other builds
 running (load average 2–4); JVM: JMH, 1 fork, 3 × 2 s warm-up, 5 × 2 s; Native: kotlinx-benchmark, same iterations.
 
 | connections per second | before | after |
@@ -386,7 +386,7 @@ alone (`ConnectionCore` pairs under virtual time), through two `QuicEndpoint`s o
 connections that each carried one GET (control and QPACK streams open, an `acceptRequest` loop per server connection);
 then the managed heap allocated per GiB moved (and, since P.2, the same over loopback UDP: the `udp` section). Each idle measurement is taken with both sides, then again after the client
 sides closed without telling the server, which leaves the server's share. Client and server run in one process, without
-sockets, so the numbers are the library's, not the kernel's. M4 Max, macOS, JVM 21 (`-Xmx1g`), loaded host (load average
+sockets, so the numbers are the library's, not the kernel's. An Apple Silicon Mac, macOS, JVM 21 (`-Xmx1g`), loaded host (load average
 3–5), local; single runs, before = `9ed03deb0` (the benchmark), after = `2c0dae80c` (the three `perf(quic)` commits below).
 
 | per idle connection (KB = 1000 bytes) | before | after |
@@ -469,7 +469,7 @@ connection.
 
 The memory benchmark's allocation per GiB went over a `MemoryNetwork` only, whose per-datagram copy a socket does not
 make; its `udp` section (`tools/bench/memory.sh`, `MemoryBench`) now moves the same stream over loopback through the
-accelerated socket (`KslDatagramIo`), client and server in one process with ksl crypto. M4 Max, macOS, JVM 21, loaded
+accelerated socket (`KslDatagramIo`), client and server in one process with ksl crypto. An Apple Silicon Mac, macOS, JVM 21, loaded
 host (load average 2-9), local; single runs, before = `614733d0d` (P.5), after = `6db77c3e3`.
 
 | | before | after |
@@ -517,7 +517,7 @@ its own `SO_REUSEPORT` socket and the kernel balances the 8 client flows. `hands
 (P-256 certificate), 4 at a time per client, the client connects and closes; `bulk8`: 8 connections, one per client, each
 moving 16 MiB to the server with ksl crypto (AES-GCM); `bulk8null`: the same with the Null crypto provider, the upper bound
 the receive path leaves. Medians of 5 iterations of 2 s after 3 of warm-up, [min–max] in brackets; JVM: JMH, 1 fork.
-M4 Max (10 performance and 4 efficiency cores), macOS 26.7, JVM 21; Linux: the same JVM benchmark in Docker Desktop's
+An Apple Silicon Mac (10 performance and 4 efficiency cores), a recent macOS, JVM 21; Linux: the same JVM benchmark in Docker Desktop's
 `linux/arm64` VM (14 CPUs, kernel 7.0, Temurin 21) against the manylinux `libksl.so`. Measured on `9869a72a3` plus the
 benchmark; no other build ran, but the host was not quiet (load average 4–9 with the runs, macOS background daemons at
 times). Windows: not measured yet; the manual `windows-loops-bench` job of `build.yml` (workflow_dispatch with
@@ -577,7 +577,7 @@ warm-up of a separate run with only that parameter set.
 ### One connection over loopback (2026-11-08)
 
 One connection over loopback moved 25–35 MiB/s with a third to half of a core busy. Sampled every 0.5 ms during a
-256 MiB transfer (JVM, the setup of `UdpThroughputBenchmark`, Null crypto, CUBIC; M4 Max, macOS, quiet host):
+256 MiB transfer (JVM, the setup of `UdpThroughputBenchmark`, Null crypto, CUBIC; an Apple Silicon Mac, macOS, quiet host):
 
 | | before | after |
 |---|---|---|

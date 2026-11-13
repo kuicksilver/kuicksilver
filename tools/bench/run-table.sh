@@ -55,7 +55,7 @@ names=(kuicksilver kuicksilver-native "${peers[@]}")
 {
   echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "commit: $(git rev-parse HEAD)"
-  echo "host: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs, $(uname -sr)"
+  echo "host: $(uname -s) $(uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc) CPUs"   # the kind of host only: no CPU model or OS build (published with the results)
   echo "docker: $(docker version -f 'server {{.Server.Version}}, {{.Server.Os}}/{{.Server.Arch}}') ($(docker info -f '{{.OperatingSystem}}, {{.NCPU}} CPUs, {{.MemTotal}} bytes'))"
   echo "runner: $(cat tools/interop/runner.lock)"
   for n in "${names[@]}" kuicksilver-native-amd64; do

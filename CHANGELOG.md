@@ -132,7 +132,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   that falls more than 512 datagrams behind loses its own datagrams, counted in the new
   `EndpointStats.datagramsDispatchDropped`; the receiver never waits for it. Linux and Android keep a socket per loop.
   Handshakes and many connections spread over the loops; one connection is not faster with more loops. See
-  docs/guide/quic.md, "Several loops on one port". Measured on an M4 Max (docs/benchmarks.md, "Several loops on one
+  docs/guide/quic.md, "Several loops on one port". Measured on an Apple Silicon Mac (docs/benchmarks.md, "Several loops on one
   socket"): 4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes,
   capped by the receiver's one `recvmsg` per datagram on Darwin.
 - Native: `KSL_GET_RENEGOTIATION`, a getter that reports a peer's TLS 1.2 renegotiation attempt on an established TCP
@@ -746,7 +746,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   16 datagrams or 1 ms, so a stream's writer waited up to 1 ms per write while the sender sat idle. They now run before
   its next batch, and the receiver does not wait in the socket while one is queued; a stream's reader still runs every
   16 datagrams or 1 ms, so a paced sender's client costs no more CPU (quinn → JVM client 8.8 s/GB before and after).
-  Over loopback (M4 Max): 29 -> 213 MiB/s on the JVM, 27 -> 209 MiB/s on Kotlin/Native. On Linux 8 connections over 4
+  Over loopback (an Apple Silicon Mac): 29 -> 213 MiB/s on the JVM, 27 -> 209 MiB/s on Kotlin/Native. On Linux 8 connections over 4
   loops move 3.2 times what one loop moves instead of 0.6 times (docs/benchmarks.md, "One connection over loopback").
 - QUIC (performance): the packet path on the accelerated socket allocates nothing per datagram: the connection ID table
   routes a datagram without boxing its hash, the endpoint loop takes a flowing socket's batches and flushes (a send on

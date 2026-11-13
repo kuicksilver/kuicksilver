@@ -1,6 +1,6 @@
 date: 2026-11-09T01:48:12Z
 commit: 4c246665652ee5eb2c527958f4443663f3b679ab
-host: Apple M4 Max, 14 CPUs, Darwin 25.6.0
+host: an Apple Silicon Mac (arm64), 14 CPUs, a recent macOS
 docker: server 29.9.2, linux/arm64 (Docker Desktop, kernel 7.0.14-linuxkit, 14 CPUs, 15690371072 bytes)
 image: kuicksilver-interop:local sha256:cd0e1d7b53cd505f51e17e05fb166bff8d69521a3946c700d360252963a57dc3
 java: openjdk version "21.0.12.1" 2026-08-18

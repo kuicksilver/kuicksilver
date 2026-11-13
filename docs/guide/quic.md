@@ -836,7 +836,7 @@ What each mode buys: handshakes (most of a server's CPU) and the work of many co
 In-process routing keeps receiving sequential: one receive system call per datagram on Darwin, so a bulk transfer over
 many connections gains less than handshakes do, and the gain stops where that one receiver is saturated. One connection
 never runs faster with more loops: it lives on one loop, by design. More loops than cores gain nothing. Measured on an
-M4 Max with in-process routing ([Benchmarks: Several loops on one socket](../benchmarks.md#several-loops-on-one-socket-s34-2026-11-07)):
+Apple Silicon Mac with in-process routing ([Benchmarks: Several loops on one socket](../benchmarks.md#several-loops-on-one-socket-s34-2026-11-07)):
 4 loops complete 3.3–3.5 times the handshakes of one; 8 bulk connections move 1.2–1.3 times the bytes, where the
 receiver's one `recvmsg` per datagram is saturated.
 
