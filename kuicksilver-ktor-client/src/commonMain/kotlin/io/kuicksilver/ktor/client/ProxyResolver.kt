@@ -610,6 +610,7 @@ internal fun pacUrlIsPrivate(pacUrl: String?): Boolean {
 
         "file" -> {
             '\\' !in rest &&
+                !rest.contains("%5c", ignoreCase = true) && // an encoded backslash can spell a UNC path too
                 when {
                     rest.startsWith("////") -> false
                     rest.startsWith("///") -> true

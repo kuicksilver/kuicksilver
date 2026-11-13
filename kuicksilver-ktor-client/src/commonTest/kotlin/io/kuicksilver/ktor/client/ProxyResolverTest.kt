@@ -481,7 +481,13 @@ class ProxyResolverTest {
      */
     @Test fun negative_remoteFilePacUrlGetsTheOriginOnly() {
         val url = Url("wss://h/c?t=1")
-        for (configUrl in listOf("file://srv/share/p.pac", "file:////srv/share/p.pac", "FILE://srv/p.pac", "file:\\\\srv\\p.pac")) {
+        for (configUrl in listOf(
+            "file://srv/share/p.pac",
+            "file:////srv/share/p.pac",
+            "FILE://srv/p.pac",
+            "file:\\\\srv\\p.pac",
+            "file:///%5C%5Csrv/share/p.pac",
+        )) {
             assertEquals("wss://h/", winPacTarget(url, detect = false, configUrl = configUrl, fullWebSocketUrl = true), configUrl)
         }
         for (configUrl in listOf("file:///c:/p.pac", "file://localhost/c:/p.pac", "FILE://LOCALHOST/p.pac", "HTTPS://cfg.test/p.pac")) {
