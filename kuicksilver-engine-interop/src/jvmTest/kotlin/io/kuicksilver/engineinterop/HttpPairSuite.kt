@@ -287,18 +287,27 @@ internal abstract class HttpPairSuite(
         }
 
     /**
-     * A request timeout while the body is still arriving fails the call with Ktor's HttpRequestTimeoutException, the
-     * server's write side sees the abort once released, and the client goes on.
+     * A request timeout while the body is still arriving (the response stalls after its first piece) fails the call with
+     * Ktor's HttpRequestTimeoutException; once the server writes on, its write sees the abort (a stream reset, or the
+     * connection closed), and the client goes on.
      */
-    @Test fun requestTimeoutMidBody() =
+    @Test open fun requestTimeoutMidBody() =
         interopTest {
             val id = UUID.randomUUID().toString()
             val hold = server.probe.hold(id)
-            assertFailsWith<HttpRequestTimeoutException> {
-                client.get(server.url("/hold/$id")) { timeout { requestTimeoutMillis = 1_000 } }.bodyAsText()
-            }
+            val e =
+                runCatching {
+                    client
+                        .get(
+                            server.url("/stall/$id"),
+                        ) { timeout { requestTimeoutMillis = 1_000 } }
+                        .bodyAsText()
+                }.exceptionOrNull()
+            assertTrue(generateSequence(e) { it.cause }.any { it is HttpRequestTimeoutException }, "the call ended with $e")
             assertTrue(hold.entered.isCompleted, "the handler started")
             hold.release.complete(Unit)
+            val cause = withTimeout(20.seconds) { hold.aborted.await() }
+            assertTrue(cause !is WrittenToTheEnd, "the server wrote the whole response")
             assertEquals("hello", client.get(server.url("/hello")).bodyAsText())
         }
 
@@ -323,7 +332,9 @@ internal abstract class HttpPairSuite(
                     s.probe.stopping.await()
                     hold.release.complete(Unit)
                     assertEquals("first;second", call.await())
-                    stop.join()
+                    // ours ends once its last call has: no wait for idle clients; Ktor's Netty and CIO engines wait out
+                    // the grace period (3 s)
+                    withTimeout(if (serverEngine == ServerEngine.Kuicksilver) 1.seconds else 5.seconds) { stop.join() }
                 }
                 val after = runCatching { c.get(s.url("/hello")) }
                 assertTrue(after.isFailure, "a request after the stop got ${after.getOrNull()?.status}")
@@ -333,14 +344,23 @@ internal abstract class HttpPairSuite(
             }
         }
 
-    /** A server whose certificate does not chain to the client's anchors is refused: the call fails, no response. */
+    /** A server whose certificate does not chain to the client's anchors is refused: the call fails in TLS, no response. */
     @Test fun negative_untrustedServerIsRefused() =
         interopTest {
             if (wire == Wire.H1Clear) return@interopTest
             val c = ktorClient(clientEngine, http2 = wire == Wire.H2, h3Only = wire == Wire.H3, otherCa = true)
             try {
                 val r = runCatching { c.get(server.url("/hello")) }
-                assertNotNull(r.exceptionOrNull(), "got ${r.getOrNull()?.status} from a server the client does not trust")
+                val e = r.exceptionOrNull()
+                assertNotNull(e, "got ${r.getOrNull()?.status} from a server the client does not trust")
+                // a TLS failure (the JDK's, OkHttp's or ours), not some other end of the call
+                assertTrue(
+                    generateSequence(e) { it.cause }.any {
+                        it is javax.net.ssl.SSLException || it is java.security.cert.CertificateException ||
+                            it is io.kuicksilver.tls.TlsException
+                    },
+                    "the call failed with $e",
+                )
             } finally {
                 c.close()
             }

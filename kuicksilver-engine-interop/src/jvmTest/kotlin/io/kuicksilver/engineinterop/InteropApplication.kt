@@ -155,6 +155,28 @@ internal fun Application.interopModule(
                 writeFully("second".encodeToByteArray())
             }
         }
+        // the first piece, then (once the test releases it) 16 KiB pieces until the write fails or 1 GiB went out: a client
+        // that gave up while the response stalled is seen as a failed write
+        get("/stall/{id}") {
+            val h = probe.hold(call.parameters["id"]!!)
+            val piece = ByteArray(16 * 1024)
+            try {
+                call.respondBytesWriter(ContentType.Application.OctetStream) {
+                    writeFully("first;".encodeToByteArray())
+                    flush()
+                    h.entered.complete(Unit)
+                    h.release.await()
+                    repeat(65_536) {
+                        writeFully(piece)
+                        flush()
+                    }
+                }
+            } catch (e: Throwable) {
+                h.aborted.complete(e)
+                throw e
+            }
+            h.aborted.complete(WrittenToTheEnd())
+        }
         // writes 16 KiB pieces until the write fails (the client went away) or 1 GiB went out
         get("/endless/{id}") {
             val h = probe.hold(call.parameters["id"]!!)

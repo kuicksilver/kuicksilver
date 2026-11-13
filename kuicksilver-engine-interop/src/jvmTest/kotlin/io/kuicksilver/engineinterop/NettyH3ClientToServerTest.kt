@@ -20,6 +20,7 @@ import io.netty.handler.codec.http3.Http3RequestStreamInboundHandler
 import io.netty.handler.codec.quic.QuicChannel
 import io.netty.handler.codec.quic.QuicSslContextBuilder
 import io.netty.handler.codec.quic.QuicStreamChannel
+import io.netty.util.AsciiString
 import io.netty.util.ReferenceCountUtil
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -156,7 +157,9 @@ internal class NettyH3ClientToServerTest {
         val head = DefaultHttp3HeadersFrame()
         head
             .headers()
-            .method(method)
+            // an AsciiString: Netty's HEAD check (Http3RequestStreamValidationHandler) compares with AsciiString.equals,
+            // which is false for a String, and would then hold a HEAD response to its Content-Length
+            .method(AsciiString.of(method))
             .path(path)
             .authority("127.0.0.1:${server.port}")
             .scheme("https")
@@ -192,11 +195,10 @@ internal class NettyH3ClientToServerTest {
         }
 
     /**
-     * RFC 9110 section 15.3.5: a 204 has no content; the stream ends cleanly. And a HEAD response: its Content-Length is the
-     * GET's (RFC 9110 section 9.3.2) with no DATA, which RFC 9114 section 4.1.2 allows ("A response that is defined as never
-     * having content, even when a Content-Length is present, can have a non-zero Content-Length header field even though
-     * no content is included in DATA frames"). Netty 4.2.17's HTTP/3 validation reports it as "Expected content-length
-     * 1000 != 0" all the same; the head and the empty content are what our server sent.
+     * RFC 9110 section 15.3.5: a 204 has no content. A HEAD response carries the GET's Content-Length with no DATA (RFC
+     * 9110 section 9.3.2), which RFC 9114 section 4.1.2 allows: "A response that is defined as never having content, even
+     * when a Content-Length is present, can have a non-zero Content-Length header field even though no content is
+     * included in DATA frames." Netty's validation accepts both.
      */
     @Test fun headAnd204() =
         interopTest {
@@ -208,6 +210,7 @@ internal class NettyH3ClientToServerTest {
             assertEquals("200", head.status)
             assertEquals("1000", head.fields["content-length"])
             assertEquals(0, head.body.size)
+            assertEquals(null, head.failure)
         }
 
     /** 100 response fields through QPACK (RFC 9204), and the decoded UTF-8 target. */

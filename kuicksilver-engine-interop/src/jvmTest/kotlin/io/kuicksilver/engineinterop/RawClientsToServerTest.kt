@@ -335,8 +335,8 @@ internal class RawClientsToServerTest {
         }
 
     /**
-     * The JDK client's HTTP/2 requests are multiplexed on one connection: after a first request (the JDK opens a connection
-     * per request while none is established yet), 20 at once share one client port.
+     * The JDK client's HTTP/2 requests are multiplexed on one connection: once a first request has established it, 20 at
+     * once share its client port.
      */
     @Test fun jdkH2Multiplexing() =
         interopTest {

@@ -217,7 +217,7 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   agent is off for every test task, so ordinary test runs are not instrumented; the report tasks need the property.
 - **Engine interop.** `kuicksilver-engine-interop` runs the Ktor client and server engines against Ktor's Netty and
   CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs in one JVM, about a minute:
-  `./gradlew --max-workers=2 :kuicksilver-engine-interop:jvmTest` (the gate's step `jvm: engine interop`). A new pair
+  `./gradlew --max-workers=2 :kuicksilver-engine-interop:jvmTest` (the gate's step `jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)`). A new pair
   is a subclass of `HttpPairSuite` or `WebSocketPairSuite`; a test that a pair overrides documents the peer's behaviour
   in [interop.md](docs/spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13) and
   still asserts Kuicksilver's side.

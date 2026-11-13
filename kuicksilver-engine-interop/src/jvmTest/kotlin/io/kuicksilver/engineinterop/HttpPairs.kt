@@ -3,6 +3,8 @@
 package io.kuicksilver.engineinterop
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
@@ -94,6 +96,31 @@ internal class ClientToNettyH3Test : HttpPairSuite(ServerEngine.Netty, ClientEng
         }
 
     /**
+     * The request timeout fails the call and our client abandons the stream (STOP_SENDING, as in [cancelMidBody]); Ktor's
+     * handler is not told (docs/spec/interop.md, "Engine interop", finding 4), so its write is not asserted.
+     */
+    @Test override fun requestTimeoutMidBody() =
+        interopTest {
+            val id = UUID.randomUUID().toString()
+            val e =
+                runCatching {
+                    client
+                        .get(
+                            server.url("/stall/$id"),
+                        ) { timeout { requestTimeoutMillis = 1_000 } }
+                        .bodyAsText()
+                }.exceptionOrNull()
+            assertTrue(generateSequence(e) { it.cause }.any { it is HttpRequestTimeoutException }, "the call ended with $e")
+            assertTrue(
+                server.probe
+                    .hold(id)
+                    .entered.isCompleted,
+                "the handler started",
+            )
+            assertEquals("hello", client.get(server.url("/hello")).bodyAsText())
+        }
+
+    /**
      * Ktor's Netty engine stops HTTP/3 without a GOAWAY and without CONNECTION_CLOSE, and the response in flight never
      * completes (RFC 9114 section 5.2 describes the graceful shutdown with GOAWAY). Our side: the call fails once the
      * QUIC idle timeout passes (RFC 9000 section 10.1), here a short one, instead of hanging.
@@ -129,14 +156,13 @@ internal class ClientToCioH1Test : HttpPairSuite(ServerEngine.Cio, ClientEngine.
 /** Ktor CIO client, our server, cleartext HTTP/1.1. */
 internal class CioToServerH1Test : HttpPairSuite(ServerEngine.Kuicksilver, ClientEngine.Cio, Wire.H1Clear) {
     /**
-     * Ktor's CIO client opens a new connection for each request, against every server (Netty, CIO and ours alike), so
-     * there is no reuse to observe; persistence is the client's choice (RFC 9112 section 9.3). Each request succeeds on
-     * its own connection, and the server keeps none of them open past the client's close.
+     * Ktor's CIO client opens a new connection for each request, against every server (Netty, CIO and ours alike):
+     * persistence is the client's choice (RFC 9112 section 9.3). Five requests arrive from five client ports.
      */
     @Test override fun connectionReuse() =
         interopTest {
-            val peers = (1..5).map { client.get(server.url("/peer")).bodyAsText() }
-            assertEquals(5, peers.size)
+            val peers = (1..5).map { client.get(server.url("/peer")).bodyAsText() }.toSet()
+            assertEquals(5, peers.size, "the client ports the server saw: $peers")
         }
 }
 
