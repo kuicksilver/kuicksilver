@@ -91,6 +91,19 @@ internal object KslNative {
         out: IntArray,
     ): ByteArray?
 
+    @JvmStatic external fun ctxSetCrls(
+        ctx: Long,
+        crls: ByteArray,
+    ): Int
+
+    /** KSL_OCSP_* or -1; until[0] = the epoch second the response is fresh until (0 unless it passed) */
+    @JvmStatic external fun ocspCheck(
+        response: ByteArray,
+        chain: ByteArray,
+        at: Long,
+        until: LongArray,
+    ): Int
+
     /** 0 = passes, X509_V_ERR_* = a weak key or signature, -1 = unusable input */
     @JvmStatic external fun chainLevel(
         chain: ByteArray,

@@ -252,6 +252,8 @@ internal class KslQuicTlsSession(
                 lease.close()
                 throw t
             }
+        } else {
+            stapleFor(ssl, config)
         }
     }
 
@@ -313,6 +315,12 @@ internal class KslQuicTlsSession(
     private var admission: EarlyDataAdmission? = null
     private var admitted: ByteArray? = null // the ticket identity the register admitted, until TLS confirmed or refused the early data
     private var resumed: QuicSessionTicket? = null
+
+    /**
+     * The entry of [resumed] when the server actually resumed it (completed(), `GET_SESSION_REUSED`), else null: a declined
+     * resumption ran a full handshake, whose chain, validated path and staple are this session's own.
+     */
+    private var resumedEntry: SessionCache.Entry? = null
     private var lastSession = 0L // our reference to the newest session seen, so a new ticket is told apart from it
     private val pendingTickets = ArrayDeque<QuicSessionTicket>()
 
@@ -321,6 +329,10 @@ internal class KslQuicTlsSession(
         if (ticket.closed) return false
         // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
         if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(ticket.entry.chain, reference)) {
+            ticket.close()
+            return false
+        }
+        if (!ctx.cachedStapleStillFresh(ticket.entry)) {
             ticket.close()
             return false
         }
@@ -414,12 +426,20 @@ internal class KslQuicTlsSession(
         val prev = lastSession
         lastSession = h
         if (prev != 0L) Ksl.sessionFree(prev)
-        val chain = resumed?.entry?.chain ?: presented
+        val chain = resumedEntry?.chain ?: presented
         val validated =
-            resumed?.entry?.validated ?: if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) validatedChain() else presented
+            resumedEntry?.validated ?: if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) validatedChain() else presented
         Ksl.sslGet1Session(s()).let {
             pendingTickets +=
-                QuicSessionTicket(SessionCache.Entry(it, chain, validated, identityTag = ctx.identityTag))
+                QuicSessionTicket(
+                    SessionCache.Entry(
+                        it,
+                        chain,
+                        validated,
+                        identityTag = ctx.identityTag,
+                        stapleUntil = resumedEntry?.stapleUntil ?: stapleUntilOf(s()),
+                    ),
+                )
         }
     }
 
@@ -481,6 +501,7 @@ internal class KslQuicTlsSession(
             }
         // a resumed handshake carries no Certificate; the cached chain was verified again before resuming
         if (cached != null) presented = cached.chain
+        resumedEntry = cached
         if (pinsApply) {
             if (cached == null) presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
             // ClientAuth.Optional: a client without a certificate is accepted; one that presents a certificate must pass the pins

@@ -92,6 +92,18 @@ final enum class io.kuicksilver.tls/PinScope : kotlin/Enum<io.kuicksilver.tls/Pi
     final fun values(): kotlin/Array<io.kuicksilver.tls/PinScope> // io.kuicksilver.tls/PinScope.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.tls/RevocationPolicy : kotlin/Enum<io.kuicksilver.tls/RevocationPolicy> { // io.kuicksilver.tls/RevocationPolicy|null[0]
+    enum entry Off // io.kuicksilver.tls/RevocationPolicy.Off|null[0]
+    enum entry RequireStapled // io.kuicksilver.tls/RevocationPolicy.RequireStapled|null[0]
+    enum entry StapledIfPresent // io.kuicksilver.tls/RevocationPolicy.StapledIfPresent|null[0]
+
+    final val entries // io.kuicksilver.tls/RevocationPolicy.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/RevocationPolicy> // io.kuicksilver.tls/RevocationPolicy.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/RevocationPolicy // io.kuicksilver.tls/RevocationPolicy.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/RevocationPolicy> // io.kuicksilver.tls/RevocationPolicy.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.tls/SignatureAlgorithm : kotlin/Enum<io.kuicksilver.tls/SignatureAlgorithm> { // io.kuicksilver.tls/SignatureAlgorithm|null[0]
     enum entry EcdsaP256 // io.kuicksilver.tls/SignatureAlgorithm.EcdsaP256|null[0]
     enum entry Ed25519 // io.kuicksilver.tls/SignatureAlgorithm.Ed25519|null[0]
@@ -310,9 +322,13 @@ sealed interface io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdent
 sealed interface io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig|null[0]
     final class AnchoredCa : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.AnchoredCa|null[0]
         constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>) // io.kuicksilver.tls/TrustConfig.AnchoredCa.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>, kotlin.collections/List<io.kuicksilver.tls/CertificateRevocationList>) // io.kuicksilver.tls/TrustConfig.AnchoredCa.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>;kotlin.collections.List<io.kuicksilver.tls.CertificateRevocationList>){}[0]
 
         final val roots // io.kuicksilver.tls/TrustConfig.AnchoredCa.roots|{}roots[0]
             final fun <get-roots>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TrustConfig.AnchoredCa.roots.<get-roots>|<get-roots>(){}[0]
+
+        final var crls // io.kuicksilver.tls/TrustConfig.AnchoredCa.crls|{}crls[0]
+            final fun <get-crls>(): kotlin.collections/List<io.kuicksilver.tls/CertificateRevocationList> // io.kuicksilver.tls/TrustConfig.AnchoredCa.crls.<get-crls>|<get-crls>(){}[0]
     }
 
     final class Custom : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Custom|null[0]
@@ -426,6 +442,12 @@ sealed interface io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyR
         final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.InvalidPurpose.toString|toString(){}[0]
     }
 
+    final object InvalidStatusResponse : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.InvalidStatusResponse|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.InvalidStatusResponse.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.InvalidStatusResponse.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.InvalidStatusResponse.toString|toString(){}[0]
+    }
+
     final object NoCertificate : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.NoCertificate|null[0]
         final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.NoCertificate.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.NoCertificate.hashCode|hashCode(){}[0]
@@ -510,6 +532,21 @@ final class io.kuicksilver.tls/Certificate { // io.kuicksilver.tls/Certificate|n
     }
 }
 
+final class io.kuicksilver.tls/CertificateRevocationList { // io.kuicksilver.tls/CertificateRevocationList|null[0]
+    constructor <init>(kotlin/ByteArray) // io.kuicksilver.tls/CertificateRevocationList.<init>|<init>(kotlin.ByteArray){}[0]
+
+    final val der // io.kuicksilver.tls/CertificateRevocationList.der|{}der[0]
+        final fun <get-der>(): kotlin/ByteArray // io.kuicksilver.tls/CertificateRevocationList.der.<get-der>|<get-der>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/CertificateRevocationList.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/CertificateRevocationList.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/CertificateRevocationList.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/CertificateRevocationList.Companion|null[0]
+        final fun parsePem(kotlin/String): kotlin.collections/List<io.kuicksilver.tls/CertificateRevocationList> // io.kuicksilver.tls/CertificateRevocationList.Companion.parsePem|parsePem(kotlin.String){}[0]
+    }
+}
+
 final class io.kuicksilver.tls/CipherSuites { // io.kuicksilver.tls/CipherSuites|null[0]
     constructor <init>(kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/CipherSuites.<init>|<init>(kotlin.collections.List<kotlin.String>){}[0]
 
@@ -562,6 +599,17 @@ final class io.kuicksilver.tls/InMemoryKeylog : io.kuicksilver.tls/KeylogSink { 
     final fun log(kotlin/String) // io.kuicksilver.tls/InMemoryKeylog.log|log(kotlin.String){}[0]
 }
 
+final class io.kuicksilver.tls/OcspStapling { // io.kuicksilver.tls/OcspStapling|null[0]
+    constructor <init>(kotlin/ByteArray? = ...) // io.kuicksilver.tls/OcspStapling.<init>|<init>(kotlin.ByteArray?){}[0]
+
+    final val current // io.kuicksilver.tls/OcspStapling.current|{}current[0]
+        final fun <get-current>(): kotlin/ByteArray? // io.kuicksilver.tls/OcspStapling.current.<get-current>|<get-current>(){}[0]
+
+    final fun isUsableFor(kotlin.collections/List<io.kuicksilver.tls/Certificate>): kotlin/Boolean // io.kuicksilver.tls/OcspStapling.isUsableFor|isUsableFor(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/OcspStapling.toString|toString(){}[0]
+    final fun update(kotlin/ByteArray?) // io.kuicksilver.tls/OcspStapling.update|update(kotlin.ByteArray?){}[0]
+}
+
 final class io.kuicksilver.tls/PacketProtectionException : kotlinx.io/IOException { // io.kuicksilver.tls/PacketProtectionException|null[0]
     constructor <init>(kotlin/String) // io.kuicksilver.tls/PacketProtectionException.<init>|<init>(kotlin.String){}[0]
 }
@@ -579,6 +627,7 @@ final class io.kuicksilver.tls/QuicSessionTicket : kotlin/AutoCloseable { // io.
 
 final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerTlsOverride|null[0]
     constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>? = ..., io.kuicksilver.tls/ClientAuth? = ..., io.kuicksilver.tls/TrustConfig? = ...) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?){}[0]
+    constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>?, io.kuicksilver.tls/ClientAuth?, io.kuicksilver.tls/TrustConfig?, io.kuicksilver.tls/OcspStapling?) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?;io.kuicksilver.tls.OcspStapling?){}[0]
 
     final val alpn // io.kuicksilver.tls/ServerTlsOverride.alpn|{}alpn[0]
         final fun <get-alpn>(): kotlin.collections/List<kotlin/String>? // io.kuicksilver.tls/ServerTlsOverride.alpn.<get-alpn>|<get-alpn>(){}[0]
@@ -588,6 +637,9 @@ final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerT
         final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity // io.kuicksilver.tls/ServerTlsOverride.identity.<get-identity>|<get-identity>(){}[0]
     final val trust // io.kuicksilver.tls/ServerTlsOverride.trust|{}trust[0]
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.tls/ServerTlsOverride.trust.<get-trust>|<get-trust>(){}[0]
+
+    final var ocspStapling // io.kuicksilver.tls/ServerTlsOverride.ocspStapling|{}ocspStapling[0]
+        final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.tls/ServerTlsOverride.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
 }
 
 final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/SessionTicketConfig|null[0]
@@ -634,6 +686,10 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.tls/TlsConfig.identity.<get-identity>|<get-identity>(){}[0]
     final val keylog // io.kuicksilver.tls/TlsConfig.keylog|{}keylog[0]
         final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.keylog.<get-keylog>|<get-keylog>(){}[0]
+    final val ocspStapling // io.kuicksilver.tls/TlsConfig.ocspStapling|{}ocspStapling[0]
+        final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.tls/TlsConfig.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
+    final val revocation // io.kuicksilver.tls/TlsConfig.revocation|{}revocation[0]
+        final fun <get-revocation>(): io.kuicksilver.tls/RevocationPolicy // io.kuicksilver.tls/TlsConfig.revocation.<get-revocation>|<get-revocation>(){}[0]
     final val role // io.kuicksilver.tls/TlsConfig.role|{}role[0]
         final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.tls/TlsConfig.role.<get-role>|<get-role>(){}[0]
     final val serverName // io.kuicksilver.tls/TlsConfig.serverName|{}serverName[0]
@@ -674,6 +730,12 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var keylog // io.kuicksilver.tls/TlsConfig.Builder.keylog|{}keylog[0]
             final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.Builder.keylog.<get-keylog>|<get-keylog>(){}[0]
             final fun <set-keylog>(io.kuicksilver.tls/KeylogSink?) // io.kuicksilver.tls/TlsConfig.Builder.keylog.<set-keylog>|<set-keylog>(io.kuicksilver.tls.KeylogSink?){}[0]
+        final var ocspStapling // io.kuicksilver.tls/TlsConfig.Builder.ocspStapling|{}ocspStapling[0]
+            final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.tls/TlsConfig.Builder.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
+            final fun <set-ocspStapling>(io.kuicksilver.tls/OcspStapling?) // io.kuicksilver.tls/TlsConfig.Builder.ocspStapling.<set-ocspStapling>|<set-ocspStapling>(io.kuicksilver.tls.OcspStapling?){}[0]
+        final var revocation // io.kuicksilver.tls/TlsConfig.Builder.revocation|{}revocation[0]
+            final fun <get-revocation>(): io.kuicksilver.tls/RevocationPolicy // io.kuicksilver.tls/TlsConfig.Builder.revocation.<get-revocation>|<get-revocation>(){}[0]
+            final fun <set-revocation>(io.kuicksilver.tls/RevocationPolicy) // io.kuicksilver.tls/TlsConfig.Builder.revocation.<set-revocation>|<set-revocation>(io.kuicksilver.tls.RevocationPolicy){}[0]
         final var serverName // io.kuicksilver.tls/TlsConfig.Builder.serverName|{}serverName[0]
             final fun <get-serverName>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.serverName.<get-serverName>|<get-serverName>(){}[0]
             final fun <set-serverName>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.serverName.<set-serverName>|<set-serverName>(kotlin.String?){}[0]

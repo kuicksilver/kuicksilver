@@ -128,6 +128,21 @@ public actual object Ksl {
         return out[0]
     }
 
+    public actual fun ctxSetCrls(
+        ctx: Long,
+        crlsDer: List<ByteArray>,
+    ): Unit = ctxCheck(ctx, KslNative.ctxSetCrls(ctx, frameDerList(crlsDer)))
+
+    public actual fun ocspCheck(
+        response: ByteArray,
+        chainDer: List<ByteArray>,
+        atEpochSeconds: Long,
+    ): KslOcspVerdict {
+        val until = LongArray(1)
+        val r = KslNative.ocspCheck(response, frameDerList(chainDer), atEpochSeconds, until)
+        return KslOcspVerdict(if (r < 0) -1 else r, until[0])
+    }
+
     public actual fun chainLevel(
         chainDer: List<ByteArray>,
         builtPath: Boolean,

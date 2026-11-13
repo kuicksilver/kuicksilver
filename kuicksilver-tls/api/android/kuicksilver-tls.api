@@ -26,6 +26,19 @@ public final class io/kuicksilver/tls/Certificate$Companion {
 	public final fun parsePem (Ljava/lang/String;)Ljava/util/List;
 }
 
+public final class io/kuicksilver/tls/CertificateRevocationList {
+	public static final field Companion Lio/kuicksilver/tls/CertificateRevocationList$Companion;
+	public fun <init> ([B)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDer ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/CertificateRevocationList$Companion {
+	public final fun parsePem (Ljava/lang/String;)Ljava/util/List;
+}
+
 public abstract interface class io/kuicksilver/tls/CertificateVerifier {
 	public abstract fun verify (Ljava/util/List;Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -193,6 +206,16 @@ public final class io/kuicksilver/tls/LoadBalancerKey$DefaultImpls {
 	public static fun duplicate (Lio/kuicksilver/tls/LoadBalancerKey;)Lio/kuicksilver/tls/LoadBalancerKey;
 }
 
+public final class io/kuicksilver/tls/OcspStapling {
+	public fun <init> ()V
+	public fun <init> ([B)V
+	public synthetic fun <init> ([BILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getCurrent ()[B
+	public final fun isUsableFor (Ljava/util/List;)Z
+	public fun toString ()Ljava/lang/String;
+	public final fun update ([B)V
+}
+
 public final class io/kuicksilver/tls/PacketProtectionException : java/io/IOException {
 	public fun <init> (Ljava/lang/String;)V
 }
@@ -272,12 +295,23 @@ public abstract interface class io/kuicksilver/tls/ResetKey : java/lang/AutoClos
 	public abstract fun token (Lio/kuicksilver/native/PacketBuffer;II[BI)V
 }
 
+public final class io/kuicksilver/tls/RevocationPolicy : java/lang/Enum {
+	public static final field Off Lio/kuicksilver/tls/RevocationPolicy;
+	public static final field RequireStapled Lio/kuicksilver/tls/RevocationPolicy;
+	public static final field StapledIfPresent Lio/kuicksilver/tls/RevocationPolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/RevocationPolicy;
+	public static fun values ()[Lio/kuicksilver/tls/RevocationPolicy;
+}
+
 public final class io/kuicksilver/tls/ServerTlsOverride {
 	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;)V
 	public synthetic fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;Lio/kuicksilver/tls/OcspStapling;)V
 	public final fun getAlpn ()Ljava/util/List;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 }
 
@@ -323,6 +357,8 @@ public final class io/kuicksilver/tls/TlsConfig {
 	public final fun getHandshakeTimeout-UwyO8pc ()J
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeylog ()Lio/kuicksilver/tls/KeylogSink;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
+	public final fun getRevocation ()Lio/kuicksilver/tls/RevocationPolicy;
 	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
 	public final fun getServerName ()Ljava/lang/String;
 	public final fun getSessionTickets ()Lio/kuicksilver/tls/SessionTicketConfig;
@@ -341,6 +377,8 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun getHandshakeTimeout-UwyO8pc ()J
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getKeylog ()Lio/kuicksilver/tls/KeylogSink;
+	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
+	public final fun getRevocation ()Lio/kuicksilver/tls/RevocationPolicy;
 	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
 	public final fun getServerName ()Ljava/lang/String;
 	public final fun getSessionTickets ()Lio/kuicksilver/tls/SessionTicketConfig;
@@ -354,6 +392,8 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun setHandshakeTimeout-LRDsOJo (J)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setKeylog (Lio/kuicksilver/tls/KeylogSink;)V
+	public final fun setOcspStapling (Lio/kuicksilver/tls/OcspStapling;)V
+	public final fun setRevocation (Lio/kuicksilver/tls/RevocationPolicy;)V
 	public final fun setServerName (Ljava/lang/String;)V
 	public final fun setSessionTickets (Lio/kuicksilver/tls/SessionTicketConfig;)V
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
@@ -512,6 +552,8 @@ public abstract interface class io/kuicksilver/tls/TrustConfig {
 
 public final class io/kuicksilver/tls/TrustConfig$AnchoredCa : io/kuicksilver/tls/TrustConfig {
 	public fun <init> (Ljava/util/List;)V
+	public fun <init> (Ljava/util/List;Ljava/util/List;)V
+	public final fun getCrls ()Ljava/util/List;
 	public final fun getRoots ()Ljava/util/List;
 }
 
@@ -601,6 +643,13 @@ public final class io/kuicksilver/tls/VerifyReason$HostnameMismatch : io/kuicksi
 
 public final class io/kuicksilver/tls/VerifyReason$InvalidPurpose : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$InvalidPurpose;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$InvalidStatusResponse : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$InvalidStatusResponse;
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;

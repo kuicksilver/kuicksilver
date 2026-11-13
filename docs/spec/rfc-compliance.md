@@ -102,13 +102,14 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9852 | (BCP 195) — TLS 1.3 as every protocol's default | ✅ | 0.2.0 | TLS 1.3 is the default, and QUIC accepts nothing else. | [details](rfc/9852.md#tls-1-3-as-every-protocols) |
 | RFC 10015 | TLS 1.2 key exchange | ✅ | 0.3.0 | TLS 1.2 offers only ECDHE suites with AEAD: no static RSA, no FFDH(E), no static ECDH. | [details](rfc/10015.md#tls-1-2-key-exchange) |
 | RFC 7469 | (the idea) — SPKI pins | ✅ | 0.2.0 | SPKI SHA-256 pins are matched against the validated chain. | [details](rfc/7469.md#spki-pins) |
-| RFC 6960 | / 6961 (6961 obsoleted by RFC 9846: `status_request_v2` is `ocsp_multi_RESERVED`) — OCSP, stapling | ⬜ | — | Revocation checking (OCSP, stapling) is planned for later, behind a flag. | [details](rfc/6960.md#ocsp-stapling) |
+| RFC 6960 | OCSP responses stapled through `status_request` (RFC 6066 §8) | ✅ | 0.3.0 | A client checks the OCSP response a server staples where ksl verifies the chain, and a server staples a configured response only when it is for its leaf and fresh. | [details](rfc/6960.md#ocsp-stapling) |
+| RFC 6961 | `status_request_v2` (obsoleted by RFC 9846) | ❌ | — | The multiple certificate status extension is deprecated by RFC 9846 and no longer recommended by RFC 9325, so it is never sent. | [details](rfc/6961.md#status-request-v2) |
 | RFC 8879 | certificate compression | ❌ | — | Certificate compression is not planned for 0.x. | [details](rfc/8879.md#certificate-compression) |
 | RFC 7627 | §5.2 — Extended Master Secret required for TLS 1.2 | ✅ | 0.2.1 | A TLS 1.2 peer without Extended Master Secret is refused. | [details](rfc/7627.md#s5-2-ems-required) |
 | RFC 9325 | §3.5 — TLS 1.2 implementations support Extended Master Secret | ✅ | 0.2.1 | TLS 1.2 is offered only with Extended Master Secret. | [details](rfc/9325.md#s3-5-ems) |
 | RFC 9325 | §4.4 — AEAD record limits | ✅ | 0.2.0 | Without KeyUpdate or renegotiation a TLS 1.2 or 1.3 TCP connection ends before its keys reach the AEAD limit. | [details](rfc/9325.md#s4-4-aead-limits) |
 | RFC 9325 | §4.5 — public key length | ✅ | 0.3.0 | No finite-field DH, no curve under 224 bits, and every certificate key of either side needs 112 security bits (RSA 2048) with no SHA-1 or MD5 signature. | [details](rfc/9325.md#s4-5-public-key-length) |
-| RFC 9325 | §7.5 — certificate revocation | ⬜ | — | Revocation checking is planned with the OCSP row; today it depends on the platform verifier. | [details](rfc/9325.md#s7-5-revocation) |
+| RFC 9325 | §7.5 — certificate revocation | ✅ | 0.3.0 | Stapled OCSP responses and application CRLs are checked where ksl verifies the chain and servers staple per identity, while under Platform the OS verifier decides: Apple and Windows apply their own policy, and on Android (blocklist only) and the JVM (off unless the application enables it) nothing checks revocation. | [details](rfc/9325.md#s7-5-revocation) |
 
 ## HTTP
 

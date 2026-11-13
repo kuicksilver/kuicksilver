@@ -1,8 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.native.Ksl
@@ -175,9 +178,13 @@ public class TlsConfig private constructor(
     public val handshakeTimeout: Duration,
     /** Whether every verification failure is sent as `handshake_failure`; see [Builder.genericAlerts]. */
     public val genericAlerts: Boolean,
+    /** A client's treatment of the stapled OCSP response; see [Builder.revocation]. */
+    @property:ExperimentalKuicksilverApi public val revocation: RevocationPolicy,
+    /** The OCSP response a server staples; see [Builder.ocspStapling]. */
+    @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
 ) {
     /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
-    @OptIn(DelicateKuicksilverApi::class)
+    @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {
         val overrideAlpn = o.alpn?.toList()?.also { validateAlpn(it) } // copy first: the stored list is the one validated
         checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)
@@ -195,6 +202,8 @@ public class TlsConfig private constructor(
             keylog,
             handshakeTimeout,
             genericAlerts,
+            revocation,
+            o.ocspStapling,
         )
     }
 
@@ -311,11 +320,30 @@ public class TlsConfig private constructor(
         public var handshakeTimeout: Duration = 10.seconds
 
         /**
-         * Send every verification failure as `handshake_failure` instead of the specific alert. Default false; true hides
+         * Send every verification failure as `handshake_failure` instead of the specific alert, except a failed stapled OCSP
+         * check, which OpenSSL always ends with `bad_certificate_status_response` (113). Default false; true hides
          * from the peer why it was rejected at the cost of harder diagnosis on its side. The local [TlsException.Verify]
          * keeps the real reason either way.
          */
         public var genericAlerts: Boolean = false
+
+        /**
+         * Client: how the revocation status the server staples is treated (RFC 9325 section 7.5); default
+         * [RevocationPolicy.StapledIfPresent]. Applies where `ksl` verifies the chain ([TrustConfig.AnchoredCa], and
+         * [TrustConfig.Platform] on Linux Native, also inside Pinned or ExpectedName); [RevocationPolicy.RequireStapled] with any
+         * other trust throws [TlsException.Config] when the configuration is used. Servers ignore it (client certificates are
+         * checked against the CRLs of their [TrustConfig.AnchoredCa]).
+         */
+        @ExperimentalKuicksilverApi
+        public var revocation: RevocationPolicy = RevocationPolicy.StapledIfPresent
+
+        /**
+         * Server: the OCSP response stapled for the certificate when the client asks (RFC 6066 section 8, RFC 9325 section 7.5);
+         * default null, nothing stapled. See [OcspStapling] for when a response is sent. A client configuration with one throws
+         * [TlsException.Config].
+         */
+        @ExperimentalKuicksilverApi
+        public var ocspStapling: OcspStapling? = null
 
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
@@ -323,7 +351,7 @@ public class TlsConfig private constructor(
          * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
-        @OptIn(DelicateKuicksilverApi::class)
+        @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
         public fun build(): TlsConfig {
             val validAlpn = alpn.toList().also { validateAlpn(it) } // copy first: the stored list is the one validated
             if (!handshakeTimeout.isPositive()) throw TlsException.Config("handshakeTimeout must be positive")
@@ -332,6 +360,7 @@ public class TlsConfig private constructor(
                 checkServerAuth(clientAuth, trust)
             } else {
                 if (clientAuth != ClientAuth.None) throw TlsException.Config("clientAuth applies to servers")
+                if (ocspStapling != null) throw TlsException.Config("ocspStapling applies to servers")
                 refuseReloadableOnClient(trust)
                 serverName?.let { HostName.normalize(it) }
             }
@@ -350,6 +379,8 @@ public class TlsConfig private constructor(
                 keylog,
                 handshakeTimeout,
                 genericAlerts,
+                revocation,
+                ocspStapling,
             )
         }
     }
@@ -426,4 +457,24 @@ public class ServerTlsOverride(
     public val alpn: List<String>? = null,
     public val clientAuth: ClientAuth? = null,
     public val trust: TrustConfig? = null,
-)
+) {
+    /**
+     * The OCSP response stapled for [identity] on this connection (RFC 6066 section 8); null staples nothing, never the
+     * response of [TlsConfig.ocspStapling], which is for the default identity. See [OcspStapling].
+     */
+    @ExperimentalKuicksilverApi
+    public var ocspStapling: OcspStapling? = null
+        private set
+
+    /** An override whose [identity] staples the response of [ocspStapling] (see the primary constructor for the rest). */
+    @ExperimentalKuicksilverApi
+    public constructor(
+        identity: TlsIdentity,
+        alpn: List<String>?,
+        clientAuth: ClientAuth?,
+        trust: TrustConfig?,
+        ocspStapling: OcspStapling?,
+    ) : this(identity, alpn, clientAuth, trust) {
+        this.ocspStapling = ocspStapling
+    }
+}

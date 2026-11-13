@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
 #ifdef KSL_TEST_TCP
     run_tcp();
     run_verify();
+    run_revocation();
 #endif
     if (failures) {
         printf("%d FAILURES\n", failures);

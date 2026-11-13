@@ -14,8 +14,11 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateRevocationList
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.OcspStapling
 import io.kuicksilver.tls.PinScope
+import io.kuicksilver.tls.RevocationPolicy
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TestCerts
 import io.kuicksilver.tls.TlsIdentity
@@ -94,6 +97,31 @@ class GuideSamplesTest {
         assertEquals(rootCertificate, trust.roots.single())
     }
 
+    @Test fun revocationSample() {
+        val roots = listOf(rootCertificate)
+        // a CRL that revokes nothing (crl-root.der of tools/certs/gen-revocation-certs.sh)
+        val crlPem = "-----BEGIN X509 CRL-----\n$CRL_ROOT_B64\n-----END X509 CRL-----\n"
+        val ocspResponseDer = byteArrayOf(0x30, 0x03, 0x0a, 0x01, 0x03) // stands in for the CA responder's answer
+        val serverIdentity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+        // guide:tls:revocation
+        val crls = CertificateRevocationList.parsePem(crlPem)
+        val client =
+            tlsConfig(TlsRole.Client) {
+                serverName = "api.example.com"
+                trust = TrustConfig.AnchoredCa(roots, crls)
+                revocation = RevocationPolicy.StapledIfPresent // the default
+            }
+        val stapling = OcspStapling(ocspResponseDer) // later: stapling.update(fresher)
+        val server =
+            tlsConfig(TlsRole.Server) {
+                identity = serverIdentity // leaf and its issuer
+                ocspStapling = stapling
+            }
+        assertEquals(RevocationPolicy.StapledIfPresent, client.revocation)
+        assertTrue(server.ocspStapling === stapling)
+        serverIdentity.close()
+    }
+
     @Test fun clientCaRotationSample() {
         val caBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.testCa)
         val renewedBundlePem = TestCerts.toPem("CERTIFICATE", TestCerts.otherCa)
@@ -164,3 +192,11 @@ class GuideSamplesTest {
         assertTrue(debugClient.keylog != null)
     }
 }
+
+/** crl-root.der of tools/certs/gen-revocation-certs.sh, base64. */
+private val CRL_ROOT_B64 =
+    listOf(
+        "MIHIMG8CAQEwCgYIKoZIzj0EAwIwLjEsMCoGA1UEAwwjS3VpY2tzaWx2ZXIgUmV2b2NhdGlvbiBUZXN0IHJ2LXJvb3QXDTI2MTEx",
+        "MjE0MTg0OFoYDzIxMjYxMDE5MTQxODQ4WqAOMAwwCgYDVR0UBAMCAQswCgYIKoZIzj0EAwIDSQAwRgIhALQsrxAJ0i0d/sMSAemt",
+        "4H4iRlVjWrHj6BWyW99alYPPAiEA7Z6gdHfmQSnRMHU1pL0pdgqbSLLITvGmnR9AHn2FibI=",
+    ).joinToString("")

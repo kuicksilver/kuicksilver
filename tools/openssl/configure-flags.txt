@@ -32,7 +32,8 @@ no-multiblock
 no-ssl-trace
 no-integrity-only-ciphers
 no-sslkeylog
-no-http
+# http stays on: Configure turns ocsp off with it ("http" => ["ocsp"]), and ksl checks and staples OCSP responses
+# (RFC 9325 section 7.5, RFC 6066 section 8; ksl_ocsp.c). ksl never calls OpenSSL's HTTP client.
 no-ct
 no-cms
 no-cmp

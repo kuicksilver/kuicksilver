@@ -132,3 +132,17 @@ of the literal with `AI_DEFAULT` (`nw_nat64_copy_prefixes` is not public API); `
 Kotlin discovers the prefix by RFC 7050. JNI `KslNative.resolve`, `KslNative.addrInfo`, `KslNative.nat64Synthesize`,
 cinterop the same, Kotlin `Ksl.resolve`, `Ksl.addrInfo`, `Ksl.nat64Synthesize` and `KslNet` (internal). `test_net.c`.
 86 functions.
+
+Certificate revocation, additive under 7 (RFC 9325 section 7.5: "TLS implementations MUST implement a strategy to distrust
+revoked certificates"): `ksl_ctx_set_crls(ctx, crls, len)` adds CRLs (framed as roots) to a context's own trust store and turns
+on `X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL`, with a store verify callback that passes only "unable to get
+certificate CRL" (an issuer without a configured CRL is not checked); handshakes and `ksl_ctx_verify_chain` see them alike.
+`ksl_ocsp_check(resp, len, chain, chain_len, at, valid_until)` checks one DER OCSP response for a leaf and its issuer by RFC
+6960 section 3.2 (certID, signature, the issuer's key or a delegated responder with id-kp-OCSPSigning that the issuer signed,
+thisUpdate and nextUpdate with 5 minutes of skew). The status callback of every context (`ksl_ocsp.c`) checks a client's
+stapled response (`KSL_OPT_REVOCATION`, `KSL_GET_OCSP_STATUS`) and staples a server's (`KSL_SET_OCSP_RESPONSE`) only when it
+is for the leaf sent and fresh. The OCSP half needs OpenSSL's ocsp module, which `no-http` in
+`tools/openssl/configure-flags.txt` used to turn off (Configure cascades http to ocsp); the bundled OpenSSL keeps http and
+ocsp since this change, and a build without them (a system OpenSSL built `no-ocsp`) answers `KSL_ERROR` from
+`ksl_ocsp_check` and `KSL_E_NOT_SUPPORTED` from the option and the setter. JNI `KslNative.ctxSetCrls` / `KslNative.ocspCheck`, cinterop
+`ksl_ctx_set_crls` / `ksl_ocsp_check`, Kotlin `Ksl.ctxSetCrls` / `Ksl.ocspCheck`. 88 functions.

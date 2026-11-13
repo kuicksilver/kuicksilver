@@ -92,8 +92,9 @@ additive, `ksl_udp_send_src` and `ksl_udp_recv_dst` for the local address of a w
 several sender threads on one socket, `ksl_dns_query` for one record type from the system resolver, `ksl_resolve`,
 `ksl_addr_info` and `ksl_nat64_synthesize` for Happy Eyeballs (one address family per lookup, the state of a local
 address, the platform's NAT64 synthesis), `ksl_chain_level` with
-`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, and `ksl_ctx_verify_chain_path`
-for the path a chain re-verification built). It is bumped on
+`KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, `ksl_ctx_verify_chain_path`
+for the path a chain re-verification built, and `ksl_ctx_set_crls`, `ksl_ocsp_check`, `KSL_OPT_REVOCATION`,
+`KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the

@@ -1,13 +1,17 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorConfig
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.ClientHelloInfo
+import io.kuicksilver.tls.OcspStapling
 import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
@@ -45,6 +49,11 @@ public class KuicksilverTlsConnector private constructor(
      * connector with a warning: it serves HTTP/1.1 only and sends no `Alt-Svc`.
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
+    /**
+     * The OCSP response stapled for [identity] on TCP and QUIC (RFC 9325 section 7.5), null for none; its `update` replaces
+     * it while the server runs. See `OcspStapling` for when a response is sent.
+     */
+    @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -65,11 +74,12 @@ public class KuicksilverTlsConnector private constructor(
             this@KuicksilverTlsConnector.trust?.let { trust = it }
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
             sniSelector = this@KuicksilverTlsConnector.sniSelector
+            ocspStapling = this@KuicksilverTlsConnector.ocspStapling
         }
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
     public fun withPort(port: Int): KuicksilverTlsConnector =
-        KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector)
+        KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling)
 
     /** For logs. */
     override fun toString(): String = "HTTPS (Kuicksilver TLS) $host:$port"
@@ -108,10 +118,17 @@ public class KuicksilverTlsConnector private constructor(
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 
+        /**
+         * The OCSP response to staple (RFC 6066 section 8; docs/guide/tls.md, "Certificate revocation"); null by default.
+         * `OcspStapling.update` replaces it while the server runs.
+         */
+        @ExperimentalKuicksilverApi
+        public var ocspStapling: OcspStapling? = null
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         public fun build(): KuicksilverTlsConnector {
             require(port in 0..65_535) { "port must be 0..65535" }
-            return KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector)
+            return KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling)
         }
     }
 }

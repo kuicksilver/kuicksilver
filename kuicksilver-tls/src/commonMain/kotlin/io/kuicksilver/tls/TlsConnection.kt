@@ -1,6 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, ExperimentalAtomicApi::class)
+@file:OptIn(
+    InternalKuicksilverApi::class,
+    DelicateKuicksilverApi::class,
+    ExperimentalAtomicApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+)
 
 package io.kuicksilver.tls
 
@@ -188,6 +193,8 @@ public class TlsConnection private constructor(
             sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
             Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
             cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity)
+        } else {
+            stapleFor(ssl, config)
         }
     }
 
@@ -199,6 +206,10 @@ public class TlsConnection private constructor(
             sessionCache.take(key)?.let { e ->
                 // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
                 if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(e.chain, reference!!)) {
+                    e.close()
+                    return@let
+                }
+                if (!ctx.cachedStapleStillFresh(e)) {
                     e.close()
                     return@let
                 }
@@ -303,7 +314,13 @@ public class TlsConnection private constructor(
             override != null -> {
                 val o = KslContext.create(config.withOverride(override), quic = false)
                 overrideCtx = o
-                lock.withLock { Ksl.sslSniResume(s(), o.ctx.handle, 0) }
+                lock.withLock {
+                    // the override's identity staples its own response, never the default identity's
+                    if (config.ocspStapling != null || override.ocspStapling != null) {
+                        Ksl.sslSet(s(), KslConst.SET_OCSP_RESPONSE, override.ocspStapling?.currentForSession ?: ByteArray(0))
+                    }
+                    Ksl.sslSniResume(s(), o.ctx.handle, 0)
+                }
             }
 
             info.serverName != null -> {
@@ -756,7 +773,8 @@ public class TlsConnection private constructor(
                             } else {
                                 (cached?.validated ?: presented)
                             }
-                        SessionCache.Entry(session, presented, validated, identityTag = ctx.identityTag)
+                        val until = if (reused) cached?.stapleUntil ?: 0L else stapleUntilOf(ssl)
+                        SessionCache.Entry(session, presented, validated, identityTag = ctx.identityTag, stapleUntil = until)
                     } catch (t: Throwable) {
                         Ksl.sessionFree(session)
                         throw t
@@ -1133,6 +1151,8 @@ public class SessionCache(
         val created: Long = nowSeconds(),
         /** The client identity the session was authenticated with (`KslContext.identityTag`); resumed only under the same one. */
         val identityTag: String? = null,
+        /** Until when the stapled OCSP response of the full handshake is fresh (epoch seconds), 0 without one. */
+        val stapleUntil: Long = 0L,
     ) {
         var session: Long = session
             private set
@@ -1348,6 +1368,36 @@ internal fun KslContext.cachedChainStillTrusted(
 ): Boolean =
     chain.isNotEmpty() &&
         Ksl.ctxVerifyChain(handle, chain.map { it.encoded }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
+
+/**
+ * A session whose full handshake checked a stapled OCSP response resumes only while that response is fresh (its nextUpdate,
+ * RFC 6960 section 4.2.2.1): a resumed handshake carries no Certificate and no staple, so after it the next handshake is a
+ * full one that gets a fresh response. A session without one resumes under [RevocationPolicy.StapledIfPresent] (none was
+ * required), never under [RevocationPolicy.RequireStapled].
+ */
+internal fun KslContext.cachedStapleStillFresh(entry: SessionCache.Entry): Boolean {
+    if (verifyMode != KslConst.VERIFY_OPENSSL || config.revocation == RevocationPolicy.Off) return true
+    if (entry.stapleUntil == 0L) return config.revocation != RevocationPolicy.RequireStapled
+    return nowSeconds() + resumptionClockSkewForTest <= entry.stapleUntil
+}
+
+/** Until when the stapled response this client handshake accepted is fresh (epoch seconds), 0 for none (`KSL_GET_OCSP_STATUS`). */
+internal fun stapleUntilOf(ssl: Long): Long {
+    val b = Ksl.sslGet(ssl, KslConst.GET_OCSP_STATUS)
+    if (b.size < 9 || b[0] == 0xff.toByte()) return 0L
+    var v = 0L
+    for (i in 1..8) v = (v shl 8) or (b[i].toLong() and 0xff)
+    return v
+}
+
+/** A server session staples the [TlsConfig.ocspStapling] response current now, when the client asks and it fits (ksl decides). */
+internal fun stapleFor(
+    ssl: Long,
+    config: TlsConfig,
+) {
+    val r = config.ocspStapling?.currentForSession ?: return
+    Ksl.sslSet(ssl, KslConst.SET_OCSP_RESPONSE, r)
+}
 
 internal fun TrustConfig.cacheKey(): String =
     when (this) {
