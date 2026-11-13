@@ -748,6 +748,10 @@ public class ConnectionCore internal constructor(
     /** The certificate chain the peer presented; empty before the handshake got that far or when the peer sent none. */
     public val peerCertificates: List<Certificate> get() = handshake.session.peerCertificates
 
+    /** The certificate chain this side presents (a server's identity snapshot for this handshake); empty without one. */
+    @ExperimentalKuicksilverApi
+    public val localCertificates: List<Certificate> get() = handshake.session.localCertificates
+
     /** The ALPN protocol agreed in the handshake (RFC 9001 section 8.1); null until the handshake settled it. */
     public val negotiatedAlpn: String? get() = handshake.session.negotiatedAlpn
 

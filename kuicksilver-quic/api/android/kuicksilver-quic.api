@@ -99,6 +99,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun getDatagramSender ()Lio/kuicksilver/quic/DatagramSender;
 	public final fun getEarlyDataAccepted ()Ljava/lang/Boolean;
 	public final fun getGlitchByFrameType ()[J
+	public final fun getLocalCertificates ()Ljava/util/List;
 	public final fun getMaxDatagramPayload ()I
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
 	public final fun getPeerCertificates ()Ljava/util/List;
@@ -921,6 +922,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getCore ()Lio/kuicksilver/quic/ConnectionCore;
 	public abstract fun getDatagrams ()Lkotlinx/coroutines/flow/Flow;
 	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
+	public fun getLocalCertificates ()Ljava/util/List;
 	public abstract fun getMaxDatagramSize ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPathEvents ()Lkotlinx/coroutines/flow/Flow;
@@ -948,6 +950,7 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun awaitHandshake (Lio/kuicksilver/quic/QuicConnection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
+	public static fun getLocalCertificates (Lio/kuicksilver/quic/QuicConnection;)Ljava/util/List;
 	public static fun getResetStreamAtEnabled (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;

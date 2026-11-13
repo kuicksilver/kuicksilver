@@ -35,7 +35,10 @@ import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.httpDateNow
+import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.sendStallTimeout
+import io.kuicksilver.ktor.server.h1.splitAbsoluteForm
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
@@ -302,6 +305,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             connectionScope.launchOrElse(onCancelled = { client.abort() }) {
                                 val sock: Socket
                                 val peer: List<Certificate>
+                                val own: List<Certificate>
+                                var sni: SniChoice? = null
                                 val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
@@ -330,16 +335,23 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     t.setCloseTimeout(null)
                                     sock = t
                                     peer = t.peerCertificates
+                                    own = t.localCertificates
+                                    if (l.tls.sniSelector != null) sni = SniChoice(t.sniSelectedFor)
                                 } else {
                                     sock = client
                                     peer = emptyList()
+                                    own = emptyList()
                                 }
+                                // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name, or over a plain
+                                // connection, gets 421
+                                val authorityCheck = AuthorityCheck(own, l.trustedGateway, sni)
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(
                                         sock,
                                         remote,
                                         peer,
+                                        authorityCheck,
                                         altSvc,
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         timeout,
@@ -366,7 +378,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         draining = draining,
                                         sendTimeout = sendTimeout,
-                                    ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
+                                    ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
                                     val stall = if (connection?.clientStoppedReading == true) Duration.ZERO else sendTimeout
@@ -435,9 +447,34 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
     request: Request,
     scheme: String,
     peer: List<Certificate>,
+    authorityCheck: AuthorityCheck,
     altSvc: () -> String?,
 ) {
     with(scope) {
+        // final statuses the head alone determines, answered by the engine as over HTTP/2 and HTTP/3: no call is made, so
+        // neither the application's routing nor its send pipeline (StatusPages, logging, compression) runs, and no 100 goes
+        // out before them (RFC 9110 section 10.1.1)
+        // RFC 9110 section 7.4: the target URI's authority is the absolute-form's, else Host (RFC 9112 section 3.3), and its
+        // scheme the absolute-form's, else the connection's; CONNECT's authority-form names a tunnel's destination, not an
+        // origin
+        val absolute = splitAbsoluteForm(request.uri.toString())
+        val targetScheme = if (absolute != null) request.uri.toString().substringBefore(':') else scheme
+        val misdirected =
+            if (request.method.value == "CONNECT") {
+                null
+            } else {
+                authorityCheck.rejection(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
+            }
+        if (misdirected != null) {
+            environment.log.debug(misdirected)
+            return respondFromEngine(scope, request, MisdirectedRequestStatus)
+        }
+        // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
+        if (request.headers[EARLY_DATA_FIELD] != null &&
+            request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
+        ) {
+            return respondFromEngine(scope, request, HttpStatusCode.TooEarly)
+        }
         withContext(userDispatcher) requestContext@{
             val call =
                 H1Call(
@@ -463,15 +500,10 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
             var failure: Throwable? = null
             try {
                 addHandlerForExpectedHeader(call)
-                // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
-                if (request.headers[EARLY_DATA_FIELD] != null &&
-                    request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
-                ) {
-                    call.respond(HttpStatusCode.TooEarly) // a final status the head determines: no 100 before it
-                } else {
+                run {
                     // RFC 9110 section 10.1.1: an HTTP/1.1 request with content and `Expect: 100-continue` gets "an immediate
                     // 100 (Continue) response" unless its head alone determines a final status (those went out before the
-                    // application was asked: 400, 413, 431, 425 above). Before, it went out only when the application first
+                    // application was asked: 400, 413, 431, 421, 425 above). Before, it went out only when the application first
                     // read the content, so a handler that waited before it decided held the client's content back
                     if (continueSent != null) {
                         output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
@@ -488,6 +520,33 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                 call.release()
             }
         }
+    }
+}
+
+/**
+ * Answers [request] with [status] and no content from the engine itself, the way the HTTP/2 and HTTP/3 paths answer it:
+ * `Date` (RFC 9110 section 6.6.1), `Content-Length: 0`, and `Connection: close` when the connection ends after it (the
+ * server stopping, or the request's own close, RFC 9112 section 9.6), which [H1RequestScope.endsConnection] reports to the
+ * pipeline. Content the request carries is drained by the pipeline as for any response that left it unread.
+ */
+private suspend fun respondFromEngine(
+    scope: H1RequestScope,
+    request: Request,
+    status: HttpStatusCode,
+) {
+    try {
+        val close =
+            scope.closing() ||
+                requestEndsConnection(HttpProtocolVersion.parse(request.version), scope.fields.getAll(HttpHeaders.Connection).orEmpty())
+        val head =
+            "HTTP/1.1 ${status.value} ${status.description}\r\nDate: ${httpDateNow()}\r\nContent-Length: 0\r\n" +
+                (if (close) "Connection: close\r\n" else "") + "\r\n"
+        scope.output.writeStringUtf8(head)
+        scope.output.flush()
+        scope.endsConnection?.complete(close)
+    } finally {
+        scope.output.flushAndClose()
+        request.release()
     }
 }
 

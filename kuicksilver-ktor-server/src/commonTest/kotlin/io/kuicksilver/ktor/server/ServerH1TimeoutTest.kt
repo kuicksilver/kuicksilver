@@ -182,7 +182,7 @@ class ServerH1TimeoutTest {
                         .resolvedConnectors()
                         .first()
                         .port
-                val received = withTimeout(10.seconds) { rawHttp(port, "GET / HTTP/1.1\r\nHost: s\r\n", tls = null) }
+                val received = withTimeout(10.seconds) { rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\n", tls = null) }
                 assertTrue(received.startsWith("HTTP/1.1 408 "), received)
             } finally {
                 server.stop(100, 500)
@@ -249,7 +249,7 @@ class ServerH1TimeoutTest {
                     val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
                     val w = socket.openWriteChannel(autoFlush = true)
                     val r = socket.openReadChannel()
-                    w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: s\r\n\r\n")
+                    w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: server.test\r\n\r\n")
                     w.flush()
                     withTimeout(20.seconds) { closed.await() }
                     // what the kernel had taken may still be readable; then the connection is reset (or ends), it does not hang
@@ -306,7 +306,7 @@ class ServerH1TimeoutTest {
                         val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
                         sockets += socket
                         val w = socket.openWriteChannel(autoFlush = true)
-                        w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: s\r\n\r\n")
+                        w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: server.test\r\n\r\n")
                         w.flush()
                     }
                     withTimeout(30.seconds) { repeat(clients) { closed.receive() } }
@@ -382,7 +382,7 @@ class ServerH1TimeoutTest {
                     val text =
                         slowHttp(
                             port,
-                            "GET /large?mib=$mib HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            "GET /large?mib=$mib HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n",
                             tls = if (tls) ServerFixtures.clientTls() else null,
                             bytesPerSecond = if (tls) 1024L * 1024 else 512L * 1024,
                         )
@@ -418,7 +418,7 @@ class ServerH1TimeoutTest {
                         .port
                 val received =
                     withTimeout(10.seconds) {
-                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 100\r\n\r\n0123456789", tls = null)
+                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: server.test\r\nContent-Length: 100\r\n\r\n0123456789", tls = null)
                     }
                 assertTrue(received.startsWith("HTTP/1.1 408 "), received)
                 assertTrue(received.contains("\r\nConnection: close\r\n"), received)
@@ -450,7 +450,11 @@ class ServerH1TimeoutTest {
                         .port
                 val received =
                     withTimeout(10.seconds) {
-                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n", tls = null)
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\r\nHost: server.test\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+                            tls = null,
+                        )
                     }
                 assertTrue(received.startsWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 408 "), received)
             } finally {

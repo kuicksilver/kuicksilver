@@ -12,6 +12,7 @@ public final class io/kuicksilver/ktor/network/TlsSocket : io/ktor/network/socke
 	public fun dispose ()V
 	public fun getCoroutineContext ()Lkotlin/coroutines/CoroutineContext;
 	public fun getLocalAddress ()Lio/ktor/network/sockets/SocketAddress;
+	public final fun getLocalCertificates ()Ljava/util/List;
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
 	public final fun getPeerCertificates ()Ljava/util/List;
 	public fun getRemoteAddress ()Lio/ktor/network/sockets/SocketAddress;

@@ -54,6 +54,12 @@ public class KuicksilverTlsConnector private constructor(
      * it while the server runs. See `OcspStapling` for when a response is sent.
      */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
+    /**
+     * Whether every connection to this connector comes from a trusted gateway, the one exception RFC 9110 section 7.4 makes
+     * to rejecting misdirected requests; see [Builder.trustedGateway].
+     */
+    @ExperimentalKuicksilverApi
+    public val trustedGateway: Boolean,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -79,7 +85,7 @@ public class KuicksilverTlsConnector private constructor(
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
     public fun withPort(port: Int): KuicksilverTlsConnector =
-        KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling)
+        KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling, trustedGateway)
 
     /** For logs. */
     override fun toString(): String = "HTTPS (Kuicksilver TLS) $host:$port"
@@ -125,10 +131,22 @@ public class KuicksilverTlsConnector private constructor(
         @ExperimentalKuicksilverApi
         public var ocspStapling: OcspStapling? = null
 
+        /**
+         * False by default: a request for an `https` URI whose host the certificate presented on its connection does not name
+         * (subjectAltName, as a client checks it) is answered `421 Misdirected Request` and never reaches the application,
+         * on HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 9110 section 7.4; on HTTP/2 and HTTP/3 the connection stays open for
+         * other requests). A browser that reuses a connection for another host of the same address sends such requests.
+         * True turns the check off for this connector: only when every client of it is a trusted gateway (RFC 9110 section
+         * 7.4: "Unless the connection is from a trusted gateway") that forwards requests for names this certificate does
+         * not carry, such as a TLS-terminating proxy that re-encrypts with an internal certificate.
+         */
+        @ExperimentalKuicksilverApi
+        public var trustedGateway: Boolean = false
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         public fun build(): KuicksilverTlsConnector {
             require(port in 0..65_535) { "port must be 0..65535" }
-            return KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling)
+            return KuicksilverTlsConnector(host, port, identity, clientAuth, trust, cipherSuites, sniSelector, ocspStapling, trustedGateway)
         }
     }
 }

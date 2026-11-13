@@ -263,7 +263,7 @@ class ServerPriorityTest {
                     }
                 }
             try {
-                val resp = rawHttp(port, "GET /p HTTP/1.1\r\nHost: s\r\nPriority: u=2\r\nConnection: close\r\n\r\n")
+                val resp = rawHttp(port, "GET /p HTTP/1.1\r\nHost: server.test\r\nPriority: u=2\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("${StreamPriority(2)}|${StreamPriority(2)}"), resp)
                 assertTrue(resp.lowercase().contains("\r\npriority: u=1, i\r\n"), resp)
             } finally {
@@ -277,7 +277,7 @@ class ServerPriorityTest {
             val (server, port) = tlsServer { routing { get("/p") { call.respondText("${call.request.priority}") } } }
             try {
                 h3(port) { c -> assertEquals("${StreamPriority.Default}", c.text("/p", "priority" to "u=99, i=7, ;;")) }
-                val h1 = rawHttp(port, "GET /p HTTP/1.1\r\nHost: s\r\nPriority: u=99, i=7, ;;\r\nConnection: close\r\n\r\n")
+                val h1 = rawHttp(port, "GET /p HTTP/1.1\r\nHost: server.test\r\nPriority: u=99, i=7, ;;\r\nConnection: close\r\n\r\n")
                 assertTrue(h1.startsWith("HTTP/1.1 200") && h1.endsWith("${StreamPriority.Default}"), h1)
             } finally {
                 server.stopSuspend(100, 1000)
@@ -299,7 +299,7 @@ class ServerPriorityTest {
                     }
                 }
             try {
-                val resp = rawHttp(port, "GET /bad HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+                val resp = rawHttp(port, "GET /bad HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("IllegalArgumentException|IllegalArgumentException|IllegalStateException"), resp)
             } finally {
                 server.stop(100, 500)

@@ -588,6 +588,41 @@ dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certi
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
 
+### Misdirected requests
+
+A TLS connector answers `421 Misdirected Request` to a request whose host the certificate of its connection does not
+name (whatever scheme the request names: the application would see it as https), over HTTP/1.1, HTTP/2 and HTTP/3. The
+engine answers it itself: neither routing nor plugins such as StatusPages or CallLogging see that request (RFC 9110
+section 7.4: such a request "MUST be rejected"). Browsers send these: they reuse an HTTP/2 or HTTP/3 connection for another host at
+the same address, and a 421 makes them retry on a connection of its own. On HTTP/2 and HTTP/3 only that request's stream
+ends; the connection serves the others.
+
+The host is checked as a client checks it: against the subjectAltName of the certificate that connection presented (the
+`sniSelector`'s choice, or the identity current at its handshake when a `TlsIdentity.Reloadable` rotates), a wildcard
+`*.example.com` for one whole left-most label, an IP literal against the certificate's IP addresses, never the subject CN.
+The port is not checked: a certificate names none. On a connector with an `sniSelector`, which may give each name its own
+certificate, client-certificate requirement and trust, a request must also be for the name the connection was set up for
+(its SNI name, or an IP address when the client sent no SNI), so a request cannot reach a name that requires a client
+certificate over a connection that asked for none. So a certificate must name every host the server is reached under,
+`localhost` and the addresses included where clients use them.
+
+Behind a gateway that terminates TLS and forwards requests for names the certificate here does not carry (it re-encrypts
+with an internal certificate), turn the check off for that connector only. RFC 9110 allows it for connections "from a
+trusted gateway", so the connector must accept no other clients:
+
+```kotlin
+// guide:ktor:trusted-gateway
+tlsConnector(internalIdentity) {
+    port = 8443
+    trustedGateway = true // every client of this port is the gateway
+}
+```
+
+A plain connector has no certificate at all, so a request whose target is an absolute `https://` URI
+(`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
+a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
+port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+
 ### Certificate rotation
 
 A renewed certificate can be put in place without a restart (experimental). Give the connector a
@@ -974,7 +1009,9 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   HTTP/1.1; an origin last seen on HTTP/1.1 does not make them wait. A connection
   without requests for `idleTimeout`, or past `maxConnectionLifetime`, is sent GOAWAY and closes once its requests are
   done; a server's GOAWAY moves new requests to a new connection.
-- **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
+- **HTTP/3.** One QUIC connection per origin carries all requests, also when the origin is reached under several
+  names (its host, an `Alt-Svc` alternative, an HTTPS-record target) that resolve to the same address and port: as RFC
+  9114 section 3.3 asks, a second name finds the connection already there and shares it. Origins never share one. When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's

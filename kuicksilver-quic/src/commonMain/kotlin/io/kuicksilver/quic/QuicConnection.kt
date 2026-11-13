@@ -32,6 +32,13 @@ public interface QuicConnection : AutoCloseable {
     public val peerCertificates: List<Certificate>
 
     /**
+     * The certificate chain this side presented in the handshake, leaf first (a server's identity snapshot taken for this
+     * connection); empty without one. A server checks the requests it serves against it (RFC 9110 section 7.4).
+     */
+    @ExperimentalKuicksilverApi
+    public val localCertificates: List<Certificate> get() = emptyList()
+
+    /**
      * The application protocol both sides agreed on through ALPN (RFC 9001 section 8.1); QUIC requires one, so null only if the handshake
      * settled none.
      */

@@ -134,6 +134,10 @@ public final class io/kuicksilver/tls/Hash : java/lang/Enum {
 	public static fun values ()[Lio/kuicksilver/tls/Hash;
 }
 
+public final class io/kuicksilver/tls/HostMatchKt {
+	public static final fun matchesHost (Lio/kuicksilver/tls/Certificate;Lio/kuicksilver/tls/HostName;)Z
+}
+
 public final class io/kuicksilver/tls/HostName {
 	public static final field Companion Lio/kuicksilver/tls/HostName$Companion;
 	public fun equals (Ljava/lang/Object;)Z
@@ -270,6 +274,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public fun enableEarlyData ([BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
 	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
+	public fun getLocalCertificates ()Ljava/util/List;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
@@ -286,6 +291,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
+	public static fun getLocalCertificates (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/util/List;
 	public static fun pendingCryptoBytes (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;)I
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z
@@ -411,6 +417,7 @@ public final class io/kuicksilver/tls/TlsConnection : java/lang/AutoCloseable {
 	public fun close ()V
 	public final fun exportKeyingMaterial (Ljava/lang/String;[BILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getInput ()Lio/ktor/utils/io/ByteReadChannel;
+	public final fun getLocalCertificates ()Ljava/util/List;
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
 	public final fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
 	public final fun getPeerCertificates ()Ljava/util/List;

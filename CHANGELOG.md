@@ -641,6 +641,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   timeout when that is shorter: a slow or duplex body), or a transfer coding of the application, fails that request
   with IllegalStateException before anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
   RFC's "specific user configuration": requests to them go chunked at once, without the probe (experimental).
+- Ktor client, HTTP/3 (RFC 9114 section 3.3, "Clients SHOULD NOT open more than one HTTP/3 connection to a given IP
+  address and UDP port"): one origin reached under several names that resolve to one address and port (its host, an
+  `Alt-Svc` alternative, an HTTPS-record target, an address literal) got a connection per name, all with the same
+  configuration. Before a new connection, the pool now resolves the name and shares a connection of the same origin
+  whose address (the literal its Happy Eyeballs race connected to, or the server's preferred address it moved to; the
+  zone of a link-local address and the NAT64 synthesis counted) and port match,
+  waiting for one still in its handshake for one `connectionAttemptDelay` at most; setups that ran past each other keep
+  the older connection and close the newer before any request used it. WebTransport sessions still take a connection each (session pooling is
+  separate work). Different origins still get a connection each, and `Alt-Svc` bookkeeping stays
+  per alternative (a 421 removes, a failure marks broken, the alternative the request used).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
@@ -1755,6 +1765,30 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   must set and check a random ID of its own.
 
 ### Security
+
+- Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
+  host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
+  section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong
+  identity. Such a request now gets `421 Misdirected Request` from the engine (with `Date`; neither routing nor the
+  send pipeline runs), as does now the 425 for a non-replayable request a gateway forwarded from early data, which
+  over HTTP/1.1 used to go through the application's send pipeline and over HTTP/3 lacked `Date` (RFC 9110 section
+  6.6.1), over HTTP/1.1, HTTP/2 and
+  HTTP/3; on HTTP/2 and HTTP/3 only its stream ends. The host is checked against the subjectAltName of the certificate
+  that connection presented (the `sniSelector` choice, or the identity current at its handshake), as a client checks it:
+  wildcards for one whole left-most label only, IP literals against iPAddress entries, never the subject CN, the port not
+  at all. On a connector with an `sniSelector`, which may give each name its own client-certificate policy, a request
+  must also be for the connection's SNI name (or an address when there was no SNI), else 421, so a request for a name
+  that requires a client certificate cannot ride a connection that asked for none, nor the other way round (as nginx and
+  Caddy do with client authentication). A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
+  requests are served as before. A connector whose every client is a trusted gateway turns the check off with the new
+  `tlsConnector { trustedGateway = true }`, or with the new `plainConnector { trustedGateway = true }` in place of Ktor's
+  `connector { }` (docs/guide/ktor.md, "Misdirected requests"). **Upgrading:** the check is on by default. A server whose
+  certificate does not name every host and address its clients use (`localhost`, `127.0.0.1`, the server's IP) now
+  answers those clients 421; the engine logs the reason at debug level (docs/guide/troubleshooting.md, "The server answers
+  `421 Misdirected Request`"). Reissue the certificate; set `trustedGateway` only on connectors that only a trusted
+  gateway reaches. New for the check and for servers
+  built on the libraries: `TlsConnection.localCertificates`, `QuicTlsSession.localCertificates`,
+  `QuicConnection.localCertificates`, `TlsSocket.localCertificates` and `Certificate.matchesHost`.
 
 - Ktor client, WebSockets (RFC 6455 section 4.1): the server's answer to the opening handshake was not checked beyond
   its status and its extensions, so a 101 from something that is no WebSocket server (a wrong or missing

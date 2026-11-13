@@ -69,6 +69,8 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getWebSocketsOverHttp2 ()Z
 	public final fun getWebSocketsOverHttp3 ()Z
 	public final fun getWebTransport ()Z
+	public final fun plainConnector (Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun plainConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 	public final fun setAltSvc (Z)V
 	public final fun setConnectionIdleTimeoutSeconds (I)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
@@ -102,6 +104,27 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public static synthetic fun tlsConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 }
 
+public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/ktor/server/engine/EngineConnectorConfig {
+	public fun getAddressDescription ()Ljava/lang/String;
+	public fun getHost ()Ljava/lang/String;
+	public fun getPort ()I
+	public final fun getTrustedGateway ()Z
+	public fun getType ()Lio/ktor/server/engine/ConnectorType;
+	public fun toString ()Ljava/lang/String;
+	public final fun withPort (I)Lio/kuicksilver/ktor/server/KuicksilverPlainConnector;
+}
+
+public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector$Builder {
+	public fun <init> ()V
+	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverPlainConnector;
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPort ()I
+	public final fun getTrustedGateway ()Z
+	public final fun setHost (Ljava/lang/String;)V
+	public final fun setPort (I)V
+	public final fun setTrustedGateway (Z)V
+}
+
 public abstract class io/kuicksilver/ktor/server/KuicksilverServerEventListener {
 	public fun <init> ()V
 	public fun connectionClosed (Lio/ktor/http/HttpProtocolVersion;Lio/ktor/network/sockets/InetSocketAddress;)V
@@ -122,6 +145,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/
 	public fun getPort ()I
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getTrustedGateway ()Z
 	public fun getType ()Lio/ktor/server/engine/ConnectorType;
 	public final fun tlsConfig (Ljava/util/List;)Lio/kuicksilver/tls/TlsConfig;
 	public fun toString ()Ljava/lang/String;
@@ -139,6 +163,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun getPort ()I
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getTrustedGateway ()Z
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setHost (Ljava/lang/String;)V
@@ -147,6 +172,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun setPort (I)V
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
+	public final fun setTrustedGateway (Z)V
 }
 
 public final class io/kuicksilver/ktor/server/NeverIndexedKt {

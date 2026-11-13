@@ -99,6 +99,10 @@ internal class ConnectionRuntime(
 
     @Volatile private var certificates: List<Certificate> = emptyList()
 
+    // known from the start (the identity snapshot a server's session took): a server serves 0-RTT requests before its
+    // handshake completes; immutable, so read here as well as at HandshakeCompleted
+    @Volatile private var ownCertificates: List<Certificate> = core.localCertificates
+
     /** Live stream wrappers (test hook): finished streams leave the map. */
     internal val streamCountForTest: Int get() = streams.size
 
@@ -538,6 +542,7 @@ internal class ConnectionRuntime(
                 ConnectionEvent.HandshakeCompleted -> {
                     earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
+                    ownCertificates = core.localCertificates
                     handshake.complete(Unit)
                     try {
                         loop.observer.handshakeCompleted(this)
@@ -828,6 +833,7 @@ internal class ConnectionRuntime(
 
     override val stats: ConnectionStats get() = core.stats
     override val peerCertificates: List<Certificate> get() = certificates
+    override val localCertificates: List<Certificate> get() = ownCertificates
 
     @Volatile private var alpn: String? = null
     override val negotiatedAlpn: String? get() = alpn ?: core.negotiatedAlpn

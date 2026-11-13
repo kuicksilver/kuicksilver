@@ -29,7 +29,10 @@ class ServerEarlyDataHeaderTest {
 
     private var unsafeCalls = 0
 
+    private var sendPipelines = 0
+
     private val routes: Application.() -> Unit = {
+        sendPipeline.intercept(io.ktor.server.response.ApplicationSendPipeline.Before) { sendPipelines++ }
         routing {
             get("/e") { call.respondText("early=${call.request.receivedEarly}") }
             post("/p") {
@@ -43,12 +46,12 @@ class ServerEarlyDataHeaderTest {
         serverTest {
             val (server, port) = tlsServer(module = routes)
             try {
-                val plain = rawHttp(port, "GET /e HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+                val plain = rawHttp(port, "GET /e HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(plain.endsWith("early=false"), plain)
-                val marked = rawHttp(port, "GET /e HTTP/1.1\r\nHost: s\r\nEarly-Data: 1\r\nConnection: close\r\n\r\n")
+                val marked = rawHttp(port, "GET /e HTTP/1.1\r\nHost: server.test\r\nEarly-Data: 1\r\nConnection: close\r\n\r\n")
                 assertTrue(marked.endsWith("early=true"), marked)
                 // "Multiple or invalid instances of the header field MUST be treated as equivalent to a single instance with a value of 1"
-                val invalid = rawHttp(port, "GET /e HTTP/1.1\r\nHost: s\r\nEarly-Data: 0\r\nConnection: close\r\n\r\n")
+                val invalid = rawHttp(port, "GET /e HTTP/1.1\r\nHost: server.test\r\nEarly-Data: 0\r\nConnection: close\r\n\r\n")
                 assertTrue(invalid.endsWith("early=true"), invalid)
             } finally {
                 server.stop(100, 500)
@@ -60,9 +63,14 @@ class ServerEarlyDataHeaderTest {
             val (server, port) = tlsServer(module = routes)
             try {
                 val resp =
-                    rawHttp(port, "POST /p HTTP/1.1\r\nHost: s\r\nEarly-Data: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    rawHttp(
+                        port,
+                        "POST /p HTTP/1.1\r\nHost: server.test\r\nEarly-Data: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
                 assertTrue(resp.startsWith("HTTP/1.1 425"), resp)
+                assertTrue("\r\nDate: " in resp, resp)
                 assertEquals(0, unsafeCalls, "the application processed a request that may be a replay")
+                assertEquals(0, sendPipelines, "the 425 is the engine's own, as over HTTP/2 and HTTP/3")
             } finally {
                 server.stop(100, 500)
             }
@@ -91,6 +99,7 @@ class ServerEarlyDataHeaderTest {
                                 },
                             )
                         assertEquals(425, post.status)
+                        assertTrue(post.headers["date"] != null, "RFC 9110 section 6.6.1: Date on a 4xx")
                         post.body.readFullBody()
                         assertEquals(0, unsafeCalls, "the application processed a request that may be a replay")
                     } finally {

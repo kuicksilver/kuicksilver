@@ -17,6 +17,7 @@ import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsConfig
@@ -92,6 +93,14 @@ public class TlsSocket private constructor(
 
     /** The peer's verified certificate chain, leaf first; empty when it sent none (see [TlsConnection.peerCertificates]). */
     public val peerCertificates: List<Certificate> get() = tls.peerCertificates
+
+    /** The chain this side presents on the connection, leaf first (see [TlsConnection.localCertificates]). */
+    @ExperimentalKuicksilverApi
+    public val localCertificates: List<Certificate> get() = tls.localCertificates
+
+    /** See [TlsConnection.sniSelectedFor]. */
+    @InternalKuicksilverApi
+    public val sniSelectedFor: String? get() = tls.sniSelectedFor
 
     /** The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated. */
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn

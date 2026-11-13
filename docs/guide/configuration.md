@@ -421,6 +421,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](tls.md#certificate-revocation)) |
+| `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -431,6 +432,16 @@ client certificates are verified against; set together),
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
+
+### Plain connector
+
+`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with one more option:
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
+| `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
+| `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 
 ## ktor-network
 

@@ -285,6 +285,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/QuicConnection.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
     open val isHandshakeComplete // io.kuicksilver.quic/QuicConnection.isHandshakeComplete|{}isHandshakeComplete[0]
         open fun <get-isHandshakeComplete>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.isHandshakeComplete.<get-isHandshakeComplete>|<get-isHandshakeComplete>(){}[0]
+    open val localCertificates // io.kuicksilver.quic/QuicConnection.localCertificates|{}localCertificates[0]
+        open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/QuicConnection.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     open val resetStreamAtEnabled // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled|{}resetStreamAtEnabled[0]
         open fun <get-resetStreamAtEnabled>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled.<get-resetStreamAtEnabled>|<get-resetStreamAtEnabled>(){}[0]
 
@@ -697,6 +699,8 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
         final fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/ConnectionCore.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
     final val glitchByFrameType // io.kuicksilver.quic/ConnectionCore.glitchByFrameType|{}glitchByFrameType[0]
         final fun <get-glitchByFrameType>(): kotlin/LongArray // io.kuicksilver.quic/ConnectionCore.glitchByFrameType.<get-glitchByFrameType>|<get-glitchByFrameType>(){}[0]
+    final val localCertificates // io.kuicksilver.quic/ConnectionCore.localCertificates|{}localCertificates[0]
+        final fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/ConnectionCore.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     final val maxDatagramPayload // io.kuicksilver.quic/ConnectionCore.maxDatagramPayload|{}maxDatagramPayload[0]
         final fun <get-maxDatagramPayload>(): kotlin/Int // io.kuicksilver.quic/ConnectionCore.maxDatagramPayload.<get-maxDatagramPayload>|<get-maxDatagramPayload>(){}[0]
     final val negotiatedAlpn // io.kuicksilver.quic/ConnectionCore.negotiatedAlpn|{}negotiatedAlpn[0]

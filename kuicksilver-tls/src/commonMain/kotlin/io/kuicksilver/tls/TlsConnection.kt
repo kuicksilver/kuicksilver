@@ -117,6 +117,24 @@ public class TlsConnection private constructor(
      */
     public val peerCertificates: List<Certificate> get() = presented
 
+    @Volatile private var selectedFor: String? = null
+
+    /**
+     * A server whose [TlsConfig.sniSelector] chose this connection's identity and settings: the server_name of the
+     * ClientHello it chose them for (RFC 6066 section 3; unverified input), null when the ClientHello carried none or no
+     * selector ran. The server engine holds requests on the connection to that name (RFC 9110 section 7.4).
+     */
+    @InternalKuicksilverApi
+    public val sniSelectedFor: String? get() = selectedFor
+
+    /**
+     * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
+     * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
+     * resumption, the identity chosen for the resumed handshake. Empty without one, or before the handshake chose it.
+     */
+    @ExperimentalKuicksilverApi
+    public val localCertificates: List<Certificate> get() = (overrideCtx?.ctx ?: ctx).localChain
+
     /** The application protocol both sides agreed on (RFC 7301), or null when ALPN was not negotiated. */
     public var negotiatedAlpn: String? = null
         private set
@@ -309,6 +327,7 @@ public class TlsConnection private constructor(
         val selector = config.sniSelector ?: throw TlsException.Config("ksl paused for SNI without a selector")
         val ch = Ksl.sslClientHello(s())
         val info = ClientHelloInfo(ch.serverName, parseAlpn(ch.alpnWire), parseU16List(ch.signatureAlgorithmsWire))
+        selectedFor = ch.serverName
         val override = selector(info)
         when {
             override != null -> {
