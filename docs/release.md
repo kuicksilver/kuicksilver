@@ -163,7 +163,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      same checks as the JVM libraries (`tools/check/native-release.sh`: the pinned OpenSSL inside, no instrumentation or
      debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives). No file of the publication
      and not `Kuicksilver.xcframework.zip` may name a home directory of macOS, Linux or Windows, looked for inside every
-     jar, AAR and klib (`tools/check/build-paths.py`): 0.2.0 and 0.2.1 were withdrawn for such a path.
+     jar, AAR and klib (`tools/check/build-paths.py`): 0.2.0 and 0.2.1 were withdrawn for such a path. The SBOM archive
+     and the provenance below are scanned the same way once they are made, before anything is uploaded.
    - The supply-chain files of [Supply chain](#supply-chain-sbom-and-provenance), for the GitHub release and not for
      Central: `build/release/kuicksilver-<version>-sbom.zip` (the CycloneDX SBOM of every publication, checked against
      the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.jsonl` (the build provenance, an in-toto
@@ -330,7 +331,7 @@ the bare Statement as `kuicksilver-0.2.1.intoto.json` instead; `verify-release.s
   (`io/kuicksilver/<artifactId>/<version>/<file>`), plus the SBOM archive and (from 0.3.0) `Kuicksilver.xcframework.zip`.
 - `buildDefinition`: the source (repository and commit), the version and the command line; the toolchain pins of
   `gradle/toolchains.toml`, the OpenSSL pin of `gradle/openssl.toml`, the Kotlin version, and what the Mac actually
-  had (macOS, Xcode, NDK, Docker); the local gate record; as `resolvedDependencies` the commit, the OpenSSL tarball
+  had (the OS family and architecture, without its version or build, and Xcode, NDK, Docker); the local gate record; as `resolvedDependencies` the commit, the OpenSSL tarball
   (SHA-256, signing key fingerprint, the configure flags as the SBOM lists them, their file and its SHA-256), the
   Gradle distribution (its SHA-256 from the wrapper properties), `verification-metadata.xml`, the version catalog, the
   Windows JDK and the local Docker images.

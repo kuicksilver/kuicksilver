@@ -28,7 +28,7 @@
 #      AAR's three libksl.so and every Kotlin/Native klib's static archives checked as the JVM libraries are (pinned OpenSSL
 #      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix), and
 #      no file of the publication or the xcframework zip naming a home directory of macOS, Linux or Windows
-#      (tools/check/build-paths.py, inside every jar, AAR and klib).
+#      (tools/check/build-paths.py, inside every jar, AAR and klib; the SBOM archive and the provenance too, once made).
 #      Supply chain (docs/release.md, "Supply chain"; none of it goes to Central, so the deployment count is unchanged): the
 #      CycloneDX SBOM of every publication, checked against the CycloneDX 1.6 schema, in build/release/kuicksilver-<v>-sbom.zip;
 #      the SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, digests of every file of the
@@ -435,6 +435,8 @@ else
   step "provenance: in-toto bundle, unsigned DSSE envelope"      python3 tools/release/dsse.py envelope "$payload" "$prov"
   echo "     not signed (no key, or --unsigned): a release signs the envelope and the three files with the release key"
 fi
+# the SBOM archive and the provenance go to the GitHub release: they may not name a home directory either
+step "privacy: no home-directory path in the SBOM and provenance" python3 -I tools/check/build-paths.py "$sbom_zip" "$prov" "$stmt"
 
 # the Swift package: its next commit, naming the zip above; signed, tagged and pushed by hand after the GitHub release
 # (docs/release.md, step 6). Never fatal: the release is complete without it, and it can be made again by hand.

@@ -41,6 +41,12 @@ expect 1 "negative: a compilation directory in a klib's cstubs.bc" "$tmp/cintero
 mk "$tmp/x.dll" 'MZ\x90\x00 C:/Users/builder/ksl.c'
 expect 1 "negative: C:/Users in a DLL" "$tmp/x.dll"
 
+mk "$tmp/lower.dll" 'MZ\x90\x00 d:\\users\\builder\\ksl.c'
+expect 1 "negative: d:\\users in any case" "$tmp/lower.dll"
+
+mk "$tmp/prov/statement.json" '{"host": {"os": "Darwin arm64"}, "src": "/home/builder/w"}'
+expect 1 "negative: a home directory in a provenance statement" "$tmp/prov/statement.json"
+
 mkdir -p "$tmp/n3"
 python3 -I -c 'import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z: z.writestr("/Users/someone/leak.txt", "x")' "$tmp/n3/names.zip"

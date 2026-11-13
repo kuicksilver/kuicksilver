@@ -6,7 +6,7 @@
 Every file under the given paths is read, and every zip-based archive (jar, aar, klib, zip) is opened, recursively, so a
 klib's static archives and cstubs.bc, an AAR's libksl.so and the classes of a jar are all looked at; anything else (.a,
 .so, .dll, .dylib, .bc, ...) is searched byte for byte, as its strings sit there uncompressed. A match is '/Users/',
-'/home/' or 'C:\\Users' (also 'C:/Users', any case of the drive letter): the absolute path of a checkout, a toolchain
+'/home/' or 'C:\\Users' (also 'C:/Users', any drive letter, in any case): the absolute path of a checkout, a toolchain
 or a home directory compiled into the artifact (0.2.0 and 0.2.1 were withdrawn for such a path). Each match is listed
 with the file it is in and a few bytes around it. Exit 1 on any match, 2 on a usage error.
 Usage: build-paths.py <file or directory>...
@@ -17,7 +17,7 @@ import re
 import sys
 import zipfile
 
-PATTERN = re.compile(rb"/Users/|/home/|[Cc]:(?:\\\\?|/)Users")
+PATTERN = re.compile(rb"/Users/|/home/|(?i:[a-z]:(?:\\\\?|/)users)")
 ZIPS = (".jar", ".aar", ".klib", ".zip")
 
 

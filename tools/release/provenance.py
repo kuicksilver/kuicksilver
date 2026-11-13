@@ -147,8 +147,8 @@ def main():
         ndk = m and m.group(1)
     xcode = run("xcodebuild", "-version")
     host = {
-        "os": f"{platform.system()} {platform.release()} {platform.machine()}",
-        "macos": run("sw_vers", "-productVersion"),
+        # the kind of host only (OS family and architecture): no kernel or OS build, like everything published
+        "os": f"{platform.system()} {platform.machine()}",
         "xcode": xcode.splitlines()[0].removeprefix("Xcode ") if xcode else None,
         "ndk": ndk,
         "docker": run("docker", "version", "--format", "{{.Server.Version}}"),
