@@ -90,7 +90,7 @@ bash tools/check/clang-format.sh                                 # C formatting 
 ./gradlew updateKotlinAbi                                        # regenerate the dumps after an intended API change
 bash tools/check/links.sh                                        # relative links in the Markdown files
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
-python3 tools/check/code-refs.py                                 # the File.kt:N lines docs/spec cites (--write after re-pointing them)
+python3 tools/check/code-refs.py                                 # the File.kt:N lines docs/spec cites (--fix re-points moved ones, --write records new ones)
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
 bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
 bash tools/check/guide-sync-test.sh                              # negative controls of guide-sync.sh
