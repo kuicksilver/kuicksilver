@@ -373,14 +373,15 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
 
     /**
-     * Whether a proxy auto-configuration (PAC) script the system settings name, by its URL or inline, gets a `wss://`
-     * WebSocket's whole URI with its resource name (path and query), as RFC 6455 section 4.1 asks, on Apple platforms
-     * and Windows ([ProxyResolvers.System]). Off by default: such a script gets `wss://host[:port]/` only, as Chrome,
-     * Firefox and Android give `https` and `wss` URLs to PAC scripts, since a script can send what it is given out
-     * through `dnsResolve` (CVE-2016-3763, CVE-2016-5134). A script found by WPAD (automatic detection) never gets more
-     * than that, whatever this says; `ws://` URIs reach every script whole, `http` and `https` ones as their origin.
-     * Turn it on only when the settings' PAC script is yours and served over `https` or from a file.
-     * docs/guide/ktor.md, "Proxies".
+     * Whether a proxy auto-configuration (PAC) script the system settings name gets a `wss://` WebSocket's whole URI
+     * with its resource name (path and query), as RFC 6455 section 4.1 asks, on Apple platforms and Windows
+     * ([ProxyResolvers.System]); the script must be given inline in the settings (Apple) or by an `https://` or
+     * `file:` URL. Off by default: every script gets `wss://host[:port]/` only, as Chrome, Firefox and Android give
+     * `https` and `wss` URLs to PAC scripts, since a script can send what it is given out through `dnsResolve`
+     * (CVE-2016-3763, CVE-2016-5134). A script found by WPAD (automatic detection) or fetched over plain `http://`
+     * never gets more than that, whatever this says: whoever answers on the local network writes it. `ws://` URIs reach
+     * every script whole, `http` and `https` ones as their origin. On Apple platforms the PAC URL CFNetwork reports
+     * must equal the settings' string exactly; one written otherwise gets the origin. docs/guide/ktor.md, "Proxies".
      */
     @ExperimentalKuicksilverApi
     public var pacFullWebSocketUrl: Boolean = false

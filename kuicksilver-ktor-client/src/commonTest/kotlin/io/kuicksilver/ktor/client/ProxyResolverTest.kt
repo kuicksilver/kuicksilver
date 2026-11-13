@@ -453,9 +453,33 @@ class ProxyResolverTest {
     /** Windows: a script WinHTTP's automatic detection (WPAD) found never gets the whole `wss` URI, opt-in or not. */
     @Test fun negative_wpadScriptOnWindowsGetsTheOriginOnly() {
         val url = Url("wss://h.test/chat?token=1")
-        assertEquals("wss://h.test/", winPacTarget(url, detect = true, fullWebSocketUrl = true))
-        assertEquals("wss://h.test/", winPacTarget(url, detect = false, fullWebSocketUrl = false))
-        assertEquals("wss://h.test/chat?token=1", winPacTarget(url, detect = false, fullWebSocketUrl = true))
+        val https = "https://cfg.test/proxy.pac"
+        assertEquals("wss://h.test/", winPacTarget(url, detect = true, configUrl = https, fullWebSocketUrl = true))
+        assertEquals("wss://h.test/", winPacTarget(url, detect = false, configUrl = https, fullWebSocketUrl = false))
+        assertEquals("wss://h.test/chat?token=1", winPacTarget(url, detect = false, configUrl = https, fullWebSocketUrl = true))
+        assertEquals(
+            "wss://h.test/chat?token=1",
+            winPacTarget(url, detect = false, configUrl = "file:///c:/p.pac", fullWebSocketUrl = true),
+        )
+    }
+
+    /**
+     * Windows: a PAC URL of the settings fetched over plain `http` is as open to the local network as WPAD (whoever
+     * answers for its host writes the script), so it never gets the whole `wss` URI, opt-in or not.
+     */
+    @Test fun negative_plainHttpPacUrlOnWindowsGetsTheOriginOnly() {
+        val url = Url("wss://h.test/chat?token=1")
+        for (configUrl in listOf("http://cfg.test/proxy.pac", "HTTP://cfg.test/p.pac", "ftp://cfg.test/p.pac", null)) {
+            assertEquals("wss://h.test/", winPacTarget(url, detect = false, configUrl = configUrl, fullWebSocketUrl = true), "$configUrl")
+        }
+    }
+
+    /** The URI and the host a PAC script gets carry the host in lower case, as Chromium's canonical URL does. */
+    @Test fun pacHostIsLowerCase() {
+        assertEquals("wss://h.test/", pacTarget(Url("wss://H.Test/x")))
+        assertEquals("ws://h.test/X?Y", pacTarget(Url("ws://H.TEST/X?Y")))
+        assertEquals("h.test", pacHost(Url("wss://H.Test/x")))
+        assertEquals("2001:db8::a", pacHost(Url("wss://[2001:DB8::A]/x")))
     }
 
     /** The engine's `pacFullWebSocketUrl` reaches the system resolver; off by default. */

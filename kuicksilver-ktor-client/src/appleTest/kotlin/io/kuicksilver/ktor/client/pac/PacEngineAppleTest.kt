@@ -122,16 +122,19 @@ class PacEngineAppleTest {
         runBlocking {
             val url = Url("wss://h.test:8443/chat?token=secret")
             val inline = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = echo)
-            val byUrl = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = "http://cfg.test/proxy.pac")
+            val byUrl = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = "https://cfg.test/proxy.pac")
             val wpad = CfProxy(CfProxy.Type.AutoConfiguration, null, null, wpad = true)
-            val named = SystemProxySettings(false, emptyList(), pacEnabled = true, pacUrl = "http://cfg.test/proxy.pac", pacScript = echo)
+            val named = SystemProxySettings(false, emptyList(), pacEnabled = true, pacUrl = "https://cfg.test/proxy.pac", pacScript = echo)
             assertEquals("wss://h.test:8443/", applePacTarget(url, inline, named, fullWebSocketUrl = false))
             assertEquals("wss://h.test:8443/chat?token=secret", applePacTarget(url, inline, named, fullWebSocketUrl = true))
             assertEquals("wss://h.test:8443/chat?token=secret", applePacTarget(url, byUrl, named, fullWebSocketUrl = true))
             assertEquals("wss://h.test:8443/", applePacTarget(url, wpad, named, fullWebSocketUrl = true))
-            val other = SystemProxySettings(true, emptyList(), pacEnabled = true, pacUrl = "http://other.test/p.pac")
+            val file = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = "file:///etc/proxy.pac")
+            val namedFile = SystemProxySettings(false, emptyList(), pacEnabled = true, pacUrl = "file:///etc/proxy.pac")
+            assertEquals("wss://h.test:8443/chat?token=secret", applePacTarget(url, file, namedFile, fullWebSocketUrl = true))
+            val other = SystemProxySettings(true, emptyList(), pacEnabled = true, pacUrl = "https://other.test/p.pac")
             assertEquals("wss://h.test:8443/", applePacTarget(url, byUrl, other, fullWebSocketUrl = true))
-            val off = SystemProxySettings(true, emptyList(), pacEnabled = false, pacUrl = "http://cfg.test/proxy.pac")
+            val off = SystemProxySettings(true, emptyList(), pacEnabled = false, pacUrl = "https://cfg.test/proxy.pac")
             assertEquals("wss://h.test:8443/", applePacTarget(url, byUrl, off, fullWebSocketUrl = true))
             assertEquals("https://h.test:8443/", applePacTarget(Url("https://h.test:8443/a?b"), byUrl, named, fullWebSocketUrl = true))
             // what the script itself sees, end to end
@@ -146,6 +149,19 @@ class PacEngineAppleTest {
                 )
             assertEquals("wss---h-test-8443-chat-token-secret.h.test", whole.proxies[0].host)
         }
+
+    /**
+     * The settings' own PAC URL over plain `http` is as open to the local network as WPAD (whoever answers for its host,
+     * or sits on the path, writes the script), so it never gets the whole `wss` URI, opt-in or not.
+     */
+    @Test fun negative_plainHttpPacUrlGetsTheOriginEvenWhenNamed() {
+        val url = Url("wss://h/c?token=x")
+        for (pacUrl in listOf("http://cfg.test/proxy.pac", "HTTP://cfg.test/proxy.pac", "ftp://cfg.test/proxy.pac")) {
+            val entry = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacUrl = pacUrl)
+            val settings = SystemProxySettings(false, emptyList(), pacEnabled = true, pacUrl = pacUrl)
+            assertEquals("wss://h/", applePacTarget(url, entry, settings, fullWebSocketUrl = true), pacUrl)
+        }
+    }
 
     @Test fun pacFileIsReadAndRun() =
         runBlocking {

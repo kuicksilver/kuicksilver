@@ -172,8 +172,9 @@ internal object SystemPacHost : PacHost {
 }
 
 /**
- * The most distinct names (per function family: `dnsResolve` and `isResolvable`, or `dnsResolveEx` and `isResolvableEx`)
- * one run of a script may resolve, Chromium's `kMaxUniqueResolveDnsPerExec`: later new names resolve to nothing.
+ * The most distinct lookups one run of a script may make, 20 per run in total (Chromium's `kMaxUniqueResolveDnsPerExec`):
+ * a name looked up by both families (`dnsResolve` or `isResolvable`, and `dnsResolveEx` or `isResolvableEx`) counts
+ * twice; later new lookups resolve to nothing.
  */
 internal const val PAC_MAX_DNS_LOOKUPS: Int = 20
 

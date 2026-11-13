@@ -57,6 +57,7 @@ internal object AppleSystemProxyResolver : WarningProxyResolver {
         val host = socketHost(url.host)
         if (isLoopback(host)) return null
         val target = "${if (url.protocol.isSecure()) "https" else "http"}://${uriHost(host)}:${url.port}/"
+        val scriptHost = pacHost(url)
         val settings = withContext(Dispatchers.IO) { systemProxySettings(target) }
         val entries = settings.entries
         val all =
@@ -65,15 +66,17 @@ internal object AppleSystemProxyResolver : WarningProxyResolver {
             } else {
                 entries
             }
-        return pickCfProxyWithPac(all, { evaluatePac(it, applePacTarget(url, it, settings, pacFullWebSocketUrl), host) }, warn)
+        return pickCfProxyWithPac(all, { evaluatePac(it, applePacTarget(url, it, settings, pacFullWebSocketUrl), scriptHost) }, warn)
     }
 }
 
 /**
  * The URI [entry]'s script gets for [url] ([pacTarget]): a `wss` URI whole only with [fullWebSocketUrl] and only when the
- * entry is the PAC the settings name, its URL or its script the settings' own (`ProxyAutoConfigURLString`,
- * `ProxyAutoConfigJavaScript`, with `ProxyAutoConfigEnable` on); a script WPAD found, or an entry CFNetwork gave that
- * the settings do not name, gets the origin only.
+ * entry is the PAC the settings name (`ProxyAutoConfigEnable` on) and out of the local network's reach: the settings'
+ * own script (`ProxyAutoConfigJavaScript`), or their PAC URL (`ProxyAutoConfigURLString`) when it is `https` or `file`
+ * ([pacUrlIsPrivate]). The entry's URL (CFNetwork's `absoluteString`) must equal the settings' string exactly; one
+ * written otherwise gets the origin, as do a script WPAD found, one over plain `http`, and an entry the settings do not
+ * name.
  */
 internal fun applePacTarget(
     url: Url,
@@ -85,7 +88,7 @@ internal fun applePacTarget(
         !entry.wpad &&
             settings.pacEnabled &&
             (
-                (entry.pacUrl != null && entry.pacUrl == settings.pacUrl) ||
+                (entry.pacUrl != null && entry.pacUrl == settings.pacUrl && pacUrlIsPrivate(entry.pacUrl)) ||
                     (entry.pacScript != null && entry.pacScript == settings.pacScript)
             )
     return pacTarget(url, fullWebSocketUrl && named)

@@ -67,14 +67,16 @@ internal class WpadFailures(
 }
 
 /**
- * The URI WinHTTP hands the script for [url] ([pacTarget]): a script found by automatic detection ([detect], WPAD) never
- * gets a `wss` URL whole, whatever [fullWebSocketUrl] says; the script of the settings' PAC URL gets it with it.
+ * The URI WinHTTP hands the script for [url] ([pacTarget]): a `wss` URL whole only with [fullWebSocketUrl], only for the
+ * settings' PAC URL ([configUrl], not automatic detection, [detect]), and only when that URL is `https` or `file`
+ * ([pacUrlIsPrivate]): a script over plain `http`, or one WPAD found, is as open to the local network as WPAD itself.
  */
 internal fun winPacTarget(
     url: Url,
     detect: Boolean,
+    configUrl: String?,
     fullWebSocketUrl: Boolean,
-): String = pacTarget(url, fullWebSocketUrl && !detect)
+): String = pacTarget(url, fullWebSocketUrl && !detect && pacUrlIsPrivate(configUrl))
 
 /**
  * Windows' proxy auto-configuration as WinHTTP and Internet Explorer run it: automatic detection (WPAD) first, then the
