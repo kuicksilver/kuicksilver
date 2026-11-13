@@ -1935,6 +1935,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ## [0.2.1] - 2026-11-04
 
+**Withdrawn.** Its Kotlin/Native artifacts contain a local build path; their removal from Maven Central has been
+requested. Use 0.3.0.
+
 ### Added
 
 - Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
@@ -2854,6 +2857,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   parsed.
 
 ## [0.2.0] - 2026-10-18
+
+**Withdrawn.** Its Kotlin/Native artifacts contain a local build path; their removal from Maven Central has been
+requested. Use 0.3.0.
 
 The first version published on Maven Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09,
 was never published (no tag, no Central deployment); it is summarised in the last section, and its changes reach users

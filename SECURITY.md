@@ -60,7 +60,7 @@ a release with a security fix is coming, without details, and the release's `CHA
 
 | Version | Supported |
 |---|---|
-| the latest 0.x release (0.2.1 today; updated with each release) | yes: security fixes and OpenSSL updates |
+| the latest 0.x release (0.3.0 once published; 0.2.0 and 0.2.1 are withdrawn, see the [CHANGELOG](CHANGELOG.md)) | yes: security fixes and OpenSSL updates |
 | older 0.x releases | no — upgrade to the latest |
 | unreleased code on `main` | fixes land there first; not a supported release |
 

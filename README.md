@@ -25,8 +25,9 @@ SPDX-License-Identifier: Apache-2.0
   <a href="https://www.bestpractices.dev/projects/16654"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/16654/badge"></a>
 </p>
 
-> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.1 is on Maven Central. This
-> README and the guides describe 0.3.0, the release in preparation ([Install](#install) says how to use it before it is
+> **Status: 0.x, experimental.** The API can change between any two 0.x releases. 0.2.0 and 0.2.1 are withdrawn: their
+> Kotlin/Native artifacts contain a local build path, and their removal from Maven Central has been requested; use
+> 0.3.0. This README and the guides describe 0.3.0, the release in preparation ([Install](#install) says how to use it before it is
 > published). Do not use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md)
 > says which API is stable and which is experimental.
 
@@ -74,7 +75,8 @@ server engines, and is licensed under Apache-2.0.
 
 ## Install
 
-**Versions.** 0.2.1 is the current release. The guides, the API reference and the snippets here describe **0.3.0**,
+**Versions.** 0.2.0 and 0.2.1 are withdrawn (their Kotlin/Native artifacts contain a local build path; their removal
+from Maven Central has been requested): use 0.3.0. The guides, the API reference and the snippets here describe **0.3.0**,
 the release in preparation: every guide says "version `0.3.0` or newer", and features the guides mark as 0.3.0 (the
 HTTP/3 kill switch and `Http3Advertising`, certificate reload, the QUIC connection limits of the server engine, HTTP/2,
 WebTransport, among others; see the [CHANGELOG](CHANGELOG.md)) are not in 0.2.1. Until 0.3.0 is on Maven Central, build
@@ -90,7 +92,7 @@ on macOS, Xcode. For a JVM application,
 publishes only the JVM jars, the multiplatform metadata and the BOM: no Android AAR (no NDK) and no Kotlin/Native
 klibs. The metadata still runs the C interop of every native target, so OpenSSL is still built for each of them (Docker,
 and Xcode on macOS), and the jar carries the native library of the machine that built it only (on an Apple Silicon Mac,
-macOS arm64), so the application runs on that kind of machine alone. For 0.2.1, read the documentation of the `v0.2.1` tag.
+macOS arm64), so the application runs on that kind of machine alone.
 
 Each block pins every Kuicksilver module with the bill of materials (`kuicksilver-bom`) and every Ktor module with
 Ktor's (Kuicksilver needs Ktor 3.6.x, [Supported Ktor versions](docs/guide/ktor.md#supported-ktor-versions)). A module

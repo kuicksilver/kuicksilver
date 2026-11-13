@@ -10,6 +10,9 @@ which platforms, Ktor versions and OpenSSL releases are covered. Kuicksilver is 
 [CHANGELOG](../CHANGELOG.md): Semantic Versioning, "before 1.0, any 0.x release may contain breaking changes"); this
 page says how far below that ceiling each part of the API stays.
 
+0.2.0 and 0.2.1 are withdrawn: their Kotlin/Native artifacts contain a local build path, and their removal from Maven
+Central has been requested. Use 0.3.0; what this page says of 0.2.x describes those releases as they were published.
+
 ## Stability levels
 
 Every public declaration of a published module is at exactly one of these levels. The level is visible in the code:
