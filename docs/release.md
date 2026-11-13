@@ -161,7 +161,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    - `publishToMavenLocal` into `build/release/m2` (never `~/.m2`), file count and size per module against the limits.
      The published AAR's three `libksl.so` and the static archives in each Kotlin/Native `cinterop-ksl` klib get the
      same checks as the JVM libraries (`tools/check/native-release.sh`: the pinned OpenSSL inside, no instrumentation or
-     debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives).
+     debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives). No file of the publication
+     and not `Kuicksilver.xcframework.zip` may name a home directory of macOS, Linux or Windows, looked for inside every
+     jar, AAR and klib (`tools/check/build-paths.py`): 0.2.0 and 0.2.1 were withdrawn for such a path.
    - The supply-chain files of [Supply chain](#supply-chain-sbom-and-provenance), for the GitHub release and not for
      Central: `build/release/kuicksilver-<version>-sbom.zip` (the CycloneDX SBOM of every publication, checked against
      the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.jsonl` (the build provenance, an in-toto

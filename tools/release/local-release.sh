@@ -26,7 +26,9 @@
 #      collected ones, its manifest naming the pinned OpenSSL and this commit.
 #   5. publishToMavenLocal into build/release/m2 (never ~/.m2), file count and size against the Central limits; the published
 #      AAR's three libksl.so and every Kotlin/Native klib's static archives checked as the JVM libraries are (pinned OpenSSL
-#      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix).
+#      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix), and
+#      no file of the publication or the xcframework zip naming a home directory of macOS, Linux or Windows
+#      (tools/check/build-paths.py, inside every jar, AAR and klib).
 #      Supply chain (docs/release.md, "Supply chain"; none of it goes to Central, so the deployment count is unchanged): the
 #      CycloneDX SBOM of every publication, checked against the CycloneDX 1.6 schema, in build/release/kuicksilver-<v>-sbom.zip;
 #      the SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, digests of every file of the
@@ -402,6 +404,9 @@ check_klibs() {
 }
 step "android: AAR libksl.so (OpenSSL, exports, no sanitizers)"  check_aar
 step "native: klib archives (OpenSSL, ksl_ prefix, no sanitizers)" check_klibs
+# 0.2.0 and 0.2.1 were withdrawn for a build path in their Kotlin/Native artifacts: no published file (jar, AAR, klib, and
+# what they hold: .so, .dll, .dylib, .a, cstubs.bc) and not the xcframework zip may name a home directory
+step "privacy: no home-directory path in any artifact"          python3 -I tools/check/build-paths.py "$m2/io/kuicksilver" "$xcf"
 echo "     local repository for consumer checks: $m2 (bash tools/check/consumer-smoke.sh $version with KSL_MAVEN_REPO=$m2)"
 
 # supply chain: for the GitHub release, never uploaded to Central (the count above stays what Central receives)
