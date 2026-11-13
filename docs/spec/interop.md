@@ -277,10 +277,13 @@ Findings:
    once through a Gradle init script that sets the test task's `executable`).
 7. **Ktor's CIO client** opens a new connection for every request, against Netty, CIO and our server alike; persistence
    is the client's choice (RFC 9112 section 9.3). The test asserts five requests from five client ports.
-8. **Ktor's CIO client** speaks TLS 1.2 only (ktor-network-tls) and our TCP connectors TLS 1.3 only, so there is no
-   HTTP-over-TLS pair. Our server ends the handshake as RFC 8446 appendix D.2 requires: "If the "supported_versions"
-   extension is absent and the server only supports versions greater than ClientHello.legacy_version, the server MUST
-   abort the handshake with a "protocol_version" alert." (`CioToServerTlsTest`).
+8. **Ktor's CIO client** speaks TLS 1.2 only (ktor-network-tls) and our TCP connectors are TLS 1.3 only by default, so
+   the bench, which keeps the default, has no HTTP-over-TLS pair. Our server ends the handshake as RFC 8446 appendix D.2
+   requires: "If the "supported_versions" extension is absent and the server only supports versions greater than
+   ClientHello.legacy_version, the server MUST abort the handshake with a "protocol_version" alert."
+   (`CioToServerTlsTest`). TLS 1.2 on the server is available as an opt-in, off by default:
+   `tlsConnector(identity) { versions = TlsVersions.Tls12And13 }` ([TLS 1.2 on the
+   server](../guide/ktor.md#tls-12-on-the-server)).
 9. **Ktor's OkHttp engine** sends every `Frame` as a whole message, its `fin` ignored (OkHttp has no fragments in its
    API): three fragments arrive as three messages. Not an error on either side; a fragmented message cannot be sent
    through that engine.
@@ -291,9 +294,11 @@ response to its Content-Length; the bench's Netty HTTP/3 client passes the metho
 
 Not in the bench, and why: Ktor's Jetty engine (Jetty 12.1, `ktor-server-jetty-jakarta`) brings Jakarta EE artifacts
 (CDI, Interceptors, WebSocket API) signed by keys that no key server has and that no official source lists, so they
-could only be pinned by checksum; that waits for a decision on those keys. WebSockets over HTTP/2 (RFC 8441): neither
-of our engines offers Extended CONNECT on HTTP/2 yet ([RFC compliance](rfc-compliance.md)), and none of the JVM clients
-here has it. HTTP/3 from the JDK's client: JDK 26 (JEP 517); the toolchain is 21. Ktor's Netty engine has no WebSockets
+could only be pinned by checksum; that waits for a decision on those keys. WebSockets over HTTP/2 (RFC 8441): both of
+our engines have it (Extended CONNECT on HTTP/2, server and client; [WebSockets over
+HTTP/2](#websockets-over-http2-rfc-8441-2026-11-12) has the runs against Node.js and Chrome), but none of the JVM clients
+here has it, and our client opens a WebSocket over HTTP/2 only to a server whose SETTINGS enable Extended CONNECT, so
+the WebSocket pairs here run over HTTP/1.1. HTTP/3 from the JDK's client: JDK 26 (JEP 517); the toolchain is 21. Ktor's Netty engine has no WebSockets
 over HTTP/3 (RFC 9220), so the HTTP/3 pair has none.
 
 ## Interop WebTransport (browsers, 2026-10-22 and 2026-10-23)
