@@ -73,7 +73,7 @@ internal object AppleSystemProxyResolver : WarningProxyResolver {
 /**
  * The URI [entry]'s script gets for [url] ([pacTarget]): a `wss` URI whole only with [fullWebSocketUrl] and only when the
  * entry is the PAC the settings name (`ProxyAutoConfigEnable` on) and out of the local network's reach: the settings'
- * own script (`ProxyAutoConfigJavaScript`), or their PAC URL (`ProxyAutoConfigURLString`) when it is `https` or `file`
+ * own script (`ProxyAutoConfigJavaScript`), or their PAC URL (`ProxyAutoConfigURLString`) when it is `https` or local `file`
  * ([pacUrlIsPrivate]). The entry's URL (CFNetwork's `absoluteString`) must equal the settings' string exactly; one
  * written otherwise gets the origin, as do a script WPAD found, one over plain `http`, and an entry the settings do not
  * name.

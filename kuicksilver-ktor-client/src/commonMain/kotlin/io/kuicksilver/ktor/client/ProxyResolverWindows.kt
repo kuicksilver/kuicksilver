@@ -68,7 +68,7 @@ internal class WpadFailures(
 
 /**
  * The URI WinHTTP hands the script for [url] ([pacTarget]): a `wss` URL whole only with [fullWebSocketUrl], only for the
- * settings' PAC URL ([configUrl], not automatic detection, [detect]), and only when that URL is `https` or `file`
+ * settings' PAC URL ([configUrl], not automatic detection, [detect]), and only when that URL is `https` or local `file`
  * ([pacUrlIsPrivate]): a script over plain `http`, or one WPAD found, is as open to the local network as WPAD itself.
  */
 internal fun winPacTarget(

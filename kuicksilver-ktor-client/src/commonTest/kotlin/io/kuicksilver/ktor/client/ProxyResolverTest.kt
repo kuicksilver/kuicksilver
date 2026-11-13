@@ -474,6 +474,21 @@ class ProxyResolverTest {
         }
     }
 
+    /**
+     * A `file:` PAC URL with a host (`file://srv/share/p.pac`, or the UNC form `file:////srv/share/p.pac`) is fetched over
+     * SMB from that host, which a LAN attacker can spoof as easily as an `http` server: no whole `wss` URI for it. Only a
+     * local file (`file:///…`, `file://localhost/…`) and `https` (any case) count.
+     */
+    @Test fun negative_remoteFilePacUrlGetsTheOriginOnly() {
+        val url = Url("wss://h/c?t=1")
+        for (configUrl in listOf("file://srv/share/p.pac", "file:////srv/share/p.pac", "FILE://srv/p.pac", "file:\\\\srv\\p.pac")) {
+            assertEquals("wss://h/", winPacTarget(url, detect = false, configUrl = configUrl, fullWebSocketUrl = true), configUrl)
+        }
+        for (configUrl in listOf("file:///c:/p.pac", "file://localhost/c:/p.pac", "FILE://LOCALHOST/p.pac", "HTTPS://cfg.test/p.pac")) {
+            assertEquals("wss://h/c?t=1", winPacTarget(url, detect = false, configUrl = configUrl, fullWebSocketUrl = true), configUrl)
+        }
+    }
+
     /** The URI and the host a PAC script gets carry the host in lower case, as Chromium's canonical URL does. */
     @Test fun pacHostIsLowerCase() {
         assertEquals("wss://h.test/", pacTarget(Url("wss://H.Test/x")))

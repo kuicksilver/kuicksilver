@@ -375,8 +375,8 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /**
      * Whether a proxy auto-configuration (PAC) script the system settings name gets a `wss://` WebSocket's whole URI
      * with its resource name (path and query), as RFC 6455 section 4.1 asks, on Apple platforms and Windows
-     * ([ProxyResolvers.System]); the script must be given inline in the settings (Apple) or by an `https://` or
-     * `file:` URL. Off by default: every script gets `wss://host[:port]/` only, as Chrome, Firefox and Android give
+     * ([ProxyResolvers.System]); the script must be given inline in the settings (Apple), by an `https://` URL or by a
+     * local `file:` URL (`file:///…`; one with a host, `file://srv/share/p.pac`, is fetched over SMB and does not count). Off by default: every script gets `wss://host[:port]/` only, as Chrome, Firefox and Android give
      * `https` and `wss` URLs to PAC scripts, since a script can send what it is given out through `dnsResolve`
      * (CVE-2016-3763, CVE-2016-5134). A script found by WPAD (automatic detection) or fetched over plain `http://`
      * never gets more than that, whatever this says: whoever answers on the local network writes it. `ws://` URIs reach

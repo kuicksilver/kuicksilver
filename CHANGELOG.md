@@ -488,7 +488,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   WPAD. On Windows with WinHTTP's PAC engine (`WinHttpGetProxyForUrl`: automatic detection, WPAD, by DHCP and DNS,
   then the PAC URL; each call goes without the user's credentials first, and with them only when the script's server
   asks). On Apple platforms the engine runs PAC itself, as CFNetwork's engine drops the path and query before the
-  script runs: the script of the settings' PAC URL (downloaded directly, `http`, `https` or `file`, at most 1 MiB read,
+  script runs: the script of the settings' PAC URL (downloaded directly, `http`, `https` or local `file`, at most 1 MiB read,
   one download per URL at a time, kept 30 minutes, a failure 1 minute) or given inline, or WPAD's when the settings say "auto discover" (DHCP option 252, `http` or `https`
   only, on macOS; then `wpad.<domain>` for each configured DNS search domain exactly, never a parent domain; then
   `http://wpad/wpad.dat` for the system resolver to complete), run on JavaScriptCore with the PAC utility functions
@@ -1434,7 +1434,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   which strip the same way since 2016; Firefox strips the path of every URL). This departs from RFC 6455 section 4.1,
   whose PAC rule asks for the resource name (an owner-approved security deviation; `ws://` URIs still reach the script
   whole). `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the script the system
-  settings name, given inline or by an `https://` or `file:` URL, never to one WPAD found or one fetched over plain
+  settings name, given inline or by an `https://` or local `file:///` URL, never to one WPAD found or one fetched over plain
   `http://`
   ([Proxies](docs/guide/ktor.md#proxies), [RFC 6455 §4.1](docs/spec/rfc/6455.md#s4-1-connecting-through-a-proxy)).
   The development builds before this passed every script the whole `wss` URI.

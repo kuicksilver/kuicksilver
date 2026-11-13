@@ -25,3 +25,7 @@ what the result decides for the RFC 6455 §4.1 row (docs/spec/rfc/6455.md, Open 
    - `… -> https---h-test-8443-.h.test:1` (no `chat`): WinHTTP strips the path; the rule is not met on Windows.
    - `Failed`: the script was not fetched or run (check the server log and `KSL_WIN_PAC_URL`).
 4. The three lines decide the Windows part of the RFC 6455 §4.1 row (docs/spec/rfc/6455.md, Open items).
+5. Redirect: serve the script behind an `https` URL that answers `302` to an `http://` copy of it, set `KSL_WIN_PAC_URL`
+   to the `https` URL and run step 2 again. A `Failed` line means WinHTTP refuses the https→http redirect; a `WINPAC`
+   answer means it follows it, so a whole `wss` URI (`pacFullWebSocketUrl`) could reach a script served over plain
+   `http`: record that in docs/spec/rfc/6455.md, Open items.

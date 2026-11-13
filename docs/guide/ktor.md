@@ -1208,16 +1208,18 @@ URL's path; Firefox strips it):
 | Request | On Apple platforms and Windows the script gets | On the JVM and Android `ProxySelector.select` gets |
 |---|---|---|
 | `https://h/p?q` | `https://h/` | `https://h:443/` |
-| `wss://h:8443/p?q` | `wss://h:8443/` (with `pacFullWebSocketUrl` and the settings' own script, inline or from an `https`/`file` URL: `wss://h:8443/p?q`; WinHTTP: as `https://` when it refuses `wss`) | `https://h:8443/p?q` (Android's selector cuts it to `https://h:8443/` before its PAC runs; the JDK's passes the OS only scheme and host) |
+| `wss://h:8443/p?q` | `wss://h:8443/` (with `pacFullWebSocketUrl` and the settings' own script, inline or from an `https`/local `file` URL: `wss://h:8443/p?q`; WinHTTP: as `https://` when it refuses `wss`) | `https://h:8443/p?q` (Android's selector cuts it to `https://h:8443/` before its PAC runs; the JDK's passes the OS only scheme and host) |
 | `ws://h/p?q` | `ws://h/p?q` (WinHTTP: as `http://` when it refuses `ws`) | `http://h:80/p?q` |
 | `http://h/p?q` | `http://h/` | `http://h:80/` |
 
 RFC 6455 section 4.1 asks for a WebSocket's whole URI, resource name included; for `wss` the engine departs from that
 by default for this reason. `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the
-script the system settings name, given inline (Apple) or by an `https://` or `file:` URL (Windows: the "Use setup
+script the system settings name, given inline (Apple) or by an `https://` or local `file:///` URL (Windows: the "Use setup
 script" address; Apple: the PAC URL), and never to one WPAD found or one fetched over plain `http://`: whoever answers
 on the local network writes those. On Apple platforms the PAC URL CFNetwork reports must equal the settings' string
-exactly; a URL written differently (case, a trailing slash) gets the origin only. Turn it on only when that script is
+exactly; a URL written differently (case, a trailing slash) gets the origin only. A `file:` URL with a host
+(`file://srv/share/p.pac`, `file:////srv/share/p.pac`) is fetched over SMB from that host and counts as remote: origin
+only. Turn it on only when that script is
 yours.
 On Apple platforms the engine's own runner also bounds the script: 2 s per run, 20 distinct lookups per run in total (as
 Chrome; a name looked up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer of at most 64 KiB of ASCII, a script of at most 1 MiB; an answer entry it cannot read is skipped,

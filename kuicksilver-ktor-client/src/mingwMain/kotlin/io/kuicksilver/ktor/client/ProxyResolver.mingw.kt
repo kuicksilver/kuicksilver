@@ -70,7 +70,7 @@ internal object WindowsSystemProxyResolver : WarningProxyResolver {
  * own PAC engine, in [runWinPac]'s order, on a session of its own whose timeouts are [PAC_TIMEOUT_MILLIS] (they bound
  * each step of the script's download; detection and the script's run have none of WinHTTP's, the caller's [BoundedPac]
  * bounds the wait). The URI given to the script is [winPacTarget]'s: for `https` and `wss` the origin only, a `wss`
- * URI whole only for the settings' PAC URL when `https` or `file` with [fullWebSocketUrl], never for a script automatic
+ * URI whole only for the settings' PAC URL when `https` or local `file` with [fullWebSocketUrl], never for a script automatic
  * detection found.
  * WinHTTP knows only `http` and `https`, so a WebSocket's `ws://`/`wss://` URI it refuses as an unknown scheme goes
  * again as `http://`/`https://` with the same host, port and resource name.
