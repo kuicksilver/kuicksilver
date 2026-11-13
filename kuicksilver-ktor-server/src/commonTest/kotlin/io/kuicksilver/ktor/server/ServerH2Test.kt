@@ -213,6 +213,48 @@ class ServerH2Test {
             }
         }
 
+    /**
+     * Without `:authority` (allowed for a scheme without a mandatory authority, RFC 9113 section 8.3.1) `serverHost` is the
+     * local address as an authority writes it: an IPv6 literal in brackets (RFC 3986 section 3.2.2).
+     */
+    @Test fun serverHostWithoutAuthorityIsBracketedIpv6() =
+        serverTest {
+            val started =
+                runCatching {
+                    h2TlsServer(connector = { host = "::1" }) {
+                        routing {
+                            get("/") {
+                                val l = call.request.local
+                                call.respondText("${l.serverHost}|${l.localHost}|${l.remoteHost}")
+                            }
+                        }
+                    }
+                }
+            val (server, port) =
+                started.getOrElse {
+                    println("serverHostWithoutAuthorityIsBracketedIpv6 skipped: needs an IPv6 loopback ($it)")
+                    return@serverTest
+                }
+            try {
+                RawH2Client.connect(port, host = "::1").use { raw ->
+                    raw.preface()
+                    raw.headers(1, listOf(":method" to "GET", ":scheme" to "foo", ":path" to "/"))
+                    val frames = ArrayList<RawFrame>()
+                    assertNotNull(
+                        raw.await { f ->
+                            if (f.stream == 1) frames += f
+                            f.stream == 1 && (f.endStream || f.type == RawFrame.RST_STREAM)
+                        },
+                    )
+                    assertEquals(RawFrame.HEADERS, frames.first().type, "$frames")
+                    val body = frames.filter { it.type == RawFrame.DATA }.fold(ByteArray(0)) { a, f -> a + f.payload }
+                    assertEquals("[::1]|::1|::1", body.decodeToString())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun largeResponseAndHead() =
         serverTest {
             val content = ByteArray(1 shl 20) { (it % 7).toByte() }

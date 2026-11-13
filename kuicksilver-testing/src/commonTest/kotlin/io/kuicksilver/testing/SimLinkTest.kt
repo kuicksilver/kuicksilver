@@ -14,7 +14,6 @@ import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -103,14 +102,6 @@ class SimLinkTest {
             assertEquals("127.0.0.1", sim.clientAddress.ipLiteral())
             assertEquals(InetSocketAddress("127.0.0.1", 40001).toString(), sim.clientAddress.toString())
         }
-    }
-
-    /** The simulator routes by address bytes: an IPv6 address matches itself in any spelling, on every platform. */
-    @Test fun sameAddressComparesBytes() {
-        assertTrue(sameAddress(InetSocketAddress("2001:db8::1", 443), InetSocketAddress("2001:DB8:0:0:0:0:0:1", 443)))
-        assertTrue(sameAddress(InetSocketAddress("10.0.0.1", 443), InetSocketAddress("10.0.0.1", 443)))
-        assertFalse(sameAddress(InetSocketAddress("2001:db8::1", 443), InetSocketAddress("2001:db8::1", 444)))
-        assertFalse(sameAddress(InetSocketAddress("2001:db8::1", 443), InetSocketAddress("2001:db8::2", 443)))
     }
 
     @Test fun secondPathIndependentLoss() {

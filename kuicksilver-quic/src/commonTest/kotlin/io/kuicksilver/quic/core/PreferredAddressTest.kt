@@ -151,12 +151,16 @@ class PreferredAddressTest {
     /**
      * A host name is refused naming that name, on every platform, and never looked up for the message: on Kotlin/Native
      * the literal was built with `resolveAddress()`, a `getaddrinfo` call that failed for a name that does not resolve.
-     * java.net resolves a name when the address is built, so on the JVM and Android this holds where the name stays
-     * unresolved (a resolver that answers for `.invalid`, RFC 6761 section 6.4, makes it an address).
+     * java.net resolves a name when the address is built, so where a resolver answers for `.invalid` (RFC 6761 section
+     * 6.4 asks it not to) the address is an IP address and this test has nothing to check: it says so and stops. The JVM
+     * variant, `PreferredAddressJvmTest`, builds an unresolved address and needs no resolver.
      */
     @Test fun negative_nameIsRefusedByItsName() {
         val name = InetSocketAddress("preferred.invalid", 4433)
-        if (name.ipBytesNoDns() != null) return
+        if (name.ipBytesNoDns() != null) {
+            println("negative_nameIsRefusedByItsName skipped: this host's resolver answers for preferred.invalid")
+            return
+        }
         val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(name, null) }
         assertEquals("ipv4 is not an IPv4 literal: preferred.invalid", v4.message)
         val v6 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, name) }

@@ -489,6 +489,6 @@ internal class KslDatagramIo private constructor(
         internal fun ipv6Text(
             a: ByteArray,
             off: Int,
-        ): String = ipText(a.copyOfRange(off, off + 16))
+        ): String = ipText(a, off, 16)
     }
 }

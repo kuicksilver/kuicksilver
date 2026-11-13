@@ -363,7 +363,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `newTokensRejected`.
 - QUIC: clients keep NEW_TOKEN tokens and present them on their next connection (experimental
   `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,
-  `MemoryTokenStore`). Tokens are keyed by server name and port, used once, replaced by a Retry token when a Retry comes,
+  `MemoryTokenStore`). Tokens are keyed by server name and port (without a server name, by the server's IP literal and
+  port, a link-local one with its zone ID), used once, replaced by a Retry token when a Retry comes,
   and bounded per connection (eight of at most 1024 bytes; more NEW_TOKEN frames spend glitch tokens).
 - HTTP/3 (*experimental*): the Capsule Protocol of RFC 9297 section 3 on Extended CONNECT streams whose protocol has
   datagram semantics (every one but `websocket`; on a WebSocket stream or a classic CONNECT it throws
@@ -717,19 +718,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   literals in Ktor's Netty and CIO engines too; their `remoteHost` and `localHost` are names (a reverse lookup on
   first use), ours stay literals on every protocol, by decision. Found by the engine interop bench.
 - Ktor server engine: over HTTP/1.1 on the JVM and Android the connection point wrote an IPv6 address as java.net
-  does, `0:0:0:0:0:0:0:1`; it is now the RFC 5952 text (`::1`), as over HTTP/2 and HTTP/3. The deprecated `host` was
-  still a reverse DNS lookup of the local address there; it and the deprecated `port` are now `serverHost` and
-  `serverPort`, as over HTTP/2 and HTTP/3, and `host` names its replacements as Ktor does ("Use localHost or serverHost
-  instead"). On Kotlin/Native the HTTP/1.1 accept path no longer calls `getaddrinfo` to build a connection's addresses.
-  Without a Host field (HTTP/1.1) or `:authority` (HTTP/2, HTTP/3), `serverHost` is the local address as a Host field
-  writes it, an IPv6 literal in brackets (RFC 9110 section 7.2 `uri-host`, RFC 3986 section 3.2.2, a zone ID as `%25`
-  per RFC 6874); it was the bare literal.
-- QUIC: the IP literal of an address (the engines' connection points, token store keys, the error of an invalid
-  `PreferredAddress`) never calls a resolver: on Kotlin/Native it called `getaddrinfo`, so a `PreferredAddress` given a
-  host name failed with the resolver's error instead of `IllegalArgumentException`, and on the JVM and Android the error
-  named the address by a reverse DNS lookup. An IPv6 zone ID is kept (`fe80::1%en0`, as java.net and Netty write it),
-  and an IPv4-mapped or IPv4-translated address is written in mixed notation (`::ffff:192.0.2.1`, RFC 5952 section 5) on
-  every platform.
+  does, `0:0:0:0:0:0:0:1`; it is now the RFC 5952 text (`::1`), as over HTTP/3. The deprecated `host` was a reverse DNS
+  lookup of the local address there; it and the deprecated `port` are now `serverHost` and `serverPort`, as over HTTP/3,
+  and `host` names its replacements as Ktor does ("Use localHost or serverHost instead"). The deprecated `port` thereby
+  differs on purpose from Ktor's Netty and CIO engines, where it is the local port: one meaning on every protocol here.
+  Without a Host field (HTTP/1.1) or `:authority` (HTTP/3), `serverHost` is the local address as a Host field writes it,
+  an IPv6 literal in brackets and without its zone ID (`[::1]`, `[fe80::1]`: the `IP-literal` of RFC 3986 section 3.2.2,
+  RFC 9110 section 7.2 `uri-host`, which has no zone since RFC 9844); it was the bare literal (a name over HTTP/1.1).
+- HTTP/3, Ktor server engine: the connection point's addresses never call a resolver; on Kotlin/Native each one called
+  `getaddrinfo`. An IPv6 zone ID is kept (`fe80::1%en0`, as java.net and Netty write it; it was dropped), and an
+  address with an embedded IPv4 address under a well-known prefix is written in mixed notation on every platform (RFC
+  5952 section 5: IPv4-mapped `::ffff:192.0.2.1`, IPv4-translated `::ffff:0:192.0.2.1`, IPv4-compatible `::192.0.2.1`);
+  it was hexadecimal.
 - Testing (`kuicksilver-testing`, not published): `MemoryNetwork` named an ephemeral-port socket after a reverse DNS
   lookup of its host on the JVM and Android (a lookup per bind; `localAddress` carried the name), and
   `Simulator.rebindClient` did the same to the client's address; both keep the literal now. Both compare addresses by

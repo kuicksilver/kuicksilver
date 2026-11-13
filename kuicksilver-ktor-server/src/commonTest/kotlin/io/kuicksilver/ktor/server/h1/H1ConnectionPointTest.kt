@@ -75,7 +75,7 @@ class H1ConnectionPointTest {
 
     /**
      * Without a Host field `serverHost` is the local address as a Host field writes it: an IPv6 literal in brackets (RFC
-     * 9110 section 7.2 `uri-host`, RFC 3986 section 3.2.2 `IP-literal`), a zone ID as `%25` (RFC 6874 section 2).
+     * 9110 section 7.2 `uri-host`, RFC 3986 section 3.2.2 `IP-literal`), without a zone ID, which stays in `localHost`.
      */
     @Test fun ipv6LiteralsWithoutHostField() {
         val p = H1ConnectionPoint(H1Address("::1", 50000), H1Address("::1", 8443), "HTTP/1.0", "/", null, HttpMethod.Get, "http")
@@ -88,13 +88,17 @@ class H1ConnectionPointTest {
         assertEquals("[::1]", p.host)
         @Suppress("DEPRECATION")
         assertEquals(8443, p.port)
+        val scoped = H1ConnectionPoint(H1Address("fe80::2", 1), H1Address("fe80::1%en0", 80), "HTTP/1.0", "/", null, HttpMethod.Get, "http")
+        assertEquals("fe80::1%en0", scoped.localHost)
+        assertEquals("fe80::1%en0", scoped.localAddress)
+        assertEquals("[fe80::1]", scoped.serverHost)
         val v4 = H1ConnectionPoint(H1Address("10.0.0.2", 1), H1Address("10.0.0.1", 80), "HTTP/1.0", "/", null, HttpMethod.Get, "http")
         assertEquals("10.0.0.1", v4.serverHost)
     }
 
     @Test fun uriHostBracketsIpv6Only() {
         assertEquals("[::1]", uriHost("::1"))
-        assertEquals("[fe80::1%25en0]", uriHost("fe80::1%en0"))
+        assertEquals("[fe80::1]", uriHost("fe80::1%en0")) // no zone in a URI host (RFC 3986, RFC 9844)
         assertEquals("[::1]", uriHost("[::1]"))
         assertEquals("10.0.0.1", uriHost("10.0.0.1"))
         assertEquals("example.com", uriHost("example.com"))

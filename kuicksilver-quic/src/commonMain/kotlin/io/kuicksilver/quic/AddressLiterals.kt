@@ -22,12 +22,13 @@ public fun InetSocketAddress.ipLiteral(): String {
 
 /**
  * The same host as an IP literal with [port] (the loop group's extra sockets, a resolved connect target). An IP address is
- * never looked up; a host name is resolved here, once (on Kotlin/Native `resolveAddress()` calls `getaddrinfo`).
+ * never looked up; a host name is resolved here, once (on Kotlin/Native `resolveAddress()` calls `getaddrinfo`). A name that
+ * does not resolve (an unresolved java.net address) stays as it is, this same address for the same port.
  */
 @InternalKuicksilverApi
 public fun InetSocketAddress.withLiteralHost(port: Int = this.port): InetSocketAddress {
     if (ipBytesNoDns() != null) return InetSocketAddress(ipLiteral(), port)
-    val resolved = resolveAddress() ?: return InetSocketAddress(hostname, port)
+    val resolved = resolveAddress() ?: return if (port == this.port) this else InetSocketAddress(hostname, port)
     return InetSocketAddress(ipText(resolved), port)
 }
 
@@ -46,21 +47,53 @@ internal expect fun InetSocketAddress.ipBytesNoDns(): ByteArray?
 internal expect fun InetSocketAddress.ipZoneNoDns(): String?
 
 /**
- * Address bytes as text: IPv4 (4 bytes) as a dotted quad; IPv6 (16) as RFC 5952 recommends (section 4: lower-case hex
- * without leading zeros, the longest run of two or more zero groups, the first of equal runs, as `::`), and an IPv4-mapped
- * (`::ffff:0:0/96`, RFC 4291 section 2.5.5.2) or IPv4-translated (`::ffff:0:0:0/96`, RFC 2765 section 2.1) address in the
- * mixed notation of RFC 5952 section 5 (`::ffff:192.0.2.1`).
+ * Whether this address and [other] are one IP address and port, however their text was written (Kotlin/Native's
+ * InetSocketAddress compares the text it was made with: `::1` against `0:0:0:0:0:0:0:1`): equal addresses at once, else
+ * the same port, address bytes and IPv6 zone ID. Never a resolver call; a host name only equals the same text.
  */
-internal fun ipText(b: ByteArray): String {
-    fun v4(off: Int): String = (off until off + 4).joinToString(".") { (b[it].toInt() and 0xff).toString() }
-    if (b.size == 4) return v4(0)
-    require(b.size == 16) { "an IP address has 4 or 16 bytes, not ${b.size}" }
-    val ff = 0xff.toByte()
-    if ((0 until 10).all { b[it].toInt() == 0 } && b[10] == ff && b[11] == ff) return "::ffff:" + v4(12)
-    if ((0 until 8).all { b[it].toInt() == 0 } && b[8] == ff && b[9] == ff && b[10].toInt() == 0 && b[11].toInt() == 0) {
-        return "::ffff:0:" + v4(12)
+@InternalKuicksilverApi
+public fun InetSocketAddress.sameIpAs(other: InetSocketAddress): Boolean {
+    if (port != other.port) return false
+    // equal addresses need only the zone checked: java.net's equality leaves the IPv6 scope out
+    if (this == other) return sameZoneAs(other)
+    val a = ipBytesNoDns() ?: return false
+    val b = other.ipBytesNoDns() ?: return false
+    return a.contentEquals(b) && sameZoneAs(other)
+}
+
+/** Whether both addresses have the same IPv6 zone ID (or none); no text is built on the JVM and Android. */
+internal expect fun InetSocketAddress.sameZoneAs(other: InetSocketAddress): Boolean
+
+/**
+ * Address bytes ([size] of them at [off]: 4 or 16) as text: IPv4 as a dotted quad; IPv6 as RFC 5952 recommends (section 4:
+ * lower-case hex without leading zeros, the longest run of two or more zero groups, the first of equal runs, as `::`), and
+ * an address under a well-known prefix for an embedded IPv4 address (RFC 5952 section 5: those of RFC 4291 and RFC 2765)
+ * in mixed notation: IPv4-mapped `::ffff:0:0/96` (`::ffff:192.0.2.1`), IPv4-translated `::ffff:0:0:0/96`
+ * (`::ffff:0:192.0.2.1`), and IPv4-compatible `::/96` (`::192.0.2.1`, RFC 4291 section 2.5.5.1) when its 13th and 14th
+ * bytes are not both zero, as `inet_ntop` decides, so `::` and `::1` stay hexadecimal.
+ */
+internal fun ipText(
+    b: ByteArray,
+    off: Int = 0,
+    size: Int = b.size - off,
+): String {
+    fun byte(i: Int): Int = b[off + i].toInt() and 0xff
+
+    fun v4(at: Int): String = "${byte(at)}.${byte(at + 1)}.${byte(at + 2)}.${byte(at + 3)}"
+
+    fun zero(
+        from: Int,
+        to: Int,
+    ): Boolean {
+        for (i in from until to) if (byte(i) != 0) return false
+        return true
     }
-    val g = IntArray(8) { ((b[2 * it].toInt() and 0xff) shl 8) or (b[2 * it + 1].toInt() and 0xff) }
+    if (size == 4) return v4(0)
+    require(size == 16) { "an IP address has 4 or 16 bytes, not $size" }
+    if (zero(0, 10) && byte(10) == 0xff && byte(11) == 0xff) return "::ffff:" + v4(12)
+    if (zero(0, 8) && byte(8) == 0xff && byte(9) == 0xff && zero(10, 12)) return "::ffff:0:" + v4(12)
+    if (zero(0, 12) && (byte(12) != 0 || byte(13) != 0)) return "::" + v4(12)
+    val g = IntArray(8) { (byte(2 * it) shl 8) or byte(2 * it + 1) }
     var bestStart = -1
     var bestLen = 0
     var i = 0
