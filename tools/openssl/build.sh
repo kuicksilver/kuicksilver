@@ -86,12 +86,17 @@ cd "$work"
 # compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
 # no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer
 # than what it is generated from.
+# The format is util/mkbuildinf.pl's of OpenSSL 3.5 and 4.1 (gradle/openssl.toml, gradle/openssl-next.toml): a PLATFORM
+# define and compiler_flags[] as one character literal per character, the flags' backslashes doubled before the split
+# (undone here, so a rewritten header reads back to the same line); any other layout stops the build.
 make crypto/buildinf.h >"$out/build/$target.make.log" 2>&1
-perl -0777 -ne '
-  my ($plat) = /#define PLATFORM "platform: (.*?)"/ or die "no PLATFORM in buildinf.h\n";
-  my ($body) = /compiler_flags\[\] = \{(.*?)\};/s or die "no compiler_flags in buildinf.h\n";
+KSL_V="$version" perl -0777 -ne '
+  my $fmt = "crypto/buildinf.h of OpenSSL $ENV{KSL_V} is not in the layout tools/openssl/build.sh rewrites";
+  my ($plat) = /#define PLATFORM "platform: (.*?)"/ or die "$fmt: no PLATFORM define\n";
+  my ($body) = /compiler_flags\[\] = \{(.*?)\};/s or die "$fmt: no compiler_flags[] array\n";
   my $s = join "", map { (my $c = $_) =~ s/\\(.)/$1/; $c } ($body =~ /\x27((?:\\.|[^\\\x27])*)\x27,/g);
-  $s =~ s/^compiler: // or die "no compiler: line in buildinf.h\n";
+  $s =~ s/\\\\/\\/g;   # mkbuildinf.pl doubled every backslash of the flags
+  $s =~ s/^compiler: // or die "$fmt: compiler_flags[] does not start with compiler:\n";
   my @t = grep { !m{/} } split /\s+/, $s; unshift @t, "cc" if !@t || $t[0] =~ /^-/;
   print join(" ", @t), "\n", $plat, "\n";' crypto/buildinf.h > "$out/build/$target.buildinf.txt"
 perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
