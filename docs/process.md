@@ -13,7 +13,7 @@ practice that no tool enforces, or is partial, this page says so.
 | [3](#3-where-the-rfc-leaves-a-choice-reference-stacks) | Comparison with reference stacks where the RFC leaves a choice | `docs/spec/rfc/<rfc>.md`, peer notes; commit messages | no |
 | [4](#4-the-rfc-compliance-matrix-and-the-threat-model) | The RFC compliance matrix and the threat model | [rfc-compliance.md](spec/rfc-compliance.md), [threat-model.md](spec/threat-model.md) | format and references: yes; content: review |
 | [5](#5-integration-and-the-local-gate) | Integration branch and the local gate on every target | [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh) | yes |
-| [6](#6-hosted-ci) | Hosted CI on pushes and pull requests to `main` and `release/**` | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | runs automatically; no branch protection requires it green yet |
+| [6](#6-hosted-ci) | Hosted CI on pushes and pull requests to `main` and `release/**` | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | runs automatically; no rule requires it green yet (the branch ruleset blocks deletion and force pushes only) |
 | [7](#7-before-a-release-soak-fuzzing-benchmarks) | Soak, fuzzing campaigns, benchmarks | `kuicksilver-soak`, `tools/fuzz`, [benchmarks.md](benchmarks.md) | run by hand; the verdicts are computed |
 | [8](#8-the-release) | Signed artifacts, SBOM, provenance, verification | [release.md](release.md), [verifying.md](verifying.md) | yes (`tools/release/local-release.sh` refuses) |
 | [9](#9-after-a-release) | Vulnerability handling and OpenSSL updates | [SECURITY.md](../SECURITY.md) | no (commitments) |
@@ -149,8 +149,10 @@ local publication); and, weekly or on request, the QUIC Interop Runner against t
 signs or reads a secret, and pull requests from forks run with read-only rights; a maintainer approves the workflow
 runs of every pull request from an outside contributor before they start (repository setting).
 
-Hosted CI is not the release gate: a release needs the local gate record (stage 5). `main` has no branch protection
-yet, so nothing requires a hosted run to be green before a change lands; the hosted results are read, not enforced. The other workflows:
+Hosted CI is not the release gate: a release needs the local gate record (stage 5). A repository ruleset (id 27195213)
+covers the default branch and `refs/heads/release/*`: they cannot be deleted and take no non-fast-forward push, and
+nobody can bypass it. It requires no status check or pull request, so nothing requires a hosted run to be green before a
+change lands; the hosted results are read, not enforced. The other workflows:
 
 - [`codeql.yml`](../.github/workflows/codeql.yml): CodeQL security queries over the C shim and the Kotlin JVM code, on
   pull requests and pushes to `main` and `release/**`, and weekly;
