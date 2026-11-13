@@ -9,6 +9,8 @@ import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.RetryPacket
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz target, RFC 9000 section 17.2.5: a client that sent its Initial receives a Retry shaped by the input, then its
@@ -17,6 +19,8 @@ import io.kuicksilver.quic.wire.RetryPacket
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class RetryPacketFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun retryPacket(data: ByteArray) {
         if (data.size < 2) return

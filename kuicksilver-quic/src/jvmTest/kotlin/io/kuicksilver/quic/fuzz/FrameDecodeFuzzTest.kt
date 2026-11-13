@@ -10,9 +10,13 @@ import io.kuicksilver.quic.wire.AckFrameView
 import io.kuicksilver.quic.wire.FrameDecoder
 import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.WireReader
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /** Fuzz target `frameDecode`: input = [packet type selector][packet payload]. */
 class FrameDecodeFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     private val types = arrayOf(PacketType.Initial, PacketType.ZeroRtt, PacketType.Handshake, PacketType.OneRtt)
     private val ackView = AckFrameView()
 

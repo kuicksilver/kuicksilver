@@ -15,10 +15,14 @@ import io.kuicksilver.http3.message.PseudoHeaders
 import io.kuicksilver.http3.qpack.DecodeResult
 import io.kuicksilver.http3.qpack.QpackDecoder
 import io.kuicksilver.http3.qpack.QpackError
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.test.assertTrue
 
 /** Fuzz target `h3Frames`: input = [stream kind][frames]; frames of a control or request stream through the sans-IO rules. */
 class H3FrameFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun h3Frames(data: ByteArray) {
         if (data.isEmpty()) return
@@ -73,6 +77,8 @@ class H3FrameFuzzTest {
 
 /** Fuzz target `qpackDecode`: input = [encoder-stream length, 0..255][encoder stream][field section]. */
 class QpackDecodeFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun qpackDecode(data: ByteArray) {
         if (data.size < 2) return

@@ -9,6 +9,7 @@ plugins {
     id("com.android.kotlin.multiplatform.library")
     id("org.jetbrains.dokka")
     id("kuicksilver.coverage")
+    id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
     id("org.jmailen.kotlinter")   // ktlint (ktlint_official, 140 columns, .editorconfig): `formatKotlin` rewrites, `lintKotlin` gates `check`
 }
 
@@ -215,7 +216,7 @@ providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it
             testClassesDirs = base.testClassesDirs
             classpath = base.classpath
             javaLauncher.set(base.javaLauncher)
-            jvmArgs(base.jvmArgs)
+            setJvmArgs(base.jvmArgs)   // replaces what this task's own plugins added (kuicksilver.test-jvm): each flag once
             systemProperties(base.systemProperties)
             environment(base.environment)
             workingDir = base.workingDir

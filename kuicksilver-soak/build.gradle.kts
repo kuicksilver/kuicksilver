@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jmailen.kotlinter")
+    id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
 }
 kotlin {
     jvmToolchain(21)

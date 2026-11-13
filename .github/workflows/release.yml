@@ -113,5 +113,7 @@ jobs:
         if: failure()
         with:
           name: reports-release
-          path: '**/build/reports/'
+          path: |
+            **/build/reports/
+            !**/*.hprof
           retention-days: 7

@@ -4,6 +4,8 @@ package io.kuicksilver.quic.fuzz
 
 import com.code_intelligence.jazzer.junit.FuzzTest
 import io.kuicksilver.quic.recovery.BbrDriver
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz target `bbrInvariants`: arbitrary ACK, loss, timeout, CE, idle, MTU, spurious-loss and discard sequences for one BBR
@@ -11,6 +13,8 @@ import io.kuicksilver.quic.recovery.BbrDriver
  * operations [u8 op][3-byte arguments as the operation reads them]; a short input pads with zeros.
  */
 class BbrInvariantFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun bbrInvariants(data: ByteArray) {
         var p = 0

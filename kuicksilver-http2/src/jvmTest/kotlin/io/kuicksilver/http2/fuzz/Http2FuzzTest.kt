@@ -9,6 +9,8 @@ import io.kuicksilver.http2.frame.H2ConnectionError
 import io.kuicksilver.http2.frame.H2StreamError
 import io.kuicksilver.http2.hpack.HpackDecoder
 import io.kuicksilver.http2.hpack.HpackError
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.test.assertTrue
 
 /**
@@ -18,6 +20,8 @@ import kotlin.test.assertTrue
  * sized from its checked length when its header arrives).
  */
 class H2FrameFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun frames(data: ByteArray) {
         if (data.isEmpty()) return
@@ -71,6 +75,8 @@ class H2FrameFuzzTest {
  * the block's length times 8/5 (the densest Huffman code).
  */
 class HpackDecodeFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun hpackDecode(data: ByteArray) {
         if (data.size < 3) return
@@ -102,6 +108,8 @@ class HpackDecodeFuzzTest {
  * response the driver sent on that stream.
  */
 class H2ConnectionFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     private class Wire {
         val frames = FrameDecoder(16_777_215)
         val hpack = HpackDecoder(maxTableSize = 4_096, maxHeaderListSize = 1 shl 20)
@@ -280,6 +288,8 @@ class H2ConnectionFuzzTest {
  * conserved.
  */
 class H2ClientConnectionFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun connectionClient(data: ByteArray) {
         if (data.size < 2) return
@@ -392,6 +402,8 @@ class H2ClientConnectionFuzzTest {
  * one, block after block.
  */
 class HpackRoundTripFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun hpackRoundTrip(data: ByteArray) {
         val enc =

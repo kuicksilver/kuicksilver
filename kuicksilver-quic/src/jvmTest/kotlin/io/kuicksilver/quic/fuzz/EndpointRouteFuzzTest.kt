@@ -6,6 +6,8 @@ import com.code_intelligence.jazzer.junit.FuzzTest
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionState
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz target: a server endpoint that already holds one established Null-crypto connection receives arbitrary
@@ -14,6 +16,8 @@ import io.kuicksilver.quic.ConnectionState
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class EndpointRouteFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun endpointRoute(data: ByteArray) {
         if (data.isEmpty()) return

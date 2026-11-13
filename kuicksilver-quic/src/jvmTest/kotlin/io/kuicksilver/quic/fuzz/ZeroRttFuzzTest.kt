@@ -9,10 +9,14 @@ import io.kuicksilver.quic.core.rememberedParameters
 import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.TlsRole
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.random.Random
 
 /** Fuzz targets of the transport's 0-RTT state: the server's replay register and what a client ticket remembers. */
 class ZeroRttFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     /**
      * `replayRegister`: `[layout][op]*`, a program of operations on a [ZeroRttReplayRegister] (of the production layout or
      * a small one, so that full halves, compaction and rotation are reached) checked against a model of what it must

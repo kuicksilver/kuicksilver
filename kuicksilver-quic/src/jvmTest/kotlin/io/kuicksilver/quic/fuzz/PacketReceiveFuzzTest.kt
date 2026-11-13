@@ -10,6 +10,8 @@ import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.Dgram
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -19,6 +21,8 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class PacketReceiveFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     /** `packetRecvServer`: one datagram from a client to a fresh server endpoint. */
     @FuzzTest(maxDuration = "60s")
     fun packetRecvServer(data: ByteArray) {

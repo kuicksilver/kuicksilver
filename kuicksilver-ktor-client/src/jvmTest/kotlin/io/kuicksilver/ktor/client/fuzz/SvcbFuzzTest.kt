@@ -13,6 +13,8 @@ import io.kuicksilver.ktor.client.dns.SvcbTestEncoder
 import io.kuicksilver.ktor.client.dns.aliasTarget
 import io.kuicksilver.ktor.client.dns.isHostName
 import io.kuicksilver.ktor.client.dns.serviceEndpoints
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,6 +28,8 @@ import kotlin.test.assertTrue
  * one; the endpoints chosen from them are host names, at most [MAX_ENDPOINTS].
  */
 class SvcbFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun svcbMessage(data: ByteArray) {
         if (data.isEmpty()) return

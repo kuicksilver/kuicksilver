@@ -51,13 +51,34 @@ head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --p
 # step overwrites them, and the failing tests are listed in <n>.log and on the failure line. The third 0.2.1 gate lost the
 # name of a flaky test this way: step 13's log had only "297 tests completed, 1 failed" (2026-10-23).
 step_reports() { # <marker> <dest>: copies every test-results file and HTML test report newer than <marker> to <dest>, same relative paths
+  # (never a heap dump: a safeguard, the dumps go to build/test-heap-dumps, not under build/reports; see step_dumps)
   local marker="$1" dest="$2"
   rm -rf "$dest"
   find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f -newer "$marker" \
-    \( -path '*/build/test-results/*' -o -path '*/build/reports/tests/*' \) -print0 > "$marker.list" 2>/dev/null
+    \( -path '*/build/test-results/*' -o -path '*/build/reports/tests/*' \) ! -name '*.hprof' -print0 > "$marker.list" 2>/dev/null
   [ -s "$marker.list" ] || { rm -f "$marker.list"; return 1; }
   mkdir -p "$dest" && tar --null -T "$marker.list" -cf - 2>/dev/null | tar -C "$dest" -xf -
   rm -f "$marker.list"
+}
+step_dumps() { # <marker> <log>: names every heap dump newer than <marker> (a test JVM out of heap, kuicksilver.test-jvm) under
+  # the failure line and in <log>, each with the fuzz case its JVM ran last when the fuzz tests left one (fuzz-case-<pid>.txt
+  # beside java_pid<pid>.hprof): hundreds of MB each, left where they are for a look and to be deleted afterwards
+  local found dump txt line
+  found=$(find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f \
+    -newer "$1" -path '*/build/test-heap-dumps/*' \( -name '*.hprof' -o -name 'fuzz-case-*.txt' \) -print 2>/dev/null | sort)
+  [ -n "$found" ] || return 0
+  echo >> "$2"; echo "== heap dumps of this step (delete them when done):" >> "$2"
+  while IFS= read -r dump; do
+    case "$dump" in *.hprof) ;; *) continue ;; esac
+    txt="$(dirname "$dump")/fuzz-case-$(basename "$dump" .hprof | sed 's/^java_pid//').txt"
+    line=""; [ -f "$txt" ] && line=" (fuzz case: $(head -1 "$txt"))"
+    echo "$dump$line" >> "$2"; echo "     | heap dump, delete when done: $dump$line"
+  done <<< "$found"
+  while IFS= read -r txt; do   # a fuzz case file without a dump: its JVM died some other way
+    case "$txt" in *.txt) ;; *) continue ;; esac
+    [ -f "$(dirname "$txt")/java_pid$(basename "$txt" .txt | sed 's/^fuzz-case-//').hprof" ] && continue
+    echo "$txt (fuzz case: $(head -1 "$txt"))" >> "$2"; echo "     | fuzz case without a heap dump: $txt: $(head -1 "$txt")"
+  done <<< "$found"
 }
 failed_tests() { # <dir>: one line per failed or errored JUnit test case in the XML under <dir>: class.name: first message line
   # shellcheck disable=SC2016   # an awk program
@@ -111,6 +132,7 @@ step() { # [--needs <name>]... [--after <name>]... [--pre <group>]... <name> <co
       { echo; echo "== local-matrix: test reports of this step copied to $reports"; echo "== failed tests:"; printf '%s\n' "${tests:-  (none in the XML)}"; } >> "$log"
       echo "FAIL (see $log; reports $reports)"; [ -z "$tests" ] || printf '%s\n' "$tests" | head -10 | sed 's/^/     |/'
     else echo "FAIL (see $log)"; fi
+    step_dumps "$marker" "$log"
   fi
   rm -f "$marker"
 }
@@ -156,7 +178,7 @@ step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
 step "lint: documentation references"          bash tools/check/doc-refs.sh
 step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.sh
-step "lint: fuzz campaign.sh (stubs)"           bash tools/fuzz/campaign-test.sh
+step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
 step "lint: reliability report (fixtures)"      bash tools/report/reliability-test.sh

@@ -112,7 +112,9 @@ jobs:
         if: failure()
         with:
           name: reports-pages
-          path: '**/build/reports/'
+          path: |
+            **/build/reports/
+            !**/*.hprof
           retention-days: 7
 
   publish:

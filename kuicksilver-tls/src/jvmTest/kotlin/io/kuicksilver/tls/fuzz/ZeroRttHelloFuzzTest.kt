@@ -15,6 +15,8 @@ import io.kuicksilver.tls.Pump
 import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsException
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz targets of the server's 0-RTT gate (ADR-0015): the ClientHello scan that finds the resumed ticket's identity before
@@ -23,6 +25,8 @@ import io.kuicksilver.tls.TlsException
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ZeroRttHelloFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     /**
      * `clientHelloScan`: `[fragment size][hello]`. Feeding the hello in fragments gives the result of feeding it whole; a
      * ticket identity is 32 bytes; early data implies an identity; the scan holds at most its bound.

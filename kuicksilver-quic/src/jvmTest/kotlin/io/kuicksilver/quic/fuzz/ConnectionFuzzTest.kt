@@ -20,6 +20,8 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.QuicCrypto
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -38,6 +40,8 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ConnectionFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     /** `connectionNull`: the program over a NullCryptoProvider pair (fast: no TLS, plaintext packets). */
     @FuzzTest(maxDuration = "60s")
     fun connectionNull(data: ByteArray) {
