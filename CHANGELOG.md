@@ -576,8 +576,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `build/ci/gate/<commit>.partial` (the selection, `result=partial-pass` or `partial-fail`), never the stamp, and
   `local-release.sh` now also requires `selection=all` in the stamp. A selection that leaves out a step whose output a
   selected step reads is refused before anything runs; `tools/ci/local-matrix-test.sh` checks these refusals through
-  `--dry-run`, a new gate step (46, after the local-release refusals: the later steps move up by one, 68 by default and
-  73 for a release) and a step of the CI `lint` job. The JNI exports and OpenSSL prefix checks now build what they
+  `--dry-run`, a new gate step (48, after the local-release refusals: the later steps move up by one; the gate has 71
+  steps by default and 76 for a release) and a step of the CI `lint` job. The JNI exports and OpenSSL prefix checks now build what they
   check instead of reading what earlier steps or builds left (the iOS archives were checked before the steps that build
   them), the Windows step rebuilds the mingw dll unless this run's mingw step built it, and the JVM interop image
   rebuilds its Linux libraries unless this run's Docker JVM steps built them. Behaviour changes of a full run: a step

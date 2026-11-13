@@ -86,8 +86,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **68 steps**; a release needs `--with-interop --with-windows`, which makes **73** (and `--with-browser`
-adds a Chrome WebTransport run, 74). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
+default it has **71 steps**; a release needs `--with-interop --with-windows`, which makes **76** (and `--with-browser`
+adds a Chrome WebTransport run, 77). Before step 1 it builds any missing OpenSSL and resolves every dependency, and it
 refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
