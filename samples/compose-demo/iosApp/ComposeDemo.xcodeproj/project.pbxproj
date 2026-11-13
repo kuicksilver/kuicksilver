@@ -1,0 +1,213 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000042001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000046001 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000046001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ../../../kuicksilver-native/apple/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+		B10000000000000000046002 /* ComposeDemo-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "ComposeDemo-Info.plist"; sourceTree = "<group>"; };
+		B10000000000000000046004 /* Project.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Project.xcconfig; sourceTree = "<group>"; };
+		B10000000000000000046006 /* build-kotlin-framework.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-kotlin-framework.sh"; sourceTree = "<group>"; };
+		B10000000000000000046101 /* ComposeDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ComposeDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		B10000000000000000053001 /* ComposeDemo */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ComposeDemo; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B10000000000000000042101 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B10000000000000000047001 = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000053001 /* ComposeDemo */,
+				B10000000000000000047003 /* Config */,
+				B10000000000000000047002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B10000000000000000047002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000046101 /* ComposeDemo.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B10000000000000000047003 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000046001 /* PrivacyInfo.xcprivacy */,
+				B10000000000000000046002 /* ComposeDemo-Info.plist */,
+				B10000000000000000046004 /* Project.xcconfig */,
+				B10000000000000000046006 /* build-kotlin-framework.sh */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B10000000000000000054001 /* ComposeDemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1000000000000000004C002 /* Build configuration list for PBXNativeTarget "ComposeDemo" */;
+			buildPhases = (
+				B10000000000000000042201 /* Build Kotlin framework */,
+				B10000000000000000042301 /* Sources */,
+				B10000000000000000042101 /* Frameworks */,
+				B10000000000000000042401 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B10000000000000000053001 /* ComposeDemo */,
+			);
+			name = ComposeDemo;
+			productName = ComposeDemo;
+			productReference = B10000000000000000046101 /* ComposeDemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B10000000000000000050001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					B10000000000000000054001 = {CreatedOnToolsVersion = 27.0; };
+				};
+			};
+			buildConfigurationList = B1000000000000000004C001 /* Build configuration list for PBXProject "ComposeDemo" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B10000000000000000047001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B10000000000000000047002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B10000000000000000054001 /* ComposeDemo */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B10000000000000000042401 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000042001 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B10000000000000000042201 /* Build Kotlin framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build Kotlin framework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/Config/build-kotlin-framework.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B10000000000000000042301 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B10000000000000000058001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B10000000000000000046004 /* Project.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B10000000000000000058002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = B10000000000000000046004 /* Project.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B10000000000000000058011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/ComposeDemo-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).ComposeDemo";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		B10000000000000000058012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/ComposeDemo-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).ComposeDemo";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B1000000000000000004C001 /* Build configuration list for PBXProject "ComposeDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000058001 /* Debug */,
+				B10000000000000000058002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1000000000000000004C002 /* Build configuration list for PBXNativeTarget "ComposeDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000058011 /* Debug */,
+				B10000000000000000058012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B10000000000000000050001 /* Project object */;
+}

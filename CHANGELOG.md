@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks
   revocation; `Custom` and `Tofu` decide alone. Delta, indirect and reason-partitioned CRLs are refused. `ksl` gains
   `ksl_ctx_set_crls` and `ksl_ocsp_check` (ABI 7, additive). Docs: `docs/guide/tls.md`, "Certificate revocation".
+- Compose Multiplatform demo (`samples/compose-demo`, not published): an Android and iOS app that downloads over
+  Kuicksilver HTTP/3 with `connectionMigration = followDefaultNetwork(...)` next to OkHttp (Android) or CIO and Darwin
+  (iOS) while the network switches, with the `connectionMigrated` events and an optional `Range` resume of the TCP
+  download; a lossy-network screen against its server behind `tc netem` (`server/netem.sh`); and a diagnostics screen
+  for any URL with the `http3Allowed` switch. Its JVM server (`server/`) serves `/bytes/{n}` with `Range` and `/stream`.
+  The Kuicksilver lane asks for HTTP/3 only (`H3Only`), so a fallback can never be shown as HTTP/3. `DemoLogicTest`
+  covers the screen models and the server's tests its `Range` parsing; `MigrationDemoAndroidTest` is the emulator check
+  of the release gate, run by `:androidApp:migrationDemoDeviceTest` against the server on the host. Its
+  build verifies every plugin and dependency against `gradle/verification-metadata.xml`, which now also covers Compose
+  Multiplatform, the AndroidX libraries it brings, OkHttp 5.5.1 and Ktor's CIO, Darwin and mock engines.
 - SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
   a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
   release from 0.3.0 and signed with the release key. A Swift-only app adds

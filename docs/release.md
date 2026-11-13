@@ -87,11 +87,14 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    interop images, the Windows VM). Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
    commit from start to end. Any later commit needs a new run, and only a run of every step counts: one with `--only`
-   or `--from` (re-running some steps after a fix) writes `build/ci/gate/<commit>.partial`, never the stamp.
+   or `--from` (re-running some steps after a fix) writes `build/ci/gate/<commit>.partial`, never the stamp. The Compose
+   demo is part of it: its build and `DemoLogicTest` (`samples/compose-demo`), and on the emulator
+   `:androidApp:migrationDemoDeviceTest`, an HTTP/3 download that must survive the switch of the default network while
+   the OkHttp one breaks (a skip fails the step).
 2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
    `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
    do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
-   (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the three sample builds,
+   (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the four sample builds,
    `tools/check/consumer-smoke.sh`), normally set when the
    line was started, and for a final version the README ("X.Y.Z is on Maven Central", the BOM version of its Install
    blocks, the Swift package line) and `docs/guide/ios.md` (the dependency line, the Swift package line, the xcframework

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Kuicksilver demo</string>
+	<!-- The demo server runs on a machine on the local network; iOS asks the user before the app talks to it. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>The demo downloads from the Kuicksilver demo server on your local network.</string>
+	<!--
+	URLSession (the Darwin column) dials the demo server by IP address. From iOS 17, App Transport Security refuses
+	connections to IP addresses unless this key is set (Apple's NSAllowsLocalNetworking documentation); it allows IP
+	addresses, unqualified and .local names, not arbitrary loads. CIO and Kuicksilver do not go through URLSession.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Compose Multiplatform: let the display run at 120 Hz on ProMotion iPhones. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<!-- As samples/ios: the app embeds OpenSSL (TLS 1.3 for QUIC and HTTP/3); see docs/guide/ios.md, "Export compliance". -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
+</dict>
+</plist>
