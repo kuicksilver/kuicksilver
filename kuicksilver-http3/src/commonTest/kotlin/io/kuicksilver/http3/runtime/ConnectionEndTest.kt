@@ -21,8 +21,10 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -275,15 +277,21 @@ class ConnectionEndTest {
                 val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
                 val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
                 val chunks = 80 // more than the body channel takes before its writer waits for the handler
+                // the bytes the network handed to the server, counted as it hands them over
+                val toServer = MutableStateFlow(0L)
+                q.net.tap = { _, to, bytes -> if (to == q.server.localAddress) toServer.update { it + bytes.size } }
                 repeat(chunks - 1) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flush()
-                withTimeout(5.seconds) { while (s.stats.bytesReceived < (chunks - 1).toLong() * chunk.size) delay(5) }
+                withTimeout(5.seconds) { toServer.first { it >= (chunks - 1).toLong() * chunk.size } }
                 // the last chunk and the FIN stay in the network until the session decided on its close
                 val held = ArrayList<Triple<InetSocketAddress, InetSocketAddress, ByteArray>>()
-                q.net.drop = { from, to, bytes -> from != q.server.localAddress && held.add(Triple(from, to, bytes)) }
+                val heldOne = CompletableDeferred<Unit>()
+                q.net.drop = { from, to, bytes ->
+                    from != q.server.localAddress && held.add(Triple(from, to, bytes)).also { heldOne.complete(Unit) }
+                }
                 st.output.writeFully(raw.data(chunk))
                 st.output.flushAndClose()
-                withTimeout(5.seconds) { while (held.isEmpty()) delay(5) }
+                withTimeout(5.seconds) { heldOne.await() }
                 val closing = async { session.close(Http3ErrorCode.NO_ERROR, "") }
                 withTimeout(5.seconds) { server.closed.await() }
                 repeat(2) { withContext(session.dispatcher) {} } // the pump saw the HTTP/3 close, the stream not yet whole
@@ -373,14 +381,16 @@ class ConnectionEndTest {
                 st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
                 st.output.flush()
                 val r = withTimeout(5.seconds) { response.await() } as ResponseImpl
+                // the bytes the network handed to the client, counted as it hands them over
+                val toClient = MutableStateFlow(0L)
+                q.net.tap = { _, to, bytes -> if (to == q.client.localAddress) toClient.update { it + bytes.size } }
                 // more than the body channel holds before its writer waits: the pump waits on a reader that never comes
                 val chunk = ByteArray(16 * 1024)
                 repeat(256) { st.output.writeFully(raw.data(chunk)) }
                 st.output.flush()
-                withTimeout(5.seconds) {
-                    // beyond the stream window: the pump read into the body channel and now waits for room
-                    while (c.stats.bytesReceived < 1_200_000) kotlinx.coroutines.delay(10)
-                }
+                // beyond the stream window: the server could send that much only after the client gave credit for what its
+                // pump read into the body channel, which now waits for room
+                withTimeout(5.seconds) { toClient.first { it >= 1_200_000 } }
                 s.close(Http3ErrorCode.NO_ERROR, "")
                 withTimeout(5.seconds) { client.closed.await() }
                 withTimeout(H3Session.DRAIN_GRACE + 2.seconds) { r.pump.join() }

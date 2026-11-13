@@ -559,25 +559,43 @@ class PriorityTest {
  * sent them, up to the first that carries [marker] (null crypto: the payloads are in the clear). Counted as the server
  * sends (`MemoryNet.tap`, on its loop), so it is the scheduler's order alone, whenever the client gets to read: counting
  * at the client when its reader saw the data also counted whatever arrived while that reader waited for a thread (a
- * loaded linux/amd64 container counted 230 KB and more for the same 40 KB the server had sent).
+ * loaded linux/amd64 container counted 230 KB and more where the server had sent 29 KB before the tunnel's data). A
+ * datagram the test holds and delivers later passes the tap again: it is counted once (the same array). The count is
+ * one atomic state, as the server's loop and the test's thread both reach it.
  */
 private class SentBefore(
     private val server: InetSocketAddress,
     private val marker: ByteArray,
 ) {
-    private var sent = 0L
+    /** [sent]: bytes counted; [before]: [sent] when [marker] went out, -1 until then; [seen]: the datagrams counted. */
+    private data class Count(
+        val sent: Long = 0,
+        val before: Long = -1,
+        val seen: Set<ByteArray> = emptySet(),
+    )
+
+    private val count = MutableStateFlow(Count())
 
     /** Bytes sent before the datagram that carries [marker]; -1 while it has not gone out. */
-    @kotlin.concurrent.Volatile var before = -1L
-        private set
+    val before: Long get() = count.value.before
 
     fun see(
         from: InetSocketAddress,
         @Suppress("UNUSED_PARAMETER") to: InetSocketAddress,
         b: ByteArray,
     ) {
-        if (from != server || before >= 0) return
-        if (contains(b, marker)) before = sent else sent += b.size
+        if (from != server) return
+        val carries = contains(b, marker)
+        count.update { c ->
+            when {
+                c.before >= 0 || b in c.seen -> c
+
+                // a ByteArray is its own identity: a held datagram delivered again
+                carries -> c.copy(before = c.sent)
+
+                else -> c.copy(sent = c.sent + b.size, seen = c.seen + b)
+            }
+        }
     }
 
     private fun contains(
