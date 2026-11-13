@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Engine interop bench (`kuicksilver-engine-interop`, not published; docs/spec/interop.md, "Engine interop"): the Ktor
+  client engine against Ktor's Netty server (HTTP/1.1, HTTP/2 and HTTP/3) and CIO server and a plain Netty server (1xx,
+  trailers, GOAWAY), and the Ktor server engine against Ktor's CIO, OkHttp and Java client engines, OkHttp and the JDK's
+  HttpClient on their own APIs and Netty's HTTP/3 client, in one JVM over loopback: bodies, fields, statuses, HEAD and
+  304, cancellation, timeouts, graceful stop, TLS trust and ALPN, and WebSockets (fragments, Ping, close codes,
+  permessage-deflate). It runs as the step `jvm: engine interop` of the gate and of CI.
 - SwiftPM: Kuicksilver is a Swift package, [kuicksilver/kuicksilver-swift](https://github.com/kuicksilver/kuicksilver-swift),
   a repository without source code whose binary target is `Kuicksilver.xcframework.zip`, attached to every GitHub
   release from 0.3.0 and signed with the release key. A Swift-only app adds

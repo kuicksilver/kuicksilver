@@ -151,7 +151,7 @@ Out of scope:
   system or a root user on the host;
 - bugs in OpenSSL that Kuicksilver does not make reachable (report them to OpenSSL);
 - anything in `samples/`, test certificates and test keys, or the unpublished modules (`kuicksilver-testing`,
-  `kuicksilver-bench`, `kuicksilver-interop`), unless it shows a flaw in a published module.
+  `kuicksilver-bench`, `kuicksilver-interop`, `kuicksilver-engine-interop`), unless it shows a flaw in a published module.
 
 ## Safe harbor
 

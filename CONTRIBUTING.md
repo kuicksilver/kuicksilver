@@ -96,7 +96,7 @@ tools/ci/local-matrix.sh --dry-run                               # list the gate
 ```
 
 Kotlin compiler warnings are errors in the main and test compilations of the modules that apply the `kuicksilver.kmp` convention
-plugin, and in `kuicksilver-interop` and `kuicksilver-soak` (not in `kuicksilver-bench` and not in the standalone sample builds);
+plugin, and in `kuicksilver-interop`, `kuicksilver-soak` and `kuicksilver-engine-interop` (not in `kuicksilver-bench` and not in the standalone sample builds);
 `-Pkuicksilver.warningsAsErrors=false` turns that off for a local build, for example to see all the deprecations a
 dependency bump brings before fixing them.
 
@@ -215,6 +215,12 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the JNI library, and Kover does not instrument Kotlin/Native. The generated QPACK tables are excluded. The report has
   no threshold, by decision; use it to find untested code, not as a gate. Without `-Pkuicksilver.coverage` the Kover
   agent is off for every test task, so ordinary test runs are not instrumented; the report tasks need the property.
+- **Engine interop.** `kuicksilver-engine-interop` runs the Ktor client and server engines against Ktor's Netty and
+  CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs in one JVM, about a minute:
+  `./gradlew --max-workers=2 :kuicksilver-engine-interop:jvmTest` (the gate's step `jvm: engine interop`). A new pair
+  is a subclass of `HttpPairSuite` or `WebSocketPairSuite`; a test that a pair overrides documents the peer's behaviour
+  in [interop.md](docs/spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13) and
+  still asserts Kuicksilver's side.
 - **Soak and churn.** `kuicksilver-soak` runs the whole stack on real UDP for a set time: a Ktor server (HTTP/1.1 and
   HTTP/3 on one port) and raw QUIC servers, against client coroutines doing a weighted mix of transfers (1 KiB–4 MiB),
   aborted streams, idle timeouts, stateless resets, migrations, 0-RTT resumptions, endpoint and `HttpClient` churn,

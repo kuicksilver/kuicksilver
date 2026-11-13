@@ -1850,6 +1850,10 @@ first, then reads the body, deadlocked). On Linux Native the client contract fou
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
 
+**Other HTTP implementations.** The engine interop bench runs both engines against Ktor's Netty and CIO engines,
+OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs on the JVM; its pairs, scenarios and the peers'
+deviations are in [interop.md](../spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13).
+
 **Other WebSocket peers.** The engines check every frame against the handshake (RFC 6455 sections 5.1 and 5.2, RFC
 7692 section 6.1), stricter than Ktor's own engines:
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver — interop results
 
-Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
+Results of the QUIC Interop Runner matrices, the runner's http3 case, h2spec against the HTTP/2 server, the engine interop bench (the Ktor engines against other HTTP implementations on the JVM) and the browser WebTransport checks, with the analysis of every red cell. They are the evidence for the ✅ rows of the [RFC compliance summary](rfc-compliance.md); `tools/interop/required.json` lists the cells that must stay green and `tools/interop/perf-thresholds.json` the throughput floors.
 
 ## Interop matrix (0.2.0, QUIC Interop Runner 740c05a, 2026-10-13)
 
@@ -160,6 +160,116 @@ with RST_STREAM STREAM_CLOSED, h2spec expects a connection error of that type, w
 | JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | macosArm64 executable (same host) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 | linuxX64 executable (one linux/amd64 container with the h2spec binary) | — | — | — | release gate (`tools/ci/local-matrix.sh`) |
+
+## Engine interop: the Ktor engines against other HTTP stacks (JVM, 2026-11-13)
+
+The QUIC Interop Runner checks the QUIC and HTTP/3 libraries against other QUIC stacks; this bench checks HTTP semantics
+through real engines. `kuicksilver-engine-interop` (not published, JVM tests only) starts each server in the test JVM on
+a free loopback port and drives it with a client, at least one side Kuicksilver's: `./gradlew --max-workers=2
+:kuicksilver-engine-interop:jvmTest`, about 40 s of tests (the step `jvm: engine interop` of the gate and of CI). Every
+test asserts what the RFCs require of both ends; a test that a pair overrides documents a peer's behaviour and still
+asserts Kuicksilver's side. Waits are on events (an application probe, Ktor's `ApplicationStopPreparing`), never on
+sleeps; the only timers are the request timeout under test and a short QUIC idle timeout where a peer goes silent. Both
+sides use the test PKI of the C tests (`kuicksilver-native/src/c/test/testdata`: a P-256 test CA and a leaf for
+`server.test`, `127.0.0.1` and `::1`), the leaf sent without the CA.
+
+Peers (versions as resolved with Ktor 3.6.1; JDK 21 toolchain):
+
+| Peer | Version | Role | Protocols |
+|---|---|---|---|
+| Ktor Netty engine | Ktor 3.6.1, Netty 4.2.17.Final (JDK TLS; HTTP/3 through netty-codec-native-quic, quiche) | server | HTTP/1.1 and HTTP/2 over TLS (ALPN), HTTP/3 (`enableHttp3`, experimental), WebSocket |
+| Ktor CIO engine | Ktor 3.6.1 | server, client | cleartext HTTP/1.1 and WebSocket (the server has no TLS; the client's TLS is TLS 1.2 only) |
+| Plain Netty | Netty 4.2.17.Final, `HttpServerCodec` and `Http2FrameCodec` over JDK TLS | server | HTTP/1.1, HTTP/2: 1xx, trailers, GOAWAY |
+| Ktor OkHttp engine, OkHttp | Ktor 3.6.1, OkHttp 5.5.1 | client | HTTP/1.1, HTTP/2, WebSocket (permessage-deflate) |
+| Ktor Java engine, JDK HttpClient | Ktor 3.6.1, `java.net.http` of the test JDK (21.0.5 here) | client | HTTP/1.1, HTTP/2, WebSocket over HTTP/1.1 |
+| Netty HTTP/3 client | Netty 4.2.17.Final, netty-codec-http3 (quiche) | client | HTTP/3 |
+
+Scenarios of the HTTP pairs (`HttpPairSuite`, the same 19 tests for every pair): GET; POST with an empty, a small, a
+1 MiB and a streamed body of unknown length (chunked over HTTP/1.1); a streamed and a fixed-length response; 50 request
+fields with one of 2 KiB, inner punctuation and optional whitespace (RFC 9110 section 5.5), and 100 response fields;
+a percent-encoded UTF-8 path and query; 200, 201, 204, 400, 404, 418, 500 and 503; HEAD (RFC 9110 section 9.3.2) and a
+conditional GET answered 304 with its ETag (sections 13.1.2, 15.4.5); `Expect: 100-continue`; connection reuse; 32
+concurrent requests; a response abandoned mid-body (the server's write must fail); a request timeout mid-body; a
+graceful stop with a request in flight (RFC 9113 section 6.8, RFC 9114 section 5.2); and a server the client does not
+trust (`negative_untrustedServerIsRefused`). The WebSocket pairs (`WebSocketPairSuite`, RFC 6455): text and binary
+echo (256 KiB and empty), a message sent in three fragments by the client and by the server, a server Ping answered
+with the same data, close codes and reasons both ways, and permessage-deflate (RFC 7692) negotiated by the client
+engines that negotiate extensions, with context takeover across large and small messages.
+
+Results (✓ passes as the RFC requires; ✓ᴾ passes asserting our side, the peer's behaviour is described below; — not
+applicable to the pair):
+
+| Client → server, protocol | bodies, fields, statuses, HEAD, 304, 100-continue, concurrency | reuse | cancel mid-body | timeout mid-body | graceful stop | untrusted CA | other |
+|---|---|---|---|---|---|---|---|
+| Kuicksilver → Ktor Netty, HTTP/1.1 over TLS | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| Kuicksilver → Ktor Netty, HTTP/2 | ✓ | ✓ | ✓ | ✓ (fixed, 1) | ✓ | ✓ | field section above Netty's 8192 not sent ✓ |
+| Kuicksilver → Ktor Netty, HTTP/3 | ✓ | ✓ | ✓ᴾ (4) | ✓ | ✓ᴾ (5) | ✓ | field section above 8192 not sent ✓ |
+| Kuicksilver → Ktor CIO, cleartext HTTP/1.1 | ✓ | ✓ | ✓ | ✓ | ✓ | — | |
+| Kuicksilver → plain Netty, HTTP/1.1 and HTTP/2 | | | | | | | 103 Early Hints before 200 ✓, trailers ✓, GOAWAY with a stream in flight (HTTP/2) ✓ |
+| Ktor CIO → Kuicksilver, cleartext HTTP/1.1 | ✓ | ✓ᴾ (8) | ✓ | ✓ | ✓ | — | |
+| Ktor CIO → Kuicksilver, TLS | — | — | — | — | — | — | refused with `protocol_version` ✓ (9) |
+| Ktor OkHttp → Kuicksilver, HTTP/1.1 and HTTP/2 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| Ktor Java → Kuicksilver, HTTP/1.1 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | |
+| Ktor Java → Kuicksilver, HTTP/2 | ✓ | ✓ | ✓ | ✓ | ✓ᴾ (6) | ✓ | |
+| OkHttp → Kuicksilver | | | | | | | ALPN `h2` / `http/1.1` both ways ✓, WebSocket permessage-deflate ✓, close codes ✓ |
+| JDK HttpClient → Kuicksilver | | | | | | | ALPN ✓, HTTP/2 multiplexing ✓ᴾ (7), WebSocket fragments, Ping/Pong, close codes ✓ |
+| Netty HTTP/3 → Kuicksilver | GET, 1 MiB POST, 204, 100 fields, UTF-8 target, 10 concurrent streams ✓; HEAD ✓ᴾ (3) | | | | | | |
+
+| WebSocket client → server | text, binary | client fragments | server fragments | Ping → Pong | close codes | permessage-deflate |
+|---|---|---|---|---|---|---|
+| Kuicksilver → Ktor Netty (wss) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (Ktor's WebSocketDeflateExtension) |
+| Kuicksilver → Ktor CIO (ws) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (Ktor's WebSocketDeflateExtension) |
+| Ktor CIO → Kuicksilver (ws) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (Ktor's extension against PerMessageDeflate) |
+| Ktor OkHttp → Kuicksilver (wss) | ✓ | ✓ᴾ (10) | ✓ | ✓ | ✓ | — (the engine negotiates no extensions; OkHttp's own: above) |
+| Ktor Java → Kuicksilver (wss) | ✓ | ✓ | ✓ | ✓ | ✓ | — (no extensions in the JDK) |
+
+Findings:
+
+1. **Ours, fixed.** Over HTTP/2 the client engine failed a body that a request timeout (or the caller) cut short with
+   the stream's own `CancellationException("the call ended")` instead of Ktor's `HttpRequestTimeoutException`; HTTP/1.1
+   and HTTP/3 already reported the call's cause. The call's end now cancels the body with its cause before the stream is
+   released (`ClientH2Test.requestTimeoutDuringTheBodyIsReportedAsSuch`).
+2. **Ours, fixed.** Over HTTP/1.1 the server engine took the connection's addresses from `hostname`, which on the JVM is
+   a reverse DNS lookup: every accepted connection made one, and `remoteAddress` and `remoteHost` read `localhost` for
+   127.0.0.1, where HTTP/2 and HTTP/3 (and Ktor's Netty and CIO engines) give the IP literal
+   (`ServerH1Test.connectionPointHasIpLiterals`).
+3. **Netty's HTTP/3 codec (4.2.17).** A HEAD response with `content-length: 1000` and no DATA is reported as
+   "Expected content-length 1000 != 0". RFC 9114 section 4.1.2: "A response that is defined as never having content,
+   even when a Content-Length is present, can have a non-zero Content-Length header field even though no content is
+   included in DATA frames." Our server's response is that; the test asserts the head and the empty content.
+4. **Ktor's Netty engine over HTTP/3.** After our client abandons a response with STOP_SENDING (in its qlog), the
+   server application's write never fails: Ktor's handler stays suspended until the connection ends (our server reports
+   `H3_REQUEST_CANCELLED` to its application at once). RFC 9000 section 3.5: "An endpoint that receives a STOP_SENDING
+   frame MUST send a RESET_STREAM frame if the stream is in the "Ready" or "Send" state." Whether quiche sent the
+   RESET_STREAM is not visible from our side (our qlog lists received packets without their frames); the stream is
+   never released to the application either way. The test asserts our STOP_SENDING and the next request.
+5. **Ktor's Netty engine over HTTP/3.** Its stop sends nothing more on the connection: no GOAWAY, no rest of the
+   response in flight, no CONNECTION_CLOSE (our qlog receives no packet after the stop began). RFC 9114 section 5.2
+   describes the graceful shutdown ("Endpoints initiate the graceful shutdown of an HTTP/3 connection by sending a
+   GOAWAY frame"). Our client fails the call once the QUIC idle timeout passes (RFC 9000 section 10.1); the test uses a
+   3 s idle timeout.
+6. **The JDK's HttpClient before 21.0.8** fails every open HTTP/2 stream on any GOAWAY, whatever its last stream
+   identifier (JDK-8335181, fixed in 24 and backported to 21.0.8). Our GOAWAY keeps the stream in flight, which OkHttp
+   completes; the test expects completion on a fixed JDK and "GOAWAY received" on an older one.
+7. **The JDK's HttpClient** opens one connection per request while no HTTP/2 connection to the origin is up yet (20
+   concurrent first requests, 20 connections). RFC 9113 section 9.1: "Clients SHOULD NOT open more than one HTTP/2
+   connection to a given host and port pair". After a first request, the JDK multiplexes; the test asserts that.
+8. **Ktor's CIO client** opens a new connection for every request, against Netty, CIO and our server alike; persistence
+   is the client's choice. The test checks that every request succeeds.
+9. **Ktor's CIO client** speaks TLS 1.2 only (ktor-network-tls) and our TCP connectors TLS 1.3 only, so there is no
+   HTTP-over-TLS pair. Our server ends the handshake as RFC 8446 appendix D.2 requires: "If the "supported_versions"
+   extension is absent and the server only supports versions greater than ClientHello.legacy_version, the server MUST
+   abort the handshake with a "protocol_version" alert." (`CioToServerTlsTest`).
+10. **Ktor's OkHttp engine** sends every `Frame` as a whole message, its `fin` ignored (OkHttp has no fragments in its
+    API): three fragments arrive as three messages. Not an error on either side; a fragmented message cannot be sent
+    through that engine.
+
+Not in the bench, and why: Ktor's Jetty engine (Jetty 12.1, `ktor-server-jetty-jakarta`) brings Jakarta EE artifacts
+(CDI, Interceptors, WebSocket API) signed by keys that no key server has and that no official source lists, so they
+could only be pinned by checksum; that waits for a decision on those keys. WebSockets over HTTP/2 (RFC 8441): neither
+of our engines offers Extended CONNECT on HTTP/2 yet ([RFC compliance](rfc-compliance.md)), and none of the JVM clients
+here has it. HTTP/3 from the JDK's client: JDK 26 (JEP 517); the toolchain is 21. Ktor's Netty engine has no WebSockets
+over HTTP/3 (RFC 9220), so the HTTP/3 pair has none.
 
 ## Interop WebTransport (browsers, 2026-10-22 and 2026-10-23)
 
