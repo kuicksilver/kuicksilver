@@ -31,3 +31,12 @@ kotlin {
 configurations.matching { it.name == "swiftExportClasspath" }.configureEach {
     dependencyConstraints.add(project.dependencies.constraints.create("io.opentelemetry:opentelemetry-api:1.67.0"))
 }
+
+// A test JVM out of heap exits at once and leaves a heap dump in build/test-heap-dumps, as the repository's modules do (the
+// kuicksilver.test-jvm plugin of its build-logic, which this build of its own cannot apply): never a JVM that hangs a CI job.
+tasks.withType<Test>().configureEach {
+    val dumps = layout.buildDirectory.dir("test-heap-dumps").get().asFile
+    val dumpPath = workingDir.toPath().relativize(dumps.toPath()).toString().replace(File.separatorChar, '/')
+    jvmArgs("-XX:+ExitOnOutOfMemoryError", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=$dumpPath")
+    doFirst { dumps.mkdirs() }
+}

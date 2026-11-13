@@ -7,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jetbrains.kotlin.plugin.allopen")
     id("org.jetbrains.kotlinx.benchmark")
+    id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
 }
 kotlin {
     jvmToolchain(21)

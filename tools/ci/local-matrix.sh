@@ -51,10 +51,11 @@ head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --p
 # step overwrites them, and the failing tests are listed in <n>.log and on the failure line. The third 0.2.1 gate lost the
 # name of a flaky test this way: step 13's log had only "297 tests completed, 1 failed" (2026-10-23).
 step_reports() { # <marker> <dest>: copies every test-results file and HTML test report newer than <marker> to <dest>, same relative paths
+  # (never a heap dump: a test JVM out of heap leaves hundreds of MB in build/test-heap-dumps, and none belongs in build/ci)
   local marker="$1" dest="$2"
   rm -rf "$dest"
   find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f -newer "$marker" \
-    \( -path '*/build/test-results/*' -o -path '*/build/reports/tests/*' \) -print0 > "$marker.list" 2>/dev/null
+    \( -path '*/build/test-results/*' -o -path '*/build/reports/tests/*' \) ! -name '*.hprof' -print0 > "$marker.list" 2>/dev/null
   [ -s "$marker.list" ] || { rm -f "$marker.list"; return 1; }
   mkdir -p "$dest" && tar --null -T "$marker.list" -cf - 2>/dev/null | tar -C "$dest" -xf -
   rm -f "$marker.list"

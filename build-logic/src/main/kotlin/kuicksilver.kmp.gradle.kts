@@ -9,6 +9,7 @@ plugins {
     id("com.android.kotlin.multiplatform.library")
     id("org.jetbrains.dokka")
     id("kuicksilver.coverage")
+    id("kuicksilver.test-jvm")   // a test JVM out of heap exits and leaves a heap dump
     id("org.jmailen.kotlinter")   // ktlint (ktlint_official, 140 columns, .editorconfig): `formatKotlin` rewrites, `lintKotlin` gates `check`
 }
 
@@ -186,15 +187,6 @@ kotlin.sourceSets.getByName("commonMain").resources.srcDir(licenseResources.map 
 kotlin.sourceSets.getByName("androidMain").resources.srcDir(licenseResources.map { it.destinationDir })   // the AAR packages androidMain resources, not commonMain ones
 tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") }; from(rootProject.file("NOTICE")) { into("META-INF") }; from(rootProject.file("licenses/LICENSE.openssl.txt")) { into("META-INF/licenses") }; duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
 
-// A test JVM out of heap ends at once and fails its task: without this, its coroutines went on failing with
-// OutOfMemoryError in their exception handlers and the JVM never ended, until the CI job's timeout (windows-jvm, 2 hours).
-// The heap dump (java_pid<N>.hprof) lands in build/reports/tests, which CI uploads when a job fails; the path is relative to
-// the test JVM's working directory, the project directory, so it stays the same on every host (the task's cache key).
-val testReportsDir = layout.buildDirectory.dir("reports/tests")
-tasks.withType<Test>().configureEach {
-    jvmArgs("-XX:+ExitOnOutOfMemoryError", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=build/reports/tests")
-    doFirst { testReportsDir.get().asFile.mkdirs() }   // a HeapDumpPath that is no directory would be taken as a file name
-}
 // Explicit native library for the JVM tests (Linux containers, CI): -Pkuicksilver.native.path=... is forwarded to the test JVM.
 tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }
 // CI jdk-compat job (review I7, M3): -Pkuicksilver.test.jdk=<N> runs the JVM tests on JDK N (a toolchain Gradle can find, e.g. through

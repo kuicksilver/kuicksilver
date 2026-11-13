@@ -235,6 +235,14 @@ jobs:
           name: 'reports-linux-${{ matrix.arch }}'
           path: '**/build/reports/tests/'
           retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # a test JVM out of heap leaves its heap dump there (the kuicksilver.test-jvm plugin)
+        if: failure()
+        with:
+          name: 'heap-dumps-linux-${{ matrix.arch }}'
+          path: '**/build/test-heap-dumps/'
+          if-no-files-found: ignore
+          retention-days: 7
 
   linux-native:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native,')) }}
@@ -383,6 +391,14 @@ jobs:
           name: reports-windows-jvm
           path: '**/build/reports/tests/'
           retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # a test JVM out of heap leaves its heap dump there (the kuicksilver.test-jvm plugin)
+        if: failure()
+        with:
+          name: 'heap-dumps-windows-jvm'
+          path: '**/build/test-heap-dumps/'
+          if-no-files-found: ignore
+          retention-days: 7
 
   windows-loops-bench:
     # MultiLoopBenchmark (docs/benchmarks.md, "Several loops on one socket") on a Windows host: by hand only, and only when
@@ -488,7 +504,20 @@ jobs:
         run: bash tools/check/double-build.sh macos-arm64
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
-        with: { name: reports-apple, path: '**/build/reports/', retention-days: 7 }
+        with:
+          name: reports-apple
+          path: |
+            **/build/reports/
+            !**/*.hprof
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # a test JVM out of heap leaves its heap dump there (the kuicksilver.test-jvm plugin)
+        if: failure()
+        with:
+          name: 'heap-dumps-apple'
+          path: '**/build/test-heap-dumps/'
+          if-no-files-found: ignore
+          retention-days: 7
 
   apple-native:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple-native,')) }}
@@ -522,7 +551,12 @@ jobs:
         run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
-        with: { name: reports-apple-native, path: '**/build/reports/', retention-days: 7 }
+        with:
+          name: reports-apple-native
+          path: |
+            **/build/reports/
+            !**/*.hprof
+          retention-days: 7
 
   android:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',android,')) }}
@@ -597,7 +631,9 @@ jobs:
         if: failure()
         with:
           name: 'reports-android-${{ matrix.api }}'
-          path: '**/build/reports/'
+          path: |
+            **/build/reports/
+            !**/*.hprof
           retention-days: 7
 
   jdk-compat:
@@ -642,6 +678,14 @@ jobs:
         with:
           name: 'reports-jdk-${{ matrix.jdk }}'
           path: '**/build/reports/tests/'
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # a test JVM out of heap leaves its heap dump there (the kuicksilver.test-jvm plugin)
+        if: failure()
+        with:
+          name: 'heap-dumps-jdk-${{ matrix.jdk }}'
+          path: '**/build/test-heap-dumps/'
+          if-no-files-found: ignore
           retention-days: 7
 
   interop-images:
