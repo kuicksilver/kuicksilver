@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -82,6 +83,12 @@ internal class H3Session(
 
     /** Test hook: runs before each [launchDrainer] reader, so a test can hold one past the end of the connection. */
     internal var beforeDrainerForTest: (suspend () -> Unit)? = null
+
+    /**
+     * Test hook: runs once the transport ended, before the session takes note ([onTransportClosed], which completes
+     * [closed]), so a test can hold the moment in which the transport is gone and [closed] is not complete yet.
+     */
+    @Volatile internal var beforeTransportClosedForTest: (suspend () -> Unit)? = null
 
     /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]). */
     internal val drainers = kotlin.concurrent.atomics.AtomicReference<List<Drainer>>(emptyList())
@@ -420,6 +427,7 @@ internal class H3Session(
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
         scope.launch {
             val e = quic.closed.await()
+            beforeTransportClosedForTest?.invoke()
             onTransportClosed(e)
         }
         scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadline) } }
