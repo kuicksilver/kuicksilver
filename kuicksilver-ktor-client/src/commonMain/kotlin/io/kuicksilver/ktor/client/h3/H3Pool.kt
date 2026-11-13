@@ -458,7 +458,14 @@ internal class H3Pool(
         fresh.clear()
     }
 
-    private fun Http3Connection.usable(): Boolean = !closed.isCompleted && goAwayReceived.value == null
+    /**
+     * Whether [this] ended: its HTTP/3 session took note, or its QUIC transport ended before that (the session learns of
+     * the end in a coroutine of its own, so for a moment its `closed` is not complete while every stream already failed).
+     * A request is never handed such a connection: it would fail there and fall back to TCP instead of opening a new one.
+     */
+    private fun Http3Connection.ended(): Boolean = closed.isCompleted || quic.closed.isCompleted
+
+    private fun Http3Connection.usable(): Boolean = !ended() && goAwayReceived.value == null
 
     /** WebTransport sessions of this client and their dedicated connections ([trackSession]), for [goAwayAll]. */
     private val sessions =
@@ -592,6 +599,9 @@ internal class H3Pool(
     /** Test hook: runs in a request that holds a connection, before it waits for the handshake or opens its stream. */
     internal var afterAcquireForTest: (suspend () -> Unit)? = null
 
+    /** Test hook: in [acquire], after a connection was looked up and before it is counted as in use. */
+    internal var beforeCountForTest: (suspend (Http3Connection) -> Unit)? = null
+
     /** Test hook: runs in the caller that sets up a connection, before it connects. */
     internal var beforeSetupForTest: (suspend () -> Unit)? = null
 
@@ -659,7 +669,7 @@ internal class H3Pool(
                 e.idleSince.store(clock())
                 if (events.enabled) {
                     lock.withLock {
-                        fresh.removeAll { it.closed.isCompleted } // closed before any exchange used them
+                        fresh.removeAll { it.ended() } // closed before any exchange used them
                         fresh += c
                     }
                 }
@@ -803,9 +813,10 @@ internal class H3Pool(
         }
         while (true) {
             val (e, c) = connectionEntry(t, data, dns)
+            beforeCountForTest?.invoke(c)
             val counted =
                 lock.withLock {
-                    if ((connections[t.key] === e || (e in retired && !e.drained)) && !c.closed.isCompleted) {
+                    if ((connections[t.key] === e || (e in retired && !e.drained)) && !c.ended()) {
                         e.active.addAndFetch(1)
                         true
                     } else {
@@ -830,7 +841,7 @@ internal class H3Pool(
                 val e = it.next()
                 if (!e.deferred.isCompleted) continue
                 val c = e.deferred.getCompletedOrNull()
-                if (c == null || c.closed.isCompleted) {
+                if (c == null || c.ended()) {
                     it.remove()
                     continue
                 }
@@ -852,7 +863,7 @@ internal class H3Pool(
                         false
                     }
 
-                    c == null || c.closed.isCompleted -> {
+                    c == null || c.ended() -> {
                         true
                     }
 
@@ -873,15 +884,20 @@ internal class H3Pool(
 
     /** The open, usable connection to [t], if one exists (no connection attempt). */
     suspend fun existing(t: H3Target): Http3Connection? =
-        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.takeIf {
-            !it.closed.isCompleted &&
-                it.goAwayReceived.value == null
-        }
+        lock
+            .withLock { connections[t.key] }
+            ?.deferred
+            ?.getCompletedOrNull()
+            ?.takeIf { it.usable() }
 
-    /** Whether an open connection to [t] exists and its peer accepts Extended CONNECT (WebSockets over HTTP/3, RFC 9220). */
+    /**
+     * Whether an open connection to [t] exists that may still carry a new request (no GOAWAY from its peer, after which
+     * this client opens no new request on it, RFC 9114 section 5.2, as [usable] says) and whose peer accepts Extended
+     * CONNECT (WebSockets over HTTP/3, RFC 9220).
+     */
     suspend fun canConnectProtocol(t: H3Target): Boolean =
         lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.let {
-            !it.closed.isCompleted &&
+            it.usable() &&
                 it.peerSettings.value?.enableConnectProtocol == true
         } ==
             true
@@ -960,7 +976,7 @@ internal class H3Pool(
                 if (reported) {
                     events.emit(
                         "connectionReleased",
-                    ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
+                    ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
                 }
                 // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
                 // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
@@ -1023,7 +1039,7 @@ internal class H3Pool(
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)
             if (cause != null) response.body.cancel(cause) // as the HTTP/1.1 body: closed with the call's own cancellation
             response.cancel()
-            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
+            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
         }
         val status = HttpStatusCode.fromValue(response.status)
         val headers = HeadersBuilder().apply { for ((n, v) in response.headers.fields) append(n, v) }.build()
@@ -1096,7 +1112,7 @@ internal class H3Pool(
             val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
             if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
-            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
+            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
         }
 
         // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441

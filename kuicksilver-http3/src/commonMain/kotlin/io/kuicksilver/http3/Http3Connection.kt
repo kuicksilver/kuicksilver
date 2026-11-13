@@ -288,3 +288,14 @@ public interface Http3ResponseWriter {
      */
     public suspend fun finish(trailers: Http3Headers? = null)
 }
+
+/**
+ * Test hook: runs once this connection's QUIC transport ended, before its HTTP/3 session takes note and completes
+ * [Http3Connection.closed]; a test holds that moment with it (see `H3Session.beforeTransportClosedForTest`).
+ */
+@InternalKuicksilverApi
+public var Http3Connection.beforeTransportClosedForTest: (suspend () -> Unit)?
+    get() = session.beforeTransportClosedForTest
+    set(v) {
+        session.beforeTransportClosedForTest = v
+    }

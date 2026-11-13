@@ -3,12 +3,16 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.application.install
 import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
@@ -17,6 +21,12 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
+import io.ktor.websocket.close
+import io.ktor.websocket.readBytes
+import io.ktor.websocket.readReason
+import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
@@ -29,7 +39,9 @@ import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -56,6 +68,8 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import io.ktor.server.websocket.WebSockets as ServerWebSockets
+import io.ktor.server.websocket.webSocketRaw as serverWebSocketRaw
 
 /**
  * `http3 { connectionMigration }` (U.4a, RFC 9000 section 9): pooled HTTP/3 connections follow a network source. The
@@ -196,8 +210,9 @@ class ClientMigrationTest {
         maxIdle: Duration = 10.seconds,
         engineIdle: Duration? = null,
         log: KuicksilverLogger? = null,
+        block: io.ktor.client.HttpClientConfig<KuicksilverEngineConfig>.() -> Unit = {},
     ): HttpClient =
-        testClient(Http3DiscoveryMode.Preferred, engine = {
+        testClient(Http3DiscoveryMode.Preferred, block = block, engine = {
             log?.let { logger = it }
             quic = quicConfig { maxIdleTimeout = maxIdle }
             eventListener = listener
@@ -516,8 +531,368 @@ class ClientMigrationTest {
             }
         }
 
+    /**
+     * The WebSocket server's side of the script, shared with the test: what it received, in order, and its gates. Its
+     * route is a raw one, so pings, pongs and every fragment reach it as they came.
+     */
+    private class WsScript {
+        /** Every message, ping, pong and Close the server received, in order. */
+        val received = Channel<String>(Channel.UNLIMITED)
+        val sessions = AtomicInt(0)
+        val version = CompletableDeferred<String>()
+        val portBefore = CompletableDeferred<Int>()
+        val portAfter = CompletableDeferred<Int>()
+
+        /**
+         * The first [HALF] fragments of the client's large message reached the server, and the first half of the server's
+         * reached the client (its pong to the ping that followed them came back).
+         */
+        val halves = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        val ended = CompletableDeferred<Unit>()
+    }
+
+    /** A message's bytes as the server reports them: its size and a sum over them. */
+    private fun digest(b: ByteArray) = "${b.size}/${b.foldIndexed(0L) { i, acc, x -> acc * 31 + (x.toLong() and 0xff) + i }}"
+
+    private suspend fun wsServer(
+        s: WsScript,
+        allowMigration: Boolean = true,
+    ) = testServer(configure = { if (!allowMigration) quic = quicConfig { this.allowMigration = false } }) {
+        install(ServerWebSockets)
+        routing {
+            get("/small") { call.respondText(call.request.httpVersion) }
+            serverWebSocketRaw("/ws") {
+                s.sessions.incrementAndFetch()
+                s.version.complete(call.request.httpVersion)
+                s.portBefore.complete(call.request.local.remotePort)
+                var closing = false
+                var first: Frame? = null
+                val message = ArrayList<ByteArray>()
+                try {
+                    for (f in incoming) {
+                        when (f) {
+                            is Frame.Ping -> {
+                                s.received.trySend("ping:${f.data.decodeToString()}")
+                                outgoing.send(Frame.Pong(f.data))
+                                outgoing.send(Frame.Text("ping:${f.data.decodeToString()}"))
+                            }
+
+                            is Frame.Pong -> {
+                                val payload = f.data.decodeToString()
+                                s.received.trySend("pong:$payload")
+                                if (payload == MID) {
+                                    // the client answered the ping that followed the first half of the server's large
+                                    // message on the same stream, so it has that half; now the network may change
+                                    s.halves.complete(Unit)
+                                    s.resume.await()
+                                    for (i in HALF until PARTS) outgoing.send(Frame.Binary(i == PARTS - 1, serverBig.part(i)))
+                                } else {
+                                    outgoing.send(Frame.Text("pong:$payload"))
+                                }
+                            }
+
+                            is Frame.Close -> {
+                                val r = f.readReason()
+                                s.received.trySend("close:${r?.code}:${r?.message}")
+                                if (!closing) outgoing.send(Frame.Close(CloseReason(CloseReason.Codes.NORMAL, "server bye")))
+                                flush()
+                                break
+                            }
+
+                            else -> {
+                                if (first == null) first = f
+                                message += f.data
+                                if (!f.fin) {
+                                    // half the client's large message is here: the server sends half of its own, then a
+                                    // ping (a control frame may come between fragments, RFC 6455 section 5.4) whose pong
+                                    // tells that the client has that half
+                                    if (message.size == HALF) {
+                                        for (i in 0 until HALF) outgoing.send(Frame.Binary(false, serverBig.part(i)))
+                                        outgoing.send(Frame.Ping(MID.encodeToByteArray()))
+                                    }
+                                    continue
+                                }
+                                val bytes = message.fold(ByteArray(0)) { a, b -> a + b }
+                                val parts = message.size
+                                val text = first is Frame.Text
+                                first = null
+                                message.clear()
+                                if (!text) {
+                                    s.received.trySend("binary:${digest(bytes)}:$parts")
+                                    outgoing.send(Frame.Binary(true, bytes))
+                                    continue
+                                }
+                                val t = bytes.decodeToString()
+                                s.received.trySend("text:$t:$parts")
+                                when {
+                                    t == "ping-me" -> {
+                                        outgoing.send(Frame.Ping("s-ping".encodeToByteArray()))
+                                    }
+
+                                    t.startsWith("burst:") -> {
+                                        repeat(t.removePrefix("burst:").toInt()) { outgoing.send(Frame.Text("s$it")) }
+                                    }
+
+                                    t == "where" -> {
+                                        s.portAfter.complete(call.request.local.remotePort)
+                                        outgoing.send(Frame.Text("here"))
+                                    }
+
+                                    t == "close-me" -> {
+                                        closing = true
+                                        outgoing.send(Frame.Close(CloseReason(4001, "server bye")))
+                                    }
+
+                                    else -> {
+                                        outgoing.send(Frame.Text("e:$t"))
+                                    }
+                                }
+                            }
+                        }
+                        flush()
+                    }
+                } finally {
+                    s.ended.complete(Unit)
+                }
+            }
+        }
+    }
+
+    /** The next frame within a deadline that names what was awaited. */
+    private suspend fun DefaultClientWebSocketSession.next(what: String): Frame =
+        withTimeoutOrNull(15.seconds) { incoming.receive() } ?: fail("no frame within 15 s, awaited $what")
+
+    private suspend fun DefaultClientWebSocketSession.expectText(t: String) {
+        val f = next(t)
+        assertIs<Frame.Text>(f, "awaited $t, got $f")
+        assertEquals(t, f.readText())
+    }
+
+    private suspend fun DefaultClientWebSocketSession.expectBinary(b: ByteArray) {
+        val f = next("binary ${b.size}")
+        assertIs<Frame.Binary>(f, "awaited binary ${b.size}, got $f")
+        val got = f.readBytes()
+        assertTrue(b.contentEquals(got), "binary of ${b.size} bytes: got ${got.size} bytes, different content")
+    }
+
+    /**
+     * Messages [range] sent back to back (a text and a binary each, nothing awaited between them), then their echoes, which
+     * must come in the order sent; [expected] gets what the server must have received.
+     */
+    private suspend fun DefaultClientWebSocketSession.exchange(
+        range: IntRange,
+        expected: MutableList<String>,
+    ) {
+        fun bin(i: Int) = ByteArray(1000 + i) { (it * 7 + i).toByte() }
+        for (i in range) {
+            send(Frame.Text("c$i"))
+            send(Frame.Binary(true, bin(i)))
+            expected += "text:c$i:1"
+            expected += "binary:${digest(bin(i))}:1"
+        }
+        for (i in range) {
+            expectText("e:c$i")
+            expectBinary(bin(i))
+        }
+    }
+
+    /**
+     * RFC 9220 over RFC 9000 section 9: a WebSocket on a pooled HTTP/3 connection (one stream of it) carries on across a
+     * network change, as a download does. Messages both ways before and after the switch, a large fragmented message
+     * each way whose first half crossed the old network and whose rest crosses the new one, pings both ways: everything
+     * arrives once and in order, in the same session (one WebSocket on the server, the same call, now seen from the
+     * client's new address), then a clean Close with a code and reason each way.
+     */
+    @Test fun webSocketSurvivesNetworkSwitch() = webSocketAcrossNetworkSwitch(clientCloses = true)
+
+    /** [webSocketSurvivesNetworkSwitch] with the server closing: its code and reason reach the client after the switch. */
+    @Test fun webSocketSurvivesNetworkSwitchServerCloses() = webSocketAcrossNetworkSwitch(clientCloses = false)
+
+    private fun webSocketAcrossNetworkSwitch(clientCloses: Boolean) =
+        h3Test {
+            val s = WsScript()
+            val (server, port) = wsServer(s)
+            val cut = CompletableDeferred<CuttableIo>()
+            val nets = Networks()
+            // the old network goes away right after the switch, before the rest of the large messages is sent
+            val heard = Heard(onMigrated = { cut.getCompleted().gone = true })
+            val expected = mutableListOf<String>()
+            try {
+                client(cut, heard, nets.hook) { install(WebSockets) }.use { c ->
+                    // a WebSocket takes HTTP/3 on a connection whose SETTINGS allow Extended CONNECT (RFC 9220 section 3)
+                    assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
+                    val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                    withTimeout(10.seconds) { migrator.network.first { it == 1 } } // following network 1
+                    val conn =
+                        engineOf(c)
+                            .h3
+                            .connectionsForTest()
+                            .single()
+                    val before = conn.quic.stats.currentPath
+                    var reason: CloseReason? = null
+                    c.webSocket("wss://127.0.0.1:$port/ws") {
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, call.response.version)
+                        exchange(0..9, expected)
+                        send(Frame.Ping("c-ping-1".encodeToByteArray()))
+                        expected += "ping:c-ping-1"
+                        expectText("ping:c-ping-1")
+
+                        // a large message each way, cut in the middle by the network change
+                        for (i in 0 until HALF) send(Frame.Binary(false, clientBig.part(i)))
+                        withTimeout(10.seconds) { s.halves.await() } // both first halves crossed network 1
+                        expected += "pong:$MID"
+                        nets.current.value = 2
+                        val (origin, e) = withTimeout(10.seconds) { heard.migrations.receive() }
+                        assertEquals("https://127.0.0.1:$port", origin)
+                        val m = assertIs<MigrationEvent.Migrated<*>>(e, "$e")
+                        assertEquals(1 to 2, m.old to m.new)
+                        s.resume.complete(Unit)
+                        for (i in HALF until PARTS) send(Frame.Binary(i == PARTS - 1, clientBig.part(i)))
+                        expected += "binary:${digest(clientBig)}:$PARTS"
+                        expectBinary(serverBig)
+                        expectBinary(clientBig)
+
+                        // after the switch: messages both ways, pings both ways, a burst from the server
+                        exchange(10..19, expected)
+                        send(Frame.Ping("c-ping-2".encodeToByteArray()))
+                        expected += "ping:c-ping-2"
+                        expectText("ping:c-ping-2")
+                        send(Frame.Text("ping-me"))
+                        expected += "text:ping-me:1"
+                        expected += "pong:s-ping" // the client's session answered the server's ping
+                        expectText("pong:s-ping")
+                        send(Frame.Text("burst:5"))
+                        expected += "text:burst:5:1"
+                        for (i in 0 until 5) expectText("s$i")
+                        send(Frame.Text("where"))
+                        expected += "text:where:1"
+                        expectText("here")
+
+                        if (clientCloses) {
+                            close(CloseReason(4000, "client bye"))
+                            expected += "close:4000:client bye"
+                        } else {
+                            send(Frame.Text("close-me"))
+                            expected += "text:close-me:1"
+                            expected += "close:4001:server bye" // the client's session answers with the server's Close
+                        }
+                        for (f in incoming) fail("no frame after the Close, got $f")
+                        reason = withTimeout(10.seconds) { closeReason.await() }
+                    }
+                    if (clientCloses) {
+                        assertEquals(CloseReason(4000, "client bye"), reason)
+                    } else {
+                        assertEquals(CloseReason(4001, "server bye"), reason)
+                    }
+                    withTimeout(10.seconds) { s.ended.await() }
+                    val got = generateSequence { s.received.tryReceive().getOrNull() }.toList()
+                    assertEquals(expected, got, "what the server received, in order")
+                    assertEquals("HTTP/3", s.version.await())
+                    assertEquals(1, s.sessions.load(), "one WebSocket session, no reconnect")
+                    assertNotEquals(s.portBefore.await(), s.portAfter.await(), "the server sees the session from the new socket")
+                    assertNotEquals(before, conn.quic.stats.currentPath)
+                    assertTrue(
+                        engineOf(c)
+                            .h3
+                            .connectionsForTest()
+                            .single() === conn,
+                        "the same connection",
+                    )
+                    assertTrue(heard.migrations.tryReceive().isFailure, "one migration only")
+                    assertTrue(heard.fallbacks.tryReceive().isFailure, "no fallback to TCP")
+                }
+            } finally {
+                s.resume.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Without `connectionMigration` a WebSocket over HTTP/3 ends with its network: once the old path hears nothing, the
+     * idle timeout (RFC 9000 section 10.1) ends the connection, and the session's `incoming` fails and its `closeReason` is
+     * 1006 (RFC 6455 section 7.1.5: the connection closed without a Close frame) instead of waiting for ever. (Ktor's JVM
+     * reader takes a failed input for its end, so `incoming` does not carry the transport's cause on every platform; the
+     * connection's own end does.)
+     */
+    @Test fun negative_webSocketEndsWithItsNetworkWithoutMigration() = webSocketEndsWithItsNetwork(migration = false, allowMigration = true)
+
+    /**
+     * With `connectionMigration` but a server that sent `disable_active_migration` (RFC 9000 section 9: the client "MUST
+     * NOT send packets ... from a different local address"), the switch is refused and the WebSocket ends with the old
+     * network as without the option.
+     */
+    @Test fun negative_webSocketEndsWithItsNetworkWhenServerDisablesMigration() =
+        webSocketEndsWithItsNetwork(migration = true, allowMigration = false)
+
+    private fun webSocketEndsWithItsNetwork(
+        migration: Boolean,
+        allowMigration: Boolean,
+    ) = h3Test {
+        val s = WsScript()
+        val (server, port) = wsServer(s, allowMigration)
+        val cut = CompletableDeferred<CuttableIo>()
+        val nets = Networks()
+        val heard = Heard()
+        try {
+            client(cut, heard, if (migration) nets.hook else null, maxIdle = 1.seconds) { install(WebSockets) }.use { c ->
+                assertEquals("HTTP/3", c.get("https://127.0.0.1:$port/small").bodyAsText())
+                val conn =
+                    engineOf(c)
+                        .h3
+                        .connectionsForTest()
+                        .single()
+                c.webSocket("wss://127.0.0.1:$port/ws") {
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, call.response.version)
+                    send(Frame.Text("c0"))
+                    expectText("e:c0")
+                    if (migration) {
+                        val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                        withTimeout(10.seconds) { migrator.network.first { it == 1 } }
+                        nets.current.value = 2
+                        val (_, e) = withTimeout(10.seconds) { heard.migrations.receive() }
+                        val failed = assertIs<MigrationEvent.Failed<*>>(e, "$e")
+                        assertEquals(MigrationRefusal.DisabledByPeer, assertIs<MigrationRefusedException>(failed.cause).reason)
+                    }
+                    cut.getCompleted().gone = true
+                    send(Frame.Text("c1")) // lost with the network
+                    // bounded by the 1 s idle timeout of the dead connection
+                    val outcome = withTimeoutOrNull(15.seconds) { runCatching { incoming.receive() } } ?: fail("the session hangs")
+                    val failure = outcome.exceptionOrNull() ?: fail("a frame arrived after the network went away: ${outcome.getOrNull()}")
+                    assertTrue(failure !is CancellationException, "the session fails, it is not cancelled: $failure")
+                    // RFC 6455 section 7.1.5: closed with no Close frame received, "such as could occur if the underlying
+                    // transport connection is lost", the close code "is considered to be 1006"
+                    val reason = withTimeoutOrNull(5.seconds) { closeReason.await() }
+                    assertEquals(CLOSED_ABNORMALLY, reason?.code, "$reason")
+                    // the transport's cause: the idle timeout (RFC 9000 section 10.1) of the connection the session ran on
+                    val lost = withTimeoutOrNull(5.seconds) { conn.closed.await() } ?: fail("the connection is still open")
+                    assertEquals(TimeoutKind.Idle, assertIs<QuicException.ConnectionLost.Timeout>(lost, "$lost").kind)
+                }
+                assertTrue(heard.fallbacks.tryReceive().isFailure, "a WebSocket is not repeated over TCP")
+                if (!migration) assertTrue(heard.migrations.tryReceive().isFailure, "nothing migrates without the option")
+            }
+        } finally {
+            server.stop(100, 500)
+        }
+    }
+
+    private fun ByteArray.part(i: Int) = copyOfRange(i * PART, (i + 1) * PART)
+
     private companion object {
         const val MIB_2 = 2 * 1024 * 1024
         const val MIB_8 = 8 * 1024 * 1024
+
+        /** RFC 6455 section 7.4.1: 1006, a connection closed without a Close frame (Ktor keeps its constant internal). */
+        const val CLOSED_ABNORMALLY: Short = 1006
+
+        /** The large WebSocket messages: [PARTS] fragments of [PART] bytes, [HALF] of them before the network change. */
+        const val PART = 32 * 1024
+        const val PARTS = 8
+        const val HALF = PARTS / 2
+
+        /** The payload of the server's ping between the halves of its large message. */
+        const val MID = "mid"
+        val clientBig = ByteArray(PARTS * PART) { (it * 31 + 7).toByte() }
+        val serverBig = ByteArray(PARTS * PART) { (it * 17 + 3).toByte() }
     }
 }

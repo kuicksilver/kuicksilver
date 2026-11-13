@@ -15,6 +15,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.beforeTransportClosedForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
@@ -328,4 +329,82 @@ class ClientPoolTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A connection whose QUIC transport ended is not handed out again, also before its HTTP/3 session took note (the
+     * session learns of the end in a coroutine of its own): the next request opens a new connection instead of failing on
+     * the dead one. Seen as the flake of `ClientMigrationTest.negative_noMigrationWithoutConfig`, whose GET right after a
+     * lost connection went to HTTP/1.1.
+     */
+    @Test fun negative_connectionWhoseTransportEndedIsNotReused() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    repeat(ROUNDS) { round ->
+                        assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
+                        val conn = engine.h3.connectionsForTest().single()
+                        conn.quic.close()
+                        withTimeout(5.seconds) { conn.quic.closed.await() }
+                        // at once: the session may not have taken note yet
+                        val next = runCatching { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                        assertEquals("ok", next.getOrElse { throw AssertionError("round $round: the request after the end failed", it) })
+                        assertTrue(engine.h3.connectionsForTest().single() !== conn, "round $round: a new connection")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The same when the transport ends between the connection's lookup and its count in `acquire` (the pool's re-check
+     * before a request is handed the connection): the request goes to a new connection. In that step a pool hook closes
+     * the transport while a session hook holds the HTTP/3 session's own end handling back, so every round has the
+     * transport gone and the connection's `closed` not yet complete when the re-check runs.
+     */
+    @Test fun negative_connectionWhoseTransportEndsBeforeItIsCountedIsNotUsed() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    var probed = 0
+                    repeat(HELD_ROUNDS) { round ->
+                        assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
+                        val conn = engine.h3.connectionsForTest().single()
+                        val sessionHeld = CompletableDeferred<Unit>()
+                        conn.beforeTransportClosedForTest = { sessionHeld.await() }
+                        engine.h3.beforeCountForTest = { c ->
+                            if (c === conn) {
+                                conn.quic.close()
+                                withTimeout(5.seconds) { conn.quic.closed.await() }
+                                if (!conn.closed.isCompleted) probed++
+                            }
+                        }
+                        try {
+                            val next = runCatching { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                            assertEquals("ok", next.getOrElse { throw AssertionError("round $round: the request failed", it) })
+                        } finally {
+                            engine.h3.beforeCountForTest = null
+                            sessionHeld.complete(Unit)
+                        }
+                        assertTrue(engine.h3.connectionsForTest().single() !== conn, "round $round: a new connection")
+                        withTimeout(5.seconds) { conn.closed.await() } // the session took note once let go
+                    }
+                    assertEquals(HELD_ROUNDS, probed, "every round had the transport gone and `closed` not complete")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    private companion object {
+        /** Rounds of [negative_connectionWhoseTransportEndedIsNotReused]: the window it probes is a few dispatches long. */
+        const val ROUNDS = 30
+
+        /** Rounds of [negative_connectionWhoseTransportEndsBeforeItIsCountedIsNotUsed]: each one probes the window. */
+        const val HELD_ROUNDS = 5
+    }
 }
