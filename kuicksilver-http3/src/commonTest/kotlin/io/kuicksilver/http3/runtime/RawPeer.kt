@@ -126,10 +126,15 @@ internal suspend fun awaitCondition(
 
 /**
  * Waits until the peer's STOP_SENDING for [st] arrived and failed its output, so the next write or flush on it meets the
- * stop: a test hook between two writes uses it to let the stop win that race every time.
+ * stop: a test hook between two writes uses it to let the stop win that race every time. Returns the stop's code. A
+ * missing stop is an assertion failure, not a cancellation: inside a `launch` a cancellation ends only that child, and
+ * the test would pass with the assertions after it never run.
  */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-internal suspend fun awaitOutputStopped(st: QuicStream) {
-    kotlinx.coroutines.withTimeout(kotlin.time.Duration.parse("5s")) { st.awaitSendStopped() }
+internal suspend fun awaitOutputStopped(st: QuicStream): Long {
+    val code =
+        kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("5s")) { st.awaitSendStopped() }
+            ?: throw AssertionError("no STOP_SENDING on stream ${st.id} within 5s")
     awaitCondition("the stop failing the output") { st.output.closedCause != null }
+    return code
 }

@@ -491,6 +491,7 @@ class WebTransportSessionTest {
                 val r = withTimeout(5.seconds) { server.acceptRequest() }
                 assertFailsWith<Http3Exception.MessageError> { r.acceptWebTransport() }
                 assertEquals("400", readHeaders(st)[":status"])
+                assertEquals(Http3ErrorCode.MESSAGE_ERROR, awaitOutputStopped(st)) // RFC 9114 section 4.1.2: the stream error
             }
         }
 }
