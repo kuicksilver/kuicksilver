@@ -481,6 +481,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- RFC compliance: the RFC 9000 §7.2 row is 🔶 instead of ✅. The client processes an ACK-only Initial that msquic sends
+  from the client's own DCID without fixing the server's SCID (msquic takes its real SCID only once its listener accepts
+  the connection), which departs from two MUSTs of §7.2 ("MUST discard any subsequent packet ... with a different
+  Source Connection ID", "MUST change the Destination Connection ID ... in response to only the first received
+  Initial"). The behaviour is that of 0.2.1 and stays, as a deviation approved for this release, until msquic answers
+  from its own SCID (docs/spec/rfc/9000.md, docs/spec/compat-shims.md).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.

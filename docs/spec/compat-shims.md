@@ -171,7 +171,9 @@ IsInitial source CID, `src/core/connection.c`), and takes its own SCID only when
 **Standard text.** RFC 9000 §7.2: "Once a client has received a valid Initial packet from the server, it MUST discard
 any subsequent packet it receives on that connection with a different Source Connection ID." and "A client MUST change
 the Destination Connection ID it uses for sending packets in response to only the first received Initial or Retry
-packet." The provisional Initial is a valid Initial that does not fix the SCID, so both MUSTs are departed from for it.
+packet." The provisional Initial is a valid Initial that does not fix the SCID, so both MUSTs are departed from for it. The
+owner keeps it for 0.3.0 as an approved deviation; the §7.2 row of the summary is 🔶 for it
+([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380` (the decision, with
 `onlyAcks` at :491), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
