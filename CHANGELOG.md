@@ -554,7 +554,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   configuration. Before a new connection, the pool now resolves the name and shares a connection of the same origin
   whose address (where its Happy Eyeballs race and any migration left it; the NAT64 synthesis counted) and port match,
   waiting for one still in its handshake for one `connectionAttemptDelay` at most; setups that ran past each other keep
-  the older connection and close the newer before any request used it. Different origins still get a connection each, and `Alt-Svc` bookkeeping stays
+  the older connection and close the newer before any request used it. WebTransport sessions still take a connection each (session pooling is
+  separate work). Different origins still get a connection each, and `Alt-Svc` bookkeeping stays
   per alternative (a 421 removes, a failure marks broken, the alternative the request used).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a

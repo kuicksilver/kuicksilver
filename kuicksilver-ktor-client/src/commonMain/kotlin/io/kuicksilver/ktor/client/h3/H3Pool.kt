@@ -798,23 +798,29 @@ internal class H3Pool(
                         }
                 }
                 val c = made!!
+                e.idleSince.store(clock())
                 // RFC 9114 section 3.3: a setup of the same origin to the same address that finished meanwhile (both ran
-                // past each other's wait) keeps that one; this connection is closed before any request used it
-                val kept = lock.withLock { sameAddressAs(t, e, c) }
+                // past each other's wait) keeps that one; this connection is closed before any request used it. The check
+                // and the completion are one step under the lock: a setup finishing right after this one sees it complete
+                val kept =
+                    lock.withLock {
+                        sameAddressAs(t, e, c).also { k ->
+                            if (k != null) {
+                                d.complete(k)
+                            } else {
+                                if (events.enabled) {
+                                    fresh.removeAll { it.closed.isCompleted } // closed before any exchange used them
+                                    fresh += c
+                                }
+                                d.complete(c)
+                            }
+                        }
+                    }
                 if (kept != null) {
                     sharedForTest.addAndFetch(1)
                     withContext(NonCancellable) { runCatching { c.close() } }
-                    d.complete(kept)
                     return e to kept
                 }
-                e.idleSince.store(clock())
-                if (events.enabled) {
-                    lock.withLock {
-                        fresh.removeAll { it.closed.isCompleted } // closed before any exchange used them
-                        fresh += c
-                    }
-                }
-                d.complete(c)
                 followNetwork(c, data)
             } catch (
                 x: TimeoutCancellationException,

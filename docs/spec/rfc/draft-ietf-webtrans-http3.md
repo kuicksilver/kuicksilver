@@ -177,6 +177,12 @@ Original row: draft-ietf-webtrans-http3-16 (Ktor client).
 - one dedicated QUIC connection per session outside the pool, with WebTransport, Extended CONNECT and `reset_stream_at`, closed with H3_NO_ERROR once the session's CONNECT ended both ways (the server sees the close code)
 - `connectTimeout` bounds the setup, a session that cannot be opened closes its connection
 - no fallback to HTTP/1.1
+- <a id="ktor-client-connection-per-session"></a>**Deviation, RFC 9114 section 3.3** ("SHOULD avoid creating multiple
+  connections with the same configuration"): sessions are not pooled (pooling is optional here: "WebTransport over HTTP/3
+  provides optional support for pooling"), so several sessions to one server are several connections with the same
+  configuration, to one address and port. Pooling sessions on one connection, within the server's
+  `SETTINGS_WT_MAX_SESSIONS` and quota signals, closes it; it is planned for 0.3.0 as separate work, and the RFC 9114
+  section 3.3 row ([9114.md](9114.md#s3-3-connections-per-address)) becomes ✅ with it.
 
 **Tests that pin it.**
 
