@@ -328,4 +328,37 @@ class ClientPoolTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A connection whose QUIC transport ended is not handed out again, also before its HTTP/3 session took note (the
+     * session learns of the end in a coroutine of its own): the next request opens a new connection instead of failing on
+     * the dead one. Seen as the flake of `ClientMigrationTest.negative_noMigrationWithoutConfig`, whose GET right after a
+     * lost connection went to HTTP/1.1.
+     */
+    @Test fun negative_connectionWhoseTransportEndedIsNotReused() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    repeat(ROUNDS) { round ->
+                        assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
+                        val conn = engine.h3.connectionsForTest().single()
+                        conn.quic.close()
+                        withTimeout(5.seconds) { conn.quic.closed.await() }
+                        // at once: the session may not have taken note yet
+                        val next = runCatching { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                        assertEquals("ok", next.getOrElse { throw AssertionError("round $round: the request after the end failed", it) })
+                        assertTrue(engine.h3.connectionsForTest().single() !== conn, "round $round: a new connection")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    private companion object {
+        /** Rounds of [negative_connectionWhoseTransportEndedIsNotReused]: the window it probes is a few dispatches long. */
+        const val ROUNDS = 30
+    }
 }

@@ -458,7 +458,14 @@ internal class H3Pool(
         fresh.clear()
     }
 
-    private fun Http3Connection.usable(): Boolean = !closed.isCompleted && goAwayReceived.value == null
+    /**
+     * Whether [this] ended: its HTTP/3 session took note, or its QUIC transport ended before that (the session learns of
+     * the end in a coroutine of its own, so for a moment its `closed` is not complete while every stream already failed).
+     * A request is never handed such a connection: it would fail there and fall back to TCP instead of opening a new one.
+     */
+    private fun Http3Connection.ended(): Boolean = closed.isCompleted || quic.closed.isCompleted
+
+    private fun Http3Connection.usable(): Boolean = !ended() && goAwayReceived.value == null
 
     /** WebTransport sessions of this client and their dedicated connections ([trackSession]), for [goAwayAll]. */
     private val sessions =
@@ -830,7 +837,7 @@ internal class H3Pool(
                 val e = it.next()
                 if (!e.deferred.isCompleted) continue
                 val c = e.deferred.getCompletedOrNull()
-                if (c == null || c.closed.isCompleted) {
+                if (c == null || c.ended()) {
                     it.remove()
                     continue
                 }
@@ -852,7 +859,7 @@ internal class H3Pool(
                         false
                     }
 
-                    c == null || c.closed.isCompleted -> {
+                    c == null || c.ended() -> {
                         true
                     }
 
@@ -873,15 +880,16 @@ internal class H3Pool(
 
     /** The open, usable connection to [t], if one exists (no connection attempt). */
     suspend fun existing(t: H3Target): Http3Connection? =
-        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.takeIf {
-            !it.closed.isCompleted &&
-                it.goAwayReceived.value == null
-        }
+        lock
+            .withLock { connections[t.key] }
+            ?.deferred
+            ?.getCompletedOrNull()
+            ?.takeIf { it.usable() }
 
     /** Whether an open connection to [t] exists and its peer accepts Extended CONNECT (WebSockets over HTTP/3, RFC 9220). */
     suspend fun canConnectProtocol(t: H3Target): Boolean =
         lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.let {
-            !it.closed.isCompleted &&
+            !it.ended() &&
                 it.peerSettings.value?.enableConnectProtocol == true
         } ==
             true
