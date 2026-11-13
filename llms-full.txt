@@ -3034,8 +3034,8 @@ with `STOP_SENDING`. A response body the connection cut short (a reset, a lost c
 hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
 `closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
 
-WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT (or the
-mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](#http2-on-the-client)); over HTTP/3 the handshake is RFC
+WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT and has
+not received GOAWAY (or the mode is `H3Only`), or an HTTP/2 one does ([HTTP/2 on the client](#http2-on-the-client)); over HTTP/3 the handshake is RFC
 9220, over HTTP/2 RFC 8441, and the plugin sees the usual 101. Over HTTP/1.1 at most one
 WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
 any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,

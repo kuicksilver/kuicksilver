@@ -543,7 +543,10 @@ class ClientMigrationTest {
         val portBefore = CompletableDeferred<Int>()
         val portAfter = CompletableDeferred<Int>()
 
-        /** The first [HALF] fragments of the client's large message arrived, and the server sent the first half of its own. */
+        /**
+         * The first [HALF] fragments of the client's large message reached the server, and the first half of the server's
+         * reached the client (its pong to the ping that followed them came back).
+         */
         val halves = CompletableDeferred<Unit>()
         val resume = CompletableDeferred<Unit>()
         val ended = CompletableDeferred<Unit>()
@@ -576,8 +579,17 @@ class ClientMigrationTest {
                             }
 
                             is Frame.Pong -> {
-                                s.received.trySend("pong:${f.data.decodeToString()}")
-                                outgoing.send(Frame.Text("pong:${f.data.decodeToString()}"))
+                                val payload = f.data.decodeToString()
+                                s.received.trySend("pong:$payload")
+                                if (payload == MID) {
+                                    // the client answered the ping that followed the first half of the server's large
+                                    // message on the same stream, so it has that half; now the network may change
+                                    s.halves.complete(Unit)
+                                    s.resume.await()
+                                    for (i in HALF until PARTS) outgoing.send(Frame.Binary(i == PARTS - 1, serverBig.part(i)))
+                                } else {
+                                    outgoing.send(Frame.Text("pong:$payload"))
+                                }
                             }
 
                             is Frame.Close -> {
@@ -592,14 +604,12 @@ class ClientMigrationTest {
                                 if (first == null) first = f
                                 message += f.data
                                 if (!f.fin) {
-                                    // half the client's large message is here: the server sends half of its own and waits
+                                    // half the client's large message is here: the server sends half of its own, then a
+                                    // ping (a control frame may come between fragments, RFC 6455 section 5.4) whose pong
+                                    // tells that the client has that half
                                     if (message.size == HALF) {
                                         for (i in 0 until HALF) outgoing.send(Frame.Binary(false, serverBig.part(i)))
-                                        flush()
-                                        s.halves.complete(Unit)
-                                        s.resume.await()
-                                        for (i in HALF until PARTS) outgoing.send(Frame.Binary(i == PARTS - 1, serverBig.part(i)))
-                                        flush()
+                                        outgoing.send(Frame.Ping(MID.encodeToByteArray()))
                                     }
                                     continue
                                 }
@@ -730,7 +740,8 @@ class ClientMigrationTest {
 
                         // a large message each way, cut in the middle by the network change
                         for (i in 0 until HALF) send(Frame.Binary(false, clientBig.part(i)))
-                        withTimeout(10.seconds) { s.halves.await() } // the client's first half crossed network 1
+                        withTimeout(10.seconds) { s.halves.await() } // both first halves crossed network 1
+                        expected += "pong:$MID"
                         nets.current.value = 2
                         val (origin, e) = withTimeout(10.seconds) { heard.migrations.receive() }
                         assertEquals("https://127.0.0.1:$port", origin)
@@ -878,6 +889,9 @@ class ClientMigrationTest {
         const val PART = 32 * 1024
         const val PARTS = 8
         const val HALF = PARTS / 2
+
+        /** The payload of the server's ping between the halves of its large message. */
+        const val MID = "mid"
         val clientBig = ByteArray(PARTS * PART) { (it * 31 + 7).toByte() }
         val serverBig = ByteArray(PARTS * PART) { (it * 17 + 3).toByte() }
     }
