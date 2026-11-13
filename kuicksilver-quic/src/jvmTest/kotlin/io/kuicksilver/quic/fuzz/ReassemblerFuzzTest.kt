@@ -8,6 +8,8 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.stream.RangeBudget
 import io.kuicksilver.quic.stream.Reassembler
 import io.kuicksilver.quic.stream.ReassemblyFull
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import java.util.BitSet
 
 /**
@@ -18,6 +20,8 @@ import java.util.BitSet
  * window: offsets stay within 64 KiB of the read offset.
  */
 class ReassemblerFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     private fun valueAt(o: Long): Byte = (o * 31 + 7).toByte()
 
     @FuzzTest(maxDuration = "60s")

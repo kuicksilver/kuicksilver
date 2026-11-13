@@ -9,12 +9,16 @@ import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.VersionNegotiationPacket
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz target `packetHeader`: input = [short-header DCID length selector][datagram]. Every coalesced packet the
  * parser accepts must lie inside the datagram, and the walk must make progress.
  */
 class PacketHeaderFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     private val hv = PacketHeaderView()
 
     @FuzzTest(maxDuration = "60s")

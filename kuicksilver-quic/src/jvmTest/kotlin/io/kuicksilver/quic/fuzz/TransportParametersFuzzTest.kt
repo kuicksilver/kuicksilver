@@ -8,12 +8,16 @@ import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.TlsRole
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 
 /**
  * Fuzz target `transportParameters`: input = [sender selector][encoded parameters]. A decoded set must re-encode
  * and decode to the same values.
  */
 class TransportParametersFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun transportParameters(data: ByteArray) {
         if (data.isEmpty()) return

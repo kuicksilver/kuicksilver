@@ -20,6 +20,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.EOFException
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.TestInfo
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -58,6 +60,8 @@ private fun messages(
  *   and without context takeover.
  */
 class InflateFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun inflate(data: ByteArray) {
         if (data.isEmpty()) return
@@ -153,6 +157,8 @@ class InflateFuzzTest {
  * the last thing it writes; and it ends.
  */
 class WsGuardFuzzTest {
+    @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
+
     @FuzzTest(maxDuration = "60s")
     fun wsGuard(data: ByteArray) {
         if (data.isEmpty()) return
