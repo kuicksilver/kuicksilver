@@ -21,7 +21,6 @@ import io.ktor.server.request.RequestCookies
 import io.ktor.server.request.encodeParameters
 import io.ktor.util.network.NetworkAddress
 import io.ktor.util.network.address
-import io.ktor.util.network.hostname
 import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
@@ -93,7 +92,7 @@ internal class H1ConnectionPoint(
     @Deprecated("Use localPort or serverPort instead")
     override val host: String
         get() =
-            localNetworkAddress?.hostname
+            localNetworkAddress?.address // the literal, as localHost: `hostname` would be a reverse DNS lookup on the JVM
                 ?: hostAndPort?.first
                 ?: "localhost"
 

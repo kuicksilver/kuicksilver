@@ -19,6 +19,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.runBlocking
@@ -139,8 +140,9 @@ public class Simulator(
         port: Int? = null,
         host: String? = null,
     ) {
+        // the literal: `hostname` is a reverse DNS lookup on the JVM and Android, and the new address would carry its name
         clientAddress =
-            InetSocketAddress(host ?: clientAddress.hostname, port ?: clientAddress.port)
+            InetSocketAddress(host ?: clientAddress.ipLiteral(), port ?: clientAddress.port)
     }
 
     /** Adds a client path with its own local address and link impairments; returns its index (the first path is 0). Traffic moves there only when the core switches paths. */

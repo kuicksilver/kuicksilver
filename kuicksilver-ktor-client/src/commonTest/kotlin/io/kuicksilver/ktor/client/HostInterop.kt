@@ -11,6 +11,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.incomingConnections
 import io.kuicksilver.quic.incomingStreams
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CoroutineScope
@@ -70,7 +71,7 @@ internal object HostInterop {
         remote: InetSocketAddress,
         payload: ByteArray,
     ): ByteArray {
-        val local = InetSocketAddress(if (remote.hostname.contains(':')) "::" else "0.0.0.0", 0)
+        val local = InetSocketAddress(if (remote.ipLiteral().contains(':')) "::" else "0.0.0.0", 0)
         val endpoint = QuicEndpoint.bind(local, QuicEndpointConfig.Builder().build())
         try {
             val c =

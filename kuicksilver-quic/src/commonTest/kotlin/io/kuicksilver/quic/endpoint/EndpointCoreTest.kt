@@ -25,6 +25,7 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.validationTimeout
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.issueUnique
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.QuicCrypto
@@ -1004,7 +1005,7 @@ class EndpointCoreTest {
             val s = p.server.connections().single()
             val tp = assertNotNull(c.peerTp)
             assertTrue(tp.preferredAddressPresent)
-            assertEquals("10.0.0.3", tp.preferredIpv4!!.hostname)
+            assertEquals("10.0.0.3", tp.preferredIpv4!!.ipLiteral()) // the bytes: `hostname` is a reverse lookup on the JVM
             assertEquals(4433, tp.preferredIpv4!!.port)
             assertNull(tp.preferredIpv6, "IPv6 not offered: zeros")
             val seq1 = assertNotNull(s.cids.localForTest(1), "the server's sequence 1")

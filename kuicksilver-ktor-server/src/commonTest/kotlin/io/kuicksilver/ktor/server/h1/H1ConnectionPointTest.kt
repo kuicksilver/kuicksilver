@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HttpMethod
+import io.ktor.util.network.NetworkAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -42,5 +43,31 @@ class H1ConnectionPointTest {
         assertEquals(8443, point("[::1]:8443").port)
         @Suppress("DEPRECATION")
         assertEquals(443, point("[::1]").port)
+    }
+
+    /**
+     * The local and remote hosts, and the deprecated `host`, are the literals of the connection's addresses: read through
+     * Ktor's `NetworkAddress.hostname` they were reverse DNS lookups on the JVM and Android (127.0.0.1 read "localhost").
+     * The loopback has a name on every usual host, so the old code fails here; the fixed one passes whatever the host's
+     * resolver says.
+     */
+    @Test fun hostsAreTheAddressLiterals() {
+        val p =
+            H1ConnectionPoint(
+                NetworkAddress("127.0.0.1", 8443),
+                NetworkAddress("127.0.0.1", 50000),
+                "HTTP/1.1",
+                "/",
+                "example.com",
+                HttpMethod.Get,
+                "https",
+            )
+        assertEquals("127.0.0.1", p.localHost)
+        assertEquals("127.0.0.1", p.localAddress)
+        @Suppress("DEPRECATION")
+        assertEquals("127.0.0.1", p.host)
+        assertEquals("example.com", p.serverHost)
+        assertEquals("127.0.0.1", p.remoteHost)
+        assertEquals("127.0.0.1", p.remoteAddress)
     }
 }

@@ -12,6 +12,7 @@ import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.quicClientConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.quicEndpointConfig
@@ -226,10 +227,26 @@ class MemoryNetworkTest {
         try {
             assertTrue(a.localAddress.port != 0, "port 0 binds an ephemeral port: ${a.localAddress}")
             assertTrue(a.localAddress.port != b.localAddress.port, "two sockets, two ports")
-            assertEquals("10.0.0.5", a.localAddress.hostname)
+            assertEquals("10.0.0.5", a.localAddress.ipLiteral()) // the bytes: `hostname` is a reverse lookup on the JVM
         } finally {
             a.close()
             b.close()
+        }
+    }
+
+    /**
+     * The ephemeral address keeps the literal the socket was opened with: built from `hostname`, it took the name of a
+     * reverse DNS lookup on the JVM and Android (127.0.0.1 became "localhost/127.0.0.1", and a CI host named 10.0.0.5
+     * `ip-10-0-0-5.<region>.compute.internal`), a lookup per bind. The loopback has a name on every usual host, so the old
+     * code fails here; the fixed one passes whatever the host's resolver says.
+     */
+    @Test fun ephemeralPortKeepsTheLiteral() {
+        val net = MemoryNetwork()
+        val a = net.open(InetSocketAddress("127.0.0.1", 0))
+        try {
+            assertEquals(InetSocketAddress("127.0.0.1", a.localAddress.port).toString(), a.localAddress.toString())
+        } finally {
+            a.close()
         }
     }
 

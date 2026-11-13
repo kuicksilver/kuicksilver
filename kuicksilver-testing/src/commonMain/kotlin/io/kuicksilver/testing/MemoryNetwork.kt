@@ -11,6 +11,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.ipLiteral
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,10 +68,13 @@ public class MemoryNetwork
          * it. Port 0 binds a free ephemeral port of the same host when [assignEphemeralPorts] is true (the socket's `localAddress`
          * says which).
          */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
         public fun open(local: InetSocketAddress): DatagramIo {
+            // the host as its literal: `hostname` is a reverse DNS lookup on the JVM and Android (the name, not the literal,
+            // would then name the bound address)
             while (true) {
                 val current = sockets.load()
-                val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.hostname, current) else local
+                val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.ipLiteral(), current) else local
                 check(address !in current) { "$address is already bound on this MemoryNetwork" }
                 val socket = MemorySocket(this, address, receiveBuffer)
                 if (sockets.compareAndSet(current, current + (address to socket))) return socket

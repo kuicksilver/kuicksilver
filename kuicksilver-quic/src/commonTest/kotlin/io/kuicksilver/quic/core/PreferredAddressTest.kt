@@ -13,6 +13,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.PreferredAddress
 import io.kuicksilver.quic.endpoint.EndpointPair
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlin.test.BeforeTest
@@ -55,7 +56,7 @@ class PreferredAddressTest {
             )
             assertTrue(!early, "no PATH_CHALLENGE to the preferred address before the handshake is confirmed")
             assertTrue(!nonProbingEarly, "the active path moved before the preferred one was validated")
-            assertTrue(c.remoteAddressForTest.let { it.port == 4433 && it.hostname == "10.0.0.3" }, "${c.remoteAddressForTest}")
+            assertTrue(c.remoteAddressForTest.let { it.port == 4433 && it.ipLiteral() == "10.0.0.3" }, "${c.remoteAddressForTest}")
             assertEquals(c.peerTp!!.preferredAddressCid, c.remoteCid, "the preferred path uses the sequence-1 ID")
             assertTrue(p.runUntil(5.seconds) { 0L !in c.cids.peerSeqsForTest() }, "sequence 0 retired: ${c.cids.peerSeqsForTest()}")
             assertEquals(1, c.pathCountForTest, "the original path is closed")
@@ -132,6 +133,18 @@ class PreferredAddressTest {
                 p.close()
             }
         }
+    }
+
+    /**
+     * An address of the wrong family is refused naming its literal: read through `hostname` it was a reverse DNS lookup on
+     * the JVM and Android (::1 and 127.0.0.1 read "localhost"). The loopback has a name on every usual host, so the old
+     * code fails here; the fixed one passes whatever the host's resolver says.
+     */
+    @Test fun negative_wrongFamilyNamesTheLiteral() {
+        val v6 = assertFailsWith<IllegalArgumentException> { PreferredAddress(InetSocketAddress("::1", 4433), null) }
+        assertEquals("ipv4 is not an IPv4 literal: ::1", v6.message)
+        val v4 = assertFailsWith<IllegalArgumentException> { PreferredAddress(null, InetSocketAddress("127.0.0.1", 4433)) }
+        assertEquals("ipv6 is not an IPv6 literal: 127.0.0.1", v4.message)
     }
 
     @Test fun negative_preferredAddressUnspecifiedOrMulticastIgnored() {
