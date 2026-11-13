@@ -1627,8 +1627,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   HTTP/3; on HTTP/2 and HTTP/3 only its stream ends. The host is checked against the subjectAltName of the certificate
   that connection presented (the `sniSelector` choice, or the identity current at its handshake), as a client checks it:
   wildcards for one whole left-most label only, IP literals against iPAddress entries, never the subject CN, the port not
-  at all. A connector whose every client is a trusted gateway forwarding other names turns the check off with the new
-  `tlsConnector { trustedGateway = true }` (docs/guide/ktor.md, "Misdirected requests"). New for the check and for servers
+  at all. A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
+  requests are served as before. A connector whose every client is a trusted gateway turns the check off with the new
+  `tlsConnector { trustedGateway = true }`, or with the new `plainConnector { trustedGateway = true }` in place of Ktor's
+  `connector { }` (docs/guide/ktor.md, "Misdirected requests"). New for the check and for servers
   built on the libraries: `TlsConnection.localCertificates`, `QuicTlsSession.localCertificates`,
   `QuicConnection.localCertificates`, `TlsSocket.localCertificates` and `Certificate.matchesHost`.
 

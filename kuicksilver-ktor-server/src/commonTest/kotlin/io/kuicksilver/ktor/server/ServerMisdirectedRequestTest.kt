@@ -185,28 +185,67 @@ class ServerMisdirectedRequestTest {
             }
         }
 
-    /** A plain connector has no certificate: an http request for any host is served, as before. */
-    @Test fun plainConnectorIsNotChecked() =
+    /** A server with one plain connector ([connector]) whose application counts its calls. */
+    private suspend fun plainCountingServer(
+        connector: KuicksilverApplicationEngine.Configuration.() -> Unit = {
+            connector {
+                host = "127.0.0.1"
+                port = 0
+            }
+        },
+    ): Triple<Server, Int, AtomicInt> {
+        val seen = AtomicInt(0)
+        val server =
+            kuicksilverServer(null, configure = { connector() }) {
+                intercept(ApplicationCallPipeline.Setup) { seen.incrementAndFetch() }
+                routing { get("/") { call.respondText("ok") } }
+            }
+        server.startSuspend(wait = false)
+        val port =
+            server.engine
+                .resolvedConnectors()
+                .first()
+                .port
+        return Triple(server, port, seen)
+    }
+
+    /**
+     * A plain connection is secured by no certificate: an absolute-form `https` target over it is a request for an "https"
+     * resource that "MUST be rejected" (RFC 9110 section 7.4); origin-form requests (what a gateway in front sends) and
+     * `http` targets are served for any host.
+     */
+    @Test fun negative_plainConnectorRejectsAbsoluteFormHttps() =
         serverTest {
-            val seen = AtomicInt(0)
-            val server =
-                kuicksilverServer(null, configure = {
-                    connector {
+            val (server, port, seen) = plainCountingServer()
+            try {
+                for (target in listOf("https://server.test/", "HTTPS://other.test:8443/")) {
+                    val r = rawHttp(port, "GET $target HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n", tls = null)
+                    assertEquals("421", status(r), "$target\n$r")
+                }
+                assertEquals(0, seen.load(), "no https request reached the application")
+                for (head in listOf("GET / HTTP/1.1\r\nHost: other.test", "GET http://other.test/ HTTP/1.1\r\nHost: other.test")) {
+                    val r = rawHttp(port, "$head\r\nConnection: close\r\n\r\n", tls = null)
+                    assertEquals("200", status(r), "$head\n$r")
+                }
+                assertEquals(2, seen.load())
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** `plainConnector { trustedGateway = true }`: the clients are trusted gateways, so absolute-form https targets are served. */
+    @Test fun trustedGatewayPlainConnectorServesAbsoluteFormHttps() =
+        serverTest {
+            val (server, port, seen) =
+                plainCountingServer {
+                    plainConnector {
                         host = "127.0.0.1"
                         port = 0
+                        trustedGateway = true
                     }
-                }) {
-                    intercept(ApplicationCallPipeline.Setup) { seen.incrementAndFetch() }
-                    routing { get("/") { call.respondText("ok") } }
                 }
-            server.startSuspend(wait = false)
             try {
-                val port =
-                    server.engine
-                        .resolvedConnectors()
-                        .first()
-                        .port
-                val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n", tls = null)
+                val r = rawHttp(port, "GET https://other.test/ HTTP/1.1\r\nHost: other.test\r\nConnection: close\r\n\r\n", tls = null)
                 assertEquals("200", status(r), r)
                 assertEquals(1, seen.load())
             } finally {

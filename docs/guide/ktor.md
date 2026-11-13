@@ -606,6 +606,11 @@ tlsConnector(internalIdentity) {
 }
 ```
 
+A plain connector has no certificate at all, so a request whose target is an absolute `https://` URI
+(`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
+a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
+port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+
 ### Certificate rotation
 
 A renewed certificate can be put in place without a restart (experimental). Give the connector a

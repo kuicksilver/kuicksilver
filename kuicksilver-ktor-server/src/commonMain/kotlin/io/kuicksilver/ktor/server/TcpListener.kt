@@ -338,8 +338,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     peer = emptyList()
                                     own = emptyList()
                                 }
-                                // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name gets 421
-                                val authorityCheck = AuthorityCheck(own, l.tls?.trustedGateway ?: true)
+                                // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name, or over a plain
+                                // connection, gets 421
+                                val authorityCheck = AuthorityCheck(own, l.trustedGateway)
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(

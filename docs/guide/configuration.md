@@ -427,6 +427,16 @@ client certificates are verified against; set together),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
+### Plain connector
+
+`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with one more option:
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
+| `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
+| `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
+
 ## ktor-network
 
 `Socket.tls(config, context)` and `Socket.tlsServer(config, context)` take a `TlsConfig` of the matching role (and a

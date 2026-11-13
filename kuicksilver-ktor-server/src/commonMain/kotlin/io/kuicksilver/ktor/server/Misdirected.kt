@@ -16,8 +16,8 @@ internal const val MISDIRECTED_REQUEST = 421
 internal val MisdirectedRequestStatus = HttpStatusCode(MISDIRECTED_REQUEST, "Misdirected Request")
 
 /**
- * The RFC 9110 section 7.4 check of one connection: [local] is the chain it presented, [trustedGateway] the connector's
- * exemption (true for a plain connector, which has no certificate to check against).
+ * The RFC 9110 section 7.4 check of one connection: [local] is the chain it presented (empty for a plain connection: no
+ * https request is valid over it), [trustedGateway] the connector's exemption.
  */
 internal class AuthorityCheck(
     private val local: List<Certificate>,
@@ -49,7 +49,7 @@ internal fun misdirected(
     trustedGateway: Boolean,
 ): Boolean {
     if (trustedGateway || !scheme.equals("https", ignoreCase = true) || authority.isNullOrEmpty()) return false
-    val leaf = local.firstOrNull() ?: return true // an https request on a connection secured by no certificate
+    val leaf = local.firstOrNull() ?: return true // an https request on a connection secured by no certificate (plain)
     val host =
         try {
             HostName.normalize(authorityHost(authority))

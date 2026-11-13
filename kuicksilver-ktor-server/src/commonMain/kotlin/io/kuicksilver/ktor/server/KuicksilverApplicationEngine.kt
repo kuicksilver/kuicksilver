@@ -14,6 +14,7 @@ import io.ktor.server.engine.BaseApplicationEngine
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h1.installH1CallHandling
@@ -414,6 +415,15 @@ public class KuicksilverApplicationEngine(
         ) {
             connectors.add(KuicksilverTlsConnector.Builder(identity).apply(block).build())
         }
+
+        /**
+         * Adds a plain HTTP/1.1 connector, as Ktor's `connector { }`, with the option of marking its clients trusted gateways
+         * ([KuicksilverPlainConnector.Builder.trustedGateway]).
+         */
+        @ExperimentalKuicksilverApi
+        public fun plainConnector(block: KuicksilverPlainConnector.Builder.() -> Unit = {}) {
+            connectors.add(KuicksilverPlainConnector.Builder().apply(block).build())
+        }
     }
 
     /** The configuration's [KuicksilverServerEventListener], behind a guard that logs its failures. */
@@ -574,7 +584,11 @@ public class KuicksilverApplicationEngine(
     internal class Listener(
         val config: EngineConnectorConfig,
         val tls: KuicksilverTlsConnector?,
-    )
+    ) {
+        /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val trustedGateway: Boolean = tls?.trustedGateway ?: (config as? KuicksilverPlainConnector)?.trustedGateway ?: false
+    }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
         when {
@@ -592,6 +606,8 @@ public class KuicksilverApplicationEngine(
                                 c.port
                             clientAuth = configuration.clientAuth
                             trust = configuration.clientTrust
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            trustedGateway = (c as? KuicksilverPlainConnector)?.trustedGateway ?: false
                         }.build()
                         .let { Listener(it, it) }
                 }
@@ -641,7 +657,11 @@ public class KuicksilverApplicationEngine(
                         listeners.zip(servers).map { (l, s) ->
                             val port = (s.socket.await().localAddress as? InetSocketAddress)?.port ?: l.config.port
                             s.h3Endpoint.await()?.let { h3 += startHttp3(this, l.tls!!, it, port) }
-                            if (l.tls != null) l.tls.withPort(port) else l.config.withPort(port)
+                            when {
+                                l.tls != null -> l.tls.withPort(port)
+                                l.config is KuicksilverPlainConnector -> l.config.withPort(port)
+                                else -> l.config.withPort(port)
+                            }
                         }
                     h3Ready.complete()
                     resolvedConnectorsDeferred.complete(resolved)

@@ -138,7 +138,38 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
             final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
             final fun <set-webTransport>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webTransport.<set-webTransport>|<set-webTransport>(kotlin.Boolean){}[0]
 
+        final fun plainConnector(kotlin/Function1<io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder, kotlin/Unit> = ...) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.plainConnector|plainConnector(kotlin.Function1<io.kuicksilver.ktor.server.KuicksilverPlainConnector.Builder,kotlin.Unit>){}[0]
         final fun tlsConnector(io.kuicksilver.tls/TlsIdentity, kotlin/Function1<io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder, kotlin/Unit> = ...) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.tlsConnector|tlsConnector(io.kuicksilver.tls.TlsIdentity;kotlin.Function1<io.kuicksilver.ktor.server.KuicksilverTlsConnector.Builder,kotlin.Unit>){}[0]
+    }
+}
+
+final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.server.engine/EngineConnectorConfig { // io.kuicksilver.ktor.server/KuicksilverPlainConnector|null[0]
+    final val host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host|{}host[0]
+        final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host.<get-host>|<get-host>(){}[0]
+    final val port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port.<get-port>|<get-port>(){}[0]
+    final val trustedGateway // io.kuicksilver.ktor.server/KuicksilverPlainConnector.trustedGateway|{}trustedGateway[0]
+        final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverPlainConnector.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
+    final val type // io.kuicksilver.ktor.server/KuicksilverPlainConnector.type|{}type[0]
+        final fun <get-type>(): io.ktor.server.engine/ConnectorType // io.kuicksilver.ktor.server/KuicksilverPlainConnector.type.<get-type>|<get-type>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.toString|toString(){}[0]
+    final fun withPort(kotlin/Int): io.kuicksilver.ktor.server/KuicksilverPlainConnector // io.kuicksilver.ktor.server/KuicksilverPlainConnector.withPort|withPort(kotlin.Int){}[0]
+
+    final class Builder { // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder|null[0]
+        constructor <init>() // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.<init>|<init>(){}[0]
+
+        final var host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host|{}host[0]
+            final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<get-host>|<get-host>(){}[0]
+            final fun <set-host>(kotlin/String) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<set-host>|<set-host>(kotlin.String){}[0]
+        final var port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port|{}port[0]
+            final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port.<get-port>|<get-port>(){}[0]
+            final fun <set-port>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port.<set-port>|<set-port>(kotlin.Int){}[0]
+        final var trustedGateway // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway|{}trustedGateway[0]
+            final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
+            final fun <set-trustedGateway>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway.<set-trustedGateway>|<set-trustedGateway>(kotlin.Boolean){}[0]
+
+        final fun build(): io.kuicksilver.ktor.server/KuicksilverPlainConnector // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.build|build(){}[0]
     }
 }
 
