@@ -115,7 +115,8 @@ public class H2ClientConnection private constructor(
      * stream; the slot is used up either way, and comes back with [H2ClientStream.release] or here on a failure.
      * [urgency] and [incremental] are the request's RFC 9218 priority: they schedule its own DATA (section 9), and the
      * urgency gives the weight of the RFC 7540 signal its HEADERS carry until the server's SETTINGS say it ignores those
-     * (section 2.1.1). The `priority` field among [fields] is the end-to-end signal and stays the caller's.
+     * (section 2.1.1). The `priority` field among [fields] is the end-to-end signal and stays the caller's. Fields named in
+     * [neverIndexed] are sent as literals never indexed (RFC 7541 section 6.2.3).
      */
     public fun open(
         method: String,
@@ -127,11 +128,12 @@ public class H2ClientConnection private constructor(
         protocol: String? = null,
         urgency: Int = 3,
         incremental: Boolean = false,
+        neverIndexed: Set<String> = emptySet(),
     ): H2ClientStream {
         val all = H2Messages.buildRequest(method, scheme, authority, path, fields, protocol)
         try {
             H2Messages.requireValidRequest(all, connectProtocolEnabled = rt.lock.withLock { rt.core.peerEnableConnectProtocol })
-            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD", urgency, incremental))
+            return H2ClientStream(rt, rt.open(all, endStream, headRequest = method == "HEAD", urgency, incremental, neverIndexed))
         } catch (e: Throwable) {
             rt.unreserve()
             throw e

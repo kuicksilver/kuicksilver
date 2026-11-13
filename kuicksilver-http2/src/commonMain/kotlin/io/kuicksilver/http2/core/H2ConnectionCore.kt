@@ -365,12 +365,14 @@ internal class H2ConnectionCore(
      * Opens a client stream with [fields] (section 8.3.1 pseudo-header fields first, already validated by the caller) and
      * returns its identifier. Throws [H2StreamLimit] at the peer's SETTINGS_MAX_CONCURRENT_STREAMS, [H2ConnectionUnusable]
      * after a GOAWAY or the last identifier, [H2HeaderListTooLarge] above the peer's SETTINGS_MAX_HEADER_LIST_SIZE.
+     * Fields named in [neverIndexed] are encoded as literals never indexed (RFC 7541 section 6.2.3).
      */
     fun openStream(
         fields: List<Pair<String, String>>,
         endStream: Boolean,
         urgency: Int = 3,
         incremental: Boolean = false,
+        neverIndexed: Set<String> = emptySet(),
     ): Int {
         require(urgency in 0..7) { "urgency must be 0..7" }
         check(client) { "only a client opens streams" }
@@ -393,20 +395,24 @@ internal class H2ConnectionCore(
         s.incremental = incremental
         streams[id] = s
         localOpen++
-        enqueue(s, OutItem.Fields(fields, endStream))
+        enqueue(s, OutItem.Fields(fields, endStream, neverIndexed))
         return id
     }
 
-    /** Sends a field section on [streamId]: a response, an interim response or trailers ([endStream] true for trailers). */
+    /**
+     * Sends a field section on [streamId]: a response, an interim response or trailers ([endStream] true for trailers).
+     * Fields named in [neverIndexed] are encoded as literals never indexed (RFC 7541 section 6.2.3).
+     */
     fun sendHeaders(
         streamId: Int,
         fields: List<Pair<String, String>>,
         endStream: Boolean,
+        neverIndexed: Set<String> = emptySet(),
     ) {
         val s = streams[streamId] ?: throw IllegalStateException("stream $streamId is closed")
         check(canSend(s)) { "stream $streamId cannot send" }
         checkListSize(fields)
-        enqueue(s, OutItem.Fields(fields, endStream))
+        enqueue(s, OutItem.Fields(fields, endStream, neverIndexed))
         if (endStream) localEnded(s)
     }
 
@@ -867,7 +873,7 @@ internal class H2ConnectionCore(
         /** The RFC 7540 weight of a PRIORITY flag (dependency 0, not exclusive), 0 for none. */
         weight: Int,
     ): ByteArray {
-        val encoded = hpackOut.encode(item.fields)
+        val encoded = hpackOut.encode(item.fields, item.neverIndexed)
         val max = minOf(peerMaxFrameSize, H2.MIN_MAX_FRAME_SIZE)
         val firstMax = max - (if (weight > 0) 5 else 0) // the priority fields count toward the frame's payload
         val first = encoded.copyOfRange(0, minOf(firstMax, encoded.size))

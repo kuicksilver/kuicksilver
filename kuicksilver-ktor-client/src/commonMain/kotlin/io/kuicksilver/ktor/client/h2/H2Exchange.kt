@@ -26,6 +26,8 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.NeverIndexKey
+import io.kuicksilver.ktor.client.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.client.PriorityUpdater
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.h1.CONTINUE_TIMEOUT
@@ -130,6 +132,7 @@ internal suspend fun h2Exchange(
                 endStream = !hasBody,
                 urgency = local.urgency,
                 incremental = local.incremental,
+                neverIndexed = data.attributes.getOrNull(NeverIndexKey).orEmpty(),
             )
         } catch (e: Http2Exception) {
             onReleased(conn.client.isUsable)
@@ -210,6 +213,7 @@ internal suspend fun h2Exchange(
             }
         val status = HttpStatusCode.fromValue(head.status)
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
+        if (head.neverIndexed.isNotEmpty()) data.attributes.put(NeverIndexedReceivedKey, head.neverIndexed)
         val noBody = data.method == HttpMethod.Head || status == HttpStatusCode.NoContent || status == HttpStatusCode.NotModified
         val bodyChannel: ByteReadChannel = if (noBody) ByteReadChannel.Empty else stream.body.withSocketTimeout(data)
         val responseBody: Any =

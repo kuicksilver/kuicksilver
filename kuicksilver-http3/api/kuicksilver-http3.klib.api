@@ -272,6 +272,10 @@ final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Hea
 
     final val fields // io.kuicksilver.http3/Http3Headers.fields|{}fields[0]
         final fun <get-fields>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.fields.<get-fields>|<get-fields>(){}[0]
+    final val neverIndexNames // io.kuicksilver.http3/Http3Headers.neverIndexNames|{}neverIndexNames[0]
+        final fun <get-neverIndexNames>(): kotlin.collections/Set<kotlin/String> // io.kuicksilver.http3/Http3Headers.neverIndexNames.<get-neverIndexNames>|<get-neverIndexNames>(){}[0]
+    final val neverIndexed // io.kuicksilver.http3/Http3Headers.neverIndexed|{}neverIndexed[0]
+        final fun <get-neverIndexed>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.neverIndexed.<get-neverIndexed>|<get-neverIndexed>(){}[0]
     final val size // io.kuicksilver.http3/Http3Headers.size|{}size[0]
         final fun <get-size>(): kotlin/Int // io.kuicksilver.http3/Http3Headers.size.<get-size>|<get-size>(){}[0]
 
@@ -281,6 +285,7 @@ final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Hea
     final fun hashCode(): kotlin/Int // io.kuicksilver.http3/Http3Headers.hashCode|hashCode(){}[0]
     final fun plus(io.kuicksilver.http3/Http3Headers): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Headers.plus|plus(io.kuicksilver.http3.Http3Headers){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.http3/Http3Headers.toString|toString(){}[0]
+    final fun withNeverIndexed(kotlin/Array<out kotlin/String>...): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Headers.withNeverIndexed|withNeverIndexed(kotlin.Array<out|kotlin.String>...){}[0]
 
     final object Companion { // io.kuicksilver.http3/Http3Headers.Companion|null[0]
         final val Empty // io.kuicksilver.http3/Http3Headers.Companion.Empty|{}Empty[0]

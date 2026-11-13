@@ -31,6 +31,8 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
+import io.kuicksilver.ktor.client.neverIndex
+import io.kuicksilver.ktor.client.neverIndexedHeaders
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TrustConfig
@@ -111,6 +113,44 @@ class ServerH2Test {
                 }
                 assertEquals(HttpProtocolVersion.HTTP_2_0, withTimeout(5.seconds) { opened.receive() })
                 RawH2Client.connect(port, listOf("h2", "http/1.1")).use { assertEquals("h2", it.alpn) }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 7541 sections 6.2.3 and 7.1.3: an application that proxies with both engines keeps the never-indexed bit. The
+     * client's marked field and its `authorization` reach the server's call as never indexed, a plain field does not; the
+     * server's marked response field reaches the client's response so.
+     */
+    @Test fun neverIndexedFieldsCrossBothEngines() =
+        serverTest {
+            val (server, port) =
+                h2Server {
+                    routing {
+                        get("/") {
+                            call.response.neverIndex("X-Reply")
+                            call.response.headers.append("x-reply", "r1")
+                            call.response.headers.append("x-open", "o1")
+                            call.respondText(call.request.neverIndexedHeaders.joinToString(";") { "${it.first}=${it.second}" })
+                        }
+                    }
+                }
+            try {
+                client().use { c ->
+                    val r =
+                        withTimeout(10.seconds) {
+                            c.get("https://127.0.0.1:$port/") {
+                                neverIndex("X-Secret")
+                                header("x-secret", "s1")
+                                header("x-plain", "p1")
+                                header("authorization", "Bearer t")
+                            }
+                        }
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, r.version)
+                    assertEquals("x-secret=s1;authorization=Bearer t", r.bodyAsText())
+                    assertEquals(listOf("x-reply" to "r1"), r.neverIndexedHeaders)
+                }
             } finally {
                 server.stop(100, 500)
             }

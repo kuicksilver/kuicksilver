@@ -20,6 +20,7 @@ import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http3.message.PriorityField
+import io.kuicksilver.ktor.server.NeverIndexKey
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CoroutineScope
@@ -136,7 +137,7 @@ internal open class H2Response(
         dropFramingFieldsOfAResponseWithoutContent()
         declaredLength = if (endStream) -1 else declaredLengthOf()
         applyOwnPriority()
-        h2.respond(statusCode.value, fields(), endStream)
+        h2.respond(statusCode.value, fields(), endStream, call.attributes.getOrNull(NeverIndexKey).orEmpty())
         answered = true
     }
 

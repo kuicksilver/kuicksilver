@@ -18,6 +18,7 @@ import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.PriorityPolicy
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
+import io.kuicksilver.ktor.server.NeverIndexedReceivedKey
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.ktor.server.RequestPriorityKey
@@ -76,6 +77,7 @@ internal class H2Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        if (h2.neverIndexed.isNotEmpty()) attributes.put(NeverIndexedReceivedKey, h2.neverIndexed)
         // the client's signal (RFC 9218): the Priority field, then each PRIORITY_UPDATE (section 7.1), one that came before
         // the request included (it overrides the field, section 7); the response's DATA goes by it (section 10) until the
         // response chose its own (section 8, [H2Response]); a CONNECT without a signal is a tunnel, incremental as on

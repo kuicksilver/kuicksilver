@@ -9,7 +9,7 @@ Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for th
 
 ## <a id="reset-stream-at"></a>RESET_STREAM_AT
 
-Status: 🔶 since 0.3.0 · [summary](../rfc-compliance.md#quic)
+Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#quic)
 
 Original row: draft-ietf-quic-reliable-stream-reset-11.
 
@@ -17,7 +17,7 @@ Original row: draft-ietf-quic-reliable-stream-reset-11.
 
 Quoted: "MUST NOT change the Application Error Code".
 
-**Recorded status.** 🔶 0.3.0 (experimental, off by default)
+**Recorded status.** ✅ 0.3.0 (experimental, off by default; 🔶 until the open-rows audit of 2026-11, which found every MUST and SHOULD of draft-11 met)
 
 **How it is met.**
 
@@ -42,4 +42,14 @@ Quoted: "MUST NOT change the Application Error Code".
 
 - `QuicConfig.resetStreamAt` advertises `reset_stream_at` as 0x1d and as 0x17f7586d2cb571, the unregistered codepoint of earlier drafts, and accepts either; quic-go (2bb41ed) does the same and names the old one draft-07's. No peer is known to need the old codepoint (Cloudflare quiche 4ebd213 implements neither; Chrome was not checked); it stays until one is shown to need it or not ([compatibility shims](../compat-shims.md#4-pre-iana-reset_stream_at-codepoint))
 
-**Open items.** See the roadmap ([docs/roadmap.md](../../roadmap.md)).
+**Scope.**
+
+- Experimental and off by default (`QuicConfig.resetStreamAt`), as the draft can still change; off by default is not a
+  subset of the draft, which is an optional extension negotiated by the transport parameter (section 3).
+- The section 5.2 MAY of lowering the Reliable Size with a later RESET_STREAM_AT is not offered: a second `resetAt` on
+  the stream is ignored (`StreamManager.resetAt`), so the Reliable Size never increases ("MUST NOT increase the
+  Reliable Size").
+- A STOP_SENDING is answered with RESET_STREAM, which section 5.4 allows and which is a Reliable Size of zero (section
+  5.4 "it SHOULD set the Reliable Size to zero").
+
+**Open items.** None.

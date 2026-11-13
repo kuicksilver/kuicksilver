@@ -155,6 +155,56 @@ class HpackLimitsTest {
     }
 
     @Test
+    fun neverIndexedBitIsReportedOnDecoding() {
+        // section 6.2.3: 0001 never indexed, 0000 without indexing, 01 with incremental indexing, 1 indexed
+        val block =
+            HpackWriter()
+                .also {
+                    it.writeInt(0x10, 4, 0) // never indexed, new name
+                    it.writeString("x-secret", false)
+                    it.writeString("s", false)
+                    it.writeInt(0x00, 4, 0) // without indexing, new name
+                    it.writeString("x-plain", false)
+                    it.writeString("p", false)
+                    it.writeInt(0x10, 4, 23) // never indexed, static name `authorization`
+                    it.writeString("a", false)
+                    it.writeInt(0x40, 6, 0) // with incremental indexing
+                    it.writeString("x-idx", false)
+                    it.writeString("i", false)
+                    it.writeInt(0x80, 7, 2) // indexed :method GET
+                }.toByteArray()
+        val got = mutableListOf<Triple<String, String, Boolean>>()
+        HpackDecoder().decodeFields(block) { n, v, never -> got += Triple(n, v, never) }
+        assertEquals(
+            listOf(
+                Triple("x-secret", "s", true),
+                Triple("x-plain", "p", false),
+                Triple("authorization", "a", true),
+                Triple("x-idx", "i", false),
+                Triple(":method", "GET", false),
+            ),
+            got,
+        )
+    }
+
+    @Test
+    fun negative_fieldsMarkedNeverIndexedAreNeitherIndexedNorReferenced() {
+        val e = HpackEncoder()
+        val d = HpackDecoder()
+        // indexed once: a later block would reference the table entry
+        assertEquals(listOf("x-token" to "t1"), decodeAll(d, e.encode(listOf("x-token" to "t1"))))
+        assertEquals(listOf("x-token" to "t1"), d.tableEntries())
+        // marked (by name, any case): a never-indexed literal (0001) even though the table holds the same field, and the
+        // static `:method GET` entry is not referenced either
+        val block = e.encode(listOf("x-token" to "t1", ":method" to "GET"), neverIndexed = setOf("X-Token", ":method"))
+        assertEquals(0x10, block[0].toInt() and 0xf0)
+        val got = mutableListOf<Triple<String, String, Boolean>>()
+        d.decodeFields(block) { n, v, never -> got += Triple(n, v, never) }
+        assertEquals(listOf(Triple("x-token", "t1", true), Triple(":method", "GET", true)), got)
+        assertEquals(listOf("x-token" to "t1"), d.tableEntries()) // nothing added
+    }
+
+    @Test
     fun encoderRespectsPeerTableSize() {
         val e = HpackEncoder()
         val d = HpackDecoder()

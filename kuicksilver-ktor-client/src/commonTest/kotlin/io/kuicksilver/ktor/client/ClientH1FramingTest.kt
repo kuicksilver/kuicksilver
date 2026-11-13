@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.ktor.network.selector.SelectorManager
@@ -22,23 +25,32 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.h1.FIRST_CONTACT_BODY_LIMIT
 import io.kuicksilver.ktor.client.h1.writeBody
 import io.kuicksilver.ktor.client.h1.writeHeaders
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** How the client finds the end of an HTTP/1.1 response and whether the connection may carry another one (RFC 9112 section 6.3). */
 class ClientH1FramingTest {
@@ -425,6 +437,454 @@ class ClientH1FramingTest {
                 assertFalse(head.any { it.startsWith("Content-Length:", ignoreCase = true) }, "$coding/$length: $head")
                 assertEquals("5\r\nhello\r\n0\r\n\r\n", sent.substringAfter("\r\n\r\n"), "$coding/$length")
             }
+        }
+
+    /** A body of unknown length, written as it is produced (the client would chunk it to a server known to speak HTTP/1.1). */
+    private fun streamed(text: String) =
+        object : OutgoingContent.WriteChannelContent() {
+            override suspend fun writeTo(channel: ByteWriteChannel) {
+                channel.writeStringUtf8(text)
+            }
+        }
+
+    /**
+     * Reads a request head and its body (by Content-Length or chunked); returns the head's lines and the body. [beforeBody]
+     * runs between the two (a 100 Continue).
+     */
+    private suspend fun readRequest(
+        input: ByteReadChannel,
+        beforeBody: suspend (List<String>) -> Unit = {},
+    ): Pair<List<String>, String> {
+        val head = ArrayList<String>()
+        while (true) {
+            val line = input.readLine(LineEnding.Lenient) ?: break
+            if (line.isEmpty()) break
+            head += line
+        }
+        if (head.isNotEmpty()) beforeBody(head)
+        val length =
+            head
+                .firstOrNull { it.startsWith("Content-Length:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.trim()
+                ?.toInt()
+        val body =
+            when {
+                length != null -> {
+                    val b = ByteArray(length)
+                    input.readFully(b)
+                    b.decodeToString()
+                }
+
+                head.any { it.equals("Transfer-Encoding: chunked", ignoreCase = true) } -> {
+                    buildString {
+                        while (true) {
+                            val size = input.readLine(LineEnding.Lenient)!!.trim().toInt(16)
+                            if (size == 0) {
+                                input.readLine(LineEnding.Lenient)
+                                break
+                            }
+                            val b = ByteArray(size)
+                            input.readFully(b)
+                            append(b.decodeToString())
+                            input.readLine(LineEnding.Lenient)
+                        }
+                    }
+                }
+
+                else -> {
+                    ""
+                }
+            }
+        return head to body
+    }
+
+    /**
+     * RFC 9112 section 6.1: "A client MUST NOT send a request containing Transfer-Encoding unless it knows the server will
+     * handle HTTP/1.1 requests (or later minor revisions); such knowledge might be in the form of specific user
+     * configuration or by remembering the version of a prior received response." On first contact over cleartext an
+     * OPTIONS on the same connection shows the version before a body of unknown length goes out chunked; the route is
+     * remembered, so the next such request goes at once. Before, it went out chunked on first contact.
+     */
+    @Test fun firstContactProbesBeforeTransferEncoding() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            val bodies = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(3) {
+                    val (head, body) = readRequest(input)
+                    heads += head
+                    bodies += body
+                    output.writeStringUtf8(
+                        if (head[0].startsWith(
+                                "OPTIONS ",
+                            )
+                        ) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient().use { c ->
+                    repeat(2) { assertEquals("ok", c.post("http://127.0.0.1:$port/up") { setBody(streamed("hello")) }.bodyAsText()) }
+                }
+            }
+            assertEquals(listOf("OPTIONS /up HTTP/1.1", "POST /up HTTP/1.1", "POST /up HTTP/1.1"), heads.map { it[0] })
+            assertTrue(heads.drop(1).all { "Transfer-Encoding: chunked" in it }, "$heads")
+            assertEquals(listOf("", "hello", "hello"), bodies)
+        }
+
+    /**
+     * RFC 9112 section 6.1, "specific user configuration": a server in `http11Hints`, or any server with `assumeHttp11`,
+     * gets a body of unknown length chunked at once, without the first-contact OPTIONS.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_configuredHttp11ServerGetsNoProbe() =
+        clientTest {
+            for (configure in listOf<KuicksilverEngineConfig.(Int) -> Unit>(
+                { port -> http11Hints = setOf(HostPort("127.0.0.1", port)) },
+                { _ -> assumeHttp11 = true },
+            )) {
+                val heads = ArrayList<List<String>>()
+                rawServerPerConnection({ _, input, output ->
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                }) { port ->
+                    testClient(engine = { configure(port) }).use { c ->
+                        assertEquals("ok", c.post("http://127.0.0.1:$port/up") { setBody(streamed("hello")) }.bodyAsText())
+                    }
+                }
+                assertEquals(listOf("POST /up HTTP/1.1"), heads.map { it[0] })
+                assertTrue("Transfer-Encoding: chunked" in heads[0], "${heads[0]}")
+            }
+        }
+
+    /** A hint for another port is no knowledge of this server: the probe still goes first. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun hintForAnotherServerStillProbes() =
+        clientTest {
+            val heads = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(2) {
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head[0]
+                    output.writeStringUtf8(
+                        if (head[0].startsWith(
+                                "OPTIONS ",
+                            )
+                        ) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient(engine = { http11Hints = setOf(HostPort("127.0.0.1", port + 1)) }).use { c ->
+                    assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText())
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads)
+        }
+
+    /**
+     * An HTTP/1.0 answer is no knowledge of HTTP/1.1 (RFC 9112 section 6.1): the body is framed by Content-Length from a
+     * buffer, on a new connection as the HTTP/1.0 server closed the probe's, and the route is not probed again.
+     */
+    @Test fun negative_http10ServerGetsContentLength() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                heads += head
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            }) { port ->
+                testClient().use { c ->
+                    repeat(2) { assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText()) }
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] })
+            for (h in heads.drop(1)) {
+                assertTrue("Content-Length: 5" in h, "$h")
+                assertFalse(h.any { it.startsWith("Transfer-Encoding", ignoreCase = true) }, "$h")
+            }
+        }
+
+    /**
+     * To a server not known to handle HTTP/1.1, a streamed body above the buffer bound, or a transfer coding the
+     * application applied itself, cannot be sent without Transfer-Encoding: the request fails and nothing of it is sent
+     * (RFC 9112 section 6.1 MUST NOT).
+     */
+    @Test fun negative_unknownServerGetsNoTransferEncoding() =
+        clientTest {
+            val received = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                received += head[0]
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+            }) { port ->
+                testClient().use { c ->
+                    val big = "x".repeat(FIRST_CONTACT_BODY_LIMIT + 1)
+                    val e1 = assertFailsWith<IllegalStateException> { c.post("http://127.0.0.1:$port/") { setBody(streamed(big)) } }
+                    assertTrue("RFC 9112" in e1.message!!, e1.message)
+                    val coded =
+                        object : OutgoingContent.ByteArrayContent() {
+                            override val headers: Headers = headersOf(HttpHeaders.TransferEncoding, "gzip")
+
+                            override fun bytes() = "hello".encodeToByteArray()
+                        }
+                    val e2 = assertFailsWith<IllegalStateException> { c.post("http://127.0.0.1:$port/") { setBody(coded) } }
+                    assertTrue("RFC 9112" in e2.message!!, e2.message)
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1"), received)
+        }
+
+    /**
+     * A body that ends with a CancellationException of its own while it is buffered for an HTTP/1.0 server fails the
+     * request with IllegalStateException: a `withTimeout` in its `writeTo`, or a channel its producer's cancellation
+     * closed. Before, the first reached the caller as a CancellationException (the call's own cancellation to it), and with
+     * the second the buffer's writer rethrew it without closing the buffer: the request waited for the rest of the body
+     * for ever.
+     */
+    @Test fun negative_http10ServerBodyThatCancelsItselfFails() =
+        clientTest {
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            }) { port ->
+                testClient().use { c ->
+                    val timedOut =
+                        object : OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeStringUtf8("part")
+                                withTimeout(10.milliseconds) { awaitCancellation() }
+                            }
+                        }
+                    val producerCancelled =
+                        object : OutgoingContent.ReadChannelContent() {
+                            override fun readFrom(): ByteReadChannel =
+                                ByteChannel().apply { cancel(CancellationException("the producer was cancelled")) }
+                        }
+                    for (body in listOf(timedOut, producerCancelled)) {
+                        // well within the connect timeout (10 s), which also ends a body that does not end
+                        val e =
+                            assertFailsWith<Throwable> { withTimeout(5.seconds) { c.post("http://127.0.0.1:$port/") { setBody(body) } } }
+                        assertFalse(e is CancellationException, "$e")
+                        assertTrue(e is IllegalStateException && "cancelled" in e.message.orEmpty(), "$e")
+                    }
+                }
+            }
+        }
+
+    /**
+     * To an HTTP/1.0 server a body of unknown length must end before it is sent (framed by Content-Length): one that does
+     * not end within the connect timeout fails the request with IllegalStateException naming the reason (RFC 9112 section
+     * 6.1), nothing of it sent. Before, it waited until the request timeout, or for ever without one.
+     */
+    @Test fun negative_http10ServerSlowBodyFailsWithinTheConnectTimeout() =
+        clientTest {
+            val received = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                received += head[0]
+                output.writeStringUtf8("HTTP/1.0 204 No Content\r\n\r\n")
+            }) { port ->
+                testClient(engine = { connectTimeout = 500.milliseconds }).use { c ->
+                    val never = CompletableDeferred<Unit>()
+                    val body =
+                        object : OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeStringUtf8("part")
+                                channel.flush()
+                                never.await() // a duplex body: it would end after the response
+                            }
+                        }
+                    val e = assertFailsWith<Throwable> { withTimeout(10.seconds) { c.post("http://127.0.0.1:$port/") { setBody(body) } } }
+                    assertTrue(e is IllegalStateException && e !is CancellationException, "$e")
+                    assertTrue("HTTP/1.0" in e.message!! && "RFC 9112 section 6.1" in e.message!!, e.message)
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1"), received)
+        }
+
+    /**
+     * RFC 9112 section 6.1: "handle HTTP/1.1 requests (or later minor revisions)": an HTTP/1.2 answer to the probe is that
+     * knowledge (RFC 9110 section 2.5: processed as the highest minor version the recipient is conformant to, 1.1), so
+     * the request goes chunked on the same, kept connection. A regression guard: the status line already reads HTTP/1.x
+     * above 1 as HTTP/1.1 (`statusLineOf`), and the version checks count any later minor revision as well.
+     */
+    @Test fun http12AnswerIsKnowledgeOfHttp11() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            val connections = ArrayList<Int>()
+            rawServerPerConnection({ index, input, output ->
+                repeat(2) {
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head
+                    connections += index
+                    output.writeStringUtf8(
+                        if (head[0].startsWith("OPTIONS ")) {
+                            "HTTP/1.2 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.2 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient().use { c -> assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText()) }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] })
+            assertTrue("Transfer-Encoding: chunked" in heads[1], "${heads[1]}")
+            assertEquals(listOf(0, 0), connections)
+        }
+
+    /** An answer to the probe with a body (by Content-Length, or chunked) is read to its end; the request follows it. */
+    @Test fun probeAnswerWithABodyIsReadToItsEnd() =
+        clientTest {
+            for (answer in listOf(
+                "HTTP/1.1 200 OK\r\nAllow: OPTIONS, POST\r\nContent-Length: 5\r\n\r\nallow",
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nallow\r\n0\r\n\r\n",
+            )) {
+                val heads = ArrayList<List<String>>()
+                val bodies = ArrayList<String>()
+                val connections = ArrayList<Int>()
+                rawServerPerConnection({ index, input, output ->
+                    repeat(2) {
+                        val (head, body) = readRequest(input)
+                        if (head.isEmpty()) return@rawServerPerConnection
+                        heads += head
+                        bodies += body
+                        connections += index
+                        output.writeStringUtf8(
+                            if (head[0].startsWith("OPTIONS ")) answer else "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+                        )
+                    }
+                }) { port ->
+                    testClient().use { c ->
+                        assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText())
+                    }
+                }
+                assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] }, answer)
+                assertTrue("Transfer-Encoding: chunked" in heads[1], "${heads[1]}")
+                assertEquals(listOf("", "hello"), bodies)
+                assertEquals(listOf(0, 0), connections, answer)
+            }
+        }
+
+    /**
+     * An HTTP/1.1 answer to the probe with `Connection: close`: the request goes on a new connection, and the route is
+     * known to handle HTTP/1.1 (the knowledge stays), so it goes chunked without a second probe.
+     */
+    @Test fun probeAnswerWithConnectionCloseKeepsTheKnowledge() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            val connections = ArrayList<Int>()
+            rawServerPerConnection({ index, input, output ->
+                val (head, _) = readRequest(input)
+                if (head.isEmpty()) return@rawServerPerConnection
+                heads += head
+                connections += index
+                output.writeStringUtf8(
+                    if (head[0].startsWith("OPTIONS ")) {
+                        "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                    },
+                )
+            }) { port ->
+                testClient().use { c -> assertEquals("ok", c.post("http://127.0.0.1:$port/") { setBody(streamed("hello")) }.bodyAsText()) }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] })
+            assertTrue("Transfer-Encoding: chunked" in heads[1], "${heads[1]}")
+            assertEquals(listOf(0, 1), connections)
+        }
+
+    /**
+     * Through an HTTP proxy the probe goes in absolute form (RFC 9112 section 3.2.2) like the request it precedes, and the
+     * proxy's answer is the knowledge for the route through it.
+     */
+    @Test fun probeGoesInAbsoluteFormThroughAnHttpProxy() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(2) {
+                    val (head, _) = readRequest(input)
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head
+                    output.writeStringUtf8(
+                        if (head[0].startsWith("OPTIONS ")) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { proxyPort ->
+                testClient(engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }).use { c ->
+                    assertEquals("ok", c.post("http://origin.test/up?q=1") { setBody(streamed("hello")) }.bodyAsText())
+                }
+            }
+            assertEquals(
+                listOf("OPTIONS http://origin.test/up?q=1 HTTP/1.1", "POST http://origin.test/up?q=1 HTTP/1.1"),
+                heads.map { it[0] },
+            )
+            assertTrue("Transfer-Encoding: chunked" in heads[1], "${heads[1]}")
+        }
+
+    /**
+     * The probe, then a request with `Expect: 100-continue` on the same connection: the probe carries no Expect, the
+     * request waits for the 100 Continue and then sends its body chunked (RFC 9110 section 10.1.1).
+     */
+    @Test fun probeThenExpectContinue() =
+        clientTest {
+            val heads = ArrayList<List<String>>()
+            val bodies = ArrayList<String>()
+            rawServerPerConnection({ _, input, output ->
+                repeat(2) {
+                    val (head, body) =
+                        readRequest(input) { head ->
+                            if (head.any { it.equals("Expect: 100-continue", ignoreCase = true) }) {
+                                output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
+                            }
+                        }
+                    if (head.isEmpty()) return@rawServerPerConnection
+                    heads += head
+                    bodies += body
+                    output.writeStringUtf8(
+                        if (head[0].startsWith("OPTIONS ")) {
+                            "HTTP/1.1 204 No Content\r\n\r\n"
+                        } else {
+                            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                        },
+                    )
+                }
+            }) { port ->
+                testClient().use { c ->
+                    val response =
+                        c.post("http://127.0.0.1:$port/") {
+                            header(HttpHeaders.Expect, "100-continue")
+                            setBody(streamed("hello"))
+                        }
+                    assertEquals("ok", response.bodyAsText())
+                }
+            }
+            assertEquals(listOf("OPTIONS / HTTP/1.1", "POST / HTTP/1.1"), heads.map { it[0] })
+            assertFalse(heads[0].any { it.startsWith("Expect", ignoreCase = true) }, "${heads[0]}")
+            assertTrue("Expect: 100-continue" in heads[1] && "Transfer-Encoding: chunked" in heads[1], "${heads[1]}")
+            assertEquals(listOf("", "hello"), bodies)
         }
 
     /** Reads a request head; returns its request line ("" at end of stream). */

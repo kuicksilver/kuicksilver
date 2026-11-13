@@ -87,11 +87,17 @@ internal fun H2ConnectionCore.onContinuation(
 private fun H2ConnectionCore.endBlock(now: Long) {
     inBlock = false
     val fields = ArrayList<Pair<String, String>>()
+    var neverIndexed: MutableList<Pair<String, String>>? = null
     // a compressed block above the list limit (but within twice it) fails its stream only: it is still decoded for HPACK
     val compressedFits = block.size <= settings.maxHeaderListSize
     val fits =
         try {
-            hpackIn.decode(block.block()) { n, v -> if (compressedFits) fields += n to v }
+            hpackIn.decodeFields(block.block()) { n, v, never ->
+                if (compressedFits) {
+                    fields += n to v
+                    if (never) (neverIndexed ?: ArrayList<Pair<String, String>>().also { neverIndexed = it }) += n to v
+                }
+            }
         } catch (e: HpackError) {
             throw H2ConnectionError(Http2ErrorCode.COMPRESSION_ERROR, e.message ?: "HPACK decoding error") // section 4.3
         }
@@ -106,6 +112,7 @@ private fun H2ConnectionCore.endBlock(now: Long) {
             if (compressedFits) fields else emptyList(),
             fits && compressedFits,
             now,
+            neverIndexed.orEmpty(),
         )
     }
 }
@@ -115,6 +122,7 @@ internal fun H2ConnectionCore.onHeaders(
     fields: List<Pair<String, String>>,
     fits: Boolean,
     now: Long,
+    neverIndexed: List<Pair<String, String>> = emptyList(),
 ) {
     val endStream = blockEndStream
     val s = streams[id]
@@ -170,7 +178,7 @@ internal fun H2ConnectionCore.onHeaders(
         ns.tunnel = isConnect(fields)
         streams[id] = ns
         peerStreams++
-        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true, priorityUpdate = early))
+        emit(H2Event.HeadersReceived(id, fields, endStream, !fits, opening = true, priorityUpdate = early, neverIndexed = neverIndexed))
         return
     }
     if (s.state == StreamState.CLOSED) {
@@ -206,7 +214,7 @@ internal fun H2ConnectionCore.onHeaders(
             s.finalHeadersReceived = true
         }
     }
-    emit(H2Event.HeadersReceived(id, fields, endStream, !fits))
+    emit(H2Event.HeadersReceived(id, fields, endStream, !fits, neverIndexed = neverIndexed))
     if (endStream) remoteEnded(s)
 }
 

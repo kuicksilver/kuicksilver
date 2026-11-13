@@ -32,6 +32,7 @@ import io.ktor.http.fullPath
 import io.ktor.http.hostWithPort
 import io.ktor.http.isSecure
 import io.ktor.http.supportsRequestBody
+import io.ktor.util.AttributeKey
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -39,6 +40,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
@@ -55,9 +57,12 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.EOFException
+import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.seconds
 
@@ -157,6 +162,11 @@ internal suspend fun writeBody(
     val body = request.body.getUnwrapped()
     if (body is OutgoingContent.NoContent) return
     if (body is OutgoingContent.ProtocolUpgrade) throw UnsupportedContentTypeException(body)
+    request.firstContactBody()?.let {
+        output.writeFully(it)
+        output.flush()
+        return
+    }
 
     if (chunkedTransferEncoding(request) == null) {
         // the Content-Length sent is the body's length (RFC 9112 section 6.2; section 6.3: the recipient reads that many
@@ -186,9 +196,145 @@ internal suspend fun writeBody(
 private fun OutgoingContent.getUnwrapped(): OutgoingContent =
     if (this is OutgoingContent.ContentWrapper) delegate().getUnwrapped() else this
 
+/**
+ * The most bytes of a request body of unknown length that are buffered to frame it by Content-Length for a server not
+ * known to handle HTTP/1.1 (RFC 9112 section 6.1, [prepareFirstContact]).
+ */
+internal const val FIRST_CONTACT_BODY_LIMIT: Int = 1 shl 20
+
+/** A request body buffered by [prepareFirstContact]; it holds only while the request still carries [content]. */
+internal class FirstContactBody(
+    val content: OutgoingContent,
+    val bytes: ByteArray,
+)
+
+internal val FirstContactBodyKey: AttributeKey<FirstContactBody> = AttributeKey("kuicksilver.FirstContactBody")
+
+/** The body [prepareFirstContact] buffered for this request, or null. */
+internal fun HttpRequestData.firstContactBody(): ByteArray? =
+    attributes
+        .getOrNull(FirstContactBodyKey)
+        ?.takeIf {
+            it.content === body
+        }?.bytes
+
+/**
+ * RFC 9112 section 6.1: "A client MUST NOT send a request containing Transfer-Encoding unless it knows the server will
+ * handle HTTP/1.1 requests (or later minor revisions); such knowledge might be in the form of specific user configuration
+ * or by remembering the version of a prior received response." Called for a route not known to handle HTTP/1.1 after the
+ * probe ([H1Pool]'s `probeVersion`) was answered with another version (an HTTP/1.0 server): a request that would go out
+ * chunked because its body has no length is buffered (at most [FIRST_CONTACT_BODY_LIMIT] bytes) and goes out with
+ * Content-Length instead. A longer body, or a transfer coding the application applied itself, cannot be framed without
+ * Transfer-Encoding: IllegalStateException, before anything of the request is sent. The same for a body that does not end
+ * within [withinMillis] (the connect timeout, or the request timeout when that is shorter): a slow body, or a duplex one
+ * that waits for the response before it ends, cannot be framed by Content-Length, as nothing is sent before it ended; it
+ * fails then instead of holding the request until the request timeout, or for ever without one.
+ */
+internal suspend fun prepareFirstContact(
+    request: HttpRequestData,
+    withinMillis: Long,
+) {
+    val body = request.body.getUnwrapped()
+    if (body is OutgoingContent.NoContent || body is OutgoingContent.ProtocolUpgrade) return // no body to frame
+    val te = chunkedTransferEncoding(request) ?: return
+    val server = "${request.url.protocol.name}://${request.url.host}:${request.url.port}"
+    val codings = transferCodingsOf(listOf(te))
+    if (codings == null || codings.any { !it.name.equals("chunked", ignoreCase = true) }) {
+        throw IllegalStateException(
+            "the request applies the transfer coding $te, but $server is not known to handle HTTP/1.1 yet " +
+                "(no HTTP/1.1 response on this route, no ALPN http/1.1): " +
+                "RFC 9112 section 6.1 forbids Transfer-Encoding then; send a request without it first",
+        )
+    }
+    // boxed: null is a body over the bound, a missing box the deadline
+    val buffered =
+        withTimeoutOrNull(withinMillis.coerceAtLeast(1)) { listOf(bufferBody(body, FIRST_CONTACT_BODY_LIMIT)) }
+            ?: throw IllegalStateException(
+                "the request body has no length and did not end within $withinMillis ms, but $server answered as an " +
+                    "HTTP/1.0 server (no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids " +
+                    "chunked framing then, and a body framed by Content-Length is sent only once it ended (a body that " +
+                    "waits for the response cannot be); give the body a length, or send a request without a body first",
+            )
+    val bytes =
+        buffered.single() ?: throw IllegalStateException(
+            "the request body has no length and is longer than $FIRST_CONTACT_BODY_LIMIT bytes, but " +
+                "$server is not known to handle HTTP/1.1 yet " +
+                "(no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids chunked framing then; " +
+                "give the body a length, or send a request without a body first",
+        )
+    request.attributes.put(FirstContactBodyKey, FirstContactBody(request.body, bytes))
+}
+
+/** Whether [request] would go out with Transfer-Encoding: it has content that its Content-Length does not frame. */
+internal fun needsTransferEncoding(request: HttpRequestData): Boolean {
+    val body = request.body.getUnwrapped()
+    if (body is OutgoingContent.NoContent || body is OutgoingContent.ProtocolUpgrade) return false
+    return chunkedTransferEncoding(request) != null
+}
+
+/**
+ * [body]'s bytes, or null when it has more than [limit]. A failing body fails with its own exception; one that throws a
+ * CancellationException of its own (a `withTimeout` in its `writeTo`) fails with IllegalStateException, so the caller
+ * does not take it for the call's own cancellation.
+ */
+private suspend fun bufferBody(
+    body: OutgoingContent,
+    limit: Int,
+): ByteArray? =
+    coroutineScope {
+        val channel = ByteChannel()
+        var failure: Throwable? = null // set before [channel] is cancelled, so the reader sees it once that wakes it
+        val writer =
+            launch {
+                try {
+                    processOutgoingContent(body, channel)
+                    channel.flushAndClose()
+                } catch (e: Throwable) {
+                    // the reader waits on [channel]: it ends with the failure, whoever failed or cancelled (the body, or
+                    // the call, whose cancellation the reader sees for itself)
+                    val f = if (e is kotlinx.coroutines.CancellationException) bodyCancelled(e) else e
+                    failure = f
+                    channel.cancel(f)
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
+            }
+        val bytes =
+            try {
+                channel.readBuffer(limit + 1L).readByteArray()
+            } catch (e: Throwable) {
+                ensureActive() // the call's own cancellation (or the caller's deadline) goes on as it is
+                throw failure ?: if (e is kotlinx.coroutines.CancellationException) bodyCancelled(e) else e
+            }
+        failure?.let {
+            writer.cancel()
+            throw it
+        }
+        if (bytes.size > limit) {
+            channel.cancel(IllegalStateException("over the first-contact bound"))
+            writer.cancel()
+            null
+        } else {
+            writer.join()
+            bytes
+        }
+    }
+
+/** A request body that ended with a CancellationException of its own: a failure of the body, not of the call. */
+private fun bodyCancelled(e: kotlinx.coroutines.CancellationException): IllegalStateException =
+    IllegalStateException("the request body was cancelled while it was written: ${e.message}", e)
+
+/**
+ * Whether a response of this version shows that its server handles HTTP/1.1: HTTP/1.1 "or later minor revisions"
+ * (RFC 9112 section 6.1), so an HTTP/1.2 one too. RFC 9110 section 2.5: "A recipient that receives a message with a
+ * major version number that it implements and a minor version number higher than what it implements SHOULD process the
+ * message as if it were in the highest minor version within that major version to which the recipient is conformant."
+ * The status line already reads HTTP/1.x above 1 as HTTP/1.1 (`statusLineOf`); the rule is stated here as well.
+ */
+internal fun HttpProtocolVersion.handlesHttp11(): Boolean = name == "HTTP" && major == 1 && minor >= 1
+
 /** The Content-Length a request goes out with when it is not chunked: its own field, else its body's length. */
 internal fun declaredContentLength(request: HttpRequestData): String? =
-    request.headers[HttpHeaders.ContentLength] ?: request.body
+    request.firstContactBody()?.size?.toString() ?: request.headers[HttpHeaders.ContentLength] ?: request.body
         .getUnwrapped()
         .contentLength
         ?.toString()
@@ -418,7 +564,7 @@ internal suspend fun readResponse(
             // a request that said `Connection: close` is the last one on the connection (RFC 9112 section 9.6); a response
             // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
             val keepAlive =
-                version == HttpProtocolVersion.HTTP_1_1 && connectionType?.close != true &&
+                version.handlesHttp11() && connectionType?.close != true &&
                     ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding &&
                     unsentBody == null
 
@@ -704,6 +850,7 @@ internal fun HttpHeadersMap.toMap(): Map<String, List<String>> {
  * MUST NOT with Transfer-Encoding).
  */
 internal fun chunkedTransferEncoding(request: HttpRequestData): String? {
+    if (request.firstContactBody() != null) return null
     val body = request.body.getUnwrapped()
     val codings =
         (request.headers.getAll(HttpHeaders.TransferEncoding).orEmpty() + body.headers.getAll(HttpHeaders.TransferEncoding).orEmpty())

@@ -42,5 +42,6 @@ class SystemProxyAppleTest {
     /** The real system call runs (whatever this host's settings) and gives a list. */
     @Test fun systemProxiesCallRuns() {
         systemProxies("https://example.com/")
+        systemProxySettings("https://example.com/")
     }
 }

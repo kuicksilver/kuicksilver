@@ -234,9 +234,11 @@ public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engin
 
 public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
 	public fun <init> ()V
+	public final fun getAssumeHttp11 ()Z
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
+	public final fun getHttp11Hints ()Ljava/util/Set;
 	public final fun getHttp2 ()Lio/kuicksilver/ktor/client/Http2ClientConfig;
 	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
@@ -246,6 +248,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getMaxConnectionsCount ()I
 	public final fun getMaxConnectionsPerRoute ()I
 	public final fun getMaxIdleConnectionsPerRoute ()I
+	public final fun getPacFullWebSocketUrl ()Z
 	public final fun getProxyCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
 	public final fun getProxyResolver ()Lio/kuicksilver/ktor/client/ProxyResolver;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
@@ -254,9 +257,11 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getWebSocketMaxMessageSize ()J
 	public final fun http2 (Lkotlin/jvm/functions/Function1;)V
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
+	public final fun setAssumeHttp11 (Z)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
+	public final fun setHttp11Hints (Ljava/util/Set;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setIdleTimeout-LRDsOJo (J)V
 	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
@@ -264,6 +269,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setMaxConnectionsCount (I)V
 	public final fun setMaxConnectionsPerRoute (I)V
 	public final fun setMaxIdleConnectionsPerRoute (I)V
+	public final fun setPacFullWebSocketUrl (Z)V
 	public final fun setProxyCredentials (Lio/kuicksilver/ktor/client/ProxyCredentials;)V
 	public final fun setProxyResolver (Lio/kuicksilver/ktor/client/ProxyResolver;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
@@ -294,6 +300,11 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V
 	public fun raceEnded-exY8QGI (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;JLjava/lang/Throwable;)V
 	public fun retry (Lio/ktor/client/request/HttpRequestData;ILjava/lang/Throwable;)V
+}
+
+public final class io/kuicksilver/ktor/client/NeverIndexedKt {
+	public static final fun getNeverIndexedHeaders (Lio/ktor/client/statement/HttpResponse;)Ljava/util/List;
+	public static final fun neverIndex (Lio/ktor/client/request/HttpRequestBuilder;[Ljava/lang/String;)V
 }
 
 public final class io/kuicksilver/ktor/client/PriorityKt {

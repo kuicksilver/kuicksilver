@@ -70,6 +70,9 @@ Header compression uses the static table always and the dynamic table only when 
   literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.
 - `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are never inserted into the dynamic table and are
   sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.
+- The 'N' bit (RFC 9204 section 4.5.4, experimental): a received section's `Http3Headers.neverIndexed` lists the field
+  lines that carried it, and `headers.withNeverIndexed("x-api-key")` sends the named fields as literals with it, never
+  inserted nor referenced; a received section forwarded as it is keeps the bit (section 7.1.3).
 - The decoder rejects, before allocating, integers longer than 62 bits and string literals above a ceiling, and counts
   the decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
   `maxFieldSectionSize`. In a field section the ceiling is `maxFieldSectionSize` itself and a longer string makes the

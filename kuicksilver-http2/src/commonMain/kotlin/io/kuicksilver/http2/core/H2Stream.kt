@@ -10,6 +10,8 @@ internal sealed interface OutItem {
     class Fields(
         val fields: List<Pair<String, String>>,
         val endStream: Boolean,
+        /** Names whose fields go as literals never indexed (RFC 7541 section 6.2.3). */
+        val neverIndexed: Set<String> = emptySet(),
     ) : OutItem
 
     class Data(

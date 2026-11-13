@@ -88,16 +88,20 @@ internal class QpackEncoder(
      * The field section of [fields] for [streamId]; the insert instructions it needs wait in [drainEncoderStream]. At most
      * [instructionBudget] bytes of them: RFC 9204 section 2.1.3, "an encoder SHOULD NOT write an instruction unless
      * sufficient stream and connection flow-control credit is available for the entire instruction"; a field whose insert
-     * would not fit goes as a literal (or a reference to what the table already holds).
+     * would not fit goes as a literal (or a reference to what the table already holds). A field whose name is in
+     * [neverIndexed] (compared in lowercase) goes as a literal with the 'N' bit (section 7.1.3), never inserted and never
+     * matched to a table entry: the application marked it sensitive, or forwards a field it received so (section 4.5.4).
      */
     fun encode(
         streamId: Long,
         fields: List<Pair<String, String>>,
         instructionBudget: Long = Long.MAX_VALUE,
+        neverIndexed: Set<String> = emptySet(),
     ): ByteArray {
+        val marked = if (neverIndexed.isEmpty()) neverIndexed else neverIndexed.mapTo(HashSet()) { it.lowercase() }
         val body = QpackWriter()
         val used = ArrayList<Long>()
-        var neverIndexed = 0
+        var neverIndexedCount = 0
         // may this section reference entries the decoder has not acknowledged yet (and so block)?
         val mayBlock = capacity > 0 && (isBlocking(streamId) || blockingStreams() < maxBlockedStreams)
         // a peer that never acknowledges sections would grow per-stream state without bound: above the cap every section is static or literal
@@ -108,7 +112,7 @@ internal class QpackEncoder(
             run {
                 // first pass: insertions happen before the section, so Base = Insert Count after them
                 for ((name, value) in fields) {
-                    if (capacity == 0L || sensitive(name, value) || StaticTable.find(name, value) >= 0 ||
+                    if (capacity == 0L || name in marked || sensitive(name, value) || StaticTable.find(name, value) >= 0 ||
                         table.findExact(name, value) >= 0
                     ) {
                         continue // without a blocking budget the insert is speculative: referenced once acknowledged
@@ -141,10 +145,10 @@ internal class QpackEncoder(
                 table.insertCount
             }
         for ((name, value) in fields) {
-            val never = sensitive(name, value) && name in NEVER_INDEX
-            if (never) neverIndexed++
+            val never = (sensitive(name, value) && name in NEVER_INDEX) || name in marked
+            if (never) neverIndexedCount++
             val st = StaticTable.find(name, value)
-            val dyn = if (sensitive(name, value)) -1L else table.findExact(name, value)
+            val dyn = if (never || sensitive(name, value)) -1L else table.findExact(name, value)
             when {
                 st >= 0 && !never -> {
                     body.writeInt(0xc0, 6, st.toLong())
@@ -181,7 +185,7 @@ internal class QpackEncoder(
                 }
             }
         }
-        lastNeverIndexed = neverIndexed
+        lastNeverIndexed = neverIndexedCount
         val ric = if (used.isEmpty()) 0L else used.max() + 1
         val out = QpackWriter(body.size + 4)
         if (ric == 0L) {

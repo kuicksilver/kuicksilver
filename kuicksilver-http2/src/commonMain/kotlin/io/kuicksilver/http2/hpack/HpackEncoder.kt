@@ -38,15 +38,23 @@ internal class HpackEncoder(
         table.setCapacity(c)
     }
 
-    /** Encodes [fields] as one field block. */
-    fun encode(fields: List<Pair<String, String>>): ByteArray {
+    /**
+     * Encodes [fields] as one field block. A field whose name is in [neverIndexed] (compared in lowercase) is sent as a
+     * literal never indexed (section 6.2.3), like the credentials above: the application marked it sensitive, or it
+     * forwards a field it received so (section 7.1.3).
+     */
+    fun encode(
+        fields: List<Pair<String, String>>,
+        neverIndexed: Set<String> = emptySet(),
+    ): ByteArray {
         val out = HpackWriter()
         if (pendingMin >= 0) {
             out.writeInt(0x20, 5, pendingMin)
             if (pendingMin != table.capacity) out.writeInt(0x20, 5, table.capacity)
             pendingMin = -1
         }
-        for ((name, value) in fields) encodeField(out, name, value)
+        val marked = if (neverIndexed.isEmpty()) neverIndexed else neverIndexed.mapTo(HashSet()) { it.lowercase() }
+        for ((name, value) in fields) encodeField(out, name, value, name in marked)
         return out.toByteArray()
     }
 
@@ -54,8 +62,9 @@ internal class HpackEncoder(
         out: HpackWriter,
         name: String,
         value: String,
+        marked: Boolean,
     ) {
-        val sensitive = !indexEverything && isSensitive(name, value)
+        val sensitive = marked || (!indexEverything && isSensitive(name, value))
         if (!sensitive) {
             val s = StaticTable.find(name, value)
             if (s > 0) return out.writeInt(0x80, 7, s)

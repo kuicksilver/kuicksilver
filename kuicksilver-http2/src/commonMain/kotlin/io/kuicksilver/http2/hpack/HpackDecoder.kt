@@ -55,6 +55,17 @@ internal class HpackDecoder(
         off: Int = 0,
         len: Int = block.size - off,
         sink: (name: String, value: String) -> Unit,
+    ): Boolean = decodeFields(block, off, len) { n, v, _ -> sink(n, v) }
+
+    /**
+     * [decode], with each field's representation: [sink]'s `neverIndexed` is true for a literal header field never
+     * indexed (section 6.2.3), which an intermediary MUST forward with the same representation (section 7.1.3).
+     */
+    fun decodeFields(
+        block: ByteArray,
+        off: Int = 0,
+        len: Int = block.size - off,
+        sink: (name: String, value: String, neverIndexed: Boolean) -> Unit,
     ): Boolean {
         val r = HpackReader(block, off, off + len, maxStringLength)
         var listSize = 0L
@@ -80,6 +91,7 @@ internal class HpackDecoder(
                 fieldSeen = true
                 val name: String
                 val value: String
+                var neverIndexed = false
                 when {
                     b and 0x80 != 0 -> { // indexed field (section 6.1)
                         val f = lookup(r.readInt(7))
@@ -94,13 +106,14 @@ internal class HpackDecoder(
                     }
 
                     else -> { // literal without indexing (0000, section 6.2.2) or never indexed (0001, section 6.2.3)
+                        neverIndexed = b and 0x10 != 0
                         name = literalName(r, 4)
                         value = r.readString()
                     }
                 }
                 if (fits) {
                     listSize += entrySize(name, value)
-                    if (listSize > maxHeaderListSize) fits = false else sink(name, value)
+                    if (listSize > maxHeaderListSize) fits = false else sink(name, value, neverIndexed)
                 }
             }
             if (requiredUpdate >= 0) throw HpackError("the block does not carry the required table size update")

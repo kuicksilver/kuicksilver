@@ -30,6 +30,24 @@ internal class StreamFailure(
 
 internal const val CHUNK = 16_384
 
+/** A decoded field section that also knows its never-indexed field lines (RFC 9204 section 4.5.4). */
+internal class DecodedFields(
+    fields: List<Pair<String, String>>,
+    val neverIndexed: List<Pair<String, String>>,
+) : List<Pair<String, String>> by fields
+
+/** [this] with the regular never-indexed field lines of [decoded] (a [DecodedFields]) as received. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun Http3Headers.receivedNeverIndexed(decoded: List<Pair<String, String>>): Http3Headers {
+    val never = (decoded as? DecodedFields)?.neverIndexed?.filterNot { it.first.startsWith(':') }.orEmpty()
+    return if (never.isEmpty()) this else withReceivedNeverIndexed(never)
+}
+
+/** The names [Http3Headers.neverIndexed] and [Http3Headers.neverIndexNames] give for sending. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun Http3Headers.neverIndexNames(): Set<String> =
+    if (neverIndexed.isEmpty()) neverIndexNames else neverIndexNames + neverIndexed.map { it.first }
+
 /** Decodes a field section; TooLarge and malformed sections become [StreamFailure]. */
 internal suspend fun H3Session.decodeSection(
     st: QuicStream,
@@ -40,7 +58,7 @@ internal suspend fun H3Session.decodeSection(
             // the peer reset the stream, or the connection is gone with the inserts the section waits for
             qpack.decode(st.id, block) { st.input.closedCause != null || noMoreInserts() }
     ) {
-        is DecodeResult.Decoded -> r.fields
+        is DecodeResult.Decoded -> if (r.neverIndexed.isEmpty()) r.fields else DecodedFields(r.fields, r.neverIndexed)
 
         // a value longer than we decode is the stream error QPACK_DECOMPRESSION_FAILED (RFC 9204 section 7.4), fields that
         // only add up past the limit EXCESSIVE_LOAD; a server answers 431 for either (RFC 9114 section 4.2.2)
@@ -113,7 +131,7 @@ internal suspend fun H3Session.pumpBody(
                     if (trailerFields != null) throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "HEADERS after trailers")
                     trailerFields =
                         try {
-                            PseudoHeaders.parseTrailers(decodeSection(st, f.block))
+                            decodeSection(st, f.block).let { PseudoHeaders.parseTrailers(it).receivedNeverIndexed(it) }
                         } catch (
                             e: MalformedMessage,
                         ) {

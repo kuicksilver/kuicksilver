@@ -136,8 +136,8 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 - The Capsule Protocol on CONNECT streams (RFC 9297 §3).
 - HTTP/3 priorities exposed in the Ktor engines (RFC 9218) (done; the HTTP/2 server schedules its responses by them too).
 - PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
-- Clients: SOCKS and system proxy settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692).
-  The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
+- Clients: SOCKS5 (CONNECT; no GSSAPI method, see [RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)) and system proxy
+  settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692). The Ktor client gets a `proxyResolver` setting whose default is the system proxy (HTTP/3 is not used through a proxy).
 - Server: certificate hot reload and a limit on TCP connections.
 - `loops > 1` on macOS, iOS and Windows: one socket routed in process by connection ID (done; the benchmark of what it buys is still to come).
 - A run of the iOS device checklist on a physical iPhone ([Device checklist](guide/ios.md#device-checklist)).

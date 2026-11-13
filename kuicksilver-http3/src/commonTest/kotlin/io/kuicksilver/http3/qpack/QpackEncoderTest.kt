@@ -101,6 +101,49 @@ class QpackEncoderTest {
         assertTrue(e.lastNeverIndexed == 3)
     }
 
+    /** RFC 9204 sections 4.5.4-4.5.6: the decoder reports the 'N' bit of each literal form, and only of literals. */
+    @Test fun neverIndexBitIsReportedOnDecoding() {
+        val w = QpackWriter()
+        w.writeByte(0)
+        w.writeByte(0) // Required Insert Count 0, Base 0
+        w.writeInt(0x50 or 0x20, 4, 2) // 01NT: static name `age` (index 2), N set
+        w.writeStringAuto(0, 7, "1")
+        w.writeInt(0x50, 4, 2) // 01NT without N
+        w.writeStringAuto(0, 7, "2")
+        w.writeStringAuto(0x20 or 0x10, 3, "x-secret") // 001N: literal name, N set
+        w.writeStringAuto(0, 7, "s")
+        w.writeStringAuto(0x20, 3, "x-plain") // 001N without N
+        w.writeStringAuto(0, 7, "p")
+        w.writeInt(0xc0, 6, 17) // indexed static :method GET
+        val r = assertIs<DecodeResult.Decoded>(QpackDecoder(0, 0, 65_536).decode(0, w.toByteArray()))
+        assertEquals(listOf("age" to "1", "age" to "2", "x-secret" to "s", "x-plain" to "p", ":method" to "GET"), r.fields)
+        assertEquals(listOf("age" to "1", "x-secret" to "s"), r.neverIndexed)
+    }
+
+    /**
+     * RFC 9204 section 7.1.3: a field the caller marks goes as a literal with the 'N' bit, never inserted and never matched
+     * to the dynamic table (nor to an exact static entry), even when the table holds it.
+     */
+    @Test fun negative_markedFieldsAreNeitherInsertedNorReferenced() {
+        val e = QpackEncoder()
+        e.onPeerSettings(4096, 16)
+        val d = QpackDecoder(4096, 16, 65_536)
+        d.feed(e.drainEncoderStream())
+        val first = e.encode(0, listOf("x-token" to "t1"))
+        d.feed(e.drainEncoderStream())
+        assertIs<DecodeResult.Decoded>(d.decode(0, first))
+        e.feed(d.drainDecoderStream())
+        assertEquals(1, e.insertCount)
+        val f = listOf("x-token" to "t1", "x-other" to "o", ":method" to "GET")
+        val b = e.encode(4, f, neverIndexed = setOf("X-Token", "X-Other", ":method"))
+        assertContentEquals(ByteArray(0), e.drainEncoderStream()) // nothing inserted
+        assertEquals(1, e.insertCount)
+        assertEquals(3, e.lastNeverIndexed)
+        val r = assertIs<DecodeResult.Decoded>(d.decode(4, b))
+        assertEquals(f, r.fields)
+        assertEquals(f, r.neverIndexed)
+    }
+
     @Test fun blockedBudgetIsMinOfPeerAnd100() {
         val e = QpackEncoder()
         e.onPeerSettings(4096, 1000)

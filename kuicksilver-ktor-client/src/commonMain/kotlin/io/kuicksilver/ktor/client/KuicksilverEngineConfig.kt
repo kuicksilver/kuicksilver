@@ -40,10 +40,10 @@ public enum class Http3DiscoveryMode {
 }
 
 /**
- * A host and port, for [Http3ClientConfig.quicHints].
+ * A host and port, for [Http3ClientConfig.quicHints] and [KuicksilverEngineConfig.http11Hints].
  *
  * @property host the host exactly as in request URLs (compared as is, no case folding or resolution).
- * @property port the port of the `https` origin, 443 for URLs without one.
+ * @property port the port, the scheme's default (443 for `https`, 80 for `http`) for URLs without one.
  */
 public class HostPort(
     public val host: String,
@@ -286,6 +286,20 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var maxIdleConnectionsPerRoute: Int = 4
 
     /**
+     * Servers known to handle HTTP/1.1 (RFC 9112 section 6.1: "such knowledge might be in the form of specific user
+     * configuration"): a request with Transfer-Encoding (a body of unknown length, or a transfer coding the application
+     * applied) goes to them chunked at once, without the `OPTIONS` the engine otherwise sends first to a server it has not
+     * seen answer with HTTP/1.1 nor pick ALPN `http/1.1`. The host and port of the server the request goes to: the origin,
+     * or, for plain `http` through an HTTP proxy (absolute form), the proxy. Compared as [HostPort] does.
+     */
+    @ExperimentalKuicksilverApi
+    public var http11Hints: Set<HostPort> = emptySet()
+
+    /** Every server is known to handle HTTP/1.1, as [http11Hints] for all; false by default. */
+    @ExperimentalKuicksilverApi
+    public var assumeHttp11: Boolean = false
+
+    /**
      * TCP connections (HTTP/1.1 and HTTP/2) open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same
      * default 1000). A request beyond it waits, in FIFO order, within the connect timeout; when other routes hold idle
      * connections, the oldest one is closed to make room instead. HTTP/3 multiplexes and is limited per origin instead.
@@ -377,6 +391,20 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      */
     @ExperimentalKuicksilverApi
     public var webSocketMaxMessageSize: Long = 16_777_216L // 16 MiB
+
+    /**
+     * Whether a proxy auto-configuration (PAC) script the system settings name gets a `wss://` WebSocket's whole URI
+     * with its resource name (path and query), as RFC 6455 section 4.1 asks, on Apple platforms and Windows
+     * ([ProxyResolvers.System]); the script must be given inline in the settings (Apple), by an `https://` URL or by a
+     * local `file:` URL (`file:///…`; one with a host, `file://srv/share/p.pac`, is fetched over SMB and does not count). Off by default: every script gets `wss://host[:port]/` only, as Chrome, Firefox and Android give
+     * `https` and `wss` URLs to PAC scripts, since a script can send what it is given out through `dnsResolve`
+     * (CVE-2016-3763, CVE-2016-5134). A script found by WPAD (automatic detection) or fetched over plain `http://`
+     * never gets more than that, whatever this says: whoever answers on the local network writes it. `ws://` URIs reach
+     * every script whole, `http` and `https` ones as their origin. On Apple platforms the PAC URL CFNetwork reports
+     * must equal the settings' string exactly; one written otherwise gets the origin. docs/guide/ktor.md, "Proxies".
+     */
+    @ExperimentalKuicksilverApi
+    public var pacFullWebSocketUrl: Boolean = false
 
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns), both families at once. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
