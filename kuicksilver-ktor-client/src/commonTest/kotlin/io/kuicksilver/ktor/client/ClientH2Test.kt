@@ -905,6 +905,38 @@ class ClientH2Test {
             }
         }
 
+    /**
+     * Found by the engine interop bench (kuicksilver-engine-interop, against Ktor's Netty server): a request timeout while
+     * the body arrives fails the body read with the timeout (HttpRequestTimeoutException), as over HTTP/1.1 and HTTP/3,
+     * not with the stream's own "the call ended" cancellation.
+     */
+    @Test fun requestTimeoutDuringTheBodyIsReportedAsSuch() =
+        clientTest {
+            tlsH2WithSilentUdp(onRequest = { _, r ->
+                r.respond(200)
+                val body =
+                    io.ktor.utils.io
+                        .ByteChannel()
+                body.writeFully(ByteArray(10))
+                body.flush()
+                r.sendBody(body) // the rest never comes
+            }) { port, _ ->
+                testClient(block = { install(HttpTimeout) { requestTimeoutMillis = 500 } }).use { c ->
+                    // the saved body (get) and a streamed one (execute) alike
+                    assertFailsWith<io.ktor.client.plugins.HttpRequestTimeoutException> { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                    val e =
+                        assertFailsWith<Throwable> {
+                            c.prepareGet("https://127.0.0.1:$port/").execute { it.bodyAsChannel().readBuffer() }
+                        }
+                    assertTrue(
+                        e is io.ktor.client.plugins.HttpRequestTimeoutException ||
+                            e.cause is io.ktor.client.plugins.HttpRequestTimeoutException,
+                        "the body failed with $e",
+                    )
+                }
+            }
+        }
+
     /** Events of interest, in order. */
     private class EventRecorder : KuicksilverEventListener() {
         val order = ArrayList<String>()
