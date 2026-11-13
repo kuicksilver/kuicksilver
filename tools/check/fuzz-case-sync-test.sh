@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/check/fuzz-case-sync.sh on a fixture tree: two copies that differ only in their package line
-# pass; a changed line in one, or a fuzz package without its copy, fails.
+# pass; a changed line in one, or a fuzz package without its copy, fails; one under .worktrees is not looked at.
 # Usage: tools/check/fuzz-case-sync-test.sh   (exit 1 when a control behaves wrongly)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -26,4 +26,7 @@ t="$(fixture drift)"; printf 'package b.fuzz\n\ninternal fun fuzzCase() = TODO()
 expect 1 "a drifted copy" "$t"
 t="$(fixture missing)"; rm "$t/mod-b/src/jvmTest/kotlin/b/fuzz/FuzzCase.kt"
 expect 1 "a fuzz package without its copy" "$t"
+t="$(fixture stray)"; mkdir -p "$t/.worktrees/x/mod-c/src/jvmTest/kotlin/c/fuzz"
+printf 'package c.fuzz\n\n@FuzzTest fun x(data: ByteArray) {}\n' > "$t/.worktrees/x/mod-c/src/jvmTest/kotlin/c/fuzz/XFuzzTest.kt"
+expect 0 "a fuzz package in another worktree's checkout is not this tree's" "$t"
 exit $fails
