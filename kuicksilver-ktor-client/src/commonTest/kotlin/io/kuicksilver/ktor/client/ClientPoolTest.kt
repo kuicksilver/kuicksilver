@@ -357,6 +357,44 @@ class ClientPoolTest {
             }
         }
 
+    /**
+     * The same when the transport ends between the connection's lookup and its count in `acquire` (the pool's re-check
+     * before a request is handed the connection): the request goes to a new connection. The transport is closed in that
+     * step through a test hook; a round in which the HTTP/3 session took note at once does not probe the window, and
+     * the number of rounds that did is printed.
+     */
+    @Test fun negative_connectionWhoseTransportEndsBeforeItIsCountedIsNotUsed() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    var probed = 0
+                    repeat(ROUNDS) { round ->
+                        assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
+                        val conn = engine.h3.connectionsForTest().single()
+                        engine.h3.beforeCountForTest = { c ->
+                            if (c === conn) {
+                                conn.quic.close()
+                                withTimeout(5.seconds) { conn.quic.closed.await() }
+                                if (!conn.closed.isCompleted) probed++
+                            }
+                        }
+                        try {
+                            val next = runCatching { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                            assertEquals("ok", next.getOrElse { throw AssertionError("round $round: the request failed", it) })
+                        } finally {
+                            engine.h3.beforeCountForTest = null
+                        }
+                        assertTrue(engine.h3.connectionsForTest().single() !== conn, "round $round: a new connection")
+                    }
+                    println("rounds that probed the window: $probed of $ROUNDS")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     private companion object {
         /** Rounds of [negative_connectionWhoseTransportEndedIsNotReused]: the window it probes is a few dispatches long. */
         const val ROUNDS = 30
