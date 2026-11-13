@@ -714,6 +714,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   accepted connection on the JVM and Android (`remoteAddress` and `remoteHost` read `localhost` for 127.0.0.1); they
   are now the IP literals, as over HTTP/2 and HTTP/3 and in Ktor's Netty and CIO engines, and no lookup is made. Found
   by the engine interop bench.
+- Ktor server engine: a graceful stop took 3 s longer while an HTTP/1.1 client over TLS kept its connection in a pool,
+  reading nothing until its next request (OkHttp, the JDK's HttpClient), idle or just answered: after its own
+  close_notify the server waited up to 3 s for the client's. A stopping server now closes without waiting for it (RFC
+  8446 section 6.1 lets a closing side close its read side without the peer's close_notify). Found by the engine
+  interop bench.
 - TLS: `ksl_ctx_verify_chain`, which re-verifies a client's cached chain before it resumes (ADR-0011), now applies
   OpenSSL's security level as a handshake does; before, the re-verification was weaker than the handshake it stands for
   (a client's cached chains come from handshakes at the same level under the same trust, so no weaker chain could resume

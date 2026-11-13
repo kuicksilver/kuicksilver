@@ -7,6 +7,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import kotlinx.coroutines.Job
 import kotlin.time.Duration
 
 /**
@@ -57,6 +58,18 @@ public fun Socket.setCloseTimeout(timeout: Duration?) {
 }
 
 internal expect fun Socket.setRawCloseTimeout(timeout: Duration?)
+
+/**
+ * A [TlsSocket]'s [Socket.close] sends everything queued and its close_notify, then waits up to 3 s for the peer's
+ * close_notify; once [job] completes it stops waiting (also a wait already in progress) and the socket closes. For a
+ * stopping server: an HTTP/1.1 client that keeps its idle connection in a pool reads nothing until its next request, so
+ * it never answers, and every such connection held the stop for 3 s. RFC 8446 section 6.1 lets the closing side close
+ * its read side without the peer's close_notify. No effect on a plain TCP socket, which does not wait for its peer.
+ */
+@InternalKuicksilverApi
+public fun Socket.stopAwaitingPeerCloseOn(job: Job) {
+    if (this is TlsSocket) stopAwaitingPeer = job
+}
 
 /**
  * Bytes this socket has handed to the kernel so far (of a [TlsSocket], its raw socket's, TLS records included), or null

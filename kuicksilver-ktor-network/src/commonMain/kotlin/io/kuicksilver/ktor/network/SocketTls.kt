@@ -110,6 +110,9 @@ public class TlsSocket private constructor(
      */
     @Volatile internal var closeTimeout: Duration? = null
 
+    /** Ends [close]'s wait for the peer's close_notify when it completes ([stopAwaitingPeerCloseOn]); null: wait up to 3 s. */
+    @Volatile internal var stopAwaitingPeer: Job? = null
+
     /**
      * The peer's plaintext goes to the application's channel. A session that failed (a reset, a TLS error) fails that
      * channel, not ends it: ktor's `copyTo` ends its loop on a source closed with a failure as on one closed cleanly and
@@ -205,7 +208,7 @@ public class TlsSocket private constructor(
                     runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()
                 }
-                tls.shutdown(drainTimeout = bound)
+                tls.shutdown(drainTimeout = bound, stopAwaitingPeer = stopAwaitingPeer)
             } finally {
                 tls.close()
                 runCatching { rawOut.flushAndClose() } // everything handed to the socket's write channel reaches the wire before FIN

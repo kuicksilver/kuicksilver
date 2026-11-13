@@ -31,6 +31,7 @@ import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.engineSelector
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.ktor.network.setCloseTimeout
+import io.kuicksilver.ktor.network.stopAwaitingPeerCloseOn
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
@@ -329,6 +330,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             return@launchOrElse
                                         } // a failed handshake ends only this connection
                                     t.setCloseTimeout(null)
+                                    // a stopping server sends its close_notify and closes without waiting up to 3 s for each
+                                    // client's (RFC 8446 section 6.1): a pooled idle HTTP/1.1 client never answers
+                                    t.stopAwaitingPeerCloseOn(draining)
                                     sock = t
                                     peer = t.peerCertificates
                                 } else {
@@ -508,7 +512,7 @@ private fun addHandlerForExpectedHeader(call: H1Call) {
 }
 
 // the IP literal, as over HTTP/2 and HTTP/3: `hostname` is a reverse DNS lookup on the JVM and Android (per connection, on
-// the accept path), and the connection point's addresses are IPs in Ktor's Netty and CIO engines too
+// the accept path); Ktor's Netty and CIO engines report the literal as remoteAddress too
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 private fun SocketAddress.toNetworkAddress(): NetworkAddress? =
     (this as? InetSocketAddress)?.let {
