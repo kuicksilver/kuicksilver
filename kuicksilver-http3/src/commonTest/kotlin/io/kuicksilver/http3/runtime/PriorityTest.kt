@@ -36,7 +36,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class PriorityTest {
@@ -412,8 +411,8 @@ class PriorityTest {
                 val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
                 val raw = RawPeer(c)
                 raw.openControl(listOf(SettingsId.QPACK_MAX_TABLE_CAPACITY to 4096L, SettingsId.QPACK_BLOCKED_STREAMS to 16L))
-                // (encoder stream bytes so far, connection bytes received when they arrived)
-                val encoder = MutableStateFlow(0L to 0L)
+                // encoder stream bytes so far
+                val encoder = MutableStateFlow(0L)
                 launch {
                     runCatching {
                         while (true) {
@@ -423,7 +422,7 @@ class PriorityTest {
                             while (true) {
                                 val n = st.input.readAvailable(b, 0, b.size)
                                 if (n < 0) break
-                                encoder.update { (total, _) -> total + n to c.stats.bytesReceived }
+                                encoder.update { it + n }
                             }
                         }
                     }
@@ -432,23 +431,26 @@ class PriorityTest {
                 val r = server.acceptRequest()
                 withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
                 // Set Dynamic Table Capacity follows the client's SETTINGS: in before the test begins
-                val capacitySent = withTimeout(5.seconds) { encoder.first { it.first > 0 } }.first
-                // a 40 ms round trip paces the flights, so the reader below sees the insert before the next flights land
-                q.net.delay = 20.milliseconds
+                val capacitySent = withTimeout(5.seconds) { encoder.first { it > 0 } }
                 val serverAddress = InetSocketAddress("10.0.0.2", 443)
+                // the trailer's value, in the clear in the insert (null crypto; characters whose Huffman codes are longer than a
+                // byte, so the encoder sends it as it is)
+                val marker = "~{}~{}~{}~{}"
+                val sent = SentBefore(serverAddress, marker.encodeToByteArray())
+                q.net.tap = sent::see
                 val held = Channel<Pair<InetSocketAddress, ByteArray>>(Channel.UNLIMITED)
                 q.net.drop = { from, to, b -> from == serverAddress && held.trySend(to to b).isSuccess }
                 val body = 384 * 1024 // within the client's stream and connection windows: nothing but the scheduler stops it
                 val w = r.respond(200)
                 w.output.writeFully(ByteArray(body))
                 w.output.flush()
-                w.finish(Http3Headers.of("x-probe" to "trailer")) // a new field: the encoder stream gets an insert
+                w.finish(Http3Headers.of("x-probe" to marker)) // a new field: the encoder stream gets an insert
                 q.net.drop = null
-                val base = c.stats.bytesReceived
                 held.close()
                 for ((to, b) in held) q.net.deliver(serverAddress, to, b)
-                val before = withTimeout(10.seconds) { encoder.first { it.first > capacitySent } }.second - base
-                assertTrue(before < body / 2, "$before bytes reached the client before the QPACK insert")
+                withTimeout(10.seconds) { encoder.first { it > capacitySent } }
+                val before = sent.before
+                assertTrue(before in 0 until body / 2, "the server sent $before bytes before the QPACK insert")
             }
         }
 
@@ -477,21 +479,23 @@ class PriorityTest {
                 val response = async { client.request(u0) }
                 val r = withTimeout(5.seconds) { urgent.await() }
                 val serverAddress = InetSocketAddress("10.0.0.2", 443)
+                val marker = "tunnel-data-0001".encodeToByteArray() // in the clear in its packet (null crypto)
+                val sent = SentBefore(serverAddress, marker)
+                q.net.tap = sent::see
                 val held = Channel<Pair<InetSocketAddress, ByteArray>>(Channel.UNLIMITED)
                 q.net.drop = { from, to, b -> from == serverAddress && held.trySend(to to b).isSuccess }
                 val body = 384 * 1024 // within the client's stream and connection windows: nothing but the scheduler stops it
                 val w = r.respond(200)
                 w.output.writeFully(ByteArray(body))
                 w.finish() // the whole body is the transport's before the tunnel's data
-                serverTunnel.output.writeFully(ByteArray(16))
+                serverTunnel.output.writeFully(marker)
                 serverTunnel.output.flush()
                 q.net.drop = null
-                val base = c.stats.bytesReceived
                 held.close()
                 for ((to, b) in held) q.net.deliver(serverAddress, to, b)
-                tunnel.input.readFully(ByteArray(16))
-                val before = c.stats.bytesReceived - base
-                assertTrue(before < body / 2, "$before bytes reached the client before the tunnel's data")
+                tunnel.input.readFully(ByteArray(marker.size))
+                val before = sent.before
+                assertTrue(before in 0 until body / 2, "the server sent $before bytes before the tunnel's data")
                 response.cancel()
                 client.close()
                 server.close()
@@ -548,4 +552,42 @@ class PriorityTest {
                 assertEquals(StreamPriority(1, true), (r as ServerRequestImpl).stream.priority)
             }
         }
+}
+
+/**
+ * What a server sent before the scheduler let [marker] out: the bytes of its datagrams to the client, in the order it
+ * sent them, up to the first that carries [marker] (null crypto: the payloads are in the clear). Counted as the server
+ * sends (`MemoryNet.tap`, on its loop), so it is the scheduler's order alone, whenever the client gets to read: counting
+ * at the client when its reader saw the data also counted whatever arrived while that reader waited for a thread (a
+ * loaded linux/amd64 container counted 230 KB and more for the same 40 KB the server had sent).
+ */
+private class SentBefore(
+    private val server: InetSocketAddress,
+    private val marker: ByteArray,
+) {
+    private var sent = 0L
+
+    /** Bytes sent before the datagram that carries [marker]; -1 while it has not gone out. */
+    @kotlin.concurrent.Volatile var before = -1L
+        private set
+
+    fun see(
+        from: InetSocketAddress,
+        @Suppress("UNUSED_PARAMETER") to: InetSocketAddress,
+        b: ByteArray,
+    ) {
+        if (from != server || before >= 0) return
+        if (contains(b, marker)) before = sent else sent += b.size
+    }
+
+    private fun contains(
+        b: ByteArray,
+        m: ByteArray,
+    ): Boolean {
+        outer@ for (i in 0..b.size - m.size) {
+            for (j in m.indices) if (b[i + j] != m[j]) continue@outer
+            return true
+        }
+        return false
+    }
 }
