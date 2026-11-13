@@ -51,7 +51,7 @@ head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --p
 # step overwrites them, and the failing tests are listed in <n>.log and on the failure line. The third 0.2.1 gate lost the
 # name of a flaky test this way: step 13's log had only "297 tests completed, 1 failed" (2026-10-23).
 step_reports() { # <marker> <dest>: copies every test-results file and HTML test report newer than <marker> to <dest>, same relative paths
-  # (never a heap dump: a test JVM out of heap leaves hundreds of MB in build/test-heap-dumps, and none belongs in build/ci)
+  # (never a heap dump: a safeguard, the dumps go to build/test-heap-dumps, not under build/reports; see step_dumps)
   local marker="$1" dest="$2"
   rm -rf "$dest"
   find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f -newer "$marker" \
@@ -59,6 +59,15 @@ step_reports() { # <marker> <dest>: copies every test-results file and HTML test
   [ -s "$marker.list" ] || { rm -f "$marker.list"; return 1; }
   mkdir -p "$dest" && tar --null -T "$marker.list" -cf - 2>/dev/null | tar -C "$dest" -xf -
   rm -f "$marker.list"
+}
+step_dumps() { # <marker> <log>: names every heap dump newer than <marker> (a test JVM out of heap, kuicksilver.test-jvm) under
+  # the failure line and in <log>: hundreds of MB each, left where they are for a look and to be deleted afterwards
+  local dumps
+  dumps=$(find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f \
+    -newer "$1" -path '*/build/test-heap-dumps/*.hprof' -print 2>/dev/null)
+  [ -n "$dumps" ] || return 0
+  { echo; echo "== heap dumps of this step (delete them when done):"; printf '%s\n' "$dumps"; } >> "$2"
+  printf '%s\n' "$dumps" | sed 's/^/     | heap dump, delete when done: /'
 }
 failed_tests() { # <dir>: one line per failed or errored JUnit test case in the XML under <dir>: class.name: first message line
   # shellcheck disable=SC2016   # an awk program
@@ -112,6 +121,7 @@ step() { # [--needs <name>]... [--after <name>]... [--pre <group>]... <name> <co
       { echo; echo "== local-matrix: test reports of this step copied to $reports"; echo "== failed tests:"; printf '%s\n' "${tests:-  (none in the XML)}"; } >> "$log"
       echo "FAIL (see $log; reports $reports)"; [ -z "$tests" ] || printf '%s\n' "$tests" | head -10 | sed 's/^/     |/'
     else echo "FAIL (see $log)"; fi
+    step_dumps "$marker" "$log"
   fi
   rm -f "$marker"
 }
