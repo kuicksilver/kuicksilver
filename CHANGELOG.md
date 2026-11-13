@@ -92,6 +92,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hashes to, and only it answers a Stateless Reset, within the rate limit, for an ID of the current or previous
   configuration that decrypts to this server's ID (decryptions have their own rate limit). `ksl_key_lb`,
   `ksl_key_lb_dup`, `ksl_key_lb_derive` and `ksl_key_ecb16` are additive under ABI 7. See docs/guide/quic.md, "Behind a load balancer".
+- Docs: [compatibility shims](docs/spec/compat-shims.md), every place where Kuicksilver departs from or goes beyond a
+  standard only for a peer that lags behind or breaks it (WebTransport draft-02 and draft-14 for browsers, the pre-IANA
+  `reset_stream_at` codepoint, msquic's provisional Initial SCID, quiche's FIN handling, lenient HTTP/1.1 and SOCKS5
+  replies, `Proxy-Connection` on CONNECT), each with its peers, the standard text, where it lives, its default, tests,
+  risk and removal condition; linked from the RFC compliance summary and the interop results.
 - Docs: every guide page opens with what it is for, what you need before you start (artifacts, versions, certificate) and a minimal example or a link to the section that has one; section pointers like "below" are links.
 - Docs: a generated reliability page, `docs/reliability.md`, with the interop cells of the latest matrix, fuzzing hours
   and executions per target, soak results (duration, resource trends, flatness verdicts), the count of `negative_*`

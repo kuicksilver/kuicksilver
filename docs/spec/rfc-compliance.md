@@ -9,7 +9,7 @@ Date: 2026-10-02; as of 0.2.1 (released 2026-11-04); split into this summary and
 - **Summary**: one sentence; the tests that pin a row are in its details.
 - **Details**: the row's section in `docs/spec/rfc/<rfc>.md`: the requirement, how it is met (files), the tests that pin it, history, notes on peers, open items.
 
-Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTransport with browsers) are in [interop.md](interop.md). `tools/check/rfc-table.sh` checks the format of the tables below.
+Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTransport with browsers) are in [interop.md](interop.md); every place where Kuicksilver departs from or goes beyond a standard only for a peer that lags behind or breaks it is in [compat-shims.md](compat-shims.md). `tools/check/rfc-table.sh` checks the format of the tables below.
 
 ## QUIC
 

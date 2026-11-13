@@ -320,6 +320,8 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage, one row per requirement, with a details
   file per RFC in [docs/spec/rfc/](docs/spec/rfc/).
 - [docs/spec/interop.md](docs/spec/interop.md) — the interop matrix and the analysis of its red cells.
+- [docs/spec/compat-shims.md](docs/spec/compat-shims.md) — every departure from a standard made only for a peer that lags
+  behind or breaks it, with its risk and removal condition.
 - [docs/reliability.md](docs/reliability.md) — what the last gate's artifacts say: interop cells, fuzzing hours, soak
   trends and the negative tests, generated from those artifacts.
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
