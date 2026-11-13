@@ -356,9 +356,21 @@ class StreamStateTest {
         peer.handshake(FrameEncoder.settings(intArrayOf(SettingId.NO_RFC7540_PRIORITIES), longArrayOf(1)))
         peer.send(peer.headers(1, endStream = false, dependency = 1), FrameEncoder.priority(1, 1))
         peer.send(peer.headers(3, endStream = false), FrameEncoder.priority(3, 3))
+        // trailers on the open stream 3 that name it as their own dependency: ignored as well
+        peer.send(peer.headers(3, listOf("x-trailer" to "1"), endStream = true, dependency = 3))
         peer.read()
         assertTrue(peer.resets().isEmpty(), "resets: ${peer.resets().map { it.streamId }}")
-        assertEquals(listOf(1, 3), peer.events().filterIsInstance<H2Event.HeadersReceived>().map { it.streamId })
+        assertEquals(listOf(1, 3, 3), peer.events().filterIsInstance<H2Event.HeadersReceived>().map { it.streamId })
+    }
+
+    /** Without SETTINGS_NO_RFC7540_PRIORITIES, trailers whose priority fields name their own stream reset it (RFC 7540 section 5.3.1). */
+    @Test
+    fun negative_selfDependentTrailersAreStreamError() {
+        val peer = RawH2Peer(Role.SERVER)
+        peer.handshake()
+        peer.send(peer.headers(3, endStream = false))
+        peer.send(peer.headers(3, listOf("x-trailer" to "1"), endStream = true, dependency = 3))
+        peer.assertStreamError(3, Http2ErrorCode.PROTOCOL_ERROR)
     }
 
     /**

@@ -289,9 +289,9 @@ Borderline: stricter, not lenient, and kept for a test tool built on the older R
 because it goes beyond RFC 9113 only to keep that check passing.
 
 **What it does.** A HEADERS frame whose priority fields make the stream depend on itself, or a PRIORITY frame that does,
-is a stream error of type PROTOCOL_ERROR; every other RFC 7540 priority signal is parsed and ignored. A stream opened by
-HEADERS or a PRIORITY frame is checked only while the peer has not sent SETTINGS_NO_RFC7540_PRIORITIES = 1 (after it,
-RFC 9218 §2.1: "MUST ignore HTTP/2 priority signals").
+is a stream error of type PROTOCOL_ERROR; every other RFC 7540 priority signal is parsed and ignored. Each of the three
+checks (HEADERS opening a stream, HEADERS on an open stream, PRIORITY) runs only while the peer has not sent
+SETTINGS_NO_RFC7540_PRIORITIES = 1 (after it, RFC 9218 §2.1: "MUST ignore HTTP/2 priority signals").
 
 **Peers.** h2spec 2.6.0, whose http2/5.3.1 cases ("Sends HEADERS frame that depends on itself", "Sends PRIORITY frame
 that depend on itself") expect the RFC 7540 error
@@ -303,8 +303,8 @@ document. The description of frame fields and some of the mandatory handling is 
 of this document remain interoperable with implementations that use the priority signaling described in RFC 7540." RFC
 9113 has no self-dependency rule (§6.3 keeps only the stream 0 and frame length errors).
 
-**Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:150` (HEADERS
-opening a stream), :180 (HEADERS on an open stream), :268 (PRIORITY).
+**Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:158` (HEADERS
+opening a stream), :190 (HEADERS on an open stream), :276 (PRIORITY).
 
 **On by default.** Yes; no switch.
 

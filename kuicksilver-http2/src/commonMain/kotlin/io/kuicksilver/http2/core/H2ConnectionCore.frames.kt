@@ -185,9 +185,9 @@ internal fun H2ConnectionCore.onHeaders(
         if (recentlyClosed[id] != true) headersOnClosed(id)
         return
     }
-    if (blockDependency ==
-        id
-    ) {
+    // as for a HEADERS that opens a stream: ignored entirely once the peer said it sends no RFC 7540 signals (RFC 9218
+    // section 2.1: "MUST ignore HTTP/2 priority signals")
+    if (blockDependency == id && !peerNoRfc7540Priorities) {
         return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "stream depends on itself (RFC 7540 section 5.3.1)", now)
     }
     if (s.state == StreamState.HALF_CLOSED_REMOTE) return streamError(id, Http2ErrorCode.STREAM_CLOSED, "HEADERS after END_STREAM", now)
