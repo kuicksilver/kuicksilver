@@ -161,11 +161,14 @@ ticket format for the same reason.
 **What it does.** A client takes the Source Connection ID of the server's first Initial and discards later long-header
 packets with another one. One exception: an Initial with nothing but ACK, PING and PADDING whose SCID is the DCID the
 client sends to is processed (its ACK counts, so the RTT sample is taken and acknowledged data is not resent) without
-fixing the SCID and without recording its packet number; the next Initial fixes it.
+fixing the SCID; the next Initial fixes it. Otherwise it is an Initial like any other: its packet number is recorded (a
+copy is a duplicate, RFC 9000 §12.3) and it is acknowledged, at once when a PING makes it ack-eliciting (§13.2.1).
 
 **Peers.** msquic (17f6e9f): until it has the whole ClientHello its connection sends from the client's own DCID (the
 IsInitial source CID, `src/core/connection.c`), and takes its own SCID only when the listener accepts the connection
-(`QuicConnGenerateNewSourceCid` in `src/core/listener.c`): one connection, packet numbers continuing, two SCIDs.
+(`QuicConnGenerateNewSourceCid` in `src/core/listener.c`): one connection, two SCIDs, every packet numbered from one
+counter (`Send.NextPacketNumber`), and every sent packet, ACK-only ones included, tracked as sent
+(`QuicLossDetectionOnPacketSent`), so recording and acknowledging the provisional packet changes nothing for msquic.
 
 **Standard text.** RFC 9000 §7.2: "Once a client has received a valid Initial packet from the server, it MUST discard
 any subsequent packet it receives on that connection with a different Source Connection ID." and "A client MUST change
@@ -175,19 +178,20 @@ owner keeps it for 0.3.0 as an approved deviation; the §7.2 row of the summary 
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380` (the decision, with
-`onlyAcks` at :491), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
+`onlyAcks` at :493), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.
 
 **Tests.** `core.ReceivePathTest.ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid`,
-`.negative_ackOnlyInitialFromAnotherScidFixesIt`, `.clientDiscardsLongHeaderWithDifferentScid`,
+`.provisionalInitialWithPingIsAcknowledged`, `.negative_ackOnlyInitialFromAnotherScidFixesIt`, `.clientDiscardsLongHeaderWithDifferentScid`,
 `core.HandshakeLimitsTest.ackOnlyFirstInitialUnderAmplificationLimitKeepsOneQuickHandshake`.
 
 **Risk.** Low. Initial keys are public, so whoever sees the client's first Initial can forge an ACK-only Initial from its
 DCID; the RFC already lets such an attacker forge an Initial that fixes a wrong SCID. A forged provisional Initial can
 acknowledge the client's Initial packets, so they are not resent until a real server packet arrives (a stall, up to the
-handshake timeout); it fixes nothing and records no packet number.
+handshake timeout); it fixes nothing. Its packet number is recorded, so it can make a real server packet with the same
+number a duplicate, which the server then resends; any forged Initial can do that.
 
 **Removal.** When msquic sends its first Initial from its own SCID (not the case in 17f6e9f), or answers with nothing
 before its listener accepts the connection.

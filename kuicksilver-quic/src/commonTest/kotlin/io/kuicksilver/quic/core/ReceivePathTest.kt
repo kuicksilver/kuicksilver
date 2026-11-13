@@ -580,13 +580,17 @@ class ReceivePathTest {
      * RFC 9000 section 7.2, msquic: until it has the whole ClientHello its connection sends from the client's own DCID
      * (connection.c, the IsInitial source CID) and takes its real SCID only when the listener accepts (listener.c,
      * QuicConnGenerateNewSourceCid). An Initial with nothing but ACK and PADDING from the DCID the client sends to is processed
-     * (its ACK gives an RTT sample) without fixing the SCID; its packet number is not recorded, so the ServerHello's Initial is
-     * no duplicate whatever its number. The first Initial with another SCID fixes it.
+     * (its ACK gives an RTT sample) without fixing the SCID. Its packet number is recorded like any other (RFC 9000 section
+     * 12.3: a copy is a duplicate; msquic numbers every packet of the connection from one counter, so its later Initials
+     * continue above it). The first Initial with another SCID fixes it.
      */
     @Test fun ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid() {
         val p = CorePair(crypto = ksl)
         try {
-            p.filterToClient = { i, _ -> i > 0 } // the real server's answer to half the ClientHello is lost
+            // msquic's case: the server has half the ClientHello (the second datagram is lost) and acknowledges it with packet
+            // number 0; that answer is lost here and replaced by the same ACK-only packet sent from the client's own DCID
+            p.filterToServer = { i, _ -> i != 1 }
+            p.filterToClient = { i, _ -> i > 0 }
             p.step()
             val dcid = p.client.remoteCid
             p.advance(20.milliseconds)
@@ -595,9 +599,38 @@ class ReceivePathTest {
             assertEquals(dropped, p.client.datagramsDropped, "the ACK-only Initial is processed")
             assertTrue(p.client.rtt.hasSample, "its ACK counts")
             assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
-            // the server's next Initial may carry packet number 0 again: not recorded, the provisional one is no duplicate for it
+            // RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has not
+            // processed another packet with the same packet number"
             feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
-            assertEquals(0L, p.client.duplicatesDropped, "the provisional packet number is not recorded")
+            assertEquals(1L, p.client.duplicatesDropped, "a copy of the provisional packet is a duplicate")
+            assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
+            assertEquals(p.server!!.localCid, p.client.remoteCid)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 13.2.1: "MUST acknowledge all ack-eliciting Initial and Handshake packets immediately". A provisional
+     * Initial (from the client's own DCID, msquic) that carries a PING besides its ACK is acknowledged at once, like any
+     * other, and still does not fix the SCID.
+     */
+    @Test fun provisionalInitialWithPingIsAcknowledged() {
+        val p = CorePair(crypto = ksl)
+        try {
+            p.filterToServer = { i, _ -> i != 1 } // as above: the server acknowledges half the ClientHello with packet number 0
+            p.filterToClient = { i, _ -> i > 0 }
+            p.step()
+            val dcid = p.client.remoteCid
+            p.advance(20.milliseconds)
+            val initial =
+                p.client.loss
+                    .space(SpaceId.Initial)
+                    .ack
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0, ping = true), CoreFixtures.serverAddr, p.now)
+            assertEquals(0L, initial.largestReceived, "the packet is recorded")
+            assertTrue(initial.ackRequired, "an ack-eliciting Initial is acknowledged immediately")
+            assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
             assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
             assertEquals(p.server!!.localCid, p.client.remoteCid)
         } finally {
@@ -666,10 +699,12 @@ class ReceivePathTest {
         scid: io.kuicksilver.quic.wire.ConnectionId,
         pn: Long,
         largestAcked: Int,
+        ping: Boolean = false,
     ): ByteArray {
         val dcid = client.localCid.toByteArray()
         val s = scid.toByteArray()
-        val payload = byteArrayOf(0x02, largestAcked.toByte(), 0, 0, 0) + ByteArray(30)
+        val ack = byteArrayOf(0x02, largestAcked.toByte(), 0, 0, 0)
+        val payload = if (ping) byteArrayOf(0x01) + ack + ByteArray(29) else ack + ByteArray(30)
         val length = 2 + payload.size + 16
         val header =
             byteArrayOf(0xc1.toByte(), 0, 0, 0, 1, dcid.size.toByte()) + dcid + byteArrayOf(s.size.toByte()) + s +
