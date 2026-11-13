@@ -1620,6 +1620,18 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- Ktor server (RFC 9110 section 7.4): a request for an `https` URI whose host the certificate of its connection does not
+  name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
+  section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong
+  identity. Such a request now gets `421 Misdirected Request` before the application sees it, over HTTP/1.1, HTTP/2 and
+  HTTP/3; on HTTP/2 and HTTP/3 only its stream ends. The host is checked against the subjectAltName of the certificate
+  that connection presented (the `sniSelector` choice, or the identity current at its handshake), as a client checks it:
+  wildcards for one whole left-most label only, IP literals against iPAddress entries, never the subject CN, the port not
+  at all. A connector whose every client is a trusted gateway forwarding other names turns the check off with the new
+  `tlsConnector { trustedGateway = true }` (docs/guide/ktor.md, "Misdirected requests"). New for the check and for servers
+  built on the libraries: `TlsConnection.localCertificates`, `QuicTlsSession.localCertificates`,
+  `QuicConnection.localCertificates`, `TlsSocket.localCertificates` and `Certificate.matchesHost`.
+
 - Ktor client, WebSockets (RFC 6455 section 4.1): the server's answer to the opening handshake was not checked beyond
   its status and its extensions, so a 101 from something that is no WebSocket server (a wrong or missing
   `Sec-WebSocket-Accept`, `Upgrade: h2c`, no `Connection: Upgrade`) or one choosing a subprotocol the client never

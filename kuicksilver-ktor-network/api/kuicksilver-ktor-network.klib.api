@@ -62,6 +62,8 @@ final class io.kuicksilver.ktor.network/TlsSocket : io.ktor.network.sockets/Sock
         final fun <get-coroutineContext>(): kotlin.coroutines/CoroutineContext // io.kuicksilver.ktor.network/TlsSocket.coroutineContext.<get-coroutineContext>|<get-coroutineContext>(){}[0]
     final val localAddress // io.kuicksilver.ktor.network/TlsSocket.localAddress|{}localAddress[0]
         final fun <get-localAddress>(): io.ktor.network.sockets/SocketAddress // io.kuicksilver.ktor.network/TlsSocket.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val localCertificates // io.kuicksilver.ktor.network/TlsSocket.localCertificates|{}localCertificates[0]
+        final fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.ktor.network/TlsSocket.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     final val negotiatedAlpn // io.kuicksilver.ktor.network/TlsSocket.negotiatedAlpn|{}negotiatedAlpn[0]
         final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.ktor.network/TlsSocket.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
     final val peerCertificates // io.kuicksilver.ktor.network/TlsSocket.peerCertificates|{}peerCertificates[0]

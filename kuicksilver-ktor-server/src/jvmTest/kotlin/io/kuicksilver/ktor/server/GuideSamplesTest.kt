@@ -320,6 +320,35 @@ class GuideSamplesTest {
         }
     }
 
+    @Test fun trustedGatewaySample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val internalIdentity = ServerFixtures.identity()
+                val server =
+                    embeddedServer(Kuicksilver, configure = {
+                        // guide:ktor:trusted-gateway
+                        tlsConnector(internalIdentity) {
+                            port = 0
+                            trustedGateway = true // every client of this port is the gateway
+                        }
+                        http3 = false
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                server.startSuspend(wait = false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    // a name the certificate does not carry, forwarded by the gateway: served
+                    val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: public.example\r\nConnection: close\r\n\r\n")
+                    assertTrue(r.startsWith("HTTP/1.1 200 "), r)
+                } finally {
+                    server.stopSuspend(100, 500)
+                }
+            }
+        }
+
     @Test fun prioritySample() =
         runBlocking {
             withTimeout(30.seconds) {
@@ -335,7 +364,7 @@ class GuideSamplesTest {
                         }
                     }
                 try {
-                    val resp = rawHttp(port, "GET /report HTTP/1.1\r\nHost: s\r\nPriority: u=1\r\nConnection: close\r\n\r\n")
+                    val resp = rawHttp(port, "GET /report HTTP/1.1\r\nHost: server.test\r\nPriority: u=1\r\nConnection: close\r\n\r\n")
                     assertTrue(resp.lowercase().contains("\r\npriority: u=4\r\n") && resp.endsWith("report"), resp)
                 } finally {
                     server.stop(100, 500)

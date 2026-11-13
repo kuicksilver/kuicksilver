@@ -157,6 +157,8 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
     final val trust // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trust|{}trust[0]
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trust.<get-trust>|<get-trust>(){}[0]
+    final val trustedGateway // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trustedGateway|{}trustedGateway[0]
+        final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
     final val type // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type|{}type[0]
         final fun <get-type>(): io.ktor.server.engine/ConnectorType // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type.<get-type>|<get-type>(){}[0]
 
@@ -188,6 +190,9 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final var trust // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust|{}trust[0]
             final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust.<get-trust>|<get-trust>(){}[0]
             final fun <set-trust>(io.kuicksilver.tls/TrustConfig?) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig?){}[0]
+        final var trustedGateway // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway|{}trustedGateway[0]
+            final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
+            final fun <set-trustedGateway>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trustedGateway.<set-trustedGateway>|<set-trustedGateway>(kotlin.Boolean){}[0]
 
         final fun build(): io.kuicksilver.ktor.server/KuicksilverTlsConnector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.build|build(){}[0]
     }

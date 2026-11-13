@@ -559,6 +559,8 @@ internal class KslQuicTlsSession(
         }
     }
 
+    override val localCertificates: List<Certificate> get() = ctx.localChain
+
     override val peerCertificates: List<Certificate> get() =
         if (ssl != 0L &&
             presented.isEmpty()

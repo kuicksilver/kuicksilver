@@ -112,6 +112,13 @@ public class TlsConnection private constructor(
      */
     public val peerCertificates: List<Certificate> get() = presented
 
+    /**
+     * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
+     * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
+     * resumption, the identity chosen for the resumed handshake. Empty without one, or before the handshake chose it.
+     */
+    public val localCertificates: List<Certificate> get() = (overrideCtx?.ctx ?: ctx).localChain
+
     /** The application protocol both sides agreed on (RFC 7301), or null when ALPN was not negotiated. */
     public var negotiatedAlpn: String? = null
         private set

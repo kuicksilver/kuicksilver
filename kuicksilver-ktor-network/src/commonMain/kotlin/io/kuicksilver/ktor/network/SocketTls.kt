@@ -93,6 +93,9 @@ public class TlsSocket private constructor(
     /** The peer's verified certificate chain, leaf first; empty when it sent none (see [TlsConnection.peerCertificates]). */
     public val peerCertificates: List<Certificate> get() = tls.peerCertificates
 
+    /** The chain this side presents on the connection, leaf first (see [TlsConnection.localCertificates]). */
+    public val localCertificates: List<Certificate> get() = tls.localCertificates
+
     /** The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated. */
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn
 

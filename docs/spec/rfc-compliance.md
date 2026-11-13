@@ -118,6 +118,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9114 | §7.1, §7.2 — frames | ✅ | 0.2.1 | Frames are parsed with GREASE types skipped and HTTP/2 types refused, and a declared length never sets a buffer size. | [details](rfc/9114.md#s7-1-frames) |
 | RFC 9114 | §7.2.4, §6.2.1 — SETTINGS | ✅ | 0.2.0 | SETTINGS must come first on the control stream and only once. | [details](rfc/9114.md#s7-2-4-settings) |
 | RFC 9114 | §3.1 — engine client | ✅ | 0.2.0 | The Ktor client uses h3 by prior knowledge with one connection per origin and an HTTP/1.1 fallback. | [details](rfc/9114.md#s3-1-engine-client) |
+| RFC 9114 | §3.3 — one connection per address and port (client) | 🔶 | 0.2.0 | The client opens one HTTP/3 connection per origin and destination name, so origins sharing an address each get their own TLS configuration, but one origin reached under two names of one address can get two connections. | [details](rfc/9114.md#s3-3-connections-per-address) |
 | RFC 9114 | §5.2 — engine server | ✅ | 0.2.0 | The Ktor server's stop sends a two-phase GOAWAY to all HTTP/3 connections at once. | [details](rfc/9114.md#s5-2-engine-server) |
 | RFC 9114 | §5.2; RFC 9000 §5.2.2, §10.2.3, §20.1 — engine drain without a stop | ✅ | 0.3.0 | The Ktor server's `Drain` switch sends GOAWAY to every live HTTP/3 connection and refuses new QUIC connections with CONNECTION_REFUSED while it keeps running. | [details](rfc/9114.md#s5-2-engine-drain) |
 | RFC 9114 | §3.1–3.2 — ALPN `h3` | ✅ | 0.2.0 | Endpoints negotiate ALPN `h3` only and close connections with another protocol. | [details](rfc/9114.md#s3-1-alpn-h3) |
@@ -245,6 +246,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |
 | RFC 9110 | §10.1.1 — `Expect: 100-continue` | ✅ | 0.3.0 | The server sends `100 Continue` at once unless the head alone determines the final status. | [details](rfc/9110.md#s10-1-1-expect-100-continue) |
+| RFC 9110 | §7.4, §15.5.20; RFC 9113 §9.1.1; RFC 9114 §3.3 — server: misdirected requests (421) | ✅ | 0.3.0 | The server engine answers 421 to an `https` request for a host the certificate of its connection does not name, over HTTP/1.1, HTTP/2 and HTTP/3, unless the connector is marked as a trusted gateway. | [details](rfc/9110.md#s7-4-server-misdirected-requests) |
 | RFC 8941 | §4.2 — Dictionary parsing of the Priority field | ✅ | 0.3.0 | The `Priority` field and PRIORITY_UPDATE values are parsed as RFC 8941 Dictionaries, and a failed parse means the defaults. | [details](rfc/8941.md#s4-2-dictionary-parsing) |
 | RFC 9111 | §1.2.2 — delta-seconds in Alt-Svc `ma` | ✅ | 0.2.1 | An Alt-Svc `ma` too large to represent counts as 2147483648 seconds. | [details](rfc/9111.md#s1-2-2-delta-seconds) |
 

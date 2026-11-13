@@ -181,6 +181,75 @@ class ServerIdentityReloadTest {
             }
         }
 
+    /**
+     * RFC 9110 section 7.4 checks a request against the certificate its own connection presented: after a reload to a leaf
+     * that names only `proxy.internal`, the connections opened before it still serve `server.test`, the new ones answer it 421.
+     */
+    @Test fun negative_misdirectedCheckUsesEachConnectionsOwnLeaf() =
+        h3ServerTest {
+            val r = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
+            val server =
+                kuicksilverServer(null, configure = {
+                    tlsConnector(r) {
+                        host = "127.0.0.1"
+                        port = 0
+                    }
+                }, module = { routing { get("/") { call.respondText("ok") } } })
+            server.startSuspend(wait = false)
+            val port =
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port
+            val opened = ArrayList<Any>()
+
+            fun viaProxyName(alpn: String) =
+                io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                    this.alpn = listOf(alpn)
+                    serverName = "proxy.internal"
+                    trust =
+                        io.kuicksilver.tls.TrustConfig
+                            .AnchoredCa(listOf(ServerFixtures.testCa))
+                }
+            try {
+                withTimeout(30.seconds) {
+                    val a = H1.open(port).also { opened += it }
+                    assertEquals("ok", a.get())
+                    val b = H3.open(port).also { opened += it }
+                    assertEquals("ok", b.get())
+
+                    r.reload(TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf()))
+
+                    assertEquals("ok", a.get(), "HTTP/1.1: the connection from before the reload presented server.test")
+                    assertEquals("ok", b.get(), "HTTP/3: the connection from before the reload presented server.test")
+                    val h1After =
+                        rawHttp(
+                            port,
+                            "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n",
+                            viaProxyName("http/1.1"),
+                        )
+                    assertTrue(h1After.startsWith("HTTP/1.1 421 "), h1After)
+                    val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                    try {
+                        val c = ep.connect(InetSocketAddress("127.0.0.1", port), viaProxyName("h3"))
+                        assertEquals(421, c.request(http3Request("GET", "server.test", "/")).status, "HTTP/3 after the reload")
+                        c.close()
+                    } finally {
+                        ep.close()
+                    }
+                }
+            } finally {
+                for (o in opened) {
+                    when (o) {
+                        is H1 -> o.close()
+                        is H3 -> o.close()
+                    }
+                }
+                server.stop(100, 500)
+                r.close()
+            }
+        }
+
     /** `identityReloadInterval` watches the files `EngineMain` read: set without them, the server refuses to start instead of never reloading. */
     @Test fun negative_reloadIntervalWithoutIdentityFilesFailsTheStart() =
         serverTest {

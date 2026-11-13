@@ -178,6 +178,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                 CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
                         ) {
                             val peer = conn.quic.peerCertificates
+                            val authorityCheck = AuthorityCheck(conn.quic.localCertificates, tls.trustedGateway)
                             try {
                                 while (true) {
                                     val req =
@@ -193,7 +194,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                     launch {
                                         // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                         try {
-                                            handleHttp3(req, local, peer)
+                                            handleHttp3(req, local, peer, authorityCheck)
                                         } catch (e: CancellationException) {
                                             throw e
                                         } catch (e: Throwable) {
@@ -236,6 +237,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     req: Http3ServerRequest,
     local: InetSocketAddress,
     peer: List<Certificate>,
+    authorityCheck: AuthorityCheck,
 ) {
     // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
     // WebTransport) and WebTransport go through Ktor's pipeline; other protocols are not served here and get 501 (section 3).
@@ -247,6 +249,12 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     val webTransport = configuration.webTransport && req.isWebTransport
     if (req.method == "CONNECT" && !webSocket && !webTransport) {
         runCatching { req.respond(501).finish() }
+        return
+    }
+    // RFC 9110 section 7.4 (RFC 9114 section 3.3): a request for a host this connection's certificate does not name gets 421
+    // and never reaches the application; the stream ends, the connection serves the client's other requests
+    if (authorityCheck.misdirected(req.scheme, req.authority)) {
+        runCatching { req.respond(MISDIRECTED_REQUEST).finish() }
         return
     }
     // forwarded from early data by a gateway (RFC 8470 section 5.1): what the early-data policy does not declare replayable

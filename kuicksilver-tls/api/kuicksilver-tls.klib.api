@@ -189,6 +189,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
         abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
     open val earlyDataAccepted // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted|{}earlyDataAccepted[0]
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val localCertificates // io.kuicksilver.tls/QuicTlsSession.localCertificates|{}localCertificates[0]
+        open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
 
     abstract fun drive(): io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/QuicTlsSession.drive|drive(){}[0]
     abstract fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/QuicTlsSession.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
@@ -697,6 +699,8 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
 final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuicksilver.tls/TlsConnection|null[0]
     final val input // io.kuicksilver.tls/TlsConnection.input|{}input[0]
         final fun <get-input>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.tls/TlsConnection.input.<get-input>|<get-input>(){}[0]
+    final val localCertificates // io.kuicksilver.tls/TlsConnection.localCertificates|{}localCertificates[0]
+        final fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsConnection.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     final val output // io.kuicksilver.tls/TlsConnection.output|{}output[0]
         final fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.tls/TlsConnection.output.<get-output>|<get-output>(){}[0]
     final val peerCertificates // io.kuicksilver.tls/TlsConnection.peerCertificates|{}peerCertificates[0]
@@ -775,6 +779,7 @@ final object io.kuicksilver.tls/KslQuicCrypto : io.kuicksilver.tls/QuicCrypto { 
 final val io.kuicksilver.tls/alertCode // io.kuicksilver.tls/alertCode|@io.kuicksilver.tls.VerifyReason{}alertCode[0]
     final fun (io.kuicksilver.tls/VerifyReason).<get-alertCode>(): kotlin/Int // io.kuicksilver.tls/alertCode.<get-alertCode>|<get-alertCode>@io.kuicksilver.tls.VerifyReason(){}[0]
 
+final fun (io.kuicksilver.tls/Certificate).io.kuicksilver.tls/matchesHost(io.kuicksilver.tls/HostName): kotlin/Boolean // io.kuicksilver.tls/matchesHost|matchesHost@io.kuicksilver.tls.Certificate(io.kuicksilver.tls.HostName){}[0]
 final fun io.kuicksilver.tls/keylogFile(kotlin/String): io.kuicksilver.tls/KeylogSink // io.kuicksilver.tls/keylogFile|keylogFile(kotlin.String){}[0]
 final fun io.kuicksilver.tls/keylogFromEnvironment(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/keylogFromEnvironment|keylogFromEnvironment(){}[0]
 final inline fun io.kuicksilver.tls/tlsConfig(io.kuicksilver.tls/TlsRole, kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit>): io.kuicksilver.tls/TlsConfig // io.kuicksilver.tls/tlsConfig|tlsConfig(io.kuicksilver.tls.TlsRole;kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder,kotlin.Unit>){}[0]

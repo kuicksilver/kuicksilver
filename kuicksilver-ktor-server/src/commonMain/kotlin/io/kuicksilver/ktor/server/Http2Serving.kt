@@ -107,6 +107,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     sock: Socket,
     remote: InetSocketAddress?,
     peer: List<Certificate>,
+    authorityCheck: AuthorityCheck,
     altSvc: () -> String?,
     prefaceWithin: Duration,
     idle: Duration,
@@ -172,7 +173,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
                 supervisorScope {
                     for (r in c.requests) {
-                        launch { handleH2(r, local, remote, peer, connAltSvc, idle, sendTimeout) }
+                        launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout) }
                     }
                 }
             }
@@ -286,6 +287,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     local: InetSocketAddress?,
     remote: InetSocketAddress?,
     peer: List<Certificate>,
+    authorityCheck: AuthorityCheck,
     altSvc: H2AltSvc,
     bodyIdle: Duration,
     sendTimeout: Duration,
@@ -301,6 +303,12 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
             // a classic CONNECT (no tunnels here), or another protocol: RFC 9220 section 3's answer to an Extended CONNECT
             // for a protocol the server does not support
             answered = runCatching { r.respond(501, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
+            return
+        }
+        // RFC 9110 section 7.4 (RFC 9113 section 9.1.1): a request for a host this connection's certificate does not name
+        // gets 421 and never reaches the application; the stream ends, the connection serves the client's other requests
+        if (authorityCheck.misdirected(r.scheme, r.authority)) {
+            answered = runCatching { r.respond(MISDIRECTED_REQUEST, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }
         if (r.fields.any { it.first == EARLY_DATA_FIELD.lowercase() } &&

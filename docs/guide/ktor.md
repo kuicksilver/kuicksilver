@@ -580,6 +580,32 @@ dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certi
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
 
+### Misdirected requests
+
+A TLS connector answers `421 Misdirected Request` to a request for an `https` URI whose host the certificate of its
+connection does not name, over HTTP/1.1, HTTP/2 and HTTP/3, and the application never sees that request (RFC 9110 section
+7.4: such a request "MUST be rejected"). Browsers send these: they reuse an HTTP/2 or HTTP/3 connection for another host at
+the same address, and a 421 makes them retry on a connection of its own. On HTTP/2 and HTTP/3 only that request's stream
+ends; the connection serves the others.
+
+The host is checked as a client checks it: against the subjectAltName of the certificate that connection presented (the
+`sniSelector`'s choice, or the identity current at its handshake when a `TlsIdentity.Reloadable` rotates), a wildcard
+`*.example.com` for one whole left-most label, an IP literal against the certificate's IP addresses, never the subject CN.
+The port is not checked: a certificate names none. So a certificate must name every host the server is reached under,
+`localhost` and the addresses included where clients use them.
+
+Behind a gateway that terminates TLS and forwards requests for names the certificate here does not carry (it re-encrypts
+with an internal certificate), turn the check off for that connector only. RFC 9110 allows it for connections "from a
+trusted gateway", so the connector must accept no other clients:
+
+```kotlin
+// guide:ktor:trusted-gateway
+tlsConnector(internalIdentity) {
+    port = 8443
+    trustedGateway = true // every client of this port is the gateway
+}
+```
+
 ### Certificate rotation
 
 A renewed certificate can be put in place without a restart (experimental). Give the connector a

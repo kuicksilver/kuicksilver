@@ -36,6 +36,11 @@ internal class KslContext private constructor(
      * separately, and a reload in between must not resume a session authenticated with another client certificate.
      */
     val identityTag: String?,
+    /**
+     * The certificate chain this context presents (leaf first), the snapshot [identityTag] was taken from; empty without an
+     * identity. A server's requests are checked against its leaf (RFC 9110 section 7.4).
+     */
+    val localChain: List<Certificate>,
     private val quicTickets: Boolean,
     private val earlyData: Boolean,
     /**
@@ -267,10 +272,10 @@ internal class KslContext private constructor(
             try {
                 val h = Ksl.ctxNew(if (config.role == TlsRole.Client) KslConst.CLIENT else KslConst.SERVER)
                 try {
-                    val tag: String?
+                    val chain: List<Certificate>
                     try {
                         val trust = config.trust.withSnapshot(ca)
-                        tag = configure(h, config, quic, snapshot, trust)
+                        chain = configure(h, config, quic, snapshot, trust)
                         if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData, trust)
                     } catch (
                         e: KslException.Internal,
@@ -278,7 +283,7 @@ internal class KslContext private constructor(
                         throw TlsException.Config("invalid TLS configuration: ${e.message}")
                     }
                     Ksl.ctxFreeze(h)
-                    return KslContext(h, config, quic, tag, quicTickets, earlyData, ca)
+                    return KslContext(h, config, quic, chain.firstOrNull()?.let(::certificateTag), chain, quicTickets, earlyData, ca)
                 } catch (t: Throwable) {
                     Ksl.ctxFree(h)
                     throw t
@@ -301,7 +306,7 @@ internal class KslContext private constructor(
             Ksl.sha2(256, leaf.encoded).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
         /**
-         * Returns the [identityTag] of the identity it configured: [snapshot] (whose key the caller holds) when given. [trust] is
+         * Returns the chain of the identity it configured (empty without one): [snapshot] (whose key the caller holds) when given. [trust] is
          * `config.trust` with a ReloadableCa replaced by the bundle this context was built for.
          */
         private fun configure(
@@ -310,16 +315,16 @@ internal class KslContext private constructor(
             quic: Boolean,
             snapshot: TlsIdentity.InMemory?,
             trust: TrustConfig,
-        ): String? {
+        ): List<Certificate> {
             if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
-            val tag =
+            val chain =
                 if (snapshot != null) {
                     Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)
-                    certificateTag(snapshot.chain[0])
+                    snapshot.chain
                 } else {
-                    config.identity?.let { id -> identityOf(h, id) }
+                    config.identity?.let { id -> identityOf(h, id) } ?: emptyList()
                 }
             if (config.role ==
                 TlsRole.Client
@@ -375,7 +380,7 @@ internal class KslContext private constructor(
             }
             if (config.keylog != null) Ksl.ctxSetOption(h, KslConst.OPT_KEYLOG, 1)
             if (config.genericAlerts) Ksl.ctxSetOption(h, KslConst.OPT_GENERIC_ALERTS, 1)
-            return tag
+            return chain
         }
 
         private fun quicServerTickets(
@@ -397,22 +402,22 @@ internal class KslContext private constructor(
             if (earlyData) Ksl.ctxSetOption(h, KslConst.OPT_EARLY_DATA, 1)
         }
 
-        /** Configures [id] into [h]; returns its [identityTag]. */
+        /** Configures [id] into [h]; returns the chain it configured. */
         private fun identityOf(
             h: Long,
             id: TlsIdentity,
-        ): String =
+        ): List<Certificate> =
             when (id) {
                 is TlsIdentity.InMemory -> {
                     id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
-                    certificateTag(id.chain[0])
+                    id.chain
                 }
 
                 // chain and key from one snapshot: a reload between them would pair one identity's chain with another's key
                 is TlsIdentity.Reloadable -> {
                     id.withCurrentKey { cur, k ->
                         Ksl.ctxSetIdentityKey(h, cur.chain.map { it.encoded }, k)
-                        certificateTag(cur.chain[0])
+                        cur.chain
                     }
                 }
             }
