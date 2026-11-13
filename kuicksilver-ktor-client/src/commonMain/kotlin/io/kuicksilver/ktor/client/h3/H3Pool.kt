@@ -1297,7 +1297,12 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>>,
     ): HttpResponseData {
         val requestTime = GMTDate()
-        val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
+        val headers =
+            Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders).let { h ->
+                val marked = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty()
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
+            }
         val millis = data.connectTimeoutMillis(config)
         // the keys of the remote host: the URL's name and the address the QUIC connection actually goes to (no lookup)
         val quic = conn.quic
@@ -1340,6 +1345,11 @@ internal class H3Pool(
             if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
+        }
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        stream.headers.neverIndexed.takeIf { it.isNotEmpty() }?.let {
+            data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
         }
 
         // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441

@@ -107,7 +107,16 @@ internal suspend fun h2WebSocket(
     val scheme = if (url.protocol.isSecure()) "https" else "http"
     val stream: H2ClientStream =
         try {
-            conn.client.open("CONNECT", scheme, url.authority(), url.h3Path(), fields, endStream = false, protocol = WEBSOCKET)
+            conn.client.open(
+                "CONNECT",
+                scheme,
+                url.authority(),
+                url.h3Path(),
+                fields,
+                endStream = false,
+                protocol = WEBSOCKET,
+                neverIndexed = data.attributes.getOrNull(io.kuicksilver.ktor.client.NeverIndexKey).orEmpty(),
+            )
         } catch (e: Http2Exception) {
             onReleased(conn.client.isUsable)
             if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
@@ -130,6 +139,7 @@ internal suspend fun h2WebSocket(
     }
     try {
         val head = stream.response()
+        if (head.neverIndexed.isNotEmpty()) data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, head.neverIndexed)
         val headers = HeadersBuilder().apply { for ((n, v) in head.fields) append(n, v) }.build()
         if (head.status !in 200..299) {
             // RFC 9110 section 9.3.6: only a 2xx switches to tunnel mode; the rest is a response like any other, read until

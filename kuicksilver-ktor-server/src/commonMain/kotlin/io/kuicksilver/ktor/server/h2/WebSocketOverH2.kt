@@ -118,7 +118,12 @@ internal class H2UpgradeResponse(
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         if (!headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         applyOwnPriority()
-        h2.respond(200, fields().filter { it.first !in WebSocketOverH2.DROPPED }, endStream = false)
+        h2.respond(
+            200,
+            fields().filter { it.first !in WebSocketOverH2.DROPPED },
+            endStream = false,
+            call.attributes.getOrNull(io.kuicksilver.ktor.server.NeverIndexKey).orEmpty(),
+        )
         markAnswered()
         // the frames go out as DATA within the client's windows, at most H2StreamOutput.DEFAULT_LIMIT ahead of the stream (the
         // session's writer waits beyond that: backpressure, RFC 9113 section 5.2); the channel's end is the stream's

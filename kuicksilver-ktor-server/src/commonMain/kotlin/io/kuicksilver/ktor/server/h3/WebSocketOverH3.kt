@@ -90,7 +90,12 @@ internal class H3UpgradeResponse(
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         beforeUpgradeForTest?.invoke()
-        val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
+        val headers =
+            Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED }).let { h ->
+                val marked = call.attributes.getOrNull(io.kuicksilver.ktor.server.NeverIndexKey).orEmpty()
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                if (marked.isEmpty()) h else h.withNeverIndexed(*marked.toTypedArray())
+            }
         val stream =
             try {
                 h3.acceptConnect(headers)

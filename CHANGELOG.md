@@ -594,7 +594,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   engine's own list of credentials went out never indexed. The same API carries QPACK's 'N' bit over HTTP/3 (RFC 9204
   sections 4.5.4 and 7.1.3): the decoder reports it (`Http3Headers.neverIndexed`), and fields named with
   `Http3Headers.withNeverIndexed(...)` (or the engines' `neverIndex`) go as literals with the bit, never inserted nor
-  referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit.
+  referenced; a received section forwarded as it is keeps it. Before, the decoder dropped the bit. A WebSocket's Extended CONNECT
+  and its answer (RFC 8441, RFC 9220) carry the marks the same way.
 - Ktor server: TLS 1.2 on request (RFC 9325 section 3.1.1, "Implementations MUST support TLS 1.2"). The experimental
   `versions` option of `tlsConnector(identity) { … }` (`TlsVersions.Tls13` by default, `TlsVersions.Tls12And13` to serve
   TLS 1.2 clients over TCP), the `EngineMain` key `kuicksilver.tls.versions` (`tls13` or `tls12And13`, for the deployment
