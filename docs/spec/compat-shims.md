@@ -218,8 +218,11 @@ final size.
 
 **Risk.** None for security; a lost FIN costs one small frame more.
 
-**Removal.** When the interop runner's quiche image has the fix above and `kuicksilver->quiche:handshakeloss` stays green
-without the shim over several runs.
+**Removal.** quiche has the fix: `RecvBuf::write` in `quiche/src/stream/recv_buf.rs` (4ebd213, 2026-10-27) keeps the
+first FIN of a frame whose bytes were already read ("Discard consumed data unless it carries the first FIN"), pinned by
+its test `duplicate_data_first_fin`. The shim can go once the interop runner's quiche image includes that change and
+`kuicksilver->quiche:handshakeloss` (the case that lost a request; required in `tools/interop/required.json`) stays
+green without the shim over several runs, as does `kuicksilver->quiche:transferloss`, which resends stream data too.
 
 ## 7. HTTP/1.1 status line without the SP before an absent reason
 
