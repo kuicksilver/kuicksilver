@@ -77,8 +77,9 @@ class ServerH1Test {
 
     /**
      * Found by the engine interop bench (kuicksilver-engine-interop): over HTTP/1.1 the remote and local addresses are the
-     * IP literals, as over HTTP/2 and HTTP/3 and in Ktor's Netty and CIO engines, not a name from a reverse DNS lookup
-     * (127.0.0.1 read "localhost"), and accepting a connection performs no such lookup.
+     * IP literals, as over HTTP/2 and HTTP/3, not a name from a reverse DNS lookup (127.0.0.1 read "localhost"), and
+     * accepting a connection performs no such lookup. `remoteHost` stays the literal too, unlike Ktor's Netty and CIO
+     * engines, whose `remoteHost` is `getHostName()` (by decision: no lookup per request on any protocol).
      */
     @Test fun connectionPointHasIpLiterals() =
         serverTest {

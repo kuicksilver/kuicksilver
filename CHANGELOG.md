@@ -712,8 +712,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`HttpRequestTimeoutException`), as HTTP/1.1 and HTTP/3 already reported it. Found by the engine interop bench.
 - Ktor server engine: over HTTP/1.1 the connection point's addresses came from a reverse DNS lookup made for every
   accepted connection on the JVM and Android (`remoteAddress` and `remoteHost` read `localhost` for 127.0.0.1); they
-  are now the IP literals, as over HTTP/2 and HTTP/3 and in Ktor's Netty and CIO engines, and no lookup is made. Found
-  by the engine interop bench.
+  are now the IP literals, as over HTTP/2 and HTTP/3, and no lookup is made. `remoteAddress` and `localAddress` are the
+  literals in Ktor's Netty and CIO engines too; their `remoteHost` and `localHost` are names (a reverse lookup on
+  first use), ours stay literals on every protocol, by decision. Found by the engine interop bench.
 - Ktor server engine: a graceful stop took 3 s longer while an HTTP/1.1 client over TLS kept its connection in a pool,
   reading nothing until its next request (OkHttp, the JDK's HttpClient), idle or just answered: after its own
   close_notify the server waited up to 3 s for the client's. A stopping server now closes without waiting for it (RFC
