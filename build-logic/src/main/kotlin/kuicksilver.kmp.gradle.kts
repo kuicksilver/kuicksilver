@@ -216,7 +216,7 @@ providers.gradleProperty("kuicksilver.test.repeat").orNull?.toInt()?.takeIf { it
             testClassesDirs = base.testClassesDirs
             classpath = base.classpath
             javaLauncher.set(base.javaLauncher)
-            jvmArgs(base.jvmArgs)
+            setJvmArgs(base.jvmArgs)   // replaces what this task's own plugins added (kuicksilver.test-jvm): each flag once
             systemProperties(base.systemProperties)
             environment(base.environment)
             workingDir = base.workingDir
