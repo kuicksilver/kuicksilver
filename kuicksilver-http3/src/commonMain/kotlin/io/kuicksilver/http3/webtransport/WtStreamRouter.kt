@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.http3.webtransport
 
@@ -165,7 +165,9 @@ internal class WtStreamRouter(
         bidi: Boolean,
     ) {
         runCatching { st.stopSending(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED) }
-        if (bidi) runCatching { st.reset(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED) }
+        // section 4.4: RESET_STREAM_AT; our side of the peer's stream carries no header, so the reliable size is 0, which "is
+        // logically equivalent to a RESET_STREAM frame" (draft-ietf-quic-reliable-stream-reset-11 section 4)
+        if (bidi) runCatching { st.resetAt(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, 0) }
     }
 
     companion object {

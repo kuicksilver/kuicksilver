@@ -528,7 +528,7 @@ was accepted. The route checks the
 origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
-an empty reason. One session per connection: there is no WebTransport flow control yet.
+an empty reason. One session per connection, without WebTransport flow control (a mode the draft allows, section 5.1).
 
 ```kotlin
 // guide:ktor:webtransport-server

@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.http3.runtime
 
@@ -17,6 +21,7 @@ import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.CapsuleRules
 import io.kuicksilver.http3.webtransport.WtStreamRouter
+import io.kuicksilver.quic.DatagramPolicy
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
@@ -186,13 +191,19 @@ internal class DatagramDemux(
             else -> null
         }
 
+    /**
+     * Sends an HTTP datagram of request stream [streamId] scheduled at [priority], the request stream's own (RFC 9218): it
+     * does not go ahead of more urgent streams' data (draft-ietf-webtrans-http3-16 section 3.4 asks this for a WebTransport
+     * session's datagrams; RFC 9297 section 2 leaves the prioritization of HTTP datagrams open).
+     */
     fun trySend(
         streamId: Long,
         payload: ByteArray,
+        priority: StreamPriority,
     ): DatagramSendResult {
         unsupported()?.let { return it }
         val prefix = VarInt.encode(streamId / 4)
-        return when (val r = session.quic.trySendDatagram(prefix + payload)) {
+        return when (val r = session.quic.trySendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority)) {
             is DatagramSendResult.TooLarge -> {
                 DatagramSendResult.TooLarge(httpDatagramMax(r.max, prefix.size))
             }
@@ -203,9 +214,11 @@ internal class DatagramDemux(
         }
     }
 
+    /** [trySend] that waits for room. */
     suspend fun send(
         streamId: Long,
         payload: ByteArray,
+        priority: StreamPriority,
     ) {
         when (val u = unsupported()) {
             is DatagramSendResult.Unsupported -> {
@@ -216,7 +229,7 @@ internal class DatagramDemux(
         }
         val prefix = VarInt.encode(streamId / 4)
         try {
-            session.quic.sendDatagram(prefix + payload)
+            session.quic.sendDatagram(prefix + payload, DatagramPolicy.DropOldest, priority)
         } catch (
             e: QuicException.DatagramTooLarge,
         ) {
@@ -357,14 +370,14 @@ internal class Http3StreamImpl(
     internal val sendOpen: Boolean get() = !resetSent && !writer.output.isClosedForWrite && !st.output.isClosedForWrite
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
-        if (!datagramsAllowed || !sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
+        if (!datagramsAllowed || !sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload, st.priority)
 
     override suspend fun sendDatagram(payload: ByteArray) {
         check(datagramsAllowed) {
             "stream ${st.id} is a CONNECT whose protocol has no HTTP datagrams (classic CONNECT, websocket): none are sent (RFC 9297 section 2)"
         }
         check(sendOpen) { "the send side of stream ${st.id} is closed: HTTP datagrams are no longer sent (RFC 9297 section 2.1)" }
-        session.datagrams.send(st.id, payload)
+        session.datagrams.send(st.id, payload, st.priority)
     }
 
     override fun reset(code: Long) {

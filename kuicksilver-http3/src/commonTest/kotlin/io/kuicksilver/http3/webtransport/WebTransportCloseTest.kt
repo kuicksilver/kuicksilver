@@ -6,6 +6,7 @@ package io.kuicksilver.http3.webtransport
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
@@ -64,7 +65,7 @@ private class RawSession(
 }
 
 private suspend fun CoroutineScope.rawSession(q: QuicPair): RawSession {
-    val (c, s) = q.connect()
+    val (c, s) = q.connect(H3Fixtures.quic)
     val server = Http3Connection.server(s, wtOn)
     val raw = RawPeer(c)
     raw.openControl(wtClientSettings)
@@ -119,7 +120,7 @@ class WebTransportCloseTest {
 
     @Test fun finWithoutCapsuleIsCodeZero() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.connect.output.flushAndClose()
                 val seen = withTimeout(5.seconds) { r.server.closed.await() }
@@ -133,7 +134,7 @@ class WebTransportCloseTest {
     /** Section 6: the session's streams are reset and stopped with WT_SESSION_GONE; nothing new opens. */
     @Test fun closeResetsAllStreamsSessionGone() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 val wtStream = r.raw.quic.wtBidi(r.connect.id, "hi".encodeToByteArray(), fin = false)
                 val accepted = withTimeout(5.seconds) { r.server.acceptBidi() }
@@ -148,7 +149,7 @@ class WebTransportCloseTest {
 
     @Test fun negative_closeReasonOver1024IsMessageError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.send(capsule(0x2843, closeValue(1, ByteArray(1025) { 'a'.code.toByte() })))
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(r.connect))
@@ -158,7 +159,7 @@ class WebTransportCloseTest {
 
     @Test fun negative_closeReasonInvalidUtf8IsMessageError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.send(capsule(0x2843, closeValue(1, byteArrayOf(0xc3.toByte(), 0x28))))
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(r.connect))
@@ -167,7 +168,7 @@ class WebTransportCloseTest {
 
     @Test fun negative_dataAfterCloseCapsuleIsMessageError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.send(capsule(0x2843, closeValue(1, "x".encodeToByteArray())), capsule(0x2a, byteArrayOf(1)))
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(r.connect))
@@ -176,7 +177,7 @@ class WebTransportCloseTest {
 
     @Test fun negative_drainWithValueIsMessageError() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.send(capsule(0x78ae, byteArrayOf(1)))
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, resetCode(r.connect))
@@ -215,7 +216,7 @@ class WebTransportCloseTest {
     /** Section 5.1: without negotiated flow control its capsules are ignored. */
     @Test fun flowControlCapsulesIgnoredWhenDisabled() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 r.send(capsule(0x190B4D3D, VarInt.encode(1000)), capsule(0x190B4D3F, VarInt.encode(10)))
                 r.send(capsule(0x2843, closeValue(5, "x".encodeToByteArray())))
@@ -231,7 +232,7 @@ class WebTransportCloseTest {
      */
     @Test fun closeCapsuleRightBeforeConnectionCloseKeepsItsCode() =
         h3Test {
-            QuicPair.open().useScoped { q ->
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
                 val r = rawSession(q)
                 val held = ArrayList<Triple<InetSocketAddress, InetSocketAddress, ByteArray>>()
                 q.net.drop = { from, to, bytes -> to == q.server.localAddress && held.add(Triple(from, to, bytes)) }

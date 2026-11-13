@@ -69,6 +69,8 @@ internal class WtSessionImpl(
     internal val stream: Http3Stream,
     override val headers: Http3Headers,
     override val protocol: String?,
+    /** The draft this session runs ([wtClientVersion], [wtServerVersion]). */
+    internal val version: WtVersion,
 ) : WebTransportSession,
     WtSessionSink {
     override val sessionId: Long get() = stream.streamId
@@ -265,12 +267,25 @@ internal class WtSessionImpl(
         }
     }
 
+    /**
+     * The CONNECT stream's priority changed (the client's PRIORITY_UPDATE): the session's streams follow it. Section 3.4: "it
+     * is RECOMMENDED that clients and servers apply the scheduling guidance in both Section 9 of [RFC9218] and Section 10 of
+     * [RFC9218] for all data that they send in the enclosing WebTransport session, including Capsules, WebTransport streams
+     * and datagrams". Session dispatcher only.
+     */
+    fun priorityChanged() {
+        val p = stream.priority
+        for (s in streams) if (s.writable) s.st.priority = p
+    }
+
     private fun goneRaw(
         st: QuicStream,
         bidi: Boolean,
     ) {
         runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
-        if (bidi) runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+        // section 4.4: RESET_STREAM_AT; our side of the peer's stream carries no header, so the reliable size is 0, which "is
+        // logically equivalent to a RESET_STREAM frame" (draft-ietf-quic-reliable-stream-reset-11 section 4)
+        if (bidi) runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, 0) }
     }
 
     private fun sessionClosed() = WebTransportException.SessionClosed("WebTransport session $sessionId is closed")
@@ -283,6 +298,8 @@ internal class WtSessionImpl(
         headerLength: Int = 0,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
+            // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
+            if (writable) st.priority = stream.priority
             val s = WtStreamImpl(h3.scope, st, readable, writable, headerLength) { done -> h3.scope.launch { streams.remove(done) } }
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -300,7 +317,7 @@ internal class WtSessionImpl(
                 val opening =
                     async {
                         try {
-                            if (bidi) h3.quic.openBidi() else h3.quic.openUni()
+                            if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority)
                         } catch (e: QuicException) {
                             throw h3.map(e)
                         }
@@ -314,7 +331,8 @@ internal class WtSessionImpl(
                             if (e == null) {
                                 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                                 opening.getCompleted().let { st ->
-                                    runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+                                    // nothing written yet: RESET_STREAM_AT with reliable size 0 (section 4.4)
+                                    runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, 0) }
                                     if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
                                 }
                             }
@@ -328,7 +346,9 @@ internal class WtSessionImpl(
             st.output.writeFully(header)
             st.output.flush()
         } catch (e: Throwable) {
-            runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+            // section 4.4: RESET_STREAM_AT with the header's size as the reliable size, which the transport cuts to what was
+            // written: whatever part of the header got out is still delivered
+            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
             throw if (e is CancellationException) e else h3.map(e)
         }
         return track(st, readable = bidi, writable = true, headerLength = header.size)
@@ -404,9 +424,15 @@ internal suspend fun H3Session.webTransport(
     val ps =
         withinWtDeadline { awaitPeerSettings() }
             ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtDeadline")
-    val version =
-        peerWtVersion() ?: throw Http3Exception.Settings("the server does not offer WebTransport in its SETTINGS")
+    if (highestCommonWtVersion() == null) {
+        throw Http3Exception.Settings("the server does not offer WebTransport in a draft we speak (draft-16 or draft-02) in its SETTINGS")
+    }
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
+    // section 3.1: "A client MUST NOT establish WebTransport sessions if the server's SETTINGS do not have correct values for
+    // every required setting or if the server's transport parameters do not have correct values for every required
+    // transport parameter"; a server that also announces draft-02 gets a draft-02 CONNECT ([wtClientVersion])
+    val (chosen, refusal) = wtClientVersion(this)
+    val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     withContext(dispatcher) {
         check(!wtClientBusy) {
             "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one"
@@ -437,7 +463,7 @@ internal suspend fun H3Session.webTransport(
                     throw WebTransportException.Alpn(protocols, p)
                 }
             }
-        val s = WtSessionImpl(this, stream, stream.headers, selected)
+        val s = WtSessionImpl(this, stream, stream.headers, selected, version)
         withContext(dispatcher) {
             wt.register(stream.streamId, s)
             s.start()

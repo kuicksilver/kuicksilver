@@ -80,6 +80,28 @@ public interface QuicConnection : AutoCloseable {
     ): DatagramSendResult
 
     /**
+     * [sendDatagram] scheduled by RFC 9218 urgency: the datagram does not go ahead of stream data of strictly more urgent
+     * streams ([priority]'s urgency is higher than theirs, or they are the HTTP/3 control and QPACK streams), while stream
+     * data of the same or a lower urgency waits behind it. Datagrams still leave in the order they were queued. Without a
+     * priority (the overloads above) a datagram goes ahead of every stream. Implementations outside this library need not
+     * override it: the default ignores [priority].
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun sendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): Unit = sendDatagram(data, policy)
+
+    /** [trySendDatagram] scheduled by [priority] as the [sendDatagram] overload with a priority describes. */
+    @ExperimentalKuicksilverApi
+    public fun trySendDatagram(
+        data: ByteArray,
+        policy: DatagramPolicy,
+        priority: StreamPriority,
+    ): DatagramSendResult = trySendDatagram(data, policy)
+
+    /**
      * Received datagrams, newest-128 semantics: what nobody collected in time is dropped (counted in `stats.datagramsDropped`
      * beside the UDP datagrams the connection discarded unprocessed).
      * Pull-based over one queue, so two collectors split the datagrams between them. When the connection ends the flow
@@ -105,6 +127,15 @@ public interface QuicConnection : AutoCloseable {
      */
     @ExperimentalKuicksilverApi
     public val peerSupportsDatagrams: Boolean
+
+    /**
+     * True once both sides advertised the `reset_stream_at` transport parameter (draft-ietf-quic-reliable-stream-reset
+     * section 3): ours with `QuicConfig.resetStreamAt` and the peer's. [QuicStream.resetAt] then sends RESET_STREAM_AT;
+     * otherwise it is a RESET_STREAM. False before the handshake has delivered the peer's parameters (or, for 0-RTT, the
+     * remembered ones). Implementations outside this library need not override it: the default is false.
+     */
+    @ExperimentalKuicksilverApi
+    public val resetStreamAtEnabled: Boolean get() = false
 
     /**
      * Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed, the current phase

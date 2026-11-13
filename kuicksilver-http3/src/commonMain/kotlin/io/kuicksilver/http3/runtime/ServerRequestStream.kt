@@ -32,6 +32,7 @@ import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
+import io.kuicksilver.http3.webtransport.wtServerVersion
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -441,14 +442,41 @@ internal class ServerRequestImpl(
             "WebTransport protocol '$protocol' is not one the client offered: $availableProtocols"
         }
         val ps = session.withinWtDeadline { session.awaitPeerSettings() }
+        // section 3.1: "If the server receives SETTINGS that do not have correct values for every required setting, or
+        // transport parameters that do not have correct values for every required transport parameter, the server MUST treat
+        // all established and newly incoming WebTransport sessions as malformed"; a session is established only here, once
+        // the client's SETTINGS arrived, so none was before. The client's own WebTransport setting is required too: "For
+        // draft versions of WebTransport only, clients MUST also send SETTINGS_WT_ENABLED with the draft-specific codepoint"
+        // (draft-14: SETTINGS_WT_MAX_SESSIONS above 0, draft-02: SETTINGS_ENABLE_WEBTRANSPORT=1, as Chrome and Firefox send)
+        // A client that announces a newer draft without its transport parameters but also draft-02 is served only when this
+        // CONNECT is a draft-02 request ([wtServerVersion]).
+        val draft02Request =
+            this@ServerRequestImpl.protocol.equals(WtTokens.LEGACY, ignoreCase = true) &&
+                this.headers[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
+        val (version, refusal) = wtServerVersion(session, draft02Request)
         val missing =
             when {
-                ps == null -> "no SETTINGS from the client within ${session.wtDeadline}"
-                !ps.h3Datagram -> "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
-                else -> null
+                ps == null -> {
+                    "no SETTINGS from the client within ${session.wtDeadline}"
+                }
+
+                session.highestCommonWtVersion() == null -> {
+                    "the client sent no WebTransport setting (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
+                        "draft-02 SETTINGS_ENABLE_WEBTRANSPORT), which WebTransport needs"
+                }
+
+                !ps.h3Datagram -> {
+                    "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
+                }
+
+                else -> {
+                    refusal
+                }
             }
         if (missing != null) {
-            // a request the client could not make (section 3.1): malformed, answered with 400 so it learns why
+            // a malformed request (RFC 9114 section 4.1.2: a stream error H3_MESSAGE_ERROR), answered with 400 first so the
+            // client learns why
+            runCatching { st.stopSending(Http3ErrorCode.MESSAGE_ERROR) }
             runCatching { respond(400).finish() }
             throw Http3Exception.Settings(missing)
         }
@@ -465,7 +493,7 @@ internal class ServerRequestImpl(
                 }
             }
         val stream = acceptConnect(Http3Headers(fields))
-        val s = WtSessionImpl(session, stream, this.headers, protocol)
+        val s = WtSessionImpl(session, stream, this.headers, protocol, version!!)
         withContext(session.dispatcher) {
             if (finished) {
                 s.ended()
@@ -492,7 +520,10 @@ internal class ServerRequestImpl(
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */
     fun onPriorityUpdate(p: StreamPriority) {
         // the stream first, then the flow: an application that sees the new value finds the stream already scheduled by it
-        if (serverPriority == null) st.priority = p
+        if (serverPriority == null) {
+            st.priority = p
+            wtSession?.priorityChanged() // a WebTransport session's streams go with its CONNECT stream (draft-16 section 3.4)
+        }
         priorityFlow.value = p
     }
 

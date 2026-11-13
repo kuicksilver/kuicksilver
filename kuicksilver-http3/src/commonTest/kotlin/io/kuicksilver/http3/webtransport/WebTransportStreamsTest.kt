@@ -9,9 +9,12 @@ import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
+import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.frame.ControlFrames
+import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.h3Test
@@ -19,11 +22,13 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.readAhead
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -215,15 +220,77 @@ class WebTransportStreamsTest {
             }
         }
 
+    /**
+     * Section 3.4: "it is RECOMMENDED that clients and servers apply the scheduling guidance in both Section 9 of [RFC9218]
+     * and Section 10 of [RFC9218] for all data that they send in the enclosing WebTransport session": the session's streams,
+     * opened or accepted, are sent at the CONNECT stream's priority.
+     */
+    @Test fun wtStreamsAreSentAtTheConnectPriority() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val client = p.client.webTransport(wtReq(fields = arrayOf("priority" to "u=1")))
+                val server = withTimeout(5.seconds) { serverSide.await() }
+                val urgent = StreamPriority(1, incremental = false)
+                val bidi = client.openBidi()
+                assertEquals(urgent, (bidi as WtStreamImpl).st.priority)
+                assertEquals(urgent, (client.openUni() as WtStreamImpl).st.priority)
+                bidi.output.writeFully("x".encodeToByteArray())
+                bidi.output.flush()
+                assertEquals(urgent, (withTimeout(5.seconds) { server.acceptBidi() } as WtStreamImpl).st.priority)
+                assertEquals(urgent, (server.openUni() as WtStreamImpl).st.priority)
+            }
+        }
+
+    /** Section 3.4 with RFC 9218 section 7: a PRIORITY_UPDATE for the CONNECT stream moves the session's streams with it. */
+    @Test fun wtStreamsFollowAPriorityUpdateOfTheConnect() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val request = CompletableDeferred<Http3ServerRequest>()
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    request.complete(r)
+                    serverSide.complete(r.acceptWebTransport())
+                }
+                val client = p.client.webTransport(wtReq())
+                val server = withTimeout(5.seconds) { serverSide.await() }
+                val opened = server.openUni() as WtStreamImpl
+                val bidi = client.openBidi()
+                bidi.output.writeFully("x".encodeToByteArray())
+                bidi.output.flush()
+                val accepted = withTimeout(5.seconds) { server.acceptBidi() } as WtStreamImpl
+                val moved = StreamPriority(6, incremental = false)
+                p.client.session.sendControl(
+                    FrameType.PRIORITY_UPDATE_REQUEST,
+                    ControlFrames.priorityUpdatePayload(client.sessionId, "u=6"),
+                )
+                withTimeout(5.seconds) { request.await().priority.first { it == moved } }
+                assertEquals(moved, opened.st.priority)
+                assertEquals(moved, accepted.st.priority)
+                assertEquals(moved, (server.openBidi() as WtStreamImpl).st.priority)
+            }
+        }
+
     /** Waiting for the peer's stream credit ends with the session. */
     @Test fun openWaitingForCreditEndsWithSession() =
         h3Test {
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = quicConfig { maxBidiStreams = 1 }).useScoped { p ->
-                val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
-                val opening = async { runCatching { client.openBidi() } }
-                client.close()
-                assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
-            }
+            H3Pair
+                .open(
+                    clientSettings = wtOn,
+                    serverSettings = wtOn,
+                    serverQuic =
+                        quicConfig {
+                            maxBidiStreams = 1
+                            resetStreamAt = true
+                        },
+                ).useScoped { p ->
+                    val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
+                    val opening = async { runCatching { client.openBidi() } }
+                    client.close()
+                    assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
+                }
         }
 
     /**

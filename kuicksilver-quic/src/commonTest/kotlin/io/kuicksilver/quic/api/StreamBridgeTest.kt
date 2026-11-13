@@ -222,6 +222,34 @@ class StreamBridgeTest {
             }
         }
 
+    /** `resetStreamAtEnabled` tells the application that both sides advertised `reset_stream_at` (WebTransport needs it). */
+    @Test fun resetStreamAtEnabledWhenBothSidesAdvertiseIt() =
+        runBlocking {
+            val on = quicConfig { resetStreamAt = true }
+            ApiPair.open(serverQuic = on).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect(on)
+                    assertTrue(c.resetStreamAtEnabled)
+                    assertTrue(s.resetStreamAtEnabled)
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    @Test fun negative_resetStreamAtNotEnabledWithOneSideOnly() =
+        runBlocking {
+            ApiPair.open(serverQuic = quicConfig { resetStreamAt = true }).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    assertFalse(c.resetStreamAtEnabled)
+                    assertFalse(s.resetStreamAtEnabled)
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     /** RESET_STREAM_AT through the stream API: the reader gets exactly the reliable bytes, then the reset (never -1). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test

@@ -122,6 +122,9 @@ internal class MemoryIo(
 internal object H3Fixtures {
     val testCa = Certificate(TestCerts.testCa)
 
+    /** The transport of WebTransport tests: `reset_stream_at` on, as draft-14 and later need it on both sides (draft-16 section 3.1). */
+    val quic: QuicConfig = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+
     fun client(alpn: String = "h3"): TlsConfig =
         tlsConfig(TlsRole.Client) {
             this.alpn = listOf(alpn)
@@ -205,8 +208,9 @@ internal class H3Pair(
         suspend fun open(
             clientSettings: Http3Settings = Http3Settings.Default,
             serverSettings: Http3Settings = Http3Settings.Default,
-            serverQuic: QuicConfig = QuicConfig.Default,
-            clientQuic: QuicConfig = QuicConfig.Default,
+            // WebTransport needs reset_stream_at; every other pair keeps the default transport
+            serverQuic: QuicConfig = if (serverSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
+            clientQuic: QuicConfig = if (clientSettings.webTransport) H3Fixtures.quic else QuicConfig.Default,
         ): H3Pair {
             val q = QuicPair.open(serverQuic)
             val (c, s) = q.connect(clientQuic)

@@ -439,6 +439,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
+  `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it.
 - Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
   dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
   (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
@@ -680,6 +681,34 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   second (`docs/benchmarks.md`, "0.3.0 work in progress").
 - WebTransport: `drain()` also sets the session's own `drainRequested` (draft-ietf-webtrans-http3 section 4.7: the
   side that asks winds down too); before, it reflected only the peer's drain or GOAWAY.
+- WebTransport needs the transport parameters and settings of draft-ietf-webtrans-http3-16 section 3.1 from the peer:
+  for draft-14 and later `reset_stream_at` on both sides and the peer's `max_datagram_frame_size` above 0. A client
+  throws `Http3Exception.Settings` before its CONNECT when the server lacks one ("A client MUST NOT establish
+  WebTransport sessions if ..."); a server also requires the client's own WebTransport setting (`SETTINGS_WT_ENABLED`,
+  draft-14 `SETTINGS_WT_MAX_SESSIONS`, draft-02 `SETTINGS_ENABLE_WEBTRANSPORT`) and treats a CONNECT without them as
+  malformed: 400, STOP_SENDING `H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings` (before,
+  only `H3_DATAGRAM` was checked, and the 400 came without the stream error). Draft-02 sessions, which Chrome and
+  Firefox open, need no `reset_stream_at`, as that draft predates it. The draft is the highest both sides announce
+  (section 7.1; before, a client took the server's highest, draft-14 included, which it never announced). A peer that
+  announces a newer draft without `reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a
+  draft-02 request (`:protocol webtransport` with `sec-webtransport-http3-draft02: 1`; our client then sends one), our
+  reading of section 7.1 ("the highest version supported by both endpoints" taken as the highest both can actually
+  run; the draft does not say this); its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft,
+  are refused. Safari speaks draft-14 (see `docs/spec/interop.md`). `Http3Endpoint` turns `QuicConfig.resetStreamAt`
+  on with `webTransport`, as the Ktor engines already did, and every reset of a WebTransport stream is a
+  RESET_STREAM_AT keeping the header we wrote (0 bytes on a stream the peer opened; section 4.4; before, a plain
+  RESET_STREAM without the parameter and for rejected or abandoned peer streams). With
+  `webTransport`, `SETTINGS_ENABLE_WEBTRANSPORT` other than 0 or 1 closes the connection with `H3_SETTINGS_ERROR`
+  (draft-02 section 3.1).
+- WebTransport: a session's streams are sent at the RFC 9218 priority of its CONNECT stream and follow the client's
+  PRIORITY_UPDATE for it (draft-ietf-webtrans-http3-16 section 3.4); before, they had the default priority. Its
+  datagrams, like every HTTP/3 datagram, go with their request stream's urgency (strict, both ways): never ahead of
+  more urgent streams' data, so more urgent bulk streams can hold them back, and ahead of streams of the same or a lower
+  urgency, so a datagram flood can starve those (before, every datagram went ahead of all stream data).
+- QUIC (experimental): `QuicConnection.sendDatagram(data, policy, priority)` and `trySendDatagram(data, policy,
+  priority)` schedule a datagram by RFC 9218 urgency (not ahead of strictly more urgent streams' data); the send queue
+  keeps one FIFO per urgency, so a datagram never waits behind a less urgent one, and order is kept within an urgency.
+  The sans-IO hook is `DatagramSender.nextUrgency`. Without a priority datagrams still go ahead of every stream.
 - Ktor client: a `wss` WebSocket belongs to the `https` origin (RFC 8441 section 5 via RFC 9220; RFC 7838 section 2.4):
   it uses the alternatives, broken marks and RTTs learned from `https` responses, and Alt-Svc on its HTTP/1.1 answer is
   filed under `https`; `ws` likewise under `http`. Before, `wss` was an origin of its own and never found an alternative.

@@ -29,7 +29,9 @@ import kotlin.time.Duration
  * closed, and [connect]/[connectEarly] fail with H3_GENERAL_PROTOCOL_ERROR ([Http3Exception.Protocol]) when the server chose
  * another protocol the client offered. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.maxDatagramFrameSize] is not 0.
  * [QuicConfig.maxUniStreams] must be at least 3, so the peer can open its control and QPACK streams (RFC 9114 section
- * 6.2): [bind], [connect] and [connectEarly] throw IllegalArgumentException for a smaller value.
+ * 6.2): [bind], [connect] and [connectEarly] throw IllegalArgumentException for a smaller value. With
+ * [Http3Settings.webTransport] [QuicConfig.resetStreamAt] is turned on (WebTransport needs `reset_stream_at` on both sides,
+ * draft-ietf-webtrans-http3-16 section 3.1), as the Ktor engines do.
  */
 public class Http3Endpoint private constructor(
     private val endpoint: QuicEndpoint,
@@ -53,7 +55,7 @@ public class Http3Endpoint private constructor(
     ): Http3Connection {
         require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
         requireCriticalStreams(quic)
-        val c = endpoint.connect(remote, QuicClientConfig.Builder(tls).apply { this.quic = quic }.build())
+        val c = endpoint.connect(remote, QuicClientConfig.Builder(tls).apply { this.quic = quic.forWebTransport(settings) }.build())
         return try {
             requireH3(c)
             Http3Connection.client(c, settings.withTransport(quic))
@@ -88,7 +90,7 @@ public class Http3Endpoint private constructor(
                 QuicClientConfig
                     .Builder(tls)
                     .apply {
-                        this.quic = quic
+                        this.quic = quic.forWebTransport(settings)
                         this.earlyData = earlyData
                     }.build(),
             )
@@ -230,13 +232,15 @@ public class Http3Endpoint private constructor(
         internal fun QuicEndpointConfig.forHttp3Server(settings: Http3Settings): QuicEndpointConfig {
             val s = server ?: return this
             val quic =
-                if (s.quic.defaultStreamErrorCode == 0L) {
-                    s.quic
-                        .toBuilder()
-                        .apply { defaultStreamErrorCode = Http3ErrorCode.REQUEST_REJECTED }
-                        .build()
-                } else {
-                    s.quic
+                s.quic.forWebTransport(settings).let { q ->
+                    if (q.defaultStreamErrorCode == 0L) {
+                        q
+                            .toBuilder()
+                            .apply { defaultStreamErrorCode = Http3ErrorCode.REQUEST_REJECTED }
+                            .build()
+                    } else {
+                        q
+                    }
                 }
             if (!s.earlyData && quic === s.quic) return this
             return toBuilder()
@@ -256,6 +260,15 @@ public class Http3Endpoint private constructor(
                             }.build()
                 }.build()
         }
+
+        /**
+         * draft-ietf-webtrans-http3-16 section 3.1: "both the client and the server enable the extension by sending an empty
+         * reset_stream_at transport parameter", so WebTransport turns [QuicConfig.resetStreamAt] on; without it no session
+         * of draft-14 or later could be opened or accepted, and our streams could not be reset as section 4.4 requires.
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig =
+            if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
 
         /**
          * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional

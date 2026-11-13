@@ -20,20 +20,105 @@ internal enum class WtVersion {
     Draft16,
     ;
 
+    /**
+     * This version needs `reset_stream_at` on both sides. draft-14 and draft-16 section 3.1: "both the client and the server
+     * enable the extension by sending an empty reset_stream_at transport parameter"; draft-02 predates RESET_STREAM_AT
+     * (Chrome and Firefox speak it, and need not send the parameter).
+     */
+    val needsResetStreamAt: Boolean get() = this != Draft02
+
     /** The `:protocol` token a client sends to a peer of this version (draft-16 section 3.2; `webtransport` before -15). */
     val protocolToken: String get() = if (this == Draft16) WtTokens.H3 else WtTokens.LEGACY
 
     companion object {
         /** The highest version the peer's [settings] announce, or null when they announce none. */
-        fun of(settings: Map<Long, Long>): WtVersion? =
-            when {
-                settings[SettingsId.WT_ENABLED] == 1L -> Draft16
-                (settings[SettingsId.WT_MAX_SESSIONS_DRAFT14] ?: 0L) > 0L -> Draft14
-                (settings[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) != 0L -> Draft02
-                else -> null
+        fun of(settings: Map<Long, Long>): WtVersion? = offeredIn(settings).maxOrNull()
+
+        /** Every version the peer's [settings] announce. */
+        fun offeredIn(settings: Map<Long, Long>): Set<WtVersion> =
+            buildSet {
+                if (settings[SettingsId.WT_ENABLED] == 1L) add(Draft16)
+                if ((settings[SettingsId.WT_MAX_SESSIONS_DRAFT14] ?: 0L) > 0L) add(Draft14)
+                if ((settings[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) != 0L) add(Draft02)
             }
+
+        /** The versions we announce ([WtSettings.ours]): a server every one, a client draft-16 and draft-02. */
+        fun ours(isServer: Boolean): Set<WtVersion> = if (isServer) entries.toSet() else setOf(Draft16, Draft02)
+
+        /**
+         * The versions both sides announce, highest first: draft-16 section 7.1, "The highest version supported by both
+         * endpoints is selected". A version only the peer announces is never chosen.
+         */
+        fun common(
+            peer: Map<Long, Long>,
+            isServer: Boolean,
+        ): List<WtVersion> = (offeredIn(peer) intersect ours(isServer)).sortedDescending()
     }
 }
+
+/**
+ * Why the peer of [h3] cannot carry a WebTransport session of [version] by its transport parameters (draft-16 and draft-14
+ * section 3.1: `max_datagram_frame_size` above 0 and, from draft-14 on, `reset_stream_at`, both on both sides), or null
+ * when it can. The peer's SETTINGS are checked by the callers.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun wtTransportGap(
+    h3: io.kuicksilver.http3.runtime.H3Session,
+    version: WtVersion,
+): String? =
+    when {
+        !h3.quic.peerSupportsDatagrams -> {
+            "the peer did not send max_datagram_frame_size above 0, which WebTransport needs (section 3.1)"
+        }
+
+        version.needsResetStreamAt && !h3.quic.resetStreamAtEnabled -> {
+            "reset_stream_at is not on both sides (QuicConfig.resetStreamAt and the peer's transport parameter), which " +
+                "WebTransport $version needs (section 3.1)"
+        }
+
+        else -> {
+            null
+        }
+    }
+
+/**
+ * The version a client's session on [h3] runs: the highest that both sides announce ([WtVersion.common]) and that the
+ * connection's transport parameters can carry ([wtTransportGap]); null with the reason when none can. A server that
+ * announces draft-16 without `reset_stream_at` but also draft-02 gets a draft-02 CONNECT (then a draft-02 request in
+ * every respect: `:protocol webtransport` and `sec-webtransport-http3-draft02: 1`). This fallback is our reading of
+ * section 7.1, "the highest version supported by both endpoints" taken as the highest both can actually run; the draft
+ * does not say it. A server that announces only the newer draft is refused.
+ */
+internal fun wtClientVersion(h3: io.kuicksilver.http3.runtime.H3Session): Pair<WtVersion?, String?> {
+    val common = h3.wtCommonVersions
+    if (common.isEmpty()) return null to NO_COMMON_VERSION
+    common.firstOrNull { wtTransportGap(h3, it) == null }?.let { return it to null }
+    return null to wtTransportGap(h3, common.first())
+}
+
+/**
+ * The version of the WebTransport request a server accepts on [h3]: draft-02 when the request is a draft-02 request
+ * ([draft02Request]: `:protocol webtransport` and `sec-webtransport-http3-draft02: 1`) and both sides announce draft-02,
+ * else the highest version both announce (section 7.1); null with the reason when the connection's transport parameters
+ * cannot carry it (section 3.1: the request is then malformed). So a client that announces draft-16 or draft-14 without
+ * `reset_stream_at` and also draft-02 is served only when its CONNECT is a draft-02 request (our reading of section 7.1,
+ * as for [wtClientVersion]); its draft-16 or draft-14 CONNECT is refused, never run as a draft-16 session that broke
+ * section 3.1 and could not reset as section 4.4 requires. A request in draft-02 form runs draft-02 even when a higher
+ * common version could run, because the client asked for draft-02.
+ */
+internal fun wtServerVersion(
+    h3: io.kuicksilver.http3.runtime.H3Session,
+    draft02Request: Boolean,
+): Pair<WtVersion?, String?> {
+    val common = h3.wtCommonVersions
+    if (common.isEmpty()) return null to NO_COMMON_VERSION
+    val v = if (draft02Request && WtVersion.Draft02 in common) WtVersion.Draft02 else common.first()
+    return wtTransportGap(h3, v)?.let { null to it } ?: (v to null)
+}
+
+private const val NO_COMMON_VERSION =
+    "the peer announces no WebTransport draft we speak (SETTINGS_WT_ENABLED, draft-14 SETTINGS_WT_MAX_SESSIONS or " +
+        "draft-02 SETTINGS_ENABLE_WEBTRANSPORT)"
 
 /** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-16 section 3.1); identifiers in [SettingsId]. */
 internal object WtSettings {

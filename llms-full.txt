@@ -1023,7 +1023,8 @@ within the peer's flow control (draft-11 section 4): with little credit the rese
 reliable bytes. Both codepoints of the parameter are sent and accepted, 0x1d and the pre-IANA one Chrome and quiche use.
 A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated like one that lowers a limit
 (PROTOCOL_VIOLATION). Once RESET_STREAM_AT is in play on a stream, a later reset with another error code is STREAM_STATE_ERROR. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
-above its final size, closes the connection with FRAME_ENCODING_ERROR. WebTransport uses it to keep a stream's header.
+above its final size, closes the connection with FRAME_ENCODING_ERROR. `QuicConnection.resetStreamAtEnabled` tells
+whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.
 
 ### Datagrams (RFC 9221)
 
@@ -1054,7 +1055,14 @@ returns. `trySendDatagram` never enters the loop and allocates only the copy plu
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
 what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
-connection discarded unprocessed).
+connection discarded unprocessed). Datagrams go ahead of stream data; *experimental*: `sendDatagram(data, policy,
+priority)` and `trySendDatagram(data, policy, priority)` schedule one by RFC 9218 urgency instead, so it does not go
+ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`). The urgency is strict
+both ways: more urgent bulk streams hold such datagrams back, and the datagrams go ahead of streams of the same or a
+lower urgency, so a flood of them starves those. The send queue keeps one FIFO per urgency: a datagram never waits
+behind a less urgent one, and datagrams of one urgency leave in the order they were queued (all RFC 9221 asks). HTTP/3
+sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-16
+section 3.4).
 
 ### Testing your application
 
@@ -1978,12 +1986,23 @@ HTTP/1.1 and HTTP/2 upgrades are not supported.
 
 WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is experimental (`@ExperimentalKuicksilverApi`): sessions,
 their streams and datagrams, close and drain. Both sides set `webTransport = true` in `http3Settings` (it needs
-`enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off). Browsers do not
+`enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off, and
+`Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it). Browsers do not
 speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
 accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client picks the token from the server's
 SETTINGS. A request with either token is `isWebTransport`; `acceptWebTransport` answers 200 once the client's SETTINGS
-arrived (ten seconds at most; without them, or without HTTP datagrams, the request is answered with 400 and
-`acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the session. The client waits
+arrived (ten seconds at most; without them, without a WebTransport setting of the client's own, without HTTP datagrams,
+or, for draft-14 and later, without `reset_stream_at` on both sides, the request is answered with 400, stopped with
+`H3_MESSAGE_ERROR`, and `acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the
+session. A client throws `Http3Exception.Settings` before its CONNECT when the server lacks one of them; draft-02,
+which Chrome and Firefox speak, predates `reset_stream_at` and goes without it. The draft is the highest both sides
+announce (a client of ours announces draft-16 and draft-02). A peer that announces a newer draft without
+`reset_stream_at` but also draft-02 gets a draft-02 session when its CONNECT is a draft-02 request (`:protocol
+webtransport` with `sec-webtransport-http3-draft02: 1`, which our client then sends): this is our reading of section 7.1
+("the highest version supported by both endpoints" taken as the highest both can actually run), not something the
+draft says. Its draft-16 or draft-14 CONNECT, and a peer that announces only the newer draft, are refused.
+Interop note: Safari speaks draft-14, which needs `reset_stream_at`; WebKit bugs 303152 and 305006 suggest Safari 26.4
+and later sends it, but that is not verified here ([interop](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/interop.md#interop-webtransport-browsers-2026-10-22-and-2026-10-23)). The client waits
 ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
 protocols in `WT-Available-Protocols` and the server picks one of `availableProtocols`; a choice the client did not
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
@@ -2021,9 +2040,15 @@ winds down too, draft-ietf-webtrans-http3 section 4.7). Writing the close waits 
 for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
 it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
 are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a
-session. With `QuicConfig.resetStreamAt` on both sides a stream we opened is reset with RESET_STREAM_AT, which keeps its header
-so the peer can still tell its session (section 4.4); without it the reset is a plain RESET_STREAM. The Ktor server turns
-it on with `webTransport`.
+session. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
+session (section 4.4); a session of draft-14 or later exists only with `reset_stream_at` on both sides, which
+`Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
+RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
+`priority`, else its `priority` field, else urgency 3 incremental) and follow the client's PRIORITY_UPDATE for it
+(section 3.4); its datagrams, like every HTTP datagram, go with the urgency of their request stream, strictly in both
+directions: more urgent streams' data goes first, so a bulk download at a more urgent level holds the datagrams back
+(a request is urgency 3 by default, a WebTransport session too unless its CONNECT carries a `priority`), and a datagram
+goes ahead of streams of the same or a lower urgency, so a flood of datagrams can starve those streams.
 
 ```kotlin
 // guide:http3:webtransport-echo (server)
@@ -2568,7 +2593,7 @@ was accepted. The route checks the
 origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
-an empty reason. One session per connection: there is no WebTransport flow control yet.
+an empty reason. One session per connection, without WebTransport flow control (a mode the draft allows, section 5.1).
 
 ```kotlin
 // guide:ktor:webtransport-server
@@ -5012,7 +5037,7 @@ DER.
 | `maxFieldSectionSize` | `Long` | 65 536 (64 KiB) | 1..2^30 | 0.2.0 | largest decoded header or trailer section we accept (and so the longest single field; above it: 431, the connection lives), advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE` |
 | `enableConnectProtocol` | `Boolean` | `false` |  | 0.2.0 | advertise Extended CONNECT (RFC 9220) |
 | `h3Datagram` | `Boolean` | `true` |  | 0.2.0 | `SETTINGS_H3_DATAGRAM` (always sent); `Http3Endpoint` sends 0 when `QuicConfig.maxDatagramFrameSize` is 0 |
-| `webTransport` | `Boolean` | `false` | needs `enableConnectProtocol` and `h3Datagram` | 0.3.0 | experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); `Http3Endpoint.bind` refuses it when `QuicConfig.maxDatagramFrameSize` is 0 |
+| `webTransport` | `Boolean` | `false` | needs `enableConnectProtocol` and `h3Datagram` | 0.3.0 | experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); `Http3Endpoint.bind` refuses it when `QuicConfig.maxDatagramFrameSize` is 0, and `Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it |
 | `grease` | `Boolean` | `true` |  | 0.2.0 | send a reserved setting, frame and stream type |
 | `maxInformationalResponses` | `Int` | 5 | at least 0 | 0.2.0 | deprecated and ignored since 0.2.1: a client accepts any number of 1xx responses (RFC 9110 section 15.2); their fields together are bounded by `maxFieldSectionSize`, past which the request fails with `H3_EXCESSIVE_LOAD` |
 | `maxEarlyPriorityUpdates` | `Int` | 32 | at least 0 | 0.2.0 | PRIORITY_UPDATE frames remembered for streams not yet open |

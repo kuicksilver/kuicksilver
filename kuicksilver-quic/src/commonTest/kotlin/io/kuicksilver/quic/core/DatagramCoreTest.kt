@@ -15,6 +15,7 @@ import io.kuicksilver.quic.DatagramPacketWriter
 import io.kuicksilver.quic.DatagramSender
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.localTransportParameters
@@ -64,6 +65,67 @@ class DatagramCoreTest {
         override fun onLost(id: Long) {
             lost += id
         }
+    }
+
+    /** One datagram with an RFC 9218 [urgency]; records how far stream [watch] had been sent when the datagram was written. */
+    private class UrgentSender(
+        private val urgency: Int,
+        private val core: () -> ConnectionCore,
+        private val watch: Long,
+    ) : DatagramSender {
+        var pending = true
+        var streamSentAtDatagram = -1L
+
+        override fun hasPending(): Boolean = pending
+
+        override fun nextUrgency(): Int = if (pending) urgency else -1
+
+        override fun onTransmit(packet: DatagramPacketWriter) {
+            if (!pending || packet.remaining < 10) return
+            streamSentAtDatagram = core().streams.sentEndForTest(watch)
+            if (packet.write(ByteArray(10) { 4 }, 0, 10, 1L)) pending = false
+        }
+    }
+
+    /**
+     * Where the datagram of [datagramUrgency] goes among 3000 bytes of a stream of [streamPriority], queued together: the
+     * stream's bytes sent before it.
+     */
+    private fun streamBytesBeforeDatagram(
+        datagramUrgency: Int,
+        streamPriority: StreamPriority,
+    ): Long {
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            val id = p.client.openStream(bidi = false, streamPriority)
+            assertEquals(3000, p.client.writeStream(id, ByteArray(3000) { 1 }, 0, 3000, fin = true))
+            val s = UrgentSender(datagramUrgency, { p.client }, id)
+            p.client.datagramSender = s
+            assertTrue(p.runUntil(2.seconds) { !s.pending }, "the datagram went")
+            return s.streamSentAtDatagram
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * draft-ietf-webtrans-http3-16 section 3.4 applies RFC 9218 section 10 to a session's datagrams: a datagram of urgency 5
+     * does not preempt the data of a more urgent stream (urgency 1), which all goes first.
+     */
+    @Test fun negative_datagramDoesNotPreemptMoreUrgentStreamData() {
+        assertEquals(3000L, streamBytesBeforeDatagram(datagramUrgency = 5, StreamPriority(1)))
+    }
+
+    /** Stream data of the same or a lower urgency waits behind the datagram (it is unreliable and latency-sensitive). */
+    @Test fun datagramGoesAheadOfStreamDataOfTheSameOrLowerUrgency() {
+        assertEquals(0L, streamBytesBeforeDatagram(datagramUrgency = 5, StreamPriority(5)))
+        assertEquals(0L, streamBytesBeforeDatagram(datagramUrgency = 5, StreamPriority(6, incremental = true)))
+    }
+
+    /** Without an urgency (-1, the default) a datagram goes ahead of every stream, as before. */
+    @Test fun datagramWithoutUrgencyGoesFirst() {
+        assertEquals(0L, streamBytesBeforeDatagram(datagramUrgency = -1, StreamPriority(0)))
     }
 
     private fun readAll(c: ConnectionCore): List<ByteArray> {

@@ -33,13 +33,14 @@ import kotlin.concurrent.atomics.decrementAndFetch
  * [WebTransportException.StreamStopped], with the application code mapped back from the HTTP/3 space (section 4.4).
  * Each direction buffers what ktor-io's `ByteChannel` holds before a writer suspends (1 MiB) plus one 16 KiB chunk, on
  * top of the transport's stream window, which holds the peer back once that buffer is full. The application cancelling
- * [input] sends STOP_SENDING, and cancelling [output] RESET_STREAM, with application code 0.
+ * [input] sends STOP_SENDING, and cancelling [output] RESET_STREAM_AT keeping our header (section 4.4), with application
+ * code 0.
  */
 internal class WtStreamImpl(
     scope: CoroutineScope,
     internal val st: QuicStream,
     private val readable: Boolean,
-    private val writable: Boolean,
+    internal val writable: Boolean,
     /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
     private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,
@@ -178,13 +179,17 @@ internal class WtStreamImpl(
     }
 
     /**
-     * Resets our sending side with [code]. A stream we opened keeps its header (draft-16 section 4.4: RESET_STREAM_AT with
-     * the header as the reliable size), so the peer can still tell which session the reset belongs to; without
-     * `reset_stream_at` on both sides it is a plain RESET_STREAM.
+     * Resets our sending side with [code] by RESET_STREAM_AT keeping the header we wrote as the reliable size (draft-16
+     * section 4.4: "WebTransport implementations MUST use the RESET_STREAM_AT frame [RESET-STREAM-AT] with a Reliable Size
+     * set to at least the size of the WebTransport header when resetting a WebTransport data stream"), so the peer can
+     * still tell which session the reset belongs to; on a stream the peer opened our side carries no header (size 0). A
+     * session of draft-14 or later exists only with `reset_stream_at` on both sides (section 3.1, [wtTransportGap]), so
+     * the frame always goes; only a draft-02 session (browsers), whose draft predates the frame, may lack it, and the
+     * transport then sends the RESET_STREAM that draft-02 uses.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun abandon(code: Long) {
-        runCatching { if (headerLength > 0) st.resetAt(code, headerLength.toLong()) else st.reset(code) }
+        runCatching { st.resetAt(code, headerLength.toLong()) }
     }
 
     private companion object {

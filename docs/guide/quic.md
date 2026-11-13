@@ -1024,7 +1024,8 @@ within the peer's flow control (draft-11 section 4): with little credit the rese
 reliable bytes. Both codepoints of the parameter are sent and accepted, 0x1d and the pre-IANA one Chrome and quiche use.
 A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated like one that lowers a limit
 (PROTOCOL_VIOLATION). Once RESET_STREAM_AT is in play on a stream, a later reset with another error code is STREAM_STATE_ERROR. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
-above its final size, closes the connection with FRAME_ENCODING_ERROR. WebTransport uses it to keep a stream's header.
+above its final size, closes the connection with FRAME_ENCODING_ERROR. `QuicConnection.resetStreamAtEnabled` tells
+whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.
 
 ## Datagrams (RFC 9221)
 
@@ -1055,7 +1056,14 @@ returns. `trySendDatagram` never enters the loop and allocates only the copy plu
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
 what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
-connection discarded unprocessed).
+connection discarded unprocessed). Datagrams go ahead of stream data; *experimental*: `sendDatagram(data, policy,
+priority)` and `trySendDatagram(data, policy, priority)` schedule one by RFC 9218 urgency instead, so it does not go
+ahead of strictly more urgent streams' data (the sans-IO hook is `DatagramSender.nextUrgency`). The urgency is strict
+both ways: more urgent bulk streams hold such datagrams back, and the datagrams go ahead of streams of the same or a
+lower urgency, so a flood of them starves those. The send queue keeps one FIFO per urgency: a datagram never waits
+behind a less urgent one, and datagrams of one urgency leave in the order they were queued (all RFC 9221 asks). HTTP/3
+sends every HTTP datagram at its request stream's priority this way (WebTransport, draft-ietf-webtrans-http3-16
+section 3.4).
 
 ## Testing your application
 

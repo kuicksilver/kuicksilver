@@ -24,7 +24,7 @@ Quoted: "MUST NOT change the Application Error Code".
 - with both sides' parameter `QuicStream.resetAt(code, reliableSize)` (core: `ConnectionCore.resetStreamAt`) sends RESET_STREAM_AT (0x24): the bytes below the reliable size (cut to what was written) keep being sent and retransmitted, the rest is dropped, and the frame waits until every reliable byte was sent once, so its final size stays within the peer's flow control (section 4)
 - the stream retires once they are acknowledged
 - acknowledgements of bytes past the reliable size that were sent before the reset release nothing twice
-- without the peer's parameter it is RESET_STREAM
+- without the peer's parameter it is RESET_STREAM; `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it (WebTransport requires it, draft-ietf-webtrans-http3-16 §3.1)
 - a later RESET_STREAM (our `reset`, or answering STOP_SENDING) carries the same final size and the RESET_STREAM_AT's code (section 5.2 "MUST NOT change the Application Error Code", 0.2.1 — `core.ResetStreamAtTest.laterResetKeepsTheResetStreamAtCode`).
 - Receiver: the reliable bytes are delivered, then the reset (a stream input never reads -1 for it)
 - bytes read before the frame arrived may go past the reliable size
@@ -36,7 +36,7 @@ Quoted: "MUST NOT change the Application Error Code".
 
 **Tests that pin it.**
 
-- `wire.TransportParametersTest.resetStreamAtBothCodepoints`, `core.ResetStreamAtTest.*` (including `resetAtDeliversReliablePrefix` with 10% loss both ways, `resetAtWaitsForFlowControlCredit`, `ackOfBytesPastTheReliableSizeKeepsTheBufferExact`, `negative_resetCodeChangeIsStreamStateError`, `stream.StreamStateTest.secondPlainResetWithAnotherCodeIsIgnored`, `.negative_changedCodeAfterResetStreamAtIsStreamStateError`, `negative_resetStreamAtReliableSizeAboveFinalIsError`, `negative_resetStreamAtWithoutNegotiationIsFrameEncodingError`), `wire.FrameCodecTest.resetStreamAtRoundTrips`, `.negative_resetStreamAtReliableSizeAboveFinalIsError`, `api.StreamBridgeTest.resetAtDeliversThePrefixThenTheReset`
+- `wire.TransportParametersTest.resetStreamAtBothCodepoints`, `core.ResetStreamAtTest.*` (including `resetAtDeliversReliablePrefix` with 10% loss both ways, `resetAtWaitsForFlowControlCredit`, `ackOfBytesPastTheReliableSizeKeepsTheBufferExact`, `negative_resetCodeChangeIsStreamStateError`, `stream.StreamStateTest.secondPlainResetWithAnotherCodeIsIgnored`, `.negative_changedCodeAfterResetStreamAtIsStreamStateError`, `negative_resetStreamAtReliableSizeAboveFinalIsError`, `negative_resetStreamAtWithoutNegotiationIsFrameEncodingError`), `wire.FrameCodecTest.resetStreamAtRoundTrips`, `.negative_resetStreamAtReliableSizeAboveFinalIsError`, `api.StreamBridgeTest.resetAtDeliversThePrefixThenTheReset`, `.resetStreamAtEnabledWhenBothSidesAdvertiseIt`, `.negative_resetStreamAtNotEnabledWithOneSideOnly`
 
 **Peer interop notes.**
 
