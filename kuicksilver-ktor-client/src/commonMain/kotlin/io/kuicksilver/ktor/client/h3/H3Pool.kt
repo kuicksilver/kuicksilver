@@ -53,6 +53,7 @@ import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import io.kuicksilver.ktor.network.raceAddresses
@@ -62,7 +63,6 @@ import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
-import io.kuicksilver.quic.activePath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -96,16 +96,6 @@ internal class H3Target(
 
 /** The origin host of an [H3Target.key]. */
 private fun originOfKey(key: String): String = key.substringBefore('|')
-
-/**
- * The address bytes of [a] (4 or 16), an IPv4-mapped IPv6 address as its IPv4 one. The pool connects to address literals
- * only, so the bytes are at hand: its text, else (the JVM can report a reverse name for it) the address the socket holds.
- */
-private fun addressBytes(a: InetSocketAddress): ByteArray? =
-    (
-        io.kuicksilver.ktor.client
-            .parseIpLiteral(a.hostname) ?: runCatching { a.resolveAddress() }.getOrNull()
-    )?.let(::unmapped)
 
 private fun unmapped(b: ByteArray): ByteArray =
     if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) {
@@ -160,6 +150,15 @@ internal class H3Entry(
     val createdAt: Long,
 ) {
     val active = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /**
+     * The address (bytes, an IPv4-mapped IPv6 address as its IPv4 one) and port the pool's Happy Eyeballs race connected
+     * this connection to, as the race had it: a literal, so comparing it needs no lookup (the pool compares under its
+     * lock, and reading a socket address's host name can be a reverse lookup on the JVM). Null until the setup finished.
+     */
+    @kotlin.concurrent.Volatile
+    var connectedTo: Pair<ByteArray, Int>? = null
+
     val idleSince = kotlin.concurrent.atomics.AtomicLong(createdAt)
     private val retiredFlag = kotlin.concurrent.atomics.AtomicInt(0)
 
@@ -444,6 +443,7 @@ internal class H3Pool(
         port: Int,
         dns: RequestDns,
         failures: MutableList<Throwable>,
+        connected: (Http3Connection, TcpAddress) -> Unit = { _, _ -> },
         connect: suspend (InetSocketAddress) -> Http3Connection,
     ): Http3Connection {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -453,7 +453,7 @@ internal class H3Pool(
             dns.resolution(host, port),
             delay,
             dns.order(),
-            connect = { a -> connect(InetSocketAddress(a.hostText, a.port)) },
+            connect = { a -> connect(InetSocketAddress(a.hostText, a.port)).also { connected(it, a) } },
             close = { it.close() },
             failures = failures,
             chooseFailure = ::quicRaceFailure,
@@ -602,7 +602,7 @@ internal class H3Pool(
 
     /**
      * Under the lock, once [c] was set up for [t] as [e]: the connection of another live entry of the same origin (the same
-     * configuration) whose active path has [c]'s remote address and port, if any; [t] is then filed under that entry instead
+     * configuration) connected to [c]'s address and port ([H3Entry.connectedTo], literals: no lookup under the lock), if any; [t] is then filed under that entry instead
      * of [e], whose waiters are handed it too ([e] leaves the pool unused). The older connection is kept: it may carry
      * requests already, [c] carries none yet.
      */
@@ -612,14 +612,13 @@ internal class H3Pool(
         c: Http3Connection,
     ): Http3Connection? {
         if (connections[t.key] !== e) return null
-        val remote = c.quic.let { it.activePath ?: it.paths.firstOrNull() }?.remoteAddress ?: return null
-        val bytes = addressBytes(remote) ?: return null
+        val (bytes, port) = e.connectedTo ?: return null
         val now = clock()
         for ((k, other) in connections) {
             if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
             val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
-            val r = o.quic.let { it.activePath ?: it.paths.firstOrNull() }?.remoteAddress ?: continue
-            if (r.port == remote.port && addressBytes(r)?.contentEquals(bytes) == true) {
+            val (b, p) = other.connectedTo ?: continue
+            if (p == port && b.contentEquals(bytes)) {
                 connections[t.key] = other
                 return o
             }
@@ -640,8 +639,8 @@ internal class H3Pool(
      * address and port are among the addresses [t]'s name resolves to now; when one is found, [t] is filed under it and
      * shares it. The same origin means the same configuration: the TLS configuration (server_name, the name the
      * certificate is checked against, trust, client identity) is the origin's, ALPN, QUIC and HTTP/3 settings are the
-     * pool's. The address compared is that of the connection's active path, where the race's winner and any migration
-     * left it (a client migration changes only the local side; a server's preferred address moves it); the destination's
+     * pool's. The address compared is the literal the connection's race connected to ([H3Entry.connectedTo]: no lookup
+     * ever runs for it, the comparison is under the lock; a client migration changes only the local side); the destination's
      * addresses are those of its current answers, the NAT64 synthesis of an IPv6-only network included. A setup of the
      * same origin still in its handshake is waited for first, for one Connection Attempt Delay at most. Nothing is resolved
      * when the origin has no other connection.
@@ -686,14 +685,8 @@ internal class H3Pool(
         }
         val match =
             candidates.firstOrNull { e ->
-                val remote =
-                    e
-                        .shareable()
-                        ?.quic
-                        ?.let { it.activePath ?: it.paths.firstOrNull() }
-                        ?.remoteAddress
-                val bytes = remote?.let(::addressBytes)
-                bytes != null && addresses.any { (b, port) -> port == remote.port && b.contentEquals(bytes) }
+                val remote = e.shareable()?.let { e.connectedTo }
+                remote != null && addresses.any { (b, port) -> port == remote.second && b.contentEquals(remote.first) }
             } ?: return
         lock.withLock {
             val existing = connections[t.key]
@@ -770,6 +763,8 @@ internal class H3Pool(
             // set inside the timeout: a handshake that completes as the timeout fires is closed, never orphaned
             var made: Http3Connection? = null
             val failures = ArrayList<Throwable>()
+            // the connections the race's attempts made, with the literal each went to: the winner's is kept on the entry
+            val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Pair<ByteArray, Int>>>())
             try {
                 beforeSetupForTest?.invoke()
                 withTimeout(data.connectTimeoutMillis(config)) {
@@ -777,27 +772,32 @@ internal class H3Pool(
                     // look up again
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
-                        raceQuic(t.host, t.port, dns, failures) { remote ->
+                        raceQuic(t.host, t.port, dns, failures, { won, a ->
+                            attempts.update { it + (won to (unmapped(a.bytes) to a.port)) }
+                        }) { remote ->
                             if (config.http3.earlyData) {
                                 // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                                 // the handshake timer (a request sent early then fails, and falls back, at that time)
-                                ep.connectEarly(
-                                    remote,
-                                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                    quicWithin(data.connectTimeoutMillis(config)),
-                                    config.http3.settings,
-                                )
+                                ep
+                                    .connectEarly(
+                                        remote,
+                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                        quicWithin(data.connectTimeoutMillis(config)),
+                                        config.http3.settings,
+                                    )
                             } else {
-                                ep.connect(
-                                    remote,
-                                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                    quic,
-                                    config.http3.settings,
-                                )
+                                ep
+                                    .connect(
+                                        remote,
+                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                        quic,
+                                        config.http3.settings,
+                                    )
                             }
                         }
                 }
                 val c = made!!
+                e.connectedTo = attempts.load().firstOrNull { it.first === c }?.second
                 e.idleSince.store(clock())
                 // RFC 9114 section 3.3: a setup of the same origin to the same address that finished meanwhile (both ran
                 // past each other's wait) keeps that one; this connection is closed before any request used it. The check
