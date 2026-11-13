@@ -307,7 +307,8 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         }
         // RFC 9110 section 7.4 (RFC 9113 section 9.1.1): a request for a host this connection's certificate does not name
         // gets 421 and never reaches the application; the stream ends, the connection serves the client's other requests
-        if (authorityCheck.misdirected(r.scheme, r.authority)) {
+        authorityCheck.rejection(r.scheme, r.authority)?.let { why ->
+            environment.log.debug(why)
             answered = runCatching { r.respond(MISDIRECTED_REQUEST, listOf("date" to httpDateNow()), endStream = true) }.isSuccess
             return
         }

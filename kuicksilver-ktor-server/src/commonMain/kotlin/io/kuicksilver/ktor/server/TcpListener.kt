@@ -479,9 +479,14 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                 // destination, not an origin
                 val absolute = splitAbsoluteForm(request.uri.toString())
                 val targetScheme = if (absolute != null) request.uri.toString().substringBefore(':') else scheme
-                if (request.method.value != "CONNECT" &&
-                    authorityCheck.misdirected(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
-                ) {
+                val misdirected =
+                    if (request.method.value == "CONNECT") {
+                        null
+                    } else {
+                        authorityCheck.rejection(targetScheme, absolute?.first ?: request.headers[HttpHeaders.Host]?.toString())
+                    }
+                if (misdirected != null) {
+                    environment.log.debug(misdirected)
                     call.respond(MisdirectedRequestStatus) // a final status the head determines: no 100 before it
                 } else if (
                     // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)

@@ -1633,7 +1633,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   Caddy do with client authentication). A plain connector answers 421 to an absolute-form `https://` target (no certificate secures it); origin-form
   requests are served as before. A connector whose every client is a trusted gateway turns the check off with the new
   `tlsConnector { trustedGateway = true }`, or with the new `plainConnector { trustedGateway = true }` in place of Ktor's
-  `connector { }` (docs/guide/ktor.md, "Misdirected requests"). New for the check and for servers
+  `connector { }` (docs/guide/ktor.md, "Misdirected requests"). **Upgrading:** the check is on by default. A server whose
+  certificate does not name every host and address its clients use (`localhost`, `127.0.0.1`, the server's IP) now
+  answers those clients 421; the engine logs the reason at debug level (docs/guide/troubleshooting.md, "The server answers
+  `421 Misdirected Request`"). Reissue the certificate; set `trustedGateway` only on connectors that only a trusted
+  gateway reaches. New for the check and for servers
   built on the libraries: `TlsConnection.localCertificates`, `QuicTlsSession.localCertificates`,
   `QuicConnection.localCertificates`, `TlsSocket.localCertificates` and `Certificate.matchesHost`.
 

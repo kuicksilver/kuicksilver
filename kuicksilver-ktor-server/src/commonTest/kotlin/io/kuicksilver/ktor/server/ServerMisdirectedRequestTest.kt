@@ -71,6 +71,30 @@ class ServerMisdirectedRequestTest {
         return Triple(server, port, seen)
     }
 
+    /** The reasons the engine logs (debug level) with each 421, which docs/guide/troubleshooting.md quotes. */
+    @Test fun negative_rejectionReasons() {
+        val leaf = listOf(io.kuicksilver.tls.Certificate(TestCerts.server))
+        assertEquals(null, misdirected(leaf, "https", "server.test", trustedGateway = false))
+        assertEquals(
+            "421 Misdirected Request for other.test: the certificate of this connection does not name it",
+            misdirected(leaf, "https", "other.test", trustedGateway = false),
+        )
+        assertEquals(
+            "421 Misdirected Request for other.test: an https request over a plain connection",
+            misdirected(emptyList(), "https", "other.test", trustedGateway = false),
+        )
+        assertEquals(
+            "421 Misdirected Request for b\u00fccher.test: not a valid host name or address",
+            misdirected(leaf, "https", "b\u00fccher.test", trustedGateway = false),
+        )
+        assertEquals(
+            "421 Misdirected Request for a.wild.test: the sniSelector chose this connection's TLS settings for another name",
+            misdirected(leaf, "https", "a.wild.test", trustedGateway = false, sni = SniChoice("server.test")),
+        )
+        assertEquals(null, misdirected(leaf, "https", "other.test", trustedGateway = true))
+        assertEquals(null, misdirected(leaf, "http", "other.test", trustedGateway = false))
+    }
+
     private fun status(response: String): String = response.substringAfter("HTTP/1.1 ").substringBefore(' ')
 
     /** Every response status of [raw], in order. */

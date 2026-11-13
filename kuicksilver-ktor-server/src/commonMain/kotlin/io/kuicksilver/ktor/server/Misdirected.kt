@@ -24,11 +24,11 @@ internal class AuthorityCheck(
     private val trustedGateway: Boolean,
     private val sni: SniChoice? = null,
 ) {
-    /** [misdirected] for a request whose target URI has [scheme] and [authority]. */
-    fun misdirected(
+    /** [misdirected] for a request whose target URI has [scheme] and [authority]: why it gets 421, or null. */
+    fun rejection(
         scheme: String?,
         authority: String?,
-    ): Boolean = misdirected(local, scheme, authority, trustedGateway, sni)
+    ): String? = misdirected(local, scheme, authority, trustedGateway, sni)
 }
 
 /**
@@ -59,7 +59,7 @@ internal class SniChoice(
 }
 
 /**
- * Whether a request received over TLS must be rejected with 421 (RFC 9110 section 7.4): "a request for an "https" resource
+ * Why a request must be rejected with 421 (the text the engine logs at debug level), or null when it is served (RFC 9110 section 7.4): "a request for an "https" resource
  * MUST be rejected unless it has been received over a connection that has been secured via a certificate valid for that
  * target URI's origin". [scheme] is the target URI's scheme, [authority] its authority (`:authority`, or `Host`); [local] is
  * the chain this connection presented, as the handshake chose it (SNI override or identity snapshot).
@@ -77,14 +77,20 @@ internal fun misdirected(
     authority: String?,
     trustedGateway: Boolean,
     sni: SniChoice? = null,
-): Boolean {
-    if (trustedGateway || !scheme.equals("https", ignoreCase = true) || authority.isNullOrEmpty()) return false
-    val leaf = local.firstOrNull() ?: return true // an https request on a connection secured by no certificate (plain)
+): String? {
+    if (trustedGateway || !scheme.equals("https", ignoreCase = true) || authority.isNullOrEmpty()) return null
+    val prefix = "421 Misdirected Request for $authority"
+    // an https request on a connection secured by no certificate (plain)
+    val leaf = local.firstOrNull() ?: return "$prefix: an https request over a plain connection"
     val host =
         try {
             HostName.normalize(authorityHost(authority))
         } catch (_: TlsException) {
-            return true
+            return "$prefix: not a valid host name or address"
         }
-    return !leaf.matchesHost(host) || (sni != null && !sni.allows(host))
+    return when {
+        !leaf.matchesHost(host) -> "$prefix: the certificate of this connection does not name it"
+        sni != null && !sni.allows(host) -> "$prefix: the sniSelector chose this connection's TLS settings for another name"
+        else -> null
+    }
 }

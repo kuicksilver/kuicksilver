@@ -41,6 +41,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `Http11RequiredException`, `fallback = H2Refused`, `Http2Exception` | [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
+| `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
 
@@ -645,6 +646,33 @@ that `altSvc` is on so clients learn about HTTP/3 ([Deploying the HTTP/3 server]
 the network in front of the server). `Alt-Svc: clear` instead of `h3=…`, or new QUIC clients refused with
 CONNECTION_REFUSED (0x2) while HTTP/1.1 answers, mean `engine.http3Advertising` is `Clear` or `Drain`
 ([Ktor: Turning HTTP/3 off on the server](ktor.md#turning-http3-off-on-the-server)).
+
+### The server answers `421 Misdirected Request`
+
+Since 0.3.0 a TLS connector answers 421 to an `https` request whose host the certificate of its connection does not name,
+and the application never sees the request (RFC 9110 section 7.4 requires the rejection). Browsers that reuse a connection
+for another host retry on a new connection and need nothing; the other causes are configuration. The engine logs each 421
+at debug level with the reason:
+
+- "421 Misdirected Request for <host>: the certificate of this connection does not name it": the certificate's
+  subjectAltName must list every host and address clients use, `localhost`, `127.0.0.1` and the server's IP addresses
+  included (as IP entries: a DNS entry `127.0.0.1` does not count). Wildcards cover one label (`*.example.com` covers
+  `api.example.com`, not `example.com` or `a.b.example.com`), and the subject CN is never used. Clients that pin the
+  key or use `TrustConfig.ExpectedName` to accept a certificate that names something else get 421 too: reissue the
+  certificate with the name they connect to.
+- "421 Misdirected Request for <host>: the sniSelector chose this connection's TLS settings for another name": with an
+  `sniSelector`, a request must be for the connection's SNI name, or an address when the client sent no SNI. A client
+  that sends one name in TLS and another in `Host` (some test tools, `curl --resolve` set up for another name) gets this;
+  send the same name in both.
+- "421 Misdirected Request for <host>: an https request over a plain connection": a plain connector received
+  `GET https://… HTTP/1.1`. Send origin-form requests, or terminate TLS here.
+- "421 Misdirected Request for <host>: not a valid host name or address": an internationalised name must arrive as an
+  A-label (`xn--…`).
+
+Only when every client of a connector is a trusted gateway, such as a TLS-terminating proxy that re-encrypts with an
+internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
+`tlsConnector { trustedGateway = true }` or `plainConnector { trustedGateway = true }`
+([Ktor: Misdirected requests](ktor.md#misdirected-requests)). Never set it on a connector that clients reach directly.
 
 ## Key logging is refused
 
