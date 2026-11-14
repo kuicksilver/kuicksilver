@@ -90,6 +90,20 @@ class OcspFileWatcherTest {
         assertEquals(IdentityFileWatcher.Outcome.Unchanged, w.checkOnce())
     }
 
+    /** A reload that brings in a stapled response too large for TLS 1.3 names it once, as a startup response would be. */
+    @Test fun negative_reloadedResponseTooLargeForTls13IsNamed() {
+        val w = watcher()
+        w.checkUsable()
+        file = ByteArray(65_528).also { it[0] = 0x30 }
+        assertEquals(IdentityFileWatcher.Outcome.Reloaded, w.checkOnce())
+        assertEquals(1, log.lines.count { it.first == "WARN" && "only TLS 1.2" in it.second }, "${log.lines}")
+        w.checkOnce() // unchanged: not named again
+        assertEquals(1, log.lines.count { it.first == "WARN" && "only TLS 1.2" in it.second }, "${log.lines}")
+        file = ByteArray(65_527).also { it[0] = 0x30 }
+        w.checkOnce() // fits: nothing to name
+        assertEquals(1, log.lines.count { it.first == "WARN" && "only TLS 1.2" in it.second }, "${log.lines}")
+    }
+
     /** Without a reload interval the file is not read again, only whether the response is still stapled is watched. */
     @Test fun withoutRereadTheFileIsNotRead() {
         val w = watcher(reread = false)

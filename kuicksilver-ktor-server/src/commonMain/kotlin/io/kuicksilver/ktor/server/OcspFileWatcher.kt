@@ -58,12 +58,12 @@ internal class OcspFileWatcher(
                 outcome = IdentityFileWatcher.Outcome.Failed
             }
         }
-        checkUsable()
+        checkUsable(reloaded = outcome == IdentityFileWatcher.Outcome.Reloaded)
         return outcome
     }
 
     /** Logs a change of whether the current response is stapled: the first look and each change after it. */
-    fun checkUsable() {
+    fun checkUsable(reloaded: Boolean = false) {
         val now =
             try {
                 usable(target, chain())
@@ -72,8 +72,14 @@ internal class OcspFileWatcher(
             } catch (_: Throwable) {
                 false
             }
-        if (now == stapled) return
         val size = target.current?.size ?: 0
+        // a stapled response too large for TLS 1.3: named when it is first stapled and when a reload brings one in
+        if (now && size > MAX_TLS13_RESPONSE && (stapled != true || reloaded)) {
+            log.warn(
+                "the OCSP response in $path is $size bytes: TLS 1.3 and QUIC carry at most $MAX_TLS13_RESPONSE, so only TLS 1.2 staples it",
+            )
+        }
+        if (now == stapled) return
         when {
             !now && stapled == null -> {
                 log.warn(
@@ -92,11 +98,6 @@ internal class OcspFileWatcher(
             stapled == false -> {
                 log.info("the OCSP response in $path is stapled again")
             }
-        }
-        if (now && size > MAX_TLS13_RESPONSE && stapled != true) {
-            log.warn(
-                "the OCSP response in $path is $size bytes: TLS 1.3 and QUIC carry at most $MAX_TLS13_RESPONSE, so only TLS 1.2 staples it",
-            )
         }
         stapled = now
     }
