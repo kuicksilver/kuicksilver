@@ -143,14 +143,18 @@ public class H2ClientConnection private constructor(
     /** Sends GOAWAY (NO_ERROR) and takes no new streams; the connection closes once its streams are done. */
     public fun shutdown(): Unit = rt.shutdown()
 
-    /** Closes the connection now; running streams fail with [cause]. */
+    /**
+     * Closes the connection now, for a transport that is lost (failed, or gone under it): running streams fail with
+     * [cause], and the transport is closed hard, nothing more is written. A sound transport ends with [abortInOrder].
+     */
     public fun abort(cause: Throwable): Unit = rt.abort(cause)
 
     /**
-     * Ends the connection for a fault of this side over a sound transport: running streams fail with [cause], GOAWAY
-     * (INTERNAL_ERROR, RFC 9113 sections 5.4.1 and 6.8) is written and the transport closed in order behind it (TLS
-     * close_notify); hard when the writer cannot get it out within the runtime's bound. Does not suspend. [abort] is for a
-     * transport that is lost or a peer that does not answer.
+     * Ends the connection over a sound transport: a fault of this side, or a peer that stopped answering (a health PING
+     * without its acknowledgement). Running streams fail with [cause], GOAWAY (INTERNAL_ERROR, RFC 9113 sections 5.4.1 and
+     * 6.8) is written and the transport closed in order behind it (TLS close_notify, then the FIN); hard when the writer
+     * cannot get it out within the runtime's bound (2 s). Does not suspend. A second call, or one on a connection that
+     * ended or was lost already, sends nothing more: the close already under way (in order, bounded the same) stands.
      */
     public fun abortInOrder(cause: Throwable): Unit = rt.lost(cause, inOrder = true)
 

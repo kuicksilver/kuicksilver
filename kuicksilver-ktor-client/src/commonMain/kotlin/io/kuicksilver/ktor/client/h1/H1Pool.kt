@@ -412,7 +412,8 @@ internal class H1Pool(
                         if (c.client.reservedStreams > 0) {
                             c.client.shutdown()
                         } else {
-                            c.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                            // a peer that does not answer has not lost the transport: GOAWAY, close_notify, FIN, bounded
+                            c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
                         }
                         continue
                     }
@@ -500,7 +501,11 @@ internal class H1Pool(
                                     if (found.client.reservedStreams > 0) {
                                         found.client.shutdown()
                                     } else {
-                                        found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                        // a peer that does not answer has not lost the transport: GOAWAY, close_notify,
+                                        // FIN, bounded (RFC 9113 section 6.8, RFC 9846 section 6.1)
+                                        found.client.abortInOrder(
+                                            kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"),
+                                        )
                                     }
                                     continue
                                 }
@@ -1352,6 +1357,7 @@ internal class H1Pool(
                                 client.abortInOrder(e)
                             } catch (s: Throwable) {
                                 if (s !== e) e.addSuppressed(s)
+                                tcp.close() // the runtime schedules its close regardless; this one stands in case it did not
                             }
                             throw e
                         }

@@ -39,6 +39,8 @@ import kotlin.time.Duration.Companion.seconds
 class ClientOrderlyCloseTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    private fun engine(c: io.ktor.client.HttpClient) = c.engine as KuicksilverEngine
+
     /** Reads [this] to its end: true when it ended with close_notify, false on a truncation or another failure. */
     private suspend fun ByteReadChannel.endsCleanly(): Boolean =
         runCatching {
@@ -169,10 +171,21 @@ class ClientOrderlyCloseTest {
             }
         }
 
-    /** What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and whether TLS ended cleanly. */
+    /**
+     * What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and last-stream-ids, in order, and whether
+     * TLS ended cleanly (recorded after every GOAWAY: what came before the end).
+     */
     private class H2End {
         val goAways = ArrayList<Long>()
+        val goAwayLastIds = ArrayList<Long>()
         val clean = CompletableDeferred<Boolean>()
+
+        /** Exactly one GOAWAY, with [code] and last-stream-id 0 (the server opens no streams), and then a clean TLS end. */
+        suspend fun assertOneGoAwayThenCleanEnd(code: Http2ErrorCode) {
+            assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+            assertEquals(listOf(code.code), goAways, "one GOAWAY ($code) before the end")
+            assertEquals(listOf(0L), goAwayLastIds, "its last-stream-id")
+        }
     }
 
     private fun frame(
@@ -230,6 +243,9 @@ class ClientOrderlyCloseTest {
                     }
 
                     type == 7 -> {
+                        end.goAwayLastIds +=
+                            ((payload[0].toLong() and 0x7f) shl 24) or ((payload[1].toLong() and 0xff) shl 16) or
+                            ((payload[2].toLong() and 0xff) shl 8) or (payload[3].toLong() and 0xff)
                         end.goAways +=
                             ((payload[4].toLong() and 0xff) shl 24) or ((payload[5].toLong() and 0xff) shl 16) or
                             ((payload[6].toLong() and 0xff) shl 8) or (payload[7].toLong() and 0xff)
@@ -269,8 +285,7 @@ class ClientOrderlyCloseTest {
                 // 1 ms (the least the pool takes): the engine's reaper evicts the connection soon after the response
                 testClient(engine = { idleTimeout = 1.milliseconds }).use { c ->
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
-                    assertTrue(withTimeout(10.seconds) { end.clean.await() }, "the server saw the client's close_notify")
-                    assertEquals(listOf(0L), end.goAways, "one GOAWAY (NO_ERROR)")
+                    end.assertOneGoAwayThenCleanEnd(Http2ErrorCode.NO_ERROR)
                 }
             }
         }
@@ -287,16 +302,36 @@ class ClientOrderlyCloseTest {
                 h2Server(input, output, end, violate = false)
             }) { port ->
                 testClient().use { c ->
-                    val pool = (c.engine as KuicksilverEngine).h1
+                    val pool = engine(c).h1
                     val failure = IllegalStateException("a failure after the HTTP/2 start")
                     pool.afterH2StartForTest = { _, _ -> throw failure }
                     val e = runCatching { c.get("https://127.0.0.1:$port/") }.exceptionOrNull()
                     assertTrue(generateSequence(e) { it.cause }.any { it === failure }, "the call failed with $e")
-                    assertTrue(withTimeout(10.seconds) { end.clean.await() }, "the server saw the client's close_notify")
-                    assertEquals(listOf(Http2ErrorCode.INTERNAL_ERROR.code), end.goAways, "one GOAWAY (INTERNAL_ERROR)")
+                    end.assertOneGoAwayThenCleanEnd(Http2ErrorCode.INTERNAL_ERROR)
                     assertEquals(0, pool.h2.connectionCount)
                     withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
                     assertEquals(emptyList(), pool.h2JobsForTest.toList())
+                }
+            }
+        }
+
+    /**
+     * A server that stops answering PINGs (this one never does) has not lost the transport: the connection that fails its
+     * health PING ends in order, GOAWAY (INTERNAL_ERROR, RFC 9113 sections 5.4.1 and 6.8) then close_notify (RFC 9846
+     * section 6.1), and the request goes over a new connection.
+     */
+    @Test fun negative_h2PeerThatMissesAHealthPingGetsGoAwayAndCloseNotify() =
+        clientTest {
+            val first = H2End()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                h2Server(input, output, if (index == 0) first else H2End(), violate = false)
+            }) { port ->
+                // the health PING waits half the connect timeout: 500 ms
+                testClient(engine = { connectTimeout = 1.seconds }).use { c ->
+                    engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    first.assertOneGoAwayThenCleanEnd(Http2ErrorCode.INTERNAL_ERROR)
                 }
             }
         }

@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
@@ -686,13 +687,15 @@ internal class H2Runtime(
         prefaceReceived.completeExceptionally(cause)
         val left = lock.withLock { streams.values.toList() }
         for (s in left) fail(s, cause) // a complete response stays complete (fail keeps it)
-        onChange()
-        kick.trySend(Unit) // the writer drains what is left, then closes the transport
-        if (client) {
-            // a server that stopped reading would hold the writer, and with it the transport and the pool's slot, for good:
-            // the drain is bounded as for [lost] in order (a server bounds it by the engine's send-stall deadline instead)
-            scope.launch(CoroutineName("kuicksilver-h2-close")) {
-                if (withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } == null) closeTransportOnce(graceful = false)
+        try {
+            onChange()
+        } finally {
+            // also after an engine callback that threw: the transport is never left open
+            kick.trySend(Unit) // the writer drains what is left, then closes the transport
+            if (client) {
+                // a server that stopped reading would hold the writer, and with it the transport and the pool's slot, for
+                // good: the drain is bounded as for [lost] in order (a server bounds it by the engine's send-stall deadline)
+                closeWithinBound()
             }
         }
     }
@@ -827,8 +830,11 @@ internal class H2Runtime(
 
     /**
      * The transport failed or ended under the core ([cause]): every open stream fails, and the transport is closed. [inOrder]:
-     * the transport itself is sound (a peer that stopped answering), so the GOAWAY is written and the transport closed in
-     * order behind it, or hard after [IN_ORDER_CLOSE_BOUND] when the writer cannot get it out.
+     * the transport itself is sound (a peer that stopped answering, a fault of this side), so the GOAWAY is written and the
+     * transport closed in order behind it, or hard after [IN_ORDER_CLOSE_BOUND] when the writer cannot get it out. Called
+     * again, or on a connection that ended already (whose last GOAWAY may still be on its way out), it sends nothing more:
+     * in order it leaves the close to the writer within the same bound, otherwise it closes the transport at once. The close
+     * is in place also when the GOAWAY's dispatch throws (an engine callback).
      */
     fun lost(
         cause: Throwable,
@@ -845,13 +851,26 @@ internal class H2Runtime(
             }
         // the core reports every stream (those that never went out as not processed) and its end
         if (first && inOrder) lostInOrder = true
-        if (first) withCore { goAway(Http2ErrorCode.INTERNAL_ERROR, ByteArray(0), graceful = false, now = clock()) }
-        if (first && inOrder) {
-            scope.launch(CoroutineName("kuicksilver-h2-close")) {
-                if (withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } == null) closeTransportOnce(graceful = false)
+        try {
+            if (first) withCore { goAway(Http2ErrorCode.INTERNAL_ERROR, ByteArray(0), graceful = false, now = clock()) }
+        } finally {
+            if (inOrder) closeWithinBound() else closeTransportOnce(graceful = false)
+        }
+    }
+
+    /**
+     * The transport closes in order once the writer has drained ([closed]), or hard when it has not within
+     * [IN_ORDER_CLOSE_BOUND]; at once also when the runtime's scope is cancelled already (the wait runs atomically).
+     */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class) // CoroutineStart.ATOMIC: the wait's finally runs even if never started
+    private fun closeWithinBound() {
+        scope.launch(CoroutineName("kuicksilver-h2-close"), start = CoroutineStart.ATOMIC) {
+            var drained = false
+            try {
+                drained = withTimeoutOrNull(IN_ORDER_CLOSE_BOUND) { closed.await() } != null
+            } finally {
+                if (!drained) closeTransportOnce(graceful = false)
             }
-        } else {
-            closeTransportOnce(graceful = false)
         }
     }
 
@@ -1469,7 +1488,7 @@ internal class H2Runtime(
         return ok
     }
 
-    /** Ends the connection now ([cause] for the streams still running). */
+    /** Ends the connection now ([cause] for the streams still running), its transport lost: closed hard at once. */
     fun abort(cause: Throwable) = lost(cause)
 
     private companion object {

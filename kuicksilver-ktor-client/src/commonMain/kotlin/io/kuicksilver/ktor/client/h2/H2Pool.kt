@@ -33,19 +33,13 @@ internal class H2Conn(
 
     /**
      * The hard close: for a connection that has ended already (its transport closed, this is a no-op) or whose orderly close
-     * ran out of its bound ([H2Pool.closeAll]). A live, healthy connection is closed in order: [H2ClientConnection.shutdown]
-     * (idle eviction, the lifetime, the engine's close) or [closeTransportOrderly].
+     * ran out of its bound ([H2Pool.closeAll]). A live connection is closed in order through its client instead:
+     * [H2ClientConnection.shutdown] (idle eviction, the lifetime, the engine's close) or [H2ClientConnection.abortInOrder]
+     * (a peer that does not answer a health PING). An H2Conn is never on the HTTP/1.1 pool's idle list, so that pool never
+     * closes one in order ([closeOrderly]) either.
      */
     override fun closeTransport() {
         client.abort(IOException("the HTTP/2 connection was closed by the client"))
-    }
-
-    /**
-     * GOAWAY (NO_ERROR, RFC 9113 section 6.8), then the transport closed in order (TLS close_notify): the pool closes in
-     * order only a connection without streams, which closes as soon as its GOAWAY is written, bounded by the runtime.
-     */
-    override fun closeTransportOrderly() {
-        client.shutdown()
     }
 }
 
