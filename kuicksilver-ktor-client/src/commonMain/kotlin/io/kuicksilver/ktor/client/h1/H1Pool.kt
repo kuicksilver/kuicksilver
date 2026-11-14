@@ -1356,8 +1356,9 @@ internal class H1Pool(
                             try {
                                 client.abortInOrder(e)
                             } catch (s: Throwable) {
+                                // only the GOAWAY's dispatch can throw, and the runtime has set up the transport's close
+                                // (in order, hard within its bound) before it rethrows: a close here would cut that order
                                 if (s !== e) e.addSuppressed(s)
-                                tcp.close() // the runtime schedules its close regardless; this one stands in case it did not
                             }
                             throw e
                         }

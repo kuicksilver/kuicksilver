@@ -173,7 +173,8 @@ class ClientOrderlyCloseTest {
 
     /**
      * What a hand-written HTTP/2 server saw of the client's end: the GOAWAY codes and last-stream-ids, in order, and whether
-     * TLS ended cleanly (recorded after every GOAWAY: what came before the end).
+     * TLS ended cleanly (recorded after every GOAWAY: what came before the end). The lists are written by the server's
+     * handler only; tests read them after [clean] completed, which the handler does after its last write.
      */
     private class H2End {
         val goAways = ArrayList<Long>()
@@ -324,10 +325,12 @@ class ClientOrderlyCloseTest {
         clientTest {
             val first = H2End()
             tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { index, _, input, output ->
+                // only the first connection, the one that misses the PING, is inspected; the second just serves
                 h2Server(input, output, if (index == 0) first else H2End(), violate = false)
             }) { port ->
-                // the health PING waits half the connect timeout: 500 ms
-                testClient(engine = { connectTimeout = 1.seconds }).use { c ->
+                // the health PING waits half the connect timeout (1.5 s; this server never answers, so always that long),
+                // and the new connection has the whole 3 s, as in ClientH2Test's health tests
+                testClient(engine = { connectTimeout = 3.seconds }).use { c ->
                     engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)

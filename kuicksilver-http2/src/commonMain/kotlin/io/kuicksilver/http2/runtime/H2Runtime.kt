@@ -247,6 +247,10 @@ internal class H2Runtime(
 
     @Volatile private var shuttingDown = false
     private val transportClosed = AtomicBoolean(false)
+
+    /** The bounded wait of [closeWithinBound] has started (once per connection). */
+    private val closeBoundStarted = AtomicBoolean(false)
+
     private var awaitingPong = -1L // under lock
 
     /** Bytes read from the peer and fed to the core (the reader stops when the connection ends). */
@@ -833,7 +837,8 @@ internal class H2Runtime(
      * the transport itself is sound (a peer that stopped answering, a fault of this side), so the GOAWAY is written and the
      * transport closed in order behind it, or hard after [IN_ORDER_CLOSE_BOUND] when the writer cannot get it out. Called
      * again, or on a connection that ended already (whose last GOAWAY may still be on its way out), it sends nothing more:
-     * in order it leaves the close to the writer within the same bound, otherwise it closes the transport at once. The close
+     * in order it leaves the close to the writer within the same bound, otherwise it closes the transport at once. After an
+     * earlier [lost] that was not in order the transport is closed already, and either way nothing more happens. The close
      * is in place also when the GOAWAY's dispatch throws (an engine callback).
      */
     fun lost(
@@ -860,10 +865,12 @@ internal class H2Runtime(
 
     /**
      * The transport closes in order once the writer has drained ([closed]), or hard when it has not within
-     * [IN_ORDER_CLOSE_BOUND]; at once also when the runtime's scope is cancelled already (the wait runs atomically).
+     * [IN_ORDER_CLOSE_BOUND]; at once also when the runtime's scope is cancelled already (the wait runs atomically). One
+     * wait per connection ([closeBoundStarted]): [lost] in order and the end of the connection both ask for it.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class) // CoroutineStart.ATOMIC: the wait's finally runs even if never started
     private fun closeWithinBound() {
+        if (!closeBoundStarted.compareAndSet(false, true)) return
         scope.launch(CoroutineName("kuicksilver-h2-close"), start = CoroutineStart.ATOMIC) {
             var drained = false
             try {
