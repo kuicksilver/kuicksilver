@@ -342,7 +342,10 @@ experimental in 0.3.0:
   QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
   issuer) and fresh at that moment; a stale response is silently not sent. A response is at most 2^24-5 bytes, and
   TLS 1.3 and QUIC staple one only up to 65527 bytes (it must fit the certificate's extensions, RFC 8446 section 4.4.2);
-  a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Call `update` with a fresh response before
+  a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Over QUIC a
+  large staple makes the server's first flight exceed three times what the client sent before its address is validated
+  (RFC 9000 section 8.1), so the server sends the rest only as more client packets arrive: each such limit costs extra
+  round trips. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
   and never the default identity's (TCP; QUIC has no `sniSelector`).

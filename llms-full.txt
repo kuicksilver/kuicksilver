@@ -1601,7 +1601,10 @@ experimental in 0.3.0:
   QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
   issuer) and fresh at that moment; a stale response is silently not sent. A response is at most 2^24-5 bytes, and
   TLS 1.3 and QUIC staple one only up to 65527 bytes (it must fit the certificate's extensions, RFC 8446 section 4.4.2);
-  a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Call `update` with a fresh response before
+  a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Over QUIC a
+  large staple makes the server's first flight exceed three times what the client sent before its address is validated
+  (RFC 9000 section 8.1), so the server sends the rest only as more client packets arrive: each such limit costs extra
+  round trips. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
   and never the default identity's (TCP; QUIC has no `sniSelector`).
@@ -2941,7 +2944,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.clientCa` | PEM file of the CA certificates client certificates are verified against; needs the identity files and `kuicksilver.tls.clientAuth` `optional` or `required` |
 | `kuicksilver.tls.versions` | the TLS versions of the deployment port: `tls13` (unset) or `tls12And13`; needs the identity files, and is refused next to `-sslPort`, whose key is `ktor.security.ssl.enabledProtocols`; see [TLS 1.2 on the server](#tls-12-on-the-server) |
 | `kuicksilver.tls.ocspStapling` | a file with a DER OCSP response (RFC 6960) for the identity's certificate, stapled on TCP and QUIC when it is fresh and for the certificate sent; read again every `kuicksilver.tls.reloadInterval` (put a fresh response in place before nextUpdate; without the interval, a restart reads it); a response that is not stapled is logged as a warning at startup, and so is one that stops being stapled (expired, or for a certificate that was reloaded); needs the identity files, and is refused next to `-sslPort`; see [Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation) |
-| `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); refused next to `-sslPort`; see [Misdirected requests](#misdirected-requests) |
+| `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
