@@ -7,6 +7,7 @@ import io.ktor.network.selector.Selectable
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
+import io.ktor.network.sockets.SocketAddress
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
@@ -67,6 +68,15 @@ internal class KslNioSocket(
     private val selectable = delegate as Selectable
     private val nio = selectable.channel as SocketChannel
     private val closing = AtomicBoolean(false)
+
+    /**
+     * The local address, taken while the socket is open: ktor's socket asks the channel on every read, which throws
+     * ClosedChannelException once the socket is closed, and a connected socket's addresses do not change.
+     */
+    override val localAddress: SocketAddress = delegate.localAddress
+
+    /** The remote address, taken while the socket is open (as [localAddress]). */
+    override val remoteAddress: SocketAddress = delegate.remoteAddress
 
     /** Set by [abort] before it cancels the writer: the writer then ends without shutting the output down. */
     @Volatile private var aborted = false
@@ -344,6 +354,9 @@ internal class KslNioServerSocket(
     private val delegate: ServerSocket,
     private val selector: SelectorManager,
 ) : ServerSocket by delegate {
+    /** The bound address, taken while the socket is open: ktor's server socket asks the channel, which throws once closed. */
+    override val localAddress: SocketAddress = delegate.localAddress
+
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()

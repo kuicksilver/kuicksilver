@@ -249,6 +249,7 @@ internal suspend fun connectTcpAddressWith(
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
         if (!start(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
+        socket.recordLocalAddress()
         return socket
     } catch (e: PosixException) {
         socket.close()
@@ -320,12 +321,21 @@ internal class NativeTcpServerSocket(
                 selector.select(this, SelectInterest.ACCEPT)
                 continue
             }
-            return try {
-                NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
-            } catch (e: Throwable) {
-                tcpClose(fd)
-                throw e
+            val socket =
+                try {
+                    NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
+                } catch (e: Throwable) {
+                    tcpClose(fd)
+                    throw e
+                }
+            try {
+                socket.recordLocalAddress()
+            } catch (e: PosixException) {
+                // a connection whose own address the system cannot tell is of no use: it goes, the next one is accepted
+                socket.close()
+                continue
             }
+            return socket
         }
     }
 
@@ -354,7 +364,23 @@ internal class NativeTcpSocket(
     Selectable {
     override val socketContext: CompletableJob = Job(parent)
     override val coroutineContext: CoroutineContext get() = socketContext
-    override val localAddress: SocketAddress by lazy { tcpAddressOf(descriptor, peer = false).toInet() }
+
+    /** The local address, taken by [recordLocalAddress] once the socket is connected. */
+    @Volatile private var local: SocketAddress? = null
+
+    /**
+     * The local address, as `getsockname` gave it once the socket was connected ([recordLocalAddress]); it stays valid after
+     * [close]: asked of the descriptor then, it would fail on a closed one or answer for another socket that reuses its number.
+     */
+    override val localAddress: SocketAddress get() = local ?: throw IllegalStateException("Socket is not connected")
+
+    /**
+     * Takes [localAddress] from the descriptor; called once the connect completed (an accepted socket at once): before it, the
+     * system may not have chosen the address yet (Windows answers the wildcard). Throws [PosixException] when it cannot.
+     */
+    internal fun recordLocalAddress() {
+        local = tcpAddressOf(descriptor, peer = false).toInet()
+    }
 
     private val closeFlag = AtomicBoolean(false)
 

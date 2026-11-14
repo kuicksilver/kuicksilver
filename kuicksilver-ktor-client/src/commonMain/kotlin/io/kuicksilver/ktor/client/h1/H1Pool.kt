@@ -1271,6 +1271,10 @@ internal class H1Pool(
                         // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
                         // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
                         // the connection ends with SETTINGS_TIMEOUT (h2Exchange maps that to the call's failure)
+                        // taken before the connection starts: nothing that can throw comes after it, so a started connection
+                        // never leaks past the catch below, which closes only the transport
+                        val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
+
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         val client =
                             try {
@@ -1328,7 +1332,7 @@ internal class H1Pool(
                             client,
                             key,
                             clock(),
-                            WebSocketConnecting.peerIp(tcp.remoteAddress),
+                            peerIp,
                         )
                     }
                     // ALPN `http/1.1` (RFC 7301): the server agreed to speak HTTP/1.1 (RFC 9112 section 6.1 knowledge)
