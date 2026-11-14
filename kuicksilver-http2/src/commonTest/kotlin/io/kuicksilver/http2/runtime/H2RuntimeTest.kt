@@ -1380,6 +1380,43 @@ class H2RuntimeTest {
             s.release() // a later call releases nothing twice
             assertEquals(0, client.reservedStreams)
         }
+
+    /**
+     * The server side of the same: a handler's release whose reset dispatch runs the engine's [PriorityPolicy] (a
+     * PRIORITY_UPDATE that was waiting), which throws. The stream still leaves the core and the connection's open
+     * requests, so the connection can become idle.
+     */
+    @Test fun negative_aServerReleaseWhoseResetDispatchThrowsStillReturnsTheStream() =
+        runTest {
+            val (_, server, _) = pair()
+            runCurrent()
+            val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "example.com", ":path" to "/")
+            server.rt.holdDispatchForTest()
+            server.rt.receiveWithoutDispatchForTest(literalHeaders(1, post, endStream = false))
+            server.rt.releaseDispatchForTest()
+            val r = assertNotNull(server.requests.tryReceive().getOrNull())
+            r.schedule(
+                3,
+                false,
+                object : PriorityPolicy {
+                    override fun parse(value: String): Int = 6
+
+                    override fun signal(
+                        urgency: Int,
+                        incremental: Boolean,
+                        seq: Long,
+                    ): Unit = throw IllegalStateException("from the policy")
+                },
+            )
+            assertEquals(1, server.openRequests.value)
+            server.rt.receiveWithoutDispatchForTest(FrameEncoder.priorityUpdate(1, "u=3"))
+            val e = assertFailsWith<IllegalStateException> { r.release() }
+            assertEquals("from the policy", e.message)
+            assertEquals(0, server.openRequests.value, "the request no longer counts as open")
+            server.rt.lock.withLock { assertEquals(0, server.rt.core.peerStreams, "the core released the stream") }
+            r.release()
+            assertEquals(0, server.openRequests.value)
+        }
 }
 
 /** An RFC 7541 string literal without Huffman coding: a 7-bit prefixed length (section 5.1), then the octets. */

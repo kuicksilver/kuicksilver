@@ -332,7 +332,14 @@ public class H2ServerStream internal constructor(
      * no longer counts toward SETTINGS_MAX_CONCURRENT_STREAMS. Every delivered stream must be released once.
      */
     public fun release() {
-        if (rt.release(s)) conn.released()
+        // a release that throws (an engine callback in the dispatch after its reset) was the first one: the stream was
+        // given back all the same, so it no longer counts as open either
+        var first = true
+        try {
+            first = rt.release(s)
+        } finally {
+            if (first) conn.released()
+        }
     }
 }
 
