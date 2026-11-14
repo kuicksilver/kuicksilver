@@ -153,9 +153,7 @@ class H2ReleaseFailureTest {
             call.complete() // the handler's exception does not escape it
             runCurrent()
             f.assertReleasedOnce()
-            val (level, cause) = f.logger.lines.single()
-            assertEquals(LogLevel.Warn, level)
-            assertEquals("from onChange", cause?.message)
+            f.assertWarned()
         }
 
     @Test fun negative_anExchangeThatFailedKeepsItsFailureOverTheReleases() =
@@ -175,6 +173,7 @@ class H2ReleaseFailureTest {
             val e = assertIs<Http2Exception.StreamReset>(response.await().exceptionOrNull())
             assertEquals("from onChange", e.suppressedExceptions.single().message)
             f.assertReleasedOnce()
+            f.assertWarned()
             call.complete()
             runCurrent()
             assertEquals(1, f.released.size)
@@ -195,9 +194,7 @@ class H2ReleaseFailureTest {
             call.complete()
             runCurrent()
             f.assertReleasedOnce()
-            val (level, cause) = f.logger.lines.single()
-            assertEquals(LogLevel.Warn, level)
-            assertEquals("from onChange", cause?.message)
+            f.assertWarned()
         }
 
     @Test fun negative_aWebSocketThatFailedKeepsItsFailureOverTheReleases() =
@@ -217,6 +214,7 @@ class H2ReleaseFailureTest {
             val e = assertIs<Http2Exception.StreamReset>(response.await().exceptionOrNull())
             assertEquals("from onChange", e.suppressedExceptions.single().message)
             f.assertReleasedOnce()
+            f.assertWarned()
             call.complete()
             runCurrent()
             assertEquals(1, f.released.size)
@@ -296,15 +294,19 @@ class H2ReleaseFailureTest {
             server.respond(200, emptyList(), endStream = false)
             runCurrent()
             val session = response.await().body as WebSocketSession
-            // the server's Close and END_STREAM, then the client's Close: the session ends in order
-            server.sendBody(ByteReadChannel(byteArrayOf(0x88.toByte(), 0)), end = true)
+            // the server's Close (its END_STREAM held back), then the client's Close: the session ends in order
+            server.sendBody(ByteReadChannel(byteArrayOf(0x88.toByte(), 0)), end = false)
             runCurrent()
             session.outgoing.send(Frame.Close())
             runCurrent()
             f.armed = true
-            call.complete() // the close wait's coroutine releases the stream
-            runCurrent()
+            call.complete() // the close wait starts: no reset at once, the server's END_STREAM is waited for
             assertTrue(call.isCompleted)
+            runCurrent()
+            assertEquals(0, f.released.size, "the stream is held for the server's END_STREAM")
+            assertTrue(server.awaitClientEnd(), "the client's END_STREAM went out, no RST_STREAM")
+            server.sendBody(ByteReadChannel(ByteArray(0)), end = true)
+            runCurrent()
             f.assertReleasedOnce()
             f.assertWarned()
         }
