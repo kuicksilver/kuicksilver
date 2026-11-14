@@ -34,8 +34,8 @@ import org.junit.runner.RunWith
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -182,7 +182,9 @@ class MigrationDemoAndroidTest {
                             atThirty.onAwait { true }
                             h3Result.onAwait { false }
                         }
-                    assertTrue(reachedThirty, "the HTTP/3 download ended before 30 %: ${h3Result.await()}")
+                    // the message only when it failed: built eagerly, its await would hold the switch until the download ended
+                    if (!reachedThirty) fail("the HTTP/3 download ended before 30 %: ${h3Result.await()}")
+                    Log.i("kuicksilver-demo", "switching at ${t0.elapsedNow().inWholeMilliseconds} ms")
                     // read when switching: switching off another network than the one the downloads run on proves nothing
                     val default = connectivity.activeNetwork
                     assertEquals(
@@ -195,6 +197,7 @@ class MigrationDemoAndroidTest {
                         // drain
                     }
                     radio = defaultRadio(default)
+                    Log.i("kuicksilver-demo", "svc $radio disable starts at ${t0.elapsedNow().inWholeMilliseconds} ms")
                     shell("svc $radio disable")
                     Log.i("kuicksilver-demo", "svc $radio disable at ${t0.elapsedNow().inWholeMilliseconds} ms")
                     Log.i("kuicksilver-demo", "the default was ${describe(default)}")
@@ -205,11 +208,12 @@ class MigrationDemoAndroidTest {
                             h3Result.onAwait { null }
                         }
                     Log.i("kuicksilver-demo", "after svc $radio disable: $moved, default now ${describe(connectivity.activeNetwork)}")
-                    assertNotNull(
-                        moved,
-                        "connectionMigrated(Migrated) before the HTTP/3 download ended (${h3Result.await()}); " +
-                            "default now ${describe(connectivity.activeNetwork)}",
-                    )
+                    if (moved == null) {
+                        fail(
+                            "connectionMigrated(Migrated) before the HTTP/3 download ended (${h3Result.await()}); " +
+                                "default now ${describe(connectivity.activeNetwork)}",
+                        )
+                    }
                     assertEquals(default, moved.old, "the connection left the network switched off")
                     assertNotEquals(default, moved.new)
                     val h3Done = h3Result.await()
