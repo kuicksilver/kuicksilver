@@ -59,14 +59,26 @@ class AddressLiteralTest {
         }
     }
 
-    /** A zone ID stays (RFC 4007 section 11), as java.net's own literal and Netty's `hostString` keep it. */
+    /**
+     * A zone ID stays (RFC 4007 section 11), as the platform's own literal and Netty's `hostString` keep it: the JVM and
+     * Kotlin/Native write a numeric zone as given, Android's libcore writes the name of the interface with that index
+     * (`%1` becomes `%lo`). Either way the literal names the same zone: read back, it is the same address.
+     */
     @Test fun ipv6ZoneIsKept() {
-        assertEquals("fe80::1%1", InetSocketAddress("fe80:0:0:0:0:0:0:1%1", 443).ipLiteral())
-        assertEquals("fe80::1%1", InetSocketAddress("fe80::1%1", 443).ipLiteral())
+        for (text in listOf("fe80:0:0:0:0:0:0:1%1", "fe80::1%1")) {
+            val a = InetSocketAddress(text, 443)
+            val literal = a.ipLiteral()
+            assertTrue(literal == "fe80::1%1" || Regex("fe80::1%[A-Za-z][A-Za-z0-9._-]*").matches(literal), literal)
+            assertTrue(InetSocketAddress(literal, 443).sameIpAs(a), literal)
+        }
         // an interface name: java.net keeps it when the interface exists and leaves the address unresolved otherwise
         assertEquals("fe80::1%en0", InetSocketAddress("fe80::1%en0", 443).ipLiteral())
         assertEquals("fe80::1", InetSocketAddress("fe80::1", 443).ipLiteral())
-        assertEquals("fe80::1%0", InetSocketAddress("fe80::1%0", 443).ipLiteral()) // an explicit zone 0 too, as java.net writes it
+        // an explicit zone 0: the JVM and Kotlin/Native write it, Android's libcore drops it; read back, the same address
+        val zero = InetSocketAddress("fe80::1%0", 443)
+        val zeroLiteral = zero.ipLiteral()
+        assertTrue(zeroLiteral == "fe80::1%0" || zeroLiteral == "fe80::1", zeroLiteral)
+        assertTrue(InetSocketAddress(zeroLiteral, 443).sameIpAs(zero), zeroLiteral)
     }
 
     /** One address however written, a different port, address or zone is another; never a lookup. */
