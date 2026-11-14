@@ -109,6 +109,7 @@ class TcpSocketsTest {
      * other process listening on that number answered and failed them; with the decoy they own the address they connect to.
      * The attempts alternate which side binds a free port, the other taking the number, a new pair when that is taken:
      * one order only can keep landing on taken twins where the OS hands out free ports one after the other (Windows).
+     * Only a failure that may be a taken port is retried.
      */
     private suspend fun ipv6ListenerWithIpv4Decoy(selector: SelectorManager): Pair<ServerSocket, ServerSocket>? {
         ipv6Listener(selector)?.close() ?: return null
@@ -124,6 +125,8 @@ class TcpSocketsTest {
                 throw e
             } catch (e: Throwable) {
                 runCatching { free.close() }.exceptionOrNull()?.let(e::addSuppressed)
+                // a taken port only (no common type: BindException, PosixException, IOException); a refusal fails at once
+                if (e is IllegalArgumentException || e is IllegalStateException) throw e
                 last = e
             }
         }

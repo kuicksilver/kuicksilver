@@ -136,6 +136,8 @@ class BindOnSamePortTest {
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
             val blockers = mutableListOf<io.ktor.network.sockets.ServerSocket>()
+            // asserted after the pairing: an assertion failing in a binder would only be retried
+            var onTaken: Result<Pair<TestServer, Int>>? = null
             try {
                 val calls = mutableListOf<String>()
                 val (u, t, port) =
@@ -149,16 +151,20 @@ class BindOnSamePortTest {
                             calls += "tcp$p"
                             if (calls.size == 2) {
                                 blockers += bindTcp(selector, "127.0.0.1", p)
-                                val e = runCatching { testServer(plain = true, port = p) { routing { get("/") { call.respondText("") } } } }
-                                assertTrue(e.exceptionOrNull()?.let(::mayBeTaken) == true, "testServer on a taken port: $e")
+                                onTaken =
+                                    runCatching { testServer(plain = true, port = p) { routing { get("/") { call.respondText("") } } } }
                             }
                             tcpOn(selector, p)
                         },
                         releaseSecond = { it.close() },
                     )
                 try {
-                    assertEquals(4, calls.size, "$calls")
-                    assertEquals(listOf("udp0", "tcp0", "udp$port"), listOf(calls[0], calls[2], calls[3]))
+                    val e = onTaken?.exceptionOrNull()
+                    assertTrue(e != null && mayBeTaken(e), "testServer on a taken port: $onTaken")
+                    // the second attempt went TCP-first (later ones may follow where its UDP twin is taken too)
+                    assertEquals(listOf("udp0", "tcp0"), listOf(calls[0], calls[2]), "$calls")
+                    assertTrue(port != 0)
+                    assertEquals("udp$port", calls.last())
                     assertEquals(port, (u.localAddress as InetSocketAddress).port)
                     assertEquals(port, (t.localAddress as InetSocketAddress).port)
                 } finally {
@@ -166,6 +172,7 @@ class BindOnSamePortTest {
                     t.close()
                 }
             } finally {
+                onTaken?.getOrNull()?.first?.let { runCatching { it.stop(0, 0) } }
                 blockers.forEach { it.close() }
                 selector.close()
             }
