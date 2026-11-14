@@ -249,7 +249,6 @@ internal suspend fun connectTcpAddressWith(
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
         if (!start(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
-        return socket
     } catch (e: PosixException) {
         socket.close()
         throw IOException("Failed to connect to $address.", e)
@@ -257,6 +256,14 @@ internal suspend fun connectTcpAddressWith(
         socket.close() // cancelled (a Happy Eyeballs loser, a connect timeout): the descriptor goes with it
         throw e
     }
+    try {
+        socket.recordLocalAddress()
+    } catch (e: Throwable) {
+        socket.close()
+        // an IOException still, as any failed connect: Happy Eyeballs goes on with the next address
+        throw if (e is PosixException) IOException("Connected to $address, but its local address is unavailable.", e) else e
+    }
+    return socket
 }
 
 internal actual fun platformResolveTcp(
@@ -320,12 +327,24 @@ internal class NativeTcpServerSocket(
                 selector.select(this, SelectInterest.ACCEPT)
                 continue
             }
-            return try {
-                NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
+            val socket =
+                try {
+                    NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
+                } catch (e: Throwable) {
+                    tcpClose(fd)
+                    throw e
+                }
+            try {
+                socket.recordLocalAddress()
             } catch (e: Throwable) {
-                tcpClose(fd)
-                throw e
+                socket.close()
+                if (e !is PosixException) throw e
+                // dropped without a word, as a connection the peer reset before it was accepted: getsockname fails on an
+                // accepted descriptor only when the system is out of resources (ENOBUFS) or the connection is gone already,
+                // and failing accept() for it would end the listener's accept loop, which is meant for its own failures
+                continue
             }
+            return socket
         }
     }
 
@@ -354,7 +373,25 @@ internal class NativeTcpSocket(
     Selectable {
     override val socketContext: CompletableJob = Job(parent)
     override val coroutineContext: CoroutineContext get() = socketContext
-    override val localAddress: SocketAddress by lazy { tcpAddressOf(descriptor, peer = false).toInet() }
+
+    /** The local address, taken by [recordLocalAddress] once the socket is connected. */
+    @Volatile private var local: SocketAddress? = null
+
+    /**
+     * The local address, as `getsockname` gave it once the socket was connected ([recordLocalAddress]); it stays valid after
+     * [close]: asked of the descriptor then, it would fail on a closed one or answer for another socket that reuses its number.
+     * Never missing on a socket handed out: [connectTcp] and [NativeTcpServerSocket.accept] record it before they return one.
+     */
+    override val localAddress: SocketAddress
+        get() = local ?: error("local address not recorded: the socket is not connected yet")
+
+    /**
+     * Takes [localAddress] from the descriptor; called once the connect completed (an accepted socket at once): before it, the
+     * system may not have chosen the address yet (Windows answers the wildcard). Throws [PosixException] when it cannot.
+     */
+    internal fun recordLocalAddress() {
+        local = tcpAddressOf(descriptor, peer = false).toInet()
+    }
 
     private val closeFlag = AtomicBoolean(false)
 

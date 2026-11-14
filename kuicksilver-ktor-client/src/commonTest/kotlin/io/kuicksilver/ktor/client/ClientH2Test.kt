@@ -580,6 +580,45 @@ class ClientH2Test {
         }
 
     /**
+     * HTTP_1_1_REQUIRED that has ended the connection, its TCP socket closed, before the pool takes it (a race the GOAWAY
+     * won on Android CI): the call falls back to HTTP/1.1, and nothing of the HTTP/2 connection stays behind. What it
+     * guards is that path, the hand-out of a connection already ended; that a socket's addresses stay readable after its
+     * close is SocketAddressAfterCloseTest's (kuicksilver-ktor-network).
+     */
+    @Test fun http11RequiredThatClosedTheConnectionBeforeItIsPooled() =
+        clientTest {
+            tlsH2WithSilentUdp(onConnection = {
+                _,
+                c,
+                ->
+                c.goAway(Http2ErrorCode.HTTP_1_1_REQUIRED)
+            }, onRequest = { _, r -> ok(r) }, h1 = { _, input, output ->
+                while (true) {
+                    if (readRequest(input).isEmpty()) break
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh1")
+                }
+            }) { port, _ ->
+                testClient().use { c ->
+                    val pool = engine(c).h1
+                    var started = 0
+                    pool.afterH2StartForTest = { client, tcp ->
+                        started++
+                        client.awaitClosed() // the GOAWAY was read and the transport's close begun
+                        tcp.socketContext.join() // the TCP socket is closed
+                    }
+                    val r = c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                    assertEquals("h1", r.bodyAsText())
+                    assertEquals(FallbackReason.H2Refused, r.kuicksilverDiagnostics!!.fallback)
+                    assertEquals(1, started)
+                    assertEquals(0, pool.h2.connectionCount)
+                    withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
+                    assertEquals(emptyList(), pool.h2JobsForTest.toList())
+                }
+            }
+        }
+
+    /**
      * A server that sends GOAWAY (last stream 0) on every new connection: the call fails after at most three connections
      * (one, when the GOAWAY arrives with the server's SETTINGS; else the two repeats of a request not processed), never a
      * connection storm within the connect timeout.

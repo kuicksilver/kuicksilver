@@ -472,6 +472,12 @@ class H2RuntimeTest {
 
     // ---- against a raw server ----
 
+    /** How the runtime closed the transport: hard ([closeTransport]) or in order ([closeTransportGracefully]). */
+    private class TransportCloses {
+        var hard = 0
+        var graceful = 0
+    }
+
     /** A server that writes frames by hand; [read] decodes what the client wrote after its preface. */
     private class RawServer(
         val w: Wire,
@@ -517,6 +523,8 @@ class H2RuntimeTest {
 
     private suspend fun TestScope.raw(
         pingInterval: Duration = Duration.INFINITE,
+        closes: TransportCloses? = null,
+        onChange: () -> Unit = {},
     ): Pair<RawServer, kotlinx.coroutines.Deferred<H2ClientConnection>> {
         val w = Wire()
         val r = RawServer(w)
@@ -530,8 +538,19 @@ class H2RuntimeTest {
                         Http2Settings(),
                         backgroundScope,
                         pingInterval,
-                        { w.close() },
+                        {
+                            closes?.let { it.hard++ }
+                            w.close()
+                        },
+                        onChange = onChange,
                         clock = clock(),
+                        closeTransportGracefully =
+                            closes?.let { c ->
+                                {
+                                    c.graceful++
+                                    w.close()
+                                }
+                            },
                     ).also { it.rt.prefaceReceived.await() }
             }
         runCurrent()
@@ -1262,6 +1281,60 @@ class H2RuntimeTest {
             advanceTimeBy(3_000)
             runCurrent()
             assertTrue(client.isClosed, "the transport was closed within the bound")
+        }
+
+    /**
+     * [H2Runtime.lost] in order on a connection that ended already (its own GOAWAY still to be written): nothing is closed at
+     * once, which would cut that GOAWAY and the TLS close behind it; the writer drains it and closes the transport in order.
+     */
+    @Test fun lostInOrderAfterTheEndLeavesTheCloseToTheWriter() =
+        runTest {
+            val closes = TransportCloses()
+            val (srv, deferred) = raw(closes = closes)
+            srv.settings()
+            val client = deferred.await()
+            runCurrent()
+            srv.read()
+            client.rt.goAwayNow(Http2ErrorCode.PROTOCOL_ERROR) // the core ends; its GOAWAY is queued, not written yet
+            client.abortInOrder(IllegalStateException("a fault of ours after the end"))
+            assertEquals(0, closes.hard, "not closed hard at once")
+            runCurrent()
+            val goAways = srv.read().filterIsInstance<Frame.GoAway>()
+            assertEquals(listOf(Http2ErrorCode.PROTOCOL_ERROR.code), goAways.map { it.errorCode }, "one GOAWAY, the first one's")
+            assertEquals(1, closes.graceful, "closed in order behind it")
+            advanceTimeBy(3_000)
+            runCurrent()
+            assertEquals(0, closes.hard, "and not hard after the bound either")
+        }
+
+    /**
+     * The GOAWAY of [H2Runtime.lost] in order whose dispatch throws (an engine callback) while the writer is stuck in a
+     * transport the server no longer reads: the call fails with it, and the transport is still closed hard within the
+     * bound, not left open with the writer.
+     */
+    @Test fun negative_lostInOrderWhoseGoAwayDispatchThrowsStillClosesTheTransport() =
+        runTest {
+            val closes = TransportCloses()
+            var armed = false
+            val (srv, deferred) = raw(closes = closes, onChange = { if (armed) throw IllegalStateException("callback") })
+            // windows that let the body go as fast as the client writes it (RFC 9113 sections 6.5.2, 6.9)
+            srv.settings(4 to Int.MAX_VALUE.toLong())
+            srv.write(FrameEncoder.windowUpdate(0, Int.MAX_VALUE - 65_535))
+            val client = deferred.await()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            backgroundScope.launch {
+                runCatching { s.sendBody(ByteReadChannel(ByteArray(8 shl 20)), stallMillis = null) { error("stall") } }
+            }
+            runCurrent() // the writer fills the transport (the server reads nothing) and waits in it
+            armed = true
+            assertFailsWith<IllegalStateException> { client.abortInOrder(IllegalStateException("a fault of ours")) }
+            armed = false
+            runCurrent()
+            assertEquals(0, closes.hard + closes.graceful, "the writer still waits in the transport")
+            advanceTimeBy(3_000)
+            runCurrent()
+            assertEquals(1, closes.hard, "closed hard within the bound")
         }
 
     @Test fun negative_serverHpackBombFailsTheRequestOnly() =

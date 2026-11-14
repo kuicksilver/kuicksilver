@@ -192,6 +192,15 @@ internal class H1Pool(
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
 
+    /**
+     * Runs once an HTTP/2 connection has started, before it is handed out, with its TCP socket (tests: lets the server end
+     * it, and the socket close, first, as a GOAWAY right after the preface can).
+     */
+    internal var afterH2StartForTest: (suspend (H2ClientConnection, Socket) -> Unit)? = null
+
+    /** The coroutines of the HTTP/2 connections (tests: none outlives its connection). */
+    internal val h2JobsForTest: Sequence<Job> get() = h2Scope.coroutineContext[Job]!!.children
+
     /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
     internal val h2Refused = H2RefusedRoutes(clock)
 
@@ -403,7 +412,8 @@ internal class H1Pool(
                         if (c.client.reservedStreams > 0) {
                             c.client.shutdown()
                         } else {
-                            c.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                            // a peer that does not answer has not lost the transport: GOAWAY, close_notify, FIN, bounded
+                            c.client.abortInOrder(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
                         }
                         continue
                     }
@@ -491,7 +501,11 @@ internal class H1Pool(
                                     if (found.client.reservedStreams > 0) {
                                         found.client.shutdown()
                                     } else {
-                                        found.client.abort(kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"))
+                                        // a peer that does not answer has not lost the transport: GOAWAY, close_notify,
+                                        // FIN, bounded (RFC 9113 section 6.8, RFC 9846 section 6.1)
+                                        found.client.abortInOrder(
+                                            kotlinx.io.IOException("the HTTP/2 connection did not answer a health PING"),
+                                        )
                                     }
                                     continue
                                 }
@@ -1229,6 +1243,8 @@ internal class H1Pool(
             // disclosure)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            // set once an HTTP/2 connection has started on it: the transport is the connection's to close from then on
+            var h2Owned = false
             try {
                 val rawIn = tcp.openDeliveringReadChannel()
                 val rawOut = tcp.openWriteChannel(autoFlush = true)
@@ -1268,6 +1284,11 @@ internal class H1Pool(
                             sessions,
                         )
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
+                        // taken before the connection starts: the catches here close TLS (the inner one) and TCP (the outer
+                        // one), not a started HTTP/2 connection, which owns the transport; what follows its start ends it
+                        // itself (below)
+                        val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
+
                         // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
                         // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
                         // the connection ends with SETTINGS_TIMEOUT (h2Exchange maps that to the call's failure)
@@ -1324,12 +1345,23 @@ internal class H1Pool(
                                 tls.close()
                                 throw e
                             }
-                        return H2Conn(
-                            client,
-                            key,
-                            clock(),
-                            WebSocketConnecting.peerIp(tcp.remoteAddress),
-                        )
+                        h2Owned = true
+                        try {
+                            afterH2StartForTest?.invoke(client, tcp)
+                            return H2Conn(client, key, clock(), peerIp)
+                        } catch (e: Throwable) {
+                            // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
+                            // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the
+                            // transport (the catch below leaves it alone); never hiding e
+                            try {
+                                client.abortInOrder(e)
+                            } catch (s: Throwable) {
+                                // only the GOAWAY's dispatch can throw, and the runtime has set up the transport's close
+                                // (in order, hard within its bound) before it rethrows: a close here would cut that order
+                                if (s !== e) e.addSuppressed(s)
+                            }
+                            throw e
+                        }
                     }
                     // ALPN `http/1.1` (RFC 7301): the server agreed to speak HTTP/1.1 (RFC 9112 section 6.1 knowledge)
                     if (tls.negotiatedAlpn == "http/1.1") http11Routes.mark(key)
@@ -1338,7 +1370,7 @@ internal class H1Pool(
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }
             } catch (e: Throwable) {
-                tcp.close()
+                if (!h2Owned) tcp.close()
                 throw e
             }
         }
