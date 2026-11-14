@@ -47,6 +47,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -188,6 +189,9 @@ public class KuicksilverApplicationEngine(
         /** Set by `EngineMain` (`kuicksilver.tls.ocspStapling`): the OCSP response the connectors [identity] serves staple. */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
+
+        /** The file [tlsOcspStapling] was read from, set by `EngineMain`; re-read with [identityReloadInterval]. */
+        internal var tlsOcspFile: String? = null
 
         /**
          * Set by `EngineMain` (`kuicksilver.tls.trustedGateway`): the deployment port takes every host, served with [identity]
@@ -720,8 +724,8 @@ public class KuicksilverApplicationEngine(
                     if (cause is CancellationException) throw cause else return@launch
                 }
                 startedH3Endpoints = h3.map { it.endpoint }
+                startIdentityWatcher() // before the start completes: its startup checks (the OCSP response) are logged by then
                 startupJob.complete(Unit)
-                startIdentityWatcher()
                 stopRequest.join()
                 stopIdentityWatcher()
                 // graceful stop (RFC 9114 5.2): no new connections or requests, GOAWAY to every live HTTP/3 connection, then wait for the
@@ -780,7 +784,20 @@ public class KuicksilverApplicationEngine(
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun startIdentityWatcher() {
-        val interval = configuration.identityReloadInterval ?: return
+        // the OCSP response file of kuicksilver.tls.ocspStapling: whether it is stapled is logged now, and again when that
+        // changes (checked every reload interval, re-reading the file, or hourly without one: a response expires)
+        val ocsp =
+            configuration.tlsOcspFile?.let { path ->
+                val stapling = configuration.tlsOcspStapling ?: return@let null
+                val id = configuration.identity ?: return@let null
+                OcspFileWatcher(path, stapling, { id.chain }, environment.log, reread = configuration.identityReloadInterval != null)
+            }
+        ocsp?.checkUsable()
+        val interval = configuration.identityReloadInterval
+        if (interval == null) {
+            if (ocsp != null) identityWatcher = CoroutineScope(engineDispatcher).launch { ocsp.run(1.hours) }
+            return
+        }
         val settle = configuration.identitySettleForTest ?: 1.seconds
         val readText = configuration.identityReadTextForTest
         val identity =
@@ -799,11 +816,12 @@ public class KuicksilverApplicationEngine(
                     ClientCaFileWatcher(path, target, environment.log, settle = settle)
                 }
             }
-        if (identity == null && clientCa == null) return
+        if (identity == null && clientCa == null && ocsp == null) return
         identityWatcher =
             CoroutineScope(engineDispatcher).launch {
                 identity?.let { launch { it.run(interval) } }
                 clientCa?.let { launch { it.run(interval) } }
+                ocsp?.let { launch { it.run(interval) } }
             }
     }
 

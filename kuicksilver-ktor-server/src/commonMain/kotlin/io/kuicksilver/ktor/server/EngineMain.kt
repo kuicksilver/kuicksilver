@@ -24,7 +24,8 @@ import kotlin.time.Duration.Companion.seconds
  * and HTTP/3), `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`: ask for a client certificate) and
  * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
  * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
- * `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read once at startup, stapled on TCP and QUIC),
+ * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
+ * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
  * proxy, is a trusted gateway: no `421 Misdirected Request`),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
@@ -95,7 +96,8 @@ public object EngineMain {
         require(ocspFile == null || chain != null) { "kuicksilver.tls.ocspStapling needs kuicksilver.tls.certificateChain and privateKey" }
         if (ocspFile != null) {
             @OptIn(ExperimentalKuicksilverApi::class)
-            tlsOcspStapling = io.kuicksilver.tls.OcspStapling(readOcspResponse(ocspFile))
+            tlsOcspStapling = io.kuicksilver.tls.OcspStapling(readOcspResponseFile(ocspFile))
+            tlsOcspFile = ocspFile
         }
         // before the identity: a refused client CA leaves no native key behind
         loadClientCa(config, chain != null, reload != null)
@@ -239,19 +241,6 @@ public object EngineMain {
             "tls12and13" -> TlsVersions.Tls12And13
             else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
         }
-
-    /**
-     * `kuicksilver.tls.ocspStapling`: the DER `OCSPResponse` (RFC 6960) in [path], at most 1 MiB. Read once: a fresh response
-     * needs a restart, or `OcspStapling.update` on a `tlsConnector(identity)` set up in code.
-     */
-    private fun readOcspResponse(path: String): ByteArray {
-        val chars = readSecretFile(path, MAX_PEM_FILE_BYTES) // one char per byte (0..255)
-        try {
-            return ByteArray(chars.size) { chars[it].code.toByte() }
-        } finally {
-            chars.fill('\u0000')
-        }
-    }
 
     /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */
     internal fun parseClientAuth(value: String?): ClientAuth =
