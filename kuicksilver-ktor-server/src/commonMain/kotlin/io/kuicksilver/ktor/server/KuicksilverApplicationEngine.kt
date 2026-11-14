@@ -189,7 +189,10 @@ public class KuicksilverApplicationEngine(
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
 
-        /** Set by `EngineMain` (`kuicksilver.tls.trustedGateway`): the connectors [identity] serves take every host. */
+        /**
+         * Set by `EngineMain` (`kuicksilver.tls.trustedGateway`): the deployment port takes every host, served with [identity]
+         * or, without one, in cleartext behind a TLS-terminating proxy (absolute-form `https` targets, RFC 9110 section 7.4).
+         */
         internal var tlsTrustedGateway: Boolean = false
 
         /**
@@ -596,10 +599,12 @@ public class KuicksilverApplicationEngine(
     internal class Listener(
         val config: EngineConnectorConfig,
         val tls: KuicksilverTlsConnector?,
+        /** `EngineMain`'s `kuicksilver.tls.trustedGateway` for the plain deployment port (a Ktor connector, not a plain one of ours). */
+        gateway: Boolean = false,
     ) {
         /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
         @OptIn(ExperimentalKuicksilverApi::class)
-        val trustedGateway: Boolean = tls?.trustedGateway ?: (config as? KuicksilverPlainConnector)?.trustedGateway ?: false
+        val trustedGateway: Boolean = tls?.trustedGateway ?: (((config as? KuicksilverPlainConnector)?.trustedGateway ?: false) || gateway)
     }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
@@ -627,7 +632,7 @@ public class KuicksilverApplicationEngine(
                         }.build()
                         .let { Listener(it, it) }
                 }
-                    ?: Listener(c, null)
+                    ?: Listener(c, null, configuration.tlsTrustedGateway)
             }
 
             else -> {

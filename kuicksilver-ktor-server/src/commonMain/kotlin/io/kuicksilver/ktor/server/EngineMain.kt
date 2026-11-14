@@ -25,7 +25,8 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
  * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
  * `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read once at startup, stapled on TCP and QUIC),
- * `kuicksilver.tls.trustedGateway` (`true`: every client is a trusted gateway, no `421 Misdirected Request`),
+ * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
+ * proxy, is a trusted gateway: no `421 Misdirected Request`),
  * `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle, e.g. `1h`;
  * off by default), `kuicksilver.http3`, `kuicksilver.http2` (off by default), `kuicksilver.http2RepeatOffenderPenalty` (a duration; off by
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
@@ -49,7 +50,7 @@ public object EngineMain {
      * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
      * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files,
      * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
-     * `kuicksilver.tls.ocspStapling` or `kuicksilver.tls.trustedGateway` is set without the identity files, a boolean key is not
+     * `kuicksilver.tls.ocspStapling` is set without the identity files, a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range. Throws
      * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
@@ -89,7 +90,6 @@ public object EngineMain {
                 ?.getString()
                 ?.trim()
                 ?.toBooleanStrict()
-        require(gateway == null || chain != null) { "kuicksilver.tls.trustedGateway needs kuicksilver.tls.certificateChain and privateKey" }
         gateway?.let { tlsTrustedGateway = it }
         val ocspFile = config.propertyOrNull("kuicksilver.tls.ocspStapling")?.getString()
         require(ocspFile == null || chain != null) { "kuicksilver.tls.ocspStapling needs kuicksilver.tls.certificateChain and privateKey" }

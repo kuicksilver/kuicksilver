@@ -407,7 +407,8 @@ class EngineMainTest {
 
     /**
      * `kuicksilver.tls.trustedGateway = true` takes requests for a host the certificate does not name on the deployment port
-     * (RFC 9110 section 7.4, the trusted-gateway exception); without it they get 421. It needs the identity files.
+     * (RFC 9110 section 7.4, the trusted-gateway exception); without it they get 421. Without the identity files it applies to
+     * the cleartext port: absolute-form https targets from a TLS-terminating proxy are served, 421 without the key.
      */
     @Test fun trustedGatewayKeyTakesOtherHosts() =
         serverTest {
@@ -426,20 +427,37 @@ class EngineMainTest {
                     server.stop(100, 500)
                 }
             }
-            val e =
-                assertFailsWith<IllegalArgumentException> {
-                    EngineMain
-                        .createServer(
-                            arrayOf(
-                                "-host=127.0.0.1",
-                                "-port=0",
-                                "-P:ktor.application.modules.size=1",
-                                "-P:ktor.application.modules.0=$module",
-                                "-P:kuicksilver.tls.trustedGateway=true",
-                            ),
-                        ).engine
+            // without the identity files the deployment port is cleartext, behind a TLS-terminating proxy: an absolute-form https
+            // target gets 421 unless the key says the proxy is a trusted gateway
+            for ((extra, want) in listOf(emptyArray<String>() to "421", arrayOf("-P:kuicksilver.tls.trustedGateway=true") to "200")) {
+                val server =
+                    EngineMain.createServer(
+                        arrayOf(
+                            "-host=127.0.0.1",
+                            "-port=0",
+                            "-P:ktor.application.modules.size=1",
+                            "-P:ktor.application.modules.0=$module",
+                            "-P:kuicksilver.http3=false",
+                        ) + extra,
+                    )
+                server.startSuspend(false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val r =
+                        rawHttp(
+                            port,
+                            "GET https://elsewhere.test/ HTTP/1.1\r\nHost: elsewhere.test\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    assertTrue(r.startsWith("HTTP/1.1 $want"), r)
+                } finally {
+                    server.stop(100, 500)
                 }
-            assertTrue("certificateChain" in e.message.orEmpty(), e.message)
+            }
             assertFailsWith<IllegalArgumentException> {
                 EngineMain
                     .createServer(
