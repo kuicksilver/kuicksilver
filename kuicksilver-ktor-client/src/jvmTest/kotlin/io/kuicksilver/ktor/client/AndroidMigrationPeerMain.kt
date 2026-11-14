@@ -38,6 +38,9 @@ fun main(args: Array<String>) {
                 tlsConnector(ClientFixtures.identity()) {
                     host = "127.0.0.1"
                     port = 0
+                    // the emulator reaches this peer as 10.0.2.2, a host its test certificate (server.test) does not name:
+                    // without this, every request is a misdirected one (421, RFC 9110 section 7.4)
+                    trustedGateway = true
                 }
             }) {
                 routing {

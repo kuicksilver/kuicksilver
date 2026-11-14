@@ -104,7 +104,7 @@ class MigrationDemoAndroidTest {
             "data"
         }
 
-    @Test fun http3SurvivesTheSwitchAndTcpDoesNot() =
+    @Test fun http3SurvivesTheSwitchAndTcpDoesNot(): Unit = // JUnit 4 runs only void methods; the block ends in assertIs
         runBlocking {
             val port = InstrumentationRegistry.getArguments().getString("demoServerPort")?.toIntOrNull()
             assumeTrue("start the demo server on the host and pass -Pandroid.testInstrumentationRunnerArguments.demoServerPort=8443", port != null)
