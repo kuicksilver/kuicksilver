@@ -53,7 +53,8 @@ public enum class RevocationPolicy {
  * every handshake whose path it covers ([VerifyReason.UnknownRevocationStatus]), so replace it before its nextUpdate
  * ([TrustConfig.ReloadableCa] on a server).
  *
- * @throws IllegalArgumentException when [der] does not start a DER SEQUENCE; the CRL is parsed when a trust is made with it.
+ * @throws IllegalArgumentException when [der][CertificateRevocationList.der] does not start a DER SEQUENCE; the CRL is
+ *   parsed when a trust is made with it.
  */
 @ExperimentalKuicksilverApi
 public class CertificateRevocationList(

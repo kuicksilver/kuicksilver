@@ -419,7 +419,7 @@ internal const val H2_ALPN = "h2"
  * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
  * `http/1.1` alone. A connector with `versions = TlsVersions.Tls12And13` offers `h2` over TLS 1.2 too: RFC 9113 section 9.2,
- * "Implementations of HTTP/2 MUST use TLS version 1.2 [TLS12] or higher", and the TLS 1.2 profile meets sections 9.2.1 and
+ * "Implementations of HTTP/2 MUST use TLS version 1.2 \[TLS12\] or higher", and the TLS 1.2 profile meets sections 9.2.1 and
  * 9.2.2 (compression and renegotiation off, a renegotiation attempt a connection error of type PROTOCOL_ERROR in [serveH2];
  * only ECDHE suites with an AEAD, none of them on the Appendix A list; groups of 255 bits and more, no finite-field DHE; and
  * TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 with P-256 for an RSA certificate). The handshake has no deadline of its own (`TlsConfig`'s

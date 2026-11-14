@@ -8,9 +8,10 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 
 /**
- * A plain HTTP/1.1 connector, as Ktor's `connector { }`, with [trustedGateway]: made by `plainConnector { ... }` in the
- * engine configuration. A plain connection is secured by no certificate, so a request whose absolute-form target is an
- * `https` URI gets `421 Misdirected Request` (RFC 9110 section 7.4) unless [trustedGateway] is set.
+ * A plain HTTP/1.1 connector, as Ktor's `connector { }`, with [trustedGateway][KuicksilverPlainConnector.trustedGateway]:
+ * made by `plainConnector { ... }` in the engine configuration. A plain connection is secured by no certificate, so a
+ * request whose absolute-form target is an `https` URI gets `421 Misdirected Request` (RFC 9110 section 7.4) unless
+ * [trustedGateway][KuicksilverPlainConnector.trustedGateway] is set.
  */
 @ExperimentalKuicksilverApi
 public class KuicksilverPlainConnector private constructor(

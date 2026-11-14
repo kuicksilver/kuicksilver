@@ -459,14 +459,17 @@ public class ServerTlsOverride(
     public val trust: TrustConfig? = null,
 ) {
     /**
-     * The OCSP response stapled for [identity] on this connection (RFC 6066 section 8); null staples nothing, never the
-     * response of [TlsConfig.ocspStapling], which is for the default identity. See [OcspStapling].
+     * The OCSP response stapled for [identity][ServerTlsOverride.identity] on this connection (RFC 6066 section 8); null
+     * staples nothing, never the response of [TlsConfig.ocspStapling], which is for the default identity. See [OcspStapling].
      */
     @ExperimentalKuicksilverApi
     public var ocspStapling: OcspStapling? = null
         private set
 
-    /** An override whose [identity] staples the response of [ocspStapling] (see the primary constructor for the rest). */
+    /**
+     * An override whose [identity][ServerTlsOverride.identity] staples the response of
+     * [ocspStapling][ServerTlsOverride.ocspStapling] (see the primary constructor for the rest).
+     */
     @ExperimentalKuicksilverApi
     public constructor(
         identity: TlsIdentity,

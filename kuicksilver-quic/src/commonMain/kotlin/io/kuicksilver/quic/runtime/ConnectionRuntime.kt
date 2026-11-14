@@ -465,7 +465,7 @@ internal class ConnectionRuntime(
         priority: StreamPriority,
     ): Unit = sendDatagram(data, policy, urgencyOf(priority))
 
-    /** The urgency a datagram of [priority] is scheduled with ([DatagramSender.nextUrgency]); a critical one goes first. */
+    /** The urgency a datagram of [priority] is scheduled with ([io.kuicksilver.quic.DatagramSender.nextUrgency]); a critical one goes first. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private fun urgencyOf(priority: StreamPriority): Int = if (priority === StreamPriority.Critical) -1 else priority.urgency
 

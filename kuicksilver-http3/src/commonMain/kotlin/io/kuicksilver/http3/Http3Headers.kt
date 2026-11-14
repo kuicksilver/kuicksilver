@@ -6,14 +6,14 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
  * Ordered HTTP fields without pseudo-headers; names are lowercase on the wire (RFC 9114 section 4.2). Equality and
- * [toString] look at [fields] only, not at the never-indexed marks.
+ * [toString] look at [fields][Http3Headers.fields] only, not at the never-indexed marks.
  */
 public class Http3Headers private constructor(
     fields: List<Pair<String, String>>,
     neverIndexed: List<Pair<String, String>>,
     neverIndexNames: Set<String>,
 ) {
-    /** A section of [fields] (copied), without never-indexed marks. */
+    /** A section of [fields][Http3Headers.fields] (copied), without never-indexed marks. */
     public constructor(fields: List<Pair<String, String>>) : this(fields, emptyList(), emptySet())
 
     /** The fields as name/value pairs in wire order, repeats kept; a copy of the constructor's list. */

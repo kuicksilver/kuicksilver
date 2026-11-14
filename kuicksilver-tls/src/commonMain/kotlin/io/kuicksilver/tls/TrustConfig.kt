@@ -38,8 +38,9 @@ public sealed interface TrustConfig {
         }
 
         /**
-         * The certificate revocation lists checked next to [roots] (RFC 9325 section 7.5), empty unless given: each certificate
-         * on a verified path whose issuer has one of these CRLs is checked against it, revoked fails with
+         * The certificate revocation lists checked next to [roots][TrustConfig.AnchoredCa.roots] (RFC 9325 section 7.5),
+         * empty unless given: each certificate on a verified path whose issuer has one of these CRLs is checked against it,
+         * revoked fails with
          * [VerifyReason.Revoked], and a CRL that expired or does not verify fails with [VerifyReason.UnknownRevocationStatus];
          * a certificate whose issuer has none is not checked. Clients and servers (client certificates) alike; with
          * [TrustConfig.ReloadableCa], a reload to the same roots with new CRLs replaces them.
@@ -49,7 +50,7 @@ public sealed interface TrustConfig {
             private set
 
         /**
-         * [roots] with the CRLs [crls] (see [AnchoredCa.crls]).
+         * [roots][TrustConfig.AnchoredCa.roots] with the CRLs [crls][TrustConfig.AnchoredCa.crls].
          *
          * @throws TlsException.Config when a CRL does not parse.
          */

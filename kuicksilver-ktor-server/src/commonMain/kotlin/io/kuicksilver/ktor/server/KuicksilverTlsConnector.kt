@@ -51,8 +51,8 @@ public class KuicksilverTlsConnector private constructor(
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
     /**
-     * The OCSP response stapled for [identity] on TCP and QUIC (RFC 9325 section 7.5), null for none; its `update` replaces
-     * it while the server runs. See `OcspStapling` for when a response is sent.
+     * The OCSP response stapled for [identity][KuicksilverTlsConnector.identity] on TCP and QUIC (RFC 9325 section 7.5),
+     * null for none; its `update` replaces it while the server runs. See `OcspStapling` for when a response is sent.
      */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
     /**
@@ -70,13 +70,13 @@ public class KuicksilverTlsConnector private constructor(
 
     /**
      * The server TLS configuration for [alpn]: with `h3` among them the QUIC one (TLS 1.3 only, RFC 9001 section 4.2), else the
-     * TCP one with [versions].
+     * TCP one with [versions][KuicksilverTlsConnector.versions].
      */
     public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null, quic = "h3" in alpn)
 
     /**
      * [tlsConfig] with the TLS-over-TCP handshake deadline [handshakeTimeout] (null: `TlsConfig`'s default); [quic] keeps it at
-     * TLS 1.3 whatever [versions] says.
+     * TLS 1.3 whatever [versions][KuicksilverTlsConnector.versions] says.
      */
     @OptIn(ExperimentalKuicksilverApi::class)
     internal fun tlsConfig(

@@ -658,7 +658,7 @@ internal class H3Pool(
 
     /**
      * RFC 9114 section 3.3: "Clients SHOULD NOT open more than one HTTP/3 connection to a given IP address and UDP port,
-     * where the IP address and port might be derived from a URI, a selected alternative service ([ALTSVC]), a configured
+     * where the IP address and port might be derived from a URI, a selected alternative service (\[ALTSVC\]), a configured
      * proxy, or name resolution of any of these" and "SHOULD avoid creating multiple connections with the same
      * configuration". Before [t] gets a connection of its own, a live connection of the same origin to another destination
      * name (the origin's host, an `Alt-Svc` or HTTPS-record target, an address literal) is looked for whose current remote
