@@ -1382,6 +1382,44 @@ class H2RuntimeTest {
         }
 
     /**
+     * Every step of a release runs however many throw: here `onChange` throws in the reset's dispatch, in the core
+     * release's dispatch (a second SETTINGS was waiting) and in the unreserve. The first exception is the one thrown, the
+     * later ones are suppressed under it in order, and the stream still leaves the core and gives its slot back.
+     */
+    @Test fun negative_aReleaseKeepsItsFirstExceptionAndRunsEveryStepAfterSeveral() =
+        runTest {
+            var armed = false
+            var thrown = 0
+            val w = Wire()
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    onChange = { if (armed) throw IllegalStateException("from onChange ${++thrown}") },
+                    clock = clock(),
+                )
+            runCurrent()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            // two SETTINGS whose events wait for the next dispatchers: the reset's and the core release's
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            armed = true
+            val e = assertFailsWith<IllegalStateException> { s.release() }
+            armed = false
+            assertEquals("from onChange 1", e.message)
+            assertEquals(listOf("from onChange 2", "from onChange 3"), e.suppressedExceptions.map { it.message })
+            assertEquals(0, client.reservedStreams, "the slot came back")
+            client.rt.lock.withLock { assertEquals(0, client.rt.core.activeStreams, "the core released the stream") }
+        }
+
+    /**
      * The server side of the same: a handler's release whose reset dispatch runs the engine's [PriorityPolicy] (a
      * PRIORITY_UPDATE that was waiting), which throws. The stream still leaves the core and the connection's open
      * requests, so the connection can become idle.
