@@ -337,6 +337,9 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
     // only the highest-numbered non-probing packet moves it (section 9.3)
     if (p.preferredMovePn != largestNonProbingPn) {
         p.preferredMovePending = false
+        // the client's ID it reserved goes back as for any validated path the client did not probe (onPathResponse): it was sent on
+        // that path, so it is retired, never used on another one (sections 5.1.2 and 9.5); a later move there reserves a fresh one
+        if (!p.peerProbed) releasePathCid(p)
         return
     }
     if (dcidFor(p) == null) {
@@ -350,7 +353,10 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
         paths.remove(old)
         releasePathCid(old)
     }
-    if (paths.active.socket == PREFERRED_SOCKET) leftOriginalAddress = true
+    if (paths.active.socket == PREFERRED_SOCKET && !leftOriginalAddress) {
+        leftOriginalAddress = true
+        leftAddressCids = ArrayList(registeredCids)
+    }
 }
 
 /**

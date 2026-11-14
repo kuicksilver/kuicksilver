@@ -665,6 +665,9 @@ public class ConnectionCore internal constructor(
      */
     internal var leftOriginalAddress = false
 
+    /** Server: the IDs of ours that routed to this connection when it moved ([leftOriginalAddress]): the ones the client could use on the original address. */
+    internal var leftAddressCids: List<io.kuicksilver.quic.wire.ConnectionId> = emptyList()
+
     /** Server: authenticated packets dropped because they reached the original address after [leftOriginalAddress]. */
     internal var leftAddressDropped = 0L
 

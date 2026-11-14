@@ -455,7 +455,7 @@ class PreferredAddressTest {
             assertEquals(invalidResets, s.stats.invalidResets, "not taken for an invalid Stateless Reset")
             val dropped = qlog.filter { "transport:packet_dropped" in it }
             assertEquals(held.size, dropped.size, "a qlog packet_dropped for each: $dropped")
-            assertTrue(dropped.all { "\"details\":\"left_address\"" in it }, "$dropped")
+            assertTrue(dropped.all { "\"details\":{\"reason\":\"left_address\"}" in it }, "$dropped")
             p.runUntil(2.seconds) { false }
             val fromOriginal = p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }
             assertEquals(0, fromOriginal, "nothing of the moved connection leaves the original address")
@@ -504,9 +504,30 @@ class PreferredAddressTest {
             val sentBefore = p.serverSent.size
             for (d in held) p.feed(p.server, d, p.clientAddr)
             assertTrue(p.stateless(p.server).isEmpty(), "no Stateless Reset queued")
+            assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
             p.runUntil(1.seconds) { false }
             assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
             assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_noStatelessResetFromTheLeftAddressForTheIdsOfARemovedMovedConnection() {
+        // as above, for the other way an ID stops routing: the moved connection is gone (closed and removed), its IDs with it. A
+        // client packet delayed on the original address after that gets no Stateless Reset from there either
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val (_, s, held) = moveHoldingOriginal(p)
+            s.close(0, "", p.now)
+            p.server.remove(s)
+            assertEquals(0, p.server.connectionCount)
+            val sentBefore = p.serverSent.size
+            for (d in held) assertNull(p.feed(p.server, d, p.clientAddr))
+            assertTrue(p.stateless(p.server).isEmpty(), "no Stateless Reset queued")
+            assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
+            p.runUntil(1.seconds) { false }
+            assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
         } finally {
             p.close()
         }
@@ -539,6 +560,8 @@ class PreferredAddressTest {
             assertEquals(PathState.Validated, pp.state)
             assertEquals(PathId.Initial, s.path.socket, "the connection stays on the original address")
             assertTrue(!s.leftOriginalAddress)
+            // the ID of the client's the path reserved was sent there: retired (sections 5.1.2, 9.5), not kept by a path not in use
+            assertNull(pp.peerCid, "the reserved ID is given back")
         } finally {
             p.close()
         }

@@ -139,21 +139,21 @@ internal class QlogWriter(
     )
 
     /**
-     * A packet authenticated and then dropped: qlog `transport:packet_dropped` with one of its [trigger]s and our own [details]
-     * (a field qlog tools that do not know it ignore).
+     * A packet authenticated and then dropped: qlog `transport:packet_dropped` with one of its [trigger]s and our [reason] in its
+     * `details` map (the later quic-events drafts' field; qlog tools that do not know it ignore it).
      */
     fun packetDropped(
         space: SpaceId,
         pn: Long,
         size: Int,
         trigger: String,
-        details: String,
+        reason: String,
         now: TimeMark,
     ) = event(
         now,
         "transport:packet_dropped",
         "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}," +
-            "\"trigger\":\"$trigger\",\"details\":\"$details\"",
+            "\"trigger\":\"$trigger\",\"details\":{\"reason\":\"$reason\"}",
     )
 
     fun packetLost(

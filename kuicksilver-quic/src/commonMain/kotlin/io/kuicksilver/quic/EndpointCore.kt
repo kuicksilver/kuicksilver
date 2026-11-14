@@ -12,6 +12,7 @@ import io.kuicksilver.quic.core.CidRegistrar
 import io.kuicksilver.quic.core.acceptPacketTooBig
 import io.kuicksilver.quic.core.checkStatelessReset
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.useTicket
@@ -21,6 +22,7 @@ import io.kuicksilver.quic.endpoint.ByteRoute
 import io.kuicksilver.quic.endpoint.CidIssuance
 import io.kuicksilver.quic.endpoint.CidRoute
 import io.kuicksilver.quic.endpoint.ConnectionIdRegistry
+import io.kuicksilver.quic.endpoint.LeftAddressIds
 import io.kuicksilver.quic.endpoint.QuicLbRoute
 import io.kuicksilver.quic.endpoint.QuicLbState
 import io.kuicksilver.quic.endpoint.ResetGate
@@ -752,8 +754,8 @@ public class EndpointCore internal constructor(
         if (hv.type != PacketType.OneRtt && grouped && routedElsewhere(route.ownerLoop(data, hv.dcidOff, hv.dcidLen))) {
             return null
         } // another loop's: the group forwards it (ownerLoop)
-        if (hv.type == PacketType.OneRtt && leftAddressCids.isNotEmpty() && isLeftAddressCid(data, now)) {
-            droppedStateless++
+        if (hv.type == PacketType.OneRtt && hv.dcidLen == cidLength && leftAddressIds.contains(data, hv.dcidOff, hv.dcidLen, now)) {
+            resetsWithheldLeftAddress++
             return null
         }
         if (hv.type == PacketType.OneRtt) {
@@ -916,8 +918,14 @@ public class EndpointCore internal constructor(
         /** Server addresses whose last RTT a client endpoint remembers. */
         const val RTT_MEMORY = 256
 
-        /** IDs of moved connections an endpoint keeps from Stateless Resets on the original address ([leftAddressCids]). */
+        /** IDs of moved connections an endpoint keeps from Stateless Resets on the original address ([leftAddressIds]). */
         const val LEFT_ADDRESS_IDS = 1024
+
+        /** Of those, the most one connection keeps (its oldest go first). */
+        const val LEFT_ADDRESS_IDS_PER_CONNECTION = 8
+
+        /** How long [leftAddressIds] keeps an ID of a connection without an idle timeout: QuicConfig's default idle timeout. */
+        val LEFT_ADDRESS_FALLBACK_TTL = 30.seconds
 
         /** ICMP Packet Too Big messages an endpoint looks at per second; the rest are only counted. */
         const val PTB_PER_SECOND = 64
@@ -1069,41 +1077,27 @@ public class EndpointCore internal constructor(
     }
 
     /**
-     * IDs of server connections that moved to the preferred-address socket (RFC 9000 section 9.6.2), kept after they stopped
-     * routing (retired by the client, or the connection gone), until when no Stateless Reset answers them here. A client packet
-     * delayed on the original address past its ID's routing would otherwise get one from that address: a Stateless Reset is only a
-     * MAY (section 10.3), and the moved connection leaves nothing on the address it left, nor anything that links it to its new one
-     * (section 9.5). At most [LEFT_ADDRESS_IDS], the oldest dropped first, each for the connection's idle timeout (after which the
-     * client has given the connection up anyway).
+     * IDs of server connections that moved to the preferred-address socket (RFC 9000 section 9.6.2) and were in use before the move,
+     * kept after they stopped routing (retired by the client, or the connection gone): a client packet delayed on the original
+     * address past its ID's routing gets no Stateless Reset from there. A reset is only a MAY (section 10.3), and the moved
+     * connection leaves nothing on the address it left, nor anything that links it to its new one (section 9.5). Each is kept for
+     * the connection's effective idle timeout (section 10.1: the client has given the connection up by then), at most
+     * [LEFT_ADDRESS_IDS] in all and [LEFT_ADDRESS_IDS_PER_CONNECTION] of one connection.
      */
-    private val leftAddressCids = LinkedHashMap<ConnectionId, TimeMark>()
+    private val leftAddressIds = LeftAddressIds(LEFT_ADDRESS_IDS, LEFT_ADDRESS_IDS_PER_CONNECTION)
+
+    /** Unknown short headers on the original address with an ID of a moved connection, left without a Stateless Reset ([leftAddressIds]). */
+    internal var resetsWithheldLeftAddress = 0L
 
     private fun rememberLeftAddress(
         cid: ConnectionId,
         core: ConnectionCore,
     ) {
-        val ttl = core.config.maxIdleTimeout.takeIf { it.isPositive() } ?: 30.seconds
-        leftAddressCids.remove(cid)
-        leftAddressCids[cid] = core.now + ttl
-        if (leftAddressCids.size > LEFT_ADDRESS_IDS) leftAddressCids.remove(leftAddressCids.keys.first())
-    }
-
-    /** True when the short header's DCID is one of [leftAddressCids] still remembered at [now]; expired ones are forgotten (oldest first). */
-    private fun isLeftAddressCid(
-        data: PacketBuffer,
-        now: TimeMark,
-    ): Boolean {
-        val it = leftAddressCids.entries.iterator()
-        while (it.hasNext()) {
-            if (it.next().value > now) break
-            it.remove()
-        }
-        if (leftAddressCids.isEmpty()) return false
-        val cid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
-        val until = leftAddressCids[cid] ?: return false
-        if (until > now) return true
-        leftAddressCids.remove(cid)
-        return false
+        if (!core.leftAddressCids.contains(cid)) return // issued after the move: never used on the original address
+        // the connection's effective idle timeout (the smaller of both sides', never below 3 x PTO); neither side set one: the default
+        val idle = core.timers.effectiveIdle(core.config.maxIdleTimeout, core.peerIdleMs, core.pto())
+        val ttl = if (idle.isFinite()) idle else LEFT_ADDRESS_FALLBACK_TTL
+        leftAddressIds.add(cid, core, core.now + ttl, core.now)
     }
 
     /**
