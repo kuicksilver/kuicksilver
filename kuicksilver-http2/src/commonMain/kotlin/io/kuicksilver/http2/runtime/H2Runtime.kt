@@ -1169,13 +1169,14 @@ internal class H2Runtime(
         if (!first) return false
         // the stream and its slot come back even when a step throws (an engine callback's exception passes through
         // withCore): the first call is the only one that releases, so what is not returned here is held for the
-        // connection's life. Every step runs; the first exception is thrown, the later ones added to it as suppressed
-        var failure: Throwable? = null
+        // connection's life. Every step runs; the first exception is thrown, the later ones added to it as suppressed. A
+        // callback's CancellationException does not hide a real failure after it: the first other one is thrown instead
+        val failures = ArrayList<Throwable>(0)
         val step = { action: () -> Unit ->
             try {
                 action()
             } catch (e: Throwable) {
-                failure?.addSuppressed(e) ?: run { failure = e }
+                failures += e
             }
         }
         step { abandon(s, CancellationException("the call ended")) }
@@ -1187,7 +1188,11 @@ internal class H2Runtime(
             }
         }
         if (client) step { unreserve() }
-        failure?.let { throw it }
+        if (failures.isNotEmpty()) {
+            val primary = failures.firstOrNull { it !is CancellationException } ?: failures[0]
+            for (e in failures) if (e !== primary) primary.addSuppressed(e)
+            throw primary
+        }
         return true
     }
 

@@ -19,6 +19,7 @@ import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.H2
 import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -1415,6 +1416,48 @@ class H2RuntimeTest {
             armed = false
             assertEquals("from onChange 1", e.message)
             assertEquals(listOf("from onChange 2", "from onChange 3"), e.suppressedExceptions.map { it.message })
+            assertEquals(0, client.reservedStreams, "the slot came back")
+            client.rt.lock.withLock { assertEquals(0, client.rt.core.activeStreams, "the core released the stream") }
+        }
+
+    /**
+     * A callback's CancellationException first does not hide a real failure after it: the first exception that is not a
+     * cancellation is thrown, the cancellations before and after it are suppressed under it in order.
+     */
+    @Test fun negative_aReleaseThrowsItsFirstRealFailureOverAnEarlierCancellation() =
+        runTest {
+            var armed = false
+            var thrown = 0
+            val w = Wire()
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    onChange = {
+                        if (armed) {
+                            val n = ++thrown
+                            throw if (n == 2) IllegalStateException("from onChange $n") else CancellationException("from onChange $n")
+                        }
+                    },
+                    clock = clock(),
+                )
+            runCurrent()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            armed = true
+            val e = assertFailsWith<IllegalStateException> { s.release() }
+            armed = false
+            assertEquals("from onChange 2", e.message)
+            assertEquals(listOf("from onChange 1", "from onChange 3"), e.suppressedExceptions.map { it.message })
+            assertTrue(e.suppressedExceptions.all { it is CancellationException })
             assertEquals(0, client.reservedStreams, "the slot came back")
             client.rt.lock.withLock { assertEquals(0, client.rt.core.activeStreams, "the core released the stream") }
         }
