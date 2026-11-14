@@ -471,7 +471,9 @@ class ClientH2WebSocketTest {
                     }
                     val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
-                    assertEquals(0, engine(c).h1.h2.streamCount)
+                    // the release resets the stream first and returns its reservation after: the server can see the
+                    // RST_STREAM before the slot is back (seen on Windows)
+                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
                 }
             }
         }
@@ -512,7 +514,9 @@ class ClientH2WebSocketTest {
                     }
                     val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
-                    assertEquals(0, engine(c).h1.h2.streamCount)
+                    // the release resets the stream first and returns its reservation after: the server can see the
+                    // RST_STREAM before the slot is back (seen on Windows)
+                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
                 }
             }
         }
@@ -548,7 +552,9 @@ class ClientH2WebSocketTest {
                     }
                     val reset = assertIs<Http2Exception.StreamReset>(withTimeout(10.seconds) { failure.await() })
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
-                    assertEquals(0, engine(c).h1.h2.streamCount)
+                    // the release resets the stream first and returns its reservation after: the server can see the
+                    // RST_STREAM before the slot is back (seen on Windows)
+                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
                 }
             }
         }
