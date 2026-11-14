@@ -1338,6 +1338,48 @@ class H2RuntimeTest {
             assertIs<Http2Exception.StreamReset>(got.await().exceptionOrNull())
             s.release()
         }
+
+    /**
+     * A release is the only call that gives a stream back: when an engine callback throws in the event dispatch that
+     * follows its reset (here `onChange`, for an event that was waiting), the exception reaches the caller, and the core,
+     * the stream map and the slot still get the stream back. Otherwise the slot is held for the connection's life.
+     */
+    @Test fun negative_aReleaseWhoseResetDispatchThrowsStillReturnsTheStream() =
+        runTest {
+            var armed = false
+            val w = Wire()
+            H2ServerConnection.start(w.toServer, w.toClient, Http2Settings(), backgroundScope, { w.close() }, clock())
+            val client =
+                H2ClientConnection.start(
+                    w.toClient,
+                    w.toServer,
+                    Http2Settings(),
+                    backgroundScope,
+                    Duration.INFINITE,
+                    { w.close() },
+                    onChange = {
+                        if (armed) {
+                            armed = false
+                            throw IllegalStateException("from onChange")
+                        }
+                    },
+                    clock = clock(),
+                )
+            runCurrent()
+            assertTrue(client.tryReserve())
+            val s = client.open("POST", "https", "example.com", "/", get, endStream = false)
+            runCurrent()
+            // a SETTINGS from the server whose event (SettingsChanged, which calls onChange) waits for the next dispatcher:
+            // the release's reset
+            client.rt.receiveWithoutDispatchForTest(FrameEncoder.settings(IntArray(0), LongArray(0)))
+            armed = true
+            val e = assertFailsWith<IllegalStateException> { s.release() }
+            assertEquals("from onChange", e.message)
+            assertEquals(0, client.reservedStreams, "the slot came back")
+            client.rt.lock.withLock { assertEquals(0, client.rt.core.activeStreams, "the core released the stream") }
+            s.release() // a later call releases nothing twice
+            assertEquals(0, client.reservedStreams)
+        }
 }
 
 /** An RFC 7541 string literal without Huffman coding: a 7-bit prefixed length (section 5.1), then the octets. */
