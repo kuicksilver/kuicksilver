@@ -329,7 +329,7 @@ class ClientOrderlyCloseTest {
                 h2Server(input, output, if (index == 0) first else H2End(), violate = false)
             }) { port ->
                 // the health PING waits half the connect timeout (1.5 s; this server never answers, so always that long),
-                // and the new connection has the whole 3 s, as in ClientH2Test's health tests
+                // and the new connection the remaining ~1.5 s of the same budget, as in ClientH2Test's health tests
                 testClient(engine = { connectTimeout = 3.seconds }).use { c ->
                     engine(c).h1.h2HealthAfterIdleMillis = 0 // every reuse is checked
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)

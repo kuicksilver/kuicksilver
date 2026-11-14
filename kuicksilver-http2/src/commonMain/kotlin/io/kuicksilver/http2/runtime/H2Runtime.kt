@@ -866,7 +866,8 @@ internal class H2Runtime(
     /**
      * The transport closes in order once the writer has drained ([closed]), or hard when it has not within
      * [IN_ORDER_CLOSE_BOUND]; at once also when the runtime's scope is cancelled already (the wait runs atomically). One
-     * wait per connection ([closeBoundStarted]): [lost] in order and the end of the connection both ask for it.
+     * wait per connection ([closeBoundStarted]): [lost] in order and the end of the connection both ask for it; a later
+     * caller relies on the first wait's deadline, so it gets less than the full bound.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class) // CoroutineStart.ATOMIC: the wait's finally runs even if never started
     private fun closeWithinBound() {
