@@ -129,15 +129,13 @@ class BindOnSamePortTest {
 
     /**
      * Real sockets: the UDP-first attempt finds its TCP twin taken (by a listener of ours) and the second attempt binds TCP
-     * on a free port and UDP on that number ([udpOn] honours the port it is given). Also pins that a taken port fails
-     * [tcpOn] and [testServer] with a failure [mayBeTaken] retries.
+     * on a free port and UDP on that number ([udpOn] honours the port it is given). Where our listener cannot take the
+     * twin (already taken by another, as on the Windows CI), only the pair on one port is asserted.
      */
     @Test fun aTakenTwinGoesToTheOtherOrder() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
-            val blockers = mutableListOf<io.ktor.network.sockets.ServerSocket>()
-            // asserted after the pairing: an assertion failing in a binder would only be retried
-            var onTaken: Result<Pair<TestServer, Int>>? = null
+            var blocker: io.ktor.network.sockets.ServerSocket? = null
             try {
                 val calls = mutableListOf<String>()
                 val (u, t, port) =
@@ -149,31 +147,47 @@ class BindOnSamePortTest {
                         releaseFirst = { it.close() },
                         second = { p ->
                             calls += "tcp$p"
-                            if (calls.size == 2) {
-                                blockers += bindTcp(selector, "127.0.0.1", p)
-                                onTaken =
-                                    runCatching { testServer(plain = true, port = p) { routing { get("/") { call.respondText("") } } } }
-                            }
+                            if (calls.size == 2) blocker = runCatching { bindTcp(selector, "127.0.0.1", p) }.getOrNull()
                             tcpOn(selector, p)
                         },
                         releaseSecond = { it.close() },
                     )
                 try {
-                    val e = onTaken?.exceptionOrNull()
-                    assertTrue(e != null && mayBeTaken(e), "testServer on a taken port: $onTaken")
-                    // the second attempt went TCP-first (later ones may follow where its UDP twin is taken too)
-                    assertEquals(listOf("udp0", "tcp0"), listOf(calls[0], calls[2]), "$calls")
                     assertTrue(port != 0)
-                    assertEquals("udp$port", calls.last())
                     assertEquals(port, (u.localAddress as InetSocketAddress).port)
                     assertEquals(port, (t.localAddress as InetSocketAddress).port)
+                    if (blocker != null) {
+                        // the second attempt went TCP-first (later ones may follow where its UDP twin is taken too)
+                        assertEquals(listOf("udp0", "tcp0"), listOf(calls[0], calls[2]), "$calls")
+                        assertEquals("udp$port", calls.last())
+                    }
                 } finally {
                     u.close()
                     t.close()
                 }
             } finally {
-                onTaken?.getOrNull()?.first?.let { runCatching { it.stop(0, 0) } }
-                blockers.forEach { it.close() }
+                blocker?.close()
+                selector.close()
+            }
+        }
+
+    /** A taken port fails [tcpOn] and [testServer] with a failure [mayBeTaken] retries. */
+    @Test fun aTakenPortIsRetried() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val taken = bindTcp(selector, "127.0.0.1", 0)
+            try {
+                val port = (taken.localAddress as InetSocketAddress).port
+                val tcp = runCatching { tcpOn(selector, port) }
+                tcp.getOrNull()?.first?.close()
+                val tcpFailure = tcp.exceptionOrNull()
+                assertTrue(tcpFailure != null && mayBeTaken(tcpFailure), "tcpOn on a taken port: $tcp")
+                val server = runCatching { testServer(plain = true, port = port) { routing { get("/") { call.respondText("") } } } }
+                server.getOrNull()?.first?.let { runCatching { it.stop(0, 0) } }
+                val serverFailure = server.exceptionOrNull()
+                assertTrue(serverFailure != null && mayBeTaken(serverFailure), "testServer on a taken port: $server")
+            } finally {
+                taken.close()
                 selector.close()
             }
         }
