@@ -512,6 +512,51 @@ class EngineMainTest {
             server.stop(0, 0)
         }
 
+    /**
+     * Without the identity files, `kuicksilver.tls.trustedGateway` is for the cleartext deployment port and is accepted next to
+     * Ktor's `-sslPort` connector: the cleartext port serves an absolute-form https target, the sslConnector still answers
+     * 421 for a host its certificate does not name.
+     */
+    @Test fun trustedGatewayKeyForThePlainPortNextToSslPort() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "gateway-plain-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    arrayOf(
+                        "-host=127.0.0.1",
+                        "-port=0",
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:ktor.application.modules.size=1",
+                        "-P:ktor.application.modules.0=$module",
+                        "-P:kuicksilver.http3=false",
+                        "-P:kuicksilver.tls.trustedGateway=true",
+                    ),
+                )
+            server.startSuspend(false)
+            try {
+                val connectors = server.engine.resolvedConnectors()
+                val plain = connectors.first { it.type == io.ktor.server.engine.ConnectorType.HTTP }.port
+                val ssl = connectors.first { it.type == io.ktor.server.engine.ConnectorType.HTTPS }.port
+                val request = "GET https://elsewhere.test/ HTTP/1.1\r\nHost: elsewhere.test\r\nConnection: close\r\n\r\n"
+                val r = rawHttp(plain, request, tls = null)
+                assertTrue(r.startsWith("HTTP/1.1 200"), r)
+                val other = rawHttp(ssl, "GET / HTTP/1.1\r\nHost: elsewhere.test\r\nConnection: close\r\n\r\n")
+                assertTrue(other.startsWith("HTTP/1.1 421"), other)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun tlsVersionsKeyParsed() {
         assertNull(EngineMain.parseTlsVersions(null))
         assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, EngineMain.parseTlsVersions("tls13"))

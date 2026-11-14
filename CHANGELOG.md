@@ -18,8 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
   cleartext port behind a TLS-terminating proxy) set what `tlsConnector`'s `ocspStapling` and `trustedGateway` (and
-  `plainConnector`'s) set in code; the stapling needs the identity files, and both are refused next to Ktor's
-  `-sslPort` connector, which cannot express them.
+  `plainConnector`'s) set in code; the stapling needs the identity files. Ktor's `-sslPort` connector cannot express
+  either: next to it the stapling is refused, and so is the gateway with the identity files; without them the gateway
+  is accepted and exempts only the cleartext port.
 - Certificate revocation (RFC 9325 section 7.5), experimental. Clients ask for a stapled OCSP response and check it
   (RFC 6960 section 3.2; RFC 6066 section 8) where `ksl` verifies the chain (`AnchoredCa`, `Platform` on Linux Native):
   `TlsConfig.revocation` (`RevocationPolicy.Off`, `StapledIfPresent` (the default: a server without a staple passes),

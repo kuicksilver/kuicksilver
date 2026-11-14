@@ -17,8 +17,10 @@ import java.security.PrivateKey
  * become a [TlsIdentity]; a trust store makes client certificates required, as with Ktor's Netty and Jetty engines; its
  * `enabledProtocols` ([sslVersions]) choose the TLS versions. Ktor's connector has nothing for a stapled OCSP response or a
  * trusted gateway, so such a connector staples nothing and answers `421 Misdirected Request` for a host its certificate does
- * not name; the `EngineMain` keys `kuicksilver.tls.ocspStapling` and `kuicksilver.tls.trustedGateway` are refused next to it
- * (they apply to the port of `kuicksilver.tls.certificateChain`). An application that needs either sets `ocspStapling` or
+ * not name; the `EngineMain` keys `kuicksilver.tls.ocspStapling` and `kuicksilver.tls.trustedGateway` (with the identity
+ * files) are refused next to it, as they apply to the port of `kuicksilver.tls.certificateChain`. Without the identity files
+ * `kuicksilver.tls.trustedGateway` is accepted for the cleartext deployment port, and its exemption does not reach this
+ * connector. An application that needs either sets `ocspStapling` or
  * `trustedGateway` on `tlsConnector(identity)` in code, or serves the port with the `kuicksilver.tls` keys.
  */
 internal actual fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector? {

@@ -655,8 +655,10 @@ public class KuicksilverApplicationEngine(
                             "use ktor.security.ssl.enabledProtocols there",
                     )
                 }
-                // Ktor's sslConnector has no stapled OCSP response and no trusted-gateway switch: tlsConnector(identity) has both
-                if (configuration.tlsOcspStapling != null || configuration.tlsTrustedGateway) {
+                // Ktor's sslConnector has no stapled OCSP response and no trusted-gateway switch: tlsConnector(identity) has both.
+                // A trusted gateway for the cleartext deployment port (no identity files) is accepted next to it and stays on
+                // that port: the sslConnector still answers 421 for hosts its certificate does not name
+                if (configuration.tlsOcspStapling != null || (configuration.tlsTrustedGateway && configuration.identityFiles != null)) {
                     throw TlsException.Config(
                         "kuicksilver.tls.ocspStapling and kuicksilver.tls.trustedGateway apply to the port of " +
                             "kuicksilver.tls.certificateChain, not to $c: Ktor's sslConnector cannot express them; serve that port " +
