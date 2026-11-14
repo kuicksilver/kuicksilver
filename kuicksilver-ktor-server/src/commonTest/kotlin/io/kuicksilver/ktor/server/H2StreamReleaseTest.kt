@@ -76,10 +76,18 @@ class H2StreamReleaseTest {
                     withTimeout(10.seconds) { started.await() }
                     raw.rstStream(1, 8) // CANCEL
                     val e = assertNotNull(withTimeout(10.seconds) { inFlight.await() }, "the handler's cancellation")
-                    // logged, then suppressed under the cancellation, once the release returned
-                    withTimeout(10.seconds) { while (e.suppressedExceptions.isEmpty()) delay(10) }
+                    // suppressed under the cancellation, then logged: the log's line (an atomic) publishes the suppression
+                    val line =
+                        withTimeout(10.seconds) {
+                            var found = log.lines.firstOrNull { it.cause === failure }
+                            while (found == null) {
+                                delay(10)
+                                found = log.lines.firstOrNull { it.cause === failure }
+                            }
+                            found
+                        }
+                    assertEquals("WARN", line.level)
                     assertEquals(listOf<Throwable>(failure), e.suppressedExceptions)
-                    assertEquals("WARN", log.lines.single { it.cause === failure }.level)
                 }
             } finally {
                 server.stop(100, 500)

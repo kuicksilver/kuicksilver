@@ -388,9 +388,9 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
 /**
  * A request stream's release at the end of its handling. A release that throws (an engine callback's exception in its
  * dispatch) gave the stream back all the same, so its failure is this stream's only (RFC 9113 section 5.4.2) and never
- * leaves the handler (the supervisor's last-resort handler would report it as the connection's): it is logged at warn
- * (an internal failure, as an event listener's) and suppressed under [inFlight] (the handler's cancellation), never
- * thrown in its place.
+ * leaves the handler (the supervisor's last-resort handler would report it as the connection's): it is suppressed under
+ * [inFlight] (the handler's cancellation), never thrown in its place, and then logged at warn (an internal failure, as an
+ * event listener's).
  */
 internal inline fun releaseH2Stream(
     id: Int,
@@ -401,7 +401,7 @@ internal inline fun releaseH2Stream(
     try {
         release()
     } catch (e: Throwable) {
-        runCatching { log.warn("HTTP/2 stream $id: its release failed; the stream was given back", e) }
         if (inFlight != null && inFlight !== e) inFlight.addSuppressed(e)
+        runCatching { log.warn("HTTP/2 stream $id: its release failed; the stream was given back", e) }
     }
 }
