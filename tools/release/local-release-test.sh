@@ -263,7 +263,8 @@ gate_t "negative_gateWithoutWindows"                          "refuse:without --
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published
-# version ("X.Y.Z is on Maven Central") while its dependency blocks and the iOS guide already name the line's version
+# version ("X.Y.Z is on Maven Central") while its dependency blocks and the iOS guide already name the line's version;
+# with no published version to name (0.2.x are withdrawn) only the "release in preparation" note remains
 new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
@@ -272,15 +273,17 @@ for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
-published=$(sed -n 's/.* \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) is on Maven Central.*/\1/p' README.md | head -1)
+published=$(grep -v 'Until [0-9.]* is on Maven Central' README.md \
+  | sed -n 's/.* \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) is on Maven Central.*/\1/p' | head -1)
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
 # before the release the README names both versions and calls the line's version the release in preparation
-want=""; [ "$published" = "$line" ] || want=$(printf 'README.md names %s instead of %s\nREADME.md still calls %s the release in preparation' \
-  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$line")
+want=""; if [ -z "$published" ]; then want="README.md still calls $line the release in preparation"
+elif [ "$published" != "$line" ]; then want=$(printf 'README.md names %s instead of %s\nREADME.md still calls %s the release in preparation' \
+  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$line"); fi
 want=$(grep . <<< "$want" | sort)
 out=$(bash tools/release/local-release.sh "$line" --dry-run 2>&1)
 have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' -e 's/ ("release in preparation".*//' | sort)
-if [ -n "$line" ] && [ -n "$published" ] && [ "$have" = "$want" ]; then verdict=ok; pass=$((pass+1)); else verdict=FAIL; fail=$((fail+1)); fi
+if [ -n "$line" ] && [ "$have" = "$want" ]; then verdict=ok; pass=$((pass+1)); else verdict=FAIL; fail=$((fail+1)); fi
 printf '%-4s %-58s line=%s published=%s | %s\n' "$verdict" "the repository's own version files" "$line" "$published" "$(tr '\n' ' ' <<< "${have:-no warning}")"
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]
