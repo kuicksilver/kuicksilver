@@ -243,6 +243,7 @@ private inline fun EndpointLoop.flushBody(
                     handshakeEnded(rt)
                     rt.finish()
                     timers.remove(c)
+                    core.noteClock(now) // the IDs a moved connection leaves behind are kept from now, not from its last event
                     core.remove(c)
                     runtimes.remove(c)
                     if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)

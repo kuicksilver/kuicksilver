@@ -447,6 +447,14 @@ class PreferredAddressTest {
             )
         try {
             val (c, s, held) = moveHoldingOriginal(p)
+            // the IDs kept from Stateless Resets on the original address: short-header ones only, the client's one there marked
+            val cidLength = s.config.connectionIdLength
+            assertTrue(s.leftAddressCids.all { it.length == cidLength } && s.odcid !in s.leftAddressCids, "${s.leftAddressCids}")
+            val oldPathId =
+                io.kuicksilver.quic.wire
+                    .ConnectionId(held.first().copyOfRange(1, 1 + cidLength))
+            assertEquals(oldPathId, s.leftAddressPrimary, "the ID the client used on the original path")
+            assertTrue(oldPathId in s.leftAddressCids)
             val sentBefore = p.serverSent.size
             val invalidResets = s.stats.invalidResets
             for (d in held) p.feed(p.server, d, p.clientAddr)
@@ -526,6 +534,8 @@ class PreferredAddressTest {
             for (d in held) assertNull(p.feed(p.server, d, p.clientAddr))
             assertTrue(p.stateless(p.server).isEmpty(), "no Stateless Reset queued")
             assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
+            // the endpoint names the gone connection by a token, not by the connection (which would stay reachable)
+            assertTrue(s.leftAddressToken > 0L)
             p.runUntil(1.seconds) { false }
             assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
         } finally {

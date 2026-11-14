@@ -665,8 +665,18 @@ public class ConnectionCore internal constructor(
      */
     internal var leftOriginalAddress = false
 
-    /** Server: the IDs of ours that routed to this connection when it moved ([leftOriginalAddress]): the ones the client could use on the original address. */
-    internal var leftAddressCids: List<io.kuicksilver.quic.wire.ConnectionId> = emptyList()
+    /**
+     * Server: the IDs of ours that routed to this connection in short headers when it moved ([leftOriginalAddress]), live or
+     * retired and still routing: the ones the client could use on the original address. At most the live target (8) plus the
+     * retirement backlog ([io.kuicksilver.quic.QuicLimits.retiredConnectionIds]); no original DCID or Retry SCID (long headers only).
+     */
+    internal var leftAddressCids: Set<io.kuicksilver.quic.wire.ConnectionId> = emptySet()
+
+    /** Server: of [leftAddressCids], the one the client used on the original path at the move (most likely to arrive there late). */
+    internal var leftAddressPrimary: io.kuicksilver.quic.wire.ConnectionId? = null
+
+    /** Server: the opaque token the endpoint names this connection by among the IDs it left behind (0 until it is given one). */
+    internal var leftAddressToken: Long = 0L
 
     /** Server: authenticated packets dropped because they reached the original address after [leftOriginalAddress]. */
     internal var leftAddressDropped = 0L

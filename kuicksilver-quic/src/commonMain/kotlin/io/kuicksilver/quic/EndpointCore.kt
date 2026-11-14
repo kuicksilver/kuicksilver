@@ -720,6 +720,7 @@ public class EndpointCore internal constructor(
         local: InetSocketAddress?,
     ): ConnectionCore? {
         rxLocal = local
+        noteClock(now)
         if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) {
             // RFC 9000 section 10.3: a reset may come in another version's long header that v1 cannot parse
             statelessResetFor(data, length, from, now)?.let { return it }
@@ -845,6 +846,7 @@ public class EndpointCore internal constructor(
         now: TimeMark,
         max: Int = 64,
     ): Int {
+        noteClock(now)
         retryPendingReissues()
         val q = queue ?: return 0
         if (q.size == 0) return 0
@@ -921,10 +923,12 @@ public class EndpointCore internal constructor(
         /** IDs of moved connections an endpoint keeps from Stateless Resets on the original address ([leftAddressIds]). */
         const val LEFT_ADDRESS_IDS = 1024
 
-        /** Of those, the most one connection keeps (its oldest go first). */
-        const val LEFT_ADDRESS_IDS_PER_CONNECTION = 8
-
-        /** How long [leftAddressIds] keeps an ID of a connection without an idle timeout: QuicConfig's default idle timeout. */
+        /**
+         * How long [leftAddressIds] keeps an ID of a connection with no idle timeout on either side (at least 3 x PTO): such a
+         * connection may last for ever, the memory may not. QuicConfig's default idle timeout, far past any reordering the
+         * connection's loss recovery tolerates (RFC 9002 section 6.1: packets are declared lost within about an RTT), so a datagram
+         * delayed longer is not one the client still waits for.
+         */
         val LEFT_ADDRESS_FALLBACK_TTL = 30.seconds
 
         /** ICMP Packet Too Big messages an endpoint looks at per second; the rest are only counted. */
@@ -1082,9 +1086,21 @@ public class EndpointCore internal constructor(
      * address past its ID's routing gets no Stateless Reset from there. A reset is only a MAY (section 10.3), and the moved
      * connection leaves nothing on the address it left, nor anything that links it to its new one (section 9.5). Each is kept for
      * the connection's effective idle timeout (section 10.1: the client has given the connection up by then), at most
-     * [LEFT_ADDRESS_IDS] in all and [LEFT_ADDRESS_IDS_PER_CONNECTION] of one connection.
+     * [LEFT_ADDRESS_IDS] in all and, of one connection, the IDs it held when it moved ([ConnectionCore.leftAddressCids]).
      */
-    private val leftAddressIds = LeftAddressIds(LEFT_ADDRESS_IDS, LEFT_ADDRESS_IDS_PER_CONNECTION)
+    private val leftAddressIds = LeftAddressIds(LEFT_ADDRESS_IDS)
+
+    /** The opaque token [leftAddressIds] names the next connection by (never the connection: it would stay reachable). */
+    private var leftAddressSerial = 0L
+
+    /** The latest time the endpoint was given (a datagram, admission, a flush): a connection's own clock may lag it when it is removed. */
+    private var clock: TimeMark? = null
+
+    /** Moves [clock] on to [now]. */
+    internal fun noteClock(now: TimeMark) {
+        val c = clock
+        if (c == null || now > c) clock = now
+    }
 
     /** Unknown short headers on the original address with an ID of a moved connection, left without a Stateless Reset ([leftAddressIds]). */
     internal var resetsWithheldLeftAddress = 0L
@@ -1093,11 +1109,27 @@ public class EndpointCore internal constructor(
         cid: ConnectionId,
         core: ConnectionCore,
     ) {
-        if (!core.leftAddressCids.contains(cid)) return // issued after the move: never used on the original address
-        // the connection's effective idle timeout (the smaller of both sides', never below 3 x PTO); neither side set one: the default
+        if (cid !in core.leftAddressCids) return // issued after the move: never used on the original address
+        if (core.leftAddressToken == 0L) core.leftAddressToken = ++leftAddressSerial
+        val c = clock
+        val now = if (c != null && c > core.now) c else core.now
+        // the connection's effective idle timeout (the smaller of both sides', never below 3 x PTO, RFC 9000 section 10.1)
         val idle = core.timers.effectiveIdle(core.config.maxIdleTimeout, core.peerIdleMs, core.pto())
-        val ttl = if (idle.isFinite()) idle else LEFT_ADDRESS_FALLBACK_TTL
-        leftAddressIds.add(cid, core, core.now + ttl, core.now)
+        val ttl =
+            if (idle.isFinite()) {
+                idle
+            } else {
+                val floor = core.pto() * 3
+                if (floor > LEFT_ADDRESS_FALLBACK_TTL) floor else LEFT_ADDRESS_FALLBACK_TTL
+            }
+        leftAddressIds.add(
+            cid,
+            core.leftAddressToken,
+            ownerCap = core.leftAddressCids.size,
+            primary = cid == core.leftAddressPrimary,
+            until = now + ttl,
+            now = now,
+        )
     }
 
     /**

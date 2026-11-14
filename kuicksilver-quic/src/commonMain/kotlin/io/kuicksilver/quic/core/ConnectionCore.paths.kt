@@ -355,7 +355,11 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
     }
     if (paths.active.socket == PREFERRED_SOCKET && !leftOriginalAddress) {
         leftOriginalAddress = true
-        leftAddressCids = ArrayList(registeredCids)
+        val ids = HashSet<io.kuicksilver.quic.wire.ConnectionId>()
+        cids.forEachLocal { if (it.length == config.connectionIdLength && it != odcid && it != retryScid) ids += it }
+        leftAddressCids = ids
+        // the client's DCID on the original path (activeDcidSeq is still that path's: only its packets update it)
+        leftAddressPrimary = if (activeDcidSeq >= 0) cids.localCidOf(activeDcidSeq) else null
     }
 }
 
