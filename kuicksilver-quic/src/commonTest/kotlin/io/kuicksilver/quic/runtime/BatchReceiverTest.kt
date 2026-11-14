@@ -242,6 +242,10 @@ class BatchReceiverTest {
             withContext(loop) {
                 val io = ScriptedIo(3, 2, 0, 4)
                 val r = BatchReceiver(io, { clock }, 1.milliseconds, loop)
+                // the dispatch into withContext is counted by the runBlocking thread once queued, possibly after this block
+                // started: counted after the yield below, it would be work queued since, and the gap would not be waited for
+                while (loop.dispatched() == 0L) {
+                }
                 r.receive(batch, noTimer)
                 launch { io.calls += "command" }
                 assertEquals(BatchReceiver.NOT_TRIED, r.receiveDirect(batch, noTimer)) // the suspending receive yields first
