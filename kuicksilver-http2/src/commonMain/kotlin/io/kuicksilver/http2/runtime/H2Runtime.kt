@@ -1167,22 +1167,27 @@ internal class H2Runtime(
                 }
             }
         if (!first) return false
-        // the stream and its slot come back even when the reset throws (an engine callback's exception passes through
+        // the stream and its slot come back even when a step throws (an engine callback's exception passes through
         // withCore): the first call is the only one that releases, so what is not returned here is held for the
-        // connection's life
-        try {
-            abandon(s, CancellationException("the call ended"))
-        } finally {
+        // connection's life. Every step runs; the first exception is thrown, the later ones added to it as suppressed
+        var failure: Throwable? = null
+        val step = { action: () -> Unit ->
             try {
-                withCore { release(s.id) }
-            } finally {
-                lock.withLock {
-                    streams.remove(s.id)
-                    s.chunks.clear()
-                }
-                if (client) unreserve()
+                action()
+            } catch (e: Throwable) {
+                failure?.addSuppressed(e) ?: run { failure = e }
             }
         }
+        step { abandon(s, CancellationException("the call ended")) }
+        step { withCore { release(s.id) } }
+        step {
+            lock.withLock {
+                streams.remove(s.id)
+                s.chunks.clear()
+            }
+        }
+        if (client) step { unreserve() }
+        failure?.let { throw it }
         return true
     }
 
