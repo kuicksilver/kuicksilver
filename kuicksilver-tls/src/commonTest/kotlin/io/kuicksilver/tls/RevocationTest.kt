@@ -134,6 +134,94 @@ class RevocationTest {
         )
     }
 
+    /**
+     * RFC 8446 section 4.4.2: in TLS 1.3 the response travels in the leaf's CertificateEntry, whose extensions are
+     * `Extension extensions<0..2^16-1>`: with its 4-byte extension header and the CertificateStatus' status_type and 3-byte
+     * length, a response of more than 65527 bytes cannot be sent. RFC 6066 section 8 lets a server send none, so such a
+     * response is not stapled and the handshake goes on (it used to fail in the server). [padded] pads ocspGood with copies
+     * of its certificate in BasicOCSPResponse's unsigned certs field: still valid and fresh, only larger.
+     */
+    @Test fun oversizeResponseIsNotStapledInTls13() {
+        val big = padded(RevocationCerts.ocspGood, 70_000)
+        assertTrue(big.size > OcspStapling.MAX_TLS13_RESPONSE, "${big.size}")
+        quicPasses(client(), server(stapling = OcspStapling(big)))
+        assertEquals(
+            VerifyReason.UnknownRevocationStatus,
+            quicRefused(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(big))),
+        )
+        val fits = padded(RevocationCerts.ocspGood, 60_000)
+        assertTrue(fits.size <= OcspStapling.MAX_TLS13_RESPONSE, "${fits.size}")
+        quicPasses(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(fits)))
+    }
+
+    @Test fun oversizeResponseIsNotStapledOverTcpTls13(): Unit =
+        runBlocking {
+            val (c, s) = tcp(tcpClient(), tcpServer(stapling = OcspStapling(padded(RevocationCerts.ocspGood, 70_000))))
+            c.close()
+            s.close()
+        }
+
+    /** [response] with copies of its first certificate added to BasicOCSPResponse's certs until it is about [atLeast] bytes. */
+    private fun padded(
+        response: ByteArray,
+        atLeast: Int,
+    ): ByteArray {
+        fun len(n: Int): ByteArray =
+            when {
+                n < 0x80 -> byteArrayOf(n.toByte())
+                n < 0x100 -> byteArrayOf(0x81.toByte(), n.toByte())
+                n < 0x10000 -> byteArrayOf(0x82.toByte(), (n shr 8).toByte(), n.toByte())
+                else -> byteArrayOf(0x83.toByte(), (n shr 16).toByte(), (n shr 8).toByte(), n.toByte())
+            }
+
+        fun tlv(
+            tag: Int,
+            content: ByteArray,
+        ) = byteArrayOf(tag.toByte()) + len(content.size) + content
+
+        // the children of the constructed TLV at [at]: (tag, whole TLV)
+        fun children(
+            b: ByteArray,
+            at: Int,
+        ): List<Pair<Int, ByteArray>> {
+            fun header(i: Int): Pair<Int, Int> { // (header length, content length)
+                val l = b[i + 1].toInt() and 0xff
+                if (l < 0x80) return 2 to l
+                var n = 0
+                for (k in 0 until (l and 0x7f)) n = (n shl 8) or (b[i + 2 + k].toInt() and 0xff)
+                return 2 + (l and 0x7f) to n
+            }
+            val (h, n) = header(at)
+            val out = ArrayList<Pair<Int, ByteArray>>()
+            var i = at + h
+            while (i < at + h + n) {
+                val (ch, cn) = header(i)
+                out += (b[i].toInt() and 0xff) to b.copyOfRange(i, i + ch + cn)
+                i += ch + cn
+            }
+            return out
+        }
+        val top = children(response, 0) // responseStatus, [0] responseBytes
+        val rb = children(top[1].second, 0).single().second // SEQUENCE { responseType, response }
+        val (oid, octets) = children(rb, 0).let { it[0].second to it[1].second }
+        val first = octets[1].toInt() and 0xff
+        val basicDer = octets.copyOfRange(2 + (if (first < 0x80) 0 else first and 0x7f), octets.size) // the OCTET STRING's content
+        val basic = children(basicDer, 0) // tbsResponseData, signatureAlgorithm, signature, [0] certs
+        val cert = children(children(basic[3].second, 0).single().second, 0).first().second
+        val certs = ArrayList<ByteArray>()
+        var size = response.size
+        while (size < atLeast) {
+            certs += cert
+            size += cert.size
+        }
+        val newBasic =
+            tlv(
+                0x30,
+                basic[0].second + basic[1].second + basic[2].second + tlv(0xa0, tlv(0x30, (listOf(cert) + certs).reduce { x, y -> x + y })),
+            )
+        return tlv(0x30, top[0].second + tlv(0xa0, tlv(0x30, oid + tlv(0x04, newBasic))))
+    }
+
     @Test fun updateReplacesTheStapledResponse() {
         val st = OcspStapling()
         val s = server(stapling = st)

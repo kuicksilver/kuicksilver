@@ -212,8 +212,9 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         }
         return KSL_OK;
     case KSL_SET_OCSP_RESPONSE: {
-        if (s->owner->role != KSL_SERVER || (len > 0 && !data) || len > (1u << 24) - 1) {
-            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an OCSP response is server-only, 0..2^24-1 bytes");
+        /* 2^24-5: the response, its status_type and its 3-byte length fill a TLS 1.2 CertificateStatus message */
+        if (s->owner->role != KSL_SERVER || (len > 0 && !data) || len > (1u << 24) - 5) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an OCSP response is server-only, 0..2^24-5 bytes");
             return KSL_ERROR;
         }
 #ifdef OPENSSL_NO_OCSP

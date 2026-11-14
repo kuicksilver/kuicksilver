@@ -146,7 +146,7 @@ public class OcspStapling(
     /**
      * Makes [response] (null: none) the one later handshakes staple; connections already established are not affected.
      *
-     * @throws TlsException.Config when [response] is empty, larger than 2^24 - 1 bytes, or not a DER SEQUENCE; [current] stays.
+     * @throws TlsException.Config when [response] is empty, larger than 2^24 - 5 bytes, or not a DER SEQUENCE; [current] stays.
      */
     public fun update(response: ByteArray?) {
         ref.store(response?.let { checked(it) })
@@ -174,8 +174,19 @@ public class OcspStapling(
     /** For logs. */
     override fun toString(): String = "OcspStapling(${ref.load()?.size ?: 0} bytes)"
 
-    private companion object {
-        /** RFC 6066 section 8: `opaque OCSPResponse<1..2^24-1>`. */
-        const val MAX_RESPONSE = (1 shl 24) - 1
+    internal companion object {
+        /**
+         * RFC 6066 section 8: `opaque OCSPResponse<1..2^24-1>`, inside a TLS 1.2 CertificateStatus handshake message whose
+         * body (status_type, the 3-byte length and the response) is at most 2^24-1 bytes too: 2^24-5 for the response.
+         */
+        const val MAX_RESPONSE = (1 shl 24) - 5
+
+        /**
+         * The largest response a TLS 1.3 (and QUIC) server can staple: it goes in the leaf's CertificateEntry, whose
+         * `Extension extensions<0..2^16-1>` (RFC 8446 section 4.4.2) holds the extension's type and length (4 bytes) and the
+         * CertificateStatus (status_type and a 3-byte length, RFC 8446 section 4.4.2.1, RFC 6066 section 8): 65535 - 8.
+         * A larger response is not stapled in TLS 1.3 (ksl_ocsp.c), and still is in TLS 1.2.
+         */
+        const val MAX_TLS13_RESPONSE = 65_527
     }
 }

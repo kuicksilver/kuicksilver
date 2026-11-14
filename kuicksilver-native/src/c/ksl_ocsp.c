@@ -336,8 +336,16 @@ static int responder_wanted(SSL *ssl, const uint8_t *der, size_t len, X509 *issu
     ERR_clear_error();
     return wanted;
 }
+/* The largest response TLS 1.3 (and QUIC) can carry: it goes in the leaf's CertificateEntry, whose extensions<0..2^16-1>
+   (RFC 8446 section 4.4.2) hold the extension's type and length (4 bytes) and the CertificateStatus (status_type and a
+   3-byte length, RFC 8446 section 4.4.2.1): 65535 - 8. A larger one would make OpenSSL fail the handshake with
+   internal_error; RFC 6066 section 8 lets a server send none, so it is not stapled. TLS 1.2 carries it in a
+   CertificateStatus message of its own (up to 2^24-5 bytes, the setter's limit). */
+#define KSL_OCSP_MAX_TLS13 65527u
 static int server_status(SSL *ssl, ksl_ssl *s) {
     if (s->ocsp_staple == NULL)
+        return SSL_TLSEXT_ERR_NOACK;
+    if (SSL_version(ssl) >= TLS1_3_VERSION && s->ocsp_staple_len > KSL_OCSP_MAX_TLS13)
         return SSL_TLSEXT_ERR_NOACK;
     X509 *leaf = SSL_get_certificate(ssl), *issuer = NULL;
     STACK_OF(X509) *chain = NULL;

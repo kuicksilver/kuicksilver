@@ -25,7 +25,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `RequireStapled`); a revoked or unsatisfactory response fails with `bad_certificate_status_response`
   (`VerifyReason.Revoked`, the new `VerifyReason.InvalidStatusResponse`), and an RFC 7633 must-staple certificate needs a
   staple. Servers staple a configured response over TCP and QUIC (`TlsConfig.ocspStapling`, `OcspStapling` with
-  `update`; the Ktor TLS connector's `ocspStapling`; per `sniSelector` identity, `ServerTlsOverride.ocspStapling`) only when it is for the leaf sent and fresh. Application CRLs:
+  `update`; the Ktor TLS connector's `ocspStapling`; per `sniSelector` identity, `ServerTlsOverride.ocspStapling`) only when it is for the leaf sent and fresh,
+  and over TLS 1.3 and QUIC only when it fits the certificate's extensions (65527 bytes, RFC 8446 section 4.4.2). Application CRLs:
   `TrustConfig.AnchoredCa(roots, crls)` with `CertificateRevocationList` (also as a `ReloadableCa` bundle on servers).
   Under `TrustConfig.Platform` off Linux Native the OS verifier decides: Apple and Windows apply their own revocation
   policy, while on Android (its blocklist only) and the JVM (off unless the application enables it) nothing checks

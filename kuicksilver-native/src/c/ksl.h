@@ -134,7 +134,8 @@ extern "C" {
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
 #define KSL_SET_OCSP_RESPONSE 6 /* server, before the first drive or during the SNI pause (KSL_WANT_SNI: the response for the
                                       override's identity), empty to clear: a DER OCSPResponse (RFC 6960) to staple when the client sends
-                                      status_request; copied. Sent only when it is for the leaf the handshake presents (the issuer: the
+                                      status_request; copied; at most 2^24-5 bytes, and over TLS 1.3 only up to 65527 (the
+                                      CertificateEntry's extensions; larger: not stapled there). Sent only when it is for the leaf the handshake presents (the issuer: the
                                       certificate of the configured chain that issued it), verifies, and is inside its validity interval
                                       at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
 /* clang-format on */

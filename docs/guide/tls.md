@@ -340,7 +340,9 @@ experimental in 0.3.0:
 - **Stapling (servers).** `TlsConfig.ocspStapling` (or `ocspStapling` of the Ktor TLS connector) holds the OCSP
   response for the server's certificate, fetched by the application from its CA's responder. It is stapled over TCP and
   QUIC only to clients that ask, and only when it is for the leaf the handshake presents (the chain must include the
-  issuer) and fresh at that moment; a stale response is silently not sent. Call `update` with a fresh response before
+  issuer) and fresh at that moment; a stale response is silently not sent. A response is at most 2^24-5 bytes, and
+  TLS 1.3 and QUIC staple one only up to 65527 bytes (it must fit the certificate's extensions, RFC 8446 section 4.4.2);
+  a larger one is not sent there and the handshake goes on (RFC 6066 section 8: a server may send none). Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
   and never the default identity's (TCP; QUIC has no `sniSelector`).
