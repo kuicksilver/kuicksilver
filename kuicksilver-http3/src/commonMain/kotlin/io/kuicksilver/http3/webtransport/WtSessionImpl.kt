@@ -269,8 +269,8 @@ internal class WtSessionImpl(
 
     /**
      * The CONNECT stream's priority changed (the client's PRIORITY_UPDATE): the session's streams follow it. Section 3.4: "it
-     * is RECOMMENDED that clients and servers apply the scheduling guidance in both Section 9 of [RFC9218] and Section 10 of
-     * [RFC9218] for all data that they send in the enclosing WebTransport session, including Capsules, WebTransport streams
+     * is RECOMMENDED that clients and servers apply the scheduling guidance in both Section 9 of RFC 9218 and Section 10 of
+     * RFC 9218 for all data that they send in the enclosing WebTransport session, including Capsules, WebTransport streams
      * and datagrams". Session dispatcher only.
      */
     fun priorityChanged() {
