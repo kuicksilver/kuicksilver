@@ -391,4 +391,82 @@ class PreferredAddressTest {
             p.close()
         }
     }
+
+    /** The server connection of [p], once it moved to its preferred-address socket (RFC 9000 section 9.6.2). */
+    private fun movedServer(p: EndpointPair): ConnectionCore? =
+        p.server.connections().firstOrNull { it.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+
+    @Test fun negative_delayedPacketOnTheOriginalAddressAfterTheMoveSendsNothingThere() {
+        // RFC 9000 section 9.6.2: once moved, the server "begins sending non-probing packets to the client exclusively from its
+        // preferred IP address" and "MAY continue to process delayed packets that are received on the old IP address". A packet the
+        // client sent to the original address before it moved, overtaken by its first one to the preferred address (two sockets,
+        // two receive loops: no order between them), opened a new path on the original socket and challenged it from there, so the
+        // client saw a stranger. The original address is closed for the connection once it moved
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(5.seconds) { c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
+            assertTrue(c.path.isRemote(p.serverAddr), "not moved yet")
+            // the client's next 1-RTT datagrams to the original address (its stream data goes there until it moves) arrive late
+            val held = ArrayList<ByteArray>()
+            p.filterToServer = { _, bytes ->
+                val delay = p.toServerDest == p.serverAddr && (bytes[0].toInt() and 0x80) == 0
+                if (delay) held += bytes
+                !delay
+            }
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(100), 0, 100, true)
+            assertTrue(p.runUntil(10.seconds) { movedServer(p) != null }, "the server moved to its preferred address")
+            p.filterToServer = { _, _ -> true }
+            val s = movedServer(p)!!
+            assertTrue(held.isNotEmpty(), "the client sent to the original address before it moved")
+            val sentBefore = p.serverSent.size
+            for (d in held) p.feed(p.server, d, p.clientAddr)
+            p.runUntil(2.seconds) { false }
+            val fromOriginal = p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }
+            assertEquals(0, fromOriginal, "nothing of the moved connection leaves the original address")
+            assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.path.socket, "the connection stays on the preferred address")
+            assertTrue(s.paths.all.none { it.socket == PathId.Initial }, "no path on the original socket: ${s.paths.all}")
+            assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the data arrives")
+            assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_newerPacketOnTheOriginalAddressAfterTheMoveIsDropped() {
+        // RFC 9000 section 9.6.2: "The server SHOULD drop newer packets for this connection that are received on the old IP address";
+        // one with a new largest packet number used to move the connection back there, a migration to an address the client gave up
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { movedServer(p) != null }, "the server moved to its preferred address")
+            val s = movedServer(p)!!
+            assertTrue(p.runUntil(2.seconds) { c.path.isRemote(v4) && c.pathCountForTest == 1 })
+            var diverted: ByteArray? = null
+            p.filterToServer = { _, bytes ->
+                if (diverted == null && p.toServerDest == v4) {
+                    diverted = bytes
+                    false
+                } else {
+                    true
+                }
+            }
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(100), 0, 100, true)
+            assertTrue(p.runUntil(1.seconds) { diverted != null }, "the client sent to the preferred address")
+            p.filterToServer = { _, _ -> true }
+            val received = s.packetsReceived
+            val sentBefore = p.serverSent.size
+            p.feed(p.server, diverted!!, p.clientAddr)
+            assertEquals(received, s.packetsReceived, "the newer packet from the original address is dropped")
+            p.runUntil(2.seconds) { false }
+            assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
+            assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.path.socket, "the connection stays on the preferred address")
+            assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the data arrives again")
+            assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
 }

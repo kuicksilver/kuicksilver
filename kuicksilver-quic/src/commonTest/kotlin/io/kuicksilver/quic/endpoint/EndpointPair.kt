@@ -82,6 +82,9 @@ internal class EndpointPair(
     var filterToServer: (index: Int, bytes: ByteArray) -> Boolean = { _, _ -> true }
     var filterToClient: (index: Int, bytes: ByteArray) -> Boolean = { _, _ -> true }
     var sentToServer: Int = 0
+
+    /** The destination of the datagram [filterToServer] is deciding on (the original or the preferred address). */
+    var toServerDest: InetSocketAddress? = null
     var sentToClient: Int = 0
 
     /** What the network does to the ECN codepoint in each direction (identity by default; Bleach = `{ Ecn.NotEct }`). */
@@ -208,6 +211,7 @@ internal class EndpointPair(
         }
         for (k in pending.indices) {
             val (dest, bytes) = pending[k]
+            if (toServer) toServerDest = dest
             val keep = if (toServer) filterToServer(sentToServer++, bytes) else filterToClient(sentToClient++, bytes)
             if (!keep) continue
             // the link cannot carry it (DF set: no fragmentation, no ICMP)
