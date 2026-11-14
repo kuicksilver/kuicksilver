@@ -107,7 +107,9 @@ internal fun testClient(
  * ([releaseFirst], [releaseSecond]) and the next attempt goes. Retrying one order only is not enough where the OS hands
  * out free ports one after the other (Windows does): every retry lands on the next number, and a run of taken twins
  * (TCP ports held by the client connections of earlier tests, TIME_WAIT included) refused all twenty UDP-first attempts
- * on the Windows CI, as the server engine's own pairing had found (`bindTcpAndUdp`).
+ * on the Windows CI, as the server engine's own pairing had found (`bindTcpAndUdp`). Only a failure that may come from a
+ * port in use is retried ([mayBeTaken]); any other is thrown at once, the held side released first. A release that
+ * throws does not hide the bind failure (it is added as suppressed).
  */
 internal suspend fun <A, B> bindOnSamePort(
     first: suspend (port: Int) -> Pair<A, Int>,
@@ -120,35 +122,51 @@ internal suspend fun <A, B> bindOnSamePort(
         try {
             return if (attempt % 2 == 0) {
                 val (a, port) = first(0)
-                val b =
-                    try {
-                        second(port).first
-                    } catch (e: Throwable) {
-                        releaseFirst(a)
-                        throw e
-                    }
-                Triple(a, b, port)
+                Triple(a, bindTwin(a, releaseFirst) { second(port) }, port)
             } else {
                 val (b, port) = second(0)
-                val a =
-                    try {
-                        first(port).first
-                    } catch (e: Throwable) {
-                        releaseSecond(b)
-                        throw e
-                    }
-                Triple(a, b, port)
+                Triple(bindTwin(b, releaseSecond) { first(port) }, b, port)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
+            if (!mayBeTaken(e)) throw e
             last = e
         }
     }
     throw IllegalStateException("no port free for both sockets after $SAME_PORT_ATTEMPTS attempts", last)
 }
 
-private const val SAME_PORT_ATTEMPTS = 20
+/** [bind] the twin of [held]; when that fails (cancellation included) [held] is released, a failing release suppressed. */
+private suspend fun <H, T> bindTwin(
+    held: H,
+    release: suspend (H) -> Unit,
+    bind: suspend () -> Pair<T, Int>,
+): T =
+    try {
+        bind().first
+    } catch (e: Throwable) {
+        try {
+            release(held)
+        } catch (r: Throwable) {
+            e.addSuppressed(r)
+        }
+        throw e
+    }
+
+/**
+ * Whether [e], from binding one side of a pair, may come from a port in use, so that another pair may succeed: as the
+ * server engine's `mayBeTaken`, anything but a refused configuration, which would fail every attempt alike. The
+ * address-in-use failure has no common type (`java.net.BindException` on the JVM, ktor's `PosixException` on
+ * Kotlin/Native, an `IOException` from ksl).
+ */
+internal fun mayBeTaken(e: Throwable): Boolean =
+    e !is IllegalArgumentException &&
+        e !is IllegalStateException &&
+        e !is io.kuicksilver.tls.TlsException &&
+        e !is io.kuicksilver.native.KslException
+
+internal const val SAME_PORT_ATTEMPTS = 20
 
 internal fun clientTest(block: suspend () -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 

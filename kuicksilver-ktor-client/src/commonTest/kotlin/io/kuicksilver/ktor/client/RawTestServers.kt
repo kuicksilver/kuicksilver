@@ -49,13 +49,13 @@ internal suspend fun readRequest(input: ByteReadChannel): String {
 }
 
 /** A UDP socket on 127.0.0.1:[port] (0: a free one) with its port. */
-private suspend fun silentUdpOn(
+internal suspend fun udpOn(
     selector: SelectorManager,
     port: Int,
 ) = aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", port)).let { it to (it.localAddress as InetSocketAddress).port }
 
 /** A TCP listener on 127.0.0.1:[port] (0: a free one) with its port. */
-private suspend fun tcpOn(
+internal suspend fun tcpOn(
     selector: SelectorManager,
     port: Int,
 ) = bindTcp(selector, "127.0.0.1", port).let { it to (it.localAddress as InetSocketAddress).port }
@@ -106,7 +106,7 @@ internal suspend fun tlsWithSilentUdp(
 
                 silentUdp -> {
                     bindOnSamePort(
-                        first = { p -> silentUdpOn(selector, p) },
+                        first = { p -> udpOn(selector, p) },
                         releaseFirst = { it.close() },
                         second = { p -> tcpOn(selector, p) },
                         releaseSecond = { it.close() },
@@ -237,7 +237,7 @@ internal suspend fun udpRelay(
         try {
             if (tcpTwin) {
                 bindOnSamePort(
-                    first = { p -> silentUdpOn(selector, p) },
+                    first = { p -> udpOn(selector, p) },
                     releaseFirst = { it.close() },
                     second = { p -> tcpOn(selector, p) },
                     releaseSecond = { it.close() },

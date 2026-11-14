@@ -156,9 +156,9 @@ class ClientFallbackTest {
 
     /**
      * An HTTP/1.1 [testServer] (no HTTP/3 of its own) running [module] on the TCP side of a port and [h3] (bound on the
-     * port it is given, 0: a free one) on its UDP side, paired by [bindOnSamePort]. A free port of one side says nothing
-     * about its twin: binding UDP on the port the TCP server got failed with "Address already in use" whenever another
-     * process held that UDP port.
+     * port it is given, 0: a free one) on its UDP side, paired by [bindOnSamePort] (a free port of one side says nothing
+     * about its twin; once the UDP side bound only the port the TCP server got, and failed whenever another process held
+     * it).
      */
     private suspend fun h1AndH3(
         module: Application.() -> Unit,

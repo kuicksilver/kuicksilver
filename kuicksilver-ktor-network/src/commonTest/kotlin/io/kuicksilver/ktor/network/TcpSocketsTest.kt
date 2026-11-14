@@ -107,20 +107,23 @@ class TcpSocketsTest {
      * A listener on `::1` and a decoy listener of ours on 127.0.0.1 at the same port number, or null where the host has no
      * IPv6 loopback. The negative tests below connect to 127.0.0.1 on the listener's port: with nothing of ours there, any
      * other process listening on that number answered and failed them; with the decoy they own the address they connect to.
-     * The decoy binds a free port first and `::1` takes the number, a new pair when that is taken.
+     * The attempts alternate which side binds a free port, the other taking the number, a new pair when that is taken:
+     * one order only can keep landing on taken twins where the OS hands out free ports one after the other (Windows).
      */
     private suspend fun ipv6ListenerWithIpv4Decoy(selector: SelectorManager): Pair<ServerSocket, ServerSocket>? {
         ipv6Listener(selector)?.close() ?: return null
         var last: Throwable? = null
-        repeat(20) {
-            val decoy = bindTcp(selector, "127.0.0.1", 0)
+        repeat(20) { attempt ->
+            val (freeHost, twinHost) = if (attempt % 2 == 0) "127.0.0.1" to "::1" else "::1" to "127.0.0.1"
+            val free = bindTcp(selector, freeHost, 0)
             try {
-                return bindTcp(selector, "::1", decoy.boundPort) to decoy
+                val twin = bindTcp(selector, twinHost, free.boundPort)
+                return if (attempt % 2 == 0) twin to free else free to twin
             } catch (e: kotlinx.coroutines.CancellationException) {
-                decoy.close()
+                runCatching { free.close() }
                 throw e
             } catch (e: Throwable) {
-                decoy.close()
+                runCatching { free.close() }.exceptionOrNull()?.let(e::addSuppressed)
                 last = e
             }
         }
