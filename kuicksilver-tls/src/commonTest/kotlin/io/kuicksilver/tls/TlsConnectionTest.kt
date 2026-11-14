@@ -134,6 +134,29 @@ class TlsConnectionTest {
      * whole: OpenSSL stops writing when the pair is full and asks to be driven again once it was drained, which the handshake
      * loop must do before it waits for the peer, or both sides wait for each other until the handshake deadline.
      */
+
+    /** The same for the client's flight: a client certificate chain larger than the BIO pair, sent under ClientAuth.Required. */
+    @Test fun clientFlightLargerThanTheBioPairCompletes(): Unit =
+        runBlocking {
+            for (copies in listOf(45, 60)) { // about 20 KiB and 26 KiB of certificates
+                val client =
+                    TcpFixtures.client {
+                        identity =
+                            TlsIdentity.fromDer(listOf(TestCerts.client) + List(copies) { TestCerts.testCa }, TestCerts.clientKey.copyOf())
+                    }
+                val server =
+                    TcpFixtures.server {
+                        clientAuth = ClientAuth.Required
+                        trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
+                    }
+                val (cd, sd) = connect(client, server)
+                withTimeout(20.seconds) { cd.await() }.close()
+                val s = withTimeout(20.seconds) { sd.await() }
+                assertEquals(Certificate(TestCerts.client), s.peerCertificates[0])
+                s.close()
+            }
+        }
+
     @Test fun serverFlightLargerThanTheBioPairCompletes(): Unit =
         runBlocking {
             for (copies in listOf(45, 60)) { // about 20 KiB and 26 KiB of certificates (RevocationTest staples 64 KiB)
