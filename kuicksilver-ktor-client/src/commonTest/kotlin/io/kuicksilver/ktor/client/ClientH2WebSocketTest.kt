@@ -653,11 +653,15 @@ class ClientH2WebSocketTest {
                         val out = withTimeout(10.seconds) { output.await() }
                         // the writer waits only with more than the lead flushed and not taken, and the stream only ever takes
                         // more, so at a wait the lead is past 64 KiB by at most what that flush added (a piece of one frame)
+                        // polled, not collected: writerWaiting is a StateFlow, which drops equal values, so a collector that
+                        // read `true` from a wait already being released, and then missed the false between that wait and the
+                        // final one, would never see the final wait at all
                         var lead = 0L
                         withTimeout(10.seconds) {
-                            out.writerWaiting.first {
+                            while (true) {
                                 lead = out.lead
-                                it && lead > H2StreamOutput.DEFAULT_LIMIT
+                                if (out.writerWaiting.value && lead > H2StreamOutput.DEFAULT_LIMIT) break
+                                delay(5.milliseconds)
                             }
                         }
                         assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
