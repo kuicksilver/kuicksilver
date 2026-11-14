@@ -161,16 +161,27 @@ class RevocationTest {
             s.close()
         }
 
-    /** [response] with copies of its first certificate added to BasicOCSPResponse's certs until it is about [atLeast] bytes. */
+    /**
+     * [response] (one certificate in BasicOCSPResponse's certs) grown to exactly [size] bytes with valid certificates of the
+     * revocation PKI added to that unsigned field: the signature and the RFC 6960 checks are unchanged.
+     */
     private fun padded(
         response: ByteArray,
-        atLeast: Int,
+        size: Int,
     ): ByteArray {
-        fun len(n: Int): ByteArray =
+        fun lenOf(n: Int) =
             when {
-                n < 0x80 -> byteArrayOf(n.toByte())
-                n < 0x100 -> byteArrayOf(0x81.toByte(), n.toByte())
-                n < 0x10000 -> byteArrayOf(0x82.toByte(), (n shr 8).toByte(), n.toByte())
+                n < 0x80 -> 1
+                n < 0x100 -> 2
+                n < 0x10000 -> 3
+                else -> 4
+            }
+
+        fun len(n: Int): ByteArray =
+            when (lenOf(n)) {
+                1 -> byteArrayOf(n.toByte())
+                2 -> byteArrayOf(0x81.toByte(), n.toByte())
+                3 -> byteArrayOf(0x82.toByte(), (n shr 8).toByte(), n.toByte())
                 else -> byteArrayOf(0x83.toByte(), (n shr 16).toByte(), (n shr 8).toByte(), n.toByte())
             }
 
@@ -207,19 +218,69 @@ class RevocationTest {
         val first = octets[1].toInt() and 0xff
         val basicDer = octets.copyOfRange(2 + (if (first < 0x80) 0 else first and 0x7f), octets.size) // the OCTET STRING's content
         val basic = children(basicDer, 0) // tbsResponseData, signatureAlgorithm, signature, [0] certs
+        val head = basic[0].second + basic[1].second + basic[2].second
         val cert = children(children(basic[3].second, 0).single().second, 0).first().second
-        val certs = ArrayList<ByteArray>()
-        var size = response.size
-        while (size < atLeast) {
-            certs += cert
-            size += cert.size
+
+        // the size of the whole response when the certs field's SEQUENCE holds [certBytes] bytes of certificates
+        fun total(certBytes: Int): Int {
+            fun wrap(n: Int) = 1 + lenOf(n) + n
+            val basicLen = wrap(head.size + wrap(wrap(certBytes)))
+            val rbLen = wrap(oid.size + wrap(basicLen))
+            return wrap(top[0].second.size + wrap(rbLen))
         }
-        val newBasic =
-            tlv(
-                0x30,
-                basic[0].second + basic[1].second + basic[2].second + tlv(0xa0, tlv(0x30, (listOf(cert) + certs).reduce { x, y -> x + y })),
+        val bytes = (head.size until size).firstOrNull { total(it) == size } ?: error("no encoding of $size bytes")
+        // the extra certificates: copies of the largest, then two others in counts that make up the rest exactly
+        val pool =
+            listOf(
+                RevocationCerts.rvMid,
+                RevocationCerts.rvRoot,
+                RevocationCerts.rvLeaf,
+                RevocationCerts.rvClient,
+                RevocationCerts.rvLeafMustStaple,
+                RevocationCerts.rvResponder,
+                RevocationCerts.rvResponderWeak,
+            ).distinctBy { it.size }
+                .sortedByDescending { it.size }
+        val rest = bytes - cert.size
+        for (x in pool.drop(1)) {
+            for (y in pool.drop(1)) {
+                if (x === y) continue
+                for (b in 0..pool[0].size) {
+                    for (c in 0..pool[0].size) {
+                        val r = rest - b * x.size - c * y.size
+                        if (r < 0) break
+                        if (r % pool[0].size != 0) continue
+                        val extra = List(r / pool[0].size) { pool[0] } + List(b) { x } + List(c) { y }
+                        val certs = (listOf(cert) + extra).reduce { u, v -> u + v }
+                        val newBasic = tlv(0x30, head + tlv(0xa0, tlv(0x30, certs)))
+                        return tlv(0x30, top[0].second + tlv(0xa0, tlv(0x30, oid + tlv(0x04, newBasic)))).also { check(it.size == size) }
+                    }
+                }
+            }
+        }
+        error("no certificates add up to $size bytes")
+    }
+
+    /** The boundary itself: 65527 bytes are stapled over TLS 1.3 (QUIC and TCP), 65528 are not. */
+    @Test fun tls13StaplesUpTo65527Bytes(): Unit =
+        runBlocking {
+            val atLimit = padded(RevocationCerts.ocspGood, OcspStapling.MAX_TLS13_RESPONSE)
+            val over = padded(RevocationCerts.ocspGood, OcspStapling.MAX_TLS13_RESPONSE + 1)
+            assertEquals(65_527, atLimit.size)
+            quicPasses(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(atLimit)))
+            assertEquals(
+                VerifyReason.UnknownRevocationStatus,
+                quicRefused(client(RevocationPolicy.RequireStapled), server(stapling = OcspStapling(over))),
             )
-        return tlv(0x30, top[0].second + tlv(0xa0, tlv(0x30, oid + tlv(0x04, newBasic))))
+            assertEquals(null, requiredStapleOutcome(tcpServer(stapling = OcspStapling(atLimit))))
+            assertEquals(VerifyReason.UnknownRevocationStatus, requiredStapleOutcome(tcpServer(stapling = OcspStapling(over))))
+        }
+
+    /** RFC 6066 section 8 inside a TLS 1.2 CertificateStatus message: a response of 2^24-5 bytes is taken, 2^24-4 refused. */
+    @Test fun negative_responseLimitIsTheCertificateStatusMessage() {
+        fun der(n: Int) = ByteArray(n).also { it[0] = 0x30 }
+        assertEquals((1 shl 24) - 5, OcspStapling(der((1 shl 24) - 5)).current?.size)
+        assertFailsWith<TlsException.Config> { OcspStapling(der((1 shl 24) - 4)) }
     }
 
     @Test fun updateReplacesTheStapledResponse() {
