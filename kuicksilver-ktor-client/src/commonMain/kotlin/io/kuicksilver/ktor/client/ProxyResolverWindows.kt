@@ -169,7 +169,7 @@ internal class BoundedPac(
             answered = answer != null
             return answer ?: WinPacAnswer.Failed
         } finally {
-            if (!answered) {
+            if (!answered && !call.isCompleted) {
                 // counted before the state says so, so the end's decrement never comes first
                 overran.incrementAndFetch()
                 if (!state.compareAndSet(RUNNING, OVERRAN)) overran.decrementAndFetch()

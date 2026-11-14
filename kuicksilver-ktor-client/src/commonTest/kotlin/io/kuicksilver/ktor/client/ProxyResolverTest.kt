@@ -420,6 +420,35 @@ class ProxyResolverTest {
         }
 
     /**
+     * Windows: a call that overran stops counting as such before it leaves the calls not ended, so a lookup that sees
+     * none unfinished starts its call. Before, the two counts went down in two completion handlers, the unfinished one
+     * first: a lookup in between gave [WinPacAnswer.Failed] (CI android 35, the test above). The collector runs
+     * unconfined, inside the handler, the moment the count reaches 0.
+     */
+    @Test fun negative_windowsPacOverrunIsUncountedBeforeTheCallEnds() =
+        runBlocking {
+            val bounded = BoundedPac(timeoutMillis = 100)
+            val release = CompletableDeferred<Unit>()
+            val hanging = {
+                runBlocking { release.await() }
+                WinPacAnswer.Direct
+            }
+            assertEquals(WinPacAnswer.Failed, bounded.run(hanging))
+            val seen = CompletableDeferred<WinPacAnswer>()
+            val ready = CompletableDeferred<Unit>()
+            val collector =
+                launch(Dispatchers.Unconfined) {
+                    bounded.unfinished.collect {
+                        if (it == 0) seen.complete(bounded.run { WinPacAnswer.Direct }) else ready.complete(Unit)
+                    }
+                }
+            ready.await()
+            release.complete(Unit)
+            assertEquals(WinPacAnswer.Direct, withTimeout(5.seconds) { seen.await() })
+            collector.cancel()
+        }
+
+    /**
      * The URI a PAC script gets for a secure URL (`https`, `wss`) is its origin only, `scheme://host[:port]/`, as Chromium
      * sends it (net/docs/proxy.md: "the path, query, fragment, and identity portions of the URL are stripped"; a default
      * port is left out): a script from WPAD or a plain-http PAC URL could otherwise read the path and query (tokens) and
