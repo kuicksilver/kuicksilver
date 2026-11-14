@@ -65,7 +65,9 @@ class AndroidDemoPlatform(
  * lane does ([demoTrust]); everything else is OkHttp's default (timeouts, retries, connection pool).
  */
 fun okHttpClient(): HttpClient {
-    val ca = CertificateFactory.getInstance("X.509").generateCertificate(DemoCerts.caPem.byteInputStream()) as X509Certificate
+    // trimmed: the text starts with a line break, and Android's CertificateFactory (Conscrypt) reads PEM only when the
+    // input starts with "-----BEGIN"; anything else is parsed as DER and fails with DECODE_ERROR
+    val ca = CertificateFactory.getInstance("X.509").generateCertificate(DemoCerts.caPem.trim().byteInputStream()) as X509Certificate
     val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
         load(null, null)
         setCertificateEntry("demo-ca", ca)
