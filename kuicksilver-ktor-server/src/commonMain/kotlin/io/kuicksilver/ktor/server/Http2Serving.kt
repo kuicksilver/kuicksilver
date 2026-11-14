@@ -9,6 +9,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
+import io.ktor.util.logging.Logger
 import io.ktor.util.pipeline.execute
 import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.Http2Settings
@@ -305,6 +306,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     val job = currentCoroutineContext().job
     r.invokeOnFailure { job.cancel(CancellationException("HTTP/2 stream ${r.id} ended: ${it.message}", it)) }
     var answered = false
+    var cancelled: CancellationException? = null
     try {
         // RFC 8441 section 5: `:protocol = websocket` (an upgrade token, matched in any case, RFC 9110 section 7.8); the
         // connection only takes `:protocol` when it advertised SETTINGS_ENABLE_CONNECT_PROTOCOL (webSocketsOverHttp2)
@@ -369,6 +371,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
             }
         }
     } catch (e: CancellationException) {
+        cancelled = e
         throw e
     } catch (e: Throwable) {
         // the call's set-up (the application provider, the call itself) or its error handling failed: this stream only
@@ -377,6 +380,27 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         // a call that failed after its response was committed cannot get the 500 any more: the stream is reset, unless it
         // already ended (section 5.4.2)
         if (!answered && !r.failed) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
-        r.release()
+        releaseH2Stream(r.id, environment.log, cancelled) { r.release() }
+    }
+}
+
+/**
+ * A request stream's release at the end of its handling. A release that throws (an engine callback's exception in its
+ * dispatch) gave the stream back all the same, so its failure is this stream's only (RFC 9113 section 5.4.2) and never
+ * leaves the handler (the supervisor's last-resort handler would report it as the connection's): it is logged at warn
+ * (an internal failure, as an event listener's) and suppressed under [inFlight] (the handler's cancellation), never
+ * thrown in its place.
+ */
+internal inline fun releaseH2Stream(
+    id: Int,
+    log: Logger,
+    inFlight: Throwable?,
+    release: () -> Unit,
+) {
+    try {
+        release()
+    } catch (e: Throwable) {
+        runCatching { log.warn("HTTP/2 stream $id: its release failed; the stream was given back", e) }
+        if (inFlight != null && inFlight !== e) inFlight.addSuppressed(e)
     }
 }
