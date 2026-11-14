@@ -155,8 +155,14 @@ internal class BoundedPac(
             inFlight.update { it - 1 }
             return WinPacAnswer.Failed
         }
+        // RUNNING until the call ends (ENDED) or its lookup gives up first (OVERRAN): exactly one of the two counts it
+        val state = AtomicInt(RUNNING)
         val call = GlobalScope.async(Dispatchers.IO) { block() }
-        call.invokeOnCompletion { inFlight.update { it - 1 } }
+        call.invokeOnCompletion {
+            // overran first: once no call is unfinished, none that overran is counted any more
+            if (!state.compareAndSet(RUNNING, ENDED)) overran.decrementAndFetch()
+            inFlight.update { it - 1 }
+        }
         var answered = false
         try {
             val answer = withTimeoutOrNull(timeoutMillis) { call.await() }
@@ -164,13 +170,17 @@ internal class BoundedPac(
             return answer ?: WinPacAnswer.Failed
         } finally {
             if (!answered && !call.isCompleted) {
+                // counted before the state says so, so the end's decrement never comes first
                 overran.incrementAndFetch()
-                call.invokeOnCompletion { overran.decrementAndFetch() }
+                if (!state.compareAndSet(RUNNING, OVERRAN)) overran.decrementAndFetch()
             }
         }
     }
 
     internal companion object {
         const val MAX_IN_FLIGHT: Int = 4
+        private const val RUNNING = 0
+        private const val OVERRAN = 1
+        private const val ENDED = 2
     }
 }
