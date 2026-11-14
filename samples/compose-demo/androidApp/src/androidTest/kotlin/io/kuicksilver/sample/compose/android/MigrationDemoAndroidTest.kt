@@ -20,6 +20,7 @@ import io.kuicksilver.sample.compose.download
 import io.kuicksilver.sample.compose.kuicksilverLane
 import io.kuicksilver.sample.compose.okHttpClient
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -36,6 +37,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The demo's Migration screen without its UI, on an emulator (release gate): 20 MiB from the demo server on the host
@@ -104,6 +106,20 @@ class MigrationDemoAndroidTest {
             "data"
         }
 
+    /** For the log: [lane]'s progress at each further 2 MiB, in ms since [start]. */
+    private fun progressLog(
+        lane: String,
+        start: TimeSource.Monotonic.ValueTimeMark,
+    ): (Long) -> Unit {
+        var next = 0L
+        return { got ->
+            if (got >= next) {
+                Log.i("kuicksilver-demo", "$lane: $got bytes at ${start.elapsedNow().inWholeMilliseconds} ms")
+                next = got + (2L shl 20)
+            }
+        }
+    }
+
     /** For the log: the network and its transports and validation, as the system reports them now. */
     private fun describe(n: Network?): String = "$n ${n?.let { connectivity.getNetworkCapabilities(it) }}"
 
@@ -139,15 +155,27 @@ class MigrationDemoAndroidTest {
                 withTimeout(120.seconds) {
                     // the network both downloads open their connections on (OkHttp's socket stays there)
                     val start = connectivity.activeNetwork
+                    val t0 = TimeSource.Monotonic.markNow()
                     Log.i("kuicksilver-demo", "downloads start on ${describe(start)}")
                     val atThirty = CompletableDeferred<Unit>()
+                    val h3Progress = progressLog("HTTP/3", t0)
+                    val tcpProgress = progressLog("OkHttp", t0)
+                    // off this thread: on it, the readers (which check every byte, and suspend only when no data waits)
+                    // held the switch below until the downloads had ended on the emulator (2026-11-14); the progress lines
+                    // show when the bytes arrive
                     val h3Result =
-                        async {
+                        async(Dispatchers.IO) {
                             download(h3.client, h3.baseUrl + path, resume = false, onProgress = { got, total ->
-                                if (total != null && got * 10 >= total * 3) atThirty.complete(Unit)
+                                h3Progress(got)
+                                if (total != null && got * 10 >= total * 3 && atThirty.complete(Unit)) {
+                                    Log.i("kuicksilver-demo", "HTTP/3 at 30 %: $got of $total at ${t0.elapsedNow().inWholeMilliseconds} ms")
+                                }
                             })
                         }
-                    val tcpResult = async { download(tcp.client, tcp.baseUrl + path, resume = false) }
+                    val tcpResult =
+                        async(Dispatchers.IO) {
+                            download(tcp.client, tcp.baseUrl + path, resume = false, onProgress = { got, _ -> tcpProgress(got) })
+                        }
                     // the switch must come while the download runs: one that ended before 30 % (a fast path) fails here
                     val reachedThirty =
                         select {
@@ -168,7 +196,8 @@ class MigrationDemoAndroidTest {
                     }
                     radio = defaultRadio(default)
                     shell("svc $radio disable")
-                    Log.i("kuicksilver-demo", "svc $radio disable (default was ${describe(default)})")
+                    Log.i("kuicksilver-demo", "svc $radio disable at ${t0.elapsedNow().inWholeMilliseconds} ms")
+                    Log.i("kuicksilver-demo", "the default was ${describe(default)}")
                     // heard while the download runs: a download that ends first never needed to move
                     val moved =
                         select<MigrationEvent.Migrated<*>?> {
