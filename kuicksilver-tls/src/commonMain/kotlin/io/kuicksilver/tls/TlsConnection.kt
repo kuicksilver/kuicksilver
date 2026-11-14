@@ -268,10 +268,17 @@ public class TlsConnection private constructor(
                     drainToTransport()
                     failWith(e)
                 } // the alert leaves before we give up
-            drainToTransport()
+            val sent = drainToTransport()
             when (rc) {
                 KslConst.OK -> {
                     return
+                }
+
+                // ksl answers WANT_READ when OpenSSL wants to write too: a flight larger than the BIO pair holds (about 17 KiB:
+                // a long chain, a large stapled OCSP response) stops there. What it wrote went out just now; drive again for
+                // the rest before waiting for the peer, which waits for that rest
+                KslConst.WANT_READ if sent > 0 -> {
+                    continue
                 }
 
                 KslConst.WANT_READ -> {
@@ -442,16 +449,21 @@ public class TlsConnection private constructor(
      * reading, so two peers writing at once over full transports would each wait for the other to read. It asks the
      * [drainerPump] instead ([drainRequests]).
      */
-    private suspend fun drainToTransport() {
+
+    /** Returns the bytes it wrote to the transport. */
+    private suspend fun drainToTransport(): Int {
+        var sent = 0
         drainLock.withLock {
             while (true) {
                 val n = lock.withLock { if (ssl == 0L) 0 else Ksl.tcpDrain(ssl, drainBuffer, 0, drainBuffer.size) }
                 if (n <= 0) break
                 transportOut.writeFully(drainBuffer, 0, n)
+                sent += n
             }
             transportOut.flush()
         }
         drained.trySend(Unit)
+        return sent
     }
 
     private val drainLock = Mutex()

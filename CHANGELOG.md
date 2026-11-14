@@ -974,6 +974,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
+  response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
+  loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
 - QUIC client: the provisional server Initial (ACK-only, from the client's own DCID, as msquic sends before its listener
   accepts) has its packet number recorded and is acknowledged like any other Initial. Before, a copy of it was processed
   again (RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has

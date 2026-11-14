@@ -129,6 +129,25 @@ class TlsConnectionTest {
         runBlocking { SessionCache.Default.clear() }
     }
 
+    /**
+     * A server flight larger than ksl's BIO pair holds (about 17 KiB: a long chain, a large stapled OCSP response) goes out
+     * whole: OpenSSL stops writing when the pair is full and asks to be driven again once it was drained, which the handshake
+     * loop must do before it waits for the peer, or both sides wait for each other until the handshake deadline.
+     */
+    @Test fun serverFlightLargerThanTheBioPairCompletes(): Unit =
+        runBlocking {
+            for (copies in listOf(45, 60)) { // about 20 KiB and 26 KiB of certificates (RevocationTest staples 64 KiB)
+                val server =
+                    TcpFixtures.server {
+                        identity =
+                            TlsIdentity.fromDer(listOf(TestCerts.server) + List(copies) { TestCerts.testCa }, TestCerts.serverKey.copyOf())
+                    }
+                val (cd, sd) = connect(TcpFixtures.client(), server)
+                withTimeout(20.seconds) { cd.await() }.close()
+                withTimeout(20.seconds) { sd.await() }.close()
+            }
+        }
+
     private fun both(
         client: TlsConfig = TcpFixtures.client(),
         server: TlsConfig = TcpFixtures.server(),
