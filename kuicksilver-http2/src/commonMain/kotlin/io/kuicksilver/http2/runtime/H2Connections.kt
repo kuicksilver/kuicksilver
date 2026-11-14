@@ -146,6 +146,14 @@ public class H2ClientConnection private constructor(
     /** Closes the connection now; running streams fail with [cause]. */
     public fun abort(cause: Throwable): Unit = rt.abort(cause)
 
+    /**
+     * Ends the connection for a fault of this side over a sound transport: running streams fail with [cause], GOAWAY
+     * (INTERNAL_ERROR, RFC 9113 sections 5.4.1 and 6.8) is written and the transport closed in order behind it (TLS
+     * close_notify); hard when the writer cannot get it out within the runtime's bound. Does not suspend. [abort] is for a
+     * transport that is lost or a peer that does not answer.
+     */
+    public fun abortInOrder(cause: Throwable): Unit = rt.lost(cause, inOrder = true)
+
     public companion object {
         /**
          * Starts the connection on [input] and [output] (the client preface and SETTINGS go out at once) and returns at once,

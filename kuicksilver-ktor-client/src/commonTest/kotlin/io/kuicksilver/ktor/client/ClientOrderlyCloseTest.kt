@@ -256,6 +256,51 @@ class ClientOrderlyCloseTest {
             }
         }
 
+    /**
+     * RFC 9113 section 6.8, RFC 9846 section 6.1: the pool's own close of a live connection, here idle past `idleTimeout`,
+     * sends GOAWAY (NO_ERROR) and then close_notify, while the engine is still open (the engine's close is the test above).
+     */
+    @Test fun h2ConnectionEvictedIdleSendsGoAwayAndCloseNotify() =
+        clientTest {
+            val end = H2End()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
+                h2Server(input, output, end, violate = false)
+            }) { port ->
+                // 1 ms (the least the pool takes): the engine's reaper evicts the connection soon after the response
+                testClient(engine = { idleTimeout = 1.milliseconds }).use { c ->
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://127.0.0.1:$port/").version)
+                    assertTrue(withTimeout(10.seconds) { end.clean.await() }, "the server saw the client's close_notify")
+                    assertEquals(listOf(0L), end.goAways, "one GOAWAY (NO_ERROR)")
+                }
+            }
+        }
+
+    /**
+     * A failure of ours between the start of an HTTP/2 connection and its hand-out (afterH2StartForTest throws): the call
+     * fails with it, and the connection, its transport sound, ends in order: GOAWAY (INTERNAL_ERROR, RFC 9113 section
+     * 5.4.1), then close_notify (RFC 9846 section 6.1); none of its coroutines stays behind.
+     */
+    @Test fun negative_failureAfterH2StartEndsTheConnectionInOrder() =
+        clientTest {
+            val end = H2End()
+            tlsWithSilentUdp(listOf("h2"), silentUdp = false, handler = { _, _, input, output ->
+                h2Server(input, output, end, violate = false)
+            }) { port ->
+                testClient().use { c ->
+                    val pool = (c.engine as KuicksilverEngine).h1
+                    val failure = IllegalStateException("a failure after the HTTP/2 start")
+                    pool.afterH2StartForTest = { _, _ -> throw failure }
+                    val e = runCatching { c.get("https://127.0.0.1:$port/") }.exceptionOrNull()
+                    assertTrue(generateSequence(e) { it.cause }.any { it === failure }, "the call failed with $e")
+                    assertTrue(withTimeout(10.seconds) { end.clean.await() }, "the server saw the client's close_notify")
+                    assertEquals(listOf(Http2ErrorCode.INTERNAL_ERROR.code), end.goAways, "one GOAWAY (INTERNAL_ERROR)")
+                    assertEquals(0, pool.h2.connectionCount)
+                    withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
+                    assertEquals(emptyList(), pool.h2JobsForTest.toList())
+                }
+            }
+        }
+
     /** RFC 9113 section 5.4.1: a connection error found by the client is sent as GOAWAY before the connection closes. */
     @Test fun negative_h2ConnectionErrorReachesTheServerAsGoAway() =
         clientTest {

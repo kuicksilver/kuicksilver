@@ -383,7 +383,7 @@ internal class NativeTcpSocket(
      * Never missing on a socket handed out: [connectTcp] and [NativeTcpServerSocket.accept] record it before they return one.
      */
     override val localAddress: SocketAddress
-        get() = local ?: error("Socket local address is recorded before the socket is handed out; this socket is not connected yet")
+        get() = local ?: error("local address not recorded: the socket is not connected yet")
 
     /**
      * Takes [localAddress] from the descriptor; called once the connect completed (an accepted socket at once): before it, the

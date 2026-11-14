@@ -1238,6 +1238,8 @@ internal class H1Pool(
             // disclosure)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            // set once an HTTP/2 connection has started on it: the transport is the connection's to close from then on
+            var h2Owned = false
             try {
                 val rawIn = tcp.openDeliveringReadChannel()
                 val rawOut = tcp.openWriteChannel(autoFlush = true)
@@ -1278,8 +1280,8 @@ internal class H1Pool(
                         )
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
                         // taken before the connection starts: the catches here close TLS (the inner one) and TCP (the outer
-                        // one), neither a started HTTP/2 connection, so what follows its start must not fail without
-                        // aborting it (below)
+                        // one), not a started HTTP/2 connection, which owns the transport; what follows its start ends it
+                        // itself (below)
                         val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
 
                         // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
@@ -1338,11 +1340,19 @@ internal class H1Pool(
                                 tls.close()
                                 throw e
                             }
+                        h2Owned = true
                         try {
                             afterH2StartForTest?.invoke(client, tcp)
                             return H2Conn(client, key, clock(), peerIp)
                         } catch (e: Throwable) {
-                            client.abort(e)
+                            // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
+                            // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the
+                            // transport (the catch below leaves it alone); never hiding e
+                            try {
+                                client.abortInOrder(e)
+                            } catch (s: Throwable) {
+                                if (s !== e) e.addSuppressed(s)
+                            }
                             throw e
                         }
                     }
@@ -1353,7 +1363,7 @@ internal class H1Pool(
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }
             } catch (e: Throwable) {
-                tcp.close()
+                if (!h2Owned) tcp.close()
                 throw e
             }
         }

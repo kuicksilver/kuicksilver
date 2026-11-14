@@ -31,8 +31,21 @@ internal class H2Conn(
 
     override val isOpen: Boolean get() = client.isUsable
 
+    /**
+     * The hard close: for a connection that has ended already (its transport closed, this is a no-op) or whose orderly close
+     * ran out of its bound ([H2Pool.closeAll]). A live, healthy connection is closed in order: [H2ClientConnection.shutdown]
+     * (idle eviction, the lifetime, the engine's close) or [closeTransportOrderly].
+     */
     override fun closeTransport() {
         client.abort(IOException("the HTTP/2 connection was closed by the client"))
+    }
+
+    /**
+     * GOAWAY (NO_ERROR, RFC 9113 section 6.8), then the transport closed in order (TLS close_notify): the pool closes in
+     * order only a connection without streams, which closes as soon as its GOAWAY is written, bounded by the runtime.
+     */
+    override fun closeTransportOrderly() {
+        client.shutdown()
     }
 }
 

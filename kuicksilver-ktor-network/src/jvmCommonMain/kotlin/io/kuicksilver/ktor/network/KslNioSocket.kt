@@ -28,6 +28,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import java.net.StandardSocketOptions
 import java.nio.channels.ClosedChannelException
+import java.nio.channels.SelectableChannel
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -369,17 +370,24 @@ internal class KslNioServerSocket(
     private val delegate: ServerSocket,
     private val selector: SelectorManager,
 ) : ServerSocket by delegate {
+    private val nio: SelectableChannel
+
     /** The bound address, taken while the socket is open: ktor's server socket asks the channel, which throws once closed. */
-    override val localAddress: SocketAddress =
+    override val localAddress: SocketAddress
+
+    init {
+        // the bound ktor socket is this one's from here on: a construction that fails closes it, nobody else would
         try {
-            delegate.localAddress
+            nio = (delegate as Selectable).channel
+            localAddress = delegate.localAddress
         } catch (e: Throwable) {
-            runCatching { delegate.close() } // the bound ktor socket is this one's: nobody else would close it
+            runCatching { delegate.close() }
             throw e
         }
+    }
 
     /** False once the descriptor is closed (tests). */
-    internal val isOpen: Boolean get() = (delegate as Selectable).channel.isOpen
+    internal val isOpen: Boolean get() = nio.isOpen
 
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 

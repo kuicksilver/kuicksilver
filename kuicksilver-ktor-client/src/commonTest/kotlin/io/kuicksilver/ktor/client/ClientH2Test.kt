@@ -580,10 +580,10 @@ class ClientH2Test {
         }
 
     /**
-     * HTTP_1_1_REQUIRED that has ended the connection, its transport closed, before the pool takes it: the call goes over
-     * HTTP/1.1 all the same, and nothing of the HTTP/2 connection stays behind. The peer address is read while the socket
-     * is open, and a socket's addresses stay readable after its close (on Android, ClosedChannelException failed the call
-     * when the GOAWAY won that race).
+     * HTTP_1_1_REQUIRED that has ended the connection, its TCP socket closed, before the pool takes it (a race the GOAWAY
+     * won on Android CI): the call falls back to HTTP/1.1, and nothing of the HTTP/2 connection stays behind. What it
+     * guards is that path, the hand-out of a connection already ended; that a socket's addresses stay readable after its
+     * close is SocketAddressAfterCloseTest's (kuicksilver-ktor-network).
      */
     @Test fun http11RequiredThatClosedTheConnectionBeforeItIsPooled() =
         clientTest {
@@ -609,6 +609,7 @@ class ClientH2Test {
                     val r = c.get("https://127.0.0.1:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("h1", r.bodyAsText())
+                    assertEquals(FallbackReason.H2Refused, r.kuicksilverDiagnostics!!.fallback)
                     assertEquals(1, started)
                     assertEquals(0, pool.h2.connectionCount)
                     withTimeout(5.seconds) { pool.h2JobsForTest.toList().forEach { it.join() } }
