@@ -77,6 +77,44 @@ internal class H2Http11Required(
 private fun isStreamHttp11Required(e: Http2Exception): Boolean =
     e is Http2Exception.StreamReset && e.byPeer && e.code == Http2ErrorCode.HTTP_1_1_REQUIRED
 
+/**
+ * Runs [release] (a stream's) where its exception has nowhere to go: a completion handler or a coroutine without a parent
+ * would pass it to the uncaught-exception handler (fatal to an Android app). A release that throws gave the stream and
+ * its slot back all the same (the exception is an engine callback's), so the call is not affected: it is logged at
+ * [io.kuicksilver.quic.LogLevel.Warn], as the engine's other internal failures.
+ */
+internal inline fun releaseLogged(
+    events: EngineEvents,
+    stream: H2ClientStream,
+    release: () -> Unit,
+) {
+    try {
+        release()
+    } catch (e: Throwable) {
+        runCatching {
+            if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Warn)) {
+                events.logger.log(
+                    io.kuicksilver.quic.LogLevel.Warn,
+                    "the release of HTTP/2 stream ${stream.id} failed; the stream was given back",
+                    e,
+                )
+            }
+        }
+    }
+}
+
+/** Runs [release] while [failure] is in flight: an exception of the release is suppressed under it, never in its place. */
+internal inline fun releaseUnder(
+    failure: Throwable,
+    release: () -> Unit,
+) {
+    try {
+        release()
+    } catch (e: Throwable) {
+        if (e !== failure) failure.addSuppressed(e)
+    }
+}
+
 /** The request's priority: [priority] (the builder's), else a valid raw `Priority` header, else the defaults. */
 private fun localPriority(data: HttpRequestData): StreamPriority =
     data.priority
@@ -159,20 +197,25 @@ internal suspend fun h2Exchange(
     fun release() {
         if (!released.compareAndSet(false, true)) return
         sender?.cancel()
-        stream.release()
-        onReleased(conn.client.isUsable)
+        try {
+            stream.release()
+        } finally {
+            // a release that throws gave the stream back all the same: connectionReleased goes out for it too
+            onReleased(conn.client.isUsable)
+        }
     }
     val job = callContext[Job]
     if (job == null) {
-        release()
-        throw IllegalStateException("a call without a Job")
+        val e = IllegalStateException("a call without a Job")
+        releaseUnder(e) { release() }
+        throw e
     }
     // in use until the call ends (its body read or abandoned), not just until the response head. A reader still waiting
     // sees why the call ended (the request timeout, the caller's exception), not the stream's own cancellation, as over
     // HTTP/1.1 and HTTP/3 (found by the engine interop bench against Ktor's Netty server)
     job.invokeOnCompletion { cause ->
         if (cause != null) stream.body.cancel(cause)
-        release()
+        releaseLogged(events, stream) { release() }
     }
     val activity = data.socketTimeoutMillis()?.let { Activity() }
     var bodyStarted = false
@@ -226,7 +269,9 @@ internal suspend fun h2Exchange(
                 ?: bodyChannel
         return HttpResponseData(status, requestTime, headers, HttpProtocolVersion.HTTP_2_0, responseBody, callContext)
     } catch (e: Throwable) {
-        release() // this attempt is over: its stream must not hold the connection or a stream slot for the repeat
+        // this attempt is over: its stream must not hold the connection or a stream slot for the repeat. The call fails
+        // with e (or goes again for it) whatever the release throws
+        releaseUnder(e) { release() }
         if (e !is Http2Exception) throw e
         // RFC 9113 section 3.4: the request's HEADERS went out before the server's preface, which never came within the
         // connect timeout (the connection ended with SETTINGS_TIMEOUT). A request without content, or whose content had not

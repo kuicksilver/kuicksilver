@@ -129,13 +129,18 @@ internal suspend fun h2WebSocket(
 
     fun release() {
         if (!released.compareAndSet(false, true)) return
-        stream.release()
-        onReleased(conn.client.isUsable)
+        try {
+            stream.release()
+        } finally {
+            // a release that throws gave the stream back all the same: connectionReleased goes out for it too
+            onReleased(conn.client.isUsable)
+        }
     }
     val job = callContext[Job]
     if (job == null) {
-        release()
-        throw IllegalStateException("a call without a Job")
+        val e = IllegalStateException("a call without a Job")
+        releaseUnder(e) { release() }
+        throw e
     }
     try {
         val head = stream.response()
@@ -144,7 +149,7 @@ internal suspend fun h2WebSocket(
         if (head.status !in 200..299) {
             // RFC 9110 section 9.3.6: only a 2xx switches to tunnel mode; the rest is a response like any other, read until
             // the call ends
-            job.invokeOnCompletion { release() }
+            job.invokeOnCompletion { releaseLogged(events, stream) { release() } }
             val status = HttpStatusCode.fromValue(head.status)
             return HttpResponseData(
                 status,
@@ -196,7 +201,7 @@ internal suspend fun h2WebSocket(
                     }
                 if (answered == null) {
                     sender.cancel()
-                    release()
+                    releaseLogged(events, stream) { release() }
                 }
             }
         }
@@ -206,7 +211,7 @@ internal suspend fun h2WebSocket(
             // have been closed without a cause) is reset with CANCEL at once
             if (cause != null || !output.isClosedForWrite || output.closedCause != null) {
                 sender.cancel()
-                release()
+                releaseLogged(events, stream) { release() }
                 return@invokeOnCompletion
             }
             // one bound for both: the last frames may wait for a window the server never opens again
@@ -218,7 +223,7 @@ internal suspend fun h2WebSocket(
                     }
                 } finally {
                     sender.cancel()
-                    release()
+                    releaseLogged(events, stream) { release() }
                 }
             }
         }
@@ -252,7 +257,7 @@ internal suspend fun h2WebSocket(
         val session = OwnCloseWatch(raw, ::onOwnClose)
         return HttpResponseData(HttpStatusCode.SwitchingProtocols, requestTime, headers, HttpProtocolVersion.HTTP_2_0, session, callContext)
     } catch (e: Throwable) {
-        release()
+        releaseUnder(e) { release() } // the handshake fails with e (or goes again for it) whatever the release throws
         if (e !is Http2Exception) throw e
         if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
         if (isHttp11Required(e, conn)) throw H2Http11Required(e, bodyConsumed = false, mayRepeat = true)
