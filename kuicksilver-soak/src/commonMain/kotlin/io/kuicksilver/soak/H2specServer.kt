@@ -30,6 +30,10 @@ public fun h2specServerMain(args: Array<String>) {
                 tlsConnector(SoakPki.identity()) {
                     this.host = host
                     this.port = port
+                    // on macOS h2spec reaches this server through Docker Desktop as host.docker.internal, a host the test
+                    // identity does not name: without this, every request is a misdirected one (421, RFC 9110 section 7.4)
+                    // and h2spec's cases that wait for DATA see only the 421 HEADERS
+                    trustedGateway = true
                 }
                 http2 = true
                 http3 = false
