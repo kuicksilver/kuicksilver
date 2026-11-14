@@ -420,6 +420,13 @@ public class KuicksilverApplicationEngine(
         /** Tests drive the HTTP/2 connections' clock (monotonic nanoseconds: reset budgets, protocol deadlines) with this. */
         internal var h2ClockForTest: (() -> Long)? = null
 
+        /**
+         * Tests run each HTTP/2 request stream's release at the end of its handling through this, with the handler's
+         * cancellation in flight (null for none); null releases it.
+         */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        internal var h2ReleaseForTest: ((io.kuicksilver.http2.runtime.H2ServerStream, CancellationException?) -> Unit)? = null
+
         /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
         internal var http3Bind: suspend (
             InetSocketAddress,

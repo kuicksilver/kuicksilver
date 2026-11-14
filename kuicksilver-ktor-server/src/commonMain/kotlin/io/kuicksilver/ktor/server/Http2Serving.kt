@@ -380,7 +380,8 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
         // a call that failed after its response was committed cannot get the 500 any more: the stream is reset, unless it
         // already ended (section 5.4.2)
         if (!answered && !r.failed) runCatching { r.reset(Http2ErrorCode.INTERNAL_ERROR) }
-        releaseH2Stream(r.id, environment.log, cancelled) { r.release() }
+        val release = configuration.h2ReleaseForTest
+        releaseH2Stream(r.id, environment.log, cancelled) { if (release == null) r.release() else release(r, cancelled) }
     }
 }
 
