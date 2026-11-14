@@ -659,6 +659,29 @@ public class ConnectionCore internal constructor(
     internal var preferredProbeStarted = false
     internal var movedToPreferred = false
 
+    /**
+     * Server: the connection moved to the preferred-address socket (RFC 9000 section 9.6.2). Its packets on the original address are
+     * dropped from then on ([leftAddressDropped]), and its IDs get no Stateless Reset there once they stop routing (EndpointCore).
+     */
+    internal var leftOriginalAddress = false
+
+    /**
+     * Server: the IDs of ours that routed to this connection in short headers when it moved ([leftOriginalAddress]), live or
+     * retired and still routing: the ones the client could use on the original address. At most the live target (8) plus the
+     * retirement backlog ([io.kuicksilver.quic.QuicLimits.retiredConnectionIds]). Only IDs we issued (the Retry SCID when it became our
+     * sequence-0 ID); the original DCID is not one of them. The endpoint keeps those of its ID length (EndpointCore).
+     */
+    internal var leftAddressCids: Set<io.kuicksilver.quic.wire.ConnectionId> = emptySet()
+
+    /** Server: of [leftAddressCids], the one the client used on the original path at the move (most likely to arrive there late). */
+    internal var leftAddressPrimary: io.kuicksilver.quic.wire.ConnectionId? = null
+
+    /** Server: the opaque token the endpoint names this connection by among the IDs it left behind (0 until it is given one). */
+    internal var leftAddressToken: Long = 0L
+
+    /** Server: authenticated packets dropped because they reached the original address after [leftOriginalAddress]. */
+    internal var leftAddressDropped = 0L
+
     /** Server: the endpoint's preferred address, advertised in the transport parameters (RFC 9000 section 9.6); null: none. */
     internal var preferredAddress: PreferredAddress? = null
 

@@ -313,6 +313,7 @@ internal fun ConnectionCore.onPathPacket(
         if (p.socket == PREFERRED_SOCKET && active.socket != PREFERRED_SOCKET) {
             // RFC 9000 section 9.6.1: non-probing packets go out from the preferred address only once the client's address is validated
             // there; until then they keep leaving the original socket
+            p.preferredMovePn = pn
             if (p.state == PathState.Validated) moveToPreferredSocket(p) else p.preferredMovePending = true
         } else if (p.state != PathState.Failed &&
             dcidFor(p) != null
@@ -322,6 +323,9 @@ internal fun ConnectionCore.onPathPacket(
                 if (sameIp(from, active.remote)) PathChangeReason.NatRebinding else PathChangeReason.PeerMigration,
                 challengeOld = true,
             )
+            // this packet is the new active path's first: the ID of ours it carried is the one in use there (the early return above
+            // records it only for packets that arrive on the active path)
+            if (paths.active === p && rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
         }
     }
 }
@@ -331,6 +335,16 @@ internal fun ConnectionCore.onPathPacket(
  * connection moves there and the original path closes, so nothing leaves the old socket any more.
  */
 private fun ConnectionCore.moveToPreferredSocket(p: Path) {
+    // only while the packet that asked for the move is still the newest non-probing one: a newer one on the original address since
+    // (a client back there after its own validation of the preferred address failed, section 9.6.1) keeps the connection there, as
+    // only the highest-numbered non-probing packet moves it (section 9.3)
+    if (p.preferredMovePn != largestNonProbingPn) {
+        p.preferredMovePending = false
+        // the client's ID it reserved goes back as for any validated path the client did not probe (onPathResponse): it was sent on
+        // that path, so it is retired, never used on another one (sections 5.1.2 and 9.5); a later move there reserves a fresh one
+        if (!p.peerProbed) releasePathCid(p)
+        return
+    }
     if (dcidFor(p) == null) {
         p.preferredMovePending = true // no spare ID of the client's yet: on the next non-probing packet
         return
@@ -341,6 +355,16 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
     if (old !== paths.active && old.socket != PREFERRED_SOCKET) {
         paths.remove(old)
         releasePathCid(old)
+    }
+    if (paths.active.socket == PREFERRED_SOCKET && !leftOriginalAddress) {
+        leftOriginalAddress = true
+        val ids = HashSet<io.kuicksilver.quic.wire.ConnectionId>()
+        // the IDs we issued (live, or retired and still routing), the Retry SCID among them when it became our sequence-0 ID: the
+        // original DCID and a Retry SCID kept only as an alias route Initials in the registry and are not in this list
+        cids.forEachLocal { ids += it }
+        leftAddressCids = ids
+        // the client's DCID on the original path (activeDcidSeq is still that path's: only its packets update it)
+        leftAddressPrimary = if (activeDcidSeq >= 0) cids.localCidOf(activeDcidSeq) else null
     }
 }
 

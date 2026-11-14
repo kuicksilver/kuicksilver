@@ -157,6 +157,15 @@ internal class ConnectionIdRegistry(
         return false
     }
 
+    /** The connection [cid] routes to, or null. */
+    fun owner(cid: ConnectionId): ConnectionCore? {
+        val at = find(key(cid))
+        if (at < 0) return null
+        val l = lists[at]!!
+        for (i in 0 until l.size) if (l[i].cid == cid) return l[i].core
+        return null
+    }
+
     fun lookup(
         buf: PacketBuffer,
         off: Int,

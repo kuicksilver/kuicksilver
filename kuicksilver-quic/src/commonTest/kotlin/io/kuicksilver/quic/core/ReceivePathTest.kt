@@ -786,6 +786,42 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 17.3.1: the reserved bits are checked "after removing both packet and header protection", on every packet
+     * that gets that far: a copy of a packet already received, with the bits set, is a PROTOCOL_VIOLATION too, not a duplicate
+     * dropped in silence.
+     */
+    @Test fun negative_reservedBitsOnADuplicateAreAProtocolViolation() {
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            p.runUntil(100.milliseconds) { false }
+            var copy: ByteArray? = null
+            p.filterToServer = { _, b ->
+                if (copy == null && !isLong(b)) copy = b.copyOf()
+                true
+            }
+            val id = p.client.openStream(true)
+            p.client.writeStream(id, ByteArray(10), 0, 10, true)
+            assertTrue(p.runUntil(1000.milliseconds) { copy != null && p.client.stats.bytesInFlight == 0L }, "delivered and acknowledged")
+            val server = p.server!!
+            val duplicates = server.stats.duplicatesDropped
+            val d = copy!!
+            d[0] = (d[0].toInt() or 0x08).toByte()
+            val b = PacketBuffer.of(d)
+            try {
+                server.handleDatagram(b, d.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
+            } finally {
+                b.close()
+            }
+            p.drainEvents(server, p.serverEvents)
+            assertEquals(duplicates, server.stats.duplicatesDropped, "not dropped as a duplicate")
+            assertProtocolViolation(p.serverEvents, "server (duplicate)")
+        } finally {
+            p.close()
+        }
+    }
+
     /** RFC 9000 section 17.2.2: a server Initial with a non-zero Token Length is discarded by the client; the retransmitted one completes the handshake. */
     @Test fun negative_serverInitialWithToken() {
         val p = CorePair()

@@ -49,6 +49,9 @@ internal class PacketReceiver(
         private const val OUTCOME_NONE = 0
         private const val OUTCOME_DUPLICATE = 1
         private const val OUTCOME_DISCARDED_SPACE = 2
+
+        /** Authenticated, but it reached the server's original address after the connection moved to its preferred one. */
+        private const val OUTCOME_LEFT_ADDRESS = 3
     }
 
     private val hv = PacketHeaderView()
@@ -182,9 +185,9 @@ internal class PacketReceiver(
             lastOutcome = OUTCOME_NONE
             val ok = processPacket(data, from)
             if (first == FIRST_NONE) {
-                // a duplicate was decrypted: the check may be skipped
+                // a duplicate (or a packet from the address the connection left) was decrypted: the check may be skipped
                 first =
-                    if (ok || lastOutcome == OUTCOME_DUPLICATE) {
+                    if (ok || lastOutcome == OUTCOME_DUPLICATE || lastOutcome == OUTCOME_LEFT_ADDRESS) {
                         FIRST_HANDLED
                     } else if (lastOutcome == OUTCOME_DISCARDED_SPACE) {
                         FIRST_STALE
@@ -358,17 +361,31 @@ internal class PacketReceiver(
                 return false
             }
         }
-        if (sp.ack.isDuplicate(pn)) {
-            c.duplicatesDropped++
-            lastOutcome = OUTCOME_DUPLICATE
-            return false
-        }
         if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=
             0
         ) {
             c.fail(TransportError.PROTOCOL_VIOLATION, 0, "reserved header bits set", null)
             return true
-        } // sections 17.2 and 17.3.1: checked once both protections are off
+        } // sections 17.2 and 17.3.1: checked once both protections are off, on every authenticated packet (a duplicate too)
+        if (sp.ack.isDuplicate(pn)) {
+            c.duplicatesDropped++
+            lastOutcome = OUTCOME_DUPLICATE
+            return false
+        }
+        // RFC 9000 section 9.6.2: a server that moved to its preferred address sends "exclusively from its preferred IP address" and
+        // "SHOULD drop newer packets for this connection that are received on the old IP address"; it "MAY continue to process
+        // delayed packets" there, and drops those too: a delayed packet from the client's address on the original socket is a path
+        // the connection does not have any more, and taking it opened one and challenged it from the original address (the client
+        // would see a stranger). Authenticated first, so no Stateless Reset hides behind it; what it carried the client resends
+        if (c.role == TlsRole.Server &&
+            socket != io.kuicksilver.quic.PREFERRED_SOCKET &&
+            c.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET
+        ) {
+            c.leftAddressDropped++
+            c.qlog?.packetDropped(space, pn, hv.packetEnd - headerStart(), "unexpected_packet", "left_address", now)
+            lastOutcome = OUTCOME_LEFT_ADDRESS
+            return false
+        }
         val pnLen = (data[headerStart()].toInt() and 0x03) + 1
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen

@@ -403,6 +403,13 @@ internal class ConnectionIdManager(
         return -1
     } // indexed: no iterator per packet (allocation gate)
 
+    /** Our ID with sequence number [seq] (live or still routing after retirement), or null. */
+    fun localCidOf(seq: Long): ConnectionId? {
+        for (i in 0 until local.size) if (local[i].seq == seq) return local[i].cid
+        for (i in 0 until retiredLocal.size) if (retiredLocal[i].seq == seq) return retiredLocal[i].cid
+        return null
+    }
+
     /** The highest retire_prior_to we sent: a lost NEW_CONNECTION_ID below it is not retransmitted (RFC 9000 section 19.15). */
     private var issuedRetirePriorTo = 0L
 
