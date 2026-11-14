@@ -44,6 +44,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -652,19 +653,26 @@ class ClientH2WebSocketTest {
                         }
                         val out = withTimeout(10.seconds) { output.await() }
                         // the writer waits only with more than the lead flushed and not taken, and the stream only ever takes
-                        // more, so at a wait the lead is past 64 KiB by at most what that flush added (a piece of one frame)
+                        // more, so at a wait the lead is past 64 KiB by at most what that flush added ([MAX_HAND_ON])
                         // polled, not collected: writerWaiting is a StateFlow, which drops equal values, so a collector that
                         // read `true` from a wait already being released, and then missed the false between that wait and the
                         // final one, would never see the final wait at all
+                        // the flag before the lead: a lead read after a wait was seen is that wait's or a later flush's
+                        var waiting = false
                         var lead = 0L
-                        withTimeout(10.seconds) {
-                            while (true) {
-                                lead = out.lead
-                                if (out.writerWaiting.value && lead > H2StreamOutput.DEFAULT_LIMIT) break
-                                delay(5.milliseconds)
+                        val held =
+                            withTimeoutOrNull(10.seconds) {
+                                while (true) {
+                                    waiting = out.writerWaiting.value
+                                    lead = out.lead
+                                    if (waiting && lead > H2StreamOutput.DEFAULT_LIMIT) break
+                                    delay(5.milliseconds)
+                                }
                             }
+                        if (held == null) {
+                            fail("the writer never waited past the lead: waiting=$waiting lead=$lead sent=${sent.load()}")
                         }
-                        assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + 16_388L, "lead $lead")
+                        assertTrue(lead <= H2StreamOutput.DEFAULT_LIMIT + MAX_HAND_ON, "lead $lead")
                         // and so is the sender: it settles (two reads 50 ms apart agree) within the cap, and then sends
                         // nothing more. One that is not held never settles; it is past the cap within milliseconds, where the
                         // wait stops (its frames share one array, so they cost the heap little meanwhile)
@@ -893,6 +901,15 @@ private suspend fun <T> coroutineScopeOf(block: suspend (CoroutineScope) -> T): 
 }
 
 private fun CoroutineScope.cancel() = coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+
+/**
+ * The most one flush of the client's writer hands on to its [H2StreamOutput] in a stream of 16 KiB binary frames: Ktor
+ * writes them unmasked and the output guard masks each, a 4-byte header becoming 8 (RFC 6455 section 5.2). On the JVM,
+ * Ktor's writer serializes into a 4 098-byte pool buffer (whole headers only) and each buffer it writes is flushed: 4 098 + 4
+ * (4 102 measured). Kotlin/Native's writer (Ktor's common one) flushes once per frame: 2 + 2 extended length + 4 mask + 16 384
+ * (16 392 measured). Neither flushes more at once however many frames wait in the outgoing channel ([OUTGOING_CAPACITY]).
+ */
+private const val MAX_HAND_ON = 2 + 2 + 4 + 16_384L
 
 /** The outgoing channel of a session whose application sends without end: it suspends once this many frames wait. */
 private const val OUTGOING_CAPACITY = 4
