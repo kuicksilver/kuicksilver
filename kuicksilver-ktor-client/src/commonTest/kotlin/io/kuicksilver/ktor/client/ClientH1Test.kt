@@ -159,13 +159,17 @@ class ClientH1Test {
                 var decoyServed = 0
                 val (v4, decoy, port) =
                     bindOnSamePort(
-                        first = { aSocket(selector).tcp().bind("127.0.0.1", 0).let { it to (it.localAddress as InetSocketAddress).port } },
-                        release = { it.close() },
-                    ) { p ->
-                        testServer(plain = true, host = "::1", port = p) {
-                            routing { get("/") { call.respondText("decoy").also { decoyServed++ } } }
-                        }.first
-                    }
+                        first = { p ->
+                            aSocket(selector).tcp().bind("127.0.0.1", p).let { it to (it.localAddress as InetSocketAddress).port }
+                        },
+                        releaseFirst = { it.close() },
+                        second = { p ->
+                            testServer(plain = true, host = "::1", port = p) {
+                                routing { get("/") { call.respondText("decoy").also { decoyServed++ } } }
+                            }
+                        },
+                        releaseSecond = { runCatching { it.stop(0, 0) } },
+                    )
                 coroutineScope {
                     val closer = launch { while (true) v4.accept().close() }
                     try {

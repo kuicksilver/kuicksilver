@@ -100,26 +100,48 @@ internal fun testClient(
     }
 
 /**
- * Two sockets on one port number, both owned by the test: [first] binds a free port and returns what it bound with the
- * port, [second] binds that number. While [second] finds the number taken (by an unrelated process: a free port of one
- * socket kind or address says nothing about another), the pair is released ([release]) and tried again on a new port.
- * Ports chosen this way cannot collide with another listener the way "the same number is surely free elsewhere" can.
+ * Two sockets on one port number, both owned by the test: [first] and [second] bind the port they are given (0: a free
+ * one) and return what they bound with its port. The attempts alternate which side takes a free port, the other then
+ * binding that number: first [first], then [second], and so on; a side that finds the number taken (by an unrelated
+ * process or connection: a free port of one socket kind or address says nothing about another) gets the pair released
+ * ([releaseFirst], [releaseSecond]) and the next attempt goes. Retrying one order only is not enough where the OS hands
+ * out free ports one after the other (Windows does): every retry lands on the next number, and a run of taken twins
+ * (TCP ports held by the client connections of earlier tests, TIME_WAIT included) refused all twenty UDP-first attempts
+ * on the Windows CI, as the server engine's own pairing had found (`bindTcpAndUdp`).
  */
 internal suspend fun <A, B> bindOnSamePort(
-    first: suspend () -> Pair<A, Int>,
-    release: suspend (A) -> Unit,
-    second: suspend (port: Int) -> B,
+    first: suspend (port: Int) -> Pair<A, Int>,
+    releaseFirst: suspend (A) -> Unit,
+    second: suspend (port: Int) -> Pair<B, Int>,
+    releaseSecond: suspend (B) -> Unit,
 ): Triple<A, B, Int> {
     var last: Throwable? = null
-    repeat(SAME_PORT_ATTEMPTS) {
-        val (a, port) = first()
+    repeat(SAME_PORT_ATTEMPTS) { attempt ->
         try {
-            return Triple(a, second(port), port)
+            return if (attempt % 2 == 0) {
+                val (a, port) = first(0)
+                val b =
+                    try {
+                        second(port).first
+                    } catch (e: Throwable) {
+                        releaseFirst(a)
+                        throw e
+                    }
+                Triple(a, b, port)
+            } else {
+                val (b, port) = second(0)
+                val a =
+                    try {
+                        first(port).first
+                    } catch (e: Throwable) {
+                        releaseSecond(b)
+                        throw e
+                    }
+                Triple(a, b, port)
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
-            release(a)
             throw e
         } catch (e: Throwable) {
-            release(a)
             last = e
         }
     }
