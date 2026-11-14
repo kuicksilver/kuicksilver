@@ -95,6 +95,12 @@ class ClientH2WebSocketTest {
 
     private fun engine(c: io.ktor.client.HttpClient) = c.engine as KuicksilverEngine
 
+    /** Every HTTP/2 stream slot of [e] comes back within 10 s; a slot that never does fails with the count. */
+    private suspend fun awaitStreamsReleased(e: KuicksilverEngine) {
+        withTimeoutOrNull(10.seconds) { while (e.h1.h2.streamCount != 0) delay(10) }
+            ?: fail("a stream slot was not returned within 10 s: streamCount = ${e.h1.h2.streamCount}")
+    }
+
     @Test fun webSocketUsesAnH2ConnectionThatAllowsExtendedConnect() =
         clientTest {
             val request = CompletableDeferred<H2ServerStream>()
@@ -473,7 +479,7 @@ class ClientH2WebSocketTest {
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
                     // the release resets the stream first and returns its reservation after: the server can see the
                     // RST_STREAM before the slot is back (seen on Windows)
-                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
+                    awaitStreamsReleased(engine(c))
                 }
             }
         }
@@ -516,7 +522,7 @@ class ClientH2WebSocketTest {
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
                     // the release resets the stream first and returns its reservation after: the server can see the
                     // RST_STREAM before the slot is back (seen on Windows)
-                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
+                    awaitStreamsReleased(engine(c))
                 }
             }
         }
@@ -554,7 +560,7 @@ class ClientH2WebSocketTest {
                     assertEquals(Http2ErrorCode.CANCEL, reset.code)
                     // the release resets the stream first and returns its reservation after: the server can see the
                     // RST_STREAM before the slot is back (seen on Windows)
-                    withTimeout(10.seconds) { while (engine(c).h1.h2.streamCount != 0) delay(10) }
+                    awaitStreamsReleased(engine(c))
                 }
             }
         }
@@ -888,7 +894,7 @@ class ClientH2WebSocketTest {
                     }
                     // A WebSocket's stream is released after its session ends (the close waits for the server's END_STREAM
                     // off the caller's path), so the count reaches 0 shortly after both sessions returned.
-                    withTimeout(10.seconds) { while (e.h1.h2.streamCount != 0) delay(10) }
+                    awaitStreamsReleased(e)
                     assertEquals(0, e.h1.webSocketConnecting.size())
                 }
             }
