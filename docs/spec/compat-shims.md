@@ -184,8 +184,8 @@ packet." The provisional Initial is a valid Initial that does not fix the SCID, 
 It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §7.2 row of the summary is 🔶 for it
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:380` (the decision, with
-`onlyAcks` at :497), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:397` (the decision, with
+`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.
