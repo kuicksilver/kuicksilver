@@ -668,7 +668,8 @@ public class ConnectionCore internal constructor(
     /**
      * Server: the IDs of ours that routed to this connection in short headers when it moved ([leftOriginalAddress]), live or
      * retired and still routing: the ones the client could use on the original address. At most the live target (8) plus the
-     * retirement backlog ([io.kuicksilver.quic.QuicLimits.retiredConnectionIds]); no original DCID or Retry SCID (long headers only).
+     * retirement backlog ([io.kuicksilver.quic.QuicLimits.retiredConnectionIds]). Only IDs we issued (the Retry SCID when it became our
+     * sequence-0 ID); the original DCID is not one of them. The endpoint keeps those of its ID length (EndpointCore).
      */
     internal var leftAddressCids: Set<io.kuicksilver.quic.wire.ConnectionId> = emptySet()
 

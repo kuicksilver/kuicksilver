@@ -1110,6 +1110,7 @@ public class EndpointCore internal constructor(
         core: ConnectionCore,
     ) {
         if (cid !in core.leftAddressCids) return // issued after the move: never used on the original address
+        if (cid.length != cidLength) return // not one a short header here can carry (the lookup's length, one setting for both)
         if (core.leftAddressToken == 0L) core.leftAddressToken = ++leftAddressSerial
         val c = clock
         val now = if (c != null && c > core.now) c else core.now

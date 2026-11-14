@@ -323,6 +323,9 @@ internal fun ConnectionCore.onPathPacket(
                 if (sameIp(from, active.remote)) PathChangeReason.NatRebinding else PathChangeReason.PeerMigration,
                 challengeOld = true,
             )
+            // this packet is the new active path's first: the ID of ours it carried is the one in use there (the early return above
+            // records it only for packets that arrive on the active path)
+            if (paths.active === p && rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
         }
     }
 }
@@ -356,7 +359,9 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
     if (paths.active.socket == PREFERRED_SOCKET && !leftOriginalAddress) {
         leftOriginalAddress = true
         val ids = HashSet<io.kuicksilver.quic.wire.ConnectionId>()
-        cids.forEachLocal { if (it.length == config.connectionIdLength && it != odcid && it != retryScid) ids += it }
+        // the IDs we issued (live, or retired and still routing), the Retry SCID among them when it became our sequence-0 ID: the
+        // original DCID and a Retry SCID kept only as an alias route Initials in the registry and are not in this list
+        cids.forEachLocal { ids += it }
         leftAddressCids = ids
         // the client's DCID on the original path (activeDcidSeq is still that path's: only its packets update it)
         leftAddressPrimary = if (activeDcidSeq >= 0) cids.localCidOf(activeDcidSeq) else null

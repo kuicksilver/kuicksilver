@@ -9,6 +9,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.Ecn
@@ -401,8 +402,11 @@ class PreferredAddressTest {
      * until the server moved to its preferred address: what was held arrives late. Returns the client, the moved server connection and
      * the held datagrams.
      */
-    private fun moveHoldingOriginal(p: EndpointPair): Triple<ConnectionCore, ConnectionCore, List<ByteArray>> {
-        val c = p.connect()
+    private fun moveHoldingOriginal(
+        p: EndpointPair,
+        clientQuic: io.kuicksilver.quic.QuicConfig = io.kuicksilver.quic.QuicConfig.Default,
+    ): Triple<ConnectionCore, ConnectionCore, List<ByteArray>> {
+        val c = p.connect(clientQuic)
         assertTrue(p.runUntil(5.seconds) { c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
         assertTrue(c.path.isRemote(p.serverAddr), "not moved yet")
         val held = ArrayList<ByteArray>()
@@ -538,6 +542,103 @@ class PreferredAddressTest {
             assertTrue(s.leftAddressToken > 0L)
             p.runUntil(1.seconds) { false }
             assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Feeds [held] to the server's original address at [p]'s time; true when no Stateless Reset answered any of them. */
+    private fun noResetFor(
+        p: EndpointPair,
+        held: List<ByteArray>,
+    ): Boolean {
+        for (d in held) p.feed(p.server, d, p.clientAddr)
+        return p.stateless(p.server).isEmpty()
+    }
+
+    @Test fun negative_noStatelessResetFromTheLeftAddressAfterARetry() {
+        // RFC 9000 sections 7.2 and 17.2.5: after a Retry the server's sequence-0 ID is the Retry SCID, the DCID of the client's 1-RTT
+        // packets on the original path. It is one of the IDs the moved connection leaves behind like any other: a client packet
+        // delayed there with it gets no Stateless Reset once the connection is gone
+        val p =
+            EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null)) {
+                admission = ConnectionAdmission.AlwaysRetry
+            }
+        try {
+            val (_, s, held) = moveHoldingOriginal(p)
+            val oldPathId =
+                io.kuicksilver.quic.wire
+                    .ConnectionId(held.first().copyOfRange(1, 1 + s.config.connectionIdLength))
+            assertEquals(s.retryScid, oldPathId, "after the Retry, its SCID is our ID the client uses on the original path")
+            assertEquals(oldPathId, s.leftAddressPrimary, "the client's ID on the original path")
+            assertTrue(oldPathId in s.leftAddressCids, "${s.leftAddressCids}")
+            s.close(0, "", p.now)
+            p.server.remove(s)
+            assertTrue(noResetFor(p, held), "no Stateless Reset queued")
+            assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun anIdsLifetimeStartsAtTheEndpointsClock() {
+        // the IDs a moved connection leaves behind are kept for its idle timeout from when they leave, by the endpoint's clock: the
+        // connection's own clock stopped at its last event, which may lie well before its removal
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val (_, s, held) = moveHoldingOriginal(p)
+            val ttl = s.timers.effectiveIdle(s.config.maxIdleTimeout, s.peerIdleMs, s.pto())
+            val coreNow = s.now
+            p.now = coreNow + 20.seconds // the connection idle meanwhile; the endpoint goes on
+            p.server.processPending(p.now)
+            s.close(0, "", coreNow)
+            p.server.remove(s)
+            p.now = coreNow + ttl + 5.seconds // past the connection's clock + ttl, before the endpoint's
+            assertTrue(noResetFor(p, held), "still remembered")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun withoutAnIdleTimeoutAnIdIsKeptForTheFallback() {
+        // neither side sets an idle timeout (the connection may last for ever): an ID is kept max(3 x PTO, 30 s), then forgotten
+        val none = io.kuicksilver.quic.quicConfig { maxIdleTimeout = kotlin.time.Duration.ZERO }
+        val p = EndpointPair(crypto = KslQuicCrypto, serverQuic = none, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val (_, s, held) = moveHoldingOriginal(p, none)
+            assertTrue(!s.timers.effectiveIdle(s.config.maxIdleTimeout, s.peerIdleMs, s.pto()).isFinite(), "no idle timeout")
+            val keep = maxOf(s.pto() * 3, 30.seconds)
+            p.server.processPending(p.now)
+            val removedAt = p.now
+            s.close(0, "", p.now)
+            p.server.remove(s)
+            p.now = removedAt + keep - 1.seconds
+            assertTrue(noResetFor(p, held), "kept until the fallback ends")
+            p.now = removedAt + keep
+            assertTrue(!noResetFor(p, held), "forgotten after it: an unknown ID again")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun aPeerMigrationRecordsTheIdItsPacketCarried() {
+        // RFC 9000 section 9.5: a client that migrates uses a new ID of ours there. The packet that moves the connection is the new
+        // path's first; the ID it carried is the one in use there (what a later move to the preferred address leaves behind as the
+        // client's ID on the original address), not the one of the path it left
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
+            assertTrue(p.confirmed(c))
+            assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
+            val s = p.server.connections().single()
+            s.now = p.now
+            val before = s.activeDcidSeq
+            val other = (0L..4L).first { it != before && s.cids.localCidOf(it) != null }
+            s.rxDcidSeq = other
+            val moved = InetSocketAddress("10.0.0.9", 40001)
+            s.onPathPacket(PathId.Initial, moved, s.largestNonProbingPn + 1, nonProbing = true, datagramBytes = 1200)
+            assertTrue(s.path.isRemote(moved), "migrated")
+            assertEquals(other, s.activeDcidSeq, "the ID of the packet that moved it")
         } finally {
             p.close()
         }
