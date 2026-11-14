@@ -91,20 +91,18 @@ internal inline fun releaseLogged(
     try {
         release()
     } catch (e: Throwable) {
-        runCatching {
-            if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Warn)) {
-                events.logger.log(
-                    io.kuicksilver.quic.LogLevel.Warn,
-                    "the release of HTTP/2 stream ${stream.id} failed; the stream was given back",
-                    e,
-                )
-            }
-        }
+        logReleaseFailure(events, stream, e)
     }
 }
 
-/** Runs [release] while [failure] is in flight: an exception of the release is suppressed under it, never in its place. */
+/**
+ * Runs [release] while [failure] is in flight: an exception of the release is suppressed under it, never in its place,
+ * and logged as by [releaseLogged], since a [failure] that is a cancellation (the caller's, a request timeout) is never
+ * reported with what it carries.
+ */
 internal inline fun releaseUnder(
+    events: EngineEvents,
+    stream: H2ClientStream,
     failure: Throwable,
     release: () -> Unit,
 ) {
@@ -112,6 +110,24 @@ internal inline fun releaseUnder(
         release()
     } catch (e: Throwable) {
         if (e !== failure) failure.addSuppressed(e)
+        logReleaseFailure(events, stream, e)
+    }
+}
+
+/** [e], a release's exception for [stream], at Warn; a logger that throws is ignored. */
+internal fun logReleaseFailure(
+    events: EngineEvents,
+    stream: H2ClientStream,
+    e: Throwable,
+) {
+    runCatching {
+        if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Warn)) {
+            events.logger.log(
+                io.kuicksilver.quic.LogLevel.Warn,
+                "the release of HTTP/2 stream ${stream.id} failed; the stream was given back",
+                e,
+            )
+        }
     }
 }
 
@@ -207,7 +223,7 @@ internal suspend fun h2Exchange(
     val job = callContext[Job]
     if (job == null) {
         val e = IllegalStateException("a call without a Job")
-        releaseUnder(e) { release() }
+        releaseUnder(events, stream, e) { release() }
         throw e
     }
     // in use until the call ends (its body read or abandoned), not just until the response head. A reader still waiting
@@ -271,7 +287,7 @@ internal suspend fun h2Exchange(
     } catch (e: Throwable) {
         // this attempt is over: its stream must not hold the connection or a stream slot for the repeat. The call fails
         // with e (or goes again for it) whatever the release throws
-        releaseUnder(e) { release() }
+        releaseUnder(events, stream, e) { release() }
         if (e !is Http2Exception) throw e
         // RFC 9113 section 3.4: the request's HEADERS went out before the server's preface, which never came within the
         // connect timeout (the connection ended with SETTINGS_TIMEOUT). A request without content, or whose content had not

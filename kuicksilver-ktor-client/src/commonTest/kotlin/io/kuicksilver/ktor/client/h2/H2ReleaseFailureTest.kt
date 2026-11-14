@@ -1,13 +1,23 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    InternalKuicksilverApi::class,
+    ExperimentalKuicksilverApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+    io.ktor.utils.io.InternalAPI::class,
+)
 
 package io.kuicksilver.ktor.client.h2
 
+import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
 import io.ktor.http.HttpStatusCode
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.websocket.Frame
+import io.ktor.websocket.WebSocketSession
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http2.Http2ErrorCode
@@ -20,9 +30,11 @@ import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -107,6 +119,19 @@ class H2ReleaseFailureTest {
     }
 
     private fun request(url: String) = HttpRequestBuilder().apply { url(url) }.build()
+
+    private fun webSocketRequest() =
+        HttpRequestBuilder()
+            .apply {
+                url("wss://example.com/")
+                attributes.put(WEBSOCKETS_KEY, WebSockets())
+            }.build()
+
+    private fun Fixture.assertWarned() {
+        val (level, cause) = logger.lines.single()
+        assertEquals(LogLevel.Warn, level)
+        assertEquals("from onChange", cause?.message)
+    }
 
     private fun Fixture.assertReleasedOnce() {
         assertEquals(1, released.size, "connectionReleased went out once")
@@ -193,5 +218,120 @@ class H2ReleaseFailureTest {
             assertEquals("from onChange", e.suppressedExceptions.single().message)
             f.assertReleasedOnce()
             call.complete()
+            runCurrent()
+            assertEquals(1, f.released.size)
+        }
+
+    @Test fun negative_anExchangeCancelledWhileItWaitsLogsTheReleaseFailure() =
+        runTest {
+            val f = fixture()
+            val call = Job()
+            val response = async { h2Exchange(f.conn, request("https://example.com/"), call, f.events) { f.released += it } }
+            runCurrent()
+            f.armed = true
+            response.cancel() // the caller's cancellation (or a request timeout) is in flight: it never reports the release's
+            runCurrent()
+            f.assertReleasedOnce()
+            f.assertWarned()
+            call.complete()
+            runCurrent()
+            assertEquals(1, f.released.size)
+        }
+
+    @Test fun negative_anExchangeWithoutAJobKeepsItsFailureOverTheRelease() =
+        runTest {
+            val f = fixture()
+            f.armed = true
+            val e =
+                assertFailsWith<IllegalStateException> {
+                    h2Exchange(f.conn, request("https://example.com/"), EmptyCoroutineContext, f.events) { f.released += it }
+                }
+            assertEquals("a call without a Job", e.message)
+            assertEquals("from onChange", e.suppressedExceptions.single().message)
+            f.assertReleasedOnce()
+            f.assertWarned()
+        }
+
+    @Test fun negative_aWebSocketWithoutAJobKeepsItsFailureOverTheRelease() =
+        runTest {
+            val f = fixture()
+            f.armed = true
+            val e =
+                assertFailsWith<IllegalStateException> {
+                    h2WebSocket(f.conn, request("wss://example.com/"), EmptyCoroutineContext, f.events) { f.released += it }
+                }
+            assertEquals("a call without a Job", e.message)
+            assertEquals("from onChange", e.suppressedExceptions.single().message)
+            f.assertReleasedOnce()
+            f.assertWarned()
+        }
+
+    @Test fun negative_anOpenWebSocketWhoseCallIsCancelledLogsTheReleaseFailure() =
+        runTest {
+            val f = fixture()
+            val call = Job()
+            val context = call + StandardTestDispatcher(testScheduler)
+            val response = async { h2WebSocket(f.conn, webSocketRequest(), context, f.events) { f.released += it } }
+            runCurrent()
+            f.server.requests
+                .receive()
+                .respond(200, emptyList(), endStream = false)
+            runCurrent()
+            assertEquals(HttpStatusCode.SwitchingProtocols, response.await().statusCode)
+            f.armed = true
+            call.cancel() // reset at once, from the completion handler
+            runCurrent()
+            f.assertReleasedOnce()
+            f.assertWarned()
+        }
+
+    @Test fun negative_aWebSocketClosedInOrderLogsTheReleaseFailureAfterTheCloseWait() =
+        runTest {
+            val f = fixture()
+            val call = Job()
+            val context = call + StandardTestDispatcher(testScheduler)
+            val response = async { h2WebSocket(f.conn, webSocketRequest(), context, f.events) { f.released += it } }
+            runCurrent()
+            val server = f.server.requests.receive()
+            server.respond(200, emptyList(), endStream = false)
+            runCurrent()
+            val session = response.await().body as WebSocketSession
+            // the server's Close and END_STREAM, then the client's Close: the session ends in order
+            server.sendBody(ByteReadChannel(byteArrayOf(0x88.toByte(), 0)), end = true)
+            runCurrent()
+            session.outgoing.send(Frame.Close())
+            runCurrent()
+            f.armed = true
+            call.complete() // the close wait's coroutine releases the stream
+            runCurrent()
+            assertTrue(call.isCompleted)
+            f.assertReleasedOnce()
+            f.assertWarned()
+        }
+
+    @Test fun negative_aWebSocketWhoseCloseIsNotAnsweredLogsTheReleaseFailure() =
+        runTest {
+            val f = fixture()
+            val call = Job()
+            val context = call + StandardTestDispatcher(testScheduler)
+            val response =
+                async { h2WebSocket(f.conn, webSocketRequest(), context, f.events, closeWaitMillis = 1_000) { f.released += it } }
+            runCurrent()
+            f.server.requests
+                .receive()
+                .respond(200, emptyList(), endStream = false)
+            runCurrent()
+            val session = response.await().body as WebSocketSession
+            session.outgoing.send(Frame.Close())
+            runCurrent()
+            assertEquals(0, f.released.size)
+            f.armed = true
+            testScheduler.advanceTimeBy(1_001) // the server answered neither with its Close nor with END_STREAM
+            runCurrent()
+            f.assertReleasedOnce()
+            f.assertWarned()
+            call.complete()
+            runCurrent()
+            assertEquals(1, f.released.size)
         }
 }

@@ -139,7 +139,7 @@ internal suspend fun h2WebSocket(
     val job = callContext[Job]
     if (job == null) {
         val e = IllegalStateException("a call without a Job")
-        releaseUnder(e) { release() }
+        releaseUnder(events, stream, e) { release() }
         throw e
     }
     try {
@@ -257,7 +257,7 @@ internal suspend fun h2WebSocket(
         val session = OwnCloseWatch(raw, ::onOwnClose)
         return HttpResponseData(HttpStatusCode.SwitchingProtocols, requestTime, headers, HttpProtocolVersion.HTTP_2_0, session, callContext)
     } catch (e: Throwable) {
-        releaseUnder(e) { release() } // the handshake fails with e (or goes again for it) whatever the release throws
+        releaseUnder(events, stream, e) { release() } // the handshake fails with e (or goes again for it) whatever the release throws
         if (e !is Http2Exception) throw e
         if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)
         if (isHttp11Required(e, conn)) throw H2Http11Required(e, bodyConsumed = false, mayRepeat = true)
