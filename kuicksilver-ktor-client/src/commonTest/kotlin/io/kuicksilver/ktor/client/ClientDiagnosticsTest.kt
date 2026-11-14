@@ -277,16 +277,19 @@ class ClientDiagnosticsTest {
             }
         }
 
-    /** An HTTP/1.1 server on the TCP side of a port, [udp] (bound on a free port, returning it) on its UDP side. */
+    /** An HTTP/1.1 server on the TCP side of a port, [udp] (bound on the port it is given, 0: a free one, returning it) on its UDP side. */
     private suspend fun <U> h1And(
-        udp: suspend () -> Pair<U, Int>,
+        udp: suspend (port: Int) -> Pair<U, Int>,
         release: suspend (U) -> Unit,
         module: io.ktor.server.application.Application.() -> Unit = okServer(),
     ): Triple<TestServer, U, Int> {
         val (u, server, port) =
-            bindOnSamePort(first = udp, release = release) { p ->
-                testServer(configure = { http3 = false }, port = p, module = module).first
-            }
+            bindOnSamePort(
+                first = udp,
+                releaseFirst = release,
+                second = { p -> testServer(configure = { http3 = false }, port = p, module = module) },
+                releaseSecond = { runCatching { it.stop(0, 0) } },
+            )
         return Triple(server, u, port)
     }
 
@@ -304,7 +307,7 @@ class ClientDiagnosticsTest {
         val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(serverTls(Http3Endpoint.H3)).build() }.build()
         val t =
             h1And(
-                { Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0), config).let { it to it.localAddress.port } },
+                { p -> Http3Endpoint.bind(InetSocketAddress("127.0.0.1", p), config).let { it to it.localAddress.port } },
                 { it.close() },
                 module,
             )
@@ -328,7 +331,7 @@ class ClientDiagnosticsTest {
                     QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(serverTls("not-h3")).build() }.build()
                 val (server, ep, port) =
                     h1And(
-                        { QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), config).let { it to it.localAddress.port } },
+                        { p -> QuicEndpoint.bind(InetSocketAddress("127.0.0.1", p), config).let { it to it.localAddress.port } },
                         { it.close() },
                     )
                 try {

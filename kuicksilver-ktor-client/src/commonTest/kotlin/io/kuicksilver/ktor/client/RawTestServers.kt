@@ -48,10 +48,22 @@ internal suspend fun readRequest(input: ByteReadChannel): String {
     return line
 }
 
+/** A UDP socket on 127.0.0.1:[port] (0: a free one) with its port. */
+internal suspend fun udpOn(
+    selector: SelectorManager,
+    port: Int,
+) = aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", port)).let { it to (it.localAddress as InetSocketAddress).port }
+
+/** A TCP listener on 127.0.0.1:[port] (0: a free one) with its port. */
+internal suspend fun tcpOn(
+    selector: SelectorManager,
+    port: Int,
+) = bindTcp(selector, "127.0.0.1", port).let { it to (it.localAddress as InetSocketAddress).port }
+
 /**
  * A TLS (HTTP/1.1) listener on 127.0.0.1 that runs [handler] once per accepted connection with its index, then closes it;
  * with [silentUdp] the UDP port of the same number is bound too and never answers (QUIC blocked): the UDP side binds a
- * free port first and TCP takes that number ([bindOnSamePort]; a free TCP port says nothing about its UDP twin). With
+ * free port and TCP takes that number, or the other way round ([bindOnSamePort]; a free port of one says nothing about its twin). With
  * [listener] (not closed here) it serves on that socket instead of binding one. Connections are accepted once
  * [acceptAfter] completed (they wait in the backlog until then). [block] gets the port.
  */
@@ -94,14 +106,11 @@ internal suspend fun tlsWithSilentUdp(
 
                 silentUdp -> {
                     bindOnSamePort(
-                        first = {
-                            aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)).let {
-                                it to
-                                    (it.localAddress as InetSocketAddress).port
-                            }
-                        },
-                        release = { it.close() },
-                    ) { p -> bindTcp(selector, "127.0.0.1", p) }.let { (u, t, _) ->
+                        first = { p -> udpOn(selector, p) },
+                        releaseFirst = { it.close() },
+                        second = { p -> tcpOn(selector, p) },
+                        releaseSecond = { it.close() },
+                    ).let { (u, t, _) ->
                         udp = u
                         t
                     }
@@ -228,14 +237,11 @@ internal suspend fun udpRelay(
         try {
             if (tcpTwin) {
                 bindOnSamePort(
-                    first = {
-                        aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)).let {
-                            it to
-                                (it.localAddress as InetSocketAddress).port
-                        }
-                    },
-                    release = { it.close() },
-                ) { p -> bindTcp(selector, "127.0.0.1", p) }.let { (u, t, _) -> u to t }
+                    first = { p -> udpOn(selector, p) },
+                    releaseFirst = { it.close() },
+                    second = { p -> tcpOn(selector, p) },
+                    releaseSecond = { it.close() },
+                ).let { (u, t, _) -> u to t }
             } else {
                 aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)) to null
             }
