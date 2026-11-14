@@ -10,7 +10,9 @@
 #   macos      the macosArm64 executable on this host (a Mac), h2spec in its container
 #   linux-x64  the linuxX64 executable and h2spec together in one linux/amd64 container (the release gate)
 # Docker Desktop on macOS gives a container no host network by default: h2spec then reaches the host's loopback server as
-# host.docker.internal. On Linux it shares the host network and connects to 127.0.0.1.
+# host.docker.internal. On Linux it shares the host network and connects to 127.0.0.1. h2spec sends that host as
+# :authority; the test identity names 127.0.0.1 but not host.docker.internal, so on macOS the server runs as a trusted
+# gateway (no 421 for a misdirected request, RFC 9110 section 7.4) and on Linux with the check on.
 # Usage: h2spec.sh [--no-build] [jvm|macos|linux-x64]...   (default: jvm); reports in build/h2spec/<kind>/
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -59,7 +61,9 @@ host_run() { # <kind>: the server on this host, h2spec in its container
   local kind=$1 dir="build/h2spec/$1" log pid port
   mkdir -p "$dir"
   log="$dir/server.log"
-  bash tools/interop/h2-server.sh run "$kind" 127.0.0.1 0 > "$log" 2>&1 &
+  local gateway=()
+  if [ "$(uname -s)" = Darwin ]; then gateway=(trusted-gateway); fi
+  bash tools/interop/h2-server.sh run "$kind" 127.0.0.1 0 ${gateway[@]+"${gateway[@]}"} > "$log" 2>&1 &
   pid=$!
   port=""
   for _ in $(seq 1 120); do
