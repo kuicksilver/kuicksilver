@@ -147,7 +147,13 @@ class BindOnSamePortTest {
                         releaseFirst = { it.close() },
                         second = { p ->
                             calls += "tcp$p"
-                            if (calls.size == 2) blocker = runCatching { bindTcp(selector, "127.0.0.1", p) }.getOrNull()
+                            if (calls.size == 2) {
+                                // a twin someone else already holds leaves no blocker; a cancellation still ends the test
+                                blocker =
+                                    runCatching { bindTcp(selector, "127.0.0.1", p) }
+                                        .onFailure { if (it is CancellationException) throw it }
+                                        .getOrNull()
+                            }
                             tcpOn(selector, p)
                         },
                         releaseSecond = { it.close() },
