@@ -53,15 +53,18 @@ class SocketAddressAfterCloseTest {
             client.close()
             accepted.close()
             server.close()
-            // the descriptors are closed once the sockets' jobs complete
-            client.socketContext.join()
-            accepted.socketContext.join()
-            server.socketContext.join()
+            // the descriptors are closed in the system before anything is asked: an address read from one still open would
+            // pass without the fix
+            awaitDescriptorClosed(client)
+            awaitDescriptorClosed(accepted)
+            awaitDescriptorClosed(server)
 
             assertEquals(clientPort, client.localAddress.port)
             assertEquals(serverPort, client.remoteAddress.port)
             assertEquals(serverPort, accepted.localAddress.port)
             assertEquals(clientPort, accepted.remoteAddress.port)
+            // a regression guard on Native, whose listener has always taken its address at bind; on the JVM, ktor's asks the
+            // closed channel
             assertEquals(serverPort, server.localAddress.port)
         }
 }

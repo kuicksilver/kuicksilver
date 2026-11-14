@@ -249,8 +249,6 @@ internal suspend fun connectTcpAddressWith(
     val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
     try {
         if (!start(fd, to)) awaitConnected(selector, socket, fd, recheck, undecidedLimit, rechecks)
-        socket.recordLocalAddress()
-        return socket
     } catch (e: PosixException) {
         socket.close()
         throw IOException("Failed to connect to $address.", e)
@@ -258,6 +256,14 @@ internal suspend fun connectTcpAddressWith(
         socket.close() // cancelled (a Happy Eyeballs loser, a connect timeout): the descriptor goes with it
         throw e
     }
+    try {
+        socket.recordLocalAddress()
+    } catch (e: Throwable) {
+        socket.close()
+        // an IOException still, as any failed connect: Happy Eyeballs goes on with the next address
+        throw if (e is PosixException) IOException("Connected to $address, but its local address is unavailable.", e) else e
+    }
+    return socket
 }
 
 internal actual fun platformResolveTcp(
@@ -330,9 +336,12 @@ internal class NativeTcpServerSocket(
                 }
             try {
                 socket.recordLocalAddress()
-            } catch (e: PosixException) {
-                // a connection whose own address the system cannot tell is of no use: it goes, the next one is accepted
+            } catch (e: Throwable) {
                 socket.close()
+                if (e !is PosixException) throw e
+                // dropped without a word, as a connection the peer reset before it was accepted: getsockname fails on an
+                // accepted descriptor only when the system is out of resources (ENOBUFS) or the connection is gone already,
+                // and failing accept() for it would end the listener's accept loop, which is meant for its own failures
                 continue
             }
             return socket
@@ -371,8 +380,10 @@ internal class NativeTcpSocket(
     /**
      * The local address, as `getsockname` gave it once the socket was connected ([recordLocalAddress]); it stays valid after
      * [close]: asked of the descriptor then, it would fail on a closed one or answer for another socket that reuses its number.
+     * Never missing on a socket handed out: [connectTcp] and [NativeTcpServerSocket.accept] record it before they return one.
      */
-    override val localAddress: SocketAddress get() = local ?: throw IllegalStateException("Socket is not connected")
+    override val localAddress: SocketAddress
+        get() = local ?: error("Socket local address is recorded before the socket is handed out; this socket is not connected yet")
 
     /**
      * Takes [localAddress] from the descriptor; called once the connect completed (an accepted socket at once): before it, the

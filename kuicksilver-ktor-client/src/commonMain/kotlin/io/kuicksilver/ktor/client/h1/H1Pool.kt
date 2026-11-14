@@ -192,6 +192,15 @@ internal class H1Pool(
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
 
+    /**
+     * Runs once an HTTP/2 connection has started, before it is handed out, with its TCP socket (tests: lets the server end
+     * it, and the socket close, first, as a GOAWAY right after the preface can).
+     */
+    internal var afterH2StartForTest: (suspend (H2ClientConnection, Socket) -> Unit)? = null
+
+    /** The coroutines of the HTTP/2 connections (tests: none outlives its connection). */
+    internal val h2JobsForTest: Sequence<Job> get() = h2Scope.coroutineContext[Job]!!.children
+
     /** Routes that answered HTTP_1_1_REQUIRED; internal for tests. */
     internal val h2Refused = H2RefusedRoutes(clock)
 
@@ -1268,13 +1277,14 @@ internal class H1Pool(
                             sessions,
                         )
                     if (h2Ok && tls.negotiatedAlpn == "h2") {
+                        // taken before the connection starts: the catches here close TLS (the inner one) and TCP (the outer
+                        // one), neither a started HTTP/2 connection, so what follows its start must not fail without
+                        // aborting it (below)
+                        val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
+
                         // RFC 9113 section 3.2: h2 over TLS. Section 3.4: the request goes out right after our preface, without
                         // waiting for the server's; its preface (its SETTINGS) must still arrive within the connect timeout, or
                         // the connection ends with SETTINGS_TIMEOUT (h2Exchange maps that to the call's failure)
-                        // taken before the connection starts: nothing that can throw comes after it, so a started connection
-                        // never leaks past the catch below, which closes only the transport
-                        val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
-
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         val client =
                             try {
@@ -1328,12 +1338,13 @@ internal class H1Pool(
                                 tls.close()
                                 throw e
                             }
-                        return H2Conn(
-                            client,
-                            key,
-                            clock(),
-                            peerIp,
-                        )
+                        try {
+                            afterH2StartForTest?.invoke(client, tcp)
+                            return H2Conn(client, key, clock(), peerIp)
+                        } catch (e: Throwable) {
+                            client.abort(e)
+                            throw e
+                        }
                     }
                     // ALPN `http/1.1` (RFC 7301): the server agreed to speak HTTP/1.1 (RFC 9112 section 6.1 knowledge)
                     if (tls.negotiatedAlpn == "http/1.1") http11Routes.mark(key)

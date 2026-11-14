@@ -53,7 +53,8 @@ import kotlin.time.Duration.Companion.seconds
  * already, at once. The drain is bounded by [closeTimeout] when one is set: past it the writer is cancelled. A writer that is cancelled (by that bound or
  * by the socket's job) or fails (a reset, or a failed channel) closes the descriptor itself, so a socket never stays open
  * behind a stalled write; a failed one with a reset, so the peer sees the stream cut, not ended.
- * Writing after [close] fails with an IOException, as with ktor's sockets.
+ * Writing after [close] fails with an IOException, as with ktor's sockets. The local and remote addresses are taken at
+ * construction and stay readable after [close].
  *
  * Reading ([attachForReading]) reads as ktor's reader did; an end of stream read after a send failed (on Linux, a receive
  * after a send that took the peer's reset returns the end) fails the channel with the send's failure ([SendFailures]), so a
@@ -65,18 +66,32 @@ internal class KslNioSocket(
     private val selector: SelectorManager,
     closeTimeout: Duration?,
 ) : Socket by delegate {
-    private val selectable = delegate as Selectable
-    private val nio = selectable.channel as SocketChannel
-    private val closing = AtomicBoolean(false)
+    private val selectable: Selectable
+    private val nio: SocketChannel
 
     /**
      * The local address, taken while the socket is open: ktor's socket asks the channel on every read, which throws
      * ClosedChannelException once the socket is closed, and a connected socket's addresses do not change.
      */
-    override val localAddress: SocketAddress = delegate.localAddress
+    override val localAddress: SocketAddress
 
     /** The remote address, taken while the socket is open (as [localAddress]). */
-    override val remoteAddress: SocketAddress = delegate.remoteAddress
+    override val remoteAddress: SocketAddress
+
+    init {
+        // the connected ktor socket is this one's from here on: a construction that fails closes it, nobody else would
+        try {
+            selectable = delegate as Selectable
+            nio = selectable.channel as SocketChannel
+            localAddress = delegate.localAddress
+            remoteAddress = delegate.remoteAddress
+        } catch (e: Throwable) {
+            runCatching { delegate.close() }
+            throw e
+        }
+    }
+
+    private val closing = AtomicBoolean(false)
 
     /** Set by [abort] before it cancels the writer: the writer then ends without shutting the output down. */
     @Volatile private var aborted = false
@@ -355,7 +370,16 @@ internal class KslNioServerSocket(
     private val selector: SelectorManager,
 ) : ServerSocket by delegate {
     /** The bound address, taken while the socket is open: ktor's server socket asks the channel, which throws once closed. */
-    override val localAddress: SocketAddress = delegate.localAddress
+    override val localAddress: SocketAddress =
+        try {
+            delegate.localAddress
+        } catch (e: Throwable) {
+            runCatching { delegate.close() } // the bound ktor socket is this one's: nobody else would close it
+            throw e
+        }
+
+    /** False once the descriptor is closed (tests). */
+    internal val isOpen: Boolean get() = (delegate as Selectable).channel.isOpen
 
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
