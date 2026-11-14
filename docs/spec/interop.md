@@ -155,11 +155,16 @@ new image is noticed. The first run had one failure, http2/5.1/12 ("closed: Send
 with RST_STREAM STREAM_CLOSED, h2spec expects a connection error of that type, which RFC 9113 section 5.1 allows and RFC
 7540 section 5.1 required); it is fixed (`core.StreamStateTest.negative_headersOnAClosedStreamIsAConnectionError`).
 
+h2spec sends the host it connects to as `:authority`. The test identity names 127.0.0.1 but not `host.docker.internal`,
+so the servers on the macOS host run with `trusted-gateway`: the misdirected-request check (421, RFC 9110 section 7.4)
+is off for them, and every case reaches the application. The linuxX64 executable, which h2spec reaches as 127.0.0.1,
+runs with the check on (2026-11-14: 146 / 146). The check itself is covered by `ServerMisdirectedRequestTest`.
+
 | server | generic | http2 (RFC 9113) | hpack (RFC 7541) | total |
 |---|---|---|---|---|
-| JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
-| macosArm64 executable (same host) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
-| linuxX64 executable (one linux/amd64 container with the h2spec binary) | — | — | — | release gate (`tools/ci/local-matrix.sh`) |
+| JVM (macOS arm64 host; h2spec in Docker Desktop, amd64 under emulation, reaching the host as `host.docker.internal`; `trusted-gateway`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
+| macosArm64 executable (same host; `trusted-gateway`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
+| linuxX64 executable (one linux/amd64 container with the h2spec binary; the check on; release gate, `tools/ci/local-matrix.sh`) | 44 / 44 | 94 / 94 | 8 / 8 | 146 / 146 |
 
 ## WebSockets over HTTP/2 (RFC 8441, 2026-11-12)
 

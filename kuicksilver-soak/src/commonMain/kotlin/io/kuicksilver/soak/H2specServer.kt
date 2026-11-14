@@ -22,14 +22,16 @@ import kotlinx.coroutines.runBlocking
  * misdirected-request check on); the bound port is printed as `h2spec-server listening on <port>` once the server accepts
  * connections. Runs until the process is killed.
  *
- * h2spec sends the host it connects to as `:authority`. The test identity names 127.0.0.1, so on Linux, where h2spec
- * connects to 127.0.0.1, the check stays on; on macOS it connects through Docker Desktop as host.docker.internal, which
- * the identity does not name, and `trusted-gateway` turns the check off: every request would be a misdirected one
+ * h2spec sends the host it connects to as `:authority`. The test identity names 127.0.0.1: a server that h2spec reaches
+ * as 127.0.0.1 (on a Linux host, and in the linux-x64 container, on a Mac too) keeps the check on. A server on a macOS
+ * host (the jvm and macos kinds of h2spec.sh) is reached through Docker Desktop as host.docker.internal, which the
+ * identity does not name, and runs with `trusted-gateway`, the check off: every request would be a misdirected one
  * otherwise (421, RFC 9110 section 7.4), and h2spec's cases that wait for DATA would see only the 421 HEADERS.
  */
 public fun h2specServerMain(args: Array<String>) {
     val host = args.getOrNull(0) ?: "127.0.0.1"
     val port = args.getOrNull(1)?.toInt() ?: 0
+    require(args.size <= 3) { "unknown arguments: ${args.drop(3)}" }
     val gateway =
         when (val a = args.getOrNull(2)) {
             null -> false
