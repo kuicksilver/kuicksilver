@@ -101,6 +101,9 @@ public class TlsConnection private constructor(
      */
     private val phase = AtomicInt(HANDSHAKING)
     private var readerJob: Job? = null
+
+    /** Set once the handshake is over and the reader, writer and drainer pumps start (the handshake loop drains alone before). */
+    @Volatile private var pumpsStarted = false
     private var writerJob: Job? = null
 
     /** The most plaintext one ksl_tcp_write takes (a record), learnt from a write that took less than offered; the writer's alone. */
@@ -251,6 +254,7 @@ public class TlsConnection private constructor(
         withTimeoutOrNull(timeout) { handshakeLoop() } ?: throw handshakeTimedOut(config)
         handshakeCompletedForTest?.invoke(this)
         afterHandshake()
+        pumpsStarted = true
         readerJob = scope.launch { readerPump() }
         writerJob = scope.launch { writerPump() }
         scope.launch { drainerPump() }
@@ -276,8 +280,11 @@ public class TlsConnection private constructor(
 
                 // ksl answers WANT_READ when OpenSSL wants to write too: a flight larger than the BIO pair holds (about 17 KiB:
                 // a long chain, a large stapled OCSP response) stops there. What it wrote went out just now; drive again for
-                // the rest before waiting for the peer, which waits for that rest
+                // the rest before waiting for the peer, which waits for that rest. `sent` counts every byte of this flight
+                // only because nothing else drains during the handshake: the pumps (the drainer among them) start after
+                // handshakeLoop returns; a drainer running here could take the bytes and leave `sent` 0, a wait that never ends
                 KslConst.WANT_READ if sent > 0 -> {
+                    check(!pumpsStarted) { "a drainer runs during the handshake" }
                     continue
                 }
 
