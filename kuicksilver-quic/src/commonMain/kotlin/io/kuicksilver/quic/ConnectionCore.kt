@@ -659,6 +659,15 @@ public class ConnectionCore internal constructor(
     internal var preferredProbeStarted = false
     internal var movedToPreferred = false
 
+    /**
+     * Server: the connection moved to the preferred-address socket (RFC 9000 section 9.6.2). Its packets on the original address are
+     * dropped from then on ([leftAddressDropped]), and its IDs get no Stateless Reset there once they stop routing (EndpointCore).
+     */
+    internal var leftOriginalAddress = false
+
+    /** Server: authenticated packets dropped because they reached the original address after [leftOriginalAddress]. */
+    internal var leftAddressDropped = 0L
+
     /** Server: the endpoint's preferred address, advertised in the transport parameters (RFC 9000 section 9.6); null: none. */
     internal var preferredAddress: PreferredAddress? = null
 

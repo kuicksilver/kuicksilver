@@ -138,6 +138,24 @@ internal class QlogWriter(
         "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}",
     )
 
+    /**
+     * A packet authenticated and then dropped: qlog `transport:packet_dropped` with one of its [trigger]s and our own [details]
+     * (a field qlog tools that do not know it ignore).
+     */
+    fun packetDropped(
+        space: SpaceId,
+        pn: Long,
+        size: Int,
+        trigger: String,
+        details: String,
+        now: TimeMark,
+    ) = event(
+        now,
+        "transport:packet_dropped",
+        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}," +
+            "\"trigger\":\"$trigger\",\"details\":\"$details\"",
+    )
+
     fun packetLost(
         space: SpaceId,
         pn: Long,

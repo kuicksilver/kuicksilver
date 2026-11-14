@@ -361,6 +361,12 @@ internal class PacketReceiver(
                 return false
             }
         }
+        if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=
+            0
+        ) {
+            c.fail(TransportError.PROTOCOL_VIOLATION, 0, "reserved header bits set", null)
+            return true
+        } // sections 17.2 and 17.3.1: checked once both protections are off, on every authenticated packet (a duplicate too)
         if (sp.ack.isDuplicate(pn)) {
             c.duplicatesDropped++
             lastOutcome = OUTCOME_DUPLICATE
@@ -375,16 +381,11 @@ internal class PacketReceiver(
             socket != io.kuicksilver.quic.PREFERRED_SOCKET &&
             c.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET
         ) {
-            c.datagramsDropped++
+            c.leftAddressDropped++
+            c.qlog?.packetDropped(space, pn, hv.packetEnd - headerStart(), "unexpected_packet", "left_address", now)
             lastOutcome = OUTCOME_LEFT_ADDRESS
             return false
         }
-        if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=
-            0
-        ) {
-            c.fail(TransportError.PROTOCOL_VIOLATION, 0, "reserved header bits set", null)
-            return true
-        } // sections 17.2 and 17.3.1: checked once both protections are off
         val pnLen = (data[headerStart()].toInt() and 0x03) + 1
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen

@@ -396,32 +396,66 @@ class PreferredAddressTest {
     private fun movedServer(p: EndpointPair): ConnectionCore? =
         p.server.connections().firstOrNull { it.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
 
+    /**
+     * Connects [p] and holds back the client's 1-RTT datagrams to the original address (its stream data goes there until it moves)
+     * until the server moved to its preferred address: what was held arrives late. Returns the client, the moved server connection and
+     * the held datagrams.
+     */
+    private fun moveHoldingOriginal(p: EndpointPair): Triple<ConnectionCore, ConnectionCore, List<ByteArray>> {
+        val c = p.connect()
+        assertTrue(p.runUntil(5.seconds) { c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
+        assertTrue(c.path.isRemote(p.serverAddr), "not moved yet")
+        val held = ArrayList<ByteArray>()
+        p.filterToServer = { _, bytes ->
+            val delay = p.toServerDest == p.serverAddr && (bytes[0].toInt() and 0x80) == 0
+            if (delay) held += bytes
+            !delay
+        }
+        val sid = c.openStream(true)
+        c.writeStream(sid, ByteArray(100), 0, 100, true)
+        assertTrue(p.runUntil(10.seconds) { movedServer(p) != null }, "the server moved to its preferred address")
+        p.filterToServer = { _, _ -> true }
+        assertTrue(held.isNotEmpty(), "the client sent to the original address before it moved")
+        return Triple(c, movedServer(p)!!, held)
+    }
+
     @Test fun negative_delayedPacketOnTheOriginalAddressAfterTheMoveSendsNothingThere() {
         // RFC 9000 section 9.6.2: once moved, the server "begins sending non-probing packets to the client exclusively from its
         // preferred IP address" and "MAY continue to process delayed packets that are received on the old IP address". A packet the
         // client sent to the original address before it moved, overtaken by its first one to the preferred address (two sockets,
         // two receive loops: no order between them), opened a new path on the original socket and challenged it from there, so the
         // client saw a stranger. The original address is closed for the connection once it moved
-        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
-            val c = p.connect()
-            assertTrue(p.runUntil(5.seconds) { c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
-            assertTrue(c.path.isRemote(p.serverAddr), "not moved yet")
-            // the client's next 1-RTT datagrams to the original address (its stream data goes there until it moves) arrive late
-            val held = ArrayList<ByteArray>()
-            p.filterToServer = { _, bytes ->
-                val delay = p.toServerDest == p.serverAddr && (bytes[0].toInt() and 0x80) == 0
-                if (delay) held += bytes
-                !delay
+        val qlog = ArrayList<String>()
+        val sink =
+            object : io.kuicksilver.quic.QlogSink {
+                override fun open(
+                    odcidHex: String,
+                    role: io.kuicksilver.tls.TlsRole,
+                ) = object : io.kuicksilver.quic.QlogTrace {
+                    override fun write(record: String) {
+                        qlog += record
+                    }
+
+                    override fun close() {}
+                }
             }
-            val sid = c.openStream(true)
-            c.writeStream(sid, ByteArray(100), 0, 100, true)
-            assertTrue(p.runUntil(10.seconds) { movedServer(p) != null }, "the server moved to its preferred address")
-            p.filterToServer = { _, _ -> true }
-            val s = movedServer(p)!!
-            assertTrue(held.isNotEmpty(), "the client sent to the original address before it moved")
+        val p =
+            EndpointPair(
+                crypto = KslQuicCrypto,
+                serverQuic = io.kuicksilver.quic.quicConfig { this.qlog = sink },
+                serverPreferred = PreferredAddress(v4, null),
+            )
+        try {
+            val (c, s, held) = moveHoldingOriginal(p)
             val sentBefore = p.serverSent.size
+            val invalidResets = s.stats.invalidResets
             for (d in held) p.feed(p.server, d, p.clientAddr)
+            assertEquals(held.size.toLong(), s.leftAddressDropped, "each one dropped and counted as such")
+            // authenticated, so no Stateless Reset of the client's (section 10.3.1) can hide behind it: not checked as one
+            assertEquals(invalidResets, s.stats.invalidResets, "not taken for an invalid Stateless Reset")
+            val dropped = qlog.filter { "transport:packet_dropped" in it }
+            assertEquals(held.size, dropped.size, "a qlog packet_dropped for each: $dropped")
+            assertTrue(dropped.all { "\"details\":\"left_address\"" in it }, "$dropped")
             p.runUntil(2.seconds) { false }
             val fromOriginal = p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }
             assertEquals(0, fromOriginal, "nothing of the moved connection leaves the original address")
@@ -429,6 +463,82 @@ class PreferredAddressTest {
             assertTrue(s.paths.all.none { it.socket == PathId.Initial }, "no path on the original socket: ${s.paths.all}")
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the data arrives")
             assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_reservedBitsOnAPacketToTheLeftAddressAreAProtocolViolation() {
+        // RFC 9000 section 17.3.1: "An endpoint MUST treat receipt of a packet that has a non-zero value for these bits, after removing
+        // both packet and header protection, as a connection error of type PROTOCOL_VIOLATION": the drop on the address the
+        // connection left comes after that check. Null crypto (header protection the identity, no AEAD over the header) lets the test
+        // set the bits the client "sent"
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            val (_, s, held) = moveHoldingOriginal(p)
+            val d = held.first().copyOf()
+            d[0] = (d[0].toInt() or 0x08).toByte()
+            p.feed(p.server, d, p.clientAddr)
+            p.drain(s)
+            val r = p.closed(s)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r, "${p.events[s]}")
+            assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, r.code, "$r")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_noStatelessResetFromTheLeftAddressForTheMovedConnectionsIds() {
+        // RFC 9000 sections 9.6.2 and 9.5: nothing of the moved connection leaves the original address, nothing links the two. The
+        // client retires the ID it used there; the server routes it for 3 x PTO more (section 5.1.2), then a datagram with it is an
+        // unknown short header, which a Stateless Reset may answer (a MAY, section 10.3). From the original address it would be one
+        // more datagram the moved connection makes leave there: none is sent
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        try {
+            val (c, _, held) = moveHoldingOriginal(p)
+            val seq0 = held.first().copyOfRange(1, 1 + c.peerTp!!.preferredAddressCid!!.length)
+            val seq0Id =
+                io.kuicksilver.quic.wire
+                    .ConnectionId(seq0)
+            assertTrue(p.runUntil(10.seconds) { p.server.registry.owner(seq0Id) == null }, "seq 0 stops routing")
+            val sentBefore = p.serverSent.size
+            for (d in held) p.feed(p.server, d, p.clientAddr)
+            assertTrue(p.stateless(p.server).isEmpty(), "no Stateless Reset queued")
+            p.runUntil(1.seconds) { false }
+            assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
+            assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_staleMoveToThePreferredAddressIsNotMade() {
+        // RFC 9000 sections 9.6.2 and 9.3: the server moves once the preferred path is validated and the newest non-probing packet
+        // came there. A non-probing packet on the preferred address left the move pending until the validation; a newer one on the
+        // original address since (a client whose own validation of the preferred address failed carries on there, section 9.6.1)
+        // makes that packet stale, and the move with it: the server must stay where the client is, not drop its packets there
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
+            assertTrue(p.confirmed(c))
+            assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
+            val s = p.server.connections().single()
+            s.now = p.now
+            val pn = s.largestNonProbingPn
+            // a non-probing packet of the client on the preferred address: a path there under validation, the move pending
+            s.onPathPacket(io.kuicksilver.quic.PREFERRED_SOCKET, p.clientAddr, pn + 1, nonProbing = true, datagramBytes = 1200)
+            val pp = s.paths.all.single { it.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+            assertTrue(pp.preferredMovePending && pp.state == PathState.Validating, "$pp")
+            // a newer one on the original address
+            s.onPathPacket(PathId.Initial, p.clientAddr, pn + 2, nonProbing = true, datagramBytes = 100)
+            // the server's challenge on the preferred path goes out, and is answered
+            p.batch.clear()
+            s.poll(p.batch, p.now)
+            assertTrue(pp.challenge != 0L, "challenged")
+            s.onPathResponse(pp.challenge)
+            assertEquals(PathState.Validated, pp.state)
+            assertEquals(PathId.Initial, s.path.socket, "the connection stays on the original address")
+            assertTrue(!s.leftOriginalAddress)
         } finally {
             p.close()
         }

@@ -83,7 +83,7 @@ internal class EndpointPair(
     var filterToClient: (index: Int, bytes: ByteArray) -> Boolean = { _, _ -> true }
     var sentToServer: Int = 0
 
-    /** The destination of the datagram [filterToServer] is deciding on (the original or the preferred address). */
+    /** The destination of the datagram [filterToServer] is deciding on (the original or the preferred address); null outside it. */
     var toServerDest: InetSocketAddress? = null
     var sentToClient: Int = 0
 
@@ -213,6 +213,7 @@ internal class EndpointPair(
             val (dest, bytes) = pending[k]
             if (toServer) toServerDest = dest
             val keep = if (toServer) filterToServer(sentToServer++, bytes) else filterToClient(sentToClient++, bytes)
+            toServerDest = null
             if (!keep) continue
             // the link cannot carry it (DF set: no fragmentation, no ICMP)
             if (bytes.size > (if (toServer) linkMtuToServer else linkMtuToClient)) continue

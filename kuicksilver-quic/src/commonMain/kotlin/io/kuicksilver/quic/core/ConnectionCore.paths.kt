@@ -313,6 +313,7 @@ internal fun ConnectionCore.onPathPacket(
         if (p.socket == PREFERRED_SOCKET && active.socket != PREFERRED_SOCKET) {
             // RFC 9000 section 9.6.1: non-probing packets go out from the preferred address only once the client's address is validated
             // there; until then they keep leaving the original socket
+            p.preferredMovePn = pn
             if (p.state == PathState.Validated) moveToPreferredSocket(p) else p.preferredMovePending = true
         } else if (p.state != PathState.Failed &&
             dcidFor(p) != null
@@ -331,6 +332,13 @@ internal fun ConnectionCore.onPathPacket(
  * connection moves there and the original path closes, so nothing leaves the old socket any more.
  */
 private fun ConnectionCore.moveToPreferredSocket(p: Path) {
+    // only while the packet that asked for the move is still the newest non-probing one: a newer one on the original address since
+    // (a client back there after its own validation of the preferred address failed, section 9.6.1) keeps the connection there, as
+    // only the highest-numbered non-probing packet moves it (section 9.3)
+    if (p.preferredMovePn != largestNonProbingPn) {
+        p.preferredMovePending = false
+        return
+    }
     if (dcidFor(p) == null) {
         p.preferredMovePending = true // no spare ID of the client's yet: on the next non-probing packet
         return
@@ -342,6 +350,7 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
         paths.remove(old)
         releasePathCid(old)
     }
+    if (paths.active.socket == PREFERRED_SOCKET) leftOriginalAddress = true
 }
 
 /**

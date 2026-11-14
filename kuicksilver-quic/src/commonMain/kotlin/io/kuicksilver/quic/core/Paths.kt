@@ -82,6 +82,9 @@ internal class Path(
     /** Server: the client's non-probing packets arrived on this preferred-socket path before its validation finished (RFC 9000 section 9.6.1). */
     var preferredMovePending: Boolean = false
 
+    /** Server: the number of the non-probing packet on this preferred-socket path that asked for the move ([preferredMovePending]). */
+    var preferredMovePn: Long = -1L
+
     /** The largest packet sent on this path: a Packet Too Big that claims a smaller one was too large is about another path, or forged. */
     var largestSent: Int = 0
     var rtt: RttEstimator = RttEstimator(initialRtt)

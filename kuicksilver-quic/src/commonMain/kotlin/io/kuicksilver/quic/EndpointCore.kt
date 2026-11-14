@@ -314,8 +314,10 @@ public class EndpointCore internal constructor(
             ) = registry.add(cid, core)
 
             override fun remove(cid: ConnectionId) {
+                val owner = registry.owner(cid)
                 registry.remove(cid)
                 route.release(cid)
+                if (owner != null && owner.leftOriginalAddress) rememberLeftAddress(cid, owner)
             }
 
             override fun contains(cid: ConnectionId): Boolean = registry.contains(cid)
@@ -750,6 +752,10 @@ public class EndpointCore internal constructor(
         if (hv.type != PacketType.OneRtt && grouped && routedElsewhere(route.ownerLoop(data, hv.dcidOff, hv.dcidLen))) {
             return null
         } // another loop's: the group forwards it (ownerLoop)
+        if (hv.type == PacketType.OneRtt && leftAddressCids.isNotEmpty() && isLeftAddressCid(data, now)) {
+            droppedStateless++
+            return null
+        }
         if (hv.type == PacketType.OneRtt) {
             // only for an ID this loop issued (threat-model 3.4); with QUIC-LB also our server ID under the current or previous
             // configuration, which decrypts: only while the reset limit would let the answer out, and within a budget of
@@ -910,6 +916,9 @@ public class EndpointCore internal constructor(
         /** Server addresses whose last RTT a client endpoint remembers. */
         const val RTT_MEMORY = 256
 
+        /** IDs of moved connections an endpoint keeps from Stateless Resets on the original address ([leftAddressCids]). */
+        const val LEFT_ADDRESS_IDS = 1024
+
         /** ICMP Packet Too Big messages an endpoint looks at per second; the rest are only counted. */
         const val PTB_PER_SECOND = 64
     }
@@ -1060,6 +1069,44 @@ public class EndpointCore internal constructor(
     }
 
     /**
+     * IDs of server connections that moved to the preferred-address socket (RFC 9000 section 9.6.2), kept after they stopped
+     * routing (retired by the client, or the connection gone), until when no Stateless Reset answers them here. A client packet
+     * delayed on the original address past its ID's routing would otherwise get one from that address: a Stateless Reset is only a
+     * MAY (section 10.3), and the moved connection leaves nothing on the address it left, nor anything that links it to its new one
+     * (section 9.5). At most [LEFT_ADDRESS_IDS], the oldest dropped first, each for the connection's idle timeout (after which the
+     * client has given the connection up anyway).
+     */
+    private val leftAddressCids = LinkedHashMap<ConnectionId, TimeMark>()
+
+    private fun rememberLeftAddress(
+        cid: ConnectionId,
+        core: ConnectionCore,
+    ) {
+        val ttl = core.config.maxIdleTimeout.takeIf { it.isPositive() } ?: 30.seconds
+        leftAddressCids.remove(cid)
+        leftAddressCids[cid] = core.now + ttl
+        if (leftAddressCids.size > LEFT_ADDRESS_IDS) leftAddressCids.remove(leftAddressCids.keys.first())
+    }
+
+    /** True when the short header's DCID is one of [leftAddressCids] still remembered at [now]; expired ones are forgotten (oldest first). */
+    private fun isLeftAddressCid(
+        data: PacketBuffer,
+        now: TimeMark,
+    ): Boolean {
+        val it = leftAddressCids.entries.iterator()
+        while (it.hasNext()) {
+            if (it.next().value > now) break
+            it.remove()
+        }
+        if (leftAddressCids.isEmpty()) return false
+        val cid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
+        val until = leftAddressCids[cid] ?: return false
+        if (until > now) return true
+        leftAddressCids.remove(cid)
+        return false
+    }
+
+    /**
      * The final smoothed RTT of the last client connection to each server address that ended on this endpoint's socket (RFC 9002
      * section 6.2.2: a connection over the same network MAY start from the previous connection's smoothed RTT), used by [connect] as
      * the next connection's initial RTT; at most [RTT_MEMORY] addresses, the least recently stored dropped first.
@@ -1086,6 +1133,7 @@ public class EndpointCore internal constructor(
             core.cids.forEachPeerToken(sink::removed)
         }
         reissueRetry.remove(core)
+        if (core.leftOriginalAddress) for (cid in core.registeredCids) rememberLeftAddress(cid, core)
         registry.removeAll(core)
         connections.remove(core)
         accepted.remove(core)
