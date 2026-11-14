@@ -168,7 +168,10 @@ public class H2ServerConnection private constructor(
                             )
                         c.open.update { it + 1 }
                         c.taken.update { it + 1 }
-                        // a connection that ended meanwhile takes no request: the stream goes back at once
+                        // a connection that ended meanwhile takes no request: the stream goes back at once. No callback
+                        // can throw out of this release: onRequest runs in the dispatch, so the events it makes are left
+                        // to the loop already running (afterCore), nothing waits on the new stream yet, and a server has
+                        // no reservation to give back (only the clock is read, as by every core call)
                         if (ch.trySend(stream).isFailure) stream.release()
                     },
                     ownResponseFields = ownResponseFields,
@@ -329,7 +332,9 @@ public class H2ServerStream internal constructor(
     /**
      * The handler is done with the stream: one not finished both ways is reset with CANCEL, except a complete response
      * whose request is still open, which the core stops with NO_ERROR after the response (RFC 9113 section 8.1); the stream
-     * no longer counts toward SETTINGS_MAX_CONCURRENT_STREAMS. Every delivered stream must be released once.
+     * no longer counts toward SETTINGS_MAX_CONCURRENT_STREAMS. Every delivered stream must be released once. It may throw
+     * an engine callback's exception (the first that is not a cancellation, the others suppressed under it); the stream and
+     * its slot are given back all the same.
      */
     public fun release() {
         // a release that throws (an engine callback in the dispatch after its reset) was the first one: the stream was

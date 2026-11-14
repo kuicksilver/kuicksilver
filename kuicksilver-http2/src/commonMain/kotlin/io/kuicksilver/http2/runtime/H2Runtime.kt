@@ -1154,7 +1154,8 @@ internal class H2Runtime(
     /**
      * The application is done with [s] (its call ended): a stream not finished both ways is reset with CANCEL (RFC 9113
      * section 8.1: the client no longer wants the response), the core releases it and its reservation comes back. True for
-     * the first call, false for every later one.
+     * the first call, false for every later one. It may throw an engine callback's exception (the first that is not a
+     * cancellation, the others suppressed under it); the stream and its slot are given back all the same.
      */
     fun release(s: StreamRt): Boolean {
         val first =
@@ -1169,31 +1170,38 @@ internal class H2Runtime(
         if (!first) return false
         // the stream and its slot come back even when a step throws (an engine callback's exception passes through
         // withCore): the first call is the only one that releases, so what is not returned here is held for the
-        // connection's life. Every step runs; the first exception is thrown, the later ones added to it as suppressed. A
-        // callback's CancellationException does not hide a real failure after it: the first other one is thrown instead
-        val failures = ArrayList<Throwable>(0)
-        val step = { action: () -> Unit ->
-            try {
-                action()
-            } catch (e: Throwable) {
-                failures += e
+        // connection's life. Every step runs; the first exception that is not a CancellationException (else the first) is
+        // thrown, all the others suppressed under it in order
+        var failures: ArrayList<Throwable>? = null
+        failures = step(failures) { abandon(s, CancellationException("the call ended")) }
+        failures = step(failures) { withCore { release(s.id) } }
+        failures =
+            step(failures) {
+                lock.withLock {
+                    streams.remove(s.id)
+                    s.chunks.clear()
+                }
             }
-        }
-        step { abandon(s, CancellationException("the call ended")) }
-        step { withCore { release(s.id) } }
-        step {
-            lock.withLock {
-                streams.remove(s.id)
-                s.chunks.clear()
-            }
-        }
-        if (client) step { unreserve() }
-        if (failures.isNotEmpty()) {
-            val primary = failures.firstOrNull { it !is CancellationException } ?: failures[0]
-            for (e in failures) if (e !== primary) primary.addSuppressed(e)
+        if (client) failures = step(failures) { unreserve() }
+        failures?.let { all ->
+            val primary = all.firstOrNull { it !is CancellationException } ?: all[0]
+            for (e in all) if (e !== primary) primary.addSuppressed(e)
             throw primary
         }
         return true
+    }
+
+    /** Runs [action] for [release]: its exception is added to [failures], a list made only then. */
+    private inline fun step(
+        failures: ArrayList<Throwable>?,
+        action: () -> Unit,
+    ): ArrayList<Throwable>? {
+        try {
+            action()
+        } catch (e: Throwable) {
+            return (failures ?: ArrayList(2)).also { it += e }
+        }
+        return failures
     }
 
     /** A server's response head on [s]. */

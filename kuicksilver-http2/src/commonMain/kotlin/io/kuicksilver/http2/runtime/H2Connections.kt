@@ -280,7 +280,8 @@ public class H2ClientStream internal constructor(
 
     /**
      * The call is over: a stream not finished both ways is reset with CANCEL, the connection forgets it and its slot comes
-     * back. Every opened stream must be released once.
+     * back. Every opened stream must be released once. It may throw an engine callback's exception (the first that is not a
+     * cancellation, the others suppressed under it); the stream and its slot are given back all the same.
      */
     public fun release() {
         rt.release(s)
