@@ -400,6 +400,51 @@ class SettingsAckTest {
         }
     }
 
+    /**
+     * Fairness when the connection window comes back: an urgency-0 frame waits for it (it gave its connection window back
+     * while it waited for its stream window), and so do an urgency-7 frame and an urgency-7 writer. The next connection
+     * WINDOW_UPDATE goes to the urgent waiting frame first: the writer is not told of window the frame takes, so it cannot answer
+     * [H2Event.WindowAvailable] with a frame of its own before [H2ConnectionCore.poll] writes the urgent one.
+     */
+    @Test
+    fun negative_returningConnectionWindowGoesToTheWaitingUrgentFrameFirst() {
+        for (role in Role.entries) {
+            val m = PeerMirror(role)
+            val a = m.block(endStream = false)
+            val b = m.block(endStream = false)
+            val c = m.block(endStream = false)
+            val d = m.block(endStream = false)
+            m.p.core.setPriority(a, 0, incremental = false)
+            m.p.core.setPriority(b, 7, incremental = false)
+            m.p.core.setPriority(d, 7, incremental = false)
+            m.read()
+            assertEquals(16_384, m.p.core.sendData(d, ByteArray(16_384), 0, 16_384, endStream = false)) // waits as well
+            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 0)
+            assertEquals(listOf("ACK"), m.read(), "$role")
+            m.windowUpdate(c, 65_535)
+            var left = 65_535
+            while (left > 0) {
+                val n = minOf(16_384, left)
+                assertEquals(n, m.p.core.sendData(c, ByteArray(n), 0, n, endStream = false))
+                m.read()
+                left -= n
+            }
+            m.windowUpdate(a, 16_384) // a and d wait for the connection now
+            m.windowUpdate(d, 16_384)
+            m.windowUpdate(b, 16_384)
+            assertEquals(0, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false)) // b waits for it too
+            m.p.events()
+            m.windowUpdate(0, 16_384)
+            assertTrue(m.p.events().none { it is H2Event.WindowAvailable && it.streamId == b }, "$role: b not told")
+            assertEquals(0, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false), "$role")
+            assertEquals(listOf("D$a"), m.read(), "$role: the more urgent waiting frame first")
+            assertEquals(a to 16_384, m.data.last())
+            assertTrue(m.p.core.stalls(d), "$role")
+            m.quiesce()
+        }
+    }
+
     /** A stream reset after a shrink uncharged its queued DATA: the window comes back to the connection once, not twice. */
     @Test
     fun negative_resetAfterAShrinkGivesTheWindowBackOnce() {

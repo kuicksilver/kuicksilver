@@ -495,8 +495,8 @@ internal fun H2ConnectionCore.onWindowUpdate(
         if (peerViewOfConnectionWindow > H2.MAX_WINDOW) {
             throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection window above 2^31 - 1")
         }
+        unstall(takeConnection = true) // DATA waiting for the connection window first, then the writers
         for (s in blockedOnConnection.toList()) tryWake(s)
-        unstall()
         return
     }
     val s = streams[id]

@@ -936,8 +936,8 @@ internal class H2ConnectionCore(
         item.connCharged = false
         queuedDataBytes -= item.length
         connSendWindow += item.length
+        unstall(takeConnection = true) // DATA waiting for the connection window first, then the writers
         for (w in blockedOnConnection.toList()) tryWake(w)
-        unstall() // DATA waiting for the connection window
     }
 
     /**
@@ -999,16 +999,29 @@ internal class H2ConnectionCore(
     /** The peer's view of the connection window: what we hold plus the DATA charged to it but not written (section 6.9.1). */
     internal val peerViewOfConnectionWindow: Long get() = connSendWindow + queuedDataBytes
 
-    /** A window grew: [stalled] streams whose DATA can be written again go back to the DATA scheduler. */
-    internal fun unstall() {
+    /**
+     * A window grew: [stalled] streams whose DATA can be written again go back to the DATA scheduler, most urgent first.
+     * When the connection window grew ([takeConnection]), a frame both windows now cover whole takes its connection window
+     * back at once, so a writer told of the window afterwards ([tryWake], called after this) cannot take it from the frame
+     * that waited for it. A stream window or a SETTINGS leaves the connection window to [poll].
+     */
+    internal fun unstall(takeConnection: Boolean = false) {
         if (stalled.isEmpty()) return
-        val it = stalled.iterator()
-        while (it.hasNext()) {
-            val s = it.next()
+        val candidates = stalled.sortedWith(compareBy<H2Stream>({ it.urgency }, { it.id }))
+        for (s in candidates) {
             val head = s.out.firstOrNull()
-            if (head is OutItem.Data && !writable(s, head)) continue
-            it.remove()
-            if (head is OutItem.Data) dataReady.add(s)
+            if (head is OutItem.Data) {
+                if (!writable(s, head)) continue
+                if (takeConnection && !head.connCharged && head.length <= connSendWindow &&
+                    (head.streamCharged || head.length <= s.sendWindow)
+                ) {
+                    head.connCharged = true
+                    connSendWindow -= head.length
+                    queuedDataBytes += head.length
+                }
+                dataReady.add(s)
+            }
+            stalled.remove(s)
         }
     }
 
@@ -1053,8 +1066,8 @@ internal class H2ConnectionCore(
         if (refund == 0L) return
         queuedDataBytes -= refund
         connSendWindow += refund
+        unstall(takeConnection = true) // DATA waiting for the connection window first, then the writers
         for (w in blockedOnConnection.toList()) tryWake(w)
-        unstall()
     }
 
     private fun want(s: H2Stream) {
