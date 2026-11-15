@@ -26,11 +26,12 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The HTTP/1.1 pipeline's deadlines on real threads: a step done as its deadline fires (the deadline lands on another thread
  * after the step returned, before the deadline's scope completed) counts as done. A head parsed then is the request, not a
- * 408.
+ * 408; a response the writer took off its channel then is written, not dropped with the connection.
  */
 class H1PipelineDeadlineRaceTest {
     @AfterTest fun reset() {
         headParsedForTest = null
+        pipelineResponseTakenForTest = null
     }
 
     /** Returns only once the calling block was cancelled by its deadline, without suspending after its first resumption. */
@@ -66,5 +67,10 @@ class H1PipelineDeadlineRaceTest {
     @Test fun negative_aHeadParsedAsItsDeadlineFiresIsTheRequest() {
         headParsedForTest = returnAsTheDeadlineFires
         assertEquals("HTTP/1.1 200 OK", firstLineOfTheAnswer(idle = 10.seconds, header = 200.milliseconds))
+    }
+
+    @Test fun negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten() {
+        pipelineResponseTakenForTest = returnAsTheDeadlineFires
+        assertEquals("HTTP/1.1 200 OK", firstLineOfTheAnswer(idle = 200.milliseconds, header = 10.seconds))
     }
 }

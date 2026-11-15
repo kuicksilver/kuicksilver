@@ -36,6 +36,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.fieldListElements
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -158,6 +159,10 @@ private val LINGER = 2.seconds
 /** Test hook: runs once a request head was parsed, still inside its deadline. */
 @kotlin.concurrent.Volatile
 internal var headParsedForTest: (suspend () -> Unit)? = null
+
+/** Test hook: runs once the writer took the next response off its channel, still inside the idle timeout. */
+@kotlin.concurrent.Volatile
+internal var pipelineResponseTakenForTest: (suspend () -> Unit)? = null
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
@@ -1052,7 +1057,9 @@ private suspend fun pipelineWriterLoop(
     onEnd: (String) -> Unit,
 ) {
     while (true) {
-        val next = withTimeoutOrNull(timeout) { channel.receiveCatching() }
+        // completedWithin: a response taken off the channel as the idle timeout fires is written, never dropped (its
+        // request was read and handled; dropped, its channel was neither written nor cancelled)
+        val next = completedWithin(timeout) { channel.receiveCatching().also { pipelineResponseTakenForTest?.invoke() } }
         if (next == null) {
             // idle: the reader is waiting for a head that does not come, so the whole connection ends, not only this side
             onEnd("HTTP/1.1 connection idle for $timeout")
