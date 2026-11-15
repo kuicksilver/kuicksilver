@@ -1059,6 +1059,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
+  streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
+  HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
+  work (a loaded CI VM) gave up on its own connection. With three streams allowed the streams are now opened without a
+  deadline; only a peer whose limit is lower still gets 3 s to raise it.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

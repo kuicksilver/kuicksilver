@@ -404,6 +404,9 @@ internal class StreamManager(
     /** The number of [bidi] or unidirectional streams we may open in total, as the peer's last MAX_STREAMS (or transport parameter) said. */
     internal fun localMaxStreamsAllowed(bidi: Boolean): Long = limits.peerMaxStreams(bidi)
 
+    /** How many more [bidi] or unidirectional streams we may open now, without waiting for the peer's MAX_STREAMS. */
+    internal fun localStreamsOpenable(bidi: Boolean): Long = limits.peerMaxStreams(bidi) - limits.localOpened(bidi)
+
     /** Test hook: how far stream [id] has sent new data, -1 for no such sending half. */
     internal fun sentEndForTest(id: Long): Long = streams[id]?.send?.sentEnd ?: -1
 

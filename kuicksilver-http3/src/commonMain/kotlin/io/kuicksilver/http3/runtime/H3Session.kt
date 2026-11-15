@@ -441,8 +441,9 @@ internal class H3Session(
      * Starts the session. A coroutine of the session opens our control and QPACK streams: opening a stream waits for the
      * peer's stream credit (RFC 9000 section 4.6), and a peer whose transport parameters allow fewer than the three
      * unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the peer to create at least three") would
-     * hold the caller forever. Without them after [criticalStreamsDeadline] the connection closes with
-     * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
+     * hold the caller forever. Such a peer gets [criticalStreamsDeadline] to raise its limit, and then the connection closes
+     * with H3_GENERAL_PROTOCOL_ERROR; with the three streams allowed nothing waits for the peer and no deadline applies
+     * (one there counted only this host's own progress). A server returns at once, so an accept loop never waits on one peer; a client returns once
      * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client in 0-RTT
      * opens them and sends SETTINGS at once too, as RFC 9114 section 7.2.4.2 requires ("settings MUST be sent as soon as the
      * transport is ready to send data"); when the server rejects the 0-RTT, which resets every stream the client opened
@@ -458,7 +459,7 @@ internal class H3Session(
             beforeTransportClosedForTest?.invoke()
             onTransportClosed(e)
         }
-        scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadline) } }
+        scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadlineForTest ?: criticalStreamsDeadline) } }
         scope.launch { guarded { decoderWriter() } }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
@@ -866,6 +867,10 @@ internal class H3Session(
         @kotlin.concurrent.Volatile
         internal var beforeControlFrameForTest: (suspend (H3Session, type: Long) -> Unit)? = null
 
+        /** Test hook: the critical-streams deadline of every session started while it is set, whatever [start] was given. */
+        @kotlin.concurrent.Volatile
+        internal var criticalStreamsDeadlineForTest: Duration? = null
+
         /** Test hook: runs before a client's idle close after GOAWAY, so a test can let the peer's close win the race. */
         @kotlin.concurrent.Volatile
         internal var beforeIdleCloseForTest: (suspend (H3Session) -> Unit)? = null
@@ -875,8 +880,9 @@ internal class H3Session(
         val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
 
         /**
-         * How long a new connection may take to open our control and QPACK streams. A peer that follows RFC 9114 section 6.2
-         * allows them in its transport parameters, so they open at once; only a peer that does not is held up here.
+         * How long a peer whose limit allows fewer than three unidirectional streams has to raise it before our control and
+         * QPACK streams are given up. A peer that follows RFC 9114 section 6.2 allows them in its transport parameters, so
+         * they open at once and no deadline applies.
          */
         val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
 

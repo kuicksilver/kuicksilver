@@ -41,6 +41,21 @@ public object QuicStreamLimits {
         (connection as? ConnectionRuntime)?.setReceiveWindowFloor(bytes)
     }
 
+    /**
+     * How many more unidirectional streams we may open now without waiting for the peer's MAX_STREAMS, once its limits are
+     * known: from its transport parameters (initial_max_streams_uni), or in 0-RTT the remembered ones; a client that has
+     * neither yet waits for its handshake. Null for a connection of another kind. Throws the connection's error when it ends
+     * first. The HTTP/3 layer opens its control and QPACK streams without a deadline when three are allowed (RFC 9114
+     * section 6.2 requires that much of every peer's transport parameters).
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    public suspend fun uniStreamsOpenable(connection: QuicConnection): Long? {
+        val rt = connection as? ConnectionRuntime ?: return null
+        rt.uniStreamsOpenable()?.let { return it }
+        rt.awaitHandshake()
+        return rt.uniStreamsOpenable()
+    }
+
     /** The connection-level limit we last advertised (MAX_DATA), or null for a connection of another kind (a test hook). */
     @OptIn(ExperimentalKuicksilverApi::class)
     public suspend fun receiveLimit(connection: QuicConnection): Long? = (connection as? ConnectionRuntime)?.receiveLimit()

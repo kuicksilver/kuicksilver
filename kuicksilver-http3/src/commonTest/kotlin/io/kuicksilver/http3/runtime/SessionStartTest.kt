@@ -22,6 +22,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -48,6 +49,43 @@ class SessionStartTest {
                 val local = assertIs<Http3Exception.Protocol>(server.closed.await())
                 assertEquals(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, local.h3Code)
                 assertEquals(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, peerSawClose(c))
+            }
+        }
+
+    /**
+     * A peer whose transport parameters allow the three streams is not held to the deadline, on either side: a deadline
+     * there measured only this host's own progress, and a loaded host (a Windows VM beside a busy machine) closed its
+     * connections to healthy peers with "control and QPACK streams not open after 3s". A zero deadline stands for a host
+     * that cannot open and write the streams in any time: both sides still start and exchange SETTINGS.
+     */
+    @Test fun negative_healthyPeerIsNotHeldToTheDeadline() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 3 }).use { q ->
+                val (c, s) = q.connect(clientQuic = quicConfig { maxUniStreams = 3 }) // exactly the three RFC 9114 asks for
+                val server = Http3Connection.start(s, Http3Role.Server, Http3Settings.Default, criticalStreamsDeadline = Duration.ZERO)
+                val client =
+                    withTimeout(10.seconds) {
+                        Http3Connection.start(c, Http3Role.Client, Http3Settings.Default, criticalStreamsDeadline = Duration.ZERO)
+                    }
+                withTimeout(10.seconds) { client.session.awaitPeerSettings() }
+                withTimeout(10.seconds) { server.session.awaitPeerSettings() }
+                assertEquals(false, server.closed.isCompleted)
+                assertEquals(false, client.closed.isCompleted)
+            }
+        }
+
+    /** The negative control: with a zero deadline a peer that allows two streams still fails the start at once. */
+    @Test fun negative_zeroDeadlineStillEndsAPeerWithoutUniStreamCredit() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                val (c, _) = q.connect()
+                val e =
+                    assertFailsWith<Http3Exception.Protocol> {
+                        withTimeout(10.seconds) {
+                            Http3Connection.start(c, Http3Role.Client, Http3Settings.Default, criticalStreamsDeadline = Duration.ZERO)
+                        }
+                    }
+                assertEquals(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, e.h3Code)
             }
         }
 

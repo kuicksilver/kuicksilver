@@ -22,6 +22,7 @@ import io.kuicksilver.http3.runtime.H3Session.Critical
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.awaitSendStopped
+import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -199,51 +200,60 @@ internal suspend fun H3Session.openCriticalStreams(
     attemptStreams = opened
     typedStreams.clear()
     val hook = criticalAttemptHookForTest
+
+    suspend fun attempt(): Boolean {
+        hook?.invoke(AttemptStep.Started, gen)
+        for (i in 0 until 3) {
+            opened += quic.openUni(CRITICAL)
+            if (gen != criticalGen) return false
+        }
+        hook?.invoke(AttemptStep.Opened, gen)
+        val (control, encoder, decoder) = opened
+        controlLock.withLock {
+            if (gen != criticalGen) return false
+            typedStreams += control
+            control.output.writeFully(VarInt.encode(StreamType.CONTROL))
+            control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
+            if (settings.grease) {
+                control.output.writeFully(
+                    FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
+                )
+            }
+            // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
+            if (gen > 0) {
+                earlyControl?.forEach { (frame, wanted) -> if (wanted()) control.output.writeFully(frame) }
+                earlyControl = null
+            }
+            control.output.flush()
+        }
+        hook?.invoke(AttemptStep.ControlWritten, gen)
+        encoderLock.withLock {
+            if (gen != criticalGen) return false
+            typedStreams += encoder
+            encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
+            encoder.output.flush()
+        }
+        decoderLock.withLock {
+            if (gen != criticalGen) return false
+            typedStreams += decoder
+            decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
+            decoder.output.flush()
+        }
+        if (gen != criticalGen) return false
+        critical = Critical(control, encoder, decoder)
+        for (st in listOf(control, encoder, decoder)) watchStopped(st)
+        return true
+    }
     val done =
         try {
-            withTimeoutOrNull(deadline) {
-                hook?.invoke(AttemptStep.Started, gen)
-                for (i in 0 until 3) {
-                    opened += quic.openUni(CRITICAL)
-                    if (gen != criticalGen) return@withTimeoutOrNull false
-                }
-                hook?.invoke(AttemptStep.Opened, gen)
-                val (control, encoder, decoder) = opened
-                controlLock.withLock {
-                    if (gen != criticalGen) return@withTimeoutOrNull false
-                    typedStreams += control
-                    control.output.writeFully(VarInt.encode(StreamType.CONTROL))
-                    control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
-                    if (settings.grease) {
-                        control.output.writeFully(
-                            FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
-                        )
-                    }
-                    // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
-                    if (gen > 0) {
-                        earlyControl?.forEach { (frame, wanted) -> if (wanted()) control.output.writeFully(frame) }
-                        earlyControl = null
-                    }
-                    control.output.flush()
-                }
-                hook?.invoke(AttemptStep.ControlWritten, gen)
-                encoderLock.withLock {
-                    if (gen != criticalGen) return@withTimeoutOrNull false
-                    typedStreams += encoder
-                    encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
-                    encoder.output.flush()
-                }
-                decoderLock.withLock {
-                    if (gen != criticalGen) return@withTimeoutOrNull false
-                    typedStreams += decoder
-                    decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
-                    decoder.output.flush()
-                }
-                if (gen != criticalGen) return@withTimeoutOrNull false
-                critical = Critical(control, encoder, decoder)
-                for (st in listOf(control, encoder, decoder)) watchStopped(st)
-                true
-            }
+            // RFC 9114 section 6.2: "the transport parameters sent by both clients and servers MUST allow the peer to create
+            // at least three unidirectional streams". When three may be opened now nothing here waits for the peer, so
+            // nothing bounds the attempt but the connection itself: a deadline there measured this host's own progress (a
+            // loaded host took more than three seconds to open and write them) and closed connections to healthy peers.
+            // Only a peer whose limit is lower gets [deadline] to raise it with MAX_STREAMS. (A 0-RTT the server rejects
+            // with a lower limit while the attempt opens its streams leaves an open waiting until the connection ends.)
+            val openable = QuicStreamLimits.uniStreamsOpenable(quic)
+            if (openable != null && openable >= 3) attempt() else withTimeoutOrNull(deadline) { attempt() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

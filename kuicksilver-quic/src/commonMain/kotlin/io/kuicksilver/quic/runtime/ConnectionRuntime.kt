@@ -796,6 +796,15 @@ internal class ConnectionRuntime(
     /** The connection-level limit we last advertised, read on the loop. */
     internal suspend fun receiveLimit(): Long = withContext(loop.dispatcher) { core.streams.connectionLimit }
 
+    /**
+     * How many more unidirectional streams we may open now, read on the loop, once the peer's limits are known: from this
+     * handshake's transport parameters, or in 0-RTT from the remembered ones (RFC 9000 section 7.4.1); null before either.
+     */
+    internal suspend fun uniStreamsOpenable(): Long? =
+        withContext(loop.dispatcher) {
+            if (core.peerTp == null && core.remembered == null) null else core.streams.localStreamsOpenable(bidi = false)
+        }
+
     /** Test hook: runs on the loop right after [open] made its stream, before it is handed to the caller. */
     internal var openedForTest: ((QuicStream) -> Unit)? = null
 

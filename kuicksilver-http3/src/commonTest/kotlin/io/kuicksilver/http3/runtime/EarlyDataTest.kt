@@ -45,6 +45,8 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -311,6 +313,56 @@ class EarlyDataTest {
             second.close()
         }
     }
+
+    /**
+     * The critical streams of a 0-RTT connection are not held to a deadline when the peer's parameters (remembered, then
+     * those of the handshake) allow the three unidirectional streams: a deadline there measured only this host's own
+     * progress, and a loaded host closed connections to healthy servers. With a zero deadline, standing for a host that
+     * cannot open and write them in any time, the early connection works whether the server accepts the 0-RTT, rejects it
+     * (the streams are opened again under the new parameters), or the connection ends before the server's answer.
+     */
+    @Test fun negative_zeroRttIsNotHeldToTheCriticalStreamsDeadline(): Unit =
+        runBlocking {
+            H3Session.criticalStreamsDeadlineForTest = kotlin.time.Duration.ZERO
+            try {
+                withTimeout(30.seconds) {
+                    assertEquals(
+                        true,
+                        earlyAcceptedAfterResuming(issuer = http3Settings {}, resumer = http3Settings {}, earlyRequest = true),
+                    )
+                    assertEquals(
+                        false,
+                        earlyAcceptedAfterResuming(
+                            issuer = http3Settings {},
+                            resumer = http3Settings { h3Datagram = false },
+                            earlyRequest = true,
+                        ),
+                    )
+                    val ended = kotlinx.coroutines.CompletableDeferred<Throwable?>()
+                    val answer =
+                        earlyAcceptedAfterResuming(
+                            issuer = http3Settings {},
+                            resumer = http3Settings {},
+                            sendRequest = false,
+                            beforeRequest = { c, _ ->
+                                // the network drops the server's packets meanwhile: its answer has not arrived
+                                assertFalse(c.quic.isHandshakeComplete, "the server's answer arrived")
+                                c.close() // before the server's answer
+                                ended.complete(withTimeout(10.seconds) { c.closed.await() })
+                            },
+                        )
+                    assertNull(answer)
+                    val end = withTimeout(10.seconds) { ended.await() }
+                    assertFalse(
+                        end is io.kuicksilver.http3.Http3Exception.Protocol &&
+                            end.h3Code == io.kuicksilver.http3.Http3ErrorCode.GENERAL_PROTOCOL_ERROR,
+                        "the connection ended for its critical streams: $end",
+                    )
+                }
+            } finally {
+                H3Session.criticalStreamsDeadlineForTest = null
+            }
+        }
 
     /**
      * RFC 9001 section 4.6.2: a rejected 0-RTT resets every stream the client opened, so an early request is lost with it;
