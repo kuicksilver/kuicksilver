@@ -3932,4 +3932,29 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Sixth review, the edge case of the same input: the only validated peer address is the failed path's own, validated only through
+     * the preferred-address socket (the client's probe there), while the original address's path to it failed. Section 9.6.2 forbids
+     * non-probing packets from the preferred address before the client moved there, and the original address could not validate it:
+     * no address the connection may send on is validated, and it closes silently (section 9.3.2: "If an endpoint has no state about
+     * the last validated peer address, it MUST close the connection silently"); docs/spec/rfc/9000.md records the reading.
+     */
+    @Test fun anAddressValidatedOnlyThroughThePreferredSocketDoesNotKeepTheConnection() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, failed.remote).peerProbed = true
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Closed, s.state)
+            p.batch.clear()
+            assertEquals(0, s.poll(p.batch, p.now), "silently")
+        } finally {
+            p.close()
+        }
+    }
 }
