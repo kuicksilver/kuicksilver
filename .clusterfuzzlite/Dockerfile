@@ -7,8 +7,8 @@
 # carries libksl. libksl links OpenSSL statically, so build.sh fetches the pinned OpenSSL release (gradle/openssl.toml,
 # signature and SHA-256 checked by tools/openssl/fetch.sh), builds it and builds libksl inside this image, without Docker.
 #
-# Checked locally (docker build, then the base image's compile and the base runner's run_fuzzer); the workflow
-# .github/workflows/cflite_pr.yml stays off (CONTRIBUTING.md, "Fuzzing").
+# Kept OSS-Fuzz-compatible for a future OSS-Fuzz application; no workflow of this repository runs it (CONTRIBUTING.md,
+# "Fuzzing"). Checked by hand: docker build, then the image's compile and the base runner's run_fuzzer.
 
 # pinned by digest (tools/check/pins.sh; resolved from gcr.io 2026-10-12, Renovate updates it)
 FROM gcr.io/oss-fuzz-base/base-builder-jvm@sha256:bd13a763de1a0fb22099442094e7e0049657a8c47f01e9d7af8bb849e0ad4699

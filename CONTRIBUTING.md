@@ -293,12 +293,14 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
-  in `build/fuzz-campaign/load-timeouts/` and is not a finding. ClusterFuzzLite is not used in CI: `.clusterfuzzlite/` builds
-  every Jazzer target of `tools/fuzz/campaign.sh list` (it reads the campaign's target table; the fuzzer of
-  `quic.frameDecode` is `quic_frameDecode`) and is checked locally with the OSS-Fuzz build and run commands, but
-  `.github/workflows/cflite_pr.yml` stays off: ClusterFuzzLite uploads a finding's input as a workflow artifact and prints
-  its stack trace in the job log, both public in a public repository, which the rule above rules out. The ksl harness is
-  not in that build (a C target in a JVM project, with test data read from the source tree).
+  in `build/fuzz-campaign/load-timeouts/` and is not a finding. The hosted fuzzing is `fuzz.yml` alone, which keeps
+  findings private. ClusterFuzzLite is not enabled in this repository: on a finding it uploads the input as a workflow
+  artifact and prints the stack trace in the job log, both public in a public repository, which the rule above rules out
+  (pinning its actions by commit does not pin the images they run either, which are named by a mutable tag).
+  `.clusterfuzzlite/` is kept OSS-Fuzz-compatible for a future OSS-Fuzz application, where a finding stays private
+  until it is fixed: it builds every Jazzer target of `tools/fuzz/campaign.sh list` (it reads the campaign's target
+  table; the fuzzer of `quic.frameDecode` is `quic_frameDecode`), the ksl harness aside (a C target in a JVM project,
+  with test data read from the source tree).
 
 ## Proposing a change
 

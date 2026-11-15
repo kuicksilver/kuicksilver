@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-network,
 # kuicksilver-ktor-client and kuicksilver-ktor-server and the libFuzzer harness of
-# ksl (tools/fuzz/ksl/). It replaces the ClusterFuzzLite path for this project: the laptop stays usable, so by default
+# ksl (tools/fuzz/ksl/), this project's fuzzing (ClusterFuzzLite is not enabled). The laptop stays usable, so by default
 # every run is a slice of at most 20 minutes at background priority (taskpolicy -b, nice 19, one fuzzing thread, the
 # serial collector), with a pause between slices so other builds get the machine. Progress is resumable: the growing
 # corpora, per-slice statistics and crash reproducers live in build/fuzz-campaign/ (KSL_FUZZ_STATE), and the next run

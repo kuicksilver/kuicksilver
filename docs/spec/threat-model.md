@@ -129,7 +129,7 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 
 - **Threats:** overflows in `ksl`, malformed frames, varint overflows, infinite loops in the QPACK decoder.
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
-- **Verification:** the committed fuzzing corpora run as regression tests in `jvmTest`, and `tools/c-test.sh` runs `ksl` under ASan/UBSan, both in the local gate (`tools/ci/local-matrix.sh`).
+- **Verification:** the committed fuzzing corpora run as regression tests in `jvmTest`, and `tools/c-test.sh` runs `ksl` under ASan/UBSan, both in the local gate (`tools/ci/local-matrix.sh`); the weekly hosted campaign (`.github/workflows/fuzz.yml`) never publishes a finding's input or stack trace, which is why ClusterFuzzLite, which would, is not enabled (`.clusterfuzzlite/` is kept for a future OSS-Fuzz application).
 
 0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
 resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
