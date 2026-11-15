@@ -1009,6 +1009,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/2 (RFC 9113 section 5.4.2, "A RST_STREAM is the last frame that an endpoint can send on a stream"): when the
+  peer sent DATA on a stream that had ended both ways while our last HEADERS or DATA were still queued, our RST_STREAM
+  went out first and the queued frames followed it. They are now dropped with the reset (their DATA gives the connection
+  window back). Found by the `http2.connectionServer` and `http2.connectionClient` fuzz targets.
+- HTTP/2 client (RFC 9113 section 5.1): frames on a request whose HEADERS were still queued (a stream idle to the
+  server) were accepted, so a server could answer, credit or reset a request it had never seen, and the request went out
+  afterwards. Every such frame but PRIORITY is now a connection error PROTOCOL_ERROR; unknown frame types and ALTSVC
+  stay ignored there.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
