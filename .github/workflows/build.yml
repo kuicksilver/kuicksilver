@@ -73,8 +73,8 @@ jobs:
           bash tools/check/doc-refs.sh
           python3 -I tools/check/code-refs.py   # the source lines docs/spec cites, against tools/check/code-refs.lock
       - name: 'lint: tests that can run and fail, sleeps, name-service calls, tests behind RFC rows'
-        # docs/process.md, "Repository checks"; the commit types are checked by local-matrix.sh over main..HEAD (this
-        # shallow checkout has no history to read them from)
+        # docs/process.md, "Repository checks"; the commit types and cited hashes are checked by local-matrix.sh over
+        # main..HEAD (this shallow checkout has no history to read them from; commit-msg-test.sh runs below)
         run: |
           rc=0
           python3 -I tools/check/test-discovery.py || rc=1

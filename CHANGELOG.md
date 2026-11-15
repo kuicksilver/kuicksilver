@@ -658,6 +658,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tests that had been renamed, or named them after the wrong class; those names are corrected, four ✅ sections
   that named no test now name theirs, and the RFC 9460 section 9.3 text says that a cached Alt-Svc alternative does not
   skip the HTTPS records (it shares the origin's lookup), as the client has done since 0.3.0.
+- Build: `tools/check/commit-msg.sh` also checks the commit hashes a message cites: each must name a commit in the
+  history of the branch (`--range`, step 3 of the local gate) or of `HEAD` (the hook). After a rebase or a rewrite of the
+  dates, messages kept citing the old hashes, which name nothing. A 7 to 40 digit hex word counts when it names a commit
+  here or follows a keyword (`Review of`, `commit`, `since`, ...); numbers, quoted values (a CID), `0x` constants, paths
+  and URLs do not, and another repository's or branch's commit is written `<name>@<hash>`; a commit on `origin/main`
+  passes too. Commits already on
+  `origin/main` are not read; a shallow clone lists what it could not judge instead of failing (docs/process.md,
+  "Repository checks").
 - Build: `tools/ci/local-matrix.sh --only <steps>` (e.g. `--only 25,48-49,52`) and `--from <n>` run some steps of the
   local gate again after a fix, with the step numbers of a full run. Such a run is never a gate: it writes
   `build/ci/gate/<commit>.partial` (the selection, `result=partial-pass` or `partial-fail`), never the stamp, and

@@ -98,7 +98,7 @@ python3 tools/check/test-bytecode.py                             # the same in t
 python3 tools/check/test-count.py                                # every test is listed in test-count.lock (--update after an intended change)
 python3 tools/check/test-sleeps.py                               # sleeps in tests may only go down (test-sleeps.lock, --update lowers it)
 python3 tools/check/env-apis.py                                  # no host-name lookup in library code (counted in env-apis.allow)
-bash tools/check/commit-msg.sh --range main..HEAD                # a conventional type in every commit subject of the branch
+bash tools/check/commit-msg.sh --range main..HEAD                # a conventional type in every commit subject of the branch; cited hashes in its history
 bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
 bash tools/check/guide-sync-test.sh                              # negative controls of guide-sync.sh
 bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documentation site (Dokka API reference + guide as HTML); install lines in the script; fails when the API counts differ from tools/docs/api-baseline.properties

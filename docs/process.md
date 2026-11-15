@@ -152,7 +152,7 @@ commit as the code it records, so the change is in the diff a reviewer reads.
 | [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (`Class.test`, `Class#test`, a `.test` of the class named before it, a bare name in a list of tests that is no test and no name of the sources, a class name close to a test class's but in no source), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
 | [`reproducers.py`](../tools/check/reproducers.py) | a file named like a fuzzing artifact (`crash-`, `timeout-`, `oom-`, `leak-`, `slow-unit-`, `minimized-from-`, also with `_` and in any case, so Jazzer's `Crash_<hash>.java` too), tracked or not, anywhere in the tree, without an entry in `tools/fuzz/reproducers.txt`; an entry whose input is gone (renamed or deleted), a link, or no regression or corpus input of a Jazzer target or of the ksl harness (`tools/fuzz/corpus/ksl.parsers`, which the verifier replays through `tools/fuzz/ksl/build.sh`); an unknown state (`live`: the input fails again with the plant; `dead`: it passes even then), a fix that is no commit or (with the history) changed none of the source files its plant changes (documents do not count), a fix commit that added no line its plant removes (compared without comments and spacing: a plant takes back the code of its fix as it is now, so a fix rewritten later is named with the rewrite's commit; a commit that only changed the same file is marked `<hash>~file` and needs a matching one beside it), a plant that changes a file no fix commit changed (a harness made to throw the expected failure), a dead entry without a guard test, a guard test that `tools/check/test-count.lock` does not list, that the JVM tests do not run or that belongs to another module, a live entry without the piece of its failure; a plant (`tools/fuzz/plants/<name>.patch`) that is missing, does not apply to the tree (`git apply --check`), changes nothing, touches an input, a document, the tooling or a guard test's own file, or that no entry uses | the entries themselves; `tools/fuzz/reproducers-verify.sh` checks what they claim |
 | [`fuzz-formats.py`](../tools/check/fuzz-formats.py) | for the committed fuzz inputs (`tools/fuzz/corpus/<target>/` and the regression inputs `<Class>Inputs/<method>/`) of a target whose program traces the operations it decodes (`FuzzTrace` in the fuzz packages' `FuzzCase.kt`): a jvm target of `tools/fuzz/campaign.sh` with neither a lock `tools/fuzz/formats/<target>.lock` nor a reason in `tools/fuzz/formats/untraced.txt`, or with both; a lock line that is malformed, unsorted, of no input of its target, of an input that is gone or whose bytes changed, and an input the lock does not list; and, against the merge base with `main`, a recorded input that no longer decodes as recorded there (found by its bytes, so a rename keeps it, or by its path, so a rewrite that keeps its operations does) without a line naming its target added to `tools/fuzz/formats/changes.txt` on the branch. Whether each input still decodes as its lock says is checked by `CommittedCorpusReplayTest` in the JVM tests, which runs every committed input | `KUICKSILVER_FUZZ_FORMATS=record` with the modules' JVM tests writes the locks; a changed decoding needs its reason in `changes.txt` |
-| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error) | none |
+| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error); a commit hash the message cites that is not in the history of the branch (`HEAD` for the hook): one from before a rebase or another branch's (rule below) | none |
 
 What the checks cannot see: `test-discovery.py` reads the brace structure of the sources, not their types, so a test
 whose value comes through a lambda (`= runBlocking { ... }`, a fixture helper) is judged by `test-bytecode.py` alone, and
@@ -204,8 +204,29 @@ chmod +x "$hook"
 ```
 
 The hook reads the first line of the message that is not a comment; Git's own merge, revert and autosquash subjects
-(`Merge ...`, `Revert "..."`, `fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed. It checks the
-subject only.
+(`Merge ...`, `Revert "..."`, `fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed.
+
+**Cited hashes.** A rebase or a rewrite of the dates gives every commit a new hash, and a message that cites an old one
+points at nothing. `commit-msg.sh` reads the whole message (the hook: without `#` lines and below the `git commit -v`
+cut) for words of 7 to 40 hex digits standing alone, not after `/ @ # = + -` or a single `.` (paths, URLs,
+identifiers; `a..b` counts) and not followed by `...` (a truncated value). A word is strong when it is lower case, has
+a digit and a letter and is not quoted; a number (`40636584799`), a word like `defaced`, an upper-case or a quoted
+value (`` `ca5babe14fa53a74` ``) is weak. It is cited after `commit`, `commits`, `review of`, `fix of`, `fixes`,
+`fixed in`, `follow-up to`/`of`, `reverts`, `since`, `before` or `after`, and so are the next hashes of a list after
+one (`Review of a, b and c`). A word that names a commit in this clone (also one only the reflog keeps) fails unless
+one commit with that prefix is in the history of the tip or of `origin/main` (a published commit is never rewritten;
+strong words anywhere, weak ones when cited); a strong cited word that names no commit fails too (a value after
+`since` or `after` is quoted in backticks), and any other word is taken for a value. Each word counts once per
+commit. The message is read bytewise (`LC_ALL=C`, so text in any encoding is read), and a scan that fails is an
+error (exit 2), never a pass. Write another repository's or another
+branch's commit as `<name>@<hash>` (`quic-go@432b156`) or as a URL. Commits already on `origin/main` are not read, so
+the stale citations published before the check stay; Git's `(cherry picked from commit ...)` line names the source on
+another branch and is not read. The CI `lint` job checks out one commit (no `fetch-depth`), so it runs the negative
+controls only; in a shallow clone the range check lists what it would fail as unchecked and passes.
+
+What it cannot see: a stale hash whose object is gone (a fresh clone, after `git gc` dropped the reflog's) and that
+follows no keyword (`a9297c4d3 dropped the deadline`); a weak word whose object is gone; a hash after `@`, in a path
+or a URL; a hash on a `(cherry picked ...)` line; a message whose comment character is not `#` (the hook).
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers
