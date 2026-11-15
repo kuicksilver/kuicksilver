@@ -375,6 +375,34 @@ class WebTransportFlowControlTest {
         }
 
     /**
+     * Section 5.6, "Endpoints SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data or close streams": a
+     * stream stopped as it is accepted, before its reader ever ran, abandons its bytes all the same, and they come back
+     * as credit. Accepted and stopped in one step on the session's dispatcher, so the reader is cancelled before it
+     * starts (what a loaded host does by chance). Before, only a running reader gave them back: the session's whole
+     * window stayed taken and the next stream's bytes never came.
+     */
+    @Test fun negative_aStreamStoppedBeforeItsReaderRanGivesItsCreditBack() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 1000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val st = session.openUni()
+                st.output.writeFully(ByteArray(1000)) // the whole window
+                st.output.flush()
+                p.server.awaitFlow(s) { it.receiveDataForTest.second == 1000L }
+                // the reader the accept launches runs on this dispatcher too: it is still queued when the stop cancels it
+                withContext(p.server.session.dispatcher) { s.acceptUni().stopSending(4) }
+                val second = session.openUni()
+                second.output.writeFully(ByteArray(10))
+                second.output.flushAndClose()
+                assertEquals(10, withTimeout(5.seconds) { s.acceptUni().input.readAllBytes() }.size)
+                awaitAgreement(p.client, session, p.server, s)
+            }
+        }
+
+    /**
      * Section 5.3: both sides count the same streams. An open given up while it waits for the session's stream credit
      * takes no slot the peer never sees.
      */
