@@ -21,19 +21,30 @@ import kotlinx.io.Source
 @OptIn(InternalAPI::class)
 internal class BodyReadChannel(
     private val inner: ByteReadChannel,
+    /** The reader was shown the body's failure (a server request is then over for the application). */
+    private val onFailureSeen: () -> Unit = {},
     private val onCancel: () -> Unit = {},
 ) : ByteReadChannel {
-    override val closedCause: Throwable? get() = inner.closedCause
+    override val closedCause: Throwable? get() = inner.closedCause?.also { onFailureSeen() }
 
     // in this order: a failure that lands between the two reads is then seen as a failure, never as a clean end
     override val isClosedForRead: Boolean get() = inner.isClosedForRead && inner.closedCause == null
 
     override val readBuffer: Source get() {
-        inner.closedCause?.let { throw it }
+        inner.closedCause?.let {
+            onFailureSeen()
+            throw it
+        }
         return inner.readBuffer
     }
 
-    override suspend fun awaitContent(min: Int): Boolean = inner.awaitContent(min)
+    override suspend fun awaitContent(min: Int): Boolean =
+        try {
+            inner.awaitContent(min)
+        } catch (e: Throwable) {
+            if (inner.closedCause != null) onFailureSeen()
+            throw e
+        }
 
     override fun cancel(cause: Throwable?) {
         inner.cancel(cause)

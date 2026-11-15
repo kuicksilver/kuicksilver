@@ -41,6 +41,9 @@ internal class DynamicTable(
         return true
     }
 
+    /** Test and fuzzing probe: (insert count, capacity, the entries from the oldest kept to the newest). */
+    fun snapshotForTest(): Triple<Long, Long, List<Pair<String, String>>> = Triple(insertCount, capacity, names.zip(values))
+
     fun absolute(index: Long): Pair<String, String>? {
         if (index < dropped || index >= insertCount) return null
         val i = (index - dropped).toInt()

@@ -36,6 +36,9 @@ internal class QpackEncoder(
 
     val insertCount: Long get() = table.insertCount
 
+    /** Test and fuzzing probe: see [DynamicTable.snapshotForTest]. */
+    internal fun tableForTest() = table.snapshotForTest()
+
     /** Sections sent with dynamic references and not yet acknowledged or cancelled by the peer. */
     var outstandingSections: Int = 0
         private set

@@ -48,6 +48,7 @@ private suspend fun H3Session.goAwayConfined() {
     if (!isServer) {
         goAwayPhase = 2
         goAwaySentId = 0
+        goAwaySeen.complete(Unit)
         sendGoAway(0)
         return
     }

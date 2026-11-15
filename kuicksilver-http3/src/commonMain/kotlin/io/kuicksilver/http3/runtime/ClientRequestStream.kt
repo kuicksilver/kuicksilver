@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
@@ -224,20 +225,24 @@ private suspend fun H3Session.requestOnDispatcher(
         checkPeerFieldLimit(-1, fields)
         val st =
             try {
-                quic.openBidi(localPriority(r))
+                openUnlessGoAway(localPriority(r)) ?: throw unsentAfterGoAway()!!
             } catch (e: QuicException) {
+                // a GOAWAY that arrived while the request waited for stream credit: it was never sent, and the client
+                // that closed the idle connection after that GOAWAY must say so, not report the close (RFC 9114 section 5.2)
+                unsentAfterGoAway()?.let { throw it }
                 throw map(e)
             }
+        // RFC 9114 section 5.2: "Endpoints MUST NOT initiate new requests or promise new pushes on the connection after
+        // receipt of a GOAWAY frame from the peer": a request that waited for stream credit meanwhile is not sent on the
+        // stream it got, whatever the GOAWAY's id (and not after our own GOAWAY either)
+        unsentAfterGoAway()?.let {
+            // both directions: a server that never saw a request has nothing to answer, and the stream must end both ways
+            st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+            throw it
+        }
         // a CONNECT carries a tunnel: some of its data goes out even behind more urgent streams (RFC 9218 section 10.1)
         if (r.method == "CONNECT") st.markTunnel()
-        goAwayReceived.value?.let {
-            if (st.id >=
-                it
-            ) {
-                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
-                throw Http3Exception.RequestNotProcessed.peerGoAway()
-            }
-        }
         clientStreams[st.id] = st
         val semantics = hasDatagramSemantics(r.method, r.protocol)
         if (!semantics) clientRequestsWithoutDatagrams[st.id] = st
@@ -267,6 +272,39 @@ private suspend fun H3Session.requestOnDispatcher(
             clientStreams.remove(st.id)
             rejectedByGoAway.remove(st.id)
         }
+    }
+
+/**
+ * Opens the request's stream, or null when a GOAWAY is received or sent while it waits for stream credit: such a request
+ * fails with RequestNotProcessed without opening a stream at all, so a client with many queued requests neither opens
+ * and resets a stream for each (each reset would spend one of the server's reset tokens and could turn a graceful
+ * shutdown into H3_EXCESSIVE_LOAD) nor sends any of them (RFC 9114 section 5.2). A stream the transport handed over
+ * just as the GOAWAY won is ended in both directions.
+ */
+private suspend fun H3Session.openUnlessGoAway(priority: io.kuicksilver.quic.StreamPriority): QuicStream? =
+    kotlinx.coroutines.coroutineScope {
+        val open = async { quic.openBidi(priority) }
+        val won =
+            kotlinx.coroutines.selects.select<QuicStream?> {
+                open.onAwait { it }
+                goAwaySeen.onAwait { null }
+            }
+        if (won != null) return@coroutineScope won
+        open.cancel()
+        val late = runCatching { open.await() }.getOrNull()
+        late?.let {
+            it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+        }
+        null
+    }
+
+/** A request that has not opened its stream yet when a GOAWAY was received or sent: never sent (RFC 9114 section 5.2). */
+private fun H3Session.unsentAfterGoAway(): Http3Exception.RequestNotProcessed? =
+    when {
+        goAwayReceived.value != null -> Http3Exception.RequestNotProcessed.peerGoAway()
+        goAwaySentId != null -> Http3Exception.RequestNotProcessed.ownGoAway()
+        else -> null
     }
 
 private suspend fun H3Session.exchange(

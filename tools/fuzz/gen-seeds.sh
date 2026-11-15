@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Regenerates the Jazzer seed corpora of kuicksilver-quic, kuicksilver-tls and kuicksilver-http2 from their deterministic generators:
+# Regenerates the Jazzer seed corpora of kuicksilver-quic, kuicksilver-tls, kuicksilver-http2 and kuicksilver-http3 from their deterministic generators:
 # kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/SeedCorpusTest.kt (datagrams of a Null-crypto handshake
 # with virtual time and fixed seeds, CVE-style inputs, programs of the stateful connection fuzzer, 0-RTT state),
-# kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/TlsSeedCorpusTest.kt (hand-built ClientHellos) and
+# kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/TlsSeedCorpusTest.kt (hand-built ClientHellos),
 # kuicksilver-http2/src/jvmTest/kotlin/io/kuicksilver/http2/fuzz/H2SeedCorpusTest.kt (HTTP/2 conversations with both
-# connection cores under every mode, their frames and field blocks, HPACK lists). Seeds are
+# connection cores under every mode, their frames and field blocks, HPACK lists) and the programs of the stateful HTTP/3
+# fuzzer (kuicksilver-http3/src/jvmTest/kotlin/io/kuicksilver/http3/fuzz/H3ConnectionSeededTest.kt). Seeds are
 # named seed-*; reproducers of findings (crash-*) are kept. Without the variable the same tests check that the committed
 # corpora match the generators. The grown corpora of local campaigns are in tools/fuzz/corpus (tools/fuzz/campaign.sh).
 # Usage: tools/fuzz/gen-seeds.sh
@@ -15,7 +16,8 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 gradle() { if [ -x "$HOME/.kuicksilver-tools/quiet-gradle" ]; then (cd "$root" && "$HOME/.kuicksilver-tools/quiet-gradle" "$@"); else "$root/gradlew" -p "$root" --max-workers=2 "$@"; fi; }
 for spec in "kuicksilver-quic:io/kuicksilver/quic/fuzz:io.kuicksilver.quic.fuzz.SeedCorpusTest" \
             "kuicksilver-tls:io/kuicksilver/tls/fuzz:io.kuicksilver.tls.fuzz.TlsSeedCorpusTest" \
-            "kuicksilver-http2:io/kuicksilver/http2/fuzz:io.kuicksilver.http2.fuzz.H2SeedCorpusTest"; do
+            "kuicksilver-http2:io/kuicksilver/http2/fuzz:io.kuicksilver.http2.fuzz.H2SeedCorpusTest" \
+            "kuicksilver-http3:io/kuicksilver/http3/fuzz:io.kuicksilver.http3.fuzz.H3ConnectionSeededTest"; do
   module=${spec%%:*}; rest=${spec#*:}; dir=${rest%%:*}; test=${rest#*:}
   out="$root/$module/src/jvmTest/resources/$dir"
   mkdir -p "$out"

@@ -75,6 +75,9 @@ internal class ConnectionRuntime(
 
     internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
+    /** The `done` of retired streams whose StreamFinished waits for our reset's acknowledgment (their wrappers are gone). */
+    internal val awaitingResetAck = HashMap<Long, kotlinx.coroutines.CompletableDeferred<Unit>>()
+
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
 
@@ -113,6 +116,12 @@ internal class ConnectionRuntime(
 
     /** The loop's dispatcher, where the core is touched. */
     internal val loopDispatcher: CoroutineDispatcher get() = loop.dispatcher
+
+    /** See [io.kuicksilver.quic.holdPeerStreamCredit]. */
+    internal fun holdPeerBidiCredit() {
+        loop.scope.launch { core.holdPeerBidiStreamCredit() }
+    }
+
     internal val tickerCountForTest: Int get() = tickers.size
     internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()
@@ -574,6 +583,14 @@ internal class ConnectionRuntime(
                     // fail and go; one made since (a stream opened while this event waited) names a live stream and stays. Before
                     // earlyDataAccepted turns false: whoever reads that on another thread sees the dropped streams failed
                     for (s in streams.values.filter { !it.current }) dropRejected(s)
+                    // retired streams of ours waiting for a reset's acknowledgment were dropped by the core too
+                    awaitingResetAck.keys
+                        .filter {
+                            io.kuicksilver.quic.stream.StreamIds
+                                .isLocal(it, core.role)
+                        }.forEach {
+                            awaitingResetAck.remove(it)?.complete(Unit)
+                        }
                     earlyAccepted = false
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
@@ -622,7 +639,7 @@ internal class ConnectionRuntime(
                     wrapper(e.id)?.let {
                         streams.remove(e.id)
                         it.finished()
-                    }
+                    } ?: awaitingResetAck.remove(e.id)?.complete(Unit)
                 }
 
                 // both halves done and consumed: the wrapper and its ticker go
@@ -643,6 +660,20 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.MtuUpdated -> {} // maxDatagramSize follows through the check at the top of drainEvents
+            }
+        }
+        // retired streams whose StreamFinished waits for the acknowledgment of our reset: their channels and ticker go now
+        // (a peer that leaves those acknowledgments out must not pile wrappers up), only the completion of `done` stays. A
+        // stream of our 0-RTT whose final size is held for the server's answer keeps its wrapper until StreamFinished: the
+        // answer settles that size on it (reported, or failed by a rejection or the connection's end), and only 0-RTT
+        // streams within the remembered limits can be such
+        core.streams.takeRetiredAwaitingAck()?.let { ids ->
+            for (id in ids) {
+                if (core.streams.heldForAnswer(id)) continue
+                val s = wrapper(id) ?: continue
+                streams.remove(id)
+                s.retired()
+                awaitingResetAck[id] = s.done
             }
         }
         if (core.receivedTokens != null) {
@@ -724,6 +755,8 @@ internal class ConnectionRuntime(
             handshake.completeExceptionally(reason)
             accepted.close(reason)
             for (s in streams.values) s.connectionLost(reason)
+            for (d in awaitingResetAck.values) d.complete(Unit)
+            awaitingResetAck.clear()
             if (core.state == ConnectionState.Closed) releasePaths()
             datagramDrainer.load()?.cancel()
             sendQueue.close()
@@ -752,6 +785,7 @@ internal class ConnectionRuntime(
     /** [s] names a stream a rejected 0-RTT dropped: it fails with EarlyDataRejected and leaves the map, if it is still there. Loop only. */
     internal fun dropRejected(s: StreamRuntime) {
         if (streams[s.id] === s) streams.remove(s.id)
+        awaitingResetAck.remove(s.id)?.complete(Unit)
         s.earlyDataRejected()
     }
 

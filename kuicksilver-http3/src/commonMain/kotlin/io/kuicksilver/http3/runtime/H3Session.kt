@@ -19,6 +19,7 @@ import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.http3.webtransport.WtSettings
 import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.http3.webtransport.WtVersion
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
@@ -27,6 +28,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.holdPeerStreamCredit
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.rememberedApplicationData
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -71,7 +73,7 @@ internal class H3Session(
     val settings: Http3Settings,
 ) {
     val isServer: Boolean get() = role == Http3Role.Server
-    val dispatcher = Dispatchers.Default.limitedParallelism(1)
+    val dispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcherForTest ?: Dispatchers.Default.limitedParallelism(1)
     internal val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
 
@@ -203,6 +205,9 @@ internal class H3Session(
         }
 
     val goAwayReceived = MutableStateFlow<Long?>(null)
+
+    /** Client: completed when a GOAWAY was received or sent; requests still waiting for a stream then stop waiting. */
+    internal val goAwaySeen = kotlinx.coroutines.CompletableDeferred<Unit>()
     val closed = CompletableDeferred<Throwable>()
 
     /**
@@ -358,6 +363,13 @@ internal class H3Session(
     /** The peer's unidirectional streams dropped unread: ended or reset before their type, or of an unknown type (a test hook). */
     val discardedUniStreams = MutableStateFlow(0)
     private val glitch = if (settings.glitchProtection) GlitchLimiter() else null
+
+    /**
+     * Server: the budget for the client's request stream resets, apart from [glitch] as nghttp2 keeps its
+     * `stream_reset_ratelim` apart from its glitch limit (1000, 33 a second, the same numbers), so a client cancelling
+     * requests and one sending useless frames each get their own allowance.
+     */
+    private val resetBudget = if (settings.glitchProtection) GlitchLimiter() else null
     private val clock = TimeSource.Monotonic.markNow()
 
     /** The glitch bucket's clock in nanoseconds (it refills 33 tokens a second); a test freezes it so the bucket cannot refill. */
@@ -470,6 +482,9 @@ internal class H3Session(
         // each path reports its own peer address: a change before the collector started (a NAT rebinding right after the handshake)
         // must not leave the session on the path the peer left
         quic.activePath?.let { currentPath = it }
+        // RFC 9114 section 10.5 (Rapid Reset, CVE-2023-44487): a request stream keeps its MAX_STREAMS credit until the
+        // application is done with the request, not only until the client reset it; before the first stream is taken
+        if (isServer) quic.holdPeerStreamCredit()
         scope.launch { acceptLoop() }
         datagrams.start()
         if (isServer) return
@@ -769,6 +784,28 @@ internal class H3Session(
         return limit != null && id / 4 >= limit
     }
 
+    /**
+     * Server: a request stream [e] says the client reset spends a token of [resetBudget] (RFC 9114 section 10.5: "An
+     * implementation SHOULD track the use of these features and set limits on their use"), as nghttp2 counts the RST_STREAM
+     * frames of an HTTP/2 client: a client that keeps opening requests and resetting them (Rapid Reset, CVE-2023-44487)
+     * meets H3_EXCESSIVE_LOAD, while one that cancels now and then (a browser leaving a page) stays within the refill. Not
+     * counted: a reset with H3_NO_ERROR once our response was complete ([responseComplete]: section 4.1 lets a client end
+     * its request so after a complete response), and one that follows our own STOP_SENDING (the stream then fails with that
+     * stop, never with the client's reset). An H3_NO_ERROR reset before the response was complete counts like any other.
+     */
+    fun countClientReset(
+        e: Throwable?,
+        responseComplete: Boolean = false,
+    ) {
+        if (!isServer) return
+        val reset = transportCause(e ?: return) as? QuicException.StreamError.Reset ?: return
+        if (reset.initiator != Initiator.Peer || (reset.code == Http3ErrorCode.NO_ERROR && responseComplete)) return
+        val budget = resetBudget ?: return
+        if (!budget.spend(glitchClock())) {
+            throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "request stream resets above 33/s (burst 1000)")
+        }
+    }
+
     /** Spends a glitch token; an empty bucket is a connection error H3_EXCESSIVE_LOAD (RFC 9114 section 8.1). */
     fun glitch(what: String) {
         val g =
@@ -861,6 +898,13 @@ internal class H3Session(
          */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
+
+        /**
+         * Test hook: the dispatcher of every session made from here on instead of its own single thread; the fuzzer runs
+         * both sides of a connection on one virtual-time dispatcher so a run is the same every time. Global like [createdForTest].
+         */
+        @kotlin.concurrent.Volatile
+        internal var dispatcherForTest: kotlinx.coroutines.CoroutineDispatcher? = null
 
         /** Test hook: runs when the start's wait ended with an error, before it decides whether that error fails the start. */
         @kotlin.concurrent.Volatile

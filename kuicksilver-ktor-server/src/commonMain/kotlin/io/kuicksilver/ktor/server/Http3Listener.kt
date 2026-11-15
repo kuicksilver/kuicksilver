@@ -11,6 +11,9 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.http3.awaitAbandoned
+import io.kuicksilver.http3.handlerEnded
+import io.kuicksilver.http3.holdStreamUntilHandled
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
@@ -191,14 +194,37 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                         } catch (e: Throwable) {
                                             break
                                         }
+                                    // the request's stream counts toward the client's stream limit until its handler returned,
+                                    // also when the client reset it meanwhile (Rapid Reset, CVE-2023-44487; RFC 9114 section 10.5)
+                                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                    req.holdStreamUntilHandled()
                                     launch {
-                                        // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
+                                        val handler =
+                                            launch {
+                                                // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
+                                                try {
+                                                    handleHttp3(req, local, peer, authorityCheck)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Throwable) {
+                                                    environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                                }
+                                            }
+                                        // a client that abandons the request (STOP_SENDING, or a reset) cancels its handler, which gives
+                                        // the stream back at once; a handler that ignores the cancellation keeps holding it, so the
+                                        // client still never has more handlers than streams (as Go's CVE-2023-44487 fix)
+                                        val watch =
+                                            launch {
+                                                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                                req.awaitAbandoned()
+                                                handler.cancel(CancellationException("the client abandoned the request"))
+                                            }
                                         try {
-                                            handleHttp3(req, local, peer, authorityCheck)
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Throwable) {
-                                            environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                            handler.join()
+                                        } finally {
+                                            watch.cancel()
+                                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                            req.handlerEnded()
                                         }
                                     }
                                 }

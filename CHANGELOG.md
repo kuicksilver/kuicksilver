@@ -1176,6 +1176,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   server) were accepted, so a server could answer, credit or reset a request it had never seen, and the request went out
   afterwards. Every such frame but PRIORITY is now a connection error PROTOCOL_ERROR, also on a request dropped before
   it went out while no later one did (section 5.1.1); unknown frame types and ALTSVC stay ignored there.
+- QUIC: a stream that ended with our RESET_STREAM is reported finished (`ConnectionEvent.StreamFinished`, and the HTTP/3
+  graceful close that waits for it) once the RESET_STREAM is acknowledged, RFC 9000 section 3.1 "Reset Recvd", not when
+  it is sent (also for RESET_STREAM_AT). The stream is retired at once as before, and the runtime lets go of its channels
+  then; a peer stream's credit returns at the acknowledgment, so a peer that leaves our resets unacknowledged cannot open
+  more such streams than its limit. A server's graceful close no longer overtakes the reset of a request its application
+  abandoned.
+
+- HTTP/3 client: a request waiting for stream credit when the server's GOAWAY arrived was sent on the stream it got
+  next, against RFC 9114 section 5.2 ("Endpoints MUST NOT initiate new requests ... after receipt of a GOAWAY frame"),
+  or failed with the client's own close of the idle connection; it now fails with `Http3Exception.RequestNotProcessed`
+  (never sent, safe to retry) without opening a stream, and so does one waiting when the client sent its own GOAWAY. HTTP/3 server: a request
+  stream the client reset before its HEADERS stayed open in the server's direction; it is reset with
+  H3_REQUEST_REJECTED.
+
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
@@ -2079,6 +2093,19 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   increment below 1024 bytes to it (at most 16 held); beyond those such an increment is a glitch. Readers that credit each
   frame they read, or what they read once their window is used up (Go's x/net/http2), stay free; larger increments stay
   uncounted, bounded by the 2^31 - 1 window.
+- HTTP/3 server, Rapid Reset (CVE-2023-44487; RFC 9114 section 10.5): a request the client opened and reset at once (STOP_SENDING
+  and RESET_STREAM) gave its stream's `MAX_STREAMS` credit back as soon as the transport was done with it, while the
+  request's handler still ran, so a client kept any number of handlers running within a limit of 100 streams (measured
+  against the Ktor engine before the fix: 101 handlers with 100 streams allowed, and growing). A request stream now
+  counts toward the client's limit until the application is done with the request: in the Ktor engine until its handler
+  returned; with `Http3Connection.acceptRequest` until the response ended (complete or abandoned), `reset` was called, an
+  answer failed, or the application read the request body's failure. Every reset of a request stream by the client also
+  spends a token of a reset budget of its own (1000, 33 a second; not for an H3_NO_ERROR reset after a complete response), so a reset flood ends
+  the connection with `H3_EXCESSIVE_LOAD`. The Ktor engine cancels a handler once its client abandons the request
+  (STOP_SENDING, a reset, or the connection lost) and its response was not yet sent in full. QUIC: a peer
+  that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
+  `MAX_STREAMS`, or about the next one to close when none has, not only at the next half window.
+
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

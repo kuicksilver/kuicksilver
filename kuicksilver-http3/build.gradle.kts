@@ -14,6 +14,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))
             implementation(libs.jazzer.junit)
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

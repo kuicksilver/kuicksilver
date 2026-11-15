@@ -263,6 +263,7 @@ internal fun H3Session.onGoAway(id: Long) {
         throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "GOAWAY $id is not a client-initiated bidirectional stream")
     }
     goAwayReceived.value = id
+    goAwaySeen.complete(Unit)
     if (!isServer) {
         for ((sid, st) in clientStreams.toList()) {
             if (sid >= id) { // never processed: fail them as retry-safe (section 5.2)

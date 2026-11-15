@@ -1093,6 +1093,16 @@ public class ConnectionCore internal constructor(
     /** The priority the scheduler sends stream [id] with (a test hook). */
     internal fun priorityForTest(id: Long): StreamPriority? = streams.priorityForTest(id)
 
+    /** See [StreamManager.holdPeerBidiCredit]: peer bidirectional streams keep their credit until [releasePeerStreamCredit]. */
+    internal fun holdPeerBidiStreamCredit() {
+        streams.holdPeerBidiCredit()
+    }
+
+    /** See [StreamManager.releasePeerCredit]. */
+    internal fun releasePeerStreamCredit(id: Long) {
+        streams.releasePeerCredit(id)
+    }
+
     /** Stream [id] carries a tunnel: it gets a share of the frames whatever its priority (RFC 9218 section 10.1). */
     internal fun markTunnel(id: Long) {
         streams.markTunnel(id)

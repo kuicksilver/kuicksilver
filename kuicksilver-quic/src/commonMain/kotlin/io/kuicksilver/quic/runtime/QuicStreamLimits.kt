@@ -9,8 +9,9 @@ import io.kuicksilver.quic.QuicConnection
 /**
  * The stream limits a connection grants its peer and the peer grants it, for the HTTP/3 layer (RFC 9218 section 7.2 checks a
  * PRIORITY_UPDATE's stream ID against them, RFC 9297 section 2.1 an HTTP/3 datagram's). Read without the endpoint loop's
- * lock, like [QuicConnection.stats]: the values only grow (but for the one reset of a rejected 0-RTT, which concerns
- * streams the peer never saw), and frames naming a stream reach the reader after the MAX_STREAMS that allowed it.
+ * lock, like [QuicConnection.stats]: the limits only grow (but for the one reset of a rejected 0-RTT, which concerns
+ * streams the peer never saw), and frames naming a stream reach the reader after the MAX_STREAMS that allowed it. The
+ * probe [heldPeerBidiStreamsForTest] is no limit: it goes down as well as up.
  */
 @InternalKuicksilverApi
 public object QuicStreamLimits {
@@ -18,6 +19,7 @@ public object QuicStreamLimits {
     @OptIn(ExperimentalKuicksilverApi::class)
     public fun peerBidiStreamsGranted(connection: QuicConnection): Long? =
         (connection as? ConnectionRuntime)?.core?.streams?.peerMaxStreamsGranted(bidi = true)
+            ?: (connection as? io.kuicksilver.quic.ConnectionTransportHooks)?.peerBidiStreamsGrantedHook
 
     /**
      * How many bidirectional streams we may open in total (the peer's last MAX_STREAMS); null for a connection of another
@@ -26,6 +28,7 @@ public object QuicStreamLimits {
     @OptIn(ExperimentalKuicksilverApi::class)
     public fun localBidiStreamsAllowed(connection: QuicConnection): Long? =
         (connection as? ConnectionRuntime)?.core?.streams?.localMaxStreamsAllowed(bidi = true)
+            ?: (connection as? io.kuicksilver.quic.ConnectionTransportHooks)?.localBidiStreamsAllowedHook
 
     /**
      * Keeps the connection's receive window (its MAX_DATA credit) at least [bytes], up to `QuicConfig.maxConnectionWindow`,
@@ -66,4 +69,16 @@ public object QuicStreamLimits {
     /** The connection-level limit we last advertised (MAX_DATA), or null for a connection of another kind (a test hook). */
     @OptIn(ExperimentalKuicksilverApi::class)
     public suspend fun receiveLimit(connection: QuicConnection): Long? = (connection as? ConnectionRuntime)?.receiveLimit()
+
+    /**
+     * Peer bidirectional streams whose MAX_STREAMS credit is held for the application now (`holdPeerStreamCredit`): live
+     * ones and finished ones not yet released; null for a connection of another kind. A probe for tests at quiesce: read off
+     * the loop and, unlike the limits above, it goes down as well as up.
+     */
+    public fun heldPeerBidiStreamsForTest(connection: QuicConnection): Int? =
+        (connection as? ConnectionRuntime)
+            ?.core
+            ?.streams
+            ?.heldCreditForTest()
+            ?.get(0)
 }

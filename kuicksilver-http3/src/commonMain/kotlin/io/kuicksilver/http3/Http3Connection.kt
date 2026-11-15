@@ -93,6 +93,9 @@ public class Http3Connection private constructor(
      * while it waits takes no request with it: the next call returns it. A wrapper that is itself cancelled after this
      * returned (`withTimeout`, `async`, `withContext`) may still drop the request it got, so accept in one long-lived loop
      * rather than polling with a timeout.
+     * Each request returned holds one of the client's streams (its `MAX_STREAMS` credit) until the application is done
+     * with it; see [Http3ServerRequest] for when that is. A request kept without that holds its stream until the
+     * connection ends.
      */
     public suspend fun acceptRequest(): Http3ServerRequest {
         check(role == Http3Role.Server) { "acceptRequest() is server-only" }
@@ -177,7 +180,22 @@ public class Http3Connection private constructor(
     }
 }
 
-/** A request as a server sees it (RFC 9114 section 4.1). Respond with [respond]; interim responses first with [sendInformational]. */
+/**
+ * A request as a server sees it (RFC 9114 section 4.1). Respond with [respond]; interim responses first with [sendInformational].
+ *
+ * The request holds one of the client's streams, so that a client that resets its requests at once cannot have more of
+ * them running than it may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). The stream goes back to
+ * the client once the application is done with the request, which is when the first of these happens:
+ * - its response ended: [Http3ResponseWriter.finish] returned or failed, its output was closed or cancelled, or the
+ *   stream of [acceptConnect] ended in both directions;
+ * - [reset] was called;
+ * - [respond] or [acceptConnect] failed (the exception tells the application the request is over);
+ * - the application read the request's failure from [body] (a read, or [ByteReadChannel.closedCause], showed the
+ *   client's reset or another error): from then on the request is over for the transport, also if the application keeps
+ *   working on it.
+ * A request the application drops without any of these keeps its stream until the connection ends. The Ktor engine
+ * gives the stream back when its handler returns instead, and cancels the handler when the client abandons the request.
+ */
 public interface Http3ServerRequest {
     /** The QUIC id of the request stream (a client-initiated bidirectional stream, RFC 9114 section 6.1). */
     public val streamId: Long
@@ -305,3 +323,32 @@ public var Http3Connection.beforeTransportClosedForTest: (suspend () -> Unit)?
     set(v) {
         session.beforeTransportClosedForTest = v
     }
+
+/**
+ * For a server engine that runs one handler per request: from now on [this] request keeps its stream's MAX_STREAMS credit
+ * until [handlerEnded], whatever happens to the request meanwhile (the client's reset, a failed response), so the client
+ * never has more handlers running than it may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). Call it
+ * right after [Http3Connection.acceptRequest], and [handlerEnded] exactly when the handler returned or failed.
+ */
+@InternalKuicksilverApi
+public fun Http3ServerRequest.holdStreamUntilHandled() {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.engineManaged = true
+}
+
+/**
+ * Suspends until the client abandoned [this] request: it sent STOP_SENDING for the response, reset the request other
+ * than with H3_NO_ERROR (RFC 9114 section 4.1.1), or the connection is gone. A server engine cancels the request's handler then, so the stream it
+ * holds ([holdStreamUntilHandled]) goes back to the client at once (as Go's CVE-2023-44487 fix cancels the handler's
+ * context). Never returns for a request the client keeps, once the response was sent in full, nor for requests of other
+ * implementations.
+ */
+@InternalKuicksilverApi
+public suspend fun Http3ServerRequest.awaitAbandoned() {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.awaitAbandoned() ?: kotlinx.coroutines.awaitCancellation()
+}
+
+/** The engine's handler of [this] request ended (see [holdStreamUntilHandled]). Idempotent. */
+@InternalKuicksilverApi
+public fun Http3ServerRequest.handlerEnded() {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.handlerEnded()
+}

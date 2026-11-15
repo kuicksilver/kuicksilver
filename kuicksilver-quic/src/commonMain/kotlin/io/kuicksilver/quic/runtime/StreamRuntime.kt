@@ -236,6 +236,15 @@ internal class StreamRuntime(
         loop.scope.launch { if (live()) conn.core.markTunnel(id) }
     }
 
+    /** See [io.kuicksilver.quic.releaseStreamCredit]; the MAX_STREAMS it may free goes out with this flush. */
+    internal fun releaseCredit() {
+        loop.scope.launch {
+            if (!live()) return@launch
+            conn.core.releasePeerStreamCredit(id)
+            loop.flush(conn.core)
+        }
+    }
+
     internal fun signalReadable() {
         readable.trySend(Unit)
     }
@@ -293,10 +302,18 @@ internal class StreamRuntime(
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     internal fun finished() {
+        retired()
+        done.complete(Unit)
+    }
+
+    /**
+     * The core retired the stream; its StreamFinished (and [done]) may still wait for our reset's acknowledgment. The
+     * wrapper leaves the connection's map here, so no STOP_SENDING reaches it any more.
+     */
+    internal fun retired() {
         noteSendReleased(sentToCore) // retired: nothing of it is buffered any more
         readable.trySend(Unit)
         conn.removeTicker(ticker)
-        done.complete(Unit)
         settleStop(ENDED) // both halves are done: no STOP_SENDING stops this stream any more
     }
 

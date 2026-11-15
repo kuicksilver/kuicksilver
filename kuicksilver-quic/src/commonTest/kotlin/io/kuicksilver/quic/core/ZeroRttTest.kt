@@ -305,7 +305,9 @@ class ZeroRttTest {
 
     /**
      * The held final size and StreamFinished of a 0-RTT stream are in the 0-RTT answer's one queue (`heldUntilAnswer`), in
-     * order, so the 0-RTT invariant counts them: what [held] returns, before the answer.
+     * order, so the 0-RTT invariant counts them: what [held] returns, before the answer. A stream we reset is reported
+     * finished only once the reset is acknowledged, which a 0-RTT packet's never is before the answer: before it only the
+     * size is held.
      */
     private fun heldOf(
         p: CorePair,
@@ -327,9 +329,13 @@ class ZeroRttTest {
     @Test fun heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance() {
         val (p, id) = resetEarlyUni(ticket())
         try {
-            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.handshake())
             assertEquals(true, p.client.earlyDataAccepted)
+            assertNothingHeld(p)
+            assertEquals(listOf("size 5"), p.clientEvents.ofStream(id), "the size stands at the answer")
+            // the stream is finished once the server acknowledged our reset, after the answer
+            assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
             assertNothingHeld(p)
             assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
         } finally {
@@ -340,7 +346,7 @@ class ZeroRttTest {
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedByARejection() {
         val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
         try {
-            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.handshake())
             assertEquals(false, p.client.earlyDataAccepted)
             assertNothingHeld(p)
@@ -356,7 +362,7 @@ class ZeroRttTest {
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheAcceptanceFails() {
         val (p, id) = resetEarlyUni(t2Lowered())
         try {
-            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
             assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertNothingHeld(p)
@@ -373,7 +379,7 @@ class ZeroRttTest {
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer() {
         val (p, id) = resetEarlyUni(ticket())
         try {
-            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertEquals(listOf("size 5"), heldOf(p, id))
             p.client.close(0, "end", p.now)
             assertNothingHeld(p)
             p.runUntil(limit = 2.seconds) { false }
