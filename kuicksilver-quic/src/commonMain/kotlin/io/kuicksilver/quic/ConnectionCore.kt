@@ -217,6 +217,10 @@ public class ConnectionCore internal constructor(
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null
 
+    /** Times a failed validation fell back to another validated path, and went back to the last validated peer address (RFC 9000 section 9.3.2). */
+    internal var pathFallbacksForTest = 0
+    internal var pathRevertsForTest = 0
+
     /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
     internal var testBeforeSwitch: ((PathId) -> Unit)? = null
     internal var pathResponsesSentForTest = 0

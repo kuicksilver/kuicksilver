@@ -392,6 +392,9 @@ internal class Paths(
         return best
     }
 
+    /** All path slots are taken. */
+    val isFull: Boolean get() = all.size >= maxPaths
+
     /** The most recently validated path other than [except], if any. */
     fun fallback(
         except: Path,

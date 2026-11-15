@@ -540,6 +540,7 @@ internal class ConnectionInvariants(
             }
 
             is ConnectionEvent.Closed -> {
+                if (e.reason is QuicException.ConnectionLost.NoViablePath) QuicReach.hit("migration.noViablePath")
                 if (e.reason is QuicException.ConnectionLost.StatelessReset) {
                     if (!validResetSeen[side]) {
                         fail(
@@ -602,6 +603,20 @@ internal class ConnectionInvariants(
         c: ConnectionCore,
     ) {
         val peerMax = c.peerTp?.maxUdpPayloadSize
+        // one path per local socket and peer address (the handshake-time candidate aside, which holds an address the active path left)
+        val pairs = HashSet<Triple<Int, io.kuicksilver.quic.core.AddressClass.IpKey, Int>>()
+        for (p in c.paths.all) {
+            if (p.handshakeCandidate) continue
+            if (!pairs.add(Triple(p.socket.value, p.remoteKey, p.remote.port))) {
+                fail(
+                    "${name(
+                        side,
+                    )} has two paths from socket ${p.socket.value} to ${p.remote}: ${c.paths.all.map {
+                        "${it.id.value}:${it.socket.value}:${it.remote}:${it.state}"
+                    }}",
+                )
+            }
+        }
         for (p in c.paths.all) {
             if (p.mtu < 1200) fail("${name(side)} path ${p.id.value} has MTU ${p.mtu} < 1200 (RFC 9000 section 14)")
             if (p.mtu > c.config.maxUdpPayloadSize) fail("${name(side)} path ${p.id.value} MTU ${p.mtu} above our own limit")

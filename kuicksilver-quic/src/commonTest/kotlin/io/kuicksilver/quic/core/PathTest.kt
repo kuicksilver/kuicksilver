@@ -3457,4 +3457,102 @@ class PathTest {
             p.close()
         }
     }
+
+    private fun addValidated(
+        s: ConnectionCore,
+        socket: PathId,
+        a: InetSocketAddress,
+    ): Path {
+        val q = s.paths.add(socket, a, s.config.congestionController(), s.config.newPathInitialRtt, evict = false)!!
+        q.state = PathState.Validated
+        q.validatedAt = s.now
+        q.lastReceivedAt = s.now
+        s.paths.lastValidated = q
+        return q
+    }
+
+    /**
+     * 0.3.0 re-review: the last validated path is on the failed path's local address, but the client changed its ID there, so it cannot
+     * take over as it is. The revert created a second path for the same local and peer address instead of going back to that one, and
+     * a path made active kept the mark of the changed ID, which was relative to the previous active path.
+     */
+    @Test fun negative_aRevertOnTheSameLocalAddressKeepsOnePathPerPeerAddress() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            val q = addValidated(s, failed.socket, a)
+            q.local = failed.local
+            q.peerChangedDcid = true
+            leaveSpares(s, 0)
+            s.onPathFailed(failed)
+            assertEquals(1, s.paths.all.count { it.socket == failed.socket && it.isRemote(a) }, "one path per (socket, peer address)")
+            assertSame(q, s.paths.active, "back on the last validated path")
+            assertFalse(q.peerChangedDcid, "relative to the active path, which it is now")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 re-review, RFC 9000 section 9.3.2: with all four path slots taken (two validations of other addresses under way) the revert
+     * found no slot for the last validated peer address and closed the connection, although that address was known.
+     */
+    @Test fun negative_aRevertWithEveryPathSlotTakenDoesNotClose() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
+            for (k in 0 until 2) {
+                val x =
+                    s.paths.add(
+                        failed.socket,
+                        InetSocketAddress("10.0.1.${k + 1}", 50000),
+                        s.config.congestionController(),
+                        s.config.newPathInitialRtt,
+                        evict = false,
+                    )!!
+                s.startValidation(x)
+            }
+            assertEquals(4, s.paths.all.size)
+            leaveSpares(s, 0)
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state, "a validated peer address is known: revert, not close")
+            assertTrue(s.paths.active.isRemote(a))
+            assertEquals(failed.socket, s.paths.active.socket)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9000 section 9.3: a peer address not heard from within a validation period is validated again when the connection goes back. */
+    @Test fun aRevertToAnAddressNotHeardFromRecentlyValidatesItAgain() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            val q = addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
+            q.validatedAt = s.now - 60.seconds
+            q.lastReceivedAt = s.now - 60.seconds
+            leaveSpares(s, 0)
+            s.onPathFailed(failed)
+            assertTrue(s.paths.active.isRemote(a))
+            assertEquals(PathState.Validating, s.paths.active.state, "validated again")
+        } finally {
+            p.close()
+        }
+    }
 }

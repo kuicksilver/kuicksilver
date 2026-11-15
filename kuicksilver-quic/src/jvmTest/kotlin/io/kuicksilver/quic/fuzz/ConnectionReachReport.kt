@@ -53,13 +53,25 @@ class ConnectionReachReport {
             QuicReach.reset()
             val started = System.nanoTime()
             var failed = 0
+            val examples = LinkedHashMap<String, MutableList<String>>()
             for (f in files) {
+                val before = QuicReach.snapshot()
                 try {
                     if (method == "connectionNull") target.connectionNull(f.readBytes()) else target.connectionTls(f.readBytes())
                 } catch (e: Throwable) {
                     if (failed++ < 30) println("FAIL ${f.name}: ${e::class.simpleName}: ${e.message}")
                     if (only != null) e.printStackTrace(System.out)
                 }
+                for ((k, v) in QuicReach.snapshot()) {
+                    if (v > (before[k] ?: 0L)) examples.getOrPut(k) { ArrayList() }.let { if (it.size < 2) it += f.name }
+                }
+            }
+            for (k in listOf(
+                "migration.fallback",
+                "migration.reverted",
+                "migration.noViablePath",
+            )) {
+                println("examples $method $k: ${examples[k]}")
             }
             val ms = (System.nanoTime() - started) / 1_000_000
             println("reach $method: ${files.size} inputs, $failed failing, $ms ms")

@@ -277,6 +277,26 @@ internal object ConnectionPathSeeds {
                 .path(1, E_RESET, one(1), num(50))
                 .run(10)
                 .build()
+        // a failed validation of the active path (RFC 9000 section 9.3.2), from inputs the campaigns found: another validated path
+        // takes over; the only validated one is on the server's other local address, so the server goes back to that peer address
+        // from its own; no validated peer address is left, so the connection closes
+        m["fallback-after-failed-validation"] =
+            hex(
+                "0083fdf42e3df42e2ef43af4f4f52ef402fdf43d02f4f4f5f4fd02f42e3df4f52ef43af4f5f4f43d02f4f4f5f4fd02f42e3d" +
+                    "f4f52ef43af4eff42ef4fdf5f4f43d02f4f4f5f4fdf4f5f4f43d02f4f4f5f4fd02f42e3df4f52ef43af4eff42e02f42e3df4" +
+                    "f52ef43af4eff42ef4fdf4ce3d0224",
+            )
+        m["revert-to-last-validated-address"] =
+            hex(
+                "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
+                    "128412121235f512121c24397c12121232e3f524022ef4fd3d02f4f52e2ef4fd740254f4f53d2ef4f42ef4fd3d02f4f52ef4" +
+                    "f5f42ef4fd3d02f4f4f4f5f42ef4fd3d3df4f52e2ef4f42ef4fd3d02f4f412f9009a28",
+            )
+        m["no-viable-path"] =
+            hex(
+                "00a49c9ca4e47f3113113113313914ff31131102f42e3df4f52ef43af4f5f4464646f43d000a00001100000005fd02f42e3d" +
+                    "2ef43af4ef",
+            )
         // the client migrates, so the server sends with one of the client's IDs that has a reset token; then that token arrives from a
         // stranger, with the server's own ID as destination (routed to the connection, not by the peer's address): not a reset
         m["reset-stranger-after-migration"] =
@@ -375,6 +395,8 @@ internal object ConnectionPathSeeds {
                 .build()
         m
     }
+
+    private fun hex(h: String): ByteArray = ByteArray(h.length / 2) { h.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
     /**
      * A random program over every dimension: setup bits, transfers both ways, network faults and the PATH operations, with time

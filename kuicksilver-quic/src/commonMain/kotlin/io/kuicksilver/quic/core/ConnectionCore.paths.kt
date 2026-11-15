@@ -591,6 +591,7 @@ internal fun ConnectionCore.switchPath(
     dropHandshakeCandidate() // a migration after the handshake supersedes a handshake-time rebind still being decided
     val oldPeer = cids.currentPeer
     paths.active = p
+    p.peerChangedDcid = false // relative to the active path, which this one is now
     p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
@@ -699,27 +700,58 @@ internal fun ConnectionCore.onPathFailed(
     if (back != null) {
         dcidFor(back)
         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)
+        pathFallbacksForTest++
         return
     }
-    // no such path (the validated ones are on another local address, with no spare ID for them): a server goes back to the last
-    // validated peer address from the failed path's own local address, with the ID it already uses there, which meets both MUSTs;
-    // only without any validated peer address (or a free path slot) does the connection close, silently (section 9.3.2: "If an
-    // endpoint has no state about the last validated peer address, it MUST close the connection silently")
+    // no such path (the validated ones are on another local address, or the client changed its ID there, with no spare ID): a server
+    // goes back to the last validated peer address from the failed path's own local address; only without any validated peer address
+    // does the connection close, silently (section 9.3.2: "If an endpoint has no state about the last validated peer address, it MUST
+    // close the connection silently")
     val last = paths.fallback(p) ?: paths.lastValidated.takeIf { it !== p && it.state == PathState.Validated }
     if (role == TlsRole.Server && last != null && !p.isRemote(last.remote)) {
-        val k = paths.add(p.socket, last.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now)
-        if (k != null) {
-            k.local = p.local
-            k.state = PathState.Validated
-            k.validatedAt = now
-            k.amplification.validated = true
-            initPathOnSocket(k, p)
-            paths.lastValidated = k
-            switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
-            return
-        }
+        revertTo(p, last)
+        return
     }
     silentClose(QuicException.ConnectionLost.NoViablePath())
+}
+
+/**
+ * Server, RFC 9000 section 9.3.2: the active path [p] failed its validation and no validated path can take over as it is; the
+ * connection goes back to [last]'s peer address from [p]'s local address. The path for that pair is [last] itself when it is on [p]'s
+ * local address, or one already there (one path per local and peer address), or a new one, for which a path that is neither [p] nor
+ * [last] gives way when all are taken (section 9.3: "After changing the address to which it sends non-probing packets, an endpoint can
+ * abandon any path validation for other addresses"). An address not heard from within a validation period is validated again (section
+ * 9.3: "An endpoint MAY skip validation of a peer address if that address has been seen recently").
+ */
+private fun ConnectionCore.revertTo(
+    p: Path,
+    last: Path,
+) {
+    var k =
+        paths.all.firstOrNull {
+            it !== p && it.socket == p.socket && it.isRemote(last.remote) && sameLocal(it.local, p.local) && !it.handshakeCandidate
+        }
+    if (k == null) {
+        if (paths.isFull) {
+            val victim =
+                paths.all.firstOrNull { it !== p && it !== last && it.state != PathState.Validated }
+                    ?: paths.all.first { it !== p && it !== last }
+            paths.remove(victim)
+            releasePathCid(victim)
+        }
+        k = paths.add(p.socket, last.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now)!!
+        k.local = p.local
+        initPathOnSocket(k, p)
+        k.validatedAt = last.validatedAt
+        k.lastReceivedAt = last.lastReceivedAt
+    }
+    k.state = PathState.Validated
+    k.amplification.validated = true
+    paths.lastValidated = k
+    switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
+    pathRevertsForTest++
+    val heard = if (k.validatedAt > k.lastReceivedAt) k.validatedAt else k.lastReceivedAt
+    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) startValidation(k)
 }
 
 /**
