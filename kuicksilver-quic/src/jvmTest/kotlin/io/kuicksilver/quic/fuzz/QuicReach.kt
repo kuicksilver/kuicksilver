@@ -25,8 +25,11 @@ internal object QuicReach {
      * ours (`migration.waitReleased.sameId`) is counted but not required: the engine reaches it (the previous path returns its ID once
      * its re-validation after a migration succeeds, and a revert there waits), but not this harness, whose two sides share one
      * active_connection_id_limit: with small limits the client, after moving, has no unused ID of the server's left to answer the
-     * server's re-validation of its old address (RFC 9000 section 9.5), so that re-validation never succeeds; with the default ones the
-     * server keeps a spare ID of the client's and takes it instead of waiting. Only PathTest.negative_theClientsPacketsWithTheSameIdEndTheWait
+     * server's re-validation of its old address (RFC 9000 section 9.5), so that re-validation never succeeds; with the default ones (4)
+     * the server holds the client's IDs for the old and the new address and two spare, so the fallback takes a spare instead of
+     * waiting, and every further client path that would spend them holds an ID of its own and becomes a fallback itself. Losing the
+     * client's NEW_CONNECTION_ID (a BLOCK right after the old address's PATH_RESPONSE) does not change that: the spares are there
+     * already. Only PathTest.negative_theClientsPacketsWithTheSameIdEndTheWait
      * reaches it.
      */
     val FEATURES =
