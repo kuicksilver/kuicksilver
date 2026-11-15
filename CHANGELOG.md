@@ -975,15 +975,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- HTTP/3 Capsule Protocol: a collector of `CapsuleStream.capsules` cancelled after a capsule was handed to it (a
-  `withTimeout` around `first()`, a `select`) lost that capsule, since a coroutine channel's receive drops an element
-  taken by a receiver cancelled before it resumes. Capsules now wait in a queue they leave only while the collector
-  runs: the next collector gets them, in order.
-- HTTP/3 server: `Http3Connection.acceptRequest` cancelled after a request was handed to it lost the request, which was
-  then never answered and kept counting as open (a graceful shutdown waited for it). The next call now returns it.
-- WebTransport: `acceptBidi` and `acceptUni` cancelled while taking a stream lost it, either at the channel's receive or
-  as the call returned after the stream was wrapped; the peer's stream stayed open and unread, holding its data and stream
-  credit until the session ended. The stream now goes back to the head of the queue for the next accept.
+- HTTP/3 Capsule Protocol: a collector of `CapsuleStream.capsules` cancelled while it waited could lose the capsule
+  being handed to it (a coroutine channel's receive drops an element taken by a receiver cancelled before it resumes),
+  and one cancelled while it handled a capsule lost the next one. Capsules now wait in a queue they leave only when a
+  running collector is about to get them: the next collector gets them, in order. What a wrapper around the collection
+  (`withTimeout`, `async`) does with a capsule already delivered stays the wrapper's: collect in one long-lived coroutine
+  rather than polling `first()` under a timeout.
+- HTTP/3 server: `Http3Connection.acceptRequest` cancelled while it waited could lose the request being handed to it,
+  which was then never answered and kept counting as open (a graceful shutdown waited for it). The next call now
+  returns it. A request returned to a `withTimeout` or `async` that was cancelled meanwhile is still dropped by that
+  wrapper (kotlinx.coroutines behaviour): accept in a long-lived loop rather than polling under a timeout.
+- WebTransport: `acceptBidi` and `acceptUni` cancelled while they waited, or while they set the stream up, lost it; the
+  peer's stream stayed open and unread, holding its data and stream credit until the session ended. The stream now goes
+  back to the head of the queue for the next accept (the same caveat about wrappers as for `acceptRequest`).
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

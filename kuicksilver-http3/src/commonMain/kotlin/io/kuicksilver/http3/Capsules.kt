@@ -182,7 +182,9 @@ public interface CapsuleStream {
      * [CapsuleConfig.terminalTypes] (which is delivered first), after the stream was reset and
      * stopped with H3_MESSAGE_ERROR; and with the stream's or connection's error when the peer reset the stream or the
      * connection closed. While nobody collects, reading pauses after [CapsuleConfig.receiveQueue] capsules, DATAGRAM
-     * capsules behind them included.
+     * capsules behind them included. A collector cancelled while it waits or handles a capsule leaves the next one for the
+     * next collector; a wrapper cancelled after a capsule was delivered (`withTimeout` around `first()`) may still drop
+     * that one, so collect in one long-lived coroutine.
      */
     public val capsules: Flow<Capsule>
 

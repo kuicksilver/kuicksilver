@@ -22,7 +22,6 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
@@ -34,7 +33,8 @@ import kotlin.concurrent.atomics.decrementAndFetch
 /**
  * The Capsule Protocol on an Extended CONNECT stream (RFC 9297 section 3). Three coroutines in the connection's scope:
  * a reader that runs the stream's input through [CapsuleParser] into a bounded [HandOffQueue] (a full queue stops reading,
- * which holds the peer back through flow control; a collector cancelled while it waits loses no capsule), a forwarder of the stream's QUIC datagrams, and a single writer that
+ * which holds the peer back through flow control; a collector cancelled while it waits, or while it handles a capsule,
+ * leaves the next one queued), a forwarder of the stream's QUIC datagrams, and a single writer that
  * drains a bounded queue of encoded capsules, so capsules never interleave. DATAGRAM capsules and QUIC datagrams share
  * one drop-oldest queue. A parse error resets and stops the stream with H3_MESSAGE_ERROR and fails [capsules] with
  * [Http3Exception.MessageError].
@@ -64,7 +64,10 @@ internal class CapsuleStreamImpl(
     private lateinit var reader: Job
     private lateinit var writer: Job
 
-    override val capsules: Flow<Capsule> = flow { while (true) emit(incoming.receive() ?: break) }
+    override val capsules: Flow<Capsule> = incoming.asFlow()
+
+    /** Capsules received and not collected yet (tests). */
+    internal val heldForTest: Int get() = incoming.size
     override val datagrams: Flow<ByteArray> = datagramQueue.receiveAsFlow()
 
     /**

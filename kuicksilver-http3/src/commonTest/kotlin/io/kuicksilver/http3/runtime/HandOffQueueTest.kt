@@ -11,6 +11,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -126,6 +127,54 @@ class HandOffQueueTest {
             resumed.run()
             assertTrue(first.isCancelled)
             assertEquals(1, withTimeoutOrNull(5.seconds) { second.await() }, "the second waiter slept next to the element")
+        }
+
+    /**
+     * A collector of [HandOffQueue.asFlow] whose job is cancelled while it handles element 1 leaves element 2 in the queue
+     * (a `flow {}` builder took it first and then dropped it in `emit`).
+     */
+    @Test fun negative_aCollectorCancelledWhileHandlingAnElementLeavesTheNextQueued() =
+        test {
+            val q = HandOffQueue<Int>()
+            q.offer(1)
+            q.offer(2)
+            val got = ArrayList<Int>()
+            launch {
+                q.asFlow().collect {
+                    got += it
+                    if (it == 1) currentCoroutineContext().job.cancel()
+                }
+            }.join()
+            assertEquals(listOf(1), got)
+            assertEquals(2, q.tryTake(), "element 2 was taken and dropped")
+        }
+
+    /**
+     * Collectors of [HandOffQueue.asFlow] cancelled by another thread at arbitrary moments, against a producer that is
+     * sometimes ahead and sometimes behind: every element handed to a collector arrives, once, in order.
+     */
+    @Test fun negative_collectorsCancelledAtAnyTimeLoseNothing() =
+        test {
+            val k = Killer(Random.nextLong())
+            val q = HandOffQueue<Int>(3)
+            val n = 3_000
+            val taken = MutableStateFlow(0)
+            launch {
+                for (i in 0 until n) {
+                    if (i % 3 == 0) taken.first { it >= i }
+                    q.send(i)
+                }
+                q.close()
+            }
+            val got = ArrayList<Int>()
+            k.run(this) {
+                q.asFlow().collect {
+                    got += it
+                    taken.value = got.size
+                }
+            }
+            assertEquals((0 until n).toList(), got, "$k")
+            assertTrue(k.kills > 0, "$k cancelled no collector")
         }
 
     /** A full queue holds its sender back until a receiver takes one; it never holds more than its capacity. */

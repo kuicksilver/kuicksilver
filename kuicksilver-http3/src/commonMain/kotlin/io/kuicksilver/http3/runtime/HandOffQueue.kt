@@ -7,6 +7,10 @@ package io.kuicksilver.http3.runtime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlin.concurrent.atomics.AtomicInt
 
 /**
@@ -20,6 +24,11 @@ import kotlin.concurrent.atomics.AtomicInt
  * [send] waits while [capacity] elements are held (back-pressure); [offer] never waits and is for unbounded queues.
  * Elements still held when the queue is closed are received first, then [receive] answers null (closed without a
  * cause) or throws the cause, as a closed channel does.
+ *
+ * What the queue guarantees ends where [receive] returns: a caller that wraps the call in `withTimeout`, `async` or
+ * `withContext` can still have that wrapper drop an element it returned (the wrapper discards the result of a block whose
+ * coroutine was cancelled while it ran, as kotlinx.coroutines documents). Hand elements on from the receiving
+ * coroutine itself, as [asFlow] does, and keep such wrappers out of the path.
  */
 internal class HandOffQueue<T : Any>(
     private val capacity: Int = Int.MAX_VALUE,
@@ -140,6 +149,24 @@ internal class HandOffQueue<T : Any>(
         drained.trySend(Unit)
         return first
     }
+
+    /** Elements held now (tests). */
+    val size: Int get() = locked { items.size }
+
+    /**
+     * The elements as a flow, each taken only when the collector is about to get it. Not a `flow {}` builder: its `emit`
+     * checks the collector's job after the element was taken, so a collector cancelled while it handled the element
+     * before would drop the next one. Here the check comes first, before anything is taken.
+     */
+    fun asFlow(): Flow<T> =
+        object : Flow<T> {
+            override suspend fun collect(collector: FlowCollector<T>) {
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    collector.emit(receive() ?: break)
+                }
+            }
+        }
 
     /** Waits for a signal of [ch]; a waiter cancelled meanwhile passes on a signal it may have consumed. */
     private suspend fun await(ch: Channel<Unit>) {

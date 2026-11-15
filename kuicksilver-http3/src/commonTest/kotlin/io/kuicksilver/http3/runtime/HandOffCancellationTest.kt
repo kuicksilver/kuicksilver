@@ -24,10 +24,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.coroutines.CoroutineContext
@@ -131,6 +134,76 @@ class HandOffCancellationTest {
             }
         }
 
+    /**
+     * A collector cancelled while it handles capsule 1 (its own job cancelled, a sibling failing) leaves capsule 2 queued
+     * for the next collector: the cancellation is seen before the next capsule is taken, not after.
+     */
+    @Test fun negative_aCapsuleCollectorCancelledWhileHandlingOneLosesNoCapsule() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val server =
+                    async {
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect()
+                            .useCapsuleProtocol(known)
+                    }
+                val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(known)
+                val s = withTimeout(5.seconds) { server.await() } as CapsuleStreamImpl
+                c.send(Capsule(TYPE, byteArrayOf(1)))
+                c.send(Capsule(TYPE, byteArrayOf(2)))
+                while (s.heldForTest < 2) yield() // both received, neither collected (bounded by the test's timeout)
+                val seen = ArrayList<Int>()
+                launch {
+                    s.capsules.collect { cap ->
+                        seen += cap.value.single().toInt()
+                        if (seen.size == 1) currentCoroutineContext().job.cancel()
+                    }
+                }.join()
+                assertEquals(listOf(1), seen)
+                assertEquals(2, withTimeoutOrNull(5.seconds) { s.capsules.first() }?.value?.single()?.toInt(), "capsule 2 was lost")
+            }
+        }
+
+    /**
+     * Numbered capsules collected by collectors that another thread cancels at arbitrary moments (waiting, running, handling
+     * a capsule): every capsule handed to a collector's block arrives, once, in order.
+     */
+    @Test fun negative_capsulesSurviveCollectorsCancelledAtAnyTime() =
+        h3Test {
+            val k = Killer(Random.nextLong())
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val server =
+                    async {
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect()
+                            .useCapsuleProtocol(known)
+                    }
+                val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(known)
+                val s = withTimeout(5.seconds) { server.await() }
+                val n = 300
+                val taken = MutableStateFlow(0)
+                launch {
+                    for (i in 0 until n) {
+                        // a few capsules ahead of the collector: some wait in the queue, some arrive at a waiting collector
+                        taken.first { it >= i - 3 }
+                        c.send(Capsule(TYPE, i.toString().encodeToByteArray()))
+                    }
+                    c.close()
+                }
+                val got = ArrayList<Int>()
+                k.run(this) {
+                    s.capsules.collect {
+                        got += it.value.decodeToString().toInt()
+                        taken.value = got.size
+                    }
+                }
+                assertEquals((0 until n).toList(), got, "$k")
+                assertTrue(k.kills > 0, "$k cancelled no collector")
+            }
+        }
+
     /** A request handed to an acceptRequest caller cancelled while being resumed goes to the next caller, and is answered. */
     @Test fun negative_anAcceptRequestCancelledWhileBeingResumedLosesNoRequest() =
         h3Test {
@@ -221,4 +294,49 @@ internal suspend fun <T> CoroutineScope.underCancellation(
         currentCoroutineContext().ensureActive()
         null
     }
+}
+
+/**
+ * Runs a consumer again and again, each time in a new child on [Dispatchers.Default], while another coroutine there
+ * cancels the running child at random moments (decided from [seed]): waiting, running, or between two elements.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class Killer(
+    private val seed: Long,
+) {
+    private val current = AtomicReference<Job?>(null)
+    private val killCount = AtomicLong(0)
+    val kills: Long get() = killCount.load()
+
+    /** Runs [consume] until one run ends without being cancelled. */
+    suspend fun run(
+        scope: CoroutineScope,
+        consume: suspend () -> Unit,
+    ) {
+        val rnd = Random(seed)
+        val killer =
+            scope.launch(Dispatchers.Default) {
+                while (true) {
+                    repeat(rnd.nextInt(200)) { yield() }
+                    current.load()?.let {
+                        it.cancel()
+                        killCount.incrementAndFetch()
+                    }
+                }
+            }
+        try {
+            while (true) {
+                val job = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) { consume() }
+                current.store(job)
+                job.start()
+                job.join()
+                current.store(null)
+                if (!job.isCancelled) break
+            }
+        } finally {
+            killer.cancel()
+        }
+    }
+
+    override fun toString(): String = "Killer(seed $seed)"
 }
