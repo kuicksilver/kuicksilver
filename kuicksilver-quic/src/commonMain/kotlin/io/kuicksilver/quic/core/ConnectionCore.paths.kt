@@ -862,13 +862,23 @@ private fun ConnectionCore.releasePeerCidWait(
  * Server: the active path [p] failed its validation, but its peer address is validated on another path (the client answered a
  * challenge there; on the preferred-address socket before the move, the only one a fallback may not take, [mayBeActive]). Address
  * validation proves the peer address, whatever local address the challenge left from, so the connection stays on [p] with that
- * address taken as validated: RFC 9000 section 9.3, "An endpoint MAY skip validation of a peer address if that address has been seen
+ * address taken as validated when it was seen within a validation period (otherwise [p] validates it again, once): RFC 9000 section 9.3, "An endpoint MAY skip validation of a peer address if that address has been seen
  * recently"; section 9.3.2 allows the silent close only to an endpoint that "has no state about the last validated peer address";
  * and non-probing packets keep leaving the original address (section 9.6.2). True when it did so.
  */
 private fun ConnectionCore.keepActiveOnValidatedAddress(p: Path): Boolean {
     if (role != TlsRole.Server || p !== paths.active) return false
     val other = paths.all.firstOrNull { it !== p && it.state == PathState.Validated && it.isRemote(p.remote) } ?: return false
+    val heard = if (other.validatedAt > other.lastReceivedAt) other.validatedAt else other.lastReceivedAt
+    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
+        // not seen recently: no validation to skip. The original path validates the address again, once; a second failure is a
+        // failure (the client stopped answering there)
+        if (p.revalidatedForStaleAddress) return false
+        p.revalidatedForStaleAddress = true
+        startValidation(p)
+        return true
+    }
+    p.revalidatedForStaleAddress = false
     p.state = PathState.Validated
     p.validatedAt = other.validatedAt
     p.amplification.validated = true

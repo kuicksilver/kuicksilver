@@ -3965,4 +3965,37 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Eighth review, RFC 9000 section 9.3 ("MAY skip validation of a peer address if that address has been seen recently"): the peer
+     * address validated on the preferred-address socket long ago is not taken as validated; the original path validates it again,
+     * and only a second failure ends it.
+     */
+    @Test fun negative_anAddressValidatedLongAgoOnThePreferredSocketIsValidatedAgain() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val q = addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, failed.remote)
+            q.peerProbed = true
+            q.validatedAt = s.now - 60.seconds
+            q.lastReceivedAt = s.now - 60.seconds
+            s.startValidation(failed)
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertSame(failed, s.paths.active)
+            assertEquals(PathState.Validating, failed.state, "validated again, not taken as validated")
+            s.onPathFailed(failed)
+            assertEquals(
+                io.kuicksilver.quic.ConnectionState.Closed,
+                s.state,
+                "the second failure is one: no validated address the server may use",
+            )
+        } finally {
+            p.close()
+        }
+    }
 }
