@@ -19,6 +19,7 @@ import io.kuicksilver.tls.TlsRole
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -83,12 +84,32 @@ class StreamStateTest {
             m.zeroRttPending = true
             recv(m, id, 0, byteArrayOf(1, 2), fin = true)
             assertTrue(m.events.none { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize }, "held, accepted=$accepted")
-            m.settleHeldFinalSizes(accepted)
+            assertEquals(2, m.heldUntilZeroRttAnswerForTest(), "in the answer's queue: the size and its stream")
+            m.settleHeldUntilAnswer(accepted)
             assertEquals(
                 accepted,
                 m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize && it.id == id && !it.sending && it.size == 2L },
             )
             assertEquals(0, m.sizesForTest()[5])
+            assertEquals(0, m.heldUntilZeroRttAnswerForTest())
+            assertFalse(m.zeroRttPending)
+        }
+    }
+
+    /**
+     * An answer or an end with nothing held still ends the hold: a final size that comes later is reported at once, not
+     * held for an answer that already came.
+     */
+    @Test fun negative_settlingWithNothingHeldEndsTheHold() {
+        for (accepted in listOf(true, false)) {
+            val m = manager()
+            val id = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
+            m.zeroRttPending = true
+            m.settleHeldUntilAnswer(accepted)
+            assertFalse(m.zeroRttPending, "accepted=$accepted")
+            recv(m, id, 0, byteArrayOf(1, 2), fin = true)
+            assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize && it.id == id }, "accepted=$accepted")
+            assertEquals(0, m.heldUntilZeroRttAnswerForTest())
         }
     }
 

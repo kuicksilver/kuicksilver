@@ -41,6 +41,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -297,6 +298,87 @@ class ZeroRttTest {
             p.runUntil(limit = 1.seconds) { false }
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
             assertEquals(0, p.client.streams.sizesForTest()[5], "nothing held after the answer")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The held final size and StreamFinished of a 0-RTT stream are in the 0-RTT answer's one queue (`heldUntilAnswer`), in
+     * order, so the 0-RTT invariant counts them: what [held] returns, before the answer.
+     */
+    private fun heldOf(
+        p: CorePair,
+        id: Long,
+    ): List<String> {
+        assertEquals(null, p.client.earlyDataAccepted, "no answer yet")
+        assertTrue(p.client.streams.zeroRttPending)
+        val held = p.client.streams.heldUntilAnswer
+        return held.ofStream(id)
+    }
+
+    /** After the answer or the end: nothing held, no stream named by a hold, and the hold is over. */
+    private fun assertNothingHeld(p: CorePair) {
+        assertEquals(0, p.client.zeroRttHeldForTest(), "nothing held for the answer")
+        assertEquals(0, p.client.streams.sizesForTest()[5], "no held event and no stream named by one")
+        assertFalse(p.client.streams.zeroRttPending, "the hold is over")
+    }
+
+    @Test fun heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance() {
+        val (p, id) = resetEarlyUni(ticket())
+        try {
+            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertTrue(p.handshake())
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertNothingHeld(p)
+            assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedByARejection() {
+        val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertTrue(p.handshake())
+            assertEquals(false, p.client.earlyDataAccepted)
+            assertNothingHeld(p)
+            p.runUntil(limit = 1.seconds) { false }
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+            assertNothingHeld(p)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Accepted with lower limits: the connection fails before what was held stands; it is dropped once, never reported. */
+    @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheAcceptanceFails() {
+        val (p, id) = resetEarlyUni(t2Lowered())
+        try {
+            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
+            assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+            assertNothingHeld(p)
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The connection ends before the server answers: the answer never comes and counts as no acceptance, so the held size
+     * and end are dropped and the hold ends (before, they stayed held, and a later final size was held too).
+     */
+    @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer() {
+        val (p, id) = resetEarlyUni(ticket())
+        try {
+            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            p.client.close(0, "end", p.now)
+            assertNothingHeld(p)
+            p.runUntil(limit = 2.seconds) { false }
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+            assertNothingHeld(p)
         } finally {
             p.close()
         }

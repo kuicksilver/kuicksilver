@@ -3716,6 +3716,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyBidiRe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAcrossAVersionUpgradeIsReportedOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttMaxDatagramFrameSizeReduced
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttReplayRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttTransportParamsReduced
@@ -3725,6 +3726,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_ea
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_earlyStreamOfAnAcceptedThenFailedConnectionReportsNothing
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_earlyStreamResetBeforeTheAnswerReportsNothingOnReject
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_forgedHellosDoNotFillTheRegister
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_heldFinalSizeOfA0RttStreamIsDroppedByARejection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheAcceptanceFails
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_initialFollowedByZeroRttThatDoesNotFitIsPadded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_invalidMaxEarlyDataIsProtocolViolation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData
@@ -4318,6 +4322,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negat
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_flowControlErrorKeepsReceivedWithinLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_repeatedResetRaisesOneEvent
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_resetFinalSizeBeyondStreamWindowIsFlowControlError
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_settlingWithNothingHeldEndsTheHold
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.noMaxStreamDataOnceFinalSizeIsKnown
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.noStopSendingAfterResetOrAllData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.peerOpeningHigherIdOpensLowerOnes

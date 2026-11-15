@@ -214,8 +214,9 @@ against other implementations; negative security controls named `negative_*` aft
 answer or by the end of the connection: once a client knows whether its 0-RTT was accepted, or its connection ended
 first, nothing is held back for the answer (`StreamManager.heldUntilAnswer`, the one queue for events that stand only if
 the server takes the 0-RTT carrying them, settled by the answer and by the end of the connection; the `zeroRttHeld`
-entry of `ConnectionCore.sizesForTest` counts it. Nothing is held yet: the check guards that queue, and a hold added
-later, such as the final sizes of streams sent in 0-RTT, must go through it rather than a list of its own); no client
+entry of `ConnectionCore.sizesForTest` counts it with the streams its events name. The final sizes of the client's own
+streams and their `StreamFinished` after them are held there; a hold added later must go through it too rather than a
+list of its own); no client
 0-RTT packet is sealed after the 1-RTT key arrived or numbered above the first 1-RTT packet; while the client runs on
 the remembered transport parameters, up to the moment it settles the server's answer, no limit it uses and nothing it
 sent exceeds them, however high the server's new ones; after a rejection no 0-RTT packet is left in the sent history, so

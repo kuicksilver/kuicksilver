@@ -829,8 +829,15 @@ internal class ZeroRttConnectionFuzz(
             c.streams.sendCreditViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
             c.recoveryViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
             val settled = side == 1 || answeredOrClosed()
-            for ((key, value) in c.sizesForTest()) {
-                val bound = if (key == "zeroRttHeld") (if (settled) 0L else Long.MAX_VALUE) else sizeBound(key, c)
+            // the 0-RTT hold first: a hold left after the answer is named as such, before the streams it names
+            for ((key, value) in c.sizesForTest().entries.sortedBy { it.key != "zeroRttHeld" }) {
+                // what is held for the 0-RTT answer, and the streams it names, is gone once the answer is known or the end came
+                val bound =
+                    when {
+                        key == "zeroRttHeld" -> if (settled) 0L else Long.MAX_VALUE
+                        key == "streamsHeldFor0Rtt" && settled -> 0L
+                        else -> sizeBound(key, c)
+                    }
                 check(value in 0..bound) { "${name(side)}: $key = $value outside 0..$bound" }
             }
             // every stream in the map is one the application can reach
@@ -960,6 +967,9 @@ internal class ZeroRttConnectionFuzz(
         }
         check(pair.client.zeroRttHeldForTest() == 0) {
             "client: ${pair.client.zeroRttHeldForTest()} items still held for the 0-RTT answer at the end"
+        }
+        check(pair.client.streams.sizesForTest()[5] == 0 && !pair.client.streams.zeroRttPending) {
+            "client: ${pair.client.streams.sizesForTest()[5]} held events and streams, or a hold not ended, at the end"
         }
     }
 

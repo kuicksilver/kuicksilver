@@ -253,7 +253,6 @@ internal fun ConnectionCore.settleZeroRtt() {
     val tp = peerTp ?: return
     val accepted = handshake.session.earlyDataAccepted == true
     earlyAccepted = accepted
-    streams.settleHeldUntilAnswer(accepted)
     if (accepted) {
         val lower =
             tp.activeConnectionIdLimit < old.activeConnectionIdLimit ||
@@ -268,20 +267,20 @@ internal fun ConnectionCore.settleZeroRtt() {
                 // a remembered reset_stream_at the server dropped is a lower capability too (quic-go treats it so)
                 (old.resetStreamAt && !tp.resetStreamAt)
         if (lower) {
-            // the connection fails: the streams of the 0-RTT data fail with it, their sizes never reported
-            streams.settleHeldFinalSizes(false)
+            // the connection fails: the streams of the 0-RTT data fail with it, what was held for the answer never reported
+            streams.settleHeldUntilAnswer(false)
             fail(TransportError.PROTOCOL_VIOLATION, 0, "server accepted 0-RTT with transport parameters below the remembered ones", null)
             return
         }
-        // the final sizes of streams sent in 0-RTT stand now
-        streams.settleHeldFinalSizes(true)
+        // what was held for the answer stands now (the final sizes of streams sent in 0-RTT), reported in order
+        streams.settleHeldUntilAnswer(true)
         // section 7.4.1: the new limits apply from 1-RTT on, also to the streams opened in 0-RTT
         applyPeerLimits(tp)
         streams.raiseLocalSendLimits(tp.initialMaxStreamDataBidiRemote, tp.initialMaxStreamDataUni)
         return
     }
-    // rejected: the streams sent in 0-RTT go (below, or with the connection), their sizes never stood
-    streams.settleHeldFinalSizes(false)
+    // rejected: the streams sent in 0-RTT go (below, or with the connection), what was held for the answer never stood
+    streams.settleHeldUntilAnswer(false)
     val goOn = earlyMode != EarlyDataState.Required && (rememberedAlpn ?: "") == (negotiatedAlpn ?: "")
     // connection-level frames (MAX_DATA, MAX_STREAMS) go again with their current values; stream data never
     discardZeroRttPackets { p -> if (goOn) streams.onConnectionFramesLost(p.frames) }

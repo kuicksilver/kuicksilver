@@ -164,22 +164,16 @@ internal class StreamManager(
     private val early = HashSet<Long>()
 
     /**
-     * Client: 0-RTT was attempted and the server's answer is not known yet. The final size of a sending half of ours is
-     * held until then ([settleHeldFinalSizes]), with the stream's StreamFinished after it, in order: a rejection drops the
-     * stream, whose size then never stood, and the runtime, which still holds the stream, fails it (EarlyDataRejected, or
-     * the connection's loss when it ends first).
+     * Client: 0-RTT was attempted and the server's answer is not known yet. The final size of a half of a stream of ours is
+     * held until then in [heldUntilAnswer], with the stream's StreamFinished after it, in order: a rejection, an acceptance
+     * the connection fails for lower limits, or the end of the connection drops them (the size never stood), and the
+     * runtime, which still holds the stream, fails it (EarlyDataRejected, or the connection's loss). [settleHeldUntilAnswer]
+     * ends it.
      */
     var zeroRttPending = false
-    private val heldEvents = ArrayList<ConnectionEvent>()
-    private val heldIds = HashSet<Long>()
 
-    /** The server answered our 0-RTT: the held events are raised in order when it was [accepted], dropped otherwise. */
-    fun settleHeldFinalSizes(accepted: Boolean) {
-        zeroRttPending = false
-        if (accepted) events += heldEvents
-        heldEvents.clear()
-        heldIds.clear()
-    }
+    /** Streams with an event in [heldUntilAnswer]: their StreamFinished is held after it ([reportFinished]). */
+    private val heldIds = HashSet<Long>()
 
     /** A StreamFinished raised before the final size of a half the stream has (the fuzzer's invariant; must stay 0). */
     private var finishedBeforeFinalSize = 0
@@ -418,25 +412,34 @@ internal class StreamManager(
 
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray =
-        intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size, heldEvents.size + heldIds.size)
+        intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size, heldUntilAnswer.size + heldIds.size)
 
     /**
      * Client: events held back until the server answers our 0-RTT, facts about a stream that stand only if the server took
      * the 0-RTT that carried them. [settleHeldUntilAnswer] reports them at an acceptance and drops them at a rejection or at
-     * the end of the connection. No event is held yet; a hold puts its events here rather than in a list of its own, so the
-     * 0-RTT invariant ([heldUntilZeroRttAnswerForTest]) covers it.
+     * the end of the connection. Every hold puts its events here rather than in a list of its own, so the 0-RTT invariant
+     * ([heldUntilZeroRttAnswerForTest]) covers it: the final sizes of our streams and their StreamFinished
+     * ([zeroRttPending]).
      */
     internal val heldUntilAnswer = ArrayList<ConnectionEvent>()
 
-    /** The server answered our 0-RTT ([accepted]), or the connection ended (false): what was held is reported or dropped. */
+    /**
+     * The server answered our 0-RTT ([accepted]), or the connection ended or failed before the answer stood (false): what
+     * was held is reported in order or dropped, and nothing is held any more. Called once per outcome.
+     */
     fun settleHeldUntilAnswer(accepted: Boolean) {
+        zeroRttPending = false
+        heldIds.clear()
         if (heldUntilAnswer.isEmpty()) return
         if (accepted) events += heldUntilAnswer
         heldUntilAnswer.clear()
     }
 
-    /** Fuzzing probe (0-RTT): events still held for the server's answer; 0 once it is known or the connection ended. */
-    internal fun heldUntilZeroRttAnswerForTest(): Int = heldUntilAnswer.size
+    /**
+     * Fuzzing probe (0-RTT): events still held for the server's answer, and the streams they name; 0 once it is known or the
+     * connection ended.
+     */
+    internal fun heldUntilZeroRttAnswerForTest(): Int = heldUntilAnswer.size + heldIds.size
 
     /**
      * Fuzzing probe (0-RTT), while the client still runs on the remembered transport parameters: no limit it uses, and
@@ -943,7 +946,7 @@ internal class StreamManager(
         s.reportedFinalSize = size
         val e = ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
         if (zeroRttPending && StreamIds.isLocal(s.id, role)) {
-            heldEvents += e
+            heldUntilAnswer += e
             heldIds += s.id
         } else {
             events += e
@@ -961,7 +964,7 @@ internal class StreamManager(
             // 1-RTT packets that waited for their keys are read when the keys come, before the handshake completes and the
             // 0-RTT answer is settled: a stream of ours is held like its sending half, a stream of the server's never drops
             if (zeroRttPending && StreamIds.isLocal(id, role)) {
-                heldEvents += e
+                heldUntilAnswer += e
                 heldIds += id
             } else {
                 events += e
@@ -981,9 +984,16 @@ internal class StreamManager(
             sendLimit.remove(id)
             e.send?.let { scheduler.remove(it) }
             if ((e.send?.reportedFinalSize ?: 0L) < 0 || (e.recv?.finalSize ?: 0L) < 0) finishedBeforeFinalSize++
-            // after its held final size: the runtime must still hold the stream when that size stands or falls
-            if (id in heldIds) heldEvents += ConnectionEvent.StreamFinished(id) else events += ConnectionEvent.StreamFinished(id)
+            reportFinished(id)
         }
+    }
+
+    /**
+     * The one place StreamFinished is raised. A stream with a final size held for our 0-RTT answer ([heldIds]) has it held
+     * after that size, in [heldUntilAnswer]: the runtime must still hold the stream when the size stands or falls.
+     */
+    private fun reportFinished(id: Long) {
+        if (id in heldIds) heldUntilAnswer += ConnectionEvent.StreamFinished(id) else events += ConnectionEvent.StreamFinished(id)
     }
 
     fun reset(
