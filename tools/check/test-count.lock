@@ -3729,6 +3729,11 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.relia
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.resetAtDeliversReliablePrefix
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.resetAtWaitsForFlowControlCredit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.stopSendingAfterResetAtEndsTheStream
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReviewKeyPhaseAttackTest.delayedAcksAcrossOwnUpdatePass
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReviewKeyPhaseAttackTest.honestPermutationsNeverError
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReviewKeyPhaseAttackTest.lengthBytesOf24AndHugeDeclaredLengthPass
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReviewKeyPhaseAttackTest.negative_keyUpdateOutOfOrderOffsets
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReviewKeyPhaseAttackTest.negative_keyUpdateSplitEverywhere
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.SendContinuationTest.quantumLimitedPollArmsTheNextSend
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.finOnAStoppedHalfIsReported
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.negative_resetAfterEverythingWasAcknowledgedSendsNothing
@@ -3760,6 +3765,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStream
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterAcceptedZeroRtt
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterRejectedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttMaxDatagramFrameSizeReduced
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttReplayRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttTransportParamsReduced
@@ -3774,9 +3780,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_he
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_initialFollowedByZeroRttThatDoesNotFitIsPadded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_invalidMaxEarlyDataIsProtocolViolation
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_keyUpdatesAfterRejectedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_rejectedZeroRttStreamHasNoFinalSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_resetStreamAtIsPartOfTheEarlyDataContext
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_ticketOfAnotherVersionIsNotUsed
@@ -3784,6 +3788,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_ve
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_zeroRttStopsAtTheAeadLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_zeroRttUsesTheRememberedResetStreamAt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.noEarlyDataWithoutServerOption
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.rejectedWithSmallerLimitsResetsStreamsAndContinues
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.rejectedZeroRttAdoptsLowerLimits
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.requiredModeFailsOnRejection

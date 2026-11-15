@@ -77,7 +77,7 @@ class KeyPhaseOrderingTest {
         assertKeyUpdateError { kp.receive(1, 5) } // generation 1 on 5 (previous keys), generation 0 on 10
     }
 
-    /** A packet number opened with the current keys and then, as a reuse, with the next ones. */
+    /** A packet number opened with the current keys and then, as a reuse, with the next ones (RFC 9000 section 12.3, not 6.4). */
     @Test fun negative_samePacketNumberUnderNewerKeys() {
         val kp = keyPhase()
         kp.receive(0, 10)

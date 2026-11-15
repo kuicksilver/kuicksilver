@@ -108,7 +108,8 @@ internal class KeyPhase(
     ) {
         when (choose(phaseBit, pn)) {
             CURRENT -> {
-                // newer keys at or below a packet number opened with older keys: the older key opened the higher one first
+                // newer keys below a packet number opened with older keys (section 6.4); equal, a packet number used under two keys
+                // (RFC 9000 section 12.3: "MUST NOT reuse a packet number")
                 if (pn <= maxBelowCurrent) misordered()
                 // the first packet of a phase we initiated: the peer has the new keys, so the old ones go 3 x PTO from now (section 6.5)
                 if (minCurrent == Long.MAX_VALUE && previous != null && discardAt == TimeMark.NEVER) discardAt = now + pto * 3
@@ -125,7 +126,8 @@ internal class KeyPhase(
             }
 
             else -> {
-                // the next key opened a packet number at or below one an older key opened: section 6.4, the order the RFC words
+                // the next key opened a packet number below one an older key opened: section 6.4, the order the RFC words; equal, a
+                // packet number reused under another key (RFC 9000 section 12.3)
                 if (pn <= maxCurrent || pn <= maxBelowCurrent) misordered()
                 if (generation > 0 && !ackSentForCurrentPhase) {
                     throw QuicWireException(
@@ -146,7 +148,8 @@ internal class KeyPhase(
         throw QuicWireException(
             TransportError.KEY_UPDATE_ERROR,
             0,
-            "older packet protection keys on a higher packet number than newer keys (RFC 9001 section 6.4)",
+            "older packet protection keys on a higher packet number than newer keys (RFC 9001 section 6.4), or one packet number " +
+                "under two keys (RFC 9000 section 12.3)",
         )
 
     /**

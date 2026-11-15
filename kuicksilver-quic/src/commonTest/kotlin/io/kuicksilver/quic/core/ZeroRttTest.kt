@@ -1189,7 +1189,8 @@ class ZeroRttTest {
      * RFC 9001 sections 6 and 6.4 after each 0-RTT outcome: the key phase state and the 1-RTT CRYPTO stream check start with the
      * 1-RTT keys, untouched by what 0-RTT did. Both sides update in turn (each packet number opened with the right generation, no
      * KEY_UPDATE_ERROR), then a TLS KeyUpdate from the client is still 0x010a. The tickets these connections resume came through the
-     * transport's KeyUpdate check of the 1-RTT CRYPTO stream (its control: NewSessionTickets pass).
+     * transport's KeyUpdate check of the 1-RTT CRYPTO stream (its control: NewSessionTickets pass). These three are coverage of the
+     * 0-RTT outcomes for the new state, not RED tests: they passed before the change too.
      */
     private fun keyUpdatesAfter(p: CorePair) {
         assertTrue(p.handshake())
@@ -1222,7 +1223,7 @@ class ZeroRttTest {
         }
     }
 
-    @Test fun negative_keyUpdatesAfterRejectedZeroRtt() {
+    @Test fun keyUpdatesAfterRejectedZeroRtt() {
         val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
         try {
             keyUpdatesAfter(p)
@@ -1233,7 +1234,7 @@ class ZeroRttTest {
     }
 
     /** Lost before the answer: no 1-RTT key, so no key phase and nothing of it left. */
-    @Test fun negative_noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer() {
+    @Test fun noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer() {
         val (p, _) = resumed(ticket())
         try {
             p.client.close(0, "end", p.now)
