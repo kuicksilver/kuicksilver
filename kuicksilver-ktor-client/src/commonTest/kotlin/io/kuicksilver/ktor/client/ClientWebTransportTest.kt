@@ -229,6 +229,124 @@ class ClientWebTransportTest {
             }
         }
 
+    private val oneSessionServer: io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration.() -> Unit = {
+        webTransport = true
+        http3Settings =
+            http3Settings {
+                enableConnectProtocol = true
+                webTransport = true
+                webTransportMaxSessions = 1
+            }
+    }
+
+    /**
+     * Sessions waiting for an extra connection another one is setting up share its failure: they all fail within one
+     * connect timeout, not one after the other with a timeout each.
+     */
+    @Test fun negative_sessionsWaitingForAFailedSetupFailWithinOneTimeout() =
+        h3Test {
+            val (server, port) = testServer(configure = oneSessionServer) { routing { webTransport("/wt") { echo(it) } } }
+            try {
+                testClient(Http3DiscoveryMode.Auto, engine = { connectTimeout = 2.seconds }).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    val a = client.webTransport("https://127.0.0.1:$port/wt")
+                    engine.h3.extraConnectForTest = { kotlinx.coroutines.awaitCancellation() } // the server takes no new connection
+                    val started =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    val outcomes =
+                        coroutineScope {
+                            List(6) { async { runCatching { client.webTransport("https://127.0.0.1:$port/wt") } } }.map { it.await() }
+                        }
+                    val took = started.elapsedNow()
+                    assertTrue(outcomes.all { it.isFailure }, "$outcomes")
+                    assertTrue(took < 3.5.seconds, "six sessions waiting for failed setups took $took")
+                    a.close()
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /**
+     * A connection that ends just as a session joins it (its last user had left, and it closed) is passed over: the
+     * session opens on another one instead of failing.
+     */
+    @Test fun negative_aConnectionClosingAsASessionJoinsIsPassedOver() =
+        h3Test {
+            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { echo(it) } } }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    var first = true
+                    engine.h3.webTransportStepForTest = { step ->
+                        if (step == "connection" && first) {
+                            first = false
+                            for (c in engine.h3.connectionsForTest()) c.close()
+                        }
+                    }
+                    val s = client.webTransport("https://127.0.0.1:$port/wt")
+                    assertEquals("ok", roundTrip(s, "ok"))
+                    s.close()
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /**
+     * A refusal on a connection that carries none of our sessions is no session limit (a server's rate, section 5.2):
+     * the caller gets it, and no further connection is opened to get round it.
+     */
+    @Test fun negative_aRefusalWithoutOurSessionsOpensNoFurtherConnection() =
+        h3Test {
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig
+                                    .Builder(
+                                        tlsConfig(TlsRole.Server) {
+                                            alpn = listOf(Http3Endpoint.H3)
+                                            identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                                        },
+                                    ).build()
+                        }.build(),
+                    http3Settings {
+                        enableConnectProtocol = true
+                        webTransport = true
+                    },
+                )
+            val accepted = kotlinx.coroutines.flow.MutableStateFlow(0)
+            val serving = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
+            serving.launch {
+                while (true) {
+                    val c = ep.accept()
+                    accepted.value++
+                    launch {
+                        while (true) {
+                            // every CONNECT refused unprocessed, as a server over its session rate does
+                            c.acceptRequest().reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_REJECTED)
+                        }
+                    }
+                }
+            }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { client ->
+                    assertFailsWith<Http3Exception.RequestNotProcessed> {
+                        client.webTransport("https://127.0.0.1:${ep.localAddress.port}/wt")
+                    }
+                    assertEquals(1, accepted.value, "one connection")
+                }
+            } finally {
+                serving.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+                ep.close()
+            }
+        }
+
     /** Section 5.1: without flow control on the server a connection carries one session; the second gets its own. */
     @Test fun negative_withoutFlowControlEachSessionGetsAConnection() =
         h3Test {

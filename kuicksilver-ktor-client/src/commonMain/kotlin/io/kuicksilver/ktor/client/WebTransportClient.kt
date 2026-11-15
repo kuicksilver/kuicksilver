@@ -19,7 +19,9 @@ import io.kuicksilver.http3.http3Request
  * one connection per address and port), as long as the server allows it: with WebTransport flow control on both sides
  * (draft-16 section 5.1) a connection carries up to `http3 { settings.webTransportMaxSessions }` sessions (4 by default)
  * and as many as the server accepts (section 5.2: a session it refuses with H3_REQUEST_REJECTED is opened again on
- * another connection to the same server, which the next sessions share too); without flow control a connection carries
+ * another connection to the same server, which the next sessions share too, unless none of this client's sessions was on
+ * the refusing connection: that is the server's rate, and the refusal is thrown as
+ * [io.kuicksilver.http3.Http3Exception.RequestNotProcessed]); without flow control a connection carries
  * one session, and each further one gets a connection of its own. A pooled connection that is not WebTransport-capable
  * (opened for requests without WebTransport's SETTINGS and `reset_stream_at`) is replaced by one that is, which carries
  * the origin's requests from then on; the old one finishes its requests and closes. A connection stays open while a

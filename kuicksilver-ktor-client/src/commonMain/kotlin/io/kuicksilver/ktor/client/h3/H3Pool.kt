@@ -454,8 +454,13 @@ internal class H3Pool(
             val dns = config.newRequestDns()
             val passed = HashSet<H3Entry>()
             var refusals = 0
+            var lost = 0
+            // one deadline for every connection this call sets up or waits for, however many it tries
+            val deadline =
+                kotlin.time.TimeSource.Monotonic
+                    .markNow() + connectTimeoutMillis.milliseconds
             while (true) {
-                val (e, c) = sessionConnection(t, data, dns, passed, connectTimeoutMillis)
+                val (e, c) = sessionConnection(t, data, dns, passed, connectTimeoutMillis, deadline)
                 val session =
                     try {
                         webTransportStepForTest?.invoke("connection")
@@ -477,10 +482,19 @@ internal class H3Pool(
                             }
 
                             x is Http3Exception.RequestNotProcessed -> {
-                                // the server refused it unprocessed (its session limit) or sent GOAWAY: another connection
+                                // the server refused it unprocessed (its session limit) or sent GOAWAY: another connection.
+                                // A refusal while none of our sessions is on the connection is no session limit (its rate,
+                                // section 5.2, or its own reasons): another connection would only start a fresh budget there
+                                if (!x.neverSent && e.wtSessions.load() == 0) throw x
                                 if (!x.neverSent) e.wtFullAt = e.wtSessions.load()
                                 passed += e
                                 if (++refusals > 2) throw x
+                                continue
+                            }
+
+                            // the connection ended as the session joined it (its last user had just left it): another one
+                            (c.ended() || x is io.kuicksilver.quic.QuicException.ConnectionLost) && ++lost <= 2 -> {
+                                passed += e
                                 continue
                             }
 
@@ -515,6 +529,7 @@ internal class H3Pool(
         dns: RequestDns,
         passed: Set<H3Entry>,
         connectTimeoutMillis: Long,
+        deadline: kotlin.time.TimeMark,
     ): Pair<H3Entry, Http3Connection> {
         val (main, mc) = acquire(t, data, dns, wt = true)
         if (main !in passed && main.takesSessions(mc)) return main to mc
@@ -546,14 +561,12 @@ internal class H3Pool(
             }
         if (made) {
             try {
-                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis)
+                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis, deadline)
                 c.closed.invokeOnCompletion { launchUnderLock { wtExtras[t.key]?.remove(e) } }
                 e.deferred.complete(c)
             } catch (x: Throwable) {
                 // the sessions waiting for it try another connection; our own cancellation is not theirs
-                e.deferred.completeExceptionally(
-                    if (x is CancellationException) IllegalStateException("the connection's setup was given up", x) else x,
-                )
+                e.deferred.completeExceptionally(if (x is CancellationException) SetupGivenUp(x) else x)
                 withContext(NonCancellable) { lock.withLock { wtExtras[t.key]?.remove(e) } }
                 e.release(clock())
                 throw x
@@ -565,12 +578,22 @@ internal class H3Pool(
             } catch (x: Throwable) {
                 e.release(clock())
                 currentCoroutineContext().ensureActive()
-                // the setup another session started failed: this one tries the pooled and extra connections again
-                return sessionConnection(t, data, dns, passed + e, connectTimeoutMillis)
+                // the setup another session started failed: its failure is this one's too (trying again would make each
+                // waiter spend a timeout of its own); only a setup its caller gave up is tried again, within the deadline
+                if (x !is SetupGivenUp) throw x
+                return sessionConnection(t, data, dns, passed + e, connectTimeoutMillis, deadline)
             }
         }
         return e to e.deferred.getCompletedOrNull()!!
     }
+
+    /** A setup of an extra connection its caller gave up: the sessions waiting for it try again. */
+    private class SetupGivenUp(
+        cause: Throwable,
+    ) : IllegalStateException("the connection's setup was given up", cause)
+
+    /** Test hook: runs inside the setup of an extra WebTransport connection, within its timeout. */
+    internal var extraConnectForTest: (suspend () -> Unit)? = null
 
     /** Runs [block] under [lock] from a completion handler (which cannot suspend). */
     private fun launchUnderLock(block: () -> Unit) {
@@ -630,7 +653,10 @@ internal class H3Pool(
         port: Int,
         dns: RequestDns,
         connectTimeoutMillis: Long,
+        deadline: kotlin.time.TimeMark,
     ): Http3Connection {
+        val left = -deadline.elapsedNow().inWholeMilliseconds
+        if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
         val ep = endpoint()
         val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
         val q = quicWithin(connectTimeoutMillis)
@@ -638,7 +664,8 @@ internal class H3Pool(
         var made: Http3Connection? = null
         val failures = ArrayList<Throwable>()
         try {
-            withTimeout(connectTimeoutMillis) {
+            withTimeout(left) {
+                extraConnectForTest?.invoke()
                 made = raceQuic(originHost, port, dns, failures) { remote -> ep.connect(remote, tls, q, wtSettings) }
             }
         } catch (e: TimeoutCancellationException) {
