@@ -333,6 +333,7 @@ kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2ConnectionFuzzTest.con
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2FrameFuzzTest.frames
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest.hpackDecode
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackRoundTripFuzzTest.hpackRoundTrip
+kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.H2HealthDeadlineRaceTest.negative_aPingAnsweredAsTheBoundFiresIsALiveConnection
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.PriorityConcurrencyTest.updatesNeverOverrideTheResponsesChoice
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_acceptIsNotHeldByAClientWithoutUniStreamCredit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3EndpointAcceptTest.negative_fewerThanThreeUniStreamsIsRefused
