@@ -46,6 +46,7 @@ import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.message.PriorityField
+import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.checkWebSocketUpgrade
@@ -512,7 +513,7 @@ internal suspend fun readResponse(
     webSocketKey: String? = null,
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
     webSocketCloseWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
-    onHandOver: (WebSocketLifetime) -> Unit = {},
+    onHandOver: (H1WebSocketHandOver) -> Unit = {},
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
@@ -591,26 +592,32 @@ internal suspend fun readResponse(
                                 headers.getAll(HttpHeaders.SecWebSocketProtocol).orEmpty(),
                                 lifetime.context,
                             )
-                        onHandOver(lifetime)
+                        // the connection's end is the engine's, after the session (RFC 6455 section 7.1.1: the server closes
+                        // the TCP connection first); the guard stops reading at the server's Close, the rest is read and
+                        // dropped by that end
+                        val held = HeldTransportEnd(output)
+                        val inputDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+                        onHandOver(H1WebSocketHandOver(lifetime, held, inputDone))
                         onBodyDone(AfterResponse.HandOver)
                         val wsConfig = request.attributes[WEBSOCKETS_KEY]
                         val guarded =
                             guardWebSocketInput(
                                 input,
                                 handshake.allowedRsv,
-                                untilClose = false,
+                                untilClose = true,
                                 peerMasks = false,
                                 context = lifetime.context,
                                 inflate = handshake.inflate,
                                 perMessageDeflate = handshake.perMessageDeflate,
                                 maxMessageSize = webSocketMaxMessageSize,
                                 checkText = handshake.checkText,
+                                onEnd = { inputDone.complete(Unit) },
                             )
                         // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                         val raw =
                             RawWebSocket(
                                 input = guarded,
-                                output = guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
+                                output = guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression),
                                 masking = false,
                                 coroutineContext = lifetime.context,
                                 channelsConfig = wsConfig.channelsConfig,
@@ -881,3 +888,14 @@ internal fun chunkedTransferEncoding(request: HttpRequestData): String? {
 }
 
 internal fun Url.isHttps(): Boolean = protocol.isSecure()
+
+/**
+ * What an HTTP/1.1 connection handed over to a WebSocket session needs for its end: the session's [lifetime], the
+ * session's channel to the connection ([output], whose end the engine owns), and [inputDone], completed once the
+ * session's frame guard stopped reading the connection (at the server's Close, or the end of the input).
+ */
+internal class H1WebSocketHandOver(
+    val lifetime: WebSocketLifetime,
+    val output: HeldTransportEnd,
+    val inputDone: kotlinx.coroutines.Job,
+)

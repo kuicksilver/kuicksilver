@@ -557,7 +557,26 @@ internal fun CoroutineScope.startH1Pipeline(
                         }
                     if (up == true) {
                         actorChannel.close()
-                        input.copyAndClose(requestBody as ByteChannel)
+                        // the upgrade reads the connection until it ends, not until the client closes: once the upgrade's
+                        // handler is over the connection closes at once (RFC 6455 section 5.5.1: after both Closes "The
+                        // server MUST close the underlying TCP connection immediately"; section 7.1.1: the server "SHOULD
+                        // initiate a TCP Close immediately", and the client "SHOULD wait for a TCP Close from the
+                        // server"). Copying to the client's end of the stream instead kept the connection open until the
+                        // client closed first
+                        // a failed connection (a reset) fails the upgrade's input, never this pipeline under the handler
+                        val upgradeInput = requestBody as ByteChannel
+                        val copy =
+                            launch(start = CoroutineStart.UNDISPATCHED) {
+                                try {
+                                    input.copyAndClose(upgradeInput)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Throwable) {
+                                    upgradeInput.cancel(e)
+                                }
+                            }
+                        handlerJob.join()
+                        copy.cancel()
                         break
                     } else if (requestBody is ByteChannel) { // not upgraded, for example, 404
                         requestBody.close()

@@ -78,6 +78,17 @@ internal abstract class PooledConnection(
     /** Closes the transport in order; called once, instead of [closeTransport]. */
     protected open fun closeTransportOrderly(): Unit = closeTransport()
 
+    /**
+     * For a close of its own (one that waits for the peer): true for the one caller that may close the transport, after
+     * which [close] and [closeOrderly] leave it alone; that caller gives the slot back with [slotBack] when it is done.
+     */
+    protected fun claimClose(): Boolean = closedFlag.compareAndSet(0, 1)
+
+    /** Gives the slot back after a close [claimClose] allowed. */
+    protected fun slotBack() {
+        pool?.slotReturned(this)
+    }
+
     /** True for the one caller that gives the slot back. */
     internal fun claimSlot(): Boolean = slotFlag.compareAndSet(0, 1)
 }

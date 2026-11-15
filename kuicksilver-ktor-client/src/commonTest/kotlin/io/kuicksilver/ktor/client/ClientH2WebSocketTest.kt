@@ -14,8 +14,10 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -570,16 +572,18 @@ class ClientH2WebSocketTest {
         }
 
     /**
-     * One deadline for the whole close, counted from the client's own Close: a server that answers with its Close late
-     * (1.6 s) and never ends the stream has it reset with CANCEL about one close wait (2 s) after the client's Close,
-     * not a second close wait after its own Close arrived. Before, the wait for END_STREAM started anew when the session
-     * ended, so the reset came after about 3.6 s. The server's 1.6 s is the late answer under test, not a
-     * synchronisation; the 1 s margin on either side keeps a loaded machine from deciding the result.
+     * T2 counts from the end of the closing handshake, not from the client's own Close: a slow server answers the
+     * client's Close late (1.6 s, within T1 of 2 s) and never ends the stream. The client's END_STREAM comes about one
+     * close wait (2 s) after the server's Close, not 0.4 s after it (what was left of a deadline counted from the
+     * client's own Close), and the reset with CANCEL only one close wait after that END_STREAM (RFC 8441 section 5: the
+     * orderly close first). The server's 1.6 s is the slow peer under test, not a synchronisation; the bounds keep a
+     * 0.5 s margin on either side.
      */
-    @Test fun negative_theCloseWaitIsOneDeadlineFromTheOwnClose() =
+    @Test fun negative_theTransportWaitCountsFromBothCloses() =
         clientTest {
             val reset = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
-            val sawClose = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
+            val clientEnded = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
+            val serverClosed = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
             tlsH2WithSilentUdp(
                 enableConnectProtocol = true,
                 onRequest = { _, r ->
@@ -593,18 +597,22 @@ class ClientH2WebSocketTest {
                     r.respond(200)
                     val out = ByteChannel()
                     launch { runCatching { r.sendBody(out, end = false) } }
-                    val ws = RawWebSocket(r.body, out, masking = false, coroutineContext = coroutineContext)
-                    for (frame in ws.incoming) {
-                        if (frame is Frame.Close) {
-                            sawClose.complete(
-                                kotlin.time.TimeSource.Monotonic
-                                    .markNow(),
-                            )
-                            delay(1_600) // a slow server: its Close comes late, and it never ends the stream
-                            ws.outgoing.send(Frame.Close())
-                            kotlinx.coroutines.awaitCancellation()
-                        }
+                    readClientFrames(r.body)
+                    delay(1_600) // a slow server: its Close comes late, and it never ends the stream
+                    out.writeFully(byteArrayOf(0x88.toByte(), 0))
+                    out.flush()
+                    serverClosed.complete(
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow(),
+                    )
+                    runCatching { r.body.discard() }
+                    if (r.body.closedCause == null) {
+                        clientEnded.complete(
+                            kotlin.time.TimeSource.Monotonic
+                                .markNow(),
+                        )
                     }
+                    kotlinx.coroutines.awaitCancellation()
                 },
             ) { port, _ ->
                 client().use { c ->
@@ -615,10 +623,13 @@ class ClientH2WebSocketTest {
                             // the block ends: the client's Close
                         }
                     }
-                    val closedAt = withTimeout(10.seconds) { sawClose.await() }
+                    val closedAt = withTimeout(10.seconds) { serverClosed.await() }
+                    val endedAt = withTimeout(10.seconds) { clientEnded.await() }
                     val resetAt = withTimeout(10.seconds) { reset.await() }
-                    val took = resetAt - closedAt
-                    assertTrue(took < 3_000.milliseconds, "the stream was reset $took after the client's Close")
+                    val t2 = endedAt - closedAt
+                    assertTrue(t2 > 1_500.milliseconds && t2 < 3_500.milliseconds, "END_STREAM $t2 after the server's Close")
+                    val more = resetAt - endedAt
+                    assertTrue(more > 1_500.milliseconds, "the reset $more after END_STREAM")
                 }
             }
         }

@@ -147,6 +147,33 @@ internal abstract class WebSocketPairSuite(
         }
 
     /**
+     * The closing order between the two engines (RFC 6455 sections 5.5.1 and 7.1.1): the server closes the TCP connection
+     * right after the closing handshake and the client follows it. A client that waits for the server's close (ours: T2,
+     * 5 s) finishes its close well within that wait only when the server closed first; `client.close()` waits for the
+     * session's transport to end. With the client's Close first and with the server's.
+     */
+    @Test fun closingEndsWithTheServerClosingFirst() =
+        interopTest {
+            for (clientFirst in listOf(true, false)) {
+                val c = ktorClient(clientEngine, http2 = false)
+                val started =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+                if (clientFirst) {
+                    val s = c.webSocketSession(server.wsUrl("/ws/echo"))
+                    s.close(CloseReason(1000, "bye"))
+                } else {
+                    val s = c.webSocketSession(server.wsUrl("/ws/close?code=1000&reason=bye"))
+                    withTimeout(10.seconds) { s.closeReason.await() }
+                }
+                c.close()
+                withTimeout(10.seconds) { c.coroutineContext[kotlinx.coroutines.Job]!!.join() }
+                val took = started.elapsedNow()
+                assertTrue(took < 3.seconds, "the close took $took (client first: $clientFirst)")
+            }
+        }
+
+    /**
      * permessage-deflate (RFC 7692): a client engine that negotiates extensions offers it and the server accepts it
      * (section 5: the answer's Sec-WebSocket-Extensions names it); compressible and small messages go both ways, one after
      * the other in the same window (context takeover, section 7.1.1). Ours is PerMessageDeflate, Ktor's engines use Ktor's

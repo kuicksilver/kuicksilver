@@ -23,6 +23,7 @@ import io.ktor.util.AttributeKey
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.Http3Connection
@@ -36,6 +37,7 @@ import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
+import io.kuicksilver.ktor.client.HeldTransportEnd
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
@@ -241,6 +243,9 @@ internal class H3Pool(
 
     /** A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (tests change it). */
     internal var webSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
+
+    /** Tests: a WebSocket waits for the server's FIN ("waiting"); its own goes after it ("server ended") or at T2 ("T2"). */
+    internal var webSocketClosingForTest: ((String) -> Unit)? = null
 
     /**
      * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
@@ -1356,18 +1361,52 @@ internal class H3Pool(
         // the session runs under a job of its own, so that a Close it queued is written even when the call is cancelled
         // right after (Ktor's webSocketSession() always ends so; WebSocketLifetime); the extensions' state lives as long
         val lifetime = WebSocketLifetime(data, callContext, webSocketCloseWaitMillis)
-        // each direction on its own when the session is over. A send side the session closed cleanly ends with its FIN (the
-        // Close reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The
-        // closing handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side
-        // is abandoned
-        lifetime.invokeOnEnd { _ ->
-            // a send side the session finished (its Close and FIN queued) keeps them even when the call itself failed after
-            // (the application threw once the Close was out): a reset would discard what is still in flight
-            val sentCleanly = stream.output.isClosedForWrite && stream.output.closedCause == null
-            val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
-            if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
-            if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
-            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
+        // the session's channel to the stream: its FIN is sent here, after the session; the frame guard stops reading at
+        // the server's Close, and what follows it is read and dropped here
+        val heldEnd = HeldTransportEnd(stream.output)
+        val inputDone = CompletableDeferred<Unit>()
+        // the stream ends as RFC 9220 section 3 maps RFC 6455's TCP close onto it ("Orderly TCP-level closures are
+        // represented as a FIN bit on the stream ... RST exceptions are represented with a stream error ... of type
+        // H3_REQUEST_CANCELLED"), the server's first (RFC 6455 section 7.1.1: a client "SHOULD wait for a TCP Close from
+        // the server"; RFC 9114 section 4.4: "clients SHOULD NOT close a stream for sending while they still expect to
+        // receive data from the target of the CONNECT"). A session that ended in order keeps its FIN back until the
+        // server's FIN, at most T2 (WebSocketLifetime), then sends it; a server still silent then is stopped with
+        // H3_REQUEST_CANCELLED once one more close wait has passed. A peer's STOP_SENDING meanwhile is answered with
+        // RESET_STREAM by the transport (RFC 9000 section 3.5). A session that did not end in order is reset, unless its
+        // writer finished (its Close may still be in flight: a RESET_STREAM could discard it), and stopped
+        lifetime.invokeOnEnd { cause ->
+            val sentCleanly = heldEnd.endRequested && stream.output.closedCause == null
+            try {
+                if (cause == null && sentCleanly) {
+                    webSocketClosingForTest?.invoke("waiting")
+                    val serverEnded =
+                        withTimeoutOrNull(lifetime.remainingTransportWaitMillis()) {
+                            inputDone.join()
+                            discardToEnd(stream.input)
+                        }
+                    webSocketClosingForTest?.invoke(if (serverEnded != null) "server ended" else "T2")
+                    withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
+                    if (serverEnded == null && withTimeoutOrNull(lifetime.closeWait) { discardToEnd(stream.input) } == null) {
+                        stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                    }
+                } else {
+                    if (sentCleanly) {
+                        withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
+                    } else {
+                        stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                    }
+                    if (!(stream.input.isClosedForRead && stream.input.closedCause == null)) {
+                        stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                    }
+                }
+            } catch (e: CancellationException) {
+                // cut by the end handlers' bound: both directions are let go now
+                if (!stream.output.isClosedForWrite) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                if (!stream.input.isClosedForRead) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                throw e
+            } finally {
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
+            }
         }
 
         // a refused answer (or anything else before the session exists) gives the lifetime up: its end resets the stream
@@ -1399,8 +1438,9 @@ internal class H3Pool(
                             perMessageDeflate = handshake.perMessageDeflate,
                             maxMessageSize = config.webSocketMaxMessageSize,
                             checkText = handshake.checkText,
+                            onEnd = { inputDone.complete(Unit) },
                         ),
-                        guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
+                        guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression),
                         masking = false,
                         coroutineContext = lifetime.context,
                         channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
@@ -1544,3 +1584,14 @@ internal fun quicRaceFailure(attempts: List<Throwable>): Throwable =
 /** This timeout with every failed attempt of the race it ended attached, so the report says what each address did. */
 internal fun <T : Throwable> T.withAttempts(attempts: List<Throwable>): T =
     also { t -> attempts.distinct().forEach { t.addSuppressed(it) } }
+
+/** Reads and drops [input] to its end; a failed input (a reset) ends it too. */
+private suspend fun discardToEnd(input: ByteReadChannel) {
+    try {
+        input.discard()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        // the stream was reset: its end all the same
+    }
+}

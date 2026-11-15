@@ -31,10 +31,12 @@ import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 /**
- * The close wait of a client WebSocket, counted from the session's own Close: how long the session may still take to write
- * that Close once its call ended, and over HTTP/2 to see the server's END_STREAM after it (RFC 6455 section 7.1.1: the
- * client "MAY close the connection at any time after sending and receiving a Close message, e.g., if it has not received a
- * TCP Close from the server in a reasonable time period"). One deadline for all of it.
+ * The close wait of a client WebSocket (`webSocketCloseWaitMillis`), used for both timers of the closing handshake
+ * ([WebSocketLifetime]): T1, from the session's own Close, for the server's Close (and for the session to write its own);
+ * T2, from the end of the session (both Closes sent and received), for the server's close of the transport: its TCP FIN
+ * (with close_notify over TLS), its END_STREAM over HTTP/2, its FIN over HTTP/3. RFC 6455 section 5.5.1: "the client
+ * SHOULD wait for the server to close the connection but MAY close the connection at any time after sending and receiving
+ * a Close message, e.g., if it has not received a TCP Close from the server in a reasonable time period".
  */
 internal const val WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
 
@@ -68,11 +70,23 @@ internal val WebSocketLifetimeKey: AttributeKey<WebSocketLifetime> = AttributeKe
  * - a call that ends in order waits for the session's coroutines as before (a child of the call joins [context]'s job),
  *   so `webSocket { }` still returns once the closing handshake is over;
  * - a call that ends with a cause after the session queued its own Close ([watch] sees it) leaves the session running
- *   until its coroutines end, within the close wait counted from that Close ([remainingCloseWaitMillis]): the Close goes
- *   out, behind the frames queued before it;
+ *   until its coroutines end: the Close goes out, behind the frames queued before it;
+ * - once the session queued its own Close, its coroutines have the close wait (T1, counted from that Close,
+ *   [remainingCloseWaitMillis]) to write it and to see the server's Close; a session still running then (a server that
+ *   never answers, or never takes the Close) is cancelled, whichever way its call ended (RFC 6455 section 7.1.1: the
+ *   client may close "in abnormal cases"), and its transport is ended at once;
  * - a call that ends with a cause before that cancels the session at once, as before;
  * - the engine's cleanup after `client.close()` waits for the session's end (the engine's in-flight job of the call is
  *   held until every [invokeOnEnd] handler has run), so a lingering session is not cut by the pools closing under it.
+ *
+ * The transport's own close comes after the session ([invokeOnEnd]): Ktor's writer ends its channel right after its Close
+ * (a TCP half-close, close_notify, END_STREAM or FIN at once), so the engines hand it a channel whose end only flushes
+ * ([HeldTransportEnd]), and end the transport themselves in the order RFC 6455 section 7.1.1 wants of a client: the
+ * server closes first ("The underlying TCP connection, in most normal cases, SHOULD be closed first by the server"), and
+ * the client "SHOULD wait for a TCP Close from the server", here at most the close wait counted from the session's end (T2,
+ * [remainingTransportWaitMillis]), then closes its side cleanly. The end handlers have two close waits in all: T2, and as
+ * much again for what a transport still waits for after its own close (HTTP/2 and HTTP/3: the server's end of the stream
+ * before the stream is reset).
  *
  * A lifetime made before code that can still fail or go again (a handshake answer that is refused, a request the server
  * did not process) is [abandon]ed there: nothing of it is left waiting.
@@ -84,6 +98,9 @@ internal class WebSocketLifetime(
     private val closeWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
 ) {
     private val callJob: Job = callContext[Job] ?: throw IllegalStateException("a call without a Job")
+
+    /** The call's context without its job: its dispatcher's clock runs T1. */
+    private val callTimers: CoroutineContext = callContext.minusKey(Job)
     private val track: WebSocketCallTrack? = data.attributes.getOrNull(WebSocketCallTrackKey)
     private val events: EngineEvents? = track?.events
 
@@ -92,6 +109,7 @@ internal class WebSocketLifetime(
     private val job = Job()
     private val ownClose = AtomicBoolean(false)
     private val ownCloseAt = AtomicReference<TimeMark?>(null)
+    private val endedAt = AtomicReference<TimeMark?>(null)
     private val ended = AtomicBoolean(false)
     private val endHandlers = ArrayList<suspend (Throwable?) -> Unit>()
     private var endCause: Throwable? = null
@@ -128,6 +146,20 @@ internal class WebSocketLifetime(
         return (closeWaitMillis - at.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
     }
 
+    /**
+     * What is left of T2, the wait for the server's close of the transport (its TCP FIN, END_STREAM or FIN): the close
+     * wait counted from the session's end, which in an orderly session is when both Closes were sent and received; the
+     * whole wait before the session ended. The transports close their own side when it is over, or as soon as the server
+     * closed its side first.
+     */
+    fun remainingTransportWaitMillis(): Long {
+        val at = endedAt.load() ?: return closeWaitMillis
+        return (closeWaitMillis - at.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
+    }
+
+    /** The close wait itself (both T1 and T2). */
+    val closeWait: Long get() = closeWaitMillis
+
     init {
         data.attributes.put(WebSocketLifetimeKey, this)
         // the call waits for the session as it did while the session ran under it: a call that ends in order ends once
@@ -136,28 +168,8 @@ internal class WebSocketLifetime(
             job.join()
         }
         callJob.invokeOnCompletion { cause ->
-            when {
-                cause == null -> {}
-
-                !ownClose.load() -> {
-                    job.cancel(CancellationException("the call ended before the session's Close", cause))
-                }
-
-                // the call failed after the session's Close was queued: the Close goes out, within the close wait
-                else -> {
-                    GlobalScope.launch(
-                        Dispatchers.Unconfined + CoroutineName("kuicksilver-websocket-close"),
-                        start = CoroutineStart.ATOMIC,
-                    ) {
-                        var done = false
-                        try {
-                            done = withTimeoutOrNull(remainingCloseWaitMillis()) { job.join() } != null
-                        } finally {
-                            if (!done) job.cancel(CancellationException("the session's Close was not written within the close wait"))
-                        }
-                    }
-                }
-            }
+            // the call failed after the session's Close was queued: the Close goes out, within the close wait (T1, [watch])
+            if (cause != null && !ownClose.load()) job.cancel(CancellationException("the call ended before the session's Close", cause))
             job.invokeOnCompletion { sessionCause ->
                 end(
                     when {
@@ -183,8 +195,32 @@ internal class WebSocketLifetime(
     ): WebSocketSession {
         job.complete()
         return OwnCloseWatch(session) {
-            if (ownClose.compareAndSet(false, true)) ownCloseAt.store(TimeSource.Monotonic.markNow())
+            if (ownClose.compareAndSet(false, true)) {
+                ownCloseAt.store(TimeSource.Monotonic.markNow())
+                boundByCloseWait()
+            }
             onClose()
+        }
+    }
+
+    /**
+     * T1: the session's coroutines end within the close wait from its own Close (its Close written, the server's read),
+     * or are cancelled then, whichever way the call ends; the end handlers then get that cancellation and end the
+     * transport at once.
+     */
+    private fun boundByCloseWait() {
+        // on the call's dispatcher (its clock), outside its job: the call may have ended already
+        GlobalScope.launch(callTimers + CoroutineName("kuicksilver-websocket-close"), start = CoroutineStart.ATOMIC) {
+            var done = false
+            try {
+                done = withTimeoutOrNull(remainingCloseWaitMillis()) { job.join() } != null
+            } finally {
+                if (!done) {
+                    job.cancel(
+                        CancellationException("no Close from the server (or the own Close not written) within the close wait"),
+                    )
+                }
+            }
         }
     }
 
@@ -200,8 +236,9 @@ internal class WebSocketLifetime(
     /**
      * Runs [handler] once, after both the call and the session's coroutines are over: with null when the session ended in
      * order (the call ended in order, or after the session's own Close, and the session's coroutines finished within the
-     * close wait), else with the cause. The handlers run in order, each may suspend (bounded by its own waits); the
-     * engine's in-flight job of the call completes after the last. One added after the end runs at once.
+     * close wait), else with the cause. The handlers run in order, each may suspend: all of them within two close waits
+     * (T2 and what a transport waits for after its own close), cancelled past that; the engine's in-flight job of the
+     * call completes after the last. One added after the end runs at once.
      */
     fun invokeOnEnd(handler: suspend (Throwable?) -> Unit) {
         val late =
@@ -217,6 +254,7 @@ internal class WebSocketLifetime(
     }
 
     private fun end(cause: Throwable?) {
+        endedAt.store(TimeSource.Monotonic.markNow())
         val handlers =
             lock.withLock {
                 endCause = cause
@@ -233,11 +271,12 @@ internal class WebSocketLifetime(
     ) {
         // at once on the completing thread up to a handler's first suspension; ATOMIC: the hold is released whatever happens.
         // Every handler runs, whatever an earlier one did (a cancellation included: the HTTP/3 pool entry is released
-        // after the stream's end); all of them within one close wait, so none can keep the engine's cleanup waiting
+        // after the stream's end); all of them within two close waits (T2, then a transport's wait after its own close),
+        // so none can keep the engine's cleanup waiting
         GlobalScope.launch(Dispatchers.Unconfined + CoroutineName("kuicksilver-websocket-end"), start = CoroutineStart.ATOMIC) {
             try {
                 var left = handlers
-                withTimeoutOrNull(closeWaitMillis) {
+                withTimeoutOrNull(2 * closeWaitMillis) {
                     while (left.isNotEmpty()) {
                         val h = left.first()
                         left = left.drop(1)
@@ -306,5 +345,41 @@ private class OwnCloseWatch(
 
     override suspend fun send(frame: Frame) {
         outgoing.send(frame)
+    }
+}
+
+/**
+ * The transport channel under a client session's output guard, whose [flushAndClose] only flushes: Ktor's WebSocket writer
+ * always ends its channel right after its Close, which on the transport would close the client's side at once (a TCP
+ * half-close, close_notify, END_STREAM, a FIN), before the server closed its side. RFC 6455 section 7.1.1: the server
+ * "SHOULD initiate a TCP Close immediately, and when a client is instructed to do the same, it SHOULD wait for a TCP Close
+ * from the server". The engine ends [out] itself once the session ended ([WebSocketLifetime.invokeOnEnd]). [endRequested]
+ * says the writer ended in order (its last frames flushed); [cancel] still reaches [out] at once.
+ */
+@OptIn(io.ktor.utils.io.InternalAPI::class)
+internal class HeldTransportEnd(
+    private val out: io.ktor.utils.io.ByteWriteChannel,
+) : io.ktor.utils.io.ByteWriteChannel {
+    @kotlin.concurrent.Volatile var endRequested: Boolean = false
+        private set
+
+    override val isClosedForWrite: Boolean get() = out.isClosedForWrite
+
+    override val closedCause: Throwable? get() = out.closedCause
+
+    @io.ktor.utils.io.InternalAPI
+    override val writeBuffer: kotlinx.io.Sink get() = out.writeBuffer
+
+    override suspend fun flush() {
+        out.flush()
+    }
+
+    override suspend fun flushAndClose() {
+        out.flush()
+        endRequested = true
+    }
+
+    override fun cancel(cause: Throwable?) {
+        out.cancel(cause)
     }
 }

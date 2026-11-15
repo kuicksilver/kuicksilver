@@ -871,17 +871,22 @@ public class TlsConnection private constructor(
      * queued is not bounded (a slow reader gets the last response whole; the caller bounds the connection) and only the wait
      * for the peer's close_notify after it is (3 s). [stopAwaitingPeer] ends that wait early when it completes (a server
      * that stops does not wait for idle clients that never answer): RFC 8446 section 6.1, "Both parties need not wait to
-     * receive a "close_notify" alert before closing their read side of the connection".
+     * receive a "close_notify" alert before closing their read side of the connection". [afterSent] runs once close_notify
+     * was handed to the transport, before that wait: a server ends its transport's write side there (its TCP FIN), as RFC
+     * 6455 section 5.5.1 wants of a WebSocket server ("The server MUST close the underlying TCP connection immediately")
+     * and RFC 9112 section 9.6 of a closing HTTP server (the write side first, then reading until the client closes).
      */
     @InternalKuicksilverApi
     public suspend fun shutdown(
         drainTimeout: Duration?,
         stopAwaitingPeer: Job? = null,
+        afterSent: (suspend () -> Unit)? = null,
     ) {
         if (closed) return
         val drain: suspend () -> Unit = {
             outputChannel.flushAndClose()
             writerJob?.join() // the writer pump sends close_notify after draining the output channel; a peer that stops reading stops it
+            afterSent?.invoke()
         }
         // the reader pump ends on the peer's close_notify; never read the input channel here (its consumer may be mid-read)
         val awaitPeer: suspend () -> Unit = {

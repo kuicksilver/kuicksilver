@@ -41,8 +41,9 @@ class ClientH3WebSocketTest {
 
     /**
      * The server's FIN can trail its Close frame (the core sends a flushed frame at once, the FIN with the close): a client
-     * whose closing handshake ends before that FIN arrives still delivers its Close reply and FIN, and abandons only the
-     * read side (STOP_SENDING), never its own finished send side (RESET_STREAM). Ordered here by holding the FIN back.
+     * whose closing handshake ends before that FIN arrives delivers its Close reply at once and its FIN after the server's
+     * (RFC 9220 section 3, RFC 6455 section 7.1.1), never a RESET_STREAM over the Close reply. Ordered here by holding the
+     * server's FIN back until the client's call is over.
      * On every platform: Ktor's JVM WebSocket reader stops at the Close frame, and the engine ends the stream it hands to the
      * common (Native) reader after the peer's Close frame too, so a session never waits for a FIN that does not come.
      */
@@ -74,15 +75,13 @@ class ClientH3WebSocketTest {
                         s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
                         s.output.flush() // Close(1000) without FIN: the FIN follows only after the client's call is over
                         clientDone.await()
-                        val read =
-                            runCatching {
-                                s.input
-                                    .readBuffer()
-                                    .readByteArray()
-                                    .size
-                            }
-                        runCatching { s.output.flushAndClose() }
-                        read
+                        runCatching { s.output.flushAndClose() } // the server's FIN, then the client's
+                        runCatching {
+                            s.input
+                                .readBuffer()
+                                .readByteArray()
+                                .size
+                        }
                     }
                 try {
                     testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->

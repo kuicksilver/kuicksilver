@@ -12,6 +12,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -131,7 +132,9 @@ class ClientWebSocketCloseTest {
     /**
      * The invariant over many sessions of `webSocketSession()`: whatever data frames a session sends before `close(reason)`
      * (none to several, of random sizes), the server reads them all and then that Close, with its code and reason. The
-     * server reads at once here, so the writer races the call's cancellation as it does in an application.
+     * server reads at once here, so the writer races the call's cancellation as it does in an application. Then the
+     * closing order (RFC 6455 section 7.1.1): the server answers with its Close, the client waits for the server's TCP
+     * close with its own side still open, and its FIN comes cleanly after the server's.
      *
      * A regression guard, not the test that shows the bug: over cleartext loopback the race is rare (the previous code
      * passed 200 sessions here; a TLS server under CPU load lost 73 of 4000 Closes), and the tests above force it.
@@ -145,6 +148,7 @@ class ClientWebSocketCloseTest {
             try {
                 coroutineScope {
                     val results = kotlinx.coroutines.channels.Channel<List<String>>(Channel.UNLIMITED)
+                    val hooks = kotlinx.coroutines.channels.Channel<String>(Channel.UNLIMITED)
                     val served =
                         launch {
                             repeat(sessions) {
@@ -154,19 +158,30 @@ class ClientWebSocketCloseTest {
                                         val input = s.openReadChannel()
                                         val output = s.openWriteChannel(autoFlush = true)
                                         output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
-                                        results.send(readClientFrames(input))
+                                        val frames = readClientFrames(input)
+                                        output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                                        output.flush()
+                                        val order = ArrayList<String>()
+                                        order += hooks.receive() // "waiting"
+                                        if (input.isClosedForRead) order += "the client's FIN before the server's"
+                                        output.flushAndClose()
+                                        val clean = runCatching { input.discard() }.isSuccess && input.closedCause == null
+                                        if (!clean) order += "the client's side ended without a clean FIN"
+                                        order += hooks.receive() // "server closed"
+                                        results.send(frames + order)
                                     }
                                 }
                             }
                         }
                     testClient(block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h1.webSocketClosingForTest = { hooks.trySend(it) }
                         val port = (listener.localAddress as InetSocketAddress).port
                         repeat(sessions) { i ->
                             val sizes = List(random.nextInt(0, 4)) { random.nextInt(0, 200_000) }
                             val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
                             for (size in sizes) session.outgoing.send(Frame.Binary(true, ByteArray(size)))
                             session.close(CloseReason((4000 + i).toShort(), "bye $i"))
-                            val expected = sizes.map { "binary $it" } + "close ${4000 + i} bye $i"
+                            val expected = sizes.map { "binary $it" } + "close ${4000 + i} bye $i" + "waiting" + "server closed"
                             assertEquals(expected, withTimeout(20.seconds) { results.receive() }, "session $i")
                         }
                     }

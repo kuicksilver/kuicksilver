@@ -978,6 +978,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
+  3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
+  own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which
+  it answers then), END_STREAM or FIN, reading and dropping what still comes, and closes its side cleanly after it, or
+  after the close wait (5 s) counted from both Closes; an HTTP/2 or HTTP/3 stream is reset (CANCEL,
+  H3_REQUEST_CANCELLED) only another close wait later, and a peer's STOP_SENDING while the FIN is held is answered with
+  RESET_STREAM. A session whose server never sends its Close is now ended after the close wait on HTTP/1.1 and HTTP/3
+  too, not only over HTTP/2. The server engine closes first: an upgraded HTTP/1.1 connection closes as soon as the
+  WebSocket ends (before, it stayed open until the client closed it), its FIN follows close_notify at once (before, it
+  waited up to 3 s for the client's close_notify), and over HTTP/3 the client's direction is read to its FIN for up to 5
+  s after the server's FIN, STOP_SENDING H3_NO_ERROR only after that (before, right after the server's FIN).
 - QUIC, Kotlin/Native portable UDP socket: a refused bind (the port taken) returned while its selector's wakeup pipe was
   still open; ktor-network closes it from the selector's own loop, so a busy process held those descriptors for a while.
   The bind now waits for that loop to end before it fails.
