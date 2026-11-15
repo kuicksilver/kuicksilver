@@ -348,6 +348,47 @@ class NativeLeakTest {
         assertEquals(4, odd!!.extra, "two Handshake duplicates, a 0-RTT read key, a late Handshake key")
     }
 
+    /** The connection's construction fails after its TLS session was made: nobody can close the core, so it frees it. */
+    @Test fun negative_clientConstructionFailsAfterTheSession() {
+        val before = nativeConnectionObjects()
+        val crypto = LeakTrackingCrypto(ksl, failInitialProtectors = 1)
+        assertFailsWith<IllegalStateException> {
+            ConnectionCore.client(
+                QuicConfig.Default,
+                CoreFixtures.client(),
+                crypto,
+                CoreFixtures.serverAddr,
+                Random(1),
+                io.kuicksilver.quic.TimeMark(1),
+                null,
+            )
+        }
+        assertEquals(emptyList(), crypto.live)
+        assertEquals(before, nativeConnectionObjects())
+    }
+
+    @Test fun negative_serverConstructionFailsAfterTheSession() {
+        for (failing in listOf("transport parameters", "initial keys")) {
+            val before = nativeConnectionObjects()
+            val crypto =
+                LeakTrackingCrypto(
+                    ksl,
+                    failTransportParameters = TlsRole.Server.takeIf { failing == "transport parameters" },
+                    // call 1 is the client's; call 2 the server's
+                    failInitialProtectors = if (failing == "initial keys") 2 else Int.MAX_VALUE,
+                )
+            val p = CorePair(crypto = crypto)
+            try {
+                assertFailsWith<IllegalStateException>(failing) { p.step() }
+                assertTrue(crypto.live.none { "Server" in it }, "$failing: ${crypto.live}")
+            } finally {
+                p.close()
+            }
+            assertEquals(emptyList(), crypto.live, failing)
+            assertEquals(before, nativeConnectionObjects(), failing)
+        }
+    }
+
     // ---- helpers ----
 
     private fun feed(

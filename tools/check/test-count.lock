@@ -3547,6 +3547,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.statsRefl
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LossBurstTest.alternatingLossOnALongPathKeepsTheConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheClient
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheServer
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_clientConstructionFailsAfterTheSession
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_compatibleUpgradeLostDuringTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_compatibleVersionUpgrade
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_endedRightAfterAKeyUpdate
@@ -3557,6 +3558,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_peerLostDuringTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_resetTokensFromKeys
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_retry
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_serverConstructionFailsAfterTheSession
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_statelessReset
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_unexpectedKeysFromTheTlsStack
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_versionNegotiationRestart

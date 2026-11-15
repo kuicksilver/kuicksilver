@@ -786,14 +786,20 @@ public class ConnectionCore internal constructor(
         cids.adoptInitialLocalCid(localCid)
         // before the transport parameters: the server's stateless_reset_token is the token of its handshake ID
         if (role == TlsRole.Server) cids.adoptInitialPeerCid(remoteCid)
-        val tp = buildLocalTp()
-        handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
-        handshake.session.setQuicVersion(startVersion.version)
-        serverEarly?.let { enableServerEarlyData(it) }
-        if (role == TlsRole.Client) {
-            installInitialKeys(startVersion)
-            tlsDirty = true
-        } // the first poll drives TLS to produce the ClientHello
+        try {
+            val tp = buildLocalTp()
+            handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
+            handshake.session.setQuicVersion(startVersion.version)
+            serverEarly?.let { enableServerEarlyData(it) }
+            if (role == TlsRole.Client) {
+                installInitialKeys(startVersion)
+                tlsDirty = true
+            } // the first poll drives TLS to produce the ClientHello
+        } catch (t: Throwable) {
+            // the constructor fails, so nobody can close this core: its TLS session (made above) and keys go now
+            release()
+            throw t
+        }
         timers.handshakeDeadline = now + config.handshakeTimeout
         timers.lastActivity = now
     }

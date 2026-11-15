@@ -68,6 +68,23 @@ internal fun ConnectionCore.Companion.serverWithKeys(
             earlyMode = io.kuicksilver.tls.EarlyDataState.Disabled,
             serverEarly = early,
         )
+    try {
+        core.adoptServerState(tokenValidated, packetDcid, retryScid, profile)
+    } catch (t: Throwable) {
+        // the core is not returned, so nobody else can close it: its TLS session and keys go now
+        core.release()
+        throw t
+    }
+    return core
+}
+
+private fun ConnectionCore.adoptServerState(
+    tokenValidated: Boolean,
+    packetDcid: ConnectionId,
+    retryScid: ConnectionId?,
+    profile: VersionProfile,
+) {
+    val core = this
     if (tokenValidated) {
         // a NEW_TOKEN token validated the address (RFC 9000 section 8.1.3): no anti-amplification limit, no Retry state
         core.validatedByToken = true
@@ -86,5 +103,4 @@ internal fun ConnectionCore.Companion.serverWithKeys(
         core.refreshLocalTp()
     }
     core.installInitialKeys(profile)
-    return core
 }
