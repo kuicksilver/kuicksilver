@@ -219,14 +219,17 @@ step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
 # shellcheck disable=SC2086
 # the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
-# value-returning, static or private test, one in an object, an abstract class nothing extends): the JVM ones and the
-# Android host tests (JUnit on the host JVM). The three modules outside KSL_JVM_TESTS and every module with Android host
-# tests are compiled here too, so no class file of an earlier build is read
-step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm "'$(git ls-files "kuicksilver-*/src/androidHostTest/*" | cut -d/ -f1 | sort -u | sed "s/.*/:&:compileAndroidHostTest/") && python3 -I tools/check/test-bytecode.py'
+# value-returning, static or private test, one with parameters, in an object, a local or private class, an abstract class
+# nothing extends, an override without the annotation): the JVM ones, the Android host tests (JUnit on the host JVM) and
+# the Android device tests (JUnit 4 on an emulator, which the gate runs only in its emulator steps). The three modules
+# outside KSL_JVM_TESTS, every module with Android host tests and every module's device tests are compiled here too, so no
+# class file of an earlier build is read
+step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm "'$(git ls-files "kuicksilver-*/src/androidHostTest/*" | cut -d/ -f1 | sort -u | sed "s/.*/:&:compileAndroidHostTest/") $(grep -l "id(\"kuicksilver.kmp\")" kuicksilver-*/build.gradle.kts | cut -d/ -f1 | sed "s/.*/:&:compileAndroidDeviceTest/") && python3 -I tools/check/test-bytecode.py'
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-engine-interop:jvmTest   # docs/spec/interop.md "Engine interop"; about a minute
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
-step "sample: compose-demo (build, tests)"     $G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test   # its own build, verified against gradle/verification-metadata.xml
+# the samples' test classes are read by tools/check/test-bytecode.py too (the instrumented test of the demo app compiled here)
+step "sample: compose-demo (build, tests)"     bash -c "$G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :androidApp:compileDebugAndroidTestKotlin :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test && python3 -I tools/check/test-bytecode.py --targets samples"   # its own build, verified against gradle/verification-metadata.xml
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest

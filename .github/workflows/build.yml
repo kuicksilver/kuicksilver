@@ -496,7 +496,10 @@ jobs:
         # Netty's HTTP/2 and HTTP/3 codecs, in one JVM over loopback (docs/spec/interop.md, "Engine interop")
         run: $G :kuicksilver-engine-interop:jvmTest
       - name: 'sample: realtime-telemetry'
-        run: cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest
+        # its test classes are read for test methods no runner calls, as the modules' are below
+        run: |
+          (cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest)
+          python3 -I tools/check/test-bytecode.py samples/realtime-telemetry/build/classes/kotlin/jvm/test
       - name: 'fuzz: regression corpus'
         run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"
       - name: 'sim: Monte-Carlo (KSL_SIM_RUNS=200)'
@@ -611,14 +614,15 @@ jobs:
         with: { ndk: 'true', openssl-cache: android }
       - name: 'android: AAR'
         run: $G :kuicksilver-native:bundleAndroidMainAar
-      - name: 'android: every compiled host test method can run'
-        # the Android host tests run under JUnit on the host JVM; tools/check/test-bytecode.py reads their class files
-        # (the same classes for every API level: once)
+      - name: 'android: every compiled host and device test method can run'
+        # the Android host tests run under JUnit on the host JVM, the device tests under JUnit 4 on the emulator;
+        # tools/check/test-bytecode.py reads their class files (the same classes for every API level: once)
         if: ${{ matrix.api == 35 }}
         run: |
           # shellcheck disable=SC2046   # one Gradle task path per module
-          $G $(git ls-files 'kuicksilver-*/src/androidHostTest/*' | cut -d/ -f1 | sort -u | sed 's/.*/:&:compileAndroidHostTest/')
-          python3 -I tools/check/test-bytecode.py --targets android-host
+          $G $(git ls-files 'kuicksilver-*/src/androidHostTest/*' | cut -d/ -f1 | sort -u | sed 's/.*/:&:compileAndroidHostTest/') \
+            $(grep -l 'id("kuicksilver.kmp")' kuicksilver-*/build.gradle.kts | cut -d/ -f1 | sed 's/.*/:&:compileAndroidDeviceTest/')
+          python3 -I tools/check/test-bytecode.py --targets android-host,android-device
       - name: 'android: size gate'
         run: bash tools/check/size.sh "$AAR" "$SIZE_LIMIT"
       - name: 'android: 16 KiB pages'
