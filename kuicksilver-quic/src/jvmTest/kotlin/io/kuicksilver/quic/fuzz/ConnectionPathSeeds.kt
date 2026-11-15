@@ -291,7 +291,17 @@ internal object ConnectionPathSeeds {
                 "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
                     "128412121235f512121c24397c12121232e3f524022ef4fd3d02f4f52e2ef4fd740254f4f53d2ef4f42ef4fd3d02f4f52ef4" +
                     "f5f42ef4fd3d02f4f4f4f5f42ef4fd3d3df4f52e2ef4f42ef4fd3d02f4f412f9009a28",
-            )
+            ).copyOfRange(0, 70) + // up to the revert, before the client's idle timeout; the rest of the input only waits
+            // then the client gives a new ID (a frame injected into its next packet): the reverted path, waiting for one, sends again
+            ConnProgram
+                .Builder(0)
+                .steps(2)
+                .frameRaw(0, 3, ConnProgram.FRAME_KINDS.indexOf("NEW_CONNECTION_ID"), num(50), num(0), byteArrayOf(8, 0x5d))
+                .tick(15) // the client's window is full of unacknowledged packets: the frame leaves with a PTO probe
+                .tick(15)
+                .steps(4)
+                .build()
+                .let { it.copyOfRange(1, it.size) }
         m["no-viable-path"] =
             hex(
                 "00a49c9ca4e47f3113113113313914ff31131102f42e3df4f52ef43af4f5f4464646f43d000a00001100000005fd02f42e3d" +

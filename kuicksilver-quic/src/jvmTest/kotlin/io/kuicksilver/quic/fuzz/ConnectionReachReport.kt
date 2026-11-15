@@ -16,19 +16,20 @@ class ConnectionReachReport {
     @Test fun runOne() {
         val hex = System.getenv("KUICKSILVER_FUZZ_HEX") ?: return
         KslLoader.ensureLoaded()
-        val program = ByteArray(hex.length / 2) { hex.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
-        try {
-            if (System.getenv("KUICKSILVER_FUZZ_TLS") ==
-                "1"
-            ) {
-                ConnectionFuzzTest().connectionTls(program)
-            } else {
-                ConnectionFuzzTest().connectionNull(program)
+        for (h in hex.split(",")) {
+            val program = ByteArray(h.length / 2) { h.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
+            QuicReach.reset()
+            try {
+                if (System.getenv("KUICKSILVER_FUZZ_TLS") == "1") {
+                    ConnectionFuzzTest().connectionTls(program)
+                } else {
+                    ConnectionFuzzTest().connectionNull(program)
+                }
+                println("PASS ${program.size} ${QuicReach.snapshot().keys.filter { it.startsWith("migration") }}")
+            } catch (e: Throwable) {
+                println("FAIL: ${e.message}")
+                e.printStackTrace(System.out)
             }
-            println("PASS")
-        } catch (e: Throwable) {
-            println("FAIL: ${e.message}")
-            e.printStackTrace(System.out)
         }
     }
 

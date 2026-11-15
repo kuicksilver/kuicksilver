@@ -591,6 +591,7 @@ internal class ConnectionInvariants(
             ecnCounts(side, c)
         }
         clientRules(net.client)
+        net.serverCore?.let { s -> if (!net.serverLostState) waitRules(s) }
         net.serverCore?.let { s ->
             // the move itself needs a validated path at the preferred address (section 9.6.2); later paths there (a NAT rebinding of the
             // client) may be unvalidated, as any migration's (section 9.3)
@@ -613,10 +614,11 @@ internal class ConnectionInvariants(
     ) {
         val peerMax = c.peerTp?.maxUdpPayloadSize
         // one path per local socket and peer address (the handshake-time candidate aside, which holds an address the active path left)
-        val pairs = HashSet<Triple<Int, io.kuicksilver.quic.core.AddressClass.IpKey, Int>>()
+        val pairs = HashSet<List<Any?>>()
         for (p in c.paths.all) {
             if (p.handshakeCandidate) continue
-            if (!pairs.add(Triple(p.socket.value, p.remoteKey, p.remote.port))) {
+            // a path is a local and a peer address (RFC 9000 section 9.5): a multi-homed socket may hold one per local address
+            if (!pairs.add(listOf(p.socket.value, p.local?.toString(), p.remoteKey, p.remote.port))) {
                 fail(
                     "${name(
                         side,
@@ -660,6 +662,18 @@ internal class ConnectionInvariants(
                 )
             }
         }
+    }
+
+    /**
+     * A reverted server path that waits for a peer connection ID (RFC 9000 sections 9.3, 9.5) waits only while it must: no spare ID of
+     * the client's is left and the current one is still the ID kept from the path it left (a NEW_CONNECTION_ID, or a Retire Prior To
+     * that replaced it, ends the wait). The third way out, the client's packets with the same ID of ours, is checked by its unit test.
+     */
+    private fun waitRules(s: ConnectionCore) {
+        val a = s.path
+        if (!a.waitsForPeerCid) return
+        if (s.cids.hasSparePeer()) fail("server path ${a.id.value} waits for a connection ID while a spare one is there")
+        if (s.cids.currentPeer !== a.keptPeer) fail("server path ${a.id.value} waits although the ID it kept is no longer current")
     }
 
     private fun ecnCounts(

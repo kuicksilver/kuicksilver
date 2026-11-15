@@ -56,6 +56,7 @@ internal object QuicReach {
             "migration.fallback",
             "migration.reverted",
             "migration.noViablePath",
+            "migration.waitReleased",
         )
 
     private val counts = ConcurrentHashMap<String, AtomicLong>()
@@ -125,6 +126,7 @@ internal object QuicReach {
         if (c.ecnCeEvents > 0) hit("ecn.ceCongestion")
         if (c.pathFallbacksForTest > 0) hit("migration.fallback")
         if (c.pathRevertsForTest > 0) hit("migration.reverted")
+        if (c.pathWaitReleasesForTest > 0) hit("migration.waitReleased")
         if (c.role == TlsRole.Client) {
             if (c.retryReceivedForTest) hit("retry.received")
             if (c.receivedVnVersions != null) hit("vn.received")
