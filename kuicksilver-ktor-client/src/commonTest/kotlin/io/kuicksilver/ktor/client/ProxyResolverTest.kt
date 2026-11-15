@@ -33,6 +33,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -129,6 +130,51 @@ class ProxyResolverTest {
             }
         }
     }
+
+    /**
+     * A `://` is a scheme's end only when the text before it is a URI scheme (RFC 3986 section 3.1) and no `/` comes
+     * first: user info that holds `://` fails without being repeated (before, the "unsupported scheme" message quoted all
+     * of it), and a `://` in the path leaves a URL without a scheme, read as HTTP with its credentials.
+     */
+    @Test fun negative_textBeforeColonSlashSlashThatIsNoSchemeIsNotRepeated() {
+        for (url in listOf(
+            "u:S3cRtQ://x@proxy:8080",
+            "u:%@S3cRtQ@p://%",
+            "S3cRtQ@p://h",
+            "1S3cRtQ://h",
+            "://S3cRtQ@h",
+            // user info that lost its "@" is not a host: refused, not shown as one
+            "u:S3cRtQ:/x@proxy:8080",
+            "http://u:S3cRtQ[::1",
+            "http://u:S3cRtQ[zz]:1",
+            "%S3cRtQh",
+            "http://S3cRtQ%/@h",
+            "?S3cRtQ/x@h:1",
+            "http://u:S3cRtQh:1:]2",
+            "http://[::1]S3cRtQ",
+        )) {
+            val e = assertFails(url) { env("all_proxy" to url).at("https://x.test/") }
+            assertFalse(e.message.orEmpty().contains("S3cRtQ"), "the message repeats the user info: ${e.message}")
+        }
+        assertEquals(
+            ProxyResolved("proxy", 3128, ProxyCredentials("user", "S3cRtQ")),
+            env("all_proxy" to "user:S3cRtQ@proxy:3128/a://b").at("https://x.test/")!!.let {
+                ProxyResolved(it.host, it.port, it.credentials)
+            },
+        )
+        // the authority ends at "?" and "#" too, and IP literals stay hosts
+        assertEquals("p.test", env("all_proxy" to "http://u:S3cRtQ@p.test?x").at("https://x.test/")!!.host)
+        assertEquals("::1", env("all_proxy" to "http://[::1]:3128").at("https://x.test/")!!.host)
+        assertEquals("2001:db8::1", env("all_proxy" to "2001:db8::1").at("https://x.test/")!!.host)
+        val e = assertFailsWith<UnsupportedOperationException> { env("all_proxy" to "ftp://u:S3cRtQ@h").at("https://x.test/") }
+        assertTrue("ftp://" in e.message!! && "S3cRtQ" !in e.message!!, e.message)
+    }
+
+    private data class ProxyResolved(
+        val host: String,
+        val port: Int,
+        val credentials: ProxyCredentials?,
+    )
 
     /**
      * A `socks5://` URL whose user info has no password (or an empty one) cannot authenticate: RFC 1929 section 2 gives

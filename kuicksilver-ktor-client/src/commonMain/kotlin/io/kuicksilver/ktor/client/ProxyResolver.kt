@@ -137,27 +137,44 @@ internal class EnvironmentProxyResolver(
 }
 
 /**
- * A proxy URL as curl takes it: `http://`, `socks5://`, `socks5h://` or no scheme (HTTP), user info as credentials
- * (percent-decoded), port 1080 when none is given, a path ignored. Another scheme fails with
- * UnsupportedOperationException, a bad port with IllegalArgumentException; neither message repeats the value, which may
- * hold a password.
- */
-
-/**
  * A percent-decoded part of a proxy URL's user info; a broken escape fails with IllegalArgumentException that does not
  * repeat [part]: Ktor's URLDecodeException quotes the whole text, a password included.
  */
-private fun decodeUserInfo(part: String): String =
+internal fun decodeUserInfo(part: String): String =
     try {
         part.decodeURLPart()
     } catch (_: URLDecodeException) {
         throw IllegalArgumentException("The proxy URL's user info has an invalid percent-encoding")
     }
 
+/** `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` (RFC 3986 section 3.1). */
+private val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*")
+
+/**
+ * A proxy URL as curl takes it: `http://`, `socks5://`, `socks5h://` or no scheme (HTTP), user info as credentials
+ * (percent-decoded), port 1080 when none is given, a path ignored. A `://` after the first `/` is in the path, not a
+ * scheme's end. Another scheme fails with UnsupportedOperationException, a text before `://` that is not a scheme (RFC
+ * 3986 section 3.1; it may be user info) with IllegalArgumentException, a bad port or a broken percent-escape in the user
+ * info with IllegalArgumentException. No message repeats any part of the value but a well-formed scheme: the value may
+ * hold a password.
+ */
 internal fun parseProxyUrl(value: String): ResolvedProxy {
-    val schemeEnd = value.indexOf("://")
+    val schemeEnd = value.indexOf("://").takeIf { it >= 0 && value.indexOf('/') > it } ?: -1
+    if (schemeEnd >= 0 && !URI_SCHEME.matches(value.substring(0, schemeEnd))) {
+        throw IllegalArgumentException("The proxy URL's text before :// is not a URI scheme")
+    }
     val scheme = if (schemeEnd < 0) "http" else value.substring(0, schemeEnd).lowercase()
-    val rest = (if (schemeEnd < 0) value else value.substring(schemeEnd + 3)).substringBefore('/')
+    // the authority ends at the first "/", "?" or "#" (RFC 3986 section 3.2)
+    val rest =
+        (
+            if (schemeEnd <
+                0
+            ) {
+                value
+            } else {
+                value.substring(schemeEnd + 3)
+            }
+        ).let { a -> a.substring(0, a.indexOfAny(AUTHORITY_END).takeIf { it >= 0 } ?: a.length) }
     val at = rest.lastIndexOf('@')
     val credentials =
         if (at < 0) {
@@ -182,7 +199,14 @@ internal fun parseProxyUrl(value: String): ResolvedProxy {
     }
 }
 
-/** `host`, `host:port`, `[v6]` or `[v6]:port`. */
+private val AUTHORITY_END = charArrayOf('/', '?', '#')
+
+/**
+ * `host`, `host:port`, `[v6]`, `[v6]:port` or a bare IPv6 address. The host must be an IP literal or a name of RFC 3986
+ * `unreserved` and `sub-delims` characters (section 3.2.2, no percent-escapes): anything else, such as user info that
+ * lost its `@`, fails with IllegalArgumentException whose message does not repeat it, rather than becoming a host that
+ * the proxy's text and errors would show.
+ */
 private fun splitHostPort(
     s: String,
     defaultPort: Int,
@@ -191,13 +215,25 @@ private fun splitHostPort(
     if (s.startsWith('[')) {
         val end = s.indexOf(']')
         require(end > 0) { "invalid proxy address" }
+        val host = s.substring(1, end)
+        require(parseIpLiteral(host)?.size == 16) { "invalid proxy address" }
         val after = s.substring(end + 1)
-        return s.substring(1, end) to if (after.startsWith(':')) port(after.substring(1)) else defaultPort
+        require(after.isEmpty() || after.startsWith(':')) { "invalid proxy address" }
+        return host to if (after.startsWith(':')) port(after.substring(1)) else defaultPort
     }
     val colon = s.lastIndexOf(':')
     require(s.isNotEmpty()) { "a proxy needs a host" }
-    return if (colon < 0 || s.count { it == ':' } > 1) s to defaultPort else s.substring(0, colon) to port(s.substring(colon + 1))
+    if (s.count { it == ':' } > 1) {
+        require(parseIpLiteral(s)?.size == 16) { "invalid proxy address" }
+        return s to defaultPort
+    }
+    val (host, port) = if (colon < 0) s to defaultPort else s.substring(0, colon) to port(s.substring(colon + 1))
+    require(host.isNotEmpty() && host.all { it in HOST_CHARS }) { "invalid proxy host" }
+    return host to port
 }
+
+/** RFC 3986 `unreserved` and `sub-delims` (section 3.2.2 `reg-name`, without `pct-encoded`; also IPv4 addresses). */
+private val HOST_CHARS: Set<Char> = (('a'..'z') + ('A'..'Z') + ('0'..'9') + "-._~!$&'()*+,;=".toList()).toSet()
 
 /** `localhost`, a name under `.localhost` (RFC 6761 section 6.3), 127.0.0.0/8, ::1 or an IPv4-mapped loopback. */
 internal fun isLoopback(host: String): Boolean {
