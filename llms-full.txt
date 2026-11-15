@@ -542,7 +542,7 @@ counts); when it is lost the search starts again from 1200, trying the reported 
 black-hole pause). EMSGSIZE on a probe settles that size at once. ICMP is easy to forge, so nothing else trusts it: a
 forged message costs about one probe round trip at 1200 bytes every ten minutes (the probe goes once the congestion
 window has room for it), and with zero-length connection IDs, where the quote proves only the address and port, a
-Packet Too Big never lowers the size. A congestion window still at its initial value when the size drops stays at the
+Packet Too Big is ignored altogether. A congestion window still at its initial value when the size drops stays at the
 smaller initial window after a restore: an MTU change never raises the window in bytes (RFC 8899 section 3 item 7).
 
 | Platform | Hints |

@@ -49,6 +49,11 @@ internal class Pmtud(
     private val ptbSuspend: Duration = research,
     /** The size in use at the start: the base, or the MTU a NAT-rebound path inherited (black-hole detection covers it, RFC 8899 section 4.3). */
     start: Int = base,
+    /**
+     * The largest packet number sent before this instance (-1: none): probes up to it were another instance's, sent by a search this
+     * one replaced (to an address the path no longer has, or before its capabilities changed), and their acknowledgments change nothing.
+     */
+    sentAfterPn: Long = -1L,
 ) {
     var upperBound: Int = upperBound
         private set
@@ -112,8 +117,8 @@ internal class Pmtud(
     private var ptbDisproveSize = 0
 
     /** The largest probe packet number sent so far, and that number when the last PTB drop happened: probes up to it were sent before. */
-    private var lastProbePn = -1L
-    private var ptbAfterPn = -1L
+    private var lastProbePn = sentAfterPn
+    private var ptbAfterPn = sentAfterPn
 
     /** Until when Packet Too Big messages are not processed (RFC 8899 section 8 robustness mode); [TimeMark.NEVER]: they are. */
     private var ptbSuspendedUntil: TimeMark = TimeMark.NEVER

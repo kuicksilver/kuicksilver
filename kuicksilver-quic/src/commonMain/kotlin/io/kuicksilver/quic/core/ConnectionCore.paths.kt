@@ -57,7 +57,8 @@ internal fun ConnectionCore.setMtu(
  * uses, or a long header with our ID as source), and claim a size this path did send something larger than. ICMP is spoofable:
  * even then it only settles probes or drops the size to 1200 provisionally, until a probe of the old size settles it ([Pmtud.onPtb]).
  * A quote that matched no connection ID bytes (zero-length IDs) rests on the address and port alone, which RFC 9000 section 14.2.1
- * does not count as validation ("when possible, connection IDs"): such a message may end probes, never lower the size in use.
+ * does not count as validation ("when possible, connection IDs"): such a message is ignored, neither lowering the size in use nor
+ * capping the search.
  */
 internal fun ConnectionCore.acceptPacketTooBig(
     quote: ByteArray,
@@ -88,10 +89,17 @@ internal fun ConnectionCore.acceptPacketTooBig(
             len >= 7 + dl + sl && remoteCid.length == dl && remoteCid.contentEquals(quote, 6, dl) && localCid.length == sl &&
                 localCid.contentEquals(quote, 7 + dl, sl)
         }
-    if (!ours || (idBytes == 0 && payload < m.current)) return false
+    if (!ours || idBytes == 0) return false
     if (m.onPtb(payload, now)) setMtu(p, m.current)
     return true
 }
+
+/**
+ * A new DPLPMTUD search for a path now at [start] bytes. Probes already sent, by a search it replaces, are not its own: their late
+ * acknowledgments concern the old address or the old capabilities and must not raise the new search's size.
+ */
+internal fun ConnectionCore.newPmtud(start: Int): Pmtud =
+    Pmtud(upperBound = pmtudUpperBound(), start = start, sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
 
 /** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */
 internal fun ConnectionCore.onEmsgsize(size: Int) {
@@ -247,7 +255,7 @@ private fun ConnectionCore.resetForNewIp(
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
     setMtu(p, 1200)
-    if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
+    if (p.pmtud != null) p.pmtud = newPmtud(1200)
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
     // about the new one (a bleaching middlebox there, or none)
     p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
@@ -500,7 +508,7 @@ private fun ConnectionCore.initServerPath(
 ) {
     p.caps = active.caps
     if (p.caps.ecnSend) p.ecn.enable()
-    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
+    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = newPmtud(p.mtu)
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */

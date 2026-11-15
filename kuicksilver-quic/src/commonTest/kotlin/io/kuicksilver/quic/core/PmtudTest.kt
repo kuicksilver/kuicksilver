@@ -843,7 +843,7 @@ class PmtudTest {
     @Test fun negative_ptbBelowTheMtuWithZeroLengthIdsIsIgnored() {
         // with a zero-length peer connection ID the quote matches no ID bytes: any short-header-looking datagram passes, so the message
         // rests on the address and port alone (RFC 9000 section 14.2.1: validation includes "when possible, connection IDs"). It may
-        // not lower the size in use; one at or above it still ends larger probes
+        // not lower the size in use (nor cap the search, see the next test)
         val (p, c) = pair()
         try {
             transfer(p, c)
@@ -855,6 +855,39 @@ class PmtudTest {
             assertEquals(2L, p.client.stats.ptbIgnored)
             assertEquals(1452, c.stats.pathMtu, "not lowered")
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbAboveTheMtuWithZeroLengthIdsDoesNotCapTheSearch() {
+        // zero-length IDs again, a PTB at or above the size in use: on the address and port alone it may not settle the probe in
+        // flight nor cap the search (that would hold the size down until the 600 s re-search); ignored and counted
+        val (p, c) = pair(linkMtu = 1500, caps = IoCapabilities.Portable)
+        try {
+            val probe = probeAbove(p, c, 1250)
+            c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY
+            ptb(p, c, 1278, quote = byteArrayOf(0x43, 0x11)) // payload 1250: above the size in use, below the probe
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(1L, p.client.stats.ptbIgnored)
+            assertEquals(probe, c.path.pmtud!!.probeInFlightForTest, "the probe in flight is not settled by it")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_aProbeOfAReplacedSearchRaisesNothing() {
+        // the search is replaced while a probe is in flight (new capabilities; an IP change does the same through resetForNewIp): the
+        // new search did not send that probe, so its acknowledgment, which arrives afterwards, must not raise the new search's size
+        val (p, c) = pair(linkMtu = 1500, caps = IoCapabilities.Portable)
+        try {
+            val probe = probeAbove(p, c, 1200)
+            assertEquals(1200, c.stats.pathMtu, "the probe is not acknowledged yet")
+            c.setPathCapabilities(PathId.Initial, df)
+            p.filterToServer = { _, b -> b.size <= 1200 } // the new search's own probes never arrive: any raise is the old probe's
+            val acked = p.runUntil(2.seconds) { c.stats.pathMtu > 1200 }
+            assertTrue(!acked, "the old $probe-byte probe raised the new search to ${c.stats.pathMtu}")
+            assertEquals(1200, c.path.pmtud!!.current)
         } finally {
             p.close()
         }

@@ -486,7 +486,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first, without the black-hole pause. A congestion window still at its initial value when the size drops is lowered
   with it and not raised again on a restore (RFC 8899 section 3 item 7: an MTU update "MUST NOT increase the
   congestion window measured in bytes"). With zero-length connection IDs the quote proves only the address and port,
-  so such a message never lowers the size in use. EMSGSIZE on a probe settles that size at once.
+  so such a message is ignored: it neither lowers the size in use nor caps the search. A search started over (new
+  socket capabilities, a new IP) ignores acknowledgments of the probes the search it replaced had sent. EMSGSIZE on a probe settles that size at once.
 - Native (`ksl` ABI 7): on Linux and Android the accelerated UDP socket reads the ICMP error queue (`IP_RECVERR` /
   `IPV6_RECVERR`, set with DF) and keeps ICMP Packet Too Big messages, with the quoted start of the datagram and its
   destination, as hints for path MTU discovery (`ksl_udp_take_ptb`); every platform counts sends lost to `EMSGSIZE`
