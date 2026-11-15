@@ -194,7 +194,7 @@ It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:397` (the decision, with
-`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:258`
+`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:267`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.
