@@ -112,6 +112,11 @@ class ClientWebSocketCloseOrderTest {
         val close: suspend () -> Unit,
         /** Over TLS: the server's FIN without close_notify (a truncation); without TLS the same as [close]. */
         val closeTruncated: suspend () -> Unit = close,
+        /**
+         * Over TLS: the TLS session no longer reads (its input ended or failed); what the socket still brings is read and
+         * dropped, so its end ("client FIN" or "client RST") is still seen. Without TLS nothing.
+         */
+        val stopFeeding: () -> Unit = {},
     )
 
     /**
@@ -153,16 +158,26 @@ class ClientWebSocketCloseOrderTest {
                                             socketOut.flushAndClose()
                                         })
                                     } else {
-                                        // the TLS session reads a copy of the socket's input, so that its end is seen
+                                        // the TLS session reads a copy of the socket's input, so that its end is seen. Once
+                                        // the session stopped reading ([RawConnection.stopFeeding]: a failed TLS write
+                                        // fails its input too, and its reader no longer takes the copy) the rest is read
+                                        // and dropped: a copy that waited on the full channel never saw the end
                                         val fed = ByteChannel()
+                                        val stopped = CompletableDeferred<Unit>()
                                         launch {
                                             val buf = ByteArray(16_384)
                                             try {
                                                 while (true) {
                                                     val n = socketIn.readAvailable(buf, 0, buf.size)
                                                     if (n < 0) break
-                                                    fed.writeFully(buf, 0, n)
-                                                    fed.flush()
+                                                    if (!stopped.isCompleted) {
+                                                        try {
+                                                            fed.writeFully(buf, 0, n)
+                                                            fed.flush()
+                                                        } catch (e: kotlinx.io.IOException) {
+                                                            if (!stopped.isCompleted) throw e // fed stopped by stopFeeding only
+                                                        }
+                                                    }
                                                 }
                                                 events += if (socketIn.closedCause == null) "client FIN" else "client RST"
                                                 fed.flushAndClose()
@@ -198,6 +213,9 @@ class ClientWebSocketCloseOrderTest {
                                         }, closeTruncated = {
                                             events += "server FIN"
                                             socketOut.flushAndClose()
+                                        }, stopFeeding = {
+                                            stopped.complete(Unit)
+                                            fed.cancel(kotlinx.io.IOException("the TLS session stopped reading"))
                                         })
                                     }
                                 conn.output.writeStringUtf8(switchingProtocols(conn.input.readWebSocketKey()))
@@ -430,6 +448,9 @@ class ClientWebSocketCloseOrderTest {
                     rawServer(true, serve = { conn ->
                         released.await() // reads nothing before the client gave the connection up
                         val read = probing(conn.output) { readClientFrames(conn.input) }
+                        // the probe's write can fail the TLS session (a reset connection) while the socket still holds what
+                        // the client sent: the session reads no more, the rest of the socket is read and dropped
+                        conn.stopFeeding()
                         // how the TCP connection under the TLS session ended
                         withTimeout(20.seconds) { conn.events.all.first { "client FIN" in it || "client RST" in it } }
                         ends = conn.events.all.value
