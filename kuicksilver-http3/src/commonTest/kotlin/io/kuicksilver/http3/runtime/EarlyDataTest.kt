@@ -419,6 +419,38 @@ class EarlyDataTest {
         }
 
     /**
+     * The attempt chooses its deadline from two reads, whether the handshake is complete and how many unidirectional streams
+     * may be opened. The server's answer (a rejection whose transport parameters allow two) lands between them here. With the
+     * limit read first the attempt saw the remembered three and then a complete handshake, took no deadline and no watch,
+     * and its third open waited until the connection ended; with the handshake state read first it sees the new limit and
+     * gets the deadline.
+     */
+    @Test fun negative_answerBetweenTheDeadlineReadsStillGetsTheDeadline(): Unit =
+        runBlocking {
+            H3Session.criticalStreamsDeadlineForTest = 200.milliseconds
+            try {
+                val e =
+                    assertFailsWith<io.kuicksilver.http3.Http3Exception.Protocol> {
+                        withTimeout(10.seconds) {
+                            earlyAcceptedAfterResuming(
+                                issuer = http3Settings {},
+                                resumer = http3Settings {},
+                                resumerQuic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 },
+                                clientHold = AtomicInt(0),
+                                sendRequest = false,
+                                clientSession = { session ->
+                                    session.criticalReadsHookForTest = { gen -> if (gen == 0) session.quic.awaitHandshake() }
+                                },
+                            )
+                        }
+                    }
+                assertEquals(io.kuicksilver.http3.Http3ErrorCode.GENERAL_PROTOCOL_ERROR, e.h3Code)
+            } finally {
+                H3Session.criticalStreamsDeadlineForTest = null
+            }
+        }
+
+    /**
      * RFC 9001 section 4.6.2: a rejected 0-RTT resets every stream the client opened, so an early request is lost with it;
      * the client sends it again on a new stream after the handshake (a safe method, so repeating it is allowed: RFC 9110
      * section 9.2.2), once, and the caller gets the answer. The server sees the request exactly once.

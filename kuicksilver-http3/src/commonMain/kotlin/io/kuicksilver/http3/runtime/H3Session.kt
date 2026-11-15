@@ -297,6 +297,9 @@ internal class H3Session(
     /** Test hook: runs on the dispatcher at the steps of each [openCriticalStreams] attempt ([AttemptStep]), with the attempt's generation. */
     internal var criticalAttemptHookForTest: (suspend (AttemptStep, Int) -> Unit)? = null
 
+    /** Test hook: runs between the two reads that choose an attempt's deadline (handshake state, then stream limit), with its generation. */
+    internal var criticalReadsHookForTest: (suspend (Int) -> Unit)? = null
+
     /** Where an [openCriticalStreams] attempt is ([criticalAttemptHookForTest]). */
     internal enum class AttemptStep { Started, Opened, ControlWritten }
 

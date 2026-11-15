@@ -189,6 +189,21 @@ internal suspend fun H3Session.criticalStreamsLoop(deadline: Duration) {
 }
 
 /**
+ * [block]'s result, or null when [deadline] ran out first. Unlike `withTimeoutOrNull` a block that returned is never
+ * dropped: the timeout fires on another thread, and when it lands after the block returned but before the timeout's scope
+ * completed, `withTimeoutOrNull` gives null for a result that already happened (here: critical streams opened and typed,
+ * reported as never opened).
+ */
+internal suspend fun <T : Any> completedWithin(
+    deadline: Duration,
+    block: suspend () -> T,
+): T? {
+    val result = kotlin.concurrent.atomics.AtomicReference<T?>(null)
+    withTimeoutOrNull(deadline) { result.store(block()) } // no suspension point between the return and the store
+    return result.load()
+}
+
+/**
  * Runs [attempt] in 0-RTT, where the remembered limits allowed the three streams, without a deadline unless the server's
  * answer brings transport parameters that allow fewer than three (a rejected 0-RTT starts over from the new ones, RFC 9000
  * section 7.4.1): from then on the attempt gets [deadline], as one that began with such a limit, and null when it ran out.
@@ -198,7 +213,9 @@ private suspend fun H3Session.attemptUntilTheLimitIsLow(
     attempt: suspend () -> Boolean,
 ): Boolean? =
     coroutineScope {
-        val run = async { attempt() }
+        // the result is kept as the attempt returns: a cancellation that lands as the async completes would drop it
+        val result = kotlin.concurrent.atomics.AtomicReference<Boolean?>(null)
+        val run = async { attempt().also { result.store(it) } }
         var timedOut = false
         val guard =
             launch {
@@ -218,7 +235,7 @@ private suspend fun H3Session.attemptUntilTheLimitIsLow(
         try {
             run.await()
         } catch (e: CancellationException) {
-            if (timedOut && run.isCancelled) null else throw e
+            if (timedOut && run.isCancelled) result.load() else throw e
         } finally {
             guard.cancel()
         }
@@ -290,11 +307,15 @@ internal suspend fun H3Session.openCriticalStreams(
             // loaded host took more than three seconds to open and write them) and closed connections to healthy peers.
             // Only a peer whose limit is lower gets [deadline] to raise it with MAX_STREAMS, also when that becomes known
             // during the attempt: a 0-RTT answer whose transport parameters allow fewer ([attemptUntilTheLimitIsLow])
+            // whether the handshake was over is read before the limit: an answer that lands between the two reads is then
+            // either in the limit read (complete was false, so the attempt is watched) or after both (watched as well);
+            // the other order could see the remembered limit and then a complete handshake with a lower one
+            val complete = quic.isHandshakeComplete
+            criticalReadsHookForTest?.invoke(gen)
             val openable = QuicStreamLimits.uniStreamsOpenable(quic)
-            // after the handshake the limits only grow
             if (openable == null || openable < 3) {
-                withTimeoutOrNull(deadline) { attempt() }
-            } else if (quic.isHandshakeComplete) {
+                completedWithin(deadline) { attempt() }
+            } else if (complete) { // after the handshake the limits only grow
                 attempt()
             } else {
                 attemptUntilTheLimitIsLow(deadline) { attempt() }
