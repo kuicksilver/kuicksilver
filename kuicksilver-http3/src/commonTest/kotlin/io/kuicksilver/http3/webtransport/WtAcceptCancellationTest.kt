@@ -13,10 +13,12 @@ import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.underCancellation
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
@@ -24,6 +26,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -66,8 +69,22 @@ class WtAcceptCancellationTest {
                 st.output.writeFully("two".encodeToByteArray())
                 st.output.flushAndClose()
                 // the receive resumes on the step dispatcher; the stream is wrapped on the connection's dispatcher, and the
-                // return comes back here as the next step: the caller is cancelled in between
-                withTimeout(5.seconds) { steps.tasks.receive() }.run()
+                // return comes back here as the next step: the caller is cancelled in between. The connection's dispatcher
+                // is held while the step runs: a wrap that finished before the acceptor suspended would return inline,
+                // with no step to cancel at (what a preempted test thread on a loaded host saw)
+                val resumed = withTimeout(5.seconds) { steps.tasks.receive() }
+                val holding = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val holder =
+                    launch(p.server.session.dispatcher) {
+                        holding.complete(Unit)
+                        runBlocking { release.await() } // blocks the connection's single thread, not this test's
+                    }
+                withTimeout(5.seconds) { holding.await() }
+                resumed.run()
+                assertFalse(acceptor.isCompleted, "the acceptor returned before its stream was wrapped")
+                release.complete(Unit)
+                holder.join()
                 val back = withTimeout(5.seconds) { steps.tasks.receive() }
                 acceptor.cancel()
                 back.run()
