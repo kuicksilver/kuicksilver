@@ -155,8 +155,8 @@ private val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*")
  * (percent-decoded), port 1080 when none is given, a path ignored. A `://` after the first `/` is in the path, not a
  * scheme's end. Another scheme fails with UnsupportedOperationException, a text before `://` that is not a scheme (RFC
  * 3986 section 3.1; it may be user info) with IllegalArgumentException, a bad port or a broken percent-escape in the user
- * info with IllegalArgumentException. No message repeats any part of the value but a well-formed scheme: the value may
- * hold a password.
+ * info with IllegalArgumentException. No message repeats any part of the value, not even an unsupported scheme (a user
+ * name without a password, `user://x@proxy`, reads as one): the value may hold a password.
  */
 internal fun parseProxyUrl(value: String): ResolvedProxy {
     val schemeEnd = value.indexOf("://").takeIf { it >= 0 && value.indexOf('/') > it } ?: -1
@@ -194,7 +194,7 @@ internal fun parseProxyUrl(value: String): ResolvedProxy {
         "https" -> throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
 
         else -> throw UnsupportedOperationException(
-            "proxy scheme $scheme:// is not supported (http://, socks5:// and socks5h:// are); refusing to connect around it",
+            "the proxy URL's scheme is not supported (http://, socks5:// and socks5h:// are); refusing to connect around it",
         )
     }
 }

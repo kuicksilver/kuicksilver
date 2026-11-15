@@ -991,8 +991,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Client proxy from the environment (`http_proxy`, `https_proxy`, `all_proxy`): user info with a broken percent-escape
   failed with Ktor's URLDecodeException, whose message quoted the password; a URL whose user info held `://` was
   refused with a message that quoted it as a scheme; and user info that lost its `@` became the proxy's host, shown in
-  its text. All three now fail without repeating the user info: only a valid RFC 3986 scheme is named, the authority
-  ends at `/`, `?` or `#`, and the host must be an IP literal or a plain name.
+  its text. All three now fail without repeating any of the URL (an unsupported scheme is no longer named either: a
+  user name before `://` reads as one): a scheme is one only when it is RFC 3986's, the authority ends at `/`, `?` or
+  `#`, and the host must be an IP literal or a plain name.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

@@ -166,8 +166,12 @@ class ProxyResolverTest {
         assertEquals("p.test", env("all_proxy" to "http://u:S3cRtQ@p.test?x").at("https://x.test/")!!.host)
         assertEquals("::1", env("all_proxy" to "http://[::1]:3128").at("https://x.test/")!!.host)
         assertEquals("2001:db8::1", env("all_proxy" to "2001:db8::1").at("https://x.test/")!!.host)
-        val e = assertFailsWith<UnsupportedOperationException> { env("all_proxy" to "ftp://u:S3cRtQ@h").at("https://x.test/") }
-        assertTrue("ftp://" in e.message!! && "S3cRtQ" !in e.message!!, e.message)
+        // an unsupported scheme is not named either: a user name without a password reads as one
+        for (url in listOf("ftp://u:S3cRtQ@h", "S3cRtQ://x@proxy:8080", "uS3cRtQ://x@proxy")) {
+            val e = assertFailsWith<UnsupportedOperationException>(url) { env("all_proxy" to url).at("https://x.test/") }
+            assertTrue("socks5://" in e.message!!, e.message)
+            assertFalse("S3cRtQ".lowercase() in e.message!!.lowercase() || "ftp" in e.message!!, e.message)
+        }
     }
 
     private data class ProxyResolved(
@@ -858,7 +862,7 @@ class ProxyResolverTest {
                 engine = { proxyResolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "https://127.0.0.1:1") },
             ).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.get("https://origin.test:$port/") }
-                assertTrue("socks4" in e.message!!, e.message)
+                assertTrue("not supported" in e.message!! && "socks4" !in e.message!!, e.message)
                 assertFailsWith<UnsupportedOperationException> { c.get("http://origin.test:$port/") }
             }
             assertEquals(0, accepted, "the origin was contacted around the proxy")
