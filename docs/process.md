@@ -204,6 +204,19 @@ tarball, checks every native library (architecture, exports, imports, OpenSSL ve
 counts the deployment against the Central limits and uploads one signed deployment, which a maintainer publishes after
 Central validates it.
 
+A prerelease can be published on GitHub only, never on Maven Central, with `--github-prerelease`
+([release.md](release.md#prereleases-on-github-only)); 0.3.0-rc1 is published this way, and the final 0.3.0 goes to
+Central. The mode refuses a final version, runs the same preconditions, build, checks, signing and home-directory scan,
+does not read the Central Portal token and uploads nothing. Instead of the deployment it writes a signed Maven
+repository zip of the publication (every artifact with its POM, Gradle module metadata, `.asc` and checksums), a short
+file that says how to consume it, and a signed `SHA256SUMS` of every asset, for the maintainer to attach to the GitHub
+prerelease. The Swift package commit is prepared as for a release, its binary target the zip of the GitHub prerelease.
+Its tag is immutable, so it is pushed last, in this order: the GitHub prerelease with the xcframework zip, then the
+zip's URL and checksum checked against `Package.swift` (`tools/release/swift-package-check.sh remote`; an empty package
+built for the iOS Simulator and iOS against the local zip, `swift-package-check.sh local`, comes before anything is
+published), then the Swift package tag, then an empty package resolved with `exact: "<version>"`
+(`swift-package-check.sh resolve`).
+
 - **Signatures.** Every artifact on Maven Central and the `v<version>` tag are signed with the release key
   (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`).
 - **SBOM.** A CycloneDX 1.6 SBOM of every publication, with the statically linked OpenSSL as a component, validated

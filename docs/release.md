@@ -122,6 +122,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    tools/release/local-release.sh <version> --dry-run      # everything but the upload; refusals become warnings
    tools/release/local-release.sh <version>                # uploads one deployment, not released
    ```
+   (A prerelease for GitHub only, never uploaded to Central: `--github-prerelease`, see
+   [Prereleases on GitHub only](#prereleases-on-github-only).)
    The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
    exists (locally or on origin: a release fetches origin first, a dry run uses what was fetched last), a branch behind
@@ -258,6 +260,72 @@ guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses t
   the guides follow the newest published version on both branches.
 - `context7.json` (step 7) points at the branch whose docs describe the newest published version; for a patch release
   of the newest line that is the maintenance branch until the next minor version is released from `main`.
+
+## Prereleases on GitHub only
+
+A prerelease (`X.Y.Z-alphaN`, `-betaN`, `-rcN`) may be published as a GitHub prerelease only, not on Maven Central:
+Central grants this namespace a limited number of releases, bytes and files per month, and a version on Central can
+never be replaced or removed. 0.3.0-rc1 is published this way; the final 0.3.0 goes to Central as in
+[Every release](#every-release).
+
+```
+tools/release/local-release.sh <version> --github-prerelease --dry-run   # refusals become warnings
+tools/release/local-release.sh <version> --github-prerelease             # builds and signs; uploads nothing
+```
+
+The mode refuses a final version (also in a dry run). Everything up to the upload is the same as for a Central release:
+the preconditions and the gate record, the twelve OpenSSL builds, the five JNI libraries and their checks, the jar, the
+signed `publishToMavenLocal` into `build/release/m2`, the AAR and klib checks, the home-directory scan of every
+published file and the xcframework zip, the SBOM, the provenance and their signatures. The differences:
+
+- The Central Portal token is not read, and its `ORG_GRADLE_PROJECT_mavenCentral*` variables are unset; the signing key
+  is required as for a release. Nothing is uploaded, and no Gradle publish task to Central runs.
+- The count against the Central limits is printed but never refuses.
+- The Swift package is prepared and committed as for a release (`tools/release/swift-package.sh`, in
+  `build/release/kuicksilver-swift`): `Package.swift` names
+  `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` of the GitHub
+  prerelease and its checksum, and the README `exact: "<version>"`. Nothing there is signed, tagged or pushed.
+- Instead of the deployment, `tools/release/github-repository.py` makes, in `build/release/`:
+  - `kuicksilver-<version>-maven-repository.zip`: every file of the publication of `<version>` (artifacts, POMs, Gradle
+    module metadata, `.asc`), with the `.md5`, `.sha1`, `.sha256` and `.sha512` of each artifact and a
+    `maven-metadata.xml` per artifact, under one top directory `kuicksilver-<version>-maven-repository/` with a
+    `README.md`. The zip is the same for the same publication (sorted entries, the release commit's time). It refuses
+    an artifact without its POM, its Gradle module metadata or (signed) its `.asc`.
+  - the instructions file, named as the zip with `.md` for `.zip`: the same `README.md`, how to download, check and
+    consume it (unzip, then the directory as an `exclusiveContent` `maven { url = uri("file:...") }` repository for `io.kuicksilver` in
+    `settings.gradle.kts`, and the BOM).
+  - Both are scanned for home-directory paths, are subjects of the provenance and are signed with the release key.
+  - `kuicksilver-<version>-SHA256SUMS`: the SHA-256 of every asset (the two files above, the SBOM archive, the
+    provenance, `Kuicksilver.xcframework.zip` and their `.asc`), itself signed and scanned.
+
+The script ends with the commands to run by hand, in this order. A tag of `kuicksilver/kuicksilver-swift` can never be
+moved or deleted, so everything SwiftPM will read is checked before that tag is pushed:
+
+1. `tools/release/swift-package-check.sh local <version>`: `Package.swift` of the prepared commit names the release URL
+   of `<version>` and the SHA-256 of `build/release/Kuicksilver.xcframework.zip`; a copy of the package whose binary
+   target is that zip (`path:`), and an empty package that depends on it by path, imports `Kuicksilver` and reads
+   `KuicksilverInfo.shared.VERSION`, resolve on the Mac and build with `xcodebuild` for the iOS Simulator and for iOS
+   devices (the xcframework has these two slices only, so there is no macOS build).
+2. The signed tag `v<version>` and its push (`git tag -s v<version> ...`, `git push origin <branch> v<version>`).
+3. `gh release create v<version> --prerelease --verify-tag` with the CHANGELOG section (and the instructions file) as
+   notes and every asset attached, `Kuicksilver.xcframework.zip` among them.
+4. `tools/release/swift-package-check.sh remote <version>`: the zip downloaded from the URL `Package.swift` names has the
+   SHA-256 `Package.swift` names, and is the local zip. A mismatch stops here: fix the release asset, never the tag.
+5. The Swift package commit signed, tagged `<version>` and pushed exactly as the script prints it (as in
+   [Every release](#every-release), step 6).
+6. `tools/release/swift-package-check.sh resolve <version>`: an empty package with
+   `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", exact: "<version>")` resolves (SwiftPM fetches
+   the tag and checks the zip's checksum) and builds for the iOS Simulator.
+7. Maven: an empty Gradle project as the instructions file says (download, `shasum -a 256 -c`, unzip, the `file:`
+   repository).
+
+Publishing the GitHub release starts `pages.yml`, which adds the documentation of `<version>` to the site
+(`/latest/` stays the newest final release; with none on the site yet, as for 0.3.0-rc1, it is the prerelease until the
+final version replaces it). `tools/verify/verify-release.sh` reads Maven Central and does not
+apply to such a prerelease: check it with `shasum -a 256 -c kuicksilver-<version>-SHA256SUMS` and
+`tools/release/verify-signature.sh` on the assets. `tools/release/local-release-test.sh` runs the mode's refusals, its
+credential check, `github-repository.py` against fixture publications and the refusals of `swift-package-check.sh`
+(its download stubbed; its iOS builds need a real xcframework and are run by hand).
 
 ## Supply chain: SBOM and provenance
 

@@ -613,6 +613,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the same port stays TLS 1.3. With `http2`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
   renegotiation attempt on an HTTP/2 connection ends it with GOAWAY PROTOCOL_ERROR (section 9.2.1). The default connector
   still refuses a TLS 1.2 client with `protocol_version` (docs/guide/ktor.md, "TLS 1.2 on the server").
+- Release: prereleases on GitHub only. `tools/release/local-release.sh <version> --github-prerelease` builds, checks and
+  signs a prerelease as a Central release does, uploads nothing and reads no Central credentials, and writes a signed
+  Maven repository zip of the publication (`kuicksilver-<version>-maven-repository.zip`, with checksums and
+  `maven-metadata.xml`), a file on how to consume it, and a signed `SHA256SUMS` of the assets for the GitHub prerelease.
+  It refuses a final version. The Swift package commit is prepared as for a release, and
+  `tools/release/swift-package-check.sh` checks it before its immutable tag is pushed (`local`: an empty package built
+  for the iOS Simulator and iOS against the local zip; `remote`: the published zip's SHA-256 against `Package.swift`)
+  and after (`resolve`: `exact: "<version>"`). 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
+  "Prereleases on GitHub only").
 
 ### Changed
 

@@ -16,10 +16,10 @@ printf '#!/bin/sh\nif [ -n "${KSL_CENTRAL_STATUS:-}" ]; then echo "$KSL_CENTRAL_
 printf '#!/bin/sh\necho "curl called in a test: $*" >&2; exit 7\n' > "$tmp/bin/curl"
 chmod +x "$tmp/bin/central" "$tmp/bin/curl"
 export KSL_CENTRAL_PROBE="$tmp/bin/central" PATH="$tmp/bin:$PATH"
-# the Swift package repository: empty (no version released there yet); swift-tagged.git already has 0.2.1
+# the Swift package repository: empty (no version released there yet); swift-tagged.git already has 0.2.1 and 0.4.0-rc1
 for r in swift swift-tagged; do git init -q --bare -b main "$tmp/$r.git"; done
 ( w="$tmp/swift-w"; git init -q -b main "$w" && cd "$w" && git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m x \
-  && git tag 0.2.1 && git push -q "$tmp/swift-tagged.git" main 0.2.1 ) || { echo "FAIL: Swift package fixture"; exit 2; }
+  && git tag 0.2.1 && git tag 0.4.0-rc1 && git push -q "$tmp/swift-tagged.git" main 0.2.1 0.4.0-rc1 ) || { echo "FAIL: Swift package fixture"; exit 2; }
 export KSL_SWIFT_REPO="$tmp/swift.git"
 marker='^# the local gate: tools/ci/local-matrix.sh writes'
 grep -qE "$marker" "$root/tools/release/local-release.sh" || { echo "FAIL: the local-gate marker line is gone from local-release.sh"; exit 2; }
@@ -157,6 +157,12 @@ t "CHANGELOG 0.2.9 - unreleased (placeholder)"           "refuse:no release date
 t "CHANGELOG [0.2.8] without date"                       "refuse:no release date"       release/0.2.x 0.2.8
 t "CHANGELOG without 0.2.7"                              "refuse:has no '## \[0.2.7\]'" release/0.2.x 0.2.7
 t "dry run: placeholder date (warning only)"             ok:WARN                        release/0.2.x 0.2.9 --dry-run
+# --github-prerelease: a prerelease only, as a GitHub release; the Swift package is prepared as for a release
+t "negative_githubPrereleaseFinalVersion"                "refuse:--github-prerelease takes a prerelease" release/0.2.x 0.2.1 --github-prerelease
+t "negative_githubPrereleaseFinalVersionDryRun"          "refuse:--github-prerelease takes a prerelease" release/0.2.x 0.2.1 --github-prerelease --dry-run
+t "--github-prerelease, 0.4.0-rc1"                       "ok:prepared: .*no tag 0.4.0-rc1 yet" release/0.4.x 0.4.0-rc1 --github-prerelease
+KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "negative_githubPrereleaseSwiftTagged" "refuse:tag 0.4.0-rc1 is already in" release/0.4.x 0.4.0-rc1 --github-prerelease
+KSL_SWIFT_REPO="$tmp/no-such.git" t "negative_githubPrereleaseSwiftUnreachable" "refuse:Swift package cannot be prepared: cannot clone" release/0.4.x 0.4.0-rc1 --github-prerelease
 git checkout -q main
 
 # tools/release/swift-package.sh against a local package repository; the maintainer's signing, tagging and pushing are
@@ -240,6 +246,24 @@ if sp "$L" ok "on main" finish 1.1.0-rc1 "$S1"; then
     && sp_pass "$L" || sp_fail "$L" "requirement or URL wrong"
 fi
 
+# tools/release/swift-package-check.sh on the 1.1.0-rc1 commit just made (checksum S1, the SHA-256 of "a"); the GitHub
+# release is a stub download (KSL_SWIFT_FETCH copies $KSL_TEST_REMOTE). Its iOS builds need a real xcframework: not here
+printf 'a' > "$tmp/zip-a"; printf 'b' > "$tmp/zip-b"
+printf '#!/bin/sh\n[ -f "$KSL_TEST_REMOTE" ] || exit 22\ncp "$KSL_TEST_REMOTE" "$2"\n' > "$tmp/bin/fetch"; chmod +x "$tmp/bin/fetch"
+spc() { # <label> <ok|refuse> <pattern> <remote file> <args...>
+  local label="$1" exp="$2" pat="$3" rc out; export KSL_TEST_REMOTE="$4"; shift 4
+  out=$(KSL_SWIFT_FETCH="$tmp/bin/fetch" bash "$root/tools/release/swift-package-check.sh" "$@" --package "$tmp/sp" 2>&1); rc=$?
+  if [ "$([ $rc = 0 ] && echo ok || echo refuse)" = "$exp" ] && grep -qE -- "$pat" <<< "$out"; then sp_pass "$label"
+  else sp_fail "$label" "exit $rc: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
+}
+spc "swift check: remote zip matches Package.swift and the local zip" ok "may be pushed" "$tmp/zip-a" remote 1.1.0-rc1 --zip "$tmp/zip-a"
+spc "negative_swiftCheckRemoteChecksum"         refuse "do not push the tag"               "$tmp/zip-b" remote 1.1.0-rc1 --zip "$tmp/zip-a"
+spc "negative_swiftCheckRemoteNotTheLocalZip"   refuse "differs from"                      "$tmp/zip-a" remote 1.1.0-rc1 --zip "$tmp/zip-b"
+spc "negative_swiftCheckRemoteUnreachable"      refuse "cannot download"                   "$tmp/none"  remote 1.1.0-rc1 --zip "$tmp/zip-a"
+spc "negative_swiftCheckOtherVersion"           refuse "not https://.*/v1.1.0-rc2/"        "$tmp/zip-a" remote 1.1.0-rc2
+spc "negative_swiftCheckLocalChecksum"          refuse "Package.swift names $S1"           "$tmp/zip-a" local 1.1.0-rc1 --zip "$tmp/zip-b"
+spc "negative_swiftCheckLocalNoZip"             refuse "is missing"                        "$tmp/zip-a" local 1.1.0-rc1 --zip "$tmp/none"
+
 # the local-gate check itself (local-release.sh from the marker line to the toolchain check) on fixture records: only a
 # full run's passing stamp is a gate; a run of some steps (local-matrix.sh --only/--from) never is, whatever its file says
 gate_block=$(awk -v m="$marker" '$0 ~ m {on = 1} /^# toolchains pinned/ {on = 0} on' "$root/tools/release/local-release.sh")
@@ -260,6 +284,100 @@ gate_t "negative_gatePartialRecordAsStamp"                    "refuse:did not pa
 gate_t "negative_gatePassWithSelection"                       "refuse:only some steps"         result=pass selection=from=3 "${full[@]}"
 gate_t "negative_gateNoSelectionLine"                         "refuse:only some steps"         result=pass "${full[@]}"
 gate_t "negative_gateWithoutWindows"                          "refuse:without --with-windows"  result=pass selection=all "${full[@]/with_windows=1/with_windows=0}"
+
+# the credential check (local-release.sh from "# credentials and signing" to sign_args) against a fixture
+# gradle.properties: --github-prerelease needs the signing key as a release does, never reads the Central Portal token,
+# and leaves no ORG_GRADLE_PROJECT_mavenCentral* variable for Gradle
+cred_block=$(awk '/^# credentials and signing/ {on = 1} /^sign_args=/ {on = 0} on' "$root/tools/release/local-release.sh")
+grep -q 'mavenCentralUsername' <<< "$cred_block" || { echo "FAIL: no credential check found in local-release.sh"; exit 2; }
+cred_t() { # <label> <ok|refuse>[:<pattern>] <gh 0|1> <gradle.properties lines...>
+  local label="$1" exp="${2%%:*}" pat="" gh="$3" d out got verdict; [ "$2" = "${2#*:}" ] || pat="${2#*:}"; shift 3
+  d="$tmp/cred-$pass-$fail"; mkdir -p "$d"; printf '%s\n' "$@" > "$d/gradle.properties"; : > "$d/key.gpg"
+  out=$(cd "$d" && GRADLE_USER_HOME="$d" ORG_GRADLE_PROJECT_mavenCentralPassword="${CRED_ENV:-}" dry=0 unsigned=0 gh="$gh" \
+    bash -c 'refuse() { echo "REFUSED: $*"; }; '"$cred_block"'
+      echo "env-left=${ORG_GRADLE_PROJECT_mavenCentralPassword:-}${ORG_GRADLE_PROJECT_mavenCentralUsername:-}"' 2>&1)
+  got=$(grep -q REFUSED <<< "$out" && echo refuse || echo ok)
+  verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
+  [ $verdict = ok ] && pass=$((pass+1)) || fail=$((fail+1))
+  printf '%-4s %-58s exp=%-6s got=%-6s | %s\n' "$verdict" "$label" "$exp" "$got" "$(grep -E 'REFUSED|Central|env-left' <<< "$out" | tr '\n' ' ' | cut -c1-230)"
+}
+key=(signing.keyId=0xC8D0EC68 signing.password=x "signing.secretKeyRingFile=key.gpg")
+cred_t "credentials: a release without the Central token"     "refuse:no mavenCentralUsername"    0 "${key[@]}"
+cred_t "credentials: --github-prerelease, no Central token"   "ok:Central Portal token: not read" 1 "${key[@]}"
+cred_t "negative_githubPrereleaseWithoutSigningKey"           "refuse:no signing key"             1 mavenCentralUsername=u mavenCentralPassword=p
+CRED_ENV=secret cred_t "credentials: --github-prerelease drops the token variables" "ok:env-left=$" 1 "${key[@]}"
+
+# tools/release/github-repository.py: the Maven repository zip of a GitHub prerelease from a fixture publication
+gr="$root/tools/release/github-repository.py"; V=0.4.0-rc1
+mk_m2() { # <dir> [signed]: two modules (a BOM and a library), each file with its .asc when signed, Gradle's local metadata
+  local m="$1/io/kuicksilver" a f
+  for a in kuicksilver-bom kuicksilver-quic-jvm; do
+    mkdir -p "$m/$a/$V"; printf '<metadata/>\n' > "$m/$a/maven-metadata-local.xml"
+    printf '<project><artifactId>%s</artifactId><version>%s</version></project>\n' "$a" "$V" > "$m/$a/$V/$a-$V.pom"
+    printf '{"formatVersion":"1.1"}\n' > "$m/$a/$V/$a-$V.module"
+  done
+  printf 'PK-jar\n' > "$m/kuicksilver-quic-jvm/$V/kuicksilver-quic-jvm-$V.jar"
+  mkdir -p "$m/kuicksilver-quic-jvm/0.3.0"; printf 'old\n' > "$m/kuicksilver-quic-jvm/0.3.0/kuicksilver-quic-jvm-0.3.0.jar"
+  if [ "${2:-}" = signed ]; then for f in $(find "$m" -path "*/$V/*" -type f); do printf 'sig\n' > "$f.asc"; done; fi
+}
+gr_t() { # <label> <ok|refuse>[:<pattern>] <fixture: signed|unsigned|nopom|nomodule|noasc|empty> <args...>
+  local label="$1" exp="${2%%:*}" pat="" fx="$3" d out rc got verdict; [ "$2" = "${2#*:}" ] || pat="${2#*:}"; shift 3
+  d="$tmp/gr-$pass-$fail"; mkdir -p "$d/m2" "$d/out"
+  case "$fx" in
+    signed|noasc) mk_m2 "$d/m2" signed ;; unsigned|nopom|nomodule) mk_m2 "$d/m2" ;; empty) ;;
+  esac
+  case "$fx" in
+    nopom) rm "$d/m2/io/kuicksilver/kuicksilver-quic-jvm/$V/kuicksilver-quic-jvm-$V.pom" ;;
+    nomodule) rm "$d/m2/io/kuicksilver/kuicksilver-quic-jvm/$V/kuicksilver-quic-jvm-$V.module" ;;
+    noasc) rm "$d/m2/io/kuicksilver/kuicksilver-quic-jvm/$V/kuicksilver-quic-jvm-$V.jar.asc" ;;
+  esac
+  out=$(python3 -I "$gr" pack --m2 "$d/m2" --out-dir "$d/out" --time 1794688855 "$@" 2>&1); rc=$?
+  got=$([ $rc = 0 ] && echo ok || echo refuse)
+  verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
+  [ $verdict = ok ] && pass=$((pass+1)) || fail=$((fail+1))
+  printf '%-4s %-58s exp=%-6s got=%-6s | %s\n' "$verdict" "$label" "$exp" "$got" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"
+  gr_dir="$d/out"
+}
+gr_t "github repository: signed publication"                ok              signed   --version "$V" --signed
+zip="$gr_dir/kuicksilver-$V-maven-repository.zip"; doc="$gr_dir/kuicksilver-$V-maven-repository.md"
+L="github repository: zip layout, checksums, metadata"
+entries=$(unzip -Z1 "$zip" 2>/dev/null | sort)
+p="kuicksilver-$V-maven-repository/io/kuicksilver/kuicksilver-quic-jvm"
+jar_sha1=$(printf 'PK-jar\n' | shasum -a 1 | cut -d' ' -f1)
+if grep -qx "$p/$V/kuicksilver-quic-jvm-$V.jar" <<< "$entries" && grep -qx "$p/$V/kuicksilver-quic-jvm-$V.jar.asc" <<< "$entries" \
+    && grep -qx "$p/$V/kuicksilver-quic-jvm-$V.pom.sha256" <<< "$entries" && grep -qx "$p/$V/kuicksilver-quic-jvm-$V.module.sha512" <<< "$entries" \
+    && grep -qx "$p/$V/kuicksilver-quic-jvm-$V.jar.md5" <<< "$entries" \
+    && [ "$(unzip -p "$zip" "$p/$V/kuicksilver-quic-jvm-$V.jar.sha1")" = "$jar_sha1" ] \
+    && ! grep -q '\.asc\.' <<< "$entries" && ! grep -q 'maven-metadata-local' <<< "$entries" && ! grep -q '/0\.3\.0/' <<< "$entries" \
+    && unzip -p "$zip" "$p/maven-metadata.xml" | grep -q "<version>$V</version>" && grep -qx "$p/maven-metadata.xml.sha1" <<< "$entries" \
+    && grep -qx "kuicksilver-$V-maven-repository/README.md" <<< "$entries"; then
+  pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L: $(head -c 600 <<< "$entries" | tr '\n' ' ')"; fi
+L="github repository: consumer instructions"
+if [ -f "$doc" ] && grep -q "includeGroup(\"io.kuicksilver\")" "$doc" && grep -q 'uri("file:' "$doc" \
+    && grep -q "platform(\"io.kuicksilver:kuicksilver-bom:$V\")" "$doc" && grep -q "releases/download/v$V/kuicksilver-$V-maven-repository.zip" "$doc" \
+    && grep -q "not on Maven Central" "$doc" && grep -qF "kuicksilver-swift\", exact: \"$V\")" "$doc" && cmp -s "$doc" <(unzip -p "$zip" "kuicksilver-$V-maven-repository/README.md") \
+    && ! grep -qE '/Users/|/home/' "$doc"; then
+  pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+L="github repository: the same input gives the same zip"
+mkdir -p "$gr_dir/again"; touch "$(dirname "$gr_dir")/m2/io/kuicksilver/kuicksilver-bom/$V/kuicksilver-bom-$V.pom"   # a newer mtime
+if python3 -I "$gr" pack --m2 "$(dirname "$gr_dir")/m2" --out-dir "$gr_dir/again" --time 1794688855 --version "$V" --signed >/dev/null 2>&1 \
+    && cmp -s "$zip" "$gr_dir/again/kuicksilver-$V-maven-repository.zip"; then pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+gr_t "github repository: unsigned dry run"                   ok              unsigned --version "$V"
+gr_t "negative_githubRepositoryFinalVersion"                 "refuse:not a prerelease" signed --version 0.4.0 --signed
+gr_t "negative_githubRepositoryMissingSignature"             "refuse:kuicksilver-quic-jvm-$V.jar.asc" noasc --version "$V" --signed
+gr_t "negative_githubRepositoryMissingPom"                   "refuse:no POM"            nopom    --version "$V"
+gr_t "negative_githubRepositoryMissingModule"                "refuse:no Gradle module"  nomodule --version "$V"
+gr_t "negative_githubRepositoryEmpty"                        "refuse:no io.kuicksilver" empty    --version "$V"
+gr_t "negative_githubRepositorySignedFlagUnsignedFiles"      "refuse:\.asc"             unsigned --version "$V" --signed
+L="github repository: SHA256SUMS of the assets"
+printf 'a\n' > "$gr_dir/a.bin"; printf 'b\n' > "$gr_dir/b.bin"
+if python3 -I "$gr" sums --out "$gr_dir/SUMS" "$gr_dir/a.bin" "$gr_dir/b.bin" >/dev/null 2>&1 \
+    && (cd "$gr_dir" && shasum -a 256 -c SUMS >/dev/null 2>&1) && [ "$(wc -l < "$gr_dir/SUMS" | tr -d ' ')" = 2 ] \
+    && ! grep -q '/' "$gr_dir/SUMS"; then pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+L="negative_githubRepositorySumsMissingFile"
+out=$(python3 -I "$gr" sums --out "$gr_dir/SUMS2" "$gr_dir/a.bin" "$gr_dir/missing.bin" 2>&1)
+if [ $? != 0 ] && grep -q 'missing.bin: no such asset' <<< "$out" && [ ! -e "$gr_dir/SUMS2" ]; then
+  pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published
