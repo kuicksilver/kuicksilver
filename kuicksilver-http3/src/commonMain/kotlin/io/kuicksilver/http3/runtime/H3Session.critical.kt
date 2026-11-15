@@ -26,6 +26,8 @@ import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
@@ -187,6 +189,42 @@ internal suspend fun H3Session.criticalStreamsLoop(deadline: Duration) {
 }
 
 /**
+ * Runs [attempt] in 0-RTT, where the remembered limits allowed the three streams, without a deadline unless the server's
+ * answer brings transport parameters that allow fewer than three (a rejected 0-RTT starts over from the new ones, RFC 9000
+ * section 7.4.1): from then on the attempt gets [deadline], as one that began with such a limit, and null when it ran out.
+ */
+private suspend fun H3Session.attemptUntilTheLimitIsLow(
+    deadline: Duration,
+    attempt: suspend () -> Boolean,
+): Boolean? =
+    coroutineScope {
+        val run = async { attempt() }
+        var timedOut = false
+        val guard =
+            launch {
+                try {
+                    quic.awaitHandshake()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    return@launch // the connection ended: the attempt fails with it
+                }
+                val limit = QuicStreamLimits.uniStreamLimit(quic) ?: return@launch
+                if (limit >= 3) return@launch
+                kotlinx.coroutines.delay(deadline)
+                timedOut = true
+                run.cancel()
+            }
+        try {
+            run.await()
+        } catch (e: CancellationException) {
+            if (timedOut && run.isCancelled) null else throw e
+        } finally {
+            guard.cancel()
+        }
+    }
+
+/**
  * Opens the control and QPACK streams and sends SETTINGS (RFC 9114 section 6.2: the critical streams first, then
  * others, GREASE, as the peer allows): true once done, false when a rejected 0-RTT took them first (generation [gen]
  * passed), null when the connection failed: for want of stream credit, or because the peer closed a critical stream of
@@ -250,10 +288,17 @@ internal suspend fun H3Session.openCriticalStreams(
             // at least three unidirectional streams". When three may be opened now nothing here waits for the peer, so
             // nothing bounds the attempt but the connection itself: a deadline there measured this host's own progress (a
             // loaded host took more than three seconds to open and write them) and closed connections to healthy peers.
-            // Only a peer whose limit is lower gets [deadline] to raise it with MAX_STREAMS. (A 0-RTT the server rejects
-            // with a lower limit while the attempt opens its streams leaves an open waiting until the connection ends.)
+            // Only a peer whose limit is lower gets [deadline] to raise it with MAX_STREAMS, also when that becomes known
+            // during the attempt: a 0-RTT answer whose transport parameters allow fewer ([attemptUntilTheLimitIsLow])
             val openable = QuicStreamLimits.uniStreamsOpenable(quic)
-            if (openable != null && openable >= 3) attempt() else withTimeoutOrNull(deadline) { attempt() }
+            // after the handshake the limits only grow
+            if (openable == null || openable < 3) {
+                withTimeoutOrNull(deadline) { attempt() }
+            } else if (quic.isHandshakeComplete) {
+                attempt()
+            } else {
+                attemptUntilTheLimitIsLow(deadline) { attempt() }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

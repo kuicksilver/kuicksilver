@@ -805,6 +805,9 @@ internal class ConnectionRuntime(
             if (core.peerTp == null && core.remembered == null) null else core.streams.localStreamsOpenable(bidi = false)
         }
 
+    /** The peer's limit on our unidirectional streams in total (its last MAX_STREAMS or transport parameter), read on the loop. */
+    internal suspend fun uniStreamLimit(): Long = withContext(loop.dispatcher) { core.streams.localMaxStreamsAllowed(bidi = false) }
+
     /** Test hook: runs on the loop right after [open] made its stream, before it is handed to the caller. */
     internal var openedForTest: ((QuicStream) -> Unit)? = null
 

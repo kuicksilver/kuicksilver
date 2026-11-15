@@ -56,6 +56,13 @@ public object QuicStreamLimits {
         return rt.uniStreamsOpenable()
     }
 
+    /**
+     * How many unidirectional streams the peer lets us open in total, as its last MAX_STREAMS or transport parameter said
+     * (after a rejected 0-RTT, those of the handshake); null for a connection of another kind.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    public suspend fun uniStreamLimit(connection: QuicConnection): Long? = (connection as? ConnectionRuntime)?.uniStreamLimit()
+
     /** The connection-level limit we last advertised (MAX_DATA), or null for a connection of another kind (a test hook). */
     @OptIn(ExperimentalKuicksilverApi::class)
     public suspend fun receiveLimit(connection: QuicConnection): Long? = (connection as? ConnectionRuntime)?.receiveLimit()

@@ -45,6 +45,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -217,6 +218,8 @@ class EarlyDataTest {
         clientSession: ((H3Session) -> Unit)? = null,
         /** false: the test ends the connection in [beforeRequest]; no request follows and the result is null. */
         sendRequest: Boolean = true,
+        /** The resuming server's QUIC settings (its transport parameters). */
+        resumerQuic: io.kuicksilver.quic.QuicConfig? = null,
         /** Runs once the early request was answered, with the client connection and the resuming server's connections. */
         after: suspend (Http3Connection, () -> List<Http3Connection>) -> Unit = { _, _ -> },
     ): Boolean? {
@@ -231,6 +234,7 @@ class EarlyDataTest {
         suspend fun server(
             io: io.kuicksilver.quic.DatagramIo,
             settings: Http3Settings,
+            quicConfig: io.kuicksilver.quic.QuicConfig? = null,
         ) = Http3Endpoint.bind(
             io.localAddress,
             QuicEndpointConfig
@@ -242,14 +246,26 @@ class EarlyDataTest {
                             identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
                             sessionTickets = keys
                         }
-                    this.server = QuicServerConfig.Builder(tls).apply { earlyData = true }.build()
+                    this.server =
+                        QuicServerConfig
+                            .Builder(tls)
+                            .apply {
+                                earlyData = true
+                                quicConfig?.let { quic = it }
+                            }.build()
                     crypto = KslQuicCrypto
                     this.io = { io }
                 }.build(),
             settings,
         )
         val first = server(b1, issuer)
-        val second = server(b2, resumer)
+        val second =
+            try {
+                Http3Endpoint.allowFewerUniStreamsForTest = resumerQuic != null
+                server(b2, resumer, resumerQuic)
+            } finally {
+                Http3Endpoint.allowFewerUniStreamsForTest = false
+            }
         val client =
             Http3Endpoint.bind(
                 a.localAddress,
@@ -359,6 +375,44 @@ class EarlyDataTest {
                         "the connection ended for its critical streams: $end",
                     )
                 }
+            } finally {
+                H3Session.criticalStreamsDeadlineForTest = null
+            }
+        }
+
+    /**
+     * RFC 9114 section 6.2 in 0-RTT: the remembered limits allowed the three unidirectional streams, so the attempt to open
+     * the critical streams began without a deadline; the server then rejects the 0-RTT with transport parameters that allow
+     * two (RFC 9000 section 7.4.1: the new ones apply), while that attempt is still opening its streams. From the answer on
+     * the attempt is held to the deadline like one that began with such a limit, and the connection ends with
+     * H3_GENERAL_PROTOCOL_ERROR; before, its third open waited until the connection ended.
+     */
+    @Test fun negative_rejectionWithFewerUniStreamsDuringTheAttemptGetsTheDeadline(): Unit =
+        runBlocking {
+            H3Session.criticalStreamsDeadlineForTest = 200.milliseconds
+            try {
+                // connectEarly returns once the SETTINGS went out, so here it throws the connection's error; before, it
+                // waited until the connection ended
+                val e =
+                    assertFailsWith<io.kuicksilver.http3.Http3Exception.Protocol> {
+                        withTimeout(10.seconds) {
+                            earlyAcceptedAfterResuming(
+                                issuer = http3Settings {},
+                                resumer = http3Settings {},
+                                resumerQuic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 },
+                                clientHold = AtomicInt(0), // the server's answer is not held back
+                                sendRequest = false,
+                                clientSession = { session ->
+                                    // the first attempt (generation 0, in 0-RTT) waits for the server's answer before it
+                                    // opens anything
+                                    session.criticalAttemptHookForTest = { step, gen ->
+                                        if (step == H3Session.AttemptStep.Started && gen == 0) session.quic.awaitHandshake()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                assertEquals(io.kuicksilver.http3.Http3ErrorCode.GENERAL_PROTOCOL_ERROR, e.h3Code)
             } finally {
                 H3Session.criticalStreamsDeadlineForTest = null
             }

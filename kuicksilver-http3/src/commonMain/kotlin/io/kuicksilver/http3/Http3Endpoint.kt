@@ -272,12 +272,16 @@ public class Http3Endpoint private constructor(
             return if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
         }
 
+        /** Test hook: binds a server that breaks section 6.2 (its peer's critical streams), to test the peer's side of it. */
+        @kotlin.concurrent.Volatile
+        internal var allowFewerUniStreamsForTest = false
+
         /**
          * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional
          * streams" (its control and QPACK streams). A configuration that grants fewer is refused, never raised quietly.
          */
         private fun requireCriticalStreams(q: QuicConfig) {
-            require(q.maxUniStreams >= 3) {
+            require(q.maxUniStreams >= 3 || allowFewerUniStreamsForTest) {
                 "HTTP/3 needs QuicConfig.maxUniStreams >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
                     "streams), not ${q.maxUniStreams}"
             }
