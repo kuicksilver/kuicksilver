@@ -141,7 +141,11 @@ class FlowControlTest {
 
     @Test
     fun negative_windowOverflowIsFlowControlError() {
-        val (c, id) = clientWithResponse()
+        // a stream we still send on (a half-closed (local) one has no active window, section 6.9.2: its updates are ignored)
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = false)
+        c.read()
         c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE)) // 65 535 + 2^31 - 1
         c.assertStreamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR)
         c.send(FrameEncoder.windowUpdate(0, Int.MAX_VALUE))
@@ -188,12 +192,13 @@ class FlowControlTest {
     /**
      * A client starts its request body under the protocol's initial 65 535 before the server's SETTINGS with a smaller
      * SETTINGS_INITIAL_WINDOW_SIZE arrive (section 3.4). A DATA frame [H2ConnectionCore.sendData] took from the old window but
-     * [H2ConnectionCore.poll] had not written yet must reach the server before the SETTINGS acknowledgement: the server
-     * counts what follows the acknowledgement against the smaller window (sections 6.5.3, 6.9.2). Written after it, the
-     * frame overran that window and the server reset the stream with FLOW_CONTROL_ERROR.
+     * [H2ConnectionCore.poll] had not written yet goes after the SETTINGS acknowledgement, which is sent at once (section
+     * 6.5.3), so it is charged again against the smaller window (section 6.9.2): here that window is used up, and the
+     * frame waits for the server's WINDOW_UPDATE. Written under the old window, it overran the new one and the server
+     * reset the stream with FLOW_CONTROL_ERROR.
      */
     @Test
-    fun dataTakenBeforeASmallerInitialWindowIsWrittenBeforeTheAck() {
+    fun dataTakenBeforeASmallerInitialWindowIsChargedAgainstIt() {
         val server = H2ConnectionCore(Role.SERVER, Http2Settings(initialStreamWindow = 16_384, maxStreamWindow = 16_384), 0)
         val client = H2ConnectionCore(Role.CLIENT, Http2Settings(), 0)
         val buf = ByteArray(1 shl 20)
@@ -226,10 +231,10 @@ class FlowControlTest {
             helloLen += n
         }
         assertEquals(16_384, client.sendData(id, chunk, 0, chunk.size, endStream = false))
-        client.receive(serverHello, 0, helloLen, 0) // window: 65 535 - 32 768 - 49 151 = -16 384
+        client.receive(serverHello, 0, helloLen, 0) // window: 65 535 - 16 384 (written) - 49 151 = 0; 16 KiB queued
         drain(client, server)
         assertEquals(emptyList(), serverEvents.filterIsInstance<H2Event.StreamReset>(), "no FLOW_CONTROL_ERROR")
-        assertEquals(32_768, serverEvents.filterIsInstance<H2Event.Data>().sumOf { it.data.size })
+        assertEquals(16_384, serverEvents.filterIsInstance<H2Event.Data>().sumOf { it.data.size }, "the second frame waits")
         // the rest of a 256 KiB body flows within the smaller window as the server reads
         var sent = 32_768
         var rounds = 0
@@ -244,34 +249,37 @@ class FlowControlTest {
         }
     }
 
-    /** The frame order of [dataTakenBeforeASmallerInitialWindowIsWrittenBeforeTheAck]; a later ACK waits behind a held one. */
+    /**
+     * The frame order of [dataTakenBeforeASmallerInitialWindowIsChargedAgainstIt]: the ACKs go at once and in order, and
+     * the queued frame goes in the part the new window allows, the rest after a WINDOW_UPDATE.
+     */
     @Test
-    fun settingsAckFollowsDataTakenFromTheLargerWindow() {
+    fun settingsAckGoesAtOnceAndQueuedDataTakesTheNewWindow() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake()
         val id = c.core.openStream(GET, endStream = false)
         assertEquals(16_384, c.core.sendData(id, ByteArray(16_384), 0, 16_384, endStream = false))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000)) // shrinks: its ACK waits for the queued DATA
-        c.send(settings(SettingId.MAX_CONCURRENT_STREAMS to 10)) // its ACK must not overtake the first
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000)) // shrinks: the queued frame is charged again
+        c.send(settings(SettingId.MAX_CONCURRENT_STREAMS to 10))
         val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
         assertEquals(3, out.size, "wrote ${out.map { it::class.simpleName }}")
-        assertTrue(out[0] is Frame.Data)
-        assertTrue(out.drop(1).all { it is Frame.Settings && it.ack })
-        // without DATA queued, or when the window grows, the ACK goes at once
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 500))
-        assertTrue(c.read().any { it is Frame.Settings && it.ack })
-        assertEquals(0, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false)) // 1 000 - 16 384 - 500 < 0
+        assertTrue(out.take(2).all { it is Frame.Settings && it.ack })
+        assertEquals(1_000, assertIs<Frame.Data>(out[2]).data.size)
+        c.send(FrameEncoder.windowUpdate(id, 15_384))
+        c.events()
+        assertEquals(0, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false)) // the rest is still queued: one at a time
+        assertEquals(15_384, assertIs<Frame.Data>(c.read().single()).data.size)
+        c.events()
+        assertEquals(0, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false)) // 1 000 - 16 384 + 15 384 = 0
         c.send(FrameEncoder.windowUpdate(id, 20_000))
         c.events()
         assertEquals(10, c.core.sendData(id, ByteArray(10), 0, 10, endStream = false))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 600))
-        val grown = c.read()
-        assertTrue(grown.first() is Frame.Settings && (grown.first() as Frame.Settings).ack, "wrote ${grown.map { it::class.simpleName }}")
+        assertTrue(c.core.sendWindowConserved)
     }
 
-    /** A body's last DATA frame (END_STREAM: the stream is half-closed (local)) still holds the ACK behind it. */
+    /** A body's last DATA frame (END_STREAM: the stream is half-closed (local)) is charged again too; END_STREAM goes last. */
     @Test
-    fun lastDataOfAHalfClosedStreamHoldsTheAck() {
+    fun lastDataOfAHalfClosedStreamIsChargedAgain() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake()
         val id = c.core.openStream(GET, endStream = false)
@@ -280,45 +288,52 @@ class FlowControlTest {
         c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 10))
         val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
         assertEquals(2, out.size, "wrote ${out.map { it::class.simpleName }}")
-        assertTrue(out[0] is Frame.Data && (out[0] as Frame.Data).endStream)
-        assertTrue(out[1] is Frame.Settings && (out[1] as Frame.Settings).ack)
+        assertTrue(out[0] is Frame.Settings && (out[0] as Frame.Settings).ack)
+        assertEquals(10, assertIs<Frame.Data>(out[1]).data.size)
+        assertEquals(false, (out[1] as Frame.Data).endStream)
+        c.send(FrameEncoder.windowUpdate(id, 90))
+        val last = assertIs<Frame.Data>(c.read().single())
+        assertEquals(90, last.data.size)
+        assertTrue(last.endStream)
     }
 
-    /** Two shrinking SETTINGS in a row, with DATA of other streams taken in between: the ACKs keep their order. */
+    /** Two shrinking SETTINGS in a row, with DATA of other streams taken in between: both ACKs go at once, in order. */
     @Test
-    fun twoShrinkingSettingsKeepTheirAckOrder() {
+    fun twoShrinkingSettingsAreAcknowledgedAtOnce() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake()
         val a = c.core.openStream(GET, endStream = false)
         val b = c.core.openStream(GET, endStream = false)
         c.read() // both HEADERS
         assertEquals(1_000, c.core.sendData(a, ByteArray(1_000), 0, 1_000, endStream = false))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 30_000)) // first ACK behind a's DATA
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 30_000))
         assertEquals(1_000, c.core.sendData(b, ByteArray(1_000), 0, 1_000, endStream = false))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 20_000)) // second ACK behind the first, and b's DATA
-        assertEquals(2, c.core.controlQueued) // both held, and counted toward the control-frame bound
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 20_000))
+        assertEquals(2, c.core.controlQueued) // both ACKs queued
         val out = c.read().filter { it is Frame.Data || it is Frame.Settings }
         assertEquals(4, out.size, "wrote ${out.map { it::class.simpleName }}")
-        // each ACK goes as soon as the DATA it waits for is written, the first one before b's DATA
-        assertEquals(a, assertIs<Frame.Data>(out[0]).streamId)
+        assertTrue(assertIs<Frame.Settings>(out[0]).ack)
         assertTrue(assertIs<Frame.Settings>(out[1]).ack)
-        assertEquals(b, assertIs<Frame.Data>(out[2]).streamId)
-        assertTrue(assertIs<Frame.Settings>(out[3]).ack)
+        assertEquals(a, assertIs<Frame.Data>(out[2]).streamId)
+        assertEquals(b, assertIs<Frame.Data>(out[3]).streamId)
         assertEquals(0, c.core.controlQueued)
+        assertTrue(c.core.sendWindowConserved)
     }
 
-    /** A queued DATA frame that is dropped (the peer reset its stream) releases the ACK held behind it. */
+    /** A queued DATA frame charged again after a shrink and then dropped (the peer reset its stream) gives nothing back twice. */
     @Test
-    fun droppedDataReleasesTheHeldSettingsAck() {
+    fun droppedDataAfterAShrinkKeepsTheConnectionWindow() {
         val c = RawH2Peer(Role.CLIENT)
         c.handshake()
         val id = c.core.openStream(GET, endStream = false)
         c.read() // HEADERS
         assertEquals(16_384, c.core.sendData(id, ByteArray(16_384), 0, 16_384, endStream = false))
-        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000), FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
+        c.send(settings(SettingId.INITIAL_WINDOW_SIZE to 0), FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code))
         val out = c.read()
         assertEquals(emptyList(), out.filterIsInstance<Frame.Data>())
         assertTrue(out.any { it is Frame.Settings && it.ack })
+        assertEquals(65_535, c.core.connectionSendWindowAccounted)
+        assertTrue(c.core.sendWindowConserved)
     }
 
     @Test

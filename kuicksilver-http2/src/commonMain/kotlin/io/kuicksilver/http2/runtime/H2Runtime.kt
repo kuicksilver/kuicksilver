@@ -286,8 +286,9 @@ internal class H2Runtime(
                 try {
                     core.block()
                 } finally {
-                    takeEventsLocked()
+                    // wantsWrite first: finding DATA that waits can give connection window back and wake writers
                     wantsWrite = core.wantsWrite || core.isClosed
+                    takeEventsLocked()
                 }
             }
         } finally {

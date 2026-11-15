@@ -333,15 +333,18 @@ internal fun H2ConnectionCore.onSettings(
         return
     }
     glitch(now, "SETTINGS")
-    var windowShrank = false
+    // SETTINGS_HEADER_TABLE_SIZE: the smallest and the last value of this frame (RFC 7541 section 4.2: both are signalled),
+    // applied to the encoder with our acknowledgement below
+    var tableMin = -1L
+    var tableLast = -1L
     for (i in f.ids.indices) {
         val v = f.values[i]
         when (f.ids[i]) {
             SettingId.HEADER_TABLE_SIZE -> {
-                hpackOut.setPeerMaxTableSize(v)
+                tableMin = if (tableMin < 0) v else minOf(tableMin, v)
+                tableLast = v
             }
 
-            // applied to the next block written, after our ACK
             SettingId.ENABLE_PUSH -> {
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH = $v")
                 // section 6.5.2: a server never sends 1
@@ -356,19 +359,22 @@ internal fun H2ConnectionCore.onSettings(
                 if (v > H2.MAX_WINDOW) throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE = $v")
                 val delta = v - peerInitialWindow
                 peerInitialWindow = v
-                if (delta < 0) windowShrank = true
-                // section 6.9.2: the windows of streams we can still send on (open, half-closed (remote)) move by the
-                // difference, possibly below zero
+                // our acknowledgement goes at once: queued DATA not written yet is charged again against the new window
+                if (delta < 0) unchargeQueuedData()
+                // section 6.9.2: the windows of streams we can still send on (open, half-closed (remote)), and of those whose
+                // last DATA is still queued, move by the difference, possibly below zero ("MUST NOT send new flow-controlled
+                // frames until it receives WINDOW_UPDATE frames that cause the flow-control window to become positive")
                 for (s in streams.values) {
-                    if (!canSend(s)) continue
+                    if (!canSend(s) && s.out.none { it is OutItem.Data }) continue
                     s.sendWindow += delta
-                    if (s.sendWindow >
-                        H2.MAX_WINDOW
-                    ) {
+                    if (s.sendWindow + chargedQueued(s) > H2.MAX_WINDOW) {
                         throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "stream ${s.id} window above 2^31 - 1")
                     }
                 }
-                if (delta > 0) for (s in writers.toList()) tryWake(s)
+                if (delta > 0) {
+                    for (s in writers.toList()) tryWake(s)
+                    unstall()
+                }
             }
 
             SettingId.MAX_FRAME_SIZE -> {
@@ -414,7 +420,15 @@ internal fun H2ConnectionCore.onSettings(
         }
     }
     peerNoRfc7540PrioritiesFixed = true
-    queueSettingsAck(windowShrank) // section 6.5.3: immediately, behind DATA already taken from a larger window
+    // section 6.5.3: "Once all values have been processed, the recipient MUST immediately emit a SETTINGS frame with the
+    // ACK flag set": it goes ahead of every field block and DATA frame [poll] writes from now on
+    queueControl(FrameEncoder.settingsAck())
+    if (tableMin >= 0) {
+        // RFC 7541 section 6.3: the encoder's limit is the last value "received from the decoder and acknowledged by the
+        // encoder"; the smallest value of the frame first, so it is signalled too (section 4.2), as nghttp2 requires
+        hpackOut.setPeerMaxTableSize(tableMin)
+        hpackOut.setPeerMaxTableSize(tableLast)
+    }
     emit(H2Event.SettingsChanged)
 }
 
@@ -477,11 +491,11 @@ internal fun H2ConnectionCore.onWindowUpdate(
         if (f.increment == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0 on the connection")
         connSendWindow += f.increment
         sendCredited += f.increment
-        if (connSendWindow >
-            H2.MAX_WINDOW
-        ) {
+        // section 6.9.1, against the window as the peer sees it: DATA queued but not written yet is still in it
+        if (peerViewOfConnectionWindow > H2.MAX_WINDOW) {
             throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection window above 2^31 - 1")
         }
+        unstall(takeConnection = true) // DATA waiting for the connection window first, then the writers
         for (s in blockedOnConnection.toList()) tryWake(s)
         return
     }
@@ -493,10 +507,16 @@ internal fun H2ConnectionCore.onWindowUpdate(
         return
     }
     if (f.increment == 0) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0", now) // section 6.9
-    if (s.state == StreamState.CLOSED) return
+    // a stream we will never send on again (half-closed (local) or closed, with no DATA queued) has no active flow-control
+    // window (section 6.9.2): its WINDOW_UPDATEs are ignored, as SETTINGS_INITIAL_WINDOW_SIZE changes skip it, so a peer
+    // that adjusts every stream (nghttp2) cannot take our record of it above 2^31 - 1
+    if (!canSend(s) && s.out.none { it is OutItem.Data }) return
     s.sendWindow += f.increment
-    if (s.sendWindow > H2.MAX_WINDOW) return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
+    if (s.sendWindow + chargedQueued(s) > H2.MAX_WINDOW) {
+        return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)
+    }
     tryWake(s)
+    unstall()
 }
 
 /**

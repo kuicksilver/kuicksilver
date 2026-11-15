@@ -18,7 +18,25 @@ internal sealed interface OutItem {
         val frame: ByteArray,
         /** The payload length, taken from both send windows when queued and given back if the frame is dropped. */
         val length: Int,
-    ) : OutItem
+    ) : OutItem {
+        /**
+         * Taken from the stream's send window. False after a SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE before the frame
+         * was written: its stream window was given back, and it is taken again from the new window when the frame goes out
+         * (RFC 9113 section 6.9.2), in pieces when less is available. The connection window keeps its charge: "A SETTINGS
+         * frame cannot alter the connection flow-control window."
+         */
+        var streamCharged = true
+
+        /**
+         * Taken from the connection's send window. A frame holds connection window only while it can be written: one that
+         * waits for its stream window ([H2ConnectionCore.stalled]) gives it back, so the window it cannot use goes to the
+         * other streams, and takes it again when it is written.
+         */
+        var connCharged = true
+
+        /** Both windows are taken: the frame can be written as it is. */
+        val charged: Boolean get() = streamCharged && connCharged
+    }
 }
 
 /** One stream of an [H2ConnectionCore]. */

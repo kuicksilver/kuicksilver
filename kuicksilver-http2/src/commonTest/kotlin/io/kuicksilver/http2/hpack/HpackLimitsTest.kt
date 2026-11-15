@@ -49,6 +49,41 @@ class HpackLimitsTest {
         assertEquals(listOf(":method" to "GET"), decodeAll(ok, bytes(0x82))) // only the first block after the change must carry it
     }
 
+    /**
+     * RFC 7541 section 4.4: "an attempt to add an entry larger than the maximum size causes the table to be emptied of all
+     * existing entries and results in an empty table". Decoder and encoder alike: the field itself still goes through.
+     */
+    @Test
+    fun oversizedEntryEmptiesTable() {
+        val big = "v".repeat(80) // "x" + 80 + 32 = 113 > 100
+        val d = HpackDecoder(maxTableSize = 100).also { it.setMaxTableSize(100) }
+        val shrink = HpackWriter().also { it.writeInt(0x20, 5, 100) }.toByteArray()
+        assertEquals(listOf("a" to "b"), decodeAll(d, shrink + bytes(0x40, 0x01, 0x61, 0x01, 0x62)))
+        assertEquals(listOf("a" to "b"), d.tableEntries())
+        val oversized = HpackWriter().also { it.writeInt(0x40, 6, 0) }.toByteArray() + bytes(0x01, 0x78, 80) + big.encodeToByteArray()
+        assertEquals(listOf("x" to big), decodeAll(d, oversized))
+        assertEquals(emptyList(), d.tableEntries())
+        assertEquals(0, d.tableSize)
+        assertFailsWith<HpackError> { decodeAll(d, bytes(0x80 or 62)) } // "a: b" is gone
+
+        val e =
+            HpackEncoder(maxTableSize = 100).also {
+                it.indexEverything = true
+                it.huffman = HpackEncoder.HuffmanMode.NEVER
+            }
+        val literal = bytes(0x40, 0x01, 0x61, 0x01, 0x62) // literal with incremental indexing, new name "a", value "b"
+        assertContentEquals(shrink + literal, e.encode(listOf("a" to "b")))
+        assertContentEquals(bytes(0x80 or 62), e.encode(listOf("a" to "b"))) // now in the table
+        // larger than the table: sent as a literal with incremental indexing, which empties both tables
+        val sent = e.encode(listOf("x" to big))
+        assertContentEquals(oversized, sent)
+        val peer = HpackDecoder(maxTableSize = 100)
+        decodeAll(peer, shrink + literal)
+        assertEquals(listOf("x" to big), decodeAll(peer, sent))
+        assertEquals(emptyList(), peer.tableEntries())
+        assertContentEquals(literal, e.encode(listOf("a" to "b"))) // no longer indexed: sent and added again
+    }
+
     @Test
     fun negative_indexZeroAndBeyondTable() {
         assertFailsWith<HpackError> { decodeAll(HpackDecoder(), bytes(0x80)) } // index 0 (section 6.1)

@@ -1094,6 +1094,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   on itself was reset with PROTOCOL_ERROR even after the peer sent SETTINGS_NO_RFC7540_PRIORITIES = 1, when RFC 9218
   section 2.1 says such a server "MUST ignore HTTP/2 priority signals". The RFC 7540 self-dependency check now applies
   only to peers that did not send the setting, in all three places.
+- HTTP/2 (RFC 9113 section 6.5.3, "MUST immediately emit"): the acknowledgement of a SETTINGS that shrank
+  SETTINGS_INITIAL_WINDOW_SIZE waited behind the DATA already taken from the larger window, which went in priority
+  order: it waited as long as more urgent streams, or an earlier non-incremental stream of the same urgency, kept
+  sending (with several busy streams it was never sent, and a peer with a SETTINGS timeout ended the connection), and
+  later SETTINGS waited behind it. Every acknowledgement now goes at once; DATA queued but not written gives its stream
+  window back (a SETTINGS does not touch the connection window) and is charged again against the new window when it goes
+  (RFC 9113 section 6.9.2), in parts when less is available. While it waits for a window it holds no connection window,
+  which the other streams use meanwhile. A WINDOW_UPDATE that takes a window above 2^31 - 1 counting DATA charged but
+  not written is now a FLOW_CONTROL_ERROR too, as is such a SETTINGS_INITIAL_WINDOW_SIZE.
+- HTTP/2 (RFC 9113 section 6.9.2): a stream we had finished sending on (half-closed (local)) was reset with
+  FLOW_CONTROL_ERROR when the peer, after lowering SETTINGS_INITIAL_WINDOW_SIZE, credited it up to 2^31 - 1 by its own
+  count, as nghttp2 may: such a stream has no active window, so the SETTINGS change skipped it while its WINDOW_UPDATEs
+  still counted. They are now ignored, and the response still arriving on it is no longer cut.
+- HTTP/2 (RFC 7541 section 6.3, RFC 9113 section 4.3.1): a larger SETTINGS_HEADER_TABLE_SIZE from the peer was used
+  by our HPACK encoder before our acknowledgement of it was written when that acknowledgement waited behind DATA, so a
+  field block sent in between could start with a table size update above the peer's acknowledged limit (a
+  COMPRESSION_ERROR at the peer). The value now applies with the acknowledgement, which goes first. A SETTINGS frame
+  carrying several values is signalled with its smallest and then its last value (RFC 7541 section 4.2), as nghttp2
+  requires. Client and server alike.
 - HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
   out while the explicit priority scheduled the stream, so the server and the client used different priorities.
 - HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence
@@ -1408,10 +1427,8 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   FLOW_CONTROL_ERROR when those SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE (a client uploading to a server with a
   16 KiB stream window). A DATA frame taken from the larger window but not yet written went out after the SETTINGS
   acknowledgement, and the peer counts what follows the acknowledgement against the smaller window (RFC 9113 sections
-  6.5.3, 6.9.2). The acknowledgement of such SETTINGS is now queued on receipt after the DATA frames already taken
-  from the larger window (each at most 16 KiB, at most one per stream, needing no window), and acknowledgements keep
-  the order of their SETTINGS. Held acknowledgements count toward `Http2Settings.maxControlFramesQueued`, so a peer
-  that stops reading cannot pile them up.
+  6.5.3, 6.9.2). Such frames are now charged again against the smaller window (see the SETTINGS acknowledgement
+  entry above).
 - Ktor server: a response whose content is a channel that failed (`call.respond(channel)`, `ReadChannelContent`; a proxy
   relaying an upstream body that was cut) went out as complete over HTTP/1.1 and HTTP/3 when the failure was recorded
   before the engine read the channel, or while it waited for the client: ktor-io's `copyTo`, under Ktor's

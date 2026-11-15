@@ -655,6 +655,36 @@ receiver's regular yield, which costs the 1 MiB operations of `UdpThroughputBenc
 variant above), and in request/response traffic a reply's read can wait up to 1 ms in the socket wait once the socket goes
 quiet (as before this change).
 
+### HTTP/2: the SETTINGS acknowledgement under a shrinking window (2026-11-15)
+
+When the peer shrinks SETTINGS_INITIAL_WINDOW_SIZE while DATA is queued, the acknowledgement used to wait behind the
+DATA frames already taken from the larger window, which went in priority order. Now it goes at once (RFC 9113 section
+6.5.3), and the queued DATA is charged again against the new window (section 6.9.2). `tools/bench/h2-settings-ack.sh
+[base-rev]` measures both: `SettingsAckBench` (kuicksilver-http2 jvmTest) joins a server and a client connection core in
+memory by a server-to-client link of a fixed rate (virtual time, 50 µs ticks, 2 s after 200 ms of warm-up); urgency-7
+streams have endless bodies, an urgency-0 request asks for a 1 KiB response every 5 ms (400 responses), and with "IWS
+changes" the client's side sends a SETTINGS every 20 ms that alternately halves SETTINGS_INITIAL_WINDOW_SIZE (4 MiB to
+2 MiB) and restores it. A response's delay runs from the server queueing it to the client receiving it; an
+acknowledgement's from the SETTINGS reaching the server to the acknowledgement crossing the link. Without IWS changes
+all revisions measure the same (100 Mbit/s: p50 0.70 ms, p99 1.35 ms; 1 Gbit/s: 0.05 / 0.10 ms).
+
+| link | u=7 streams | urgent p50 / p99 ms: before, held (interim), now | ACK p50 / max ms: before, held (interim), now |
+|---|---|---|---|
+| 100 Mbit/s | 1 | 0.70 / 1.35, 0.75 / 2.55, 0.70 / 1.35 | 2.05 / 2.60, 1.95 / 2.55, 0.95 / 1.25 |
+| 100 Mbit/s | 4 | 0.70 / 1.35, 0.80 / 6.45, 0.70 / 1.35 | never sent, 5.90 / 6.50, 0.95 / 1.25 |
+| 100 Mbit/s | 16 | 0.70 / 1.35, 6.20 / 22.20, 0.70 / 1.35 | never sent, 20.90 / 22.20, 0.95 / 1.25 |
+| 1 Gbit/s | 1 | 0.05 / 0.10, 0.05 / 0.15, 0.05 / 0.10 | 0.10 / 0.20, 0.10 / 0.20, 0.05 / 0.10 |
+| 1 Gbit/s | 4 | 0.05 / 0.10, 0.05 / 0.55, 0.05 / 0.10 | never sent, 0.50 / 0.55, 0.05 / 0.10 |
+| 1 Gbit/s | 16 | 0.05 / 0.10, 0.05 / 2.10, 0.05 / 0.10 | never sent, 2.05 / 2.15, 0.05 / 0.10 |
+
+"Before" is 7b17a7b31: non-incremental streams of one urgency go one after another in stream order, so an
+acknowledgement held behind the DATA of the second urgency-7 stream waited as long as the first kept sending; none went
+out in 2 s, and a peer with a SETTINGS timeout (ours: 10 s) ends the connection. "Held (interim)" was a version on the way
+that bounded the wait by writing the held-for DATA first, whatever its priority: the urgent stream then paid up to one
+16 KiB frame per waiting stream at each shrink. "Now" acknowledges at once: the acknowledgement waits only for the frame
+already being written (at most 16 KiB, 1.3 ms at 100 Mbit/s), and the urgent stream pays nothing. The same shape cannot
+be driven with h2load, which sends its SETTINGS only at the start of a connection.
+
 ## msquic's goodput outlier
 
 Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five
