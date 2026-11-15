@@ -61,8 +61,8 @@ import kotlin.time.Duration.Companion.seconds
  * (flow-control capsules included, section 5.1) is skipped unbuffered by the capsule stream. The peer's streams wait in
  * [bidiIn] and [uniIn] until the application accepts them; how many can be open at once is bounded by the QUIC stream
  * limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished. An accept
- * cancelled before it returned (a timeout, a `select`) puts its stream back first ([HandOffQueue], [accept]): a stream
- * the application never got would hold the peer and its stream credit until the session ends.
+ * cancelled while it waits or sets the stream up puts the stream back first ([HandOffQueue], [accept]): a stream the
+ * application never got would hold the peer and its stream credit until the session ends.
  *
  * State that the router and the stream pumps share ([streams], the channels' contents at close) is touched on the
  * session's dispatcher only.
@@ -392,7 +392,10 @@ internal class WtSessionImpl(
         try {
             return track(i.st, readable = true, writable = bidi, into = i)
         } catch (e: CancellationException) {
-            if (!q.putBack(i)) i.tracked?.gone() ?: goneRaw(i.st, bidi)
+            // track() runs under NonCancellable, so only its return throws this: the stream is wrapped and tracked by now. A
+            // session closed meanwhile no longer takes it back; [close] ended it with the session's other streams, and ending
+            // it again here (on the session's dispatcher, as [close] does) covers a close that drained the queue just before
+            if (!q.putBack(i)) i.tracked?.let { s -> h3.scope.launch(h3.dispatcher) { s.gone() } }
             throw e
         }
     }

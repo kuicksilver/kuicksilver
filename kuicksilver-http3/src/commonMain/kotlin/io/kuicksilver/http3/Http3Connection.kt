@@ -90,7 +90,9 @@ public class Http3Connection private constructor(
 
     /**
      * Server: the next request; malformed requests are answered at the stream level and never returned. A caller cancelled
-     * while it waits (a timeout, a `select`) takes no request with it: the next call returns it.
+     * while it waits takes no request with it: the next call returns it. A wrapper that is itself cancelled after this
+     * returned (`withTimeout`, `async`, `withContext`) may still drop the request it got, so accept in one long-lived loop
+     * rather than polling with a timeout.
      */
     public suspend fun acceptRequest(): Http3ServerRequest {
         check(role == Http3Role.Server) { "acceptRequest() is server-only" }

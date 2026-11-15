@@ -45,10 +45,17 @@ public interface WebTransportSession {
     /** Opens a unidirectional stream (section 4.2); waits for stream credit like [openBidi]. */
     public suspend fun openUni(): WebTransportSendStream
 
-    /** The next bidirectional stream the peer opened; [WebTransportException.SessionClosed] once the session is over. */
+    /**
+     * The next bidirectional stream the peer opened; [WebTransportException.SessionClosed] once the session is over. A
+     * caller cancelled while it waits leaves the stream for the next call; a wrapper cancelled after this returned
+     * (`withTimeout`, `async`) may still drop it, so accept in one long-lived loop rather than polling with a timeout.
+     */
     public suspend fun acceptBidi(): WebTransportBidiStream
 
-    /** The next unidirectional stream the peer opened; [WebTransportException.SessionClosed] once the session is over. */
+    /**
+     * The next unidirectional stream the peer opened; [WebTransportException.SessionClosed] once the session is over.
+     * Cancellation as for [acceptBidi].
+     */
     public suspend fun acceptUni(): WebTransportReceiveStream
 
     /**
