@@ -99,7 +99,7 @@ internal class H2ConnectionCore(
     internal val writers = LinkedHashSet<H2Stream>() // streams waiting for window
     internal val blockedOnConnection = LinkedHashSet<H2Stream>() // ... of which only the connection window holds back
 
-    /** Streams whose queued DATA frame lost its window to a smaller SETTINGS_INITIAL_WINDOW_SIZE and waits for window. */
+    /** Streams whose queued DATA frame lost its stream window to a smaller SETTINGS_INITIAL_WINDOW_SIZE and waits for it. */
     internal val stalled = LinkedHashSet<H2Stream>()
     private var partial: ByteArray? = null
     private var partialPos = 0
@@ -678,8 +678,9 @@ internal class H2ConnectionCore(
     /** [streamId]'s queued DATA waits for window (a test hook). */
     internal fun stalls(streamId: Int): Boolean = stalled.any { it.id == streamId }
 
-    /** The DATA counted as queued is exactly the charged DATA in the streams' queues (a test hook). */
-    internal val queuedDataAccounted: Boolean get() = queuedDataBytes == streams.values.sumOf { chargedQueued(it) }
+    /** The DATA counted as queued (charged to the connection) is exactly the DATA in the streams' queues (a test hook). */
+    internal val queuedDataAccounted: Boolean
+        get() = queuedDataBytes == streams.values.sumOf { s -> s.out.sumOf { if (it is OutItem.Data) it.length.toLong() else 0L } }
 
     /** Send-window conservation (a fuzz invariant): credit granted = window left + DATA queued + DATA written. */
     internal val sendWindowConserved: Boolean get() = sendCredited == connSendWindow + queuedDataBytes + dataWritten
@@ -742,7 +743,7 @@ internal class H2ConnectionCore(
             val s = dataReady.next() ?: break
             val head = s.out.firstOrNull()
             if (head is OutItem.Data) {
-                if (!head.charged && (s.sendWindow <= 0 || connSendWindow <= 0)) {
+                if (!head.streamCharged && s.sendWindow <= 0) {
                     // section 6.9.2: nothing until a WINDOW_UPDATE makes the window positive again (see unstall)
                     dataReady.remove(s)
                     stalled += s
@@ -850,7 +851,7 @@ internal class H2ConnectionCore(
                 }
 
                 is OutItem.Data -> {
-                    if (item.charged) {
+                    if (item.streamCharged) {
                         queuedDataBytes -= item.length
                         dataWritten += item.length
                         item.frame
@@ -912,64 +913,60 @@ internal class H2ConnectionCore(
     }
 
     /**
-     * The window of [item], a DATA frame of [s] that a smaller SETTINGS_INITIAL_WINDOW_SIZE uncharged ([OutItem.Data.charged]),
-     * taken again now that both windows are positive ([nextData]): the whole frame when it fits, otherwise a first part
-     * of what fits, without END_STREAM, with the rest back at the head of the stream's queue (section 6.9.1: never more
-     * than either window).
+     * The stream window of [item], a DATA frame of [s] that a smaller SETTINGS_INITIAL_WINDOW_SIZE gave its stream window
+     * back ([OutItem.Data.streamCharged]), taken again now that the window is positive ([nextData]): the whole frame when
+     * it fits, otherwise a first part of what fits, without END_STREAM, with the rest back at the head of the stream's
+     * queue (section 6.9.1: never more than either window; the connection's was taken when [sendData] queued it).
      */
     private fun chargeAgain(
         s: H2Stream,
         item: OutItem.Data,
     ): ByteArray {
-        val n = minOf(item.length.toLong(), s.sendWindow, connSendWindow).toInt()
+        val n = minOf(item.length.toLong(), s.sendWindow).toInt()
         check(n > 0) { "DATA of stream ${s.id} without window" }
         s.sendWindow -= n
-        connSendWindow -= n
+        queuedDataBytes -= n
         dataWritten += n
         if (n == item.length) return item.frame
         val end = item.frame[4].toInt() and 0x1 != 0
         s.out.addFirst(
             OutItem
                 .Data(FrameEncoder.data(s.id, item.frame, H2.FRAME_HEADER_SIZE + n, item.length - n, end), item.length - n)
-                .also { it.charged = false },
+                .also { it.streamCharged = false },
         )
         return FrameEncoder.data(s.id, item.frame, H2.FRAME_HEADER_SIZE, n, false)
     }
 
     /**
      * SETTINGS_INITIAL_WINDOW_SIZE shrank (section 6.9.2): the DATA frames [sendData] queued but [poll] has not written
-     * yet were charged against the larger window, while the peer counts them against the new one once it has our
-     * acknowledgement, which goes out at once (section 6.5.3). Their window goes back to the stream and the connection,
-     * and they are charged again when written ([chargeAgain]). A frame partly written is not in a queue and goes first.
+     * yet were charged against the larger stream window, while the peer counts them against the new one once it has our
+     * acknowledgement, which goes out at once (section 6.5.3). Their stream window goes back, and they are charged again
+     * when written ([chargeAgain]); the connection window is not touched ("A SETTINGS frame cannot alter the connection
+     * flow-control window"). A frame partly written is not in a queue and goes first, under the old window.
      */
     internal fun unchargeQueuedData() {
-        var refund = 0L
         for (s in streams.values) {
             for (item in s.out) {
-                if (item !is OutItem.Data || !item.charged || item.length == 0) continue
-                item.charged = false
+                if (item !is OutItem.Data || !item.streamCharged || item.length == 0) continue
+                item.streamCharged = false
                 s.sendWindow += item.length
-                refund += item.length
             }
         }
-        if (refund == 0L) return
-        queuedDataBytes -= refund
-        connSendWindow += refund
     }
 
-    /** Stream [s]'s DATA queued and charged, which the peer has not seen yet: the peer's view of its window adds it. */
+    /** Stream [s]'s queued DATA still charged to its window, which the peer has not seen yet: the peer's view adds it. */
     internal fun chargedQueued(s: H2Stream): Long {
         var n = 0L
-        for (item in s.out) if (item is OutItem.Data && item.charged) n += item.length
+        for (item in s.out) if (item is OutItem.Data && item.streamCharged) n += item.length
         return n
     }
 
-    /** The peer's view of the connection window: what we hold plus what is charged but not written (section 6.9.1). */
+    /** The peer's view of the connection window: what we hold plus the DATA queued but not written (section 6.9.1). */
     internal val peerViewOfConnectionWindow: Long get() = connSendWindow + queuedDataBytes
 
-    /** A window grew: [stalled] streams whose windows are both positive again go back to the DATA scheduler. */
+    /** A stream window grew: [stalled] streams whose window is positive again go back to the DATA scheduler. */
     internal fun unstall() {
-        if (stalled.isEmpty() || connSendWindow <= 0) return
+        if (stalled.isEmpty()) return
         val it = stalled.iterator()
         while (it.hasNext()) {
             val s = it.next()
@@ -1011,7 +1008,7 @@ internal class H2ConnectionCore(
     /** Drops what [s] still had to send; DATA that was never written gives its window back to the connection. */
     internal fun dropQueued(s: H2Stream) {
         var refund = 0L
-        for (item in s.out) if (item is OutItem.Data && item.charged) refund += item.length // an uncharged one gave it back already
+        for (item in s.out) if (item is OutItem.Data) refund += item.length
         s.out.clear()
         dataReady.remove(s)
         s.refillBy = -1
@@ -1021,7 +1018,6 @@ internal class H2ConnectionCore(
         queuedDataBytes -= refund
         connSendWindow += refund
         for (w in blockedOnConnection.toList()) tryWake(w)
-        unstall()
     }
 
     private fun want(s: H2Stream) {

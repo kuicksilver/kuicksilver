@@ -20,11 +20,12 @@ internal sealed interface OutItem {
         val length: Int,
     ) : OutItem {
         /**
-         * Taken from the send windows. False after a SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE before the frame was
-         * written: its window was given back, and it is taken again from the new window when the frame goes out (RFC 9113
-         * section 6.9.2), in pieces when less is available.
+         * Taken from the stream's send window. False after a SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE before the frame
+         * was written: its stream window was given back, and it is taken again from the new window when the frame goes out
+         * (RFC 9113 section 6.9.2), in pieces when less is available. The connection window keeps its charge: "A SETTINGS
+         * frame cannot alter the connection flow-control window."
          */
-        var charged = true
+        var streamCharged = true
     }
 }
 

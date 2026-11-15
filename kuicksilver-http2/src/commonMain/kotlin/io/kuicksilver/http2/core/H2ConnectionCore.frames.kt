@@ -371,9 +371,10 @@ internal fun H2ConnectionCore.onSettings(
                         throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "stream ${s.id} window above 2^31 - 1")
                     }
                 }
-                for (s in writers.toList()) tryWake(s)
-                for (s in blockedOnConnection.toList()) tryWake(s)
-                unstall()
+                if (delta > 0) {
+                    for (s in writers.toList()) tryWake(s)
+                    unstall()
+                }
             }
 
             SettingId.MAX_FRAME_SIZE -> {
@@ -490,12 +491,11 @@ internal fun H2ConnectionCore.onWindowUpdate(
         if (f.increment == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0 on the connection")
         connSendWindow += f.increment
         sendCredited += f.increment
-        // section 6.9.1, against the window as the peer sees it: DATA charged but not written yet is still in it
+        // section 6.9.1, against the window as the peer sees it: DATA queued but not written yet is still in it
         if (peerViewOfConnectionWindow > H2.MAX_WINDOW) {
             throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection window above 2^31 - 1")
         }
         for (s in blockedOnConnection.toList()) tryWake(s)
-        unstall()
         return
     }
     val s = streams[id]
@@ -506,8 +506,10 @@ internal fun H2ConnectionCore.onWindowUpdate(
         return
     }
     if (f.increment == 0) return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0", now) // section 6.9
-    // closed on our side: no more DATA, unless our last DATA is still queued (charged again after a shrink, section 6.9.2)
-    if (s.state == StreamState.CLOSED && s.out.none { it is OutItem.Data }) return
+    // a stream we will never send on again (half-closed (local) or closed, with no DATA queued) has no active flow-control
+    // window (section 6.9.2): its WINDOW_UPDATEs are ignored, as SETTINGS_INITIAL_WINDOW_SIZE changes skip it, so a peer
+    // that adjusts every stream (nghttp2) cannot take our record of it above 2^31 - 1
+    if (!canSend(s) && s.out.none { it is OutItem.Data }) return
     s.sendWindow += f.increment
     if (s.sendWindow + chargedQueued(s) > H2.MAX_WINDOW) {
         return streamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR, "stream window above 2^31 - 1", now)

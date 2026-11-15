@@ -141,7 +141,11 @@ class FlowControlTest {
 
     @Test
     fun negative_windowOverflowIsFlowControlError() {
-        val (c, id) = clientWithResponse()
+        // a stream we still send on (a half-closed (local) one has no active window, section 6.9.2: its updates are ignored)
+        val c = RawH2Peer(Role.CLIENT)
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = false)
+        c.read()
         c.send(FrameEncoder.windowUpdate(id, Int.MAX_VALUE)) // 65 535 + 2^31 - 1
         c.assertStreamError(id, Http2ErrorCode.FLOW_CONTROL_ERROR)
         c.send(FrameEncoder.windowUpdate(0, Int.MAX_VALUE))

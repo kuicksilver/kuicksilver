@@ -172,66 +172,39 @@ class SettingsAckTest {
     }
 
     /**
-     * DATA charged again after a shrink waits for the connection window as well (section 6.9.1: "either of the
-     * flow-control windows"), and goes when a connection WINDOW_UPDATE comes.
+     * RFC 9113 section 6.9.2: "A SETTINGS frame cannot alter the connection flow-control window." A shrink gives queued
+     * DATA its stream window back but keeps its connection charge: no other stream is woken for connection window the
+     * SETTINGS did not give, and the urgent frame already queued does not lose its place to a less urgent writer.
      */
     @Test
-    fun negative_queuedDataWaitsForTheConnectionWindowToo() {
+    fun negative_shrinkGivesNoConnectionWindowToOtherStreams() {
         for (role in Role.entries) {
             val m = PeerMirror(role)
+            val c = m.block(endStream = false)
             val a = m.block(endStream = false)
             val b = m.block(endStream = false)
+            m.p.core.setPriority(a, 0, incremental = false)
+            m.p.core.setPriority(b, 7, incremental = false)
             m.read()
-            var taken = 0
-            while (taken < 49_151) {
-                taken += m.p.core.sendData(b, ByteArray(16_384), 0, minOf(16_384, 49_151 - taken), endStream = false)
+            repeat(3) {
+                assertEquals(16_384, m.p.core.sendData(c, ByteArray(16_384), 0, 16_384, endStream = false))
                 m.read()
             }
-            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false)) // the connection's last
-            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 60_000) // a's 16 KiB back to the connection
-            assertEquals(10_849, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false)) // b's window left
-            assertEquals(listOf("ACK", "D$a", "D$b"), m.read(), "$role")
-            assertEquals(a to 5_535, m.data[m.data.size - 2], "$role: what the connection had left")
-            m.checkWindows()
-            m.windowUpdate(0, 20_000)
-            m.p.now += 10_000_000 // past b's refill grace
-            assertEquals(listOf("D$a"), m.read(), "$role")
-            assertEquals(a to 10_849, m.data.last())
-            m.checkWindows()
-        }
-    }
-
-    /** A reset of another stream gives its queued DATA's window back to the connection: DATA waiting for it goes. */
-    @Test
-    fun negative_resetOfAnotherStreamReleasesTheConnectionWindow() {
-        for (role in Role.entries) {
-            val m = PeerMirror(role)
-            val a = m.block(endStream = false)
-            val b = m.block(endStream = false)
-            m.read()
-            var taken = 0
-            while (taken < 49_151) {
-                taken += m.p.core.sendData(b, ByteArray(16_384), 0, minOf(16_384, 49_151 - taken), endStream = false)
-                m.read()
-            }
-            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            assertEquals(16_383, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false)) // the connection's last
+            assertEquals(0, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false)) // waits for the connection
+            m.p.events()
             m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 60_000)
-            assertEquals(10_849, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false))
-            // a short write: the ACK and the part of a's frame the connection allows, not b's charged frame
-            assertEquals(listOf("ACK", "D$a"), m.read(max = 9 + 9 + 5_535), "$role")
-            assertTrue(m.p.core.wantsWrite) // the driver asks: a's rest is found waiting for the connection window, b's frame is next
-            assertTrue(m.p.core.stalls(a), "$role")
-            m.reset(b) // b's 10 849 back to the connection
-            m.p.now += 10_000_000
-            assertEquals(listOf("D$a"), m.read(), "$role")
-            assertEquals(a to 10_849, m.data.last())
+            assertEquals(emptyList(), m.p.events().filterIsInstance<H2Event.WindowAvailable>(), "$role")
+            assertEquals(listOf("ACK", "D$a"), m.read(), "$role")
+            assertEquals(a to 16_383, m.data.last())
+            assertEquals(false, m.p.core.stalls(a))
             m.checkWindows()
         }
     }
 
     /** A larger SETTINGS_INITIAL_WINDOW_SIZE makes the stalled stream's window positive again: its DATA goes. */
     @Test
-    fun negative_growAfterAShrinkReleasesQueuedData() {
+    fun growAfterAShrinkReleasesQueuedData() {
         for (role in Role.entries) {
             val m = PeerMirror(role)
             val a = m.block(endStream = false)
@@ -243,6 +216,27 @@ class SettingsAckTest {
             assertEquals(listOf("ACK", "D$a"), m.read(), "$role")
             assertEquals(a to 1_000, m.data.last())
             m.checkWindows()
+        }
+    }
+
+    /**
+     * Section 6.9.2: only "streams with active flow-control windows (that is, streams in the "open" or "half-closed
+     * (remote)" state)" move with SETTINGS_INITIAL_WINDOW_SIZE. A peer that adjusts every stream (nghttp2) may then credit
+     * a stream we finished sending on up to 2^31 - 1 by its own count: that is legal, and we ignore WINDOW_UPDATEs of such
+     * a stream instead of resetting it while its other direction is still in use.
+     */
+    @Test
+    fun negative_windowUpdateOnAStreamWeFinishedSendingOnIsNotAnError() {
+        for (role in Role.entries) {
+            val m = PeerMirror(role)
+            val a = m.block(endStream = true, requestOpen = true) // half-closed (local)
+            assertEquals(listOf("H$a"), m.read(), "$role")
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 1_000)
+            m.read()
+            m.windowUpdate(a, (H2.MAX_WINDOW - 1_000).toInt()) // the peer's view: 1 000 + 2^31 - 1 001 = 2^31 - 1
+            m.read()
+            assertEquals(emptyList(), m.p.resets(), "$role")
+            assertEquals(false, m.p.core.isClosed, "$role")
         }
     }
 
@@ -273,7 +267,7 @@ class SettingsAckTest {
      * counts it against the old window, since it reaches the peer before the ACK.
      */
     @Test
-    fun negative_frameWrittenInPartBeforeAShrinkGoesFirst() {
+    fun frameWrittenInPartBeforeAShrinkGoesFirst() {
         for (role in Role.entries) {
             val m = PeerMirror(role)
             val a = m.block(endStream = false)
@@ -366,15 +360,21 @@ class SettingsAckTest {
         val r = Random(seed)
         val m = PeerMirror(role)
         val open = mutableListOf<Int>()
+        val finished = mutableListOf<Int>()
         repeat(60) {
             when (r.nextInt(9)) {
                 0 -> {
                     val room = m.streams < 40
                     if (room) {
                         val extra = List(r.nextInt(1, 4)) { "x-k${r.nextInt(6)}" to "v".repeat(r.nextInt(1, 30)) }
-                        val id = m.block(endStream = false, extra = extra)
-                        open += id
-                        if (r.nextBoolean()) m.p.core.sendData(id, ByteArray(500), 0, 500, endStream = false)
+                        if (r.nextInt(5) == 0) {
+                            // finished on our side at once: half-closed (local), its WINDOW_UPDATEs ignored
+                            finished += m.block(endStream = true, extra = extra, requestOpen = true)
+                        } else {
+                            val id = m.block(endStream = false, extra = extra)
+                            open += id
+                            if (r.nextBoolean()) m.p.core.sendData(id, ByteArray(500), 0, 500, endStream = false)
+                        }
                     }
                 }
 
@@ -403,7 +403,8 @@ class SettingsAckTest {
                 }
 
                 4 -> {
-                    val id = if (open.isEmpty() || r.nextInt(3) == 0) 0 else open[r.nextInt(open.size)]
+                    val streams = open + finished
+                    val id = if (streams.isEmpty() || r.nextInt(3) == 0) 0 else streams[r.nextInt(streams.size)]
                     // up to the maximum, less what a later SETTINGS_INITIAL_WINDOW_SIZE (at most 65 535) may add to a
                     // stream window: that would be the peer's error (exactly 2^31 - 1 is in the negative_* tests)
                     val room = minOf(H2.MAX_WINDOW, H2.MAX_WINDOW - m.window(id) - (if (id == 0) 0 else 65_535))
@@ -432,6 +433,7 @@ class SettingsAckTest {
             }
             assertTrue(m.p.core.sendWindowConserved, "$role seed $seed")
             assertTrue(m.p.core.queuedDataAccounted, "$role seed $seed")
+            assertTrue(m.p.resets().none { it.errorCode == Http2ErrorCode.FLOW_CONTROL_ERROR.code }, "$role seed $seed: a stream reset")
         }
         m.read()
         m.checkWindows()
@@ -457,7 +459,7 @@ class SettingsAckTest {
             "$role seed $seed: DATA left " +
                 m.p.core.streams.values.filter { it.out.isNotEmpty() }.map {
                     "${it.id} ${it.state} w=${it.sendWindow} conn=${m.p.core.connSendWindow} out=${it.out.map { o ->
-                        if (o is OutItem.Data) "D${o.length}/${o.charged}" else "F"
+                        if (o is OutItem.Data) "D${o.length}/${o.streamCharged}" else "F"
                     }} stalled=${it in m.p.core.stalled} ready=${it.dataReady} refill=${it.refillBy}"
                 },
         )
@@ -537,7 +539,14 @@ internal class PeerMirror(
     fun sendSettings(vararg kv: Pair<Int, Long>) {
         if (pending.isEmpty()) partOnTheWire = p.core.writingFrame
         pending.addLast(kv.toList())
+        val connectionBefore = p.core.peerViewOfConnectionWindow
+        val oursBefore = p.core.connectionSendWindowAccounted
         p.send(settings(*kv))
+        // section 6.9.2: "A SETTINGS frame cannot alter the connection flow-control window", as either side sees it
+        if (!p.core.isClosed) {
+            assertEquals(connectionBefore, p.core.peerViewOfConnectionWindow, "a SETTINGS changed the connection window")
+            assertEquals(oursBefore, p.core.connectionSendWindowAccounted)
+        }
     }
 
     fun windowUpdate(
@@ -558,6 +567,8 @@ internal class PeerMirror(
     fun block(
         endStream: Boolean,
         extra: List<Pair<String, String>> = emptyList(),
+        /** Server: the peer's request stays open, so a response with [endStream] leaves the stream half-closed (local). */
+        requestOpen: Boolean = false,
     ): Int {
         val id: Int
         val fields: List<Pair<String, String>>
@@ -567,7 +578,7 @@ internal class PeerMirror(
         } else {
             id = nextPeerStream
             nextPeerStream += 2
-            p.send(p.headers(id, endStream = true))
+            p.send(p.headers(id, endStream = !requestOpen))
             p.events()
             fields = OK + extra
             p.core.sendHeaders(id, fields, endStream)
@@ -628,7 +639,7 @@ internal class PeerMirror(
 
     /** After a full read: our view of every window equals the peer's, and none is above 2^31 - 1. */
     fun checkWindows() {
-        assertTrue(p.core.queuedDataAccounted, "queued DATA counted as charged")
+        assertTrue(p.core.queuedDataAccounted, "queued DATA counted for the connection")
         if (p.core.writingFrame || pending.isNotEmpty()) return
         assertEquals(connection, p.core.peerViewOfConnectionWindow, "connection window")
         assertTrue(connection <= H2.MAX_WINDOW)
