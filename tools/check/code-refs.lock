@@ -1,7 +1,7 @@
 # The source lines docs/spec cites, as tools/check/code-refs.py --write recorded them: <path>:<line>\t<text>
 kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:158	if (blockDependency == id && !peerNoRfc7540Priorities) {
-kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:194	if (blockDependency == id && !peerNoRfc7540Priorities) {
-kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:280	if (f.dependency == f.streamId && !peerNoRfc7540Priorities) {
+kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:203	if (blockDependency == id && !peerNoRfc7540Priorities) {
+kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:289	if (f.dependency == f.streamId && !peerNoRfc7540Priorities) {
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22	const val WT_MAX_SESSIONS_DRAFT14: Long = 0x14e9cd29
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:25	const val ENABLE_WEBTRANSPORT_DRAFT02: Long = 0x2b603742
 kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236	throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "SETTINGS_ENABLE_WEBTRANSPORT (draft-02) must be 0 or 1")
