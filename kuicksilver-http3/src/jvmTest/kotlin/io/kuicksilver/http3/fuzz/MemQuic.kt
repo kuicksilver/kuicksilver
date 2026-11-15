@@ -368,7 +368,6 @@ internal class MemStream(
     private val feed = Channel<ByteArray?>(Channel.UNLIMITED)
     private var recvDone = !hasRecv
     private var sendDone = !hasSend
-    private var finSent = false
     private var recvAll = false
     val done = CompletableDeferred<Unit>()
     private var pumping = false
@@ -411,10 +410,8 @@ internal class MemStream(
                     if (n > 0 && !sendDone) conn.net.inflight += MemNet.Piece.Data(other, buf.copyOf(n))
                 }
                 if (outCh.closedCause == null && !sendDone) {
+                    // done once the FIN arrived (it stands for everything acknowledged, RFC 9000 "Data Recvd")
                     conn.net.inflight += MemNet.Piece.Fin(other)
-                    finSent = true
-                    sendDone = true
-                    check()
                 }
             } catch (_: Throwable) {
                 // reset or stopped: the reset piece is queued where that happened
@@ -443,7 +440,15 @@ internal class MemStream(
         feed.trySend(bytes)
     }
 
+    /** Our FIN reached the peer: everything we sent arrived (the sending half's "Data Recvd"). */
+    fun finArrived() {
+        if (sendDone) return
+        sendDone = true
+        check()
+    }
+
     fun receivedFin() {
+        other.finArrived()
         // after our STOP_SENDING the FIN still ends the half: the peer had sent everything (RFC 9000 section 3.2, "Data Recvd")
         if (feed.trySend(null).isFailure && !recvDone) {
             recvAll = true

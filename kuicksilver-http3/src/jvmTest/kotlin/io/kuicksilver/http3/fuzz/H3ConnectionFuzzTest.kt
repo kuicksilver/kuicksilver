@@ -92,8 +92,6 @@ internal class H3Finding(
 internal class H3Run(
     data: ByteArray,
     private val reach: H3Reach? = null,
-    /** Fault injection for the planted-bug proof: runs on the server request before the application sees it. */
-    private val serverAppHook: ((Http3ServerRequest) -> Unit)? = null,
 ) {
     private val p = H3Program(data)
     private val scheduler = TestCoroutineScheduler()
@@ -173,7 +171,7 @@ internal class H3Run(
             setUp()
             if (client != null && server != null) {
                 var steps = 0
-                while (!p.exhausted && steps++ < 300) step()
+                while (!p.exhausted && steps++ < 300 && !(client!!.closed.isCompleted && server!!.closed.isCompleted)) step()
             }
             quiesce()
             check()
@@ -221,7 +219,6 @@ internal class H3Run(
             val srv = started.await()
             while (true) {
                 val r = runCatching { srv.acceptRequest() }.getOrNull() ?: break
-                serverAppHook?.invoke(r)
                 val tag = r.headers["x-id"]?.toIntOrNull() ?: -1
                 log("server application got request $tag on stream ${r.streamId}")
                 seenByServer[tag] = (seenByServer[tag] ?: 0) + 1
@@ -239,7 +236,8 @@ internal class H3Run(
     private fun step() {
         val c = client ?: return
         val s = server ?: return
-        when (p.pick(16).let { if (it in 10..11 || it == 14) (if (p.pick(4) == 0) it else 15) else it }) {
+        // GOAWAY and closes end the connection's useful life: rare, so most programs also complete requests first
+        when (p.pick(16).let { if (it in 10..11 || it == 14) (if (p.pick(24) == 0) it else 15) else it }) {
             0, 1, 2 -> {
                 startRequest(c)
             }
@@ -477,6 +475,12 @@ internal class H3Run(
                     throw H3Finding("request ${r.tag} failed with RequestNotProcessed, but the server application saw it")
                 }
                 if (e is Http3Exception.RequestNotProcessed) reach?.hit("client: RequestNotProcessed")
+                // RFC 9114 section 5.2: a graceful close comes "once all accepted requests ... have been processed"
+                if (e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR && !closedByProgram &&
+                    (seenByServer[r.tag] ?: 0) > 0
+                ) {
+                    throw H3Finding("request ${r.tag}, which the server application saw, failed with the graceful close: $e")
+                }
             }
         }
         for ((tag, n) in seenByServer) if (n > 1) throw H3Finding("the server application saw request $tag $n times")

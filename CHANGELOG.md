@@ -975,6 +975,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: a request waiting for stream credit when the server's GOAWAY arrived was sent on the stream it got
+  next, against RFC 9114 section 5.2 ("Endpoints MUST NOT initiate new requests ... after receipt of a GOAWAY frame"),
+  or failed with the client's own close of the idle connection; it now fails with `Http3Exception.RequestNotProcessed`
+  (never sent, safe to retry), and so does one waiting when the client sent its own GOAWAY. HTTP/3 server: a request
+  stream the client reset before its HEADERS stayed open in the server's direction; it is reset with
+  H3_REQUEST_REJECTED.
+
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
@@ -1851,7 +1858,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   counts toward the client's limit until the application is done with the request: in the Ktor engine until its handler
   returned; with `Http3Connection.acceptRequest` until the response ended (complete or abandoned), `reset` was called, an
   answer failed, or the application read the request body's failure. Every reset of a request stream by the client also
-  spends a glitch token (1000, 33 a second), so a reset flood ends the connection with `H3_EXCESSIVE_LOAD`. QUIC: a peer
+  spends a token of a reset budget of its own (1000, 33 a second; not for resets with H3_NO_ERROR), so a reset flood ends
+  the connection with `H3_EXCESSIVE_LOAD`. The Ktor engine cancels a handler once its client abandons the request
+  (STOP_SENDING, a reset, or the connection lost). QUIC: a peer
   that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
   `MAX_STREAMS`, not only at the next half window.
 
