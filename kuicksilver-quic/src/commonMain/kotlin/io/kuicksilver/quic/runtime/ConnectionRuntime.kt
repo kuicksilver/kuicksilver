@@ -589,6 +589,7 @@ internal class ConnectionRuntime(
 
                 is ConnectionEvent.StreamReadable -> {
                     wrapper(e.id)?.let {
+                        it.noteReceived(core.streamHighestReceived(e.id))
                         it.updateReceivedAll()
                         it.signalReadable()
                     }

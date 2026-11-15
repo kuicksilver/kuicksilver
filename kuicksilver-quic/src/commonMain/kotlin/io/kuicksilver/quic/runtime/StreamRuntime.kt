@@ -52,6 +52,14 @@ internal class StreamRuntime(
         kotlinx.coroutines.CompletableDeferred<Long>().also {
             if (!recv) it.completeExceptionally(IllegalStateException("stream $id is send-only"))
         }
+    private val receivedOffsetFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    override val receivedOffset: kotlinx.coroutines.flow.StateFlow<Long> get() = receivedOffsetFlow
+
+    /** On the loop: the core received up to [offset] on this stream; the flow only grows. */
+    internal fun noteReceived(offset: Long) {
+        if (offset > receivedOffsetFlow.value) receivedOffsetFlow.value = offset
+    }
+
     override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = sentFinal
     override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = receivedFinal
 
@@ -61,6 +69,7 @@ internal class StreamRuntime(
         size: Long,
     ) {
         (if (sending) sentFinal else receivedFinal).complete(size)
+        if (!sending) noteReceived(size)
     }
 
     /** The final sizes will never be known: the connection ended, or a rejected 0-RTT dropped the stream. */

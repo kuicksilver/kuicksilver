@@ -9,6 +9,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -97,6 +98,27 @@ class FinalSizeTest {
                     st.resetAt(5, 10)
                     assertEquals(40_000L, assertNotNull(st.sentFinalSize).await())
                     assertEquals(40_000L, assertNotNull(ss.receivedFinalSize).await())
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** receivedOffset follows what arrived, read or not, and ends at the final size. */
+    @Test fun receivedOffsetFollowsUnreadData() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openUni()
+                    st.output.writeFully(ByteArray(3000), 0, 3000)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    assertEquals(3000L, assertNotNull(ss.receivedOffset).first { it == 3000L }) // nothing read
+                    st.reset(1)
+                    assertEquals(3000L, assertNotNull(ss.receivedFinalSize).await())
+                    assertEquals(3000L, ss.receivedOffset!!.value)
+                    assertEquals(0L, assertNotNull(st.receivedOffset).value)
                     c.close()
                     s.close()
                 }

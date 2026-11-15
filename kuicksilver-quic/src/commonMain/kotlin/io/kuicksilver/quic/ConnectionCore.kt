@@ -458,6 +458,9 @@ public class ConnectionCore internal constructor(
     /** The peer's FIN and every byte before it arrived on stream [id] (RFC 9000 section 3.2, "Data Recvd" or "Data Read"). */
     internal fun streamReceivedAll(id: Long): Boolean = streams.receivedAll(id)
 
+    /** [StreamManager.highestReceived] of [id]. */
+    internal fun streamHighestReceived(id: Long): Long = streams.highestReceived(id)
+
     /** [StreamManager.sendCredit] of [id]. */
     internal fun streamSendCredit(id: Long): Long = streams.sendCredit(id)
 

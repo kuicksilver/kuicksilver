@@ -92,6 +92,24 @@ class StreamStateTest {
         }
     }
 
+    /**
+     * Data beyond a gap gives nothing to read, but raises StreamReadable so the runtime learns the highest offset received
+     * (QuicStream.receivedOffset), which flow control counts (RFC 9000 section 4.1).
+     */
+    @Test fun dataBeyondAGapRaisesTheHighestOffset() {
+        val m = manager(role = TlsRole.Server)
+        recv(m, 0, 100, ByteArray(50))
+        assertEquals(150L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
+        m.events.clear()
+        recv(m, 0, 10, ByteArray(20)) // inside what was seen: the highest stays
+        assertEquals(150L, m.highestReceived(0))
+        recv(m, 0, 150, ByteArray(10))
+        assertEquals(160L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
+        assertEquals(-1L, m.highestReceived(4))
+    }
+
     @Test fun maxDataWithoutGrowthTouchesNoStream() {
         // RFC 9000 section 21.6: a MAX_DATA that raises nothing costs the peer one frame; it must not cost us a pass over every stream
         val m = manager(peerMaxData = 1L shl 20, maxStreams = 1000)

@@ -1042,6 +1042,10 @@ data; a rejection fails both with `QuicException.StreamError.EarlyDataRejected`,
 `Deferred`: await it, never cancel it. In the sans-IO core the same moments raise `ConnectionEvent.StreamFinalSize`,
 once per half.
 
+`QuicStream.receivedOffset` is a `StateFlow<Long>` of the highest offset of the peer's half received so far, read or
+not and in order or not, and then its final size: what QUIC flow control counts (RFC 9000 section 4.1), so a protocol
+with limits of its own across streams can check bytes nobody has read yet.
+
 ## Datagrams (RFC 9221)
 
 Both sides advertise `max_datagram_frame_size` (65 535 by default; `maxDatagramFrameSize = 0` turns the extension off and

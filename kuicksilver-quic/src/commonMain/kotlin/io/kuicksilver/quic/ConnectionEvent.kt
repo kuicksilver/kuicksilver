@@ -49,7 +49,11 @@ public sealed interface ConnectionEvent {
         public val id: Long,
     ) : ConnectionEvent
 
-    /** Stream [id][ConnectionEvent.StreamReadable.id] has new data, its end or its reset for [ConnectionCore.readStream]; raised again only after more arrives. */
+    /**
+     * Stream [id][ConnectionEvent.StreamReadable.id] has new data, its end or its reset for [ConnectionCore.readStream], or
+     * data arrived beyond a gap (its highest received offset grew, nothing new to read yet); raised again only after more
+     * arrives.
+     */
     public class StreamReadable internal constructor(
         /** The stream with something to read. */
         public val id: Long,

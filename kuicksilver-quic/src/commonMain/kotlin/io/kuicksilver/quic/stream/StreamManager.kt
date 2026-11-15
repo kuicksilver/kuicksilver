@@ -197,6 +197,10 @@ internal class StreamManager(
     }
 
     /** The receiving part of [id] holds or held every byte up to the FIN ("Data Recvd" or "Data Read", RFC 9000 section 3.2). */
+
+    /** The highest offset received on [id]'s receiving half (RFC 9000 section 4.5), or -1 when it has none (or is gone). */
+    fun highestReceived(id: Long): Long = streams[id]?.recv?.highest ?: -1
+
     fun receivedAll(id: Long): Boolean = streams[id]?.recv?.state.let { it == RecvState.DataRecvd || it == RecvState.DataRead }
 
     /** After an accepted 0-RTT: streams we opened take the server's new initial limits (they only grow). */
@@ -521,14 +525,20 @@ internal class StreamManager(
         val before = r.readable
         val wasWhole = r.state == RecvState.DataRecvd
         val finalBefore = r.finalSize
+        val highestBefore = r.highest
         connReceived += r.onData(offset, data, off, len, fin, connFlow, connReceived) // checks both windows before it changes anything
         reportReceivedFinal(id, r, finalBefore)
         if (r.stopped) {
             creditConnection(r.abandon())
             if (r.finished) maybeClose(id)
         } // nothing will read a stopped stream: its bytes go straight back to the connection window, and the FIN retires it
-        // also when a FIN alone completes a stream whose bytes are not all read: the runtime learns the stream is whole
-        else if (r.readable > before || (fin && r.readable == 0) || (!wasWhole && r.state == RecvState.DataRecvd)) {
+        // also when a FIN alone completes a stream whose bytes are not all read: the runtime learns the stream is whole; and
+        // when data arrived beyond a gap: nothing more to read, but the highest offset received grew (receivedOffset)
+        else if (r.readable > before ||
+            (fin && r.readable == 0) ||
+            (!wasWhole && r.state == RecvState.DataRecvd) ||
+            r.highest > highestBefore
+        ) {
             events += e.readable
         }
     }

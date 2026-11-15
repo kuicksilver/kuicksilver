@@ -360,6 +360,8 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
         open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.quic/QuicStream.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
     open val receivedFinalSize // io.kuicksilver.quic/QuicStream.receivedFinalSize|{}receivedFinalSize[0]
         open fun <get-receivedFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.receivedFinalSize.<get-receivedFinalSize>|<get-receivedFinalSize>(){}[0]
+    open val receivedOffset // io.kuicksilver.quic/QuicStream.receivedOffset|{}receivedOffset[0]
+        open fun <get-receivedOffset>(): kotlinx.coroutines.flow/StateFlow<kotlin/Long>? // io.kuicksilver.quic/QuicStream.receivedOffset.<get-receivedOffset>|<get-receivedOffset>(){}[0]
     open val sentFinalSize // io.kuicksilver.quic/QuicStream.sentFinalSize|{}sentFinalSize[0]
         open fun <get-sentFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sentFinalSize.<get-sentFinalSize>|<get-sentFinalSize>(){}[0]
 

@@ -6,6 +6,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * A QUIC stream as two ktor-io channels. Closing [output] sends FIN; closing it with a cause sends
@@ -101,6 +102,15 @@ public interface QuicStream {
      */
     @ExperimentalKuicksilverApi
     public val receivedFinalSize: Deferred<Long>? get() = null
+
+    /**
+     * The highest offset of the peer's half received so far, whether read or not and in order or not (RFC 9000 section 4.1:
+     * flow control counts it), then its final size once a reset or FIN told it. It only grows; 0 on our own unidirectional
+     * stream. What a protocol that limits the peer's data across streams checks, also for bytes nobody reads yet
+     * (draft-ietf-webtrans-http3-16 section 5.6.4). Null from implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val receivedOffset: StateFlow<Long>? get() = null
 
     /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
