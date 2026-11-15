@@ -62,6 +62,10 @@ internal class StreamManager(
         var recv: RecvStream? = null
         var countedClosed = false
 
+        /** The runtime follows the bytes this stream's send buffer released ([sendReleased]); one event is queued. */
+        var watchSend = false
+        var sendNoted = false
+
         /** Reused per stream: a readable/writable notification per packet must not allocate. */
         val readable = ConnectionEvent.StreamReadable(id)
         val writable = ConnectionEvent.StreamWritable(id)
@@ -198,6 +202,31 @@ internal class StreamManager(
 
     /** The highest offset received on [id]'s receiving half (RFC 9000 section 4.5), or -1 when it has none (or is gone). */
     fun highestReceived(id: Long): Long = streams[id]?.recv?.highest ?: -1
+
+    /** From now on, bytes released from [id]'s send buffer raise its StreamWritable ([noteSendReleased]). */
+    fun watchSend(id: Long) {
+        streams[id]?.watchSend = true
+    }
+
+    /**
+     * The bytes of [id]'s sending half released from the send buffer so far (acknowledged, or dropped by a reset), or -1 for
+     * a stream without one; the next release raises an event again.
+     */
+    fun sendReleased(id: Long): Long {
+        val e = streams[id] ?: return -1
+        e.sendNoted = false
+        val s = e.send ?: return -1
+        return s.enqueuedTotal - s.buffered
+    }
+
+    /** Bytes of [id]'s send buffer were released: a watched stream gets one StreamWritable until the runtime reads the count. */
+    private fun noteSendReleased(id: Long) {
+        val e = streams[id] ?: return
+        if (e.watchSend && !e.sendNoted) {
+            e.sendNoted = true
+            events += e.writable
+        }
+    }
 
     /** The receiving part of [id] holds or held every byte up to the FIN ("Data Recvd" or "Data Read", RFC 9000 section 3.2). */
     fun receivedAll(id: Long): Boolean = streams[id]?.recv?.state.let { it == RecvState.DataRecvd || it == RecvState.DataRead }
@@ -613,6 +642,7 @@ internal class StreamManager(
         val finalSize = s.finalSizeForReset
         val resetCode = codeAfterResetAt(s, code)
         sendBufferedBytes -= s.reset()
+        noteSendReleased(id)
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
@@ -880,6 +910,7 @@ internal class StreamManager(
         val finalSize = s.finalSizeForReset
         val resetCode = codeAfterResetAt(s, code)
         sendBufferedBytes -= s.reset()
+        noteSendReleased(id)
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
@@ -912,6 +943,7 @@ internal class StreamManager(
         if (!peerResetStreamAt && !forceResetStreamAtForTest) return reset(id, code)
         val r = reliable.coerceIn(0, s.written)
         sendBufferedBytes -= s.resetAt(r, code)
+        noteSendReleased(id)
         wakeRefusedWriters()
         if (s.hasPending) scheduler.add(s) else scheduler.remove(s)
         announceResetAtIfDue(s)
@@ -1094,8 +1126,9 @@ internal class StreamManager(
             ) {
                 continue // reset() already released the buffer
             }
-            sendBufferedBytes -=
-                s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
+            val released = s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
+            sendBufferedBytes -= released
+            if (released > 0) noteSendReleased(s.id)
             if (s.state == SendState.DataRecvd || s.state == SendState.ResetSent) maybeClose(s.id)
         }
         if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()

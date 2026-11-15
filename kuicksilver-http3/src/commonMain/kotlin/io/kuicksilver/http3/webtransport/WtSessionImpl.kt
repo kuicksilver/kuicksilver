@@ -102,6 +102,23 @@ internal class WtSessionImpl(
         if (flowEnabled) WtSessionFlow.of(h3, version, { capsulesOut.trySend(it) }) { blockedAtZero() } else null
 
     /**
+     * The session's turns at the connection's send buffer and its share of it (section 8), with flow control (sessions
+     * share the connection only then): a part of QUIC's `maxSendBuffer` for each session the connection may carry, and one
+     * more for the rest of the connection, at its CONNECT stream's current urgency. Session dispatcher only.
+     */
+    private val sendTurns: WtSendTurns? =
+        if (flowEnabled) {
+            val buffer = runCatching { h3.quic.core.maxSendBuffer }.getOrDefault(DEFAULT_SEND_BUFFER)
+            val cap = maxOf(WtFairness.SEND_QUANTUM, buffer / (h3.settings.webTransportMaxSessions + 1))
+            WtSendTurns(this, { stream.priority.urgency }, h3.wtFairness.send, WtSendShare(cap))
+        } else {
+            null
+        }
+
+    /** The session's share of the send buffer, with flow control (a test hook; its counts on the session's dispatcher). */
+    internal val sendShareForTest: WtSendShare? get() = sendTurns?.share
+
+    /**
      * A draft-14 peer that declared flow control only by `SETTINGS_WT_MAX_SESSIONS` (no initial limits) left us blocked at
      * a zero limit (session dispatcher): once that lasted [STALL_AFTER], [creditStall] says so, once. It checks that the
      * limit is still 0, not that a writer still waits (one that gave up meanwhile is reported too).
@@ -459,16 +476,7 @@ internal class WtSessionImpl(
                     },
                     flow,
                     inCount,
-                    if (flowEnabled) {
-                        WtSendTurn {
-                            cost,
-                            block,
-                            ->
-                            h3.wtFairness.send.inTurn(this@WtSessionImpl, stream.priority.urgency, cost, block)
-                        }
-                    } else {
-                        null
-                    },
+                    sendTurns,
                 )
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -623,6 +631,9 @@ internal class WtSessionImpl(
 
         /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
         val CLOSE_TIMEOUT: Duration = 5.seconds
+
+        /** QUIC's default `maxSendBuffer`, for a transport that does not tell its own. */
+        const val DEFAULT_SEND_BUFFER: Long = 4_194_304
     }
 }
 

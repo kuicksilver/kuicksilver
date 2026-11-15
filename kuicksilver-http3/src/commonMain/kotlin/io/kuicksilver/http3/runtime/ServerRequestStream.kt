@@ -186,6 +186,13 @@ internal suspend fun handleRequestStream(
             // refused before the application: section 5.1 without flow control, section 5.2 (draft-14 section 5.2) over the
             // limit; the connection stays (draft-14: "The server MUST NOT close the connection if the client opens sessions
             // exceeding this limit")
+            // section 5.2: faster than the rate, refused unprocessed; a peer that keeps trying spends glitch tokens too
+            if (!wtSessionRate.spend(glitchClock())) {
+                abort(st, Http3ErrorCode.REQUEST_REJECTED)
+                wt.unregister(st.id)
+                glitch("WebTransport sessions above the rate")
+                return@with
+            }
             if (!wtAdmits(draft02)) {
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)

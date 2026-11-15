@@ -518,6 +518,13 @@ internal class H3Session(
     private val wtFloor = MutableStateFlow(0L)
     private var wtFloorSender: Job? = null
 
+    /**
+     * Server: the rate of incoming WebTransport sessions (draft-16 section 5.2, "Servers SHOULD limit the rate of incoming
+     * WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources"): a burst of
+     * [WT_SESSION_BURST] CONNECTs, then [WT_SESSIONS_PER_SECOND] a second, on [glitchClock]. Session dispatcher only.
+     */
+    internal val wtSessionRate = GlitchLimiter(WT_SESSION_BURST, WT_SESSIONS_PER_SECOND)
+
     /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
     internal val wtFairness =
         io.kuicksilver.http3.webtransport
@@ -791,6 +798,12 @@ internal class H3Session(
     }
 
     companion object {
+        /** WebTransport CONNECTs a server takes at once on a connection before [WT_SESSIONS_PER_SECOND] applies. */
+        const val WT_SESSION_BURST: Int = 32
+
+        /** WebTransport CONNECTs a server takes a second on a connection after the burst (section 5.2). */
+        const val WT_SESSIONS_PER_SECOND: Int = 8
+
         /**
          * Test hook: sees every session as it is made, before it starts (to install the per-session hooks). It is global, so
          * it is not safe for tests that run in parallel in one process (none do: each module's tests run one after another);

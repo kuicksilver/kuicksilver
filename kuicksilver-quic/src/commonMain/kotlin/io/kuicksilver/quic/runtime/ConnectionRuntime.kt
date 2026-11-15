@@ -596,7 +596,10 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.StreamWritable -> {
-                    wrapper(e.id)?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                    wrapper(e.id)?.let {
+                        it.ticker.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                        if (it.watchingSend) it.noteSendReleased(core.streamSendReleased(e.id))
+                    }
                 }
 
                 is ConnectionEvent.StreamReset -> {

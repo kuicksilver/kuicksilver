@@ -114,6 +114,17 @@ public interface QuicStream {
     @ExperimentalKuicksilverApi
     public val receivedOffset: StateFlow<Long>? get() = null
 
+    /**
+     * The bytes of our sending half released from the connection's send buffer so far (`QuicConfig.maxSendBuffer`, shared
+     * by every stream): acknowledged by the peer, or dropped by a reset; all of them once the stream retired or the
+     * connection ended. It only grows; the bytes written minus these are what the stream holds of the shared buffer, which
+     * a protocol multiplexing independent users over one connection limits per user. Tracked from its first read on (that
+     * read catches up with what was released before); stays 0 on the peer's unidirectional stream. Null from
+     * implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val sendReleased: StateFlow<Long>? get() = null
+
     /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
     public val receivedEarly: Boolean get() = false

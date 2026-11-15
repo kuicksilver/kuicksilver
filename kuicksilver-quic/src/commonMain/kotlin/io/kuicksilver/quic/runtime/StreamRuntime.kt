@@ -60,6 +60,34 @@ internal class StreamRuntime(
         if (offset > receivedOffsetFlow.value) receivedOffsetFlow.value = offset
     }
 
+    private val sendReleasedFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** [sendReleased] was read: the loop keeps the flow up to date. */
+    @Volatile
+    internal var watchingSend = false
+        private set
+
+    /** Bytes the core took for this stream's sending half (on the loop, by [StreamOutput]). */
+    internal var sentToCore = 0L
+
+    override val sendReleased: kotlinx.coroutines.flow.StateFlow<Long>
+        get() {
+            if (outChannel != null && !watchingSend) {
+                watchingSend = true
+                loop.scope.launch {
+                    if (!current) return@launch
+                    conn.core.watchStreamSend(id)
+                    noteSendReleased(conn.core.streamSendReleased(id))
+                }
+            }
+            return sendReleasedFlow
+        }
+
+    /** On the loop: the core released up to [total] bytes of this stream's send buffer; the flow only grows. */
+    internal fun noteSendReleased(total: Long) {
+        if (total > sendReleasedFlow.value) sendReleasedFlow.value = total
+    }
+
     override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = sentFinal
     override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = receivedFinal
 
@@ -150,6 +178,7 @@ internal class StreamRuntime(
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     internal fun finished() {
+        noteSendReleased(sentToCore) // retired: nothing of it is buffered any more
         readable.trySend(Unit)
         conn.removeTicker(ticker)
         done.complete(Unit)
@@ -220,6 +249,7 @@ internal class StreamRuntime(
         finalSizesLost(reason)
         inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
+        noteSendReleased(sentToCore) // the buffer went with the connection
         done.complete(Unit)
     }
 

@@ -63,7 +63,8 @@ public sealed interface ConnectionEvent {
      * Stream [id][ConnectionEvent.StreamWritable.id] can make progress again: acknowledgements freed send-buffer room after [ConnectionCore.writeStream] took fewer bytes
      * than offered, or the peer raised its flow-control credit (MAX_STREAM_DATA, MAX_DATA; RFC 9000 section 4.1) while the stream had
      * data waiting to be sent. Retry the write; the event is a hint, a write may still take fewer bytes when other streams share the
-     * buffer.
+     * buffer. Also, for a stream whose [QuicStream.sendReleased] is followed, once acknowledgements or a reset released
+     * some of its buffered bytes.
      */
     public class StreamWritable internal constructor(
         /** The stream that can be written to again. */

@@ -461,6 +461,19 @@ public class ConnectionCore internal constructor(
     /** [StreamManager.highestReceived] of [id]. */
     internal fun streamHighestReceived(id: Long): Long = streams.highestReceived(id)
 
+    /** [StreamManager.watchSend] of [id]. */
+    internal fun watchStreamSend(id: Long) = streams.watchSend(id)
+
+    /** [StreamManager.sendReleased] of [id]. */
+    internal fun streamSendReleased(id: Long): Long = streams.sendReleased(id)
+
+    /**
+     * The connection's send buffer (`QuicConfig.maxSendBuffer`): the bytes of all its streams written and not yet
+     * acknowledged, together, beyond which writes wait.
+     */
+    @ExperimentalKuicksilverApi
+    public val maxSendBuffer: Long get() = config.maxSendBuffer
+
     /** [StreamManager.sendCredit] of [id]. */
     internal fun streamSendCredit(id: Long): Long = streams.sendCredit(id)
 

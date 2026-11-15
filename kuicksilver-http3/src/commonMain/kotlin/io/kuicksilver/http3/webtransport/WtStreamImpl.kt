@@ -48,8 +48,8 @@ internal class WtStreamImpl(
     private val flow: WtSessionFlow? = null,
     /** The count of the peer's bytes on [input] against the session's limit, or null without flow control. */
     private val inCount: WtInCount? = null,
-    /** The session's turn at the connection's send buffer (draft-16 section 8), with flow control. */
-    private val turns: WtSendTurn? = null,
+    /** The session's turns at, and its share of, the connection's send buffer (draft-16 section 8), with flow control. */
+    private val turns: WtSendTurns? = null,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
     private val outCh = ByteChannel()
@@ -78,6 +78,9 @@ internal class WtStreamImpl(
 
     /** Our sending half's final size is fixed: nothing more is taken from the credit (session dispatcher only). */
     private var sendEnded = false
+
+    /** This stream's bytes in the session's share of the send buffer. */
+    private val account = if (writable) turns?.follow(scope, st, headerLength) else null
 
     init {
         inPump = if (readable) scope.launch { pumpIn() } else null.also { inCh.finish() }
@@ -160,7 +163,7 @@ internal class WtStreamImpl(
                             st.output.writeFully(buf, from, from + k) // start and end index
                             st.output.flush()
                         }
-                        turns?.run(k.toLong(), write) ?: write()
+                        if (turns != null && account != null) turns.run(account, k.toLong(), write) else write()
                         off += k
                     }
                 }

@@ -24,6 +24,7 @@ import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.runtime.readVarInt
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CoroutineScope
@@ -56,10 +57,12 @@ class WebTransportServerSessionsTest {
     private fun serverTest(
         serverSettings: Http3Settings = wtOn,
         clientSettings: List<Pair<Long, Long>> = wtClientFlowSettings(),
+        serverQuic: QuicConfig = H3Fixtures.quic,
+        clientQuic: QuicConfig = H3Fixtures.quic,
         block: suspend CoroutineScope.(Raw) -> Unit,
     ) = h3Test {
-        QuicPair.open(H3Fixtures.quic).useScoped { q ->
-            val (c, s) = q.connect(H3Fixtures.quic)
+        QuicPair.open(serverQuic).useScoped { q ->
+            val (c, s) = q.connect(clientQuic)
             val server = Http3Connection.server(s, serverSettings)
             val raw = RawPeer(c)
             raw.openControl(clientSettings)
@@ -164,6 +167,81 @@ class WebTransportServerSessionsTest {
             r.uniTo(b, "b again")
             assertEquals("b again", sb.nextUniText())
             assertFalse(s3.closed.isCompleted)
+        }
+
+    /**
+     * Section 8: a session whose peer never reads one of its streams holds only its share of the connection's send buffer
+     * (QUIC's `maxSendBuffer`), so another session's data still goes through. Without the share the first session's
+     * writer filled the buffer while holding the turn, and every session stalled.
+     */
+    @Test fun negative_aSessionWhosePeerNeverReadsDoesNotStallTheOthers() =
+        serverTest(
+            clientSettings = wtClientFlowSettings(data = 64_000_000),
+            serverQuic =
+                H3Fixtures.quic
+                    .toBuilder()
+                    .apply { maxSendBuffer = 262_144 }
+                    .build(),
+            clientQuic =
+                H3Fixtures.quic
+                    .toBuilder()
+                    .apply {
+                        initialStreamWindow = 16_384
+                        maxStreamWindow = 16_384
+                    }.build(),
+        ) { r ->
+            val (_, sa) = rawSession(r.c, r.server, r.raw)
+            val (_, sb) = rawSession(r.c, r.server, r.raw)
+            val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
+            assertEquals(262_144L / 5, share.cap)
+            // the client takes 16 KiB of this stream and never reads it: the rest stays in the server's buffer
+            val stuck = sa.openUni()
+            val flooding = launch { runCatching { stuck.output.writeFully(ByteArray(2_000_000)) } }
+            withTimeout(5.seconds) { share.held.first { it + WtFairness.SEND_QUANTUM > share.cap } }
+            val out = sb.openUni()
+            val data = ByteArray(500_000) { it.toByte() }
+            launch {
+                out.output.writeFully(data)
+                out.output.flushAndClose()
+            }
+            val got =
+                withTimeout(10.seconds) {
+                    while (true) {
+                        val st = r.c.acceptStream()
+                        if (st.id and 2L == 0L || st.readVarInt() != StreamType.WT_UNI) continue
+                        if (st.readVarInt() == sb.sessionId) return@withTimeout st.input.readAllBytes()
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    error("unreachable")
+                }
+            assertTrue(data.contentEquals(got), "the other session's data arrived whole")
+            assertTrue(share.held.value <= share.cap, "the stuck session stays within its share")
+            flooding.cancel()
+        }
+
+    /**
+     * Section 5.2: "Servers SHOULD limit the rate of incoming WebTransport sessions". Sessions opened and ended in a loop
+     * meet the burst, then are refused unprocessed until the rate gives another.
+     */
+    @Test fun negative_sessionsOpenedAndEndedInALoopMeetTheRate() =
+        serverTest { r ->
+            var now = 0L
+            r.server.session.glitchClock = { now }
+            repeat(io.kuicksilver.http3.runtime.H3Session.WT_SESSION_BURST) {
+                val (st, s) = rawSession(r.c, r.server, r.raw)
+                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                withTimeout(5.seconds) { s.closed.await() }
+                withTimeout(5.seconds) {
+                    while (withContextOf(r.server) { st.id in r.server.session.wtSessions }) kotlinx.coroutines.yield()
+                }
+            }
+            r.refusedConnect()
+            assertFalse(r.server.closed.isCompleted, "the connection stays")
+            now += 1_000_000_000L / io.kuicksilver.http3.runtime.H3Session.WT_SESSIONS_PER_SECOND // one more
+            val (_, again) = rawSession(r.c, r.server, r.raw)
+            assertFalse(again.closed.isCompleted)
+            r.refusedConnect()
         }
 
     /** Two CONNECTs racing for the last slot: exactly one is admitted, the other refused. */

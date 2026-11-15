@@ -681,7 +681,16 @@ class WebTransportFlowControlTest {
                     .first { it == WtStreamRouter.MAX_BUFFERED_STREAMS }
             }
             val session = request.acceptWebTransport()
-            assertEquals("200", readHeaders(connect)[":status"])
+            // a session the tallies close at once may reset its CONNECT stream before the client read the 200: the reset
+            // then drops it, and the check below tells why
+            val status =
+                try {
+                    readHeaders(connect)[":status"]
+                } catch (e: io.kuicksilver.quic.QuicException.StreamError.Reset) {
+                    assertEquals(Http3ErrorCode.WT_FLOW_CONTROL_ERROR, e.code)
+                    null
+                }
+            if (status != null) assertEquals("200", status)
             check(connect, session, server)
         }
     }

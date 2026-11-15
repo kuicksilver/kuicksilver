@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: `QuicStream.receivedOffset` (experimental), the highest offset of the peer's half received so far, read or not
   and in order or not, then its final size: what flow control counts (RFC 9000 section 4.1). `StreamReadable` is now
   also raised when data beyond a gap raises it.
+- QUIC: `QuicStream.sendReleased` (experimental), the bytes of a sending half the connection's shared send buffer
+  (`maxSendBuffer`) released so far, acknowledged or dropped by a reset, so a protocol multiplexing independent users
+  over one connection can give each a share of it; `ConnectionCore.maxSendBuffer` tells the buffer's size. A stream
+  whose count is followed also raises `StreamWritable` when acknowledgements release its bytes.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the

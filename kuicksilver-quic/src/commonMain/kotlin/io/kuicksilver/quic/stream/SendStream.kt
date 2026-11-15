@@ -87,6 +87,10 @@ internal class SendStream(
     var buffered: Long = 0
         private set
 
+    /** Every byte ever taken into the buffer; minus [buffered], the bytes released (acknowledged or dropped by a reset). */
+    var enqueuedTotal: Long = 0
+        private set
+
     /** Test hook: range comparisons made by the lost/acknowledged bookkeeping, to prove its cost per call stays bounded. */
     internal var rangeStepsForTest: Long = 0
         private set
@@ -174,6 +178,7 @@ internal class SendStream(
             if (first < len) data.copyInto(ring, 0, off + first, off + len)
             written += len
             buffered += len
+            enqueuedTotal += len
         }
         if (fin) finQueued = true
         if (state == SendState.Ready) state = SendState.Send
