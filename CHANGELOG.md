@@ -975,6 +975,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 Capsule Protocol: a collector of `CapsuleStream.capsules` cancelled after a capsule was handed to it (a
+  `withTimeout` around `first()`, a `select`) lost that capsule, since a coroutine channel's receive drops an element
+  taken by a receiver cancelled before it resumes. Capsules now wait in a queue they leave only while the collector
+  runs: the next collector gets them, in order.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
