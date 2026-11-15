@@ -22,7 +22,7 @@ class SendStreamModelTest {
         val data = ArrayList<Byte>()
         var sentEnd = 0
         val acked = HashSet<Int>()
-        val lost = sortedSetOf<Int>()
+        val lost = HashSet<Int>() // read in order through min(): commonTest has no sorted set
         var released = 0
         var finQueued = false
         var finSent = false
@@ -79,7 +79,7 @@ class SendStreamModelTest {
         val got = s.nextRange(max, r)
         val expected: Triple<Int, Int, Boolean>? =
             if (m.lost.isNotEmpty()) {
-                val start = m.lost.first()
+                val start = m.lost.min()
                 var end = start
                 while (end in m.lost && end - start < max) end++
                 Triple(start, end - start, false)
@@ -148,7 +148,7 @@ class SendStreamModelTest {
         assertEquals(m.sentEnd.toLong(), s.sentEnd)
         assertEquals(m.finSent, s.finSent)
         assertEquals(m.finAcked && m.finQueued && m.released == m.data.size, s.state == SendState.DataRecvd, "Data Recvd")
-        assertEquals(if (m.lost.isNotEmpty()) m.lost.first().toLong() else m.sentEnd.toLong(), s.nextOffset)
+        assertEquals(if (m.lost.isNotEmpty()) m.lost.min().toLong() else m.sentEnd.toLong(), s.nextOffset)
         // RFC 9000 section 3.1: "Ready" until the first write, "Send", "Data Sent" once the FIN went out (and stays there when it
         // is lost: "In this state, the endpoint only retransmits stream data as necessary"), "Data Recvd"
         val state =

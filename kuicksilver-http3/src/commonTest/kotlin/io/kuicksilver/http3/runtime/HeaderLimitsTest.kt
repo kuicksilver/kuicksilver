@@ -589,7 +589,7 @@ class HeaderLimitsTest {
                 val rnd = kotlin.random.Random(1)
                 val answers =
                     (0 until n).map {
-                        val v = String(CharArray(62_000) { "~^|`{}<>\\".random(rnd) })
+                        val v = CharArray(62_000) { "~^|`{}<>\\".random(rnd) }.concatToString()
                         async {
                             p.client
                                 .request(
