@@ -35,7 +35,11 @@ if [ "$target" = "$host" ] && [ -n "$san" ] && [ "${KSL_TSAN:-0}" != 1 ] && [ -z
   bash "$root/tools/fuzz/ksl/build.sh" >/dev/null
   replay="$out/ksl-corpus-replay"; rm -rf "$replay"; mkdir -p "$replay"
   cp tools/fuzz/corpus/ksl.parsers/* "$replay"/
-  "$root/build/fuzz-ksl/ksl_fuzz" -runs=0 -timeout=60 "$replay" | grep '^INFO: loaded'
+  # the exit status decides (a finding aborts the harness); libFuzzer reports on stderr, the macOS driver on stdout
+  if ! "$root/build/fuzz-ksl/ksl_fuzz" -runs=0 -timeout=60 "$replay" > "$out/ksl-corpus-replay.log" 2>&1; then
+    cat "$out/ksl-corpus-replay.log"; echo "ksl corpus replay failed"; exit 1
+  fi
+  echo "ksl corpus replay: $(find "$replay" -type f | wc -l | tr -d ' ') inputs, no finding"
 fi
 # Apple's resolver fallback (no mDNSResponder): ksl_resolve still answers from the hosts file (macOS host runs only)
 case "$target:$(uname -s):${KSL_TSAN:-0}" in macos-*:Darwin:0) bash "$root/tools/check/ksl-resolve-fallback.sh" ;; esac

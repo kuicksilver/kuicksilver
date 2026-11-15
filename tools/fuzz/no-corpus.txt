@@ -1,0 +1,13 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Campaign targets (tools/fuzz/campaign.sh) with no committed corpus in tools/fuzz/corpus/<target>/ yet. CommittedCorpusReplayTest
+# fails for a target that has none and is not listed here, and for a listed target that has one: run
+# `tools/fuzz/campaign.sh minimize <target>` after its first campaign and remove its line.
+quic.zeroRttConnection
+http2.frames
+http2.hpackDecode
+http2.connectionServer
+http2.connectionClient
+http2.hpackRoundTrip
+ktor-network.inflate
+ktor-network.wsGuard

@@ -273,7 +273,8 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run as regression tests
   in `jvmTest`: the seeds and reproducers in the resources through Jazzer, and the campaigns' minimized corpora in
   `tools/fuzz/corpus/<target>/` through `CommittedCorpusReplayTest` (in each module's `FuzzCase.kt`, for the module's rows
-  of the campaign.sh table); `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan.
+  of the campaign.sh table; a target without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test
+  fails for one that is in neither); `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan.
   `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds. Long runs use
   `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
