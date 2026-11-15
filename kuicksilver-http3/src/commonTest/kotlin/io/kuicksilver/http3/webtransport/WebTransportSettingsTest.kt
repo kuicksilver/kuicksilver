@@ -86,14 +86,14 @@ class WebTransportSettingsTest {
                 Http3Connection.server(s, wtOn)
                 val m = peerSettingsOf(c)
                 assertEquals(1L, m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02])
-                assertEquals(16L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
+                assertEquals(4L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
                 assertEquals(1L, m[SettingsId.WT_ENABLED])
                 assertEquals(1L, m[SettingsId.ENABLE_CONNECT_PROTOCOL])
                 assertEquals(1L, m[SettingsId.H3_DATAGRAM])
                 // WebTransport flow control declared with the default limits (section 5.5)
-                assertEquals(15_728_640L, m[SettingsId.WT_INITIAL_MAX_DATA])
-                assertEquals(100L, m[SettingsId.WT_INITIAL_MAX_STREAMS_UNI])
-                assertEquals(100L, m[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI])
+                assertEquals(3_932_160L, m[SettingsId.WT_INITIAL_MAX_DATA])
+                assertEquals(24L, m[SettingsId.WT_INITIAL_MAX_STREAMS_UNI])
+                assertEquals(24L, m[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI])
             }
         }
 

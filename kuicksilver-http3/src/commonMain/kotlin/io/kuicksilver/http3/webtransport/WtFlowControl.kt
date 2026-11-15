@@ -7,6 +7,7 @@ import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.H3Session
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -113,6 +114,12 @@ internal class WtSessionFlow(
     peerBidi: Long,
     peerUni: Long,
     peerData: Long,
+    /**
+     * draft-16 closes the session on a WT_MAX_DATA or WT_MAX_STREAMS "that does not increase" the value previously
+     * received (sections 5.6.2, 5.6.4); draft-14 only on one "less than a previously received value" (its sections 5.6.2,
+     * 5.6.4), so an equal one is accepted and changes nothing.
+     */
+    private val equalLimitIsViolation: Boolean = true,
     /** Queues a capsule on the CONNECT stream; never suspends. */
     private val sendCapsule: (Capsule) -> Unit,
 ) {
@@ -154,6 +161,9 @@ internal class WtSessionFlow(
     private var received = 0L
     private var consumed = 0L
 
+    /** Streams of the kind we opened, and that the peer opened, as counted (a test hook). */
+    fun openedForTest(bidi: Boolean): Pair<Long, Long> = opened[if (bidi) 0 else 1] to peerOpened[if (bidi) 0 else 1]
+
     /** The peer's stream limit of the kind (a test hook). */
     fun peerMaxStreamsForTest(bidi: Boolean): Long = peerMaxStreams[if (bidi) 0 else 1]
 
@@ -192,15 +202,28 @@ internal class WtSessionFlow(
         }
     }
 
+    /** Waiters look again (a stream's sending ended: its [takeData] returns 0). */
+    fun wake() {
+        credit.value++
+    }
+
     /** A stream [takeStream] counted was never opened (the transport refused it): the peer never sees it, so it is not counted. */
     fun returnStream(bidi: Boolean) {
         opened[if (bidi) 0 else 1]--
+        changed()
     }
 
-    /** Waits until the peer's data limit leaves room, and takes up to [want] bytes of it; returns how many. */
-    suspend fun takeData(want: Int): Int {
+    /**
+     * Waits until the peer's data limit leaves room, and takes up to [want] bytes of it; returns how many, or 0 once
+     * [ended] says the stream can send nothing more (its final size is fixed): nothing is taken then.
+     */
+    suspend fun takeData(
+        want: Int,
+        ended: () -> Boolean = { false },
+    ): Int {
         while (true) {
             over?.let { throw it }
+            if (ended()) return 0
             val room = peerMaxData - sentData
             if (room > 0) {
                 val n = minOf(want.toLong(), room).toInt()
@@ -282,9 +305,35 @@ internal class WtSessionFlow(
         consumed += n
         changed()
         if (ourMaxData - consumed < (window + 1) / 2) {
-            ourMaxData = consumed + window
-            send(WtFlow.capsule(WtFlow.MAX_DATA, ourMaxData))
+            // a variable-length integer holds at most 2^62-1: the limit stops there, and goes out only when it grew
+            val next = if (consumed > VarInt.MAX - window) VarInt.MAX else consumed + window
+            if (next > ourMaxData) {
+                ourMaxData = next
+                send(WtFlow.capsule(WtFlow.MAX_DATA, ourMaxData))
+            }
         }
+    }
+
+    /**
+     * Streams the router rejected for this session before it existed (over its buffering bounds): the peer counted them,
+     * so they are opened and closed here, and their [bytes] received and consumed; returns the violation, if any.
+     */
+    fun onRejected(
+        bidi: Int,
+        uni: Int,
+        bytes: Long,
+    ): String? {
+        repeat(bidi) {
+            onPeerStream(true)?.let { return it }
+            onPeerStreamClosed(true)
+        }
+        repeat(uni) {
+            onPeerStream(false)?.let { return it }
+            onPeerStreamClosed(false)
+        }
+        onReceived(bytes)?.let { return it }
+        onConsumed(bytes)
+        return null
     }
 
     /** A flow-control capsule from the peer (section 5.6); returns the violation that closes the session, if any. */
@@ -296,7 +345,10 @@ internal class WtSessionFlow(
             WtFlow.MAX_DATA -> {
                 // section 5.6.4: "If an endpoint receives a WT_MAX_DATA capsule with a Maximum Data value that does not
                 // increase the Maximum Data value previously received, it MUST close the WebTransport session"
-                if (value <= peerMaxData) return "WT_MAX_DATA $value does not increase the limit $peerMaxData"
+                if (value < peerMaxData || (equalLimitIsViolation && value == peerMaxData)) {
+                    return "WT_MAX_DATA $value does not increase the limit $peerMaxData"
+                }
+                if (value == peerMaxData) return null
                 peerMaxData = value
                 credit.value++
                 changed()
@@ -307,7 +359,10 @@ internal class WtSessionFlow(
                 // section 5.6.2: "Recipients of a capsule with a Maximum Streams value larger than this limit MUST close the
                 // WebTransport session", and one "that does not increase the Maximum Streams value previously received"
                 if (value > WtFlow.MAX_STREAM_COUNT) return "WT_MAX_STREAMS $value is beyond 2^60"
-                if (value <= peerMaxStreams[i]) return "WT_MAX_STREAMS $value does not increase the limit ${peerMaxStreams[i]}"
+                if (value < peerMaxStreams[i] || (equalLimitIsViolation && value == peerMaxStreams[i])) {
+                    return "WT_MAX_STREAMS $value does not increase the limit ${peerMaxStreams[i]}"
+                }
+                if (value == peerMaxStreams[i]) return null
                 peerMaxStreams[i] = value
                 credit.value++
                 changed()
@@ -340,6 +395,7 @@ internal class WtSessionFlow(
                 peerBidi = peer[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI] ?: 0L,
                 peerUni = peer[SettingsId.WT_INITIAL_MAX_STREAMS_UNI] ?: 0L,
                 peerData = peer[SettingsId.WT_INITIAL_MAX_DATA] ?: 0L,
+                equalLimitIsViolation = version != WtVersion.Draft14,
                 sendCapsule = send,
             )
         }
@@ -350,10 +406,11 @@ internal class WtSessionFlow(
 }
 
 /**
- * The count of one stream's body bytes from the peer against the session's limit (section 5.4): what was taken from the
- * transport, or the final size without the header once the peer's FIN or reset told it, whichever is larger, so a stream
- * the application never read, or stopped, counts what the peer sent. Made when the stream reaches its session, accepted
- * or not. Session dispatcher only.
+ * The count of one stream's body bytes from the peer against the session's limit (section 5.4). Received: the most the
+ * peer is known to have sent, without the header: the highest offset the transport received (read or not, in order or
+ * not), the bytes taken from it, or the final size once its FIN or reset told it. Consumed (the credit given back):
+ * what the application read, or everything received once nobody will read it (the peer reset the stream, we stopped
+ * reading). Made when the stream reaches its session, accepted or not. Session dispatcher only.
  */
 internal class WtInCount(
     private val flow: WtSessionFlow,
@@ -361,10 +418,13 @@ internal class WtInCount(
     private val onViolation: (String) -> Unit,
 ) {
     private var taken = 0L
+    private var highestBody = 0L
     private var finalBody = -1L
+    private var read = 0L
     private var counted = 0L
     private var abandoned = false
     private var consumedCount = 0L
+    private val watchers = ArrayList<Job>()
 
     /** [n] more bytes were taken from the transport. */
     fun taken(n: Int) {
@@ -372,9 +432,22 @@ internal class WtInCount(
         update()
     }
 
-    /** The peer's half has final size [size] (header included). */
+    /** The transport received the peer's half up to [offset] (header included). */
+    fun received(offset: Long) {
+        highestBody = maxOf(highestBody, offset - headerLength)
+        update()
+    }
+
+    /** The peer's half has final size [size] (header included): nothing more will come, the watchers stop. */
     fun final(size: Long) {
         finalBody = maxOf(0L, size - headerLength)
+        update()
+        stop()
+    }
+
+    /** The application read [n] more bytes. */
+    fun read(n: Long) {
+        read += n
         update()
     }
 
@@ -384,14 +457,20 @@ internal class WtInCount(
         update()
     }
 
+    /** The stream is gone from the session: the watchers of its offsets stop. */
+    fun stop() {
+        for (w in watchers) w.cancel()
+        watchers.clear()
+    }
+
     private fun update() {
-        val target = maxOf(taken, finalBody)
+        val target = maxOf(taken, highestBody, finalBody)
         if (target > counted) {
             val delta = target - counted
             counted = target
             flow.onReceived(delta)?.let(onViolation)
         }
-        val consumed = if (abandoned) target else taken
+        val consumed = if (abandoned) target else minOf(read, target)
         if (consumed > consumedCount) {
             flow.onConsumed(consumed - consumedCount)
             consumedCount = consumed
@@ -399,7 +478,8 @@ internal class WtInCount(
     }
 
     companion object {
-        /** A count for [st] on [h3]'s session scope; it learns the final size when the transport does. */
+        /** A count for [st] on [h3]'s session scope; it follows the transport's received offset and final size. */
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         fun start(
             h3: H3Session,
             st: io.kuicksilver.quic.QuicStream,
@@ -408,11 +488,12 @@ internal class WtInCount(
             onViolation: (String) -> Unit,
         ): WtInCount {
             val c = WtInCount(flow, headerLength, onViolation)
-            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            h3.scope.launch {
-                val f = runCatching { st.receivedFinalSize?.await() }.getOrNull() ?: return@launch
-                c.final(f)
-            }
+            c.watchers +=
+                h3.scope.launch {
+                    val f = runCatching { st.receivedFinalSize?.await() }.getOrNull() ?: return@launch
+                    c.final(f)
+                }
+            st.receivedOffset?.let { offsets -> c.watchers += h3.scope.launch { offsets.collect { c.received(it) } } }
             return c
         }
     }

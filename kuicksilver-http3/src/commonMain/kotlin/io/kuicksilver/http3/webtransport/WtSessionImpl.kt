@@ -39,11 +39,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -176,6 +176,14 @@ internal class WtSessionImpl(
         flow?.onPeerStream(bidi)?.let { flowControlError(it) }
     }
 
+    override fun onRejected(
+        bidi: Int,
+        uni: Int,
+        bytes: Long,
+    ) {
+        flow?.onRejected(bidi, uni, bytes)?.let { flowControlError(it) }
+    }
+
     /**
      * The peer broke flow control: section 5 says it "MUST close the WebTransport session with a WT_FLOW_CONTROL_ERROR
      * error code", which, as an HTTP/3 code and no application code, ends the CONNECT stream with RESET_STREAM and
@@ -260,7 +268,11 @@ internal class WtSessionImpl(
                 bidiIn.close()
                 uniIn.close()
                 for (ch in listOf(bidiIn to true, uniIn to false)) {
-                    while (true) goneRaw((ch.first.tryReceive().getOrNull() ?: break).stream, ch.second)
+                    while (true) {
+                        val q = ch.first.tryReceive().getOrNull() ?: break
+                        q.count?.stop()
+                        goneRaw(q.stream, ch.second)
+                    }
                 }
                 flow?.end(sessionClosed())
                 capsulesOut.close()
@@ -414,55 +426,68 @@ internal class WtSessionImpl(
             s
         }
 
+    /**
+     * Opens a stream: its stream credit (section 5.6.2: "An endpoint MUST NOT open more streams than permitted by the
+     * current stream limit set by its peer"), the QUIC stream, then its whole header, as one unit on the connection's
+     * scope that the caller only waits for. Section 5.3 counts the streams both sides agree on, so the unit keeps the
+     * count exact: a slot taken for a stream that never existed goes back, and a stream that exists gets its whole header
+     * out, then is reset keeping it when nobody wants it any more (the caller gave up, or the session ended).
+     */
     private suspend fun open(bidi: Boolean): WtStreamImpl {
         if (closedInfo.isCompleted) throw sessionClosed()
-        // section 5.6.2: "An endpoint MUST NOT open more streams than permitted by the current stream limit set by its peer";
-        // the wait ends with the session (flow.end)
-        flow?.let { f -> withContext(h3.dispatcher) { f.takeStream(bidi) } }
-        // the wait for stream credit ends when the session does
-        val st =
-            coroutineScope {
-                val opening =
-                    async {
-                        try {
-                            if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority)
-                        } catch (e: QuicException) {
-                            throw h3.map(e)
-                        } catch (e: Throwable) {
-                            // no stream: the peer never sees one, so the session's count does not keep it either
-                            flow?.let { f -> withContext(NonCancellable + h3.dispatcher) { f.returnStream(bidi) } }
-                            throw e
-                        }
+        val header = VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId)
+
+        fun unwanted(st: QuicStream) {
+            // section 4.4: RESET_STREAM_AT keeping the header, so the peer counts the stream as we do
+            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
+            if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+        }
+        val unit =
+            h3.scope.async {
+                val f = flow
+                f?.takeStream(bidi) // the wait ends with the session (flow.end); nothing is taken before it returns
+                val st =
+                    try {
+                        val quicOpen = suspend { if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority) }
+                        quicOpen()
+                    } catch (e: Throwable) {
+                        // no stream the peer will see: the slot goes back
+                        f?.returnStream(bidi)
+                        throw if (e is QuicException) h3.map(e) else e
                     }
-                select {
-                    opening.onAwait { it }
-                    closedInfo.onAwait {
-                        opening.cancel()
-                        // opened just as the session closed: the stream is not handed out, so it is ended here
-                        opening.invokeOnCompletion { e ->
-                            if (e == null) {
-                                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                                opening.getCompleted().let { st ->
-                                    // nothing written yet: RESET_STREAM_AT with reliable size 0 (section 4.4)
-                                    runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, 0) }
-                                    if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
-                                }
-                            }
-                        }
-                        throw sessionClosed()
+                withContext(NonCancellable) {
+                    try {
+                        st.output.writeFully(header)
+                        st.output.flush()
+                    } catch (e: Throwable) {
+                        // only the connection's end gets here (nobody stops a stream it has not seen): the header goes reliably
+                        // as far as it was written
+                        runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
+                        throw h3.map(e)
                     }
                 }
+                // given up while the header went out: the result would be dropped, so the stream is ended here
+                if (!isActive) {
+                    unwanted(st)
+                    throw CancellationException("the opening of a WebTransport stream was given up")
+                }
+                st
             }
-        val header = VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId)
-        try {
-            st.output.writeFully(header)
-            st.output.flush()
-        } catch (e: Throwable) {
-            // section 4.4: RESET_STREAM_AT with the header's size as the reliable size, which the transport cuts to what was
-            // written: whatever part of the header got out is still delivered
-            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
-            throw if (e is CancellationException) e else h3.map(e)
-        }
+        val st =
+            try {
+                select<QuicStream> {
+                    unit.onAwait { it }
+                    closedInfo.onAwait { throw sessionClosed() }
+                }
+            } catch (e: Throwable) {
+                // the caller gave up, or the session closed: an opening still waiting stops; a stream it opened is ended
+                unit.cancel()
+                unit.invokeOnCompletion { ex ->
+                    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                    if (ex == null) unwanted(unit.getCompleted())
+                }
+                throw e
+            }
         return track(st, readable = bidi, writable = true, headerLength = header.size)
     }
 

@@ -701,6 +701,76 @@ class EarlyDataTest {
 
     private val maxField = io.kuicksilver.http3.frame.SettingsId.MAX_FIELD_SECTION_SIZE
 
+    /**
+     * draft-ietf-webtrans-http3-16 section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS
+     * frame received in the resumed connection reduces any flow control values from the cached previous values": a
+     * server that accepted 0-RTT and then sends a lower SETTINGS_WT_INITIAL_MAX_DATA, or omits it.
+     */
+    @Test fun negative_webTransportFlowControlLoweredAfter0RttIsSettingsError(): Unit =
+        runBlocking {
+            val data = io.kuicksilver.http3.frame.SettingsId.WT_INITIAL_MAX_DATA
+            val changes =
+                listOf<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>>(
+                    { l -> l.map { if (it.first == data) it.first to it.second - 1 else it } },
+                    { l -> l.filter { it.first != data } },
+                )
+            for (change in changes) {
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
+                    enableConnectProtocol = true
+                    webTransport = true
+                }.use { f ->
+                    withTimeout(20.seconds) {
+                        f.start()
+                        f.warmUp()
+                    }
+                    H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                    try {
+                        val end: Throwable =
+                            withTimeout(20.seconds) {
+                                try {
+                                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                                    if (runCatching { c.quic.awaitHandshake() }.isSuccess) {
+                                        assertEquals(true, c.quic.earlyDataAccepted, "the server did not accept 0-RTT")
+                                    }
+                                    c.closed.await()
+                                } catch (e: io.kuicksilver.http3.Http3Exception) {
+                                    e
+                                } catch (e: io.kuicksilver.quic.QuicException) {
+                                    e
+                                }
+                            }
+                        val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "${end::class.simpleName}: $end")
+                        assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code, "$e")
+                    } finally {
+                        H3Session.createdForTest = null
+                    }
+                }
+            }
+        }
+
+    /**
+     * Section 3.2: "If the server accepts 0-RTT, the server MUST NOT reduce these initial flow control values": a server
+     * whose WebTransport flow-control values or session limit changed accepts no early data from a ticket issued before;
+     * one with the same values does.
+     */
+    @Test fun webTransportFlowControlChangeInvalidatesEarlyData(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val issuer = io.kuicksilver.http3.webtransport.wtOn
+                val changed =
+                    listOf<Http3Settings.Builder.() -> Unit>(
+                        { webTransportInitialMaxData = 1000 },
+                        { webTransportInitialMaxStreamsBidi = 3 },
+                        { webTransportInitialMaxStreamsUni = 3 },
+                        { webTransportMaxSessions = 2 },
+                    )
+                for (change in changed) {
+                    assertEquals(false, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer.toBuilder().apply(change).build()))
+                }
+                assertEquals(true, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer))
+            }
+        }
+
     @Test fun earlyGetIsAnsweredIn0Rtt(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->

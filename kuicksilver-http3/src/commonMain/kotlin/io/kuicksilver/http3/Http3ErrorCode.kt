@@ -71,7 +71,7 @@ public object Http3ErrorCode {
     /** WT_SESSION_GONE: resets and stops the streams of a WebTransport session that closed (section 6). */
     public const val WT_SESSION_GONE: Long = 0x170d7b68
 
-    /** WT_FLOW_CONTROL_ERROR: WebTransport flow control was violated (section 5); not sent by this library, which has none. */
+    /** WT_FLOW_CONTROL_ERROR: WebTransport flow control was violated (section 5); the CONNECT stream is reset with it. */
     public const val WT_FLOW_CONTROL_ERROR: Long = 0x045d4487
 
     /** WT_ALPN_ERROR: the server chose a `WT-Protocol` the client did not offer (section 3.3). */

@@ -15,8 +15,9 @@ import kotlinx.io.IOException
 
 /**
  * A WebTransport session over HTTP/3 (draft-ietf-webtrans-http3-16): an Extended CONNECT stream that groups
- * WebTransport streams and datagrams. One session per connection: there is no WebTransport flow control, and without it
- * a client keeps to one session and a server refuses a second with H3_REQUEST_REJECTED (section 5.1).
+ * WebTransport streams and datagrams. With WebTransport flow control (section 5, on when both sides declare it in their
+ * SETTINGS) its streams and stream data stay within the peer's limits and a violation by the peer closes the session
+ * ([WebTransportException.FlowControl]); without it a connection carries one session (section 5.1).
  *
  * The session ends with [close] on either side (WT_CLOSE_SESSION with a code and a reason, then FIN), with the peer's
  * FIN on the CONNECT stream (code 0), or with a failure (a malformed capsule, a reset CONNECT stream, a lost

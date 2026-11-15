@@ -4,6 +4,7 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
@@ -48,9 +49,9 @@ import kotlin.time.Duration.Companion.seconds
 
 /** [wtOn] with WebTransport flow-control limits of our own. */
 internal fun wtLimits(
-    bidi: Long = 100,
-    uni: Long = 100,
-    data: Long = 15_728_640,
+    bidi: Long = 24,
+    uni: Long = 24,
+    data: Long = 3_932_160,
 ): Http3Settings =
     wtOn
         .toBuilder()
@@ -72,6 +73,9 @@ internal fun wtClientFlowSettings(
             SettingsId.WT_INITIAL_MAX_STREAMS_UNI to uni,
             SettingsId.WT_INITIAL_MAX_DATA to data,
         )
+
+/** A draft-14 client: it declares flow control by SETTINGS_WT_MAX_SESSIONS above 1 alone (its section 5.1). */
+internal val draft14Client: List<Pair<Long, Long>> = listOf(SettingsId.H3_DATAGRAM to 1L, SettingsId.WT_MAX_SESSIONS_DRAFT14 to 4L)
 
 /** A capsule on the wire (RFC 9297 section 3.2). */
 internal fun capsuleBytes(
@@ -102,11 +106,12 @@ internal suspend fun CoroutineScope.rawSession(
     c: QuicConnection,
     server: Http3Connection,
     raw: RawPeer,
+    token: String = WtTokens.H3,
 ): Pair<QuicStream, WebTransportSession> {
     val accepted = CompletableDeferred<WebTransportSession>()
     launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
     val st = c.openBidi()
-    st.output.writeFully(raw.wtConnect(st))
+    st.output.writeFully(raw.wtConnect(st, token))
     st.output.flush()
     assertEquals("200", readHeaders(st)[":status"])
     return st to withTimeout(5.seconds) { accepted.await() }
@@ -153,7 +158,7 @@ class WebTransportFlowControlTest {
         assertEquals(7L, ours[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI])
         assertNull(ours[SettingsId.WT_INITIAL_MAX_STREAMS_UNI])
         assertEquals(9L, ours[SettingsId.WT_INITIAL_MAX_DATA])
-        assertEquals(16L, ours[SettingsId.WT_MAX_SESSIONS_DRAFT14])
+        assertEquals(4L, ours[SettingsId.WT_MAX_SESSIONS_DRAFT14])
         // without flow control a draft-14 client is told one session, and nothing declares the intent
         val none = WtSettings.ours(isServer = true, settings = wtLimits(0, 0, 0)).toMap()
         assertEquals(1L, none[SettingsId.WT_MAX_SESSIONS_DRAFT14])
@@ -298,10 +303,214 @@ class WebTransportFlowControlTest {
             }
         }
 
+    /**
+     * Section 5.4, "both endpoints agree on how much WebTransport session flow control credit was consumed": after the
+     * peer's STOP_SENDING fixed the final size, the application writing on takes no credit it never gives back.
+     */
+    @Test fun negative_writeAfterThePeersStopTakesNoCredit() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val st = session.openUni()
+                st.output.writeFully(ByteArray(100))
+                st.output.flush()
+                val r = s.acceptUni()
+                p.server.awaitFlow(s) { it.receiveDataForTest.second == 100L }
+                r.stopSending(4)
+                withTimeout(5.seconds) { (st as WtStreamImpl).st.sentFinalSize!!.await() }
+                runCatching {
+                    st.output.writeFully(ByteArray(5000))
+                    st.output.flush()
+                }
+                val second = session.openUni()
+                second.output.writeFully(ByteArray(10))
+                second.output.flushAndClose()
+                assertEquals(
+                    10,
+                    s
+                        .acceptUni()
+                        .input
+                        .readAllBytes()
+                        .size,
+                )
+                awaitAgreement(p.client, session, p.server, s)
+                assertEquals(110L, withContext(p.client.session.dispatcher) { assertNotNull(session.flow).sendDataForTest.second })
+            }
+        }
+
+    /** A writer waiting for credit when the peer stops the stream: the wait ends, the credit taken comes back. */
+    @Test fun negative_stopWhileWaitingForCreditGivesItBack() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 1000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val st = session.openUni()
+                val writing =
+                    launch {
+                        runCatching {
+                            st.output.writeFully(ByteArray(5000))
+                            st.output.flush()
+                        }
+                    }
+                p.client.awaitFlow(session) { (it.sentForTest[WtFlow.DATA_BLOCKED] ?: 0) >= 1 }
+                s.acceptUni().stopSending(4) // never read: the 1000 bytes are abandoned, so consumed
+                writing.join()
+                val second = session.openUni()
+                second.output.writeFully(ByteArray(10))
+                second.output.flushAndClose()
+                assertEquals(10, withTimeout(5.seconds) { s.acceptUni().input.readAllBytes() }.size)
+                awaitAgreement(p.client, session, p.server, s)
+            }
+        }
+
+    /**
+     * Section 5.3: both sides count the same streams. An open given up while it waits for the session's stream credit
+     * takes no slot the peer never sees.
+     */
+    @Test fun negative_openCancelledWhileWaitingForTheSessionsCreditTakesNoSlot() = cancelledOpen(waitsForQuic = false)
+
+    /** The same while it waits for the connection's (the QUIC peer's MAX_STREAMS), its session slot already taken. */
+    @Test fun negative_openCancelledWhileWaitingForTheConnectionsCreditTakesNoSlot() = cancelledOpen(waitsForQuic = true)
+
+    private fun cancelledOpen(waitsForQuic: Boolean) =
+        h3Test {
+            // waiting for the QUIC credit: the server grants the client 4 unidirectional QUIC streams, its 3 HTTP/3 streams
+            // and one more
+            val quic =
+                io.kuicksilver.quic.quicConfig {
+                    resetStreamAt = true
+                    if (waitsForQuic) maxUniStreams = 4
+                }
+            val server = wtLimits(uni = if (waitsForQuic) 5 else 1).toBuilder().apply { grease = false }.build()
+            val client = wtOn.toBuilder().apply { grease = false }.build()
+            H3Pair.open(clientSettings = client, serverSettings = server, serverQuic = quic).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val first = session.openUni()
+                val waiting = async { session.openUni() }
+                if (waitsForQuic) {
+                    // the session's slot taken: it waits for the QUIC credit now
+                    p.client.awaitFlow(session) { it.openedForTest(false).first == 2L }
+                } else {
+                    p.client.awaitFlow(session) { (it.sentForTest[WtFlow.STREAMS_BLOCKED_UNI] ?: 0) >= 1 }
+                }
+                waiting.cancel()
+                p.client.awaitFlow(session) { it.openedForTest(false).first == 1L }
+                if (waitsForQuic) {
+                    // the QUIC credit of a retired stream may come late (the server batches MAX_STREAMS): the counts agree
+                    first.output.writeFully("x".encodeToByteArray())
+                    first.output.flushAndClose()
+                    assertEquals(
+                        "x",
+                        s
+                            .acceptUni()
+                            .input
+                            .readAllBytes()
+                            .decodeToString(),
+                    )
+                    assertEquals(1L, withContext(p.server.session.dispatcher) { assertNotNull(s.flow).openedForTest(false).second })
+                    return@useScoped
+                }
+                first.output.flushAndClose()
+                assertEquals(
+                    0,
+                    s
+                        .acceptUni()
+                        .input
+                        .readAllBytes()
+                        .size,
+                )
+                val next = withTimeout(5.seconds) { session.openUni() }
+                next.output.writeFully("x".encodeToByteArray())
+                next.output.flushAndClose()
+                assertEquals(
+                    "x",
+                    s
+                        .acceptUni()
+                        .input
+                        .readAllBytes()
+                        .decodeToString(),
+                )
+                val opened = withContext(p.client.session.dispatcher) { assertNotNull(session.flow).openedForTest(false).first }
+                val peer = withContext(p.server.session.dispatcher) { assertNotNull(s.flow).openedForTest(false).second }
+                assertEquals(2L, opened)
+                assertEquals(opened, peer, "client and server count the same streams")
+            }
+        }
+
+    /**
+     * Randomized through the real streams: writes, the writer's reset, the reader's stop, cancelled inputs and outputs, and
+     * clean ends in random order on random streams; once everything ended both sides count the same bytes and streams,
+     * and neither keeps credit it will never get back.
+     */
+    @Test fun randomizedStreamEndingsLeakNoCredit() =
+        h3Test {
+            for (seed in 0 until 4) {
+                H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 20_000)).useScoped { p ->
+                    val rnd = kotlin.random.Random(seed)
+                    val serverSide = CompletableDeferred<WebTransportSession>()
+                    launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                    val session = p.client.webTransport(wtReq())
+                    val s = withTimeout(5.seconds) { serverSide.await() }
+                    repeat(8) {
+                        val st = session.openUni()
+                        val peer = withTimeout(5.seconds) { s.acceptUni() }
+                        val reader = launch { runCatching { peer.input.readAllBytes() } }
+                        val writer =
+                            launch {
+                                runCatching {
+                                    repeat(rnd.nextInt(1, 6)) { st.output.writeFully(ByteArray(rnd.nextInt(1, 9000))) }
+                                    st.output.flush()
+                                }
+                            }
+                        when (rnd.nextInt(5)) {
+                            0 -> {
+                                st.reset(1)
+                            }
+
+                            1 -> {
+                                peer.stopSending(2)
+                            }
+
+                            2 -> {
+                                peer.input.cancel(null)
+                            }
+
+                            3 -> {
+                                st.output.cancel(null)
+                            }
+
+                            else -> {}
+                        }
+                        writer.join()
+                        runCatching { st.output.flushAndClose() }
+                        reader.join()
+                    }
+                    awaitAgreement(p.client, session, p.server, s)
+                    val opened = withContext(p.client.session.dispatcher) { assertNotNull(session.flow).openedForTest(false).first }
+                    val peerOpened = withContext(p.server.session.dispatcher) { assertNotNull(s.flow).openedForTest(false).second }
+                    assertEquals(opened, peerOpened, "seed $seed")
+                    // a last stream still finds room: nothing stayed taken
+                    val last = session.openUni()
+                    last.output.writeFully(ByteArray(10_000))
+                    last.output.flushAndClose()
+                    assertEquals(10_000, withTimeout(5.seconds) { s.acceptUni().input.readAllBytes() }.size, "seed $seed")
+                }
+            }
+        }
+
     /** A raw client that declares flow control, its session on a server with [serverSettings], then [block]. */
     private fun rawFlowTest(
         serverSettings: Http3Settings = wtOn,
         clientSettings: List<Pair<Long, Long>> = wtClientFlowSettings(),
+        connectToken: String = WtTokens.H3,
         block: suspend CoroutineScope.(c: QuicConnection, raw: RawPeer, connect: QuicStream, session: WebTransportSession) -> Unit,
     ) = h3Test {
         QuicPair.open(H3Fixtures.quic).useScoped { q ->
@@ -309,7 +518,7 @@ class WebTransportFlowControlTest {
             val server = Http3Connection.server(s, serverSettings)
             val raw = RawPeer(c)
             raw.openControl(clientSettings)
-            val (connect, session) = rawSession(c, server, raw)
+            val (connect, session) = rawSession(c, server, raw, connectToken)
             block(c, raw, connect, session)
             assertFalse(server.closed.isCompleted) // a session error, not a connection error
         }
@@ -343,6 +552,72 @@ class WebTransportFlowControlTest {
     @Test fun negative_dataBeyondTheLimitClosesTheSession() =
         rawFlowTest(serverSettings = wtLimits(data = 100)) { _, raw, connect, session ->
             raw.uni(StreamType.WT_UNI, VarInt.encode(connect.id) + ByteArray(1000), fin = true)
+            assertFlowControlClose(connect, session)
+        }
+
+    /**
+     * Section 5.6.4 on bytes nobody has read: a stream without FIN that the application never accepts still counts what
+     * the transport received (its highest offset), so the session closes when that passes the limit.
+     */
+    @Test fun negative_unreadBytesWithoutFinBeyondTheLimitCloseTheSession() =
+        rawFlowTest(serverSettings = wtLimits(data = 100)) { _, raw, connect, session ->
+            raw.uni(StreamType.WT_UNI, VarInt.encode(connect.id) + ByteArray(150), fin = false)
+            assertFlowControlClose(connect, session)
+        }
+
+    /**
+     * Streams the router rejects before their session exists (beyond its buffering bound) still count against the
+     * session's flow control once it does (section 5.6.2: the limit "includes streams that have been closed"), their
+     * bytes too (section 5.4).
+     */
+    @Test fun streamsRejectedBeforeTheSessionCount() =
+        rejectedBeforeTheSession(uniLimit = 24) { _, session, server ->
+            server.awaitFlow(session) { it.openedForTest(false).second == 18L && it.receiveDataForTest.second == 180L }
+            assertFalse(session.closed.isCompleted)
+        }
+
+    @Test fun negative_streamsRejectedBeforeTheSessionBeyondItsLimitCloseIt() =
+        rejectedBeforeTheSession(uniLimit = 17) { connect, session, _ -> assertFlowControlClose(connect, session) }
+
+    /** A raw client sends 18 streams of 10 bytes for its session before the server accepts it: 16 wait, 2 are rejected. */
+    private fun rejectedBeforeTheSession(
+        uniLimit: Long,
+        check: suspend (QuicStream, WebTransportSession, Http3Connection) -> Unit,
+    ) = h3Test {
+        QuicPair.open(H3Fixtures.quic).useScoped { q ->
+            val (c, s) = q.connect(H3Fixtures.quic)
+            val server = Http3Connection.server(s, wtLimits(uni = uniLimit))
+            val raw = RawPeer(c)
+            raw.openControl(wtClientFlowSettings())
+            val connect = c.openBidi()
+            connect.output.writeFully(raw.wtConnect(connect))
+            connect.output.flush()
+            val request = server.acceptRequest()
+            repeat(18) { raw.uni(StreamType.WT_UNI, VarInt.encode(connect.id) + ByteArray(10), fin = true) }
+            withTimeout(5.seconds) {
+                server.session.wt.bufferedCount
+                    .first { it == WtStreamRouter.MAX_BUFFERED_STREAMS }
+            }
+            val session = request.acceptWebTransport()
+            assertEquals("200", readHeaders(connect)[":status"])
+            check(connect, session, server)
+        }
+    }
+
+    /**
+     * draft-14 closes the session only on a WT_MAX_DATA or WT_MAX_STREAMS "less than a previously received value"
+     * (its sections 5.6.2, 5.6.4): an equal one changes nothing, a lower one closes it.
+     */
+    @Test fun draft14AcceptsAnEqualLimitAndRefusesALowerOne() =
+        rawFlowTest(clientSettings = draft14Client, connectToken = WtTokens.LEGACY) { _, _, connect, session ->
+            assertEquals(WtVersion.Draft14, (session as WtSessionImpl).version)
+            connect.capsule(WtFlow.MAX_DATA, VarInt.encode(1000))
+            connect.capsule(WtFlow.MAX_DATA, VarInt.encode(1000))
+            connect.capsule(WtFlow.MAX_STREAMS_UNI, VarInt.encode(3))
+            connect.capsule(WtFlow.MAX_STREAMS_UNI, VarInt.encode(3))
+            session.openUni().output.flushAndClose() // the raised limit is taken: nothing closed it
+            assertFalse(session.closed.isCompleted)
+            connect.capsule(WtFlow.MAX_DATA, VarInt.encode(999))
             assertFlowControlClose(connect, session)
         }
 

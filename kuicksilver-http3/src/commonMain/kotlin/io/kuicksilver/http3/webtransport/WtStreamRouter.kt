@@ -21,7 +21,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Where the router hands a WebTransport stream once its session exists; called on the session's dispatcher. */
-internal fun interface WtSessionSink {
+internal interface WtSessionSink {
     /**
      * [stream] is positioned after its header (signal or type, then Session ID), which took [headerLength] bytes; [bidi]
      * tells which kind it is.
@@ -31,6 +31,16 @@ internal fun interface WtSessionSink {
         bidi: Boolean,
         headerLength: Int,
     )
+
+    /**
+     * Streams of this session the router rejected before the session existed ([bidi] and [uni] of them) and [bytes] of
+     * their bodies: the peer counted them against the session's flow control, so the session does too.
+     */
+    fun onRejected(
+        bidi: Int,
+        uni: Int,
+        bytes: Long,
+    ) {}
 }
 
 /**
@@ -63,6 +73,15 @@ internal class WtStreamRouter(
     private val sinks = HashMap<Long, WtSessionSink>()
     private val buffered = ArrayList<Buffered>()
     private val closedSessions = ArrayDeque<Long>()
+
+    /** Streams rejected for a session not established yet, by Session ID: handed to it when it registers. */
+    private class Tally {
+        var bidi = 0
+        var uni = 0
+        var bytes = 0L
+    }
+
+    private val tallies = LinkedHashMap<Long, Tally>()
 
     /** How a buffered stream waits out [BUFFER_TIMEOUT]; a test replaces it to end the wait without real time passing. */
     var bufferTimer: suspend (Duration) -> Unit = { delay(it) }
@@ -121,8 +140,12 @@ internal class WtStreamRouter(
             it.onStream(st, bidi, headerLength)
             return
         }
-        if (isGone(sessionId) || buffered.size >= MAX_BUFFERED_STREAMS) {
+        if (isGone(sessionId)) {
             reject(st, bidi)
+            return
+        }
+        if (buffered.size >= MAX_BUFFERED_STREAMS) {
+            rejectCounted(sessionId, st, bidi, headerLength)
             return
         }
         val b = Buffered(sessionId, st, bidi, headerLength)
@@ -133,7 +156,7 @@ internal class WtStreamRouter(
                 bufferTimer(BUFFER_TIMEOUT)
                 if (buffered.remove(b)) {
                     bufferedCount.value = buffered.size
-                    reject(b.stream, b.bidi)
+                    rejectCounted(b.sessionId, b.stream, b.bidi, b.headerLength)
                 }
             }
     }
@@ -148,6 +171,7 @@ internal class WtStreamRouter(
         sink: WtSessionSink,
     ) {
         sinks[sessionId] = sink
+        tallies.remove(sessionId)?.let { sink.onRejected(it.bidi, it.uni, it.bytes) }
         val mine = buffered.filter { it.sessionId == sessionId }
         buffered.removeAll(mine)
         bufferedCount.value = buffered.size
@@ -160,6 +184,7 @@ internal class WtStreamRouter(
     /** [sessionId] ended, or its CONNECT was refused: streams still waiting for it, and later ones, are rejected. */
     fun unregister(sessionId: Long) {
         sinks.remove(sessionId)
+        tallies.remove(sessionId)
         if (sessionId !in closedSessions) {
             closedSessions.addLast(sessionId)
             if (closedSessions.size > MAX_CLOSED_REMEMBERED) closedSessions.removeFirst()
@@ -170,6 +195,34 @@ internal class WtStreamRouter(
         for (b in mine) {
             b.timer?.cancel()
             reject(b.stream, b.bidi)
+        }
+    }
+
+    /**
+     * [reject], for a stream of a session that may still be established (over the buffering bounds): the peer counts it
+     * against that session's flow control (section 5.6.2: the limit "includes streams that have been closed as well as
+     * those that are open"; section 5.4: its bytes by the final size), so it is tallied for the session, or handed to it
+     * when it exists by the time the final size is known. At most [MAX_TALLIES] sessions are tallied; the oldest goes.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun rejectCounted(
+        sessionId: Long,
+        st: QuicStream,
+        bidi: Boolean,
+        headerLength: Int,
+    ) {
+        val t =
+            tallies.getOrPut(sessionId) {
+                if (tallies.size >= MAX_TALLIES) tallies.remove(tallies.keys.first())
+                Tally()
+            }
+        if (bidi) t.bidi++ else t.uni++
+        reject(st, bidi)
+        session.scope.launch {
+            val f = runCatching { st.receivedFinalSize?.await() }.getOrNull() ?: return@launch
+            val bytes = maxOf(0L, f - headerLength)
+            val sink = sinks[sessionId]
+            if (sink != null) sink.onRejected(0, 0, bytes) else tallies[sessionId]?.let { it.bytes += bytes }
         }
     }
 
@@ -192,5 +245,8 @@ internal class WtStreamRouter(
 
         /** Closed or refused sessions remembered, so their late streams are rejected at once instead of buffered. */
         const val MAX_CLOSED_REMEMBERED = 16
+
+        /** Sessions not established yet whose rejected streams are tallied for them. */
+        const val MAX_TALLIES = 16
     }
 }

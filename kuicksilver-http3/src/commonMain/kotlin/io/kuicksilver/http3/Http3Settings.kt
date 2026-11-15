@@ -123,33 +123,39 @@ public class Http3Settings private constructor(
         public var webTransport: Boolean = false
 
         /**
-         * Server: WebTransport sessions accepted at once on one connection when flow control is on (both sides sent a
-         * non-zero `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-16 section 5.1), 1..65535; 16 by default. A
-         * CONNECT beyond it is reset with H3_REQUEST_REJECTED (section 5.2), and a client opens another connection.
+         * WebTransport sessions on one connection when flow control is on (both sides sent a non-zero
+         * `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-16 section 5.1), 1..65535; 4 by default. A server resets a
+         * CONNECT beyond it with H3_REQUEST_REJECTED (section 5.2), and a client opens another connection instead of
+         * putting more on one. The per-session limits below, times this, must fit the QUIC connection's
+         * ([Http3Endpoint] refuses a configuration where they do not): no session can then hold every stream slot or the
+         * whole connection window.
          */
         @ExperimentalKuicksilverApi
-        public var webTransportMaxSessions: Int = 16
+        public var webTransportMaxSessions: Int = 4
 
         /**
-         * Bidirectional streams the peer may open in each WebTransport session (section 5.5.2), 0..2^60; 100 by default. The
-         * limit rises with WT_MAX_STREAMS as the peer's streams end. When this, [webTransportInitialMaxStreamsUni] and
-         * [webTransportInitialMaxData] are all 0, we do not declare WebTransport flow control (section 5.1) and a
-         * connection carries one session.
+         * Bidirectional streams the peer may open in each WebTransport session (section 5.5.2), 0..2^60; 24 by default, so
+         * 4 sessions and their CONNECT streams fit the default 100 QUIC streams. The limit rises with WT_MAX_STREAMS as the
+         * peer's streams end. When this, [webTransportInitialMaxStreamsUni] and [webTransportInitialMaxData] are all 0, we
+         * do not declare WebTransport flow control (section 5.1) and a connection carries one session.
          */
         @ExperimentalKuicksilverApi
-        public var webTransportInitialMaxStreamsBidi: Long = 100
-
-        /** Unidirectional streams the peer may open in each WebTransport session (section 5.5.1), 0..2^60; 100 by default. */
-        @ExperimentalKuicksilverApi
-        public var webTransportInitialMaxStreamsUni: Long = 100
+        public var webTransportInitialMaxStreamsBidi: Long = 24
 
         /**
-         * Stream body bytes the peer may send in each WebTransport session (section 5.5.3), 0..2^62-1; 15 MiB by default
-         * (the default largest QUIC connection window). The limit rises with WT_MAX_DATA as the bytes are taken from the
-         * transport.
+         * Unidirectional streams the peer may open in each WebTransport session (section 5.5.1), 0..2^60; 24 by default
+         * (4 sessions and the peer's 3 HTTP/3 streams fit the default 100 QUIC streams).
          */
         @ExperimentalKuicksilverApi
-        public var webTransportInitialMaxData: Long = 15_728_640
+        public var webTransportInitialMaxStreamsUni: Long = 24
+
+        /**
+         * Stream body bytes the peer may send in each WebTransport session (section 5.5.3), 0..2^62-1; 3 932 160 by
+         * default (4 sessions fill the default largest QUIC connection window, 15 MiB). The limit rises with WT_MAX_DATA
+         * as the application reads the bytes.
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransportInitialMaxData: Long = 3_932_160
 
         /** Advertises a 4096-byte dynamic table and 16 blocked streams (the dynamic table is off by default). */
         public fun enableQpackDynamicTable() {
@@ -225,6 +231,30 @@ public class Http3Settings private constructor(
      */
     internal val webTransportFlowControl: Boolean
         get() = webTransportInitialMaxStreamsBidi != 0L || webTransportInitialMaxStreamsUni != 0L || webTransportInitialMaxData != 0L
+
+    /**
+     * With WebTransport flow control, [webTransportMaxSessions] sessions at their initial limits must fit [quic]'s:
+     * their bidirectional streams and CONNECT streams within `maxBidiStreams`, their unidirectional streams and the
+     * peer's three HTTP/3 streams within `maxUniStreams`, their data within `maxConnectionWindow`. Otherwise one session,
+     * or a few, could hold every stream slot (a new CONNECT among them) or the whole connection window, and starve the
+     * others (draft-ietf-webtrans-http3-16 sections 5.1 and 8). IllegalArgumentException when they do not.
+     */
+    internal fun requireWebTransportFits(quic: io.kuicksilver.quic.QuicConfig) {
+        if (!webTransport || !webTransportFlowControl) return
+        val n = webTransportMaxSessions.toLong()
+        require(webTransportInitialMaxStreamsBidi <= quic.maxBidiStreams / n - 1) {
+            "webTransportMaxSessions ($n) x (webTransportInitialMaxStreamsBidi ($webTransportInitialMaxStreamsBidi) + its " +
+                "CONNECT stream) exceeds QuicConfig.maxBidiStreams (${quic.maxBidiStreams})"
+        }
+        require(webTransportInitialMaxStreamsUni <= (quic.maxUniStreams - 3) / n) {
+            "webTransportMaxSessions ($n) x webTransportInitialMaxStreamsUni ($webTransportInitialMaxStreamsUni) + 3 HTTP/3 " +
+                "streams exceeds QuicConfig.maxUniStreams (${quic.maxUniStreams})"
+        }
+        require(webTransportInitialMaxData <= quic.maxConnectionWindow / n) {
+            "webTransportMaxSessions ($n) x webTransportInitialMaxData ($webTransportInitialMaxData) exceeds " +
+                "QuicConfig.maxConnectionWindow (${quic.maxConnectionWindow})"
+        }
+    }
 
     /**
      * The settings a 0-RTT client relies on (RFC 9114 section 7.2.4.2), bound into the server's tickets: a ticket issued
