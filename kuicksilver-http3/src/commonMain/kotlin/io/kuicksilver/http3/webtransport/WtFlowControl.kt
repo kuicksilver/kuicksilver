@@ -221,9 +221,13 @@ internal class WtSessionFlow(
         credit.value++
     }
 
-    /** A stream [takeStream] counted was never opened (the transport refused it): the peer never sees it, so it is not counted. */
+    /**
+     * A stream [takeStream] counted was never opened (the transport refused it, or its opener gave up while it waited for
+     * the transport): the peer never sees it, so it is not counted, and an open waiting for a slot takes it.
+     */
     fun returnStream(bidi: Boolean) {
         opened[if (bidi) 0 else 1]--
+        credit.value++
         changed()
     }
 

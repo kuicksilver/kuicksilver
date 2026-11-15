@@ -1062,6 +1062,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport flow control: a stream stopped (`stopSending`, or its input cancelled) right as it was accepted, before
   its reader had run, never gave its bytes back as session credit (draft-ietf-webtrans-http3-16 section 5.6), so a
   session whose window it filled stalled for good. Its bytes now count as consumed as for a stream stopped later.
+- WebTransport flow control: a stream slot given back by an open that was given up while it waited for the
+  connection's stream credit did not wake the opens waiting for a slot, so they waited with one free until the peer
+  raised its limit, if ever. They now take it at once.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
