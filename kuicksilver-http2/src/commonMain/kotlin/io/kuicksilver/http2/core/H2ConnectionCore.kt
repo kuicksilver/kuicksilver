@@ -496,11 +496,14 @@ internal class H2ConnectionCore(
      * Resets [streamId] with [code] (the application cancelled it). A stream whose field section was never written is idle
      * to the peer: it is dropped without a RST_STREAM (section 6.4; a later stream closes it, section 5.1.1) and reported
      * as not processed. A stream already closed (the peer reset it, or it ended both ways) gets nothing (sections 5.1, 5.4.2).
+     * [causedByPeer]: the driver found an error of the peer's on the stream (a malformed message, section 8.1.1), which
+     * takes from the glitch budget as the core's own stream errors do (MadeYouReset, CVE-2025-8671).
      */
     fun reset(
         streamId: Int,
         code: Http2ErrorCode,
         now: Long,
+        causedByPeer: Boolean = false,
     ) {
         if (closed) return
         val s = streams[streamId]
@@ -513,7 +516,11 @@ internal class H2ConnectionCore(
         if (isIdle(streamId) && s == null) return // section 6.4: never on an idle stream
         // section 5.1: nothing but PRIORITY on a closed stream, and section 5.4.2: no RST_STREAM in answer to the peer's
         if (s?.state == StreamState.CLOSED || (s == null && streamId in recentlyClosed)) return
-        resetStream(streamId, code, now, causedByPeer = false)
+        try {
+            resetStream(streamId, code, now, causedByPeer)
+        } catch (e: H2ConnectionError) {
+            connectionError(e.code, e.message ?: "") // the peer's error emptied the glitch budget: a driver's call never throws it
+        }
     }
 
     /**
@@ -696,6 +703,9 @@ internal class H2ConnectionCore(
 
     /** Control frames waiting for [poll] (bounded by `maxControlFramesQueued`). */
     internal val controlQueued: Int get() = control.size + pingAnswers.size
+
+    /** Bytes of the control frames waiting for [poll] (a test hook: what a flood that does not read makes us hold). */
+    internal val controlQueuedBytes: Long get() = control.sumOf { it.size.toLong() } + pingAnswers.sumOf { it.size.toLong() }
 
     // ---------------------------------------------------------------------------------------------------------------
     // internals

@@ -532,14 +532,20 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   peer to read them; at most 100 empty DATA frames in a row; a glitch budget (10 000, 330 per second: nghttp2's numbers;
   counted events: PRIORITY, which creates no state, unknown frame types, empty DATA, SETTINGS, a PING with no DATA or
   HEADERS of ours since the previous PING, and every stream error the peer causes: WINDOW_UPDATE of 0, DATA on a closed
-  stream, MadeYouReset), one reset per stream; DATA dropped before it was written gives its window back; on a
+  stream, MadeYouReset, a malformed request or response the engine resets (RFC 9113 §8.1.1, a zero-length field block
+  included), a request refused above SETTINGS_MAX_CONCURRENT_STREAMS once our SETTINGS are acknowledged (§5.1.2)), one
+  reset per stream; DATA dropped before it was written gives its window back; on a
   server, the client's RST_STREAM frames take from a reset budget (1000, 33 per second, as nghttp2; a client keeps none,
   since a server may legitimately end a response with RST_STREAM NO_ERROR); a stream the peer reset counts toward
   SETTINGS_MAX_CONCURRENT_STREAMS until its handler returns (`release`), and more than 4 x that limit refused in a row ends
   the connection; a response's interim (1xx) field sections together stay within SETTINGS_MAX_HEADER_LIST_SIZE (past it
   the client discards the response); receive windows grow only as the application reads, and a reset or released
   stream's unread content goes back to the connection (memory per connection stays within the connection window, 15 MiB
-  at most); a sender holds at most one DATA frame per stream; per-frame work does not grow with the number of streams.
+  at most); a sender holds at most one DATA frame per stream, so a peer that opens its windows a byte at a time
+  (CVE-2019-9511, the data dribble) makes us hold one byte per stream; per-frame work does not grow with the number of
+  streams. WINDOW_UPDATE frames are neither answered nor counted (as in nghttp2 and Go): they build no state, a flood of
+  them costs the attacker a frame for each frame of our work, and one that takes the connection window above 2^31 - 1
+  ends with FLOW_CONTROL_ERROR (§6.9.1).
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS after ALPN `h2` (no h2c), TLS 1.3,
@@ -677,7 +683,14 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `.legitimateBrowserCancellationsNotPunished`; `.repeatOffenderBackoffIsOffByDefault`, `.slowFieldBlockIsNotAFloodStrike`, `.sustainedCancellationsBelowTheRefillRateAreNotPunished`;
   `RepeatOffendersTest.negative_threeStrikesWithinAMinuteRefuseForThePenalty`, `.negative_ipv4MappedPeersCountAsTheirIpv4Address`,
   `.negative_trackedAddressesAreBounded`, `.negative_penalisedAddressesOutliveEviction`, `.ipv6CountsByItsSlash56`;
-  `core.FloodTest.negative_zeroRefillRateNeverRefills`; h2spec 2.6.0 (`tools/interop/h2spec.sh`, 146 of 146).
+  `core.FloodTest.negative_zeroRefillRateNeverRefills`; every flood class against both cores with a peer that reads
+  nothing, each with its measured bound (at most 10 000 control frames, 170 000 bytes for PING answers; one DATA frame per
+  stream for the data dribble): `core.FloodClassesTest.*`; floods the engine must judge (malformed requests and refusals
+  read by the client): `runtime.H2ServerFloodTest.negative_malformedRequestFloodEndsCalm`,
+  `.negative_refusedRequestFloodEndsCalm`; end to end: `ServerH2FloodTest.negative_floodClassesWithoutReadingEndCalm`,
+  `.windowUpdateFloodHoldsNothing`, and against the client engine from a hostile server
+  `ClientH2FloodTest.negative_pingFloodFromTheServer`, `.negative_settingsFloodFromTheServer`,
+  `.negative_emptyDataFloodFromTheServer`, `.negative_priorityAndUnknownFloodFromTheServer`; h2spec 2.6.0 (`tools/interop/h2spec.sh`, 146 of 146).
 - **Fuzzing:** Jazzer targets `http2.frames` (`FrameDecoder` fed in input-chosen pieces: only its own errors escape, no
   payload above the limit, allocation within the input plus one frame) and `http2.hpackDecode` (two blocks through one
   decoder with input-chosen table size and list limit: only `HpackError` escapes, the list stays within the limit,

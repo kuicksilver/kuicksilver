@@ -49,6 +49,7 @@ internal class RawFrame(
     companion object {
         const val DATA = 0
         const val HEADERS = 1
+        const val PRIORITY = 2
         const val RST_STREAM = 3
         const val SETTINGS = 4
         const val PING = 6

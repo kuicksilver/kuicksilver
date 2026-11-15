@@ -79,6 +79,16 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.interimResponsesOnOneStreamAndAFinalOnAnother
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.tableSizeReductionIsSignalledAfterOurAck
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.CompressionOrderTest.trailersOnOneStreamThenHeadersOnAnother
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_dataDribbleHoldsOneFramePerStream
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_emptyFrameFloodsWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodFillsTheQueueBeforeTheGlitchBudget
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_pingFloodWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_priorityShufflingWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_refusedStreamsBetweenFinishedRoundsEndCalm
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_resetsWeAreMadeToSendWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_settingsFloodWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_zeroLengthFieldBlockFloodWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.windowUpdateFloodsHoldNothing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.clientIsNotPunishedForServerResets
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_continuationBytesAboveListSize
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_continuationFloodClosesBeforeDecoding
@@ -314,6 +324,8 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.requ
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.serverStreamFailureReachesTheHandlerAndReleaseCounts
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.streamIdentifiersExhaustedRetireTheConnection
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2RuntimeTest.streamingBodyBackpressure
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ServerFloodTest.negative_malformedRequestFloodEndsCalm
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2ServerFloodTest.negative_refusedRequestFloodEndsCalm
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2StreamOutputTest.everyByteThenEndStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2StreamOutputTest.negative_aFailedStreamFailsTheWriter
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.runtime.H2StreamOutputTest.negative_cancelAfterFlushAndCloseSendsNoEndStream
@@ -1105,6 +1117,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.s
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.staleConnectionRetriedOnceForGet
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.webSocketOverH1
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.wrongPinFails
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_emptyDataFloodFromTheServer
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_pingFloodFromTheServer
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_priorityAndUnknownFloodFromTheServer
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2FloodTest.negative_settingsFloodFromTheServer
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.aConnectionRegisteredWhileWaitingForAPermitIsUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.burstBeforeTheServerSettingsStaysWithinTheirLimit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2Test.cancelSendsRstStreamCancel
@@ -2310,6 +2326,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1Timeou
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH1TimeoutTest.slowTlsHandshakeIsBoundedByTheHeadDeadlineOnly
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.legitimateBrowserCancellationsNotPunished
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_continuationFloodBounded
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodClassesWithoutReadingEndCalm
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodWithoutReadingIsCutOffAfterTheStallDeadline
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetBounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_rapidResetDoesNotRunHandlersUnbounded
@@ -2318,6 +2335,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.repeatOffenderBackoffIsOffByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.slowFieldBlockIsNotAFloodStrike
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.sustainedCancellationsBelowTheRefillRateAreNotPunished
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.windowUpdateFloodHoldsNothing
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.connectionPointSchemeIsTheConnections
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.earlyResponseStopsTheRequestWithNoError
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.idleConnectionGetsGoAwayAndCloses

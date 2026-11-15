@@ -619,14 +619,18 @@ internal class H2Runtime(
         s.writable.trySend(Unit)
     }
 
-    /** RFC 9113 section 8.1.1: a malformed message is a stream error of type PROTOCOL_ERROR. */
+    /**
+     * RFC 9113 section 8.1.1: a malformed message is a stream error of type PROTOCOL_ERROR. The peer caused it, so it takes
+     * from the glitch budget as the core's own stream errors do (section 10.5; MadeYouReset, CVE-2025-8671): a peer that
+     * sends malformed requests or responses without end cannot make us reset streams without end.
+     */
     private fun malformed(
         s: StreamRt,
         reason: String,
     ) {
         fail(s, Http2Exception.MalformedMessage("malformed message on stream ${s.id}: $reason"))
         afterMalformedFailForTest?.invoke()
-        withCore { reset(s.id, Http2ErrorCode.PROTOCOL_ERROR, clock()) }
+        withCore { reset(s.id, Http2ErrorCode.PROTOCOL_ERROR, clock(), causedByPeer = true) }
     }
 
     private fun onReset(e: H2Event.StreamReset) {

@@ -1895,6 +1895,16 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- HTTP/2 (RFC 9113 section 10.5; CVE-2019-9514, CVE-2019-9516, MadeYouReset CVE-2025-8671): two kinds of streams the
+  peer makes us reset cost it nothing. A malformed request or response (section 8.1.1: missing or invalid pseudo-header
+  fields, a zero-length field block, connection-specific fields, a content-length that does not match) is reset by the
+  engine with PROTOCOL_ERROR, and that reset now takes from the glitch budget as the core's own stream errors do; and a
+  request above SETTINGS_MAX_CONCURRENT_STREAMS, refused once our SETTINGS were acknowledged (section 5.1.2: the peer
+  knows the limit then), is a glitch too. Before, a client that read our RST_STREAM frames could send malformed requests
+  without end, and one that let its 100 running requests finish between batches never had more than 4 x the limit
+  refused in a row, so neither flood ended; both now end with ENHANCE_YOUR_CALM after the budget (10 000 by default).
+  Refusals before our SETTINGS are acknowledged stay free. A driver's `reset` never throws when the budget runs out:
+  the connection ends with the GOAWAY instead.
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

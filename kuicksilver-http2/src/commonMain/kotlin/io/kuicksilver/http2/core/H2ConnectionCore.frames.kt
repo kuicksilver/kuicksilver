@@ -164,7 +164,11 @@ internal fun H2ConnectionCore.onHeaders(
             if (++refusedInARow > 4 * maxOf(settings.maxConcurrentStreams, 1)) {
                 calm("more than ${4 * settings.maxConcurrentStreams} refused streams in a row")
             }
-            return resetStream(id, Http2ErrorCode.REFUSED_STREAM, now, causedByPeer = false)
+            // "An endpoint that receives a HEADERS frame that causes its advertised concurrent stream limit to be exceeded
+            // MUST treat this as a stream error": once our SETTINGS are acknowledged the peer knows the limit, so each
+            // refusal is its error and a glitch (handlers that finish in between reset the count above, not this budget);
+            // a burst before that acknowledgement is not
+            return resetStream(id, Http2ErrorCode.REFUSED_STREAM, now, causedByPeer = settingsUnacked == 0)
         }
         val ns =
             H2Stream(
