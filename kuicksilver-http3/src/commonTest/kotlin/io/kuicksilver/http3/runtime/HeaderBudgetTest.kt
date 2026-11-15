@@ -79,7 +79,7 @@ class HeaderBudgetTest {
             val gone = kotlinx.coroutines.CompletableDeferred<Throwable>()
             val first =
                 launch(start = CoroutineStart.UNDISPATCHED) {
-                    gone.complete(runCatching { b.reserve(10, EndWatch(aborted, Job()) { it }) }.exceptionOrNull()!!)
+                    gone.complete(runCatching { b.reserve(10) { EndWatch(aborted, Job()) { it } } }.exceptionOrNull()!!)
                 }
             val second = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(2) }
             yield()
@@ -101,7 +101,7 @@ class HeaderBudgetTest {
             val b = HeaderBudget(10)
             b.reserve(8)
             val connection = Job()
-            val w = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(5, EndWatch(null, connection) { null }) }
+            val w = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(5) { EndWatch(null, connection) { null } } }
             connection.complete()
             repeat(5) { yield() }
             assertEquals(1, b.waiting)
@@ -120,13 +120,24 @@ class HeaderBudgetTest {
             val a =
                 async(
                     start = CoroutineStart.UNDISPATCHED,
-                ) { runCatching { b.reserve(1, EndWatch(null, connection) { it ?: closedReason }) } }
+                ) { runCatching { b.reserve(1) { EndWatch(null, connection) { it ?: closedReason } } } }
             yield()
             assertEquals(1, b.waiting)
             connection.complete()
             assertEquals(closedReason, a.await().exceptionOrNull())
             assertEquals(0, b.waiting)
             assertEquals(10, b.reserved)
+        }
+
+    /**
+     * A reservation that fits at once never makes its watch: a request stream's reader pays for the stream's abort signal
+     * (a Deferred and a check on the transport's loop) only when it has to wait.
+     */
+    @Test fun negative_aReservationThatFitsMakesNoWatch() =
+        runBlocking {
+            val b = HeaderBudget(10)
+            b.reserve(4) { error("the watch was made for a reservation that fit") }
+            assertEquals(4, b.reserved)
         }
 
     @Test fun negative_aReservationAboveTheCapacityIsRefused() =

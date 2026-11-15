@@ -34,11 +34,12 @@ internal class HeaderBudget(
 
     /**
      * Reserves [bytes] (at most [capacity]), waiting in line while the connection holds too much already. A reader that
-     * waits also wakes when its stream or its connection ends ([watch]) and leaves the line with that reason.
+     * waits also wakes when its stream or its connection ends ([watch], made only when it has to wait) and leaves the line
+     * with that reason.
      */
     suspend fun reserve(
         bytes: Long,
-        watch: EndWatch? = null,
+        watch: (() -> EndWatch)? = null,
     ) {
         require(bytes in 0..capacity) { "reservation of $bytes outside 0..$capacity" }
         if (waiters.isEmpty() && reserved + bytes <= capacity) {
@@ -48,7 +49,7 @@ internal class HeaderBudget(
         val w = Waiter(bytes)
         waiters.addLast(w)
         try {
-            if (watch == null) w.granted.await() else watch.await(w.granted)
+            if (watch == null) w.granted.await() else watch().await(w.granted)
         } catch (e: Throwable) {
             // granted just before the cancellation or the abandonment reached the waiter: the reservation is returned;
             // else the waiter leaves the line, which may let the next one in

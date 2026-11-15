@@ -437,6 +437,16 @@ internal class H3Session(
     /** The peer's unidirectional streams stopped because their header missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
     internal var uniDeadlinesPassedForTest = 0
 
+    /** The peer's unidirectional streams whose type is still being read, oldest first. Session dispatcher only. */
+    internal val uniTypesPending = LinkedHashMap<Long, UniHeader>()
+
+    /** Bumped on every change a spared stalled type is decided on: a type byte, a stream identified, added or gone. */
+    internal val uniTypeProgress = MutableStateFlow(0L)
+
+    internal fun uniProgress() {
+        uniTypeProgress.value++
+    }
+
     /** Unidirectional-stream header deadlines still armed (none may outlive its stream's header). */
     internal val uniDeadlinesArmed = AtomicInt(0)
 

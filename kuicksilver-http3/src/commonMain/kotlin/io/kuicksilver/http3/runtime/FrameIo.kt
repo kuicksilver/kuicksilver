@@ -189,8 +189,8 @@ internal class RequestFrames(
     var sectionDeadline: kotlin.time.Duration? = null,
     /** The stream, for the deadline's error. */
     private val streamId: Long? = null,
-    /** What a reader waiting for [budget] also wakes for: its stream's or its connection's end. */
-    private val budgetWatch: EndWatch? = null,
+    /** What a reader waiting for [budget] also wakes for: its stream's or its connection's end; made only when it waits. */
+    private val budgetWatch: (() -> EndWatch)? = null,
 ) {
     private fun ahead(bytes: Long) {
         limitReadAhead?.invoke(bytes.coerceAtLeast(1))

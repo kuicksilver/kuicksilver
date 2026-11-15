@@ -310,13 +310,13 @@ private suspend fun H3Session.exchange(
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
-                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric, insertsWatch(st)) },
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { insertsWatch(st) } },
                 // a response head is taken from the window only once the connection's header budget granted it (RFC 9114
                 // section 10.5), and each field section must arrive within maxHeaderBlockTime of its frame header: a
                 // server that trickles its heads holds neither memory nor the request forever
                 limitReadAhead = { st.readAhead = it },
                 budget = headerBudget,
-                budgetWatch = budgetWatch(st),
+                budgetWatch = { budgetWatch(st) },
                 sectionDeadline = settings.maxHeaderBlockTime,
                 streamId = st.id,
             )

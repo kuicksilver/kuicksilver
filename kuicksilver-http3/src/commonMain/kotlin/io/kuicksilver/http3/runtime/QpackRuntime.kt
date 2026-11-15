@@ -78,7 +78,7 @@ internal class QpackRuntime(
     suspend fun decode(
         streamId: Long,
         block: ByteArray,
-        watch: EndWatch? = null,
+        watch: (() -> EndWatch)? = null,
     ): DecodeResult {
         while (true) {
             when (val r = decoder.decode(streamId, block)) {
@@ -104,7 +104,7 @@ internal class QpackRuntime(
     suspend fun awaitInserts(
         streamId: Long,
         encodedRic: Long,
-        watch: EndWatch? = null,
+        watch: (() -> EndWatch)? = null,
     ) {
         val ric = decoder.requiredInsertCount(encodedRic)
         if (ric <= decoder.insertCount) return
@@ -116,11 +116,11 @@ internal class QpackRuntime(
     private suspend fun awaitInsertCount(
         streamId: Long,
         count: Long,
-        watch: EndWatch?,
+        watch: (() -> EndWatch)?,
     ) = coroutineScope {
         val arrived = launch { inserts.first { it >= count } }
         try {
-            if (watch == null) arrived.join() else watch.await(arrived)
+            if (watch == null) arrived.join() else watch().await(arrived)
         } catch (e: StreamAbandoned) {
             cancelStream(streamId)
             throw e

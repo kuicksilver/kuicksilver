@@ -1958,7 +1958,8 @@ unfinished. Those bytes still count against the connection's flow-control window
 wait for it too, at most until `maxHeaderBlockTime` ends the waiting streams. With WebTransport on, a server's
 WebTransport streams must send their signal and Session ID within the same time, or are reset with
 `WT_BUFFERED_STREAM_REJECTED`. A peer's unidirectional stream must send its type within it too, or is stopped with
-`H3_STREAM_CREATION_ERROR` (never while it could still be the peer's control or a QPACK stream). The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+`H3_STREAM_CREATION_ERROR`; one stalled stream per control or QPACK stream the peer has not opened yet is spared while
+its bytes so far could still be that stream's type. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
 
 ### Shutdown and GOAWAY
 

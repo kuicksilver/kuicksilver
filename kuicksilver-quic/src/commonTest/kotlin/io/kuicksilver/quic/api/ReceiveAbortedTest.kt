@@ -21,7 +21,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * `QuicStream.receiveAborted`: completes with the peer's RESET_STREAM, never with a FIN, so a waiter tells an aborted
- * stream from a finished one exactly (a final size alone does not: both a FIN and a reset fix one).
+ * stream from a finished one exactly (a final size alone does not: both a FIN and a reset fix one). A rejected 0-RTT's
+ * drop completes it too: `ZeroRttApiTest.rejectedZeroRttFailsEarlyStreamsAndTheConnectionGoesOn`.
  */
 class ReceiveAbortedTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()

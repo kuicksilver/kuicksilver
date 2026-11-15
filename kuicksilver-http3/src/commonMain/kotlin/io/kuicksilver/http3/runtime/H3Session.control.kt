@@ -20,6 +20,7 @@ import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
+import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.runtime.H3Session.Companion.beforeControlFrameForTest
@@ -39,9 +40,6 @@ import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 
-/** The peer's critical stream types: control, QPACK encoder, QPACK decoder (RFC 9114 section 6.2, RFC 9204 section 4.2). */
-private const val CRITICAL_STREAM_TYPES = 3
-
 // The peer's unidirectional streams: control, QPACK encoder and decoder streams, and what arrives on them (RFC 9114 sections 6.2 and 7.2, RFC 9204 section 4.2).
 
 /**
@@ -55,17 +53,23 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
     // first byte, as a request head must: a stream that never sends it would hold its reader and stream slot as long as the
     // peer keeps the connection alive (RFC 9000 section 21.6). Its type unknown, it is an unknown type to RFC 9114 section
     // 6.2: reading is aborted with H3_STREAM_CREATION_ERROR, never a connection error. A critical stream must not be
-    // stopped that way (section 6.2.1: "the receiver MUST NOT request that the sender close the control stream"), and
-    // every type value fits one byte but may be
-    // sent longer: while one of the peer's control and QPACK streams is still missing, the stalled stream could be it, and
-    // it is stopped only once the last of them was identified.
+    // stopped that way (section 6.2.1: "the receiver MUST NOT request that the sender close the control stream"), and a
+    // critical type value fits one byte but may be sent longer: a stalled stream is spared only while what arrived of its
+    // type can still decode to a critical type not seen yet, and only as many such streams as types are missing, oldest
+    // first ([sparedAsCritical]); every other one is stopped at its deadline.
     val reader = currentCoroutineContext()[Job]!!
     val header = UniHeader()
+    uniTypesPending[st.id] = header
+    uniProgress()
     val deadline =
         scope.launch {
             delay(settings.maxHeaderBlockTime)
-            if (!header.known) criticalStreamsSeen.first { it >= CRITICAL_STREAM_TYPES }
-            if (header.settled) return@launch
+            while (true) {
+                if (header.settled) return@launch
+                val seen = uniTypeProgress.value
+                if (!sparedAsCritical(header)) break
+                uniTypeProgress.first { it != seen } // a byte, a stream identified or gone: decide again
+            }
             header.settled = true
             uniDeadlinesPassedForTest++
             reader.cancel()
@@ -86,16 +90,54 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
         readUniArmed(st, header, ::headerRead)
     } finally {
         deadline.cancel()
+        uniTypesPending.remove(st.id)
+        uniProgress()
     }
 }
 
+/** The peer's critical stream types (RFC 9114 section 6.2, RFC 9204 section 4.2). */
+private val CRITICAL_TYPES = listOf(StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER)
+
+/**
+ * Whether [header]'s stalled stream is spared at its deadline as possibly one of the peer's critical streams: what arrived
+ * of its type can still decode to a critical type not seen yet ([UniHeader.couldBeCritical]: every critical value is
+ * below 256, so only a varint's length prefix with zero value bits, then zeros, leaves one possible), and it is among the
+ * oldest such streams, at most one per critical type still missing. Session dispatcher only.
+ */
+private fun H3Session.sparedAsCritical(header: UniHeader): Boolean {
+    if (!header.couldBeCritical()) return false
+    val missing = CRITICAL_TYPES.count { it !in peerUni }
+    if (missing == 0) return false
+    val rank =
+        uniTypesPending.values
+            .asSequence()
+            .filter { it.couldBeCritical() }
+            .indexOf(header)
+    return rank in 0 until missing
+}
+
 /** Where a peer's unidirectional stream is in its header, and the code its deadline stops it with. */
-private class UniHeader {
+internal class UniHeader {
     /** The header was read (or given up): the deadline stands down. */
     var settled = false
 
     /** The type was read: the stream is no critical stream that could still be identified. */
     var known = false
+
+    /** The bytes of the type's varint read so far (at most 8). */
+    val prefix = ArrayList<Byte>(8)
+
+    /**
+     * What arrived of the type can still be a critical type (0x00, 0x02 or 0x03): nothing yet, or the first byte of a
+     * longer varint whose value bits are all zero (0x40, 0x80, 0xc0) followed by zeros only; its last byte, which would
+     * complete it, has not come.
+     */
+    fun couldBeCritical(): Boolean {
+        if (known) return false
+        if (prefix.isEmpty()) return true
+        val first = prefix[0].toInt() and 0xff
+        return (first == 0x40 || first == 0x80 || first == 0xc0) && prefix.drop(1).all { it.toInt() == 0 }
+    }
 
     /**
      * H3_STREAM_CREATION_ERROR for a type that never arrived (RFC 9114 section 6.2: "If reading is aborted, the recipient
@@ -105,6 +147,36 @@ private class UniHeader {
     var rejectCode = Http3ErrorCode.STREAM_CREATION_ERROR
 }
 
+/**
+ * The type of a peer's unidirectional stream, read byte by byte into [header] (what [sparedAsCritical] decides on), with
+ * the length it took; null at a clean end before its first byte, IncompleteFrame at an end inside it.
+ */
+private suspend fun H3Session.readUniType(
+    st: QuicStream,
+    header: UniHeader,
+): Pair<Long, Int>? {
+    val one = ByteArray(1)
+    if (st.input.readAvailable(one, 0, 1) <= 0) {
+        st.input.closedCause?.let { throw it }
+        return null
+    }
+    header.prefix += one[0]
+    uniProgress()
+    val n = VarInt.encodedLength(one[0])
+    val b = ByteArray(n)
+    b[0] = one[0]
+    var i = 1
+    while (i < n) {
+        val r = st.input.readAvailable(one, 0, 1)
+        if (r < 0) throw st.input.closedCause ?: IncompleteFrame()
+        if (r == 0) continue
+        b[i++] = one[0]
+        header.prefix += one[0]
+        uniProgress()
+    }
+    return VarInt.read(b, 0, n) to n
+}
+
 private suspend fun H3Session.readUniArmed(
     st: QuicStream,
     header: UniHeader,
@@ -112,7 +184,7 @@ private suspend fun H3Session.readUniArmed(
 ) {
     val (type, typeLength) =
         try {
-            st.input.readVarIntSizedOrNull()
+            readUniType(st, header)
         } catch (_: IncompleteFrame) {
             null
         } catch (e: CancellationException) {
@@ -126,11 +198,14 @@ private suspend fun H3Session.readUniArmed(
             return
         }
     header.known = true
+    uniTypesPending.remove(st.id)
+    uniProgress()
     if (type != StreamType.WT_UNI || !settings.webTransport) headerRead()
     when (type) {
         StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER -> {
             if (!peerUni.add(type)) throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "second stream of type $type")
             criticalStreamsSeen.value++
+            uniProgress()
             try {
                 when (type) {
                     StreamType.CONTROL -> {

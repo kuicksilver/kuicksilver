@@ -163,10 +163,10 @@ private suspend fun H3Session.handleArmedRequestStream(
                 firstType = firstType,
                 webTransport = settings.webTransport,
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
-                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric, insertsWatch(st)) },
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { insertsWatch(st) } },
                 limitReadAhead = { st.readAhead = it },
                 budget = headerBudget,
-                budgetWatch = budgetWatch(st),
+                budgetWatch = { budgetWatch(st) },
                 streamId = st.id,
             )
         beforeRequestHeadersForTest?.invoke(st)

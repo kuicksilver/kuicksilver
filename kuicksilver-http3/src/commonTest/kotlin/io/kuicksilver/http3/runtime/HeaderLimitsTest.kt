@@ -236,6 +236,69 @@ class HeaderLimitsTest {
             }
         }
 
+    /**
+     * The exemption is exact: with only the QPACK encoder stream missing, the oldest stalled stream whose bytes can still
+     * decode to a critical type (`0x40`) is spared; 19 more `0x40` streams (one missing type spares one stream) and 20
+     * `0x41` streams (a two-byte value of at least 256, never a critical type) are stopped at their deadline, so a peer
+     * cannot park every unidirectional slot by leaving one critical stream out. The spared stream completes as the
+     * encoder stream and works.
+     */
+    @Test fun negative_onlyAsManyStalledStreamsAsCriticalTypesAreMissingAreSpared() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, fastDeadline)
+                val raw = RawPeer(c)
+                raw.openControl()
+                raw.uni(io.kuicksilver.http3.frame.StreamType.QPACK_DECODER)
+                awaitCondition("two critical streams to be known") { server.session.criticalStreamsSeen.value == 2 }
+                val encoder = c.openUni()
+                encoder.output.writeFully(byteArrayOf(0x40))
+                encoder.output.flush()
+                awaitCondition("the candidate to be pending") {
+                    withContext(server.session.dispatcher) { server.session.uniTypesPending.size == 1 }
+                }
+                val others =
+                    (0 until 40).map { i ->
+                        c.openUni().also {
+                            it.output.writeFully(byteArrayOf(if (i % 2 == 0) 0x40 else 0x41))
+                            it.output.flush()
+                        }
+                    }
+                for (u in others) assertEquals(Http3ErrorCode.STREAM_CREATION_ERROR, withTimeout(5.seconds) { u.awaitSendStopped() })
+                assertEquals(40, withContext(server.session.dispatcher) { server.session.uniDeadlinesPassedForTest })
+                encoder.output.writeFully(byteArrayOf(0x02))
+                encoder.output.flush()
+                awaitCondition("the encoder stream to be known") { server.session.criticalStreamsSeen.value == 3 }
+                assertNothingHeld(server)
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * Prefixes that can no longer be a critical type are stopped at once even while a critical type is missing: `0x41`
+     * (value at least 256), and a four-byte varint whose second byte is not zero.
+     */
+    @Test fun negative_aStalledTypeThatCannotBeCriticalIsStopped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, fastDeadline)
+                val raw = RawPeer(c)
+                raw.openControl()
+                awaitCondition("the control stream to be known") { server.session.criticalStreamsSeen.value == 1 }
+                val streams =
+                    listOf(byteArrayOf(0x41), byteArrayOf(0x80.toByte(), 0x01)).map { b ->
+                        c.openUni().also {
+                            it.output.writeFully(b)
+                            it.output.flush()
+                        }
+                    }
+                for (u in streams) assertEquals(Http3ErrorCode.STREAM_CREATION_ERROR, withTimeout(5.seconds) { u.awaitSendStopped() })
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
     /** A unidirectional WebTransport stream whose Session ID never completes is stopped with WT_BUFFERED_STREAM_REJECTED. */
     @Test fun negative_webTransportUnidirectionalStreamWithoutItsSessionIdIsStopped() =
         h3Test {
