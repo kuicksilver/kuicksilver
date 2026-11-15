@@ -516,7 +516,8 @@ class ClientH3WebSocketTest {
                         // the stream (STOP_SENDING with H3_REQUEST_CANCELLED, RFC 9114 section 4.1.1) before the FIN goes
                         // out, which fails the finish (a slow host); the client checks the 204 itself
                         val setUp = conn.acceptRequest()
-                        runCatching { setUp.respond(204, io.kuicksilver.http3.Http3Headers(emptyList())).finish() }
+                        val answer = setUp.respond(204, io.kuicksilver.http3.Http3Headers(emptyList()))
+                        runCatching { answer.finish() }
                         // the first's CONNECT is never answered, whenever it arrives (or if it never does: its client can
                         // give up before it is sent); the second's is
                         while (true) {
