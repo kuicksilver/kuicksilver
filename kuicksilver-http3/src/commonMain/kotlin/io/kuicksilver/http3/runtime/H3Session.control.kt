@@ -249,7 +249,7 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     }
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
     wtCommonVersions = WtVersion.common(m, isServer)
-    wtPeerSettings = m.filterKeys { it in WtSettings.ALL }
+    wtPeerSettings = m.filterKeys { it in WtSettings.ALL }.ifEmpty { emptyMap() } // no map held when the peer has none
     peerSettings.value = ps
     peerSettingsArrived.complete(ps)
 }

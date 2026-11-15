@@ -41,8 +41,8 @@ internal class HandOffQueue<T : Any>(
     /** Signalled when an element was added or the queue closed. */
     private val filled = Channel<Unit>(Channel.CONFLATED)
 
-    /** Signalled when an element was taken or the queue closed. */
-    private val drained = Channel<Unit>(Channel.CONFLATED)
+    /** Signalled when an element was taken or the queue closed; only a bounded queue has senders that wait for it. */
+    private val drained: Channel<Unit>? = if (capacity == Int.MAX_VALUE) null else Channel(Channel.CONFLATED)
 
     private inline fun <R> locked(block: () -> R): R {
         while (!lock.compareAndSet(0, 1)) {
@@ -101,12 +101,12 @@ internal class HandOffQueue<T : Any>(
 
                 true -> {
                     filled.trySend(Unit)
-                    if (room) drained.trySend(Unit) // another sender may have slept through the one signal for several places
+                    if (room) drained?.trySend(Unit) // another sender may have slept through the one signal for several places
                     return
                 }
 
                 false -> {
-                    await(drained)
+                    await(drained!!) // full: only a bounded queue gets here
                 }
             }
         }
@@ -128,7 +128,7 @@ internal class HandOffQueue<T : Any>(
     fun tryTake(): T? {
         var more = false
         val e = locked { items.removeFirstOrNull().also { more = items.isNotEmpty() } } ?: return null
-        drained.trySend(Unit)
+        drained?.trySend(Unit)
         if (more) filled.trySend(Unit) // another waiter may have slept through the one signal for several elements
         return e
     }
@@ -146,7 +146,7 @@ internal class HandOffQueue<T : Any>(
                 }
             }
         filled.trySend(Unit)
-        drained.trySend(Unit)
+        drained?.trySend(Unit)
         return first
     }
 

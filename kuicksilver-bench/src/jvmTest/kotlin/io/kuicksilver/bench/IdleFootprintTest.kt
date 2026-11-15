@@ -33,13 +33,17 @@ class IdleFootprintTest {
     }
 
     private companion object {
-        // 78.6-79.6 K measured (2026-11-06, JVM 21, 12 runs). Before, in about a third of the runs, 88.6-89.4 K: the HTTP/3
-        // accept loop's coroutine frame still held the last request stream and its 8 KiB input segment when that request had
-        // arrived while the loop waited (docs/benchmarks.md, "Memory"); this ceiling catches that mode coming back. 88-104 K
-        // with 4 KiB reassembly windows, 292 K with per-stream staging arrays
+        // 82.1-82.8 K measured (2026-11-15, JVM 21, 4 runs; 80.7-81.1 K before the streams' final sizes and stop watch and
+        // WebTransport flow control, 88.5 K with their objects made up front: a Deferred and a flow pair per stream, an
+        // exception with its stack trace for the half a unidirectional stream lacks, the WebTransport queues and limiter per
+        // connection; now made by their first user). 78.6-79.6 K measured (2026-11-06, JVM 21, 12 runs). Before, in about a
+        // third of the runs, 88.6-89.4 K: the HTTP/3 accept loop's coroutine frame still held the last request stream and its 8
+        // KiB input segment when that request had arrived while the loop waited (docs/benchmarks.md, "Memory"); this ceiling
+        // catches that mode coming back. 88-104 K with 4 KiB reassembly windows, 292 K with per-stream staging arrays
         const val HTTP3_CEILING = 85_000L
-        // 35 552 measured (2026-11-11, JVM 21): the 0.3.0 RFC 9000/9002 state a connection keeps from the start (its own IDs
-        // for removal by key, per-path ECN and persistent-congestion marks, the 0-RTT packet range); 35 104 before
+        // 35 776 measured (2026-11-15, JVM 21; 35 864 with the 0-RTT hold's queue and set made up front, now by the first
+        // hold). 35 552 measured (2026-11-11, JVM 21): the 0.3.0 RFC 9000/9002 state a connection keeps from the start (its own
+        // IDs for removal by key, per-path ECN and persistent-congestion marks, the 0-RTT packet range); 35 104 before
         // (2026-11-06), 36 160 with the DATAGRAM ring made up front
         const val CORE_CEILING = 36_000L
     }

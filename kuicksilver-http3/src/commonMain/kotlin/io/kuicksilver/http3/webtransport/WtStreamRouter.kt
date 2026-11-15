@@ -81,7 +81,8 @@ internal class WtStreamRouter(
         var bytes = 0L
     }
 
-    private val tallies = LinkedHashMap<Long, Tally>()
+    /** Made with the first stream rejected for a session not established yet: a connection without one holds none. */
+    private var tallies: LinkedHashMap<Long, Tally>? = null
 
     /** How a buffered stream waits out [BUFFER_TIMEOUT]; a test replaces it to end the wait without real time passing. */
     var bufferTimer: suspend (Duration) -> Unit = { delay(it) }
@@ -171,7 +172,7 @@ internal class WtStreamRouter(
         sink: WtSessionSink,
     ) {
         sinks[sessionId] = sink
-        tallies.remove(sessionId)?.let { sink.onRejected(it.bidi, it.uni, it.bytes) }
+        tallies?.remove(sessionId)?.let { sink.onRejected(it.bidi, it.uni, it.bytes) }
         val mine = buffered.filter { it.sessionId == sessionId }
         buffered.removeAll(mine)
         bufferedCount.value = buffered.size
@@ -184,7 +185,7 @@ internal class WtStreamRouter(
     /** [sessionId] ended, or its CONNECT was refused: streams still waiting for it, and later ones, are rejected. */
     fun unregister(sessionId: Long) {
         sinks.remove(sessionId)
-        tallies.remove(sessionId)
+        tallies?.remove(sessionId)
         if (sessionId !in closedSessions) {
             closedSessions.addLast(sessionId)
             if (closedSessions.size > MAX_CLOSED_REMEMBERED) closedSessions.removeFirst()
@@ -211,9 +212,10 @@ internal class WtStreamRouter(
         bidi: Boolean,
         headerLength: Int,
     ) {
+        val all = tallies ?: LinkedHashMap<Long, Tally>().also { tallies = it }
         val t =
-            tallies.getOrPut(sessionId) {
-                if (tallies.size >= MAX_TALLIES) tallies.remove(tallies.keys.first())
+            all.getOrPut(sessionId) {
+                if (all.size >= MAX_TALLIES) all.remove(all.keys.first())
                 Tally()
             }
         if (bidi) t.bidi++ else t.uni++
@@ -222,7 +224,7 @@ internal class WtStreamRouter(
             val f = runCatching { st.receivedFinalSize?.await() }.getOrNull() ?: return@launch
             val bytes = maxOf(0L, f - headerLength)
             val sink = sinks[sessionId]
-            if (sink != null) sink.onRejected(0, 0, bytes) else tallies[sessionId]?.let { it.bytes += bytes }
+            if (sink != null) sink.onRejected(0, 0, bytes) else tallies?.get(sessionId)?.let { it.bytes += bytes }
         }
     }
 

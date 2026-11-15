@@ -132,13 +132,31 @@ internal class H3Session(
     /**
      * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over, each with
      * whether it is a draft-02 request (which picks its version, [io.kuicksilver.http3.webtransport.wtServerVersion]).
-     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through `wtSessionAdmitted` and
-     * [wtSessionEnded].
+     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
+     * [wtSessionEnded]. The map is made with the first session: a connection without one holds none.
      */
-    val wtSessions = LinkedHashMap<Long, Boolean>()
+    val wtSessions: Map<Long, Boolean> get() = wtSessionMap ?: emptyMap()
+
+    private var wtSessionMap: LinkedHashMap<Long, Boolean>? = null
+
+    /** Server: the CONNECT on [streamId] ([draft02]: a draft-02 request) holds a slot from now on. Session dispatcher only. */
+    fun wtSessionAdmitted(
+        streamId: Long,
+        draft02: Boolean,
+    ) {
+        (wtSessionMap ?: LinkedHashMap<Long, Boolean>().also { wtSessionMap = it })[streamId] = draft02
+        wtSessionsChanged()
+    }
+
+    /** Server: the CONNECT on [streamId] gave its slot back; false when it held none. Session dispatcher only. */
+    fun wtSessionRemoved(streamId: Long): Boolean {
+        if (wtSessionMap?.remove(streamId) == null) return false
+        wtSessionsChanged()
+        return true
+    }
 
     /** [wtSessions] changed: [wtIdle] follows. */
-    fun wtSessionsChanged() {
+    private fun wtSessionsChanged() {
         wtIdle.value = wtSessions.isEmpty()
     }
 
@@ -494,11 +512,30 @@ internal class H3Session(
     /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
     private var wtFlowSessions = 0
 
+    /**
+     * What the WebTransport sessions of this connection share, made with the first one that needs it (a CONNECT, a session's
+     * stream): a connection without WebTransport holds none of it.
+     */
+    private class WtShared {
+        /** [wtFlowSessions], for whoever follows it from elsewhere. */
+        val flowSessionCount = MutableStateFlow(0)
+
+        /** The floor [wtFlowSession] wants for the connection's receive window. */
+        val floor = MutableStateFlow(0L)
+
+        val sessionRate = GlitchLimiter(WT_SESSION_BURST, WT_SESSIONS_PER_SECOND)
+        val fairness =
+            io.kuicksilver.http3.webtransport
+                .WtFairness()
+    }
+
+    private val wtShared by lazy { WtShared() }
+
     /** [wtFlowSessions] for whoever follows it from elsewhere: the sessions' shares of the send buffer (`WtSendShare`). */
-    internal val wtFlowSessionCount = MutableStateFlow(0)
+    internal val wtFlowSessionCount: MutableStateFlow<Int> get() = wtShared.flowSessionCount
 
     /** [wtFlowSessions] and the receive-window floor it asks for (a test hook; session dispatcher only). */
-    internal val wtFlowSessionsForTest: Pair<Int, Long> get() = wtFlowSessions to wtFloor.value
+    internal val wtFlowSessionsForTest: Pair<Int, Long> get() = wtFlowSessions to wtShared.floor.value
 
     /** Test hook: a server session accepted next ends before it starts, as one whose exchange ended during the accept. */
     internal var endBeforeStartForTest = false
@@ -512,13 +549,14 @@ internal class H3Session(
     fun wtFlowSession(up: Boolean) {
         wtFlowSessions += if (up) 1 else -1
         check(wtFlowSessions >= 0) { "WebTransport session count below 0" }
-        wtFlowSessionCount.value = wtFlowSessions
-        wtFloor.value = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
-        // one sender of the latest value: a stale floor never overtakes a newer one
+        val shared = wtShared
+        shared.flowSessionCount.value = wtFlowSessions
+        shared.floor.value = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
+        // one sender of the latest value, started by the first session: a stale floor never overtakes a newer one
         if (wtFloorSender == null) {
             wtFloorSender =
                 scope.launch {
-                    wtFloor.collect {
+                    shared.floor.collect {
                         io.kuicksilver.quic.runtime.QuicStreamLimits
                             .setReceiveWindowFloor(quic, it)
                     }
@@ -526,8 +564,6 @@ internal class H3Session(
         }
     }
 
-    /** The floor [wtFlowSession] wants for the connection's receive window. */
-    private val wtFloor = MutableStateFlow(0L)
     private var wtFloorSender: Job? = null
 
     /**
@@ -535,12 +571,10 @@ internal class H3Session(
      * WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources"): a burst of
      * [WT_SESSION_BURST] CONNECTs, then [WT_SESSIONS_PER_SECOND] a second, on [glitchClock]. Session dispatcher only.
      */
-    internal val wtSessionRate = GlitchLimiter(WT_SESSION_BURST, WT_SESSIONS_PER_SECOND)
+    internal val wtSessionRate: GlitchLimiter get() = wtShared.sessionRate
 
     /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
-    internal val wtFairness =
-        io.kuicksilver.http3.webtransport
-            .WtFairness()
+    internal val wtFairness: io.kuicksilver.http3.webtransport.WtFairness get() = wtShared.fairness
 
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
     internal var wtPeerSettings: Map<Long, Long> = emptyMap()

@@ -172,8 +172,11 @@ internal class StreamManager(
      */
     var zeroRttPending = false
 
-    /** Streams with an event in [heldUntilAnswer]: their StreamFinished is held after it ([reportFinished]). */
-    private val heldIds = HashSet<Long>()
+    /**
+     * Streams with an event in [heldUntilAnswer]: their StreamFinished is held after it ([reportFinished]). Made by the first
+     * hold, as the queue is: a connection that never holds (a server, a client without 0-RTT) has neither.
+     */
+    private var heldIds: HashSet<Long>? = null
 
     /** A StreamFinished raised before the final size of a half the stream has (the fuzzer's invariant; must stay 0). */
     private var finishedBeforeFinalSize = 0
@@ -412,7 +415,7 @@ internal class StreamManager(
 
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray =
-        intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size, heldUntilAnswer.size + heldIds.size)
+        intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size, (held?.size ?: 0) + (heldIds?.size ?: 0))
 
     /**
      * Client: events held back until the server answers our 0-RTT, facts about a stream that stand only if the server took
@@ -421,7 +424,20 @@ internal class StreamManager(
      * ([heldUntilZeroRttAnswerForTest]) covers it: the final sizes of our streams and their StreamFinished
      * ([zeroRttPending]).
      */
-    internal val heldUntilAnswer = ArrayList<ConnectionEvent>()
+    internal val heldUntilAnswer: MutableList<ConnectionEvent>
+        get() = held ?: ArrayList<ConnectionEvent>().also { held = it }
+
+    /** [heldUntilAnswer], once something was held. */
+    private var held: ArrayList<ConnectionEvent>? = null
+
+    /** Holds [e], about stream [id], for the server's answer to our 0-RTT. */
+    private fun hold(
+        e: ConnectionEvent,
+        id: Long,
+    ) {
+        heldUntilAnswer += e
+        (heldIds ?: HashSet<Long>().also { heldIds = it }) += id
+    }
 
     /**
      * The server answered our 0-RTT ([accepted]), or the connection ended or failed before the answer stood (false): what
@@ -429,17 +445,17 @@ internal class StreamManager(
      */
     fun settleHeldUntilAnswer(accepted: Boolean) {
         zeroRttPending = false
-        heldIds.clear()
-        if (heldUntilAnswer.isEmpty()) return
-        if (accepted) events += heldUntilAnswer
-        heldUntilAnswer.clear()
+        heldIds = null
+        val h = held ?: return
+        held = null
+        if (accepted) events += h
     }
 
     /**
      * Fuzzing probe (0-RTT): events still held for the server's answer, and the streams they name; 0 once it is known or the
      * connection ended.
      */
-    internal fun heldUntilZeroRttAnswerForTest(): Int = heldUntilAnswer.size + heldIds.size
+    internal fun heldUntilZeroRttAnswerForTest(): Int = (held?.size ?: 0) + (heldIds?.size ?: 0)
 
     /**
      * Fuzzing probe (0-RTT), while the client still runs on the remembered transport parameters: no limit it uses, and
@@ -946,8 +962,7 @@ internal class StreamManager(
         s.reportedFinalSize = size
         val e = ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
         if (zeroRttPending && StreamIds.isLocal(s.id, role)) {
-            heldUntilAnswer += e
-            heldIds += s.id
+            hold(e, s.id)
         } else {
             events += e
         }
@@ -964,8 +979,7 @@ internal class StreamManager(
             // 1-RTT packets that waited for their keys are read when the keys come, before the handshake completes and the
             // 0-RTT answer is settled: a stream of ours is held like its sending half, a stream of the server's never drops
             if (zeroRttPending && StreamIds.isLocal(id, role)) {
-                heldUntilAnswer += e
-                heldIds += id
+                hold(e, id)
             } else {
                 events += e
             }
@@ -993,7 +1007,8 @@ internal class StreamManager(
      * after that size, in [heldUntilAnswer]: the runtime must still hold the stream when the size stands or falls.
      */
     private fun reportFinished(id: Long) {
-        if (id in heldIds) heldUntilAnswer += ConnectionEvent.StreamFinished(id) else events += ConnectionEvent.StreamFinished(id)
+        val e = ConnectionEvent.StreamFinished(id)
+        if (heldIds?.contains(id) == true) heldUntilAnswer += e else events += e
     }
 
     fun reset(

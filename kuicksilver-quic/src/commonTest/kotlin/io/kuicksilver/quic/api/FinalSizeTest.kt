@@ -5,6 +5,7 @@
 package io.kuicksilver.quic.api
 
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
@@ -15,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -158,6 +160,33 @@ class FinalSizeTest {
                     }
                     c.close()
                     s.close()
+                }
+            }
+        }
+
+    /**
+     * Nothing observed a stream while it ran (its Deferreds and flows are made by the first reader): read only after the
+     * connections ended, it still tells what was fixed before the end, not the loss that came after.
+     */
+    @Test fun aFirstReadAfterTheEndStillTellsWhatWasFixedBefore() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openUni()
+                    st.output.writeFully(ByteArray(1234), 0, 1234)
+                    st.output.flushAndClose()
+                    val ss = s.acceptStream()
+                    val read = ss.input.readBuffer()
+                    assertEquals(1234, read.readByteArray().size)
+                    c.close()
+                    s.close()
+                    assertEquals(1234L, assertNotNull(st.sentFinalSize).await())
+                    assertEquals(1234L, assertNotNull(ss.receivedFinalSize).await())
+                    assertEquals(1234L, assertNotNull(ss.receivedOffset).value)
+                    assertFailsWith<IllegalStateException> { assertNotNull(st.receivedFinalSize).await() }
+                    assertFailsWith<IllegalStateException> { assertNotNull(ss.sentFinalSize).await() }
+                    Unit
                 }
             }
         }

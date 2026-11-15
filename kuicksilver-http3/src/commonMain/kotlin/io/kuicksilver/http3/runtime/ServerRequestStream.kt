@@ -198,8 +198,7 @@ internal suspend fun handleRequestStream(
                 wt.unregister(st.id)
                 return@with
             }
-            wtSessions[st.id] = draft02
-            wtSessionsChanged()
+            wtSessionAdmitted(st.id, draft02)
         }
         val req = ServerRequestImpl(this, st, parsed)
         // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
@@ -255,7 +254,7 @@ internal fun H3Session.wtSessionEnded(
     streamId: Long,
     session: WtSessionImpl?,
 ) {
-    if (wtSessions.remove(streamId) != null) wtSessionsChanged()
+    wtSessionRemoved(streamId)
     session?.ended() ?: wt.unregister(streamId)
 }
 

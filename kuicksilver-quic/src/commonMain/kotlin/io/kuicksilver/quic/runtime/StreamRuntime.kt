@@ -44,23 +44,111 @@ internal class StreamRuntime(
     override val input: ByteReadChannel get() = inChannel ?: throw IllegalStateException("stream $id is send-only")
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
     internal val readable = Channel<Unit>(Channel.CONFLATED)
-    private val sentFinal =
-        kotlinx.coroutines.CompletableDeferred<Long>().also {
-            if (!send) it.completeExceptionally(IllegalStateException("stream $id is receive-only"))
+
+    /**
+     * The final size of our sending half, -1 while unknown (loop). This and the fields below are what the observers follow
+     * ([sentFinalSize], [receivedFinalSize], [receivedOffset], [sendReleased]); the Deferreds and flows that publish them
+     * are made only when someone reads one ([watch]): a stream nobody observes (an idle HTTP/3 connection's control and
+     * QPACK streams, a plain request) allocates none of them, and no exception for the half it lacks.
+     */
+    @Volatile
+    private var sentFinalKnown = -1L
+
+    /** The final size of the peer's sending half, -1 while unknown (loop). */
+    @Volatile
+    private var receivedFinalKnown = -1L
+
+    /** Why a final size still unknown never will be (loop). */
+    @Volatile
+    private var finalsLost: Throwable? = null
+
+    /** The highest offset of the peer's half received so far (loop). */
+    @Volatile
+    private var receivedHigh = 0L
+
+    /** The bytes of our send buffer released so far, as far as the loop followed them. */
+    @Volatile
+    private var sendReleasedTotal = 0L
+
+    /** The Deferreds and flows handed to observers, made once by the first reader. */
+    private class Watch(
+        val sentFinal: kotlinx.coroutines.CompletableDeferred<Long>,
+        val receivedFinal: kotlinx.coroutines.CompletableDeferred<Long>,
+        val receivedOffset: kotlinx.coroutines.flow.MutableStateFlow<Long>,
+        val sendReleased: kotlinx.coroutines.flow.MutableStateFlow<Long>,
+    )
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private val watchRef = kotlin.concurrent.atomics.AtomicReference<Watch?>(null)
+
+    /**
+     * The observers' objects, made on the first call. The loop writes a field before it reads [watchRef], a reader publishes
+     * [watchRef] before it reads the fields ([sync]): one of the two sees the other, so no value is lost.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun watch(): Watch {
+        watchRef.load()?.let { return it }
+        val made =
+            Watch(
+                kotlinx.coroutines.CompletableDeferred<Long>().also {
+                    if (outChannel == null) it.completeExceptionally(IllegalStateException("stream $id is receive-only"))
+                },
+                kotlinx.coroutines.CompletableDeferred<Long>().also {
+                    if (inChannel == null) it.completeExceptionally(IllegalStateException("stream $id is send-only"))
+                },
+                kotlinx.coroutines.flow.MutableStateFlow(0L),
+                kotlinx.coroutines.flow.MutableStateFlow(0L),
+            )
+        val w = if (watchRef.compareAndSet(null, made)) made else watchRef.load()!!
+        sync(w)
+        return w
+    }
+
+    /** Brings [w] up to the fields; any thread, any number of times: Deferreds complete once, flows only grow. */
+    private fun sync(w: Watch) {
+        val sent = sentFinalKnown
+        val received = receivedFinalKnown
+        val lost = finalsLost
+        settle(w.sentFinal, sent, lost)
+        settle(w.receivedFinal, received, lost)
+        grow(w.receivedOffset, receivedHigh)
+        grow(w.sendReleased, sendReleasedTotal)
+    }
+
+    private fun settle(
+        d: kotlinx.coroutines.CompletableDeferred<Long>,
+        size: Long,
+        lost: Throwable?,
+    ) {
+        when {
+            size >= 0 -> d.complete(size)
+            lost != null -> d.completeExceptionally(lost)
         }
-    private val receivedFinal =
-        kotlinx.coroutines.CompletableDeferred<Long>().also {
-            if (!recv) it.completeExceptionally(IllegalStateException("stream $id is send-only"))
+    }
+
+    private fun grow(
+        flow: kotlinx.coroutines.flow.MutableStateFlow<Long>,
+        to: Long,
+    ) {
+        while (true) {
+            val v = flow.value
+            if (to <= v || flow.compareAndSet(v, to)) return
         }
-    private val receivedOffsetFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
-    override val receivedOffset: kotlinx.coroutines.flow.StateFlow<Long> get() = receivedOffsetFlow
+    }
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun synced() {
+        watchRef.load()?.let(::sync)
+    }
+
+    override val receivedOffset: kotlinx.coroutines.flow.StateFlow<Long> get() = watch().receivedOffset
 
     /** On the loop: the core received up to [offset] on this stream; the flow only grows. */
     internal fun noteReceived(offset: Long) {
-        if (offset > receivedOffsetFlow.value) receivedOffsetFlow.value = offset
+        if (offset <= receivedHigh) return
+        receivedHigh = offset
+        synced()
     }
-
-    private val sendReleasedFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     /** [sendReleased] was read: the loop keeps the flow up to date. */
     @Volatile
@@ -80,30 +168,37 @@ internal class StreamRuntime(
                     noteSendReleased(conn.core.streamSendReleased(id))
                 }
             }
-            return sendReleasedFlow
+            return watch().sendReleased
         }
 
     /** On the loop: the core released up to [total] bytes of this stream's send buffer; the flow only grows. */
     internal fun noteSendReleased(total: Long) {
-        if (total > sendReleasedFlow.value) sendReleasedFlow.value = total
+        if (total <= sendReleasedTotal) return
+        sendReleasedTotal = total
+        synced()
     }
 
-    override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = sentFinal
-    override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = receivedFinal
+    override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = watch().sentFinal
+    override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = watch().receivedFinal
 
     /** On the loop: the core fixed the final size of one half ([io.kuicksilver.quic.ConnectionEvent.StreamFinalSize]). */
     internal fun finalSize(
         sending: Boolean,
         size: Long,
     ) {
-        (if (sending) sentFinal else receivedFinal).complete(size)
+        // the first outcome stands, as a Deferred's would: a half that lacks it, already known or already lost keeps it
+        if (finalsLost == null && (if (sending) outChannel else inChannel) != null) {
+            if (sending && sentFinalKnown < 0) sentFinalKnown = size
+            if (!sending && receivedFinalKnown < 0) receivedFinalKnown = size
+        }
         if (!sending) noteReceived(size)
+        synced()
     }
 
     /** The final sizes will never be known: the connection ended, or a rejected 0-RTT dropped the stream. */
     private fun finalSizesLost(cause: Throwable) {
-        sentFinal.completeExceptionally(cause)
-        receivedFinal.completeExceptionally(cause)
+        if (finalsLost == null) finalsLost = cause
+        synced()
     }
 
     internal val ticker = conn.newTicker()
