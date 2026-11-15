@@ -1174,7 +1174,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no fallback before the server moved there (section 9.6.2;
   `.negative_theFallbackNeverMovesToThePreferredAddressBeforeTheClientDid`), and an active path whose own peer address the
   client validated on another path stays active (sections 9.3, 9.3.2;
-  `.negative_anAddressValidatedThroughThePreferredSocketKeepsTheConnectionOnTheOriginalAddress`)
+  `.negative_anAddressValidatedThroughThePreferredSocketKeepsTheConnectionOnTheOriginalAddress`) when it was seen within a
+  validation period, else after validating it again, once per staleness (section 9.3 "seen recently";
+  `.negative_anAddressValidatedLongAgoOnThePreferredSocketIsValidatedAgain`,
+  `.negative_aSuccessfulRevalidationOfAStaleAddressAllowsTheNextOne`)
   (`PathTest.negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne`,
   `.negative_theFallbackChoiceReservesNoIdForThePathsItPasses`,
   `.negative_aFailedValidationRevertsToTheLastValidatedPeerAddressFromItsOwnLocalAddress`,

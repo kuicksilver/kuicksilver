@@ -984,6 +984,8 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                 TimeMark.NEVER
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
+            // the address is seen again: a later staleness earns its own re-validation (keepActiveOnValidatedAddress)
+            p.revalidatedForStaleAddress = false
             paths.lastValidated = p
             if (p === paths.active) {
                 handshakeFallback = null

@@ -3998,4 +3998,38 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * RFC 9000 section 9.3: the re-validation of a stale peer address is one per staleness. Once the client answered it, the address is
+     * validated (and seen) again; when it later goes stale and the path fails again, it is validated again once more, not given up.
+     */
+    @Test fun negative_aSuccessfulRevalidationOfAStaleAddressAllowsTheNextOne() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val q = addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, failed.remote)
+            q.peerProbed = true
+            q.validatedAt = s.now - 60.seconds
+            q.lastReceivedAt = s.now - 60.seconds
+            s.startValidation(failed)
+            s.onPathFailed(failed)
+            assertEquals(PathState.Validating, failed.state)
+            repeat(5) { p.step() }
+            assertEquals(PathState.Validated, failed.state, "the client answered the re-validation")
+            q.validatedAt = s.now - 60.seconds
+            q.lastReceivedAt = s.now - 60.seconds
+            assertFalse(failed.revalidatedForStaleAddress, "a successful re-validation ends the one the stale address had")
+            s.startValidation(failed)
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertSame(failed, s.paths.active)
+            assertEquals(PathState.Validating, failed.state, "the address went stale again: validated again, once")
+        } finally {
+            p.close()
+        }
+    }
 }
