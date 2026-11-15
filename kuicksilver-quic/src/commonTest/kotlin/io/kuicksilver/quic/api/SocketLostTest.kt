@@ -190,7 +190,10 @@ class SocketLostTest {
             }
         }
 
-    /** Third review of 6cacf9c04: a switch that made the path active and then threw leaves the path and its socket alone. */
+    /**
+     * Third review of "a refused switch in migrate never closes the path the connection is on": a switch that made the path active
+     * and then threw leaves the path and its socket alone.
+     */
     @Test fun negative_aSwitchThatThrowsAfterMakingThePathActiveKeepsItsSocket() =
         runBlocking<Unit> {
             ApiPair.open().use { p ->
