@@ -254,6 +254,53 @@ tarball, checks every native library (architecture, exports, imports, OpenSSL ve
 counts the deployment against the Central limits and uploads one signed deployment, which a maintainer publishes after
 Central validates it.
 
+A prerelease can be published on GitHub only, never on Maven Central, with `--github-prerelease`
+([release.md](release.md#prereleases-on-github-only)); 0.3.0-rc1 is published this way, and the final 0.3.0 goes to
+Central; without the mode the script refuses a prerelease unless `--central-prerelease` asks for Central. The mode
+refuses a final version, runs the same preconditions, build, checks, signing and home-directory scan, does not read or
+pass on the Central Portal token and uploads nothing. Instead of the deployment it writes a signed Maven
+repository zip of the publication (every artifact with its POM, Gradle module metadata, `.asc` and checksums), a short
+file that says how to consume it, and a signed `SHA256SUMS` of every asset, for the maintainer to attach to the GitHub
+prerelease. The Swift package commit is prepared as for a release, its binary target the zip of the GitHub prerelease.
+Its tag is immutable, so it is pushed last, in this order: an empty package built for the iOS Simulator and iOS
+against the local zip (`tools/release/swift-package-check.sh local`); the GitHub prerelease as a draft with the
+xcframework zip, whose asset and GitHub's digest are checked against `Package.swift` (`swift-package-check.sh remote
+--draft`) before it is published, and the public URL once it is (`remote`); then the Swift package tag, after
+`swift-package-check.sh prepush`; then an empty package resolved with `exact: "<version>"` (`resolve`). Commits and
+tags are made in UTC, and the checks refuse any other time zone. The clone of the Swift package gets a pre-push hook
+([`tools/release/swift-package-pre-push.sh`](../tools/release/swift-package-pre-push.sh)) that runs the same checks on
+every push of it, so the immutable tag does not depend on running them by hand: a tag is pushed only as the signed,
+annotated tag of the release identity, never as a bare commit, and the clone's own git config carries that identity
+(`user.name`, `user.email`, and `kuicksilver.swift.author`, which the checks read): the release key's identity
+`Kuicksilver <hello@kuicksilver.io>` for its commit and its tag, whatever the Mac's global one is. The documentation site is not built
+for a prerelease.
+
+### Privacy pre-push hook
+
+Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no identity but the
+configured one, no name, home directory or host name in an author, committer, commit message or added line; and a
+tag (only release tags are pushed here, whatever their name) is pushed only as an annotated tag signed by the release
+key (checked against `tools/release/kuicksilver-release-key.asc` and its pinned fingerprint).
+[`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
+`tools/release/local-release.sh` refuses to run until it is installed in the checkout and the names and the identity
+are configured, while the checkout's `user.name <user.email>` is not that identity, and while the tagger is not a user
+ID of the release key (GitHub shows a signed tag as Verified only then). Release tags are made with the tagger per
+command (`git -c user.name=… -c user.email=… tag -s`, as the script prints it), so commits keep the checkout's identity. The
+hook checks the commits the remote does not have (by a named remote's tracking refs, else by listing it; a remote that
+cannot be listed refuses the push), also after a force push. The
+names live in the checkout's git config, never in the repository (a space in a name matches ' ', '.', '_', '-' or
+nothing; any case):
+
+```
+ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+git config --add kuicksilver.privacy.names "<first name> <last name>"     # once per name, alias or spelling
+git config kuicksilver.privacy.identity "<name> <email>"                   # the only author and committer
+git config kuicksilver.privacy.tagger "Kuicksilver <hello@kuicksilver.io>"  # the only tagger: the release key's identity
+```
+
+Commit and tag with `TZ=UTC`. The same names, the user and host names of the Mac and its temporary directories are
+also looked for in every release output by `tools/check/build-paths.py`, at scan time.
+
 - **Signatures.** Every artifact on Maven Central and the `v<version>` tag are signed with the release key
   (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`).
 - **SBOM.** A CycloneDX 1.6 SBOM of every publication, with the statically linked OpenSSL as a component, validated

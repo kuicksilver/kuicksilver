@@ -9,10 +9,13 @@
 #            the files rendered (with a stand-in checksum) and read back by `swift package dump-package`.
 #            local-release.sh runs it with its preconditions.
 #   finish   the same on a fresh clone, then the SwiftPM checksum of the release's Kuicksilver.xcframework.zip, and the
-#            commit (unsigned, as kinchpik). It prints what the maintainer runs in a terminal once the GitHub release
-#            v<version> is published (before that the zip's URL does not resolve): sign the commit and make the tag
-#            <version> (plain SemVer, as Swift packages tag: 0.3.0, 0.3.0-rc1) with the release key, as the main tag is
-#            made, verify both, push. Nothing is signed, tagged or pushed here. Re-running finish is safe: it clones
+#            commit (unsigned, as the release key's identity, Kuicksilver <hello@kuicksilver.io>). It prints what the
+#            maintainer runs in a terminal once the GitHub release v<version> is published (before that the zip's URL
+#            does not resolve): sign the commit and make the tag <version> (plain SemVer, as Swift packages tag: 0.3.0,
+#            0.3.0-rc1) with the release key, as the main tag is made, verify both, check them (tools/release/swift-package-check.sh prepush: UTC dates, the tag on the
+#            commit, no home-directory path), push. The clone's pre-push hook runs the same checks on every push
+#            (tools/release/swift-package-pre-push.sh, installed here). Commit and tag are made with TZ=UTC. Nothing is signed, tagged or
+#            pushed here. Re-running finish is safe: it clones
 #            afresh (the manual way after a failed or rejected push).
 #
 # Which branch: the newest line (the highest X.Y among the package's tags, or a higher one) moves main; a release of an
@@ -28,7 +31,8 @@
 # Usage: tools/release/swift-package.sh prepare <version> [--out <dir>] [--dry-run]
 #        tools/release/swift-package.sh finish <version> <checksum> [--source-commit <sha>] [--out <dir>] [--dry-run]
 # Env: KSL_SWIFT_REPO    the package repository to clone (default https://github.com/kuicksilver/kuicksilver-swift.git)
-#      KSL_SWIFT_AUTHOR  "Name <email>" of the commit (default the maintainer, kinchpik)
+#      KSL_SWIFT_AUTHOR  "Name <email>" of the commit and the tag (default the release key's identity, so that GitHub
+#                        shows them as Verified)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68   # the release key (tools/release/kuicksilver-release-key.asc)
@@ -52,7 +56,7 @@ else
 fi
 commit="${commit:-$(git rev-parse HEAD)}"
 repo="${KSL_SWIFT_REPO:-https://github.com/kuicksilver/kuicksilver-swift.git}"
-author="${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}"
+author="${KSL_SWIFT_AUTHOR:-Kuicksilver <hello@kuicksilver.io>}"
 name="${author% <*}"; email="${author##*<}"; email="${email%>}"
 url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/Kuicksilver.xcframework.zip"
 problem() { if [ "$dry" = 1 ]; then echo "  WARN (a release would refuse): $*"; else echo "REFUSED: $*" >&2; exit 1; fi; }
@@ -65,6 +69,15 @@ else
   git init -q "$out"; echo "  $out: a new repository (dry run without $repo)"
 fi
 G=(git -C "$out")
+# the clone's pre-push hook (tools/release/swift-package-pre-push.sh): a push that would publish a non-UTC date, a local
+# path or name, or a tag not on the checked commit is refused, whether or not the checks were run by hand
+out_abs=$(cd "$out" && pwd); hooks="$out_abs/.git/hooks"; mkdir -p "$hooks"
+printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$root/tools/release/swift-package-pre-push.sh" > "$hooks/pre-push"
+chmod +x "$hooks/pre-push"; "${G[@]}" config core.hooksPath "$hooks"
+# the release identity in the clone's own config: the maintainer's amend and tag by hand (below) use it, never the Mac's
+# global identity; swift-package-check.sh and the hook refuse any other author, committer or tagger
+"${G[@]}" config user.name "$name"; "${G[@]}" config user.email "$email"
+"${G[@]}" config kuicksilver.swift.author "$author"   # what the checks and the hook require, read back at push time
 if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
 fi
@@ -119,20 +132,21 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
 
 # --------------------------------------------------------------------------------------------------------- commit
 "${G[@]}" add -A
-"${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
+# UTC: the commit (and the tag made on it by hand, see below) never carries the maintainer's time zone
+TZ=UTC "${G[@]}" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
-out_abs=$(cd "$out" && pwd)
 q_out=$(printf %q "$out_abs"); q_root=$(printf %q "$root")   # pasteable even with spaces in the path
 echo "  $out: commit $("${G[@]}" rev-parse --short HEAD) on $branch, checksum $sum (unsigned, no tag yet)"
 cat <<NEXT
   Swift package, once the GitHub release v$version is published (SwiftPM downloads $url),
   in a terminal with the release key, as the main tag is made:
     cd $q_out
-    export GPG_TTY=\$(tty)
+    export GPG_TTY=\$(tty) TZ=UTC
     git commit --amend --no-edit -S$fpr
     git tag -s -u $fpr $version -m "Kuicksilver $version"
     git verify-commit HEAD && git verify-tag $version
+    $q_root/tools/release/swift-package-check.sh prepush $version --package $q_out
     git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git $branch refs/tags/$version
   --atomic: both or neither, so a rejected branch never leaves the (immutable) tag behind. If the push is rejected
   ($branch moved since the clone: not a fast-forward), never force it: run

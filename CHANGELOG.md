@@ -626,6 +626,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the same port stays TLS 1.3. With `http2`, HTTP/2 is offered over TLS 1.2 too (RFC 9113 section 9.2), and a client's
   renegotiation attempt on an HTTP/2 connection ends it with GOAWAY PROTOCOL_ERROR (section 9.2.1). The default connector
   still refuses a TLS 1.2 client with `protocol_version` (docs/guide/ktor.md, "TLS 1.2 on the server").
+- Release: prereleases on GitHub only. `tools/release/local-release.sh <version> --github-prerelease` builds, checks and
+  signs a prerelease as a Central release does, uploads nothing and reads no Central credentials, and writes a signed
+  Maven repository zip of the publication (`kuicksilver-<version>-maven-repository.zip`, with checksums and
+  `maven-metadata.xml`), a file on how to consume it, and a signed `SHA256SUMS` of the assets for the GitHub prerelease.
+  It refuses a final version; without it a prerelease is refused unless `--central-prerelease` sends it to Central.
+  The Swift package commit is prepared as for a release (in UTC), and `tools/release/swift-package-check.sh` checks it
+  before its immutable tag is pushed (`local`: an empty package built for the iOS Simulator and iOS against the local
+  zip; `remote --draft`: the draft release's zip and GitHub's digest against `Package.swift`, then `remote` at the public
+  URL; `prepush`: UTC commit and tag dates, no home-directory path) and after (`resolve`: `exact: "<version>"`). The
+  documentation site is no longer built for a published prerelease, and `/latest/` is only ever a final release.
+  The Swift package clone gets a pre-push hook that runs those checks on every push of it, and its own git config
+  carries the release identity, which the checks require of every commit and tag (both also signed by the release key).
+- Release privacy: `tools/hooks/pre-push` (UTC commit and tag dates, one identity, no maintainer name, home directory or
+  host name in a pushed commit or its author, release tags signed by the release key), installed by symlink with the names and the identity in git config
+  (`kuicksilver.privacy.names`, `kuicksilver.privacy.identity`, and `kuicksilver.privacy.tagger`, the release key's
+  identity `Kuicksilver <hello@kuicksilver.io>` that release tags and the Swift package's commits and tags carry, so that
+  GitHub can show them as Verified), and required by
+  `local-release.sh` (docs/process.md, "Privacy pre-push hook"). `tools/check/build-paths.py` also refuses temporary
+  directories (`/tmp/`, `/var/folders/`, ...), home-relative paths, and the user, host and configured names, looked up
+  at scan time. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
+  "Prereleases on GitHub only").
 
 ### Changed
 

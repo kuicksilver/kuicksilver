@@ -1,0 +1,107 @@
+#!/bin/sh
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The privacy guard of a maintainer's checkout (docs/process.md, "Privacy pre-push hook"; tools/release/local-release.sh
+# refuses to run without it). Refuses a push when
+#  - a pushed commit has an author or committer date that is not UTC (+0000), or a pushed annotated tag a tagger date
+#    that is not;
+#  - a pushed tag (any: only release tags are pushed here) is not an annotated tag signed by the release key (checked
+#    against tools/release/kuicksilver-release-key.asc and its pinned fingerprint);
+#  - a pushed commit has an author or committer other than kuicksilver.privacy.identity, or a pushed tag a tagger other
+#    than kuicksilver.privacy.tagger (the release key's identity, so that GitHub shows the signed tag as Verified; both
+#    required), or one whose name or e-mail matches the names below;
+#  - a pushed commit's message, or a line it adds, names the maintainer: a name of `git config --get-all
+#    kuicksilver.privacy.names` (plain names, any case; a space in one matches ' ', '.', '_', '-' or nothing), the home
+#    directory of the current user (/Users/<user>, /home/<user>, C:\Users\<user>) or this machine's host name.
+# The names and the identity live in the checkout's git config only, never in the repository; a push is refused while
+# either is unset. Checked are the commits the remote does not have: for a named remote those not on its tracking refs,
+# for a URL those it does not list (a remote that cannot be listed refuses the push), also after a force push.
+# Install: ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+z=0000000000000000000000000000000000000000
+names=$(git config --get-all kuicksilver.privacy.names)
+if [ -z "$names" ]; then
+  echo "pre-push: no kuicksilver.privacy.names in git config: set the maintainer's names first (docs/process.md)"; exit 1
+fi
+ID=$(git config kuicksilver.privacy.identity)
+if [ -z "$ID" ]; then
+  echo "pre-push: no kuicksilver.privacy.identity in git config: set the only author and committer allowed (docs/process.md)"; exit 1
+fi
+TAGGER=$(git config kuicksilver.privacy.tagger)
+if [ -z "$TAGGER" ]; then
+  echo "pre-push: no kuicksilver.privacy.tagger in git config: set the release key's identity, the only tagger allowed (docs/process.md)"; exit 1
+fi
+# each name as an extended regular expression: metacharacters escaped, a space matching a separator or nothing
+PAT=$(printf '%s\n' "$names" | sed -e 's/[][\.*^$+?(){}|/]/\\&/g' -e 's/ /[ ._-]*/g' | paste -sd '|' -)
+u=${USER:-$(id -un)}
+[ -n "$u" ] && PAT="$PAT|/Users/$u|/home/$u|[A-Za-z]:\\\\+Users\\\\+$u"
+for h in "$(hostname 2>/dev/null | cut -d. -f1)" "$(scutil --get LocalHostName 2>/dev/null)"; do
+  [ ${#h} -ge 4 ] && [ "$h" != localhost ] && PAT="$PAT|$h"
+done
+# what the remote already has is not checked again: a named remote's tracking refs, or for a URL what it lists (a remote
+# that cannot be listed refuses the push: without it every commit, or none, would be checked); a named remote without
+# tracking refs yet is listed like a URL
+if [ -n "$1" ] && [ "$1" != "$2" ] && [ -n "$(git for-each-ref --count=1 "refs/remotes/$1/")" ]; then
+  known="--remotes=$1"
+elif listed=$(git ls-remote "$2" 2>/dev/null); then
+  known=$(printf '%s\n' "$listed" | awk '{print $1}' | sort -u | while read -r s; do git cat-file -e "$s^{commit}" 2>/dev/null && echo "$s"; done)
+else
+  echo "pre-push: cannot list $2 (what it already has decides what is checked): push refused"; exit 1
+fi
+# every tag pushed here is a release tag, signed by the release key: its signature checked against the pinned public key
+# of the checkout in a keyring of its own (GOODSIG and VALIDSIG on the primary fingerprint). KSL_RELEASE_KEY_FILE and
+# KSL_RELEASE_FPR replace the key only together with KSL_HOOK_TEST=1 (the tests)
+verify_release_tag() { # <tag object> <name>
+  vt=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$vt"
+  key=$(git rev-parse --show-toplevel)/tools/release/kuicksilver-release-key.asc; fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
+  if [ "${KSL_HOOK_TEST:-}" = 1 ]; then   # tools/release/local-release-test.sh only: a throwaway key in place of the release key
+    key=${KSL_RELEASE_KEY_FILE:-$key}; fpr=${KSL_RELEASE_FPR:-$fpr}
+  fi
+  git cat-file tag "$1" > "$vt/obj"
+  sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$vt/obj" > "$vt/payload"
+  sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$vt/obj" > "$vt/sig.asc"
+  if [ ! -s "$vt/sig.asc" ]; then
+    echo "pre-push: tag $2 is not signed (git tag -s with the release key)"; rm -rf "$vt"; return 1
+  fi
+  mkdir -m 700 "$vt/home"
+  gpg --homedir "$vt/home" --batch --import "$key" >/dev/null 2>&1
+  st=$(gpg --homedir "$vt/home" --batch --status-fd 1 --verify "$vt/sig.asc" "$vt/payload" 2>/dev/null)
+  gpgconf --homedir "$vt/home" --kill all >/dev/null 2>&1; rm -rf "$vt"
+  if printf '%s\n' "$st" | grep -q '^\[GNUPG:\] GOODSIG ' && printf '%s\n' "$st" | grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$"; then return 0; fi
+  echo "pre-push: tag $2 is not signed by the release key $fpr"; return 1
+}
+bad=0
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && continue
+  if [ "$(git cat-file -t "$lsha" 2>/dev/null)" = tag ]; then   # an annotated tag: its tagger date must be UTC too
+    tz=$(git cat-file -p "$lsha" | sed -n 's/^tagger .* \([-+][0-9][0-9][0-9][0-9]\)$/\1/p' | head -1)
+    [ "$tz" = "+0000" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger zone ${tz:-none}, not +0000 (tag with TZ=UTC)"; bad=1; }
+    who=$(git cat-file -p "$lsha" | sed -n 's/^tagger \(.*>\) [0-9]* [-+][0-9]*$/\1/p' | head -1)
+    [ "$who" = "$TAGGER" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger '$who', not $TAGGER"; bad=1; }
+    out=$(git cat-file -p "$lsha" | grep -i -E "$PAT")
+    [ -n "$out" ] && { echo "pre-push: personal identifiers in tag ${lref#refs/tags/}:"; echo "$out" | head -5; bad=1; }
+    case "$rref" in refs/tags/*) verify_release_tag "$lsha" "${rref#refs/tags/}" || bad=1 ;; esac
+  fi
+  case "$rref" in refs/tags/*) [ "$(git cat-file -t "$lsha" 2>/dev/null)" = tag ] \
+    || { echo "pre-push: ${rref#refs/tags/}: every tag pushed here is a release tag: an annotated tag signed by the release key (git tag -s)"; bad=1; } ;; esac
+  # the commits to check: those the remote does not have; a force push over a commit not here is no exception
+  if [ "$rsha" != "$z" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then range="$rsha..$lsha"; else range="$lsha --not $known"; fi
+  if ! revs=$(git rev-list $range); then echo "pre-push: cannot list the commits of $rref ($range)"; bad=1; continue; fi
+  [ -n "$revs" ] || continue
+  if ! log=$(git log --no-walk=unsorted --format='%h|%ad|%cd|%an <%ae>|%cn <%ce>' --date=format:%z $revs); then
+    echo "pre-push: cannot read the commits of $rref"; bad=1; continue
+  fi
+  out=$(printf '%s\n' "$log" | awk -F'|' '$2!="+0000" || $3!="+0000"')
+  [ -n "$out" ] && { echo "pre-push: commits with non-UTC dates (commit with TZ=UTC):"; echo "$out"; bad=1; }
+  out=$(printf '%s\n' "$log" | awk -F'|' -v id="$ID" '$4!=id || $5!=id')
+  [ -n "$out" ] && { echo "pre-push: commits with another author/committer identity than $ID:"; echo "$out"; bad=1; }
+  out=$(printf '%s\n' "$log" | cut -d'|' -f1,4,5 | grep -i -E "$PAT")
+  [ -n "$out" ] && { echo "pre-push: personal identifiers in author/committer names or e-mails:"; echo "$out"; bad=1; }
+  out=$(git log --no-walk=unsorted --format='%h %B' $revs | grep -i -E "$PAT")
+  [ -n "$out" ] && { echo "pre-push: personal identifiers in commit messages:"; echo "$out" | head -20; bad=1; }
+  for c in $revs; do
+    out=$(git show --format= --no-color --no-ext-diff -U0 "$c" | grep -E '^\+' | grep -v '^+++' | grep -i -E "$PAT")
+    [ -n "$out" ] && { echo "pre-push: personal identifiers added in $(git rev-parse --short "$c"):"; echo "$out" | cut -c1-200 | head -20; bad=1; }
+  done
+done
+[ $bad -eq 0 ] || echo "pre-push: push refused (privacy guard tools/hooks/pre-push)"
+exit $bad
