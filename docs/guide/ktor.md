@@ -1121,7 +1121,14 @@ there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is 
 STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
 closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
 engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
-client's close_notify is not waited for), END_STREAM or FIN right after the session. The connection, its pool slot and the engine's
+client's close_notify is not waited for), END_STREAM or FIN right after the session.
+
+How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
+bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
+is cancelled and the connection or stream ended at once), 5 s for the server's close of the transport (then the client
+closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
+(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
+they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
 `close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
 before the pools close. A call that ends before the session queued its Close ends the session at once. A coroutine of
 the session that fails is reported to the event listener (`webSocketFailed`).

@@ -145,6 +145,32 @@ class QlogWriterTest {
         }
     }
 
+    /**
+     * A sent RESET_STREAM and STOP_SENDING name their stream and code (qlog's QUIC event schema: `stream_id`,
+     * `error_code`, and the RESET_STREAM's `final_size`), so a trace tells which stream an endpoint abandoned. Before, only
+     * the frame type was there.
+     */
+    @Test fun resetAndStopSendingNameTheirStream() {
+        val sink = MemorySink()
+        val p = pair(sink)
+        try {
+            assertTrue(p.handshake())
+            val id = p.client.openStream(true, StreamPriority.Default)
+            p.client.writeStream(id, ByteArray(10), 0, 10, false)
+            p.client.resetStream(id, 7)
+            p.client.stopSending(id, 9)
+
+            fun sent(type: String) = records(sink, "client").any { "\"$type\"" in it }
+            assertTrue(p.runUntil(limit = 5_000.milliseconds) { sent("reset_stream") && sent("stop_sending") })
+            val reset = records(sink, "client").first { "\"reset_stream\"" in it }
+            assertTrue(reset.contains("{\"frame_type\":\"reset_stream\",\"stream_id\":$id,\"error_code\":7,\"final_size\":"), reset)
+            val stop = records(sink, "client").first { "\"stop_sending\"" in it }
+            assertTrue(stop.contains("{\"frame_type\":\"stop_sending\",\"stream_id\":$id,\"error_code\":9}"), stop)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun lossAndMetricsEvents() {
         val sink = MemorySink()
         val p = pair(sink)

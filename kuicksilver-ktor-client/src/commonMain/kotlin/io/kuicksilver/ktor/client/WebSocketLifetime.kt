@@ -37,6 +37,11 @@ import kotlin.time.TimeSource
  * (with close_notify over TLS), its END_STREAM over HTTP/2, its FIN over HTTP/3. RFC 6455 section 5.5.1: "the client
  * SHOULD wait for the server to close the connection but MAY close the connection at any time after sending and receiving
  * a Close message, e.g., if it has not received a TCP Close from the server in a reasonable time period".
+ *
+ * The bound this gives `client.close()` (which waits for every session's end) against a server that stays silent: three
+ * close waits (15 s) after the session's own Close at most. T1 for the server's Close; T2 for its close of the transport;
+ * over HTTP/2 and HTTP/3 one more for its END_STREAM or FIN after the client's own, before the stream is reset. The end
+ * handlers are cut off two close waits after the session ended, whatever they still wait for.
  */
 internal const val WEBSOCKET_CLOSE_WAIT_MILLIS: Long = 5_000
 

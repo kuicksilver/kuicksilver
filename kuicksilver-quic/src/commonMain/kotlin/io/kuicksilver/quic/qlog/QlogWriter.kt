@@ -233,6 +233,28 @@ internal class QlogWriter(
             if (sb.isNotEmpty()) sb.append(',')
             sb.append("{\"frame_type\":\"").append(type).append("\"}")
         }
+
+        // qlog's QUIC event schema names the stream and the code of a reset or a stop (draft-ietf-quic-qlog-quic-events:
+        // ResetStreamFrame, StopSendingFrame), so a trace says which stream was abandoned
+        fun addStreamFrame(
+            type: String,
+            stream: Long,
+            code: Long,
+            finalSize: Long = -1,
+            reliableSize: Long = -1,
+        ) {
+            if (sb.isNotEmpty()) sb.append(',')
+            sb
+                .append("{\"frame_type\":\"")
+                .append(type)
+                .append("\",\"stream_id\":")
+                .append(stream)
+                .append(",\"error_code\":")
+                .append(code)
+            if (finalSize >= 0) sb.append(",\"final_size\":").append(finalSize)
+            if (reliableSize >= 0) sb.append(",\"reliable_size\":").append(reliableSize)
+            sb.append('}')
+        }
         if (f.ackLargest >= 0) add("ack")
         for (i in 0 until f.cryptoCount) add("crypto")
         for (i in 0 until f.streamCount) add("stream")
@@ -259,12 +281,25 @@ internal class QlogWriter(
         }
         if (f.flags and SentFrames.PATH_RESPONSE != 0) add("path_response")
         for (i in 0 until f.idCount) {
+            when (f.idKind[i]) {
+                SentFrames.ID_RESET_STREAM -> {
+                    addStreamFrame("reset_stream", f.idValue[i], f.idExtra[i], f.idExtra2[i])
+                    continue
+                }
+
+                SentFrames.ID_RESET_STREAM_AT -> {
+                    addStreamFrame("reset_stream_at", f.idValue[i], f.idExtra[i], f.idExtra2[i], f.idExtra3[i])
+                    continue
+                }
+
+                SentFrames.ID_STOP_SENDING -> {
+                    addStreamFrame("stop_sending", f.idValue[i], f.idExtra[i])
+                    continue
+                }
+            }
             add(
                 when (f.idKind[i]) {
                     SentFrames.ID_MAX_STREAM_DATA -> "max_stream_data"
-                    SentFrames.ID_RESET_STREAM -> "reset_stream"
-                    SentFrames.ID_RESET_STREAM_AT -> "reset_stream_at"
-                    SentFrames.ID_STOP_SENDING -> "stop_sending"
                     SentFrames.ID_NEW_CONNECTION_ID -> "new_connection_id"
                     SentFrames.ID_RETIRE_CONNECTION_ID -> "retire_connection_id"
                     SentFrames.ID_NEW_TOKEN -> "new_token"

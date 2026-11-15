@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
+  (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
   (the engine's or Ktor's reader or writer) fails; the session may outlive its call while it writes its own Close, so
   this can come after `callEnd`.
@@ -984,8 +986,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it answers then), END_STREAM or FIN, reading and dropping what still comes, and closes its side cleanly after it, or
   after the close wait (5 s) counted from both Closes; an HTTP/2 or HTTP/3 stream is reset (CANCEL,
   H3_REQUEST_CANCELLED) only another close wait later, and a peer's STOP_SENDING while the FIN is held is answered with
-  RESET_STREAM. A session whose server never sends its Close is now ended after the close wait on HTTP/1.1 and HTTP/3
-  too, not only over HTTP/2. The server engine closes first: an upgraded HTTP/1.1 connection closes as soon as the
+  RESET_STREAM.
+- Ktor client, WebSockets over HTTP/1.1 and HTTP/3: a session that sent its Close to a server that never answers with its
+  own no longer hangs. Ktor's session waited for that Close for good, and with it the call and `client.close()`; now, as
+  over HTTP/2 already, the session is cancelled 5 s after its own Close (the close wait, RFC 6455 section 7.1.1: the client
+  may close "if it has not received a TCP Close from the server in a reasonable time period") and the connection closed
+  (HTTP/1.1) or the stream reset with H3_REQUEST_CANCELLED (HTTP/3). For a silent server `client.close()` waits at most
+  three close waits (15 s) after the session's Close (docs/guide/ktor.md).
+- Ktor server, WebSockets: the server closes first: an upgraded HTTP/1.1 connection closes as soon as the
   WebSocket ends (before, it stayed open until the client closed it), its FIN follows close_notify at once (before, it
   waited up to 3 s for the client's close_notify), and over HTTP/3 the client's direction is read to its FIN for up to 5
   s after the server's FIN, STOP_SENDING H3_NO_ERROR only after that (before, right after the server's FIN).

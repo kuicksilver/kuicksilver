@@ -75,8 +75,13 @@ class ClientWebSocketCloseOrderTest {
         val timed = MutableStateFlow(emptyList<String>())
 
         operator fun plusAssign(e: String) {
-            timed.update { it + "$e@${start.elapsedNow().inWholeMilliseconds}" }
+            note(e)
             all.update { it + e }
+        }
+
+        /** A detail for the failure message only (stream IDs, codes), with its time. */
+        fun note(e: String) {
+            timed.update { it + "$e@${start.elapsedNow().inWholeMilliseconds}" }
         }
 
         suspend fun await(e: String) = withTimeout(20.seconds) { all.first { e in it } }
@@ -274,35 +279,35 @@ class ClientWebSocketCloseOrderTest {
         trailing: Boolean = false,
         truncated: Boolean = false,
     ) = clientTest {
-            val conns = CompletableDeferred<RawConnection>()
-            val hook = Events()
-            rawServer(tls, serve = { conn ->
-                conns.complete(conn)
-                conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x0F, 0xA1.toByte())) // Close 4001
-                // a server that sends more after its Close (RFC 6455 section 5.5.1 forbids data frames): the client
-                // reads and drops it (section 7.1.1: "discarding any trailing bytes")
-                if (trailing) conn.output.writeFully(TRAILING)
-                conn.output.flush()
-                assertEquals("close 4001 ", readClientFrames(conn.input).last())
-                conn.watchEnd()
-            }) { port ->
-                testClient(block = { install(WebSockets) }).use { c ->
-                    engine(c).h1.webSocketClosingForTest = { hook += it }
-                    engine(c).h1.webSocketCloseWaitMillis = 60_000
-                    withTimeout(20.seconds) { c.webSocket("${scheme(tls)}://127.0.0.1:$port/ws") { for (f in incoming) continue } }
-                    val conn = conns.await()
-                    hook.await("waiting")
-                    conn.events.assertClientQuietWhileServerHolds()
-                    if (truncated) conn.closeTruncated() else conn.close()
-                    conn.events.await("client FIN")
-                    // over TLS the client answers even a truncated end with close_notify: it closes its write side
-                    if (tls) conn.events.await("client close_notify")
-                    hook.await("server closed")
-                    if (!truncated) assertServerFirst(conn.events, tls)
-                    assertFalse(conn.events.has("client RST"), "${conn.events.all.value}")
-                }
+        val conns = CompletableDeferred<RawConnection>()
+        val hook = Events()
+        rawServer(tls, serve = { conn ->
+            conns.complete(conn)
+            conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x0F, 0xA1.toByte())) // Close 4001
+            // a server that sends more after its Close (RFC 6455 section 5.5.1 forbids data frames): the client
+            // reads and drops it (section 7.1.1: "discarding any trailing bytes")
+            if (trailing) conn.output.writeFully(TRAILING)
+            conn.output.flush()
+            assertEquals("close 4001 ", readClientFrames(conn.input).last())
+            conn.watchEnd()
+        }) { port ->
+            testClient(block = { install(WebSockets) }).use { c ->
+                engine(c).h1.webSocketClosingForTest = { hook += it }
+                engine(c).h1.webSocketCloseWaitMillis = 60_000
+                withTimeout(20.seconds) { c.webSocket("${scheme(tls)}://127.0.0.1:$port/ws") { for (f in incoming) continue } }
+                val conn = conns.await()
+                hook.await("waiting")
+                conn.events.assertClientQuietWhileServerHolds()
+                if (truncated) conn.closeTruncated() else conn.close()
+                conn.events.await("client FIN")
+                // over TLS the client answers even a truncated end with close_notify: it closes its write side
+                if (tls) conn.events.await("client close_notify")
+                hook.await("server closed")
+                if (!truncated) assertServerFirst(conn.events, tls)
+                assertFalse(conn.events.has("client RST"), "${conn.events.all.value}")
             }
         }
+    }
 
     /**
      * A server that answers the Close and then never closes: the client closes at T2 (200 ms here), cleanly (close_notify
@@ -432,18 +437,18 @@ class ClientWebSocketCloseOrderTest {
                     endServer.complete(Unit)
                     events.await("client END_STREAM")
                     hook.await("server ended")
-                    assertTrue(events.before("server END_STREAM", "client END_STREAM"), "${events.all.value}")
+                    assertTrue(events.before("server END_STREAM", "client END_STREAM"), "${events.timed.value}")
                     // the stream is over both ways: released without RST_STREAM. A request after the release goes on
                     // the same connection, behind any RST_STREAM the release would have sent
                     awaitH2StreamsReleased(engine(c))
                     c.get("https://127.0.0.1:$port/")
-                    assertFalse(events.all.value.any { it.startsWith("client RST") }, "${events.all.value}")
+                    assertFalse(events.all.value.any { it.startsWith("client RST") }, "${events.timed.value}")
                 } else {
                     // T2 (200 ms): END_STREAM first, the reset (CANCEL) only one close wait later
                     events.await("client END_STREAM")
                     hook.await("T2")
                     events.await("client RST ${Http2ErrorCode.CANCEL}")
-                    assertTrue(events.before("client END_STREAM", "client RST ${Http2ErrorCode.CANCEL}"), "${events.all.value}")
+                    assertTrue(events.before("client END_STREAM", "client RST ${Http2ErrorCode.CANCEL}"), "${events.timed.value}")
                     endServer.complete(Unit)
                 }
             }
@@ -466,7 +471,13 @@ class ClientWebSocketCloseOrderTest {
 
     // ---- HTTP/3 (RFC 9220 section 3: the FIN is the TCP FIN, H3_REQUEST_CANCELLED the reset) ----
 
-    /** The client's qlog: "client STOP_SENDING" and "client RESET_STREAM" for every such frame it sends. */
+    /**
+     * The client's qlog: "client STOP_SENDING" and "client RESET_STREAM" for every such frame it sends on a bidirectional
+     * stream of its own (the WebSocket's CONNECT stream, the only request here). Those on unidirectional streams are noted
+     * only: the server stops the client's GREASE stream (RFC 9114 section 6.2: H3_STREAM_CREATION_ERROR) and the client
+     * answers with RESET_STREAM (RFC 9000 section 3.5) when that stream was not acknowledged yet, which has nothing to do
+     * with the WebSocket (found under load: stream 14, code 0x103).
+     */
     private class FramesSent(
         val events: Events,
     ) : QlogSink {
@@ -477,8 +488,17 @@ class ClientWebSocketCloseOrderTest {
             object : QlogTrace {
                 override fun write(record: String) {
                     if ("packet_sent" !in record) return
-                    if ("\"stop_sending\"" in record) events += "client STOP_SENDING"
-                    if ("\"reset_stream\"" in record) events += "client RESET_STREAM"
+                    // every reset or stop with its stream and code (qlog names them), for the failure message
+                    for (m in RESET_OR_STOP.findAll(record)) {
+                        val (type, stream, code) = m.destructured
+                        events.note("client $type stream $stream code $code")
+                        // client-initiated bidirectional: stream ID 0 modulo 4 (RFC 9000 section 2.1)
+                        if (stream.toLong() % 4 != 0L) continue
+                        when (type) {
+                            "stop_sending" -> events += "client STOP_SENDING"
+                            "reset_stream", "reset_stream_at" -> events += "client RESET_STREAM"
+                        }
+                    }
                 }
 
                 override fun close() {}
@@ -513,18 +533,15 @@ class ClientWebSocketCloseOrderTest {
                                     },
                                 ).build()
                     }.build(),
-                // no GREASE stream, which the client stops (STOP_SENDING, RFC 9114 section 6.2.3): the client's qlog then
-                // shows only the WebSocket stream's frames
-                io.kuicksilver.http3.http3Settings {
-                    enableConnectProtocol = true
-                    grease = false
-                },
+                // GREASE on both sides (the default): the uni streams it adds are stopped and reset beside the WebSocket
+                io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
             )
         coroutineScope {
             val served =
                 launch {
                     val conn = ep.accept()
                     val s = conn.acceptRequest().acceptConnect()
+                    events.note("server WebSocket stream ${s.streamId}")
                     val close = byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte())
                     if (clientFirst) {
                         readClientFrames(s.input)
@@ -556,7 +573,10 @@ class ClientWebSocketCloseOrderTest {
                     engine = { http3 { qlog = FramesSent(events) } },
                     block = { install(WebSockets) },
                 ).use { c ->
-                    engine(c).h3.webSocketClosingForTest = { hook += it }
+                    engine(c).h3.webSocketClosingForTest = {
+                        hook += it
+                        events.note("hook $it")
+                    }
                     engine(c).h3.webSocketCloseWaitMillis = if (serverEnds) 60_000 else 200
                     val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
                     if (clientFirst) {
@@ -572,7 +592,7 @@ class ClientWebSocketCloseOrderTest {
                             events.await("client RESET_STREAM")
                             events.await("client reset")
                             hook.await("server ended")
-                            assertFalse(events.has("client STOP_SENDING"), "${events.all.value}")
+                            assertFalse(events.has("client STOP_SENDING"), "${events.timed.value}")
                         }
 
                         serverEnds -> {
@@ -580,9 +600,9 @@ class ClientWebSocketCloseOrderTest {
                             endServer.complete(Unit)
                             events.await("client FIN")
                             hook.await("server ended")
-                            assertTrue(events.before("server FIN", "client FIN"), "${events.all.value}")
+                            assertTrue(events.before("server FIN", "client FIN"), "${events.timed.value}")
                             // the stream's end is over before the pool lets the connection go: no frame of an abort
-                            assertFalse(events.has("client STOP_SENDING") || events.has("client RESET_STREAM"), "${events.all.value}")
+                            assertFalse(events.has("client STOP_SENDING") || events.has("client RESET_STREAM"), "${events.timed.value}")
                         }
 
                         else -> {
@@ -590,7 +610,7 @@ class ClientWebSocketCloseOrderTest {
                             hook.await("T2")
                             events.await("client STOP_SENDING")
                             assertTrue(events.before("client FIN", "client STOP_SENDING"), "${events.timed.value} ${hook.timed.value}")
-                            assertFalse(events.has("client RESET_STREAM"), "${events.all.value}")
+                            assertFalse(events.has("client RESET_STREAM"), "${events.timed.value}")
                             endServer.complete(Unit)
                         }
                     }
@@ -621,3 +641,7 @@ private val SLOW_SERVER = 300.milliseconds
 
 /** A text frame "late" of a server's (unmasked), sent after its Close: what a client must read and drop. */
 private val TRAILING = byteArrayOf(0x81.toByte(), 4) + "late".encodeToByteArray()
+
+/** A reset or stop in a qlog packet_sent record: its type, stream and code. */
+private val RESET_OR_STOP =
+    Regex("\"frame_type\":\"(reset_stream|reset_stream_at|stop_sending)\",\"stream_id\":(\\d+),\"error_code\":(\\d+)")
