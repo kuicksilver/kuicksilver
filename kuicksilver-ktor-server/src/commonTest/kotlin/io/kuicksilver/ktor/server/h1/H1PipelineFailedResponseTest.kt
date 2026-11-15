@@ -230,14 +230,15 @@ class H1PipelineFailedResponseTest {
                     output.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
                     output.flush()
                     upgraded!!.complete(true)
+                    val upgradedInput = upgradeInput!!
                     val outcome =
                         try {
                             val buf = ByteArray(4096)
                             while (true) {
-                                val n = input.readAvailable(buf, 0, buf.size)
+                                val n = upgradedInput.readAvailable(buf, 0, buf.size)
                                 if (n < 0) break
                             }
-                            input.closedCause?.let { "a failure: ${it.message}" } ?: "a clean end"
+                            upgradedInput.closedCause?.let { "a failure: ${it.message}" } ?: "a clean end"
                         } catch (e: Exception) {
                             "a failure: ${e.message}"
                         }

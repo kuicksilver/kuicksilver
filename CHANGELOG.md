@@ -975,6 +975,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/1.1 server: a GET that offers an upgrade (`Connection: Upgrade` with an `Upgrade` field, `h2c`, `websocket` or any
+  other token) and whose handler read the request body before answering hung its connection for good: the body stayed
+  open until the response head settled the upgrade. Such a request has no body (RFC 9112 section 6.3 item 7), so the
+  body now ends at once whether or not the upgrade is taken, and the new protocol reads the connection from a separate
+  input. Upgrades (WebSocket) are unchanged.
+- HTTP/1.1 client and server: an empty `Connection` field, or one of only commas and whitespace, is a valid empty list
+  (RFC 9110 section 5.6.1.2). The client failed the call with an IllegalArgumentException from Ktor's
+  `ConnectionOptions.parse`, and the server answered 400. Connection options are now read over all field lines, with
+  HTAB as whitespace (`keep-alive,<HTAB>close` closes) and empty elements ignored.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

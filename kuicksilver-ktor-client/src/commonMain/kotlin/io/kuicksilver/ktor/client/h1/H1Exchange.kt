@@ -20,7 +20,6 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
-import io.ktor.http.cio.ConnectionOptions
 import io.ktor.http.cio.HttpHeadersMap
 import io.ktor.http.cio.ParserException
 import io.ktor.http.cio.RequestResponseBuilder
@@ -51,6 +50,7 @@ import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
 import kotlinx.coroutines.CoroutineName
@@ -543,10 +543,8 @@ internal suspend fun readResponse(
             val version = HttpProtocolVersion.parse(rawResponse.version)
             val fields = responseFields(rawResponse.headers, kept)
             val framing = ResponseFraming.of(fields, http10 = version == HttpProtocolVersion.HTTP_1_0)
-            val connectionType =
-                ConnectionOptions.parse(
-                    fields.valuesOf(HttpHeaders.Connection).takeIf { it.isNotEmpty() }?.joinToString(","),
-                )
+            // an empty Connection field, or one of only empty list elements, carries no option (RFC 9110 section 5.6.1.2)
+            val responseOptions = connectionOptions(fields.valuesOf(HttpHeaders.Connection))
             // Transfer-Encoding overrides Content-Length (RFC 9112 section 6.3 item 3): the stale length is not shown to Ktor,
             // which would check the body against it
             val headers =
@@ -564,8 +562,9 @@ internal suspend fun readResponse(
             // a request that said `Connection: close` is the last one on the connection (RFC 9112 section 9.6); a response
             // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
             val keepAlive =
-                version.handlesHttp11() && connectionType?.close != true &&
-                    ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding &&
+                version.handlesHttp11() && "close" !in responseOptions &&
+                    "close" !in connectionOptions(request.headers.getAll(HttpHeaders.Connection).orEmpty()) &&
+                    !framing.lengthAndEncoding &&
                     unsentBody == null
 
             if (status == HttpStatusCode.SwitchingProtocols) {

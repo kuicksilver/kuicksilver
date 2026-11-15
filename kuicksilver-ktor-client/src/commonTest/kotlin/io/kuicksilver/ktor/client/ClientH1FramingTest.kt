@@ -86,6 +86,31 @@ class ClientH1FramingTest {
             assertEquals(listOf(0, 1), served, "the second request went out on the first connection")
         }
 
+    /**
+     * An empty Connection field (and one of only OWS, with a bare LF) is a valid empty list (RFC 9110 section 5.6.1.2):
+     * the response is read and the connection, which nothing closes, carries the next request. Before, the engine failed
+     * the call with Ktor's IllegalArgumentException from `ConnectionOptions.parse`.
+     */
+    @Test fun negative_anEmptyConnectionFieldIsAnEmptyList() =
+        clientTest {
+            val connections = ArrayList<Int>()
+            rawServerPerConnection({ index, input, output ->
+                connections += index
+                for (head in listOf("HTTP/1.1 200 OK\r\nConnection:\r\n", "HTTP/1.1 200 OK\nConnection: \t\n")) {
+                    readHead(input)
+                    output.writeStringUtf8(head + "Content-Length: 2\r\n\r\nok")
+                    output.flush()
+                }
+                readHead(input)
+            }) { port ->
+                testClient().use { c ->
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/1").bodyAsText())
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/2").bodyAsText())
+                }
+            }
+            assertEquals(listOf(0), connections, "both requests on one connection")
+        }
+
     /** Content-Length is 1*DIGIT (RFC 9110 section 8.6): a sign is not a length. */
     @Test fun negative_signedContentLengthRejected() =
         clientTest {

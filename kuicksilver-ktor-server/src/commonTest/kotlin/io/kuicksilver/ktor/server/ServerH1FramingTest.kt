@@ -89,6 +89,29 @@ class ServerH1FramingTest {
         }
 
     /**
+     * An empty Connection field, or one of only commas and OWS, is a valid list without elements (RFC 9110 section
+     * 5.6.1.2: a recipient MUST parse and ignore empty list elements): the request is served and the connection carries
+     * the next one. Before, Ktor's `ConnectionOptions.parse` threw on the empty value and the engine answered 400.
+     */
+    @Test fun negative_anEmptyConnectionFieldIsAccepted() =
+        serverTest {
+            plainServer { port ->
+                val values = listOf("Connection:\r\n", "Connection: \t\r\n", "Connection: ,, ,\r\n", "Connection:\n")
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            values.joinToString("") { "GET / HTTP/1.1\r\nHost: s\r\n$it\r\n" } +
+                                "GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertEquals(values.size + 1, Regex("HTTP/1.1 200 ").findAll(resp).count(), resp)
+                assertFalse(resp.contains(" 400 "), resp)
+            }
+        }
+
+    /**
      * RFC 9112 section 2.2: "a recipient MAY recognize a single LF as a line terminator and ignore any preceding CR". The
      * server does so in the request line, the field section and a trailer section (as Go's net/http and nginx), and only
      * there: the chunk-size line takes CRLF alone (`h1.ChunkedBodyTest.negative_bareLfInChunkSizeLineIsRejected`).

@@ -247,6 +247,8 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9112 | §9.3.2 — server pipelining | ✅ | 0.2.1 | Pipelined requests are answered in order. | [details](rfc/9112.md#s9-3-2-server-pipelining) |
 | RFC 9112 | §4 — server status line | ✅ | 0.2.1 | The status line is always `HTTP/1.1` with a valid reason phrase. | [details](rfc/9112.md#s4-server-status-line) |
 | RFC 9110 | §7.8, §15.2 — server Upgrade in HTTP/1.0 | ✅ | 0.2.1 | The Upgrade field of an HTTP/1.0 request is ignored. | [details](rfc/9110.md#s7-8-server-upgrade-in-http-1-0) |
+| RFC 9110 | §7.8; RFC 9112 §6.3 item 7 — server: an upgrade offer has no body | ✅ | 0.3.0 | The body of an upgrade offer without framing ends at once; the new protocol gets its own input. | [details](rfc/9110.md#s7-8-upgrade-offer-without-a-body) |
+| RFC 9110 | §5.6.1, §7.6.1 — Connection field lists (client and server) | ✅ | 0.3.0 | Empty Connection fields and empty list elements are valid and ignored. | [details](rfc/9110.md#s5-6-1-connection-lists) |
 | RFC 9931 | §8 (updates RFC 9112; server CONNECT) — server CONNECT | ✅ | 0.2.1 | Every CONNECT is refused and is the last request on its connection. | [details](rfc/9931.md#s8-server-connect) |
 | RFC 9112 | §9.6 — server staged close | ✅ | 0.2.1 | A response that ends the connection while the client may still send closes in stages. | [details](rfc/9112.md#s9-6-server-staged-close) |
 | RFC 9110 | §15.5.9; RFC 9112 §9.5 — server timeouts | ✅ | 0.2.1 | Incomplete request heads and stalled bodies time out. | [details](rfc/9110.md#s15-5-9-server-timeouts) |

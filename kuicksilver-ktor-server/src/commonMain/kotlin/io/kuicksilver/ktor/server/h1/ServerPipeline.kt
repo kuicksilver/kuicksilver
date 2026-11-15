@@ -8,16 +8,16 @@
 // is internal to ktor-server-cio), without its `onClose` hook; a deadline and a size limit for every request head (408,
 // 431), an idle timeout that ends the whole connection, not only its output, and a deadline on response writes that
 // make no progress.
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.Headers
 import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.cio.CIOHeaders
-import io.ktor.http.cio.ConnectionOptions
 import io.ktor.http.cio.Request
 import io.ktor.http.cio.RequestResponseBuilder
-import io.ktor.http.cio.expectHttpUpgrade
 import io.ktor.http.cio.parseRequest
 import io.ktor.http.toHttpDate
 import io.ktor.server.plugins.BadRequestException
@@ -34,6 +34,8 @@ import io.ktor.utils.io.copyAndClose
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.writePacket
+import io.kuicksilver.ktor.network.connectionOptions
+import io.kuicksilver.ktor.network.fieldListElements
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -98,8 +100,8 @@ internal class H1Connection(
 }
 
 /**
- * One request of an [H1Connection]: its body ([input]), its response ([output]), for an upgrade whether it happened, and
- * [closing]: true once the server stops, when the connection ends after this response.
+ * One request of an [H1Connection]: its body ([input]), its response ([output]), for an upgrade whether it happened and
+ * the input of the new protocol, and [closing]: true once the server stops, when the connection ends after this response.
  */
 internal class H1RequestScope(
     override val coroutineContext: kotlin.coroutines.CoroutineContext,
@@ -108,6 +110,12 @@ internal class H1RequestScope(
     val remoteAddress: H1Address?,
     val localAddress: H1Address?,
     val upgraded: CompletableDeferred<Boolean>?,
+    /**
+     * For a request that offers an upgrade: the connection's input after the request, for the protocol it switches to once
+     * [upgraded] completes with true; it ends empty when the upgrade is not taken. Not the request's body ([input]), which a
+     * request with an upgrade offer never has (it has neither Content-Length nor Transfer-Encoding). Null for other requests.
+     */
+    val upgradeInput: ByteReadChannel? = null,
     val closing: () -> Boolean = { false },
     /**
      * For a request with `Expect: 100-continue`: complete it once `100 Continue` went out, which starts the deadline of the
@@ -453,14 +461,12 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 val response = ByteChannel()
-                val upgrade = fields["Upgrade"]
                 val version = HttpProtocolVersion.parse(request.version)
                 // read before the handler runs: it may release the request's fields
-                val lastRequest =
-                    requestEndsConnection(version, fields.getAll("Connection").orEmpty())
+                val connectionOptions = connectionOptions(fields.getAll("Connection").orEmpty())
+                val lastRequest = requestEndsConnection(version, connectionOptions)
                 val safe = request.method.value in SAFE_METHODS
                 val connect = request.method.value == "CONNECT"
-                val connectionOptions: ConnectionOptions?
 
                 unwritten.update { it + 1 }
                 try {
@@ -472,23 +478,16 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 val expectedHttpBody = framing.hasBody
-                val expectedHttpUpgrade: Boolean
-                try {
-                    connectionOptions = ConnectionOptions.parse(fields["Connection"])
-                    expectedHttpUpgrade = !expectedHttpBody && expectHttpUpgrade(request.method, upgrade, connectionOptions)
-                } catch (_: Throwable) {
-                    request.release()
-                    response.writePacket(badRequestPacket(input.headMethod))
-                    response.close()
-                    break
-                }
+                val expectedHttpUpgrade =
+                    !expectedHttpBody && offersUpgrade(request.method.value, fields.getAll("Upgrade").orEmpty(), connectionOptions)
 
-                val requestBody =
-                    if (expectedHttpBody || expectedHttpUpgrade) {
-                        ByteChannel(true)
-                    } else {
-                        ByteReadChannel.Empty
-                    }
+                // the request's body and, for an upgrade offer, the input of the protocol it may switch to are separate: a
+                // request without Content-Length and Transfer-Encoding has no body (RFC 9112 section 6.3 item 7), so a
+                // handler that reads it sees its end at once, whether or not the upgrade is taken. One channel for both
+                // stayed open until the response head settled the upgrade, and a handler that read the body before it
+                // answered waited for itself: the connection hung
+                val requestBody = if (expectedHttpBody) ByteChannel(true) else ByteReadChannel.Empty
+                val upgradeInput = if (expectedHttpUpgrade) ByteChannel(true) else null
 
                 val upgraded = if (expectedHttpUpgrade) CompletableDeferred<Boolean>() else null
                 // completed when `100 Continue` has been written (the engine's `addHandlerForExpectedHeader`)
@@ -517,6 +516,7 @@ internal fun CoroutineScope.startH1Pipeline(
                                 connection.remoteAddress,
                                 connection.localAddress,
                                 upgraded,
+                                upgradeInput = upgradeInput,
                                 closing = {
                                     draining?.isCompleted == true || bodyTimedOut.isCompleted || body?.endsConnectionAtResponse() == true
                                 },
@@ -557,11 +557,10 @@ internal fun CoroutineScope.startH1Pipeline(
                         }
                     if (up == true) {
                         actorChannel.close()
-                        input.copyAndClose(requestBody as ByteChannel)
+                        input.copyAndClose(upgradeInput!!)
                         break
-                    } else if (requestBody is ByteChannel) { // not upgraded, for example, 404
-                        requestBody.close()
                     }
+                    upgradeInput?.close() // not upgraded, for example, 404
                     if (up == null) break
                 }
 
@@ -1243,8 +1242,26 @@ private suspend fun settleUnreadBody(
 internal fun requestEndsConnection(
     version: HttpProtocolVersion?,
     connection: List<String>,
+): Boolean = requestEndsConnection(version, connectionOptions(connection))
+
+/** [requestEndsConnection] for the request's connection options [options], as [connectionOptions] reads them. */
+internal fun requestEndsConnection(
+    version: HttpProtocolVersion?,
+    options: Set<String>,
 ): Boolean {
-    val options = connection.flatMap { line -> line.split(',').map { it.trim(' ', '\t').lowercase() } }
     if ("close" in options) return true
     return version != HttpProtocolVersion.HTTP_1_1 && "keep-alive" !in options
 }
+
+/**
+ * Whether a request of [method] with the Upgrade field lines [upgrade] and the connection options [options] offers to
+ * switch protocols (RFC 9110 section 7.8): a GET (the only method Ktor's upgrades answer) whose Upgrade lists at least one
+ * protocol and whose Connection carries the `upgrade` option, which a sender of Upgrade MUST send. An Upgrade of only
+ * empty list elements names no protocol to switch to (the server MUST NOT switch to one the client did not indicate).
+ * The Upgrade of an HTTP/1.0 request never gets here: [requestFields] drops it, as the server MUST ignore it.
+ */
+internal fun offersUpgrade(
+    method: String,
+    upgrade: List<String>,
+    options: Set<String>,
+): Boolean = method == "GET" && "upgrade" in options && fieldListElements(upgrade).isNotEmpty()
