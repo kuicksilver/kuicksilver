@@ -385,11 +385,23 @@ connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one 
 
 Credit comes back as the application takes the bytes, for a stream that ended cleanly once all of it was handed to its
 input (read or not), and for a reset or stopped stream once its final size is known; bytes of an open stream that nobody
-reads give none. So read a session's incoming streams concurrently (a coroutine per accepted stream), or give the
-session enough data credit for what its peer sends at once. Streams waiting for session
-credit are not served in the order they were opened, by this library's sender or any other (section 5 sets no order):
-a reader that takes the streams strictly one after another can wait on a stream that got no credit while the credit sits
-unread in later ones, and under a tight `webTransportInitialMaxData` the session stalls.
+reads give none.
+
+This library's sender hands a session's data credit to the session's streams in the order the session handed them to
+the application (`openUni` or `openBidi` returned; for the peer's bidirectional streams, `acceptBidi`): while a stream
+waits for credit, or writes what it was just given, no stream opened after it gets any. A stream that asks for more
+than there is gets what there is at once (one frame's worth, never a wait for all of it) and keeps its place for the
+rest; at most one chunk (16 KiB) is kept for it at a time, and a stream with nothing more to send keeps no place. Opens
+waiting for the peer's stream limit are served in the order they asked. So a peer that reads our streams one after
+another, in the order they were opened, never waits on a stream that got no credit while the credit sits unread in later
+ones, however tight its limit. The order holds within a session: the sessions of a connection still take their
+weighted turns (below), and one session waiting for its credit never holds up another.
+
+Section 5 sets no order, so a sender of another implementation may serve its streams in any order, and credit still
+comes back only as the application reads: when the peer is not this library, or when the application reads a session's
+streams out of the order they were opened, read them concurrently (a coroutine per accepted stream), or give the session
+enough data credit for what its peer sends at once; a strictly sequential reader under a tight
+`webTransportInitialMaxData` can otherwise stall the session.
 
 Sessions
 sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which

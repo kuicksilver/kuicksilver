@@ -458,11 +458,8 @@ class WebTransportFlowControlTest {
      * does. Each alone is pinned elsewhere: the reader's report by [negative_exactReadsOfAnOpenStreamGiveCreditBack] (no
      * end), the clean end by [negative_cleanlyEndedStreamsGiveCreditBackUnread] (no read).
      *
-     * Every stream is read as it arrives, each by its own reader: the twelve streams are written at once and wait for
-     * credit together, and which of them the sender's next WT_MAX_DATA serves is not in the order they were opened (nothing
-     * in section 5 orders it). A single reader taking the streams one after another could wait on a stream that got no
-     * credit while the credit sat unread in later ones, a stall of the test's own making (credit goes back as the
-     * application reads, by design), not of the exact reads.
+     * Every stream is read as it arrives, each by its own reader, so this pins the exact reads alone; the same streams read
+     * one after another, which relies on our sender serving credit in open order, are [WtCreditOrderTest].
      */
     @Test fun negative_exactReadsOfEndedStreamsGiveCreditBack() =
         h3Test {

@@ -1068,12 +1068,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.
   The engines' sockets now have their selector run a selection after every close.
-- WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
-  credit for an open stream comes back as the application takes its bytes (for a stream that ended cleanly, once all of
-  it was handed to its input; for a reset or stopped one, by its final size), so an application that reads a session's
-  open streams strictly one after another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
-  `Http3Settings` now say so (read the streams concurrently, or give the session enough credit). `Http3Settings`'s KDoc
-  no longer says the credit follows bytes taken from the transport.
+- WebTransport: a session's data credit goes to its streams in the order they were opened (draft-ietf-webtrans-http3-16
+  section 5 sets no order). While a stream waits for credit, or writes what it was just given, no stream opened after it
+  gets any; a stream that asks more than there is gets what there is and keeps its place; a stream with nothing to send,
+  or cancelled or reset while it waits, keeps none and loses no credit. Opens waiting for the peer's stream limit are
+  served in the order they asked. Before, waiting streams were served in no particular order, so a peer that read a
+  session's streams strictly one after another under a tight limit could stall (credit went to later streams it had not
+  read yet). Both roles, every session on its own; the weighted turns between sessions are unchanged. Credit for an open
+  stream still comes back as the application takes its bytes (for a stream that ended cleanly, once all of it was handed
+  to its input; for a reset or stopped one, by its final size); the guide, the configuration table and `Http3Settings`
+  say when to read a peer's streams concurrently (a sender of another implementation may serve them in any order).
+  `Http3Settings`'s KDoc no longer says the credit follows bytes taken from the transport.
 - Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket
   after the close wait (a server that does not read), cut inside a frame, or with a failed writer, now has its connection
   reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the connection was closed gracefully: it

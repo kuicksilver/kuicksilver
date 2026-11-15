@@ -76,8 +76,11 @@ internal class WtStreamImpl(
     /** Body bytes taken from the session's credit (flow control; session dispatcher only). */
     private var outCounted = 0L
 
-    /** Our sending half's final size is fixed: nothing more is taken from the credit (session dispatcher only). */
-    private var sendEnded = false
+    /**
+     * This stream's place in the session's data credit, made now, when the session hands the stream to the application:
+     * the session serves its streams' credit in that order ([WtSessionFlow.Sender]).
+     */
+    private val credit = if (writable) flow?.sender() else null
 
     /** This stream's bytes in the session's share of the send buffer. */
     private val account = if (writable) turns?.follow(scope, st, headerLength) else null
@@ -100,8 +103,7 @@ internal class WtStreamImpl(
             // wait for it ends at once), so what it took and never sent is given back once and for all
             scope.launch {
                 val f = runCatching { st.sentFinalSize?.await() }.getOrNull() ?: return@launch
-                sendEnded = true
-                flow.wake()
+                credit?.close()
                 flow.sentFinal(outCounted, maxOf(0L, f - headerLength))
             }
         }
@@ -144,15 +146,17 @@ internal class WtStreamImpl(
         val buf = ByteArray(CHUNK)
         try {
             while (true) {
+                // everything given was written: the place in the session's credit stays only if more bytes are here at once
+                credit?.idle()
                 val n = outCh.readAvailable(buf, 0, buf.size)
                 if (n < 0) break
-                if (flow == null) {
+                if (credit == null) {
                     st.output.writeFully(buf, 0, n)
                 } else {
                     var off = 0
                     while (off < n) {
                         // counted before the write: a reset that cuts the write short is settled by the final size
-                        val k = flow.takeData(n - off) { sendEnded }
+                        val k = credit.take(n - off)
                         // the sending half is over (reset, or stopped by the peer): its own failure tells why
                         if (k == 0) throw st.output.closedCause ?: IOException("WebTransport stream $streamId: sending ended")
                         outCounted += k
@@ -184,6 +188,9 @@ internal class WtStreamImpl(
                 abandon(WtErrorCodes.toHttp3(0))
             }
             outCh.cancel(map(e))
+        } finally {
+            // nothing more is taken for this stream: its place and what was kept for it go to the streams after it
+            credit?.close()
         }
     }
 

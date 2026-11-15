@@ -3,6 +3,7 @@
 package io.kuicksilver.http3.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.H3Fixtures
@@ -20,6 +21,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.webTransport
+import io.kuicksilver.http3.webtransport.awaitFlow
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -32,6 +34,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -220,6 +223,8 @@ class EarlyDataTest {
         sendRequest: Boolean = true,
         /** The resuming server's QUIC settings (its transport parameters). */
         resumerQuic: io.kuicksilver.quic.QuicConfig? = null,
+        /** Answers the resuming server's CONNECT requests instead of the 204. */
+        onResumerConnect: (suspend (io.kuicksilver.http3.Http3ServerRequest) -> Unit)? = null,
         /** Runs once the early request was answered, with the client connection and the resuming server's connections. */
         after: suspend (Http3Connection, () -> List<Http3Connection>) -> Unit = { _, _ -> },
     ): Boolean? {
@@ -287,7 +292,13 @@ class EarlyDataTest {
                             while (true) {
                                 val r = c.acceptRequest()
                                 if (srv === second) resumerRequests.incrementAndFetch()
-                                scope.launch { r.respond(204, responseHeaders).finish() }
+                                scope.launch {
+                                    if (srv === second && r.method == "CONNECT" && onResumerConnect != null) {
+                                        onResumerConnect(r)
+                                    } else {
+                                        r.respond(204, responseHeaders).finish()
+                                    }
+                                }
                             }
                         }
                     }
@@ -1241,6 +1252,89 @@ class EarlyDataTest {
                         }
                     assertTrue(left != null, "a request the server answered with 425 is still registered")
                 }
+            }
+        }
+
+    /**
+     * A WebTransport session's credit queue ([io.kuicksilver.http3.webtransport.WtSessionFlow.Sender]) on a connection
+     * whose 0-RTT the server accepted ([accept] true) or rejected: the session exists only after the handshake
+     * (draft-ietf-webtrans-http3-16 section 3.2), its streams are served in open order under a tight limit, and once they
+     * ended nothing waits or stays kept on either side.
+     */
+    private fun creditQueueAfter0Rtt(accept: Boolean) =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val wt =
+                    io.kuicksilver.http3.webtransport
+                        .wtLimits(data = 4000)
+                val serverSide = kotlinx.coroutines.CompletableDeferred<io.kuicksilver.http3.WebTransportSession>()
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = wt,
+                        resumer =
+                            if (accept) {
+                                wt
+                            } else {
+                                io.kuicksilver.http3.webtransport
+                                    .wtLimits(data = 5000)
+                            },
+                        earlyRequest = true,
+                        clientSettings =
+                            io.kuicksilver.http3.webtransport
+                                .wtLimits(data = 4000),
+                        onResumerConnect = { r -> serverSide.complete(r.acceptWebTransport()) },
+                        after = { c, resumed ->
+                            val session = c.webTransport(http3Request("CONNECT", "server.test", "/wt"))
+                            val s = serverSide.await()
+                            launch {
+                                repeat(3) { i ->
+                                    val st = session.openUni()
+                                    st.output.writeFully(ByteArray(10_000) { i.toByte() })
+                                    st.output.flushAndClose()
+                                }
+                            }
+                            repeat(3) { i ->
+                                val b = ByteArray(10_000)
+                                s.acceptUni().input.readFully(b)
+                                assertTrue(b.all { it == i.toByte() }, "stream $i in order")
+                            }
+                            c.awaitFlow(session) { it.creditIdleForTest }
+                            resumed().last().awaitFlow(s) { it.creditIdleForTest }
+                        },
+                    )
+                assertEquals(accept, accepted, "0-RTT accepted")
+            }
+        }
+
+    @Test fun negative_webTransportCreditQueueAfterAccepted0RttLeavesNothing(): Unit = creditQueueAfter0Rtt(accept = true)
+
+    @Test fun negative_webTransportCreditQueueAfterRejected0RttLeavesNothing(): Unit = creditQueueAfter0Rtt(accept = false)
+
+    /**
+     * The connection is lost while the client is still in 0-RTT, before the server answered: a WebTransport session asked
+     * for meanwhile never comes to exist (no CONNECT goes in 0-RTT), so no credit queue, turn or session is left.
+     */
+    @Test fun negative_webTransportCreditQueueWhenLostBefore0RttAnswerLeavesNothing(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val wt =
+                    io.kuicksilver.http3.webtransport
+                        .wtLimits(data = 4000)
+                var asked: kotlinx.coroutines.Deferred<Result<io.kuicksilver.http3.WebTransportSession>>? = null
+                earlyAcceptedAfterResuming(
+                    issuer = wt,
+                    resumer = wt,
+                    clientSettings = wt,
+                    sendRequest = false,
+                    beforeRequest = { c, _ ->
+                        val a = async { runCatching { c.webTransport(http3Request("CONNECT", "server.test", "/wt")) } }
+                        asked = a
+                        c.close()
+                        assertTrue(a.await().isFailure, "no session on a lost connection")
+                        assertTrue(withContext(c.session.dispatcher) { c.session.wtSessions.isEmpty() && c.session.wtFairness.idleForTest })
+                    },
+                )
+                assertTrue(asked != null)
             }
         }
 }
