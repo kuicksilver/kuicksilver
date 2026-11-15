@@ -13,7 +13,21 @@ import subprocess
 TEST_SET = re.compile(r"^(?P<module>.+?)/src/(?P<set>[A-Za-z0-9]*Test|test)/")
 MAIN_SET = re.compile(r"^(?P<module>.+?)/src/(?P<set>[A-Za-z0-9]*Main|main)/")
 TEST_ANNOTATION = re.compile(r"@(?:kotlin\.test\.|org\.junit\.(?:jupiter\.api\.)?)?Test\b(?!\s*\.)|@(?:com\.code_intelligence\.jazzer\.junit\.)?FuzzTest\b")
-IGNORE_ANNOTATION = re.compile(r"@(?:kotlin\.test\.|org\.junit\.)?Ignore\b")
+IGNORE_ANNOTATION = re.compile(r"@(?:kotlin\.test\.|org\.junit\.)?Ignore\b|@(?:org\.junit\.jupiter\.api\.)?Disabled\b")
+_ALIAS = re.compile(r"^\s*import\s+(kotlin\.test\.Test|org\.junit\.Test|org\.junit\.jupiter\.api\.Test|"
+                    r"com\.code_intelligence\.jazzer\.junit\.FuzzTest|kotlin\.test\.Ignore|org\.junit\.Ignore|"
+                    r"org\.junit\.jupiter\.api\.Disabled)\s+as\s+(\w+)", re.M)
+
+
+def annotations(text):
+    """(test, ignore) annotation patterns of one file: the standard ones plus the names its imports alias them to
+    (`import kotlin.test.Test as Check`)."""
+    tests, ignores = [], []
+    for target, alias in _ALIAS.findall(text):
+        (tests if target.endswith(("Test", "FuzzTest")) else ignores).append(alias)
+    t = TEST_ANNOTATION if not tests else re.compile(TEST_ANNOTATION.pattern + "|@(?:" + "|".join(tests) + r")\b(?!\s*\.)")
+    i = IGNORE_ANNOTATION if not ignores else re.compile(IGNORE_ANNOTATION.pattern + "|@(?:" + "|".join(ignores) + r")\b")
+    return t, i
 
 
 def tracked(root):
@@ -114,16 +128,34 @@ def _char_end(t, i):
     return len(t) if j < 0 else j + 1
 
 
-def blank(t):
-    """t with every comment and every string or character literal replaced by spaces (newlines kept)."""
-    out, i, n = [], 0, len(t)
+def blank(t, templates=False):
+    """t with every comment and every string or character literal replaced by spaces (newlines kept). With templates,
+    the code of a string template (`${x.hostname}`) is kept: a call inside a message counts as a call."""
+    out = []
+    _emit_code(t, 0, out, templates, False)
+    return "".join(out)
+
+
+def _emit_code(t, i, out, templates, stop_at_close):
+    """Appends the code from i to out (comments and literals blanked); returns the index after the text, or (stop_at_close)
+    after the '}' that closes a template (that brace blanked)."""
+    n, depth = len(t), 0
     while i < n:
         m = _SPECIAL.search(t, i)
         if not m:
             out.append(t[i:])
-            break
+            return n
         tok, s = m.group(0), m.start()
-        if tok in ("{", "}"):
+        if tok == "{":
+            depth += 1
+            out.append(t[i:m.end()])
+            i = m.end()
+            continue
+        if tok == "}":
+            if depth == 0 and stop_at_close:
+                out.append(t[i:s] + " ")
+                return m.end()
+            depth -= 1
             out.append(t[i:m.end()])
             i = m.end()
             continue
@@ -134,6 +166,10 @@ def blank(t):
         elif tok == "/*":
             e = _comment_end(t, s + 2)
         elif tok in ('"', '"""'):
+            if templates:
+                out.append(" " * len(tok))
+                i = _emit_string(t, m.end(), tok == '"""', out)
+                continue
             e = _string_end(t, m.end(), tok == '"""')
         elif tok == "'":
             e = _char_end(t, m.end())
@@ -145,7 +181,33 @@ def blank(t):
             continue
         out.append(_blank(t[s:e]))
         i = e
-    return "".join(out)
+    return n
+
+
+def _emit_string(t, i, raw, out):
+    """Appends a string literal from just after its opening quote, blanked but for the code of its templates."""
+    n = len(t)
+    rx = _IN_RAW if raw else _IN_STRING
+    while True:
+        m = rx.search(t, i)
+        if not m:
+            out.append(_blank(t[i:]))
+            return n
+        tok = m.group(0)
+        out.append(_blank(t[i:m.start()]))
+        i = m.end()
+        if tok == "${":
+            out.append("  ")
+            i = _emit_code(t, i, out, True, True)
+        elif tok in ('"', '"""'):
+            e = i
+            if raw:
+                while t.startswith('"', e):
+                    e += 1
+            out.append(_blank(t[m.start():e]))
+            return e
+        else:
+            out.append(_blank(tok))
 
 
 class Frame:
@@ -281,11 +343,12 @@ def stack_at(index, pos):
     return index[i][1] if i >= 0 else (Frame("file"),)
 
 
-def tests_in(code):
+def tests_in(code, text=None):
     """Every test annotation of blanked code: dict(line, kind ('Test' or 'FuzzTest'), name, stack (the frames enclosing
     it, the file first), params (the text inside the parentheses), mods (the fun's modifiers), ignored (an @Ignore on it
     or on a class around it), fun (False when no fun follows the annotation))."""
-    anns = list(TEST_ANNOTATION.finditer(code))
+    test_rx, ignore_rx = annotations(text) if text is not None else (TEST_ANNOTATION, IGNORE_ANNOTATION)
+    anns = list(test_rx.finditer(code))
     if not anns:
         return []
     index = scopes(code)
@@ -323,10 +386,112 @@ def tests_in(code):
                 break
         decl = " ".join(reversed(decl_lines)) + " " + fm.group(1)
         mods = set(re.findall(r"\b(" + "|".join(MODIFIERS - {"fun"}) + r")\b", _strip_annotations(decl)))
-        ignored = bool(IGNORE_ANNOTATION.search(decl)) or any(
-            IGNORE_ANNOTATION.search(_decl_prefix(code, f.pos)) for f in stack[1:] if f.kind == "class")
+        ignored = bool(ignore_rx.search(decl)) or any(
+            ignore_rx.search(_decl_prefix(code, f.pos)) for f in stack[1:] if f.kind == "class")
+        ret, callee = signature(code, j)
         out.append(dict(line=line, kind=kind, name=fm.group(2).strip("`"), stack=stack, params=code[po + 1:j].strip(),
-                        mods=mods, ignored=ignored, fun=True))
+                        mods=mods, ignored=ignored, fun=True, ret=ret, callee=callee))
+    return out
+
+
+_SIG = re.compile(r"\s*(?::\s*([^={;]+?))?\s*(=|\{|$)")
+
+
+def signature(code, close):
+    """(declared return type or None, callee of an expression body) for the function whose parameter list ends at
+    close: the callee is None for a block body, the called name with its type arguments (`runBlocking<Unit>`) for an
+    expression body that is a call, and '' for any other expression body."""
+    m = _SIG.match(code, close + 1)
+    if not m:
+        return None, None
+    ret = m.group(1).strip() if m.group(1) else None
+    if m.group(2) != "=":
+        return ret, None
+    return ret, _last_call(code, m.end())
+
+
+def _skip_group(code, i):
+    """The index after the balanced (...) or {...} that starts at i."""
+    open_, close = code[i], {"(": ")", "{": "}"}[code[i]]
+    depth = 0
+    for j in range(i, len(code)):
+        if code[j] == open_:
+            depth += 1
+        elif code[j] == close:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return len(code)
+
+
+def _last_call(code, i):
+    """The callee whose value an expression body starting at i has: the last call of a chain (`assertIs<X>(y).let {}` is
+    `let`), with its type arguments; '' when the expression is no call."""
+    callee = ""
+    rx = re.compile(r"\s*([A-Za-z_][\w.]*?)\s*(<[^>{(]*>)?\s*(?=[({])")
+    while True:
+        c = rx.match(code, i)
+        if not c:
+            return callee
+        name = c.group(1).split(".")[-1] if callee else c.group(1)
+        callee = name + (re.sub(r"\s+", "", c.group(2)) if c.group(2) else "")
+        i = c.end()
+        while i < len(code) and code[i] in "({":
+            i = _skip_group(code, i)
+            while i < len(code) and code[i] in " \t":
+                i += 1
+        d = re.match(r"\s*\??\.", code[i:])
+        if not d:
+            return callee
+        i += d.end()
+
+
+def function_bodies(code):
+    """(name, start, end) of the body of every function declaration in code: the block, or the expression of an
+    expression body (to the end of its line, or of the brackets opened on it, and of the chain lines that follow)."""
+    out = []
+    for m in re.finditer(r"\bfun\s+(?:<[^>{]*>\s*)?(?:[\w.?<>, *]+\.)?(`[^`]+`|\w+)\s*\(", code):
+        j = _skip_group(code, m.end() - 1) - 1
+        sig = _SIG.match(code, j + 1)
+        if not sig or not sig.group(2):
+            continue
+        start = sig.end()
+        if sig.group(2) == "{":
+            out.append((m.group(1).strip("`"), start - 1, _skip_group(code, start - 1)))
+            continue
+        depth, k, n = 0, start, len(code)
+        while k < n:
+            ch = code[k]
+            if ch in "({[":
+                depth += 1
+            elif ch in ")}]":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif ch == "\n" and depth == 0 and code[start:k].strip():
+                nxt = code[k + 1:k + 200].lstrip()
+                if not nxt.startswith((".", "?.", "?:", "&&", "||", "+", "-", "*", "/")):
+                    break
+            k += 1
+        out.append((m.group(1).strip("`"), start, k))
+    return out
+
+
+def functions(code):
+    """(name, declared return type or None, callee or None as in signature) of every function declaration in code."""
+    out = []
+    for m in re.finditer(r"\bfun\s+(?:<[^>{]*>\s*)?(?:[\w.?<>, *]+\.)?(`[^`]+`|\w+)\s*\(", code):
+        depth, j = 0, m.end() - 1
+        while j < len(code):
+            if code[j] == "(":
+                depth += 1
+            elif code[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        ret, callee = signature(code, j)
+        out.append((m.group(1).strip("`"), ret, callee))
     return out
 
 

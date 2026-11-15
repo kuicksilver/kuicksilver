@@ -4,14 +4,16 @@
 # Negative controls of tools/check/env-apis.py on a scratch repository: library code without name-service calls passes
 # (a `hostname` parameter, a named argument, a comment, a string, test code and samples do not count); Ktor's .hostname
 # (also through an implicit receiver, the H1Request case), java.net's hostName and canonicalHostName,
-# InetAddress.getLocalHost and the C gethostname / getnameinfo each fail; an allowlist entry with its reason lets one
-# file's use pass, and an entry without a reason, with an unknown api or matching no use fails. Usage: env-apis-test.sh
+# InetAddress.getLocalHost, the C gethostname / getnameinfo, a call inside a string template, a reference ::getHostName
+# and a Java source each fail; an allowlist entry with its count and reason lets that many uses of one file pass, one more
+# fails, and an entry without a count or a reason, with an unknown api or with more than the file has fails.
+# Usage: env-apis-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0
 m="kuicksilver-x/src/commonMain/kotlin/x"
-mkdir -p "$r/tools/check" "$r/$m" "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/samples/s/src/commonMain/kotlin" "$r/kuicksilver-native/src/c"
+mkdir -p "$r/tools/check" "$r/$m" "$r/kuicksilver-x/src/jvmMain/java/x" "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/samples/s/src/commonMain/kotlin" "$r/kuicksilver-native/src/c"
 git -C "$r" init -q
 cat > "$r/$m/Ok.kt" <<'EOF'
 // a.hostname in a comment
@@ -42,14 +44,22 @@ case_ 1 "negative: canonicalHostName" "| canonicalHostName |" "$m/A.kt" 'fun f(a
 case_ 1 "negative: InetAddress.getLocalHost" "| getLocalHost |" "$m/A.kt" 'fun f() = java.net.InetAddress.getLocalHost()'
 case_ 1 "negative: C gethostname" "| gethostname |" "kuicksilver-native/src/c/a.c" 'int f(char *b) { return gethostname(b, 64); }'
 case_ 1 "negative: C getnameinfo" "| getnameinfo |" "kuicksilver-native/src/c/a.c" 'int f(void) { return getnameinfo(0, 0, 0, 0, 0, 0, 0); }'
-printf '%s | hostname | the address is always built from the literal text, so no lookup runs\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
+case_ 1 "negative: a call inside a string template" "$m/A.kt:1 | hostname |" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = error("peer ${a.hostname} is gone")'
+case_ 1 "negative: a reference ::getHostName" "| getHostName( |" "$m/A.kt" 'val f = java.net.InetAddress::getHostName'
+case_ 1 "negative: a Java source" "| getHostName( |" "kuicksilver-x/src/jvmMain/java/x/J.java" 'class J { String h(java.net.InetAddress a) { return a.getHostName(); } }'
+printf '%s | hostname | 1 | the address is always built from the literal text, so no lookup runs\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
 case_ 0 "an allowlisted use passes" "1 use(s), 1 allowed, 0 finding(s)" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname'
+case_ 1 "negative: a second use in an allowed file" "$m/A.kt:2 | hostname | 2 uses in the file (lines 1, 2), tools/check/env-apis.allow:1 allows 1" "$m/A.kt" \
+'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname
+fun g(a: io.ktor.network.sockets.InetSocketAddress) = "peer ${a.hostname}"'
 case_ 1 "negative: the allowlist names one api only" "| hostName |" "$m/A.kt" \
 'fun f(a: io.ktor.network.sockets.InetSocketAddress, b: java.net.InetAddress) = a.hostname + b.hostName'
-expect 1 "negative: an entry matching no use is stale" "| stale | $m/A.kt has no hostname any more"
-printf '%s | hostname |\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
+expect 1 "negative: an entry matching no use is stale" "| stale | $m/A.kt has 0 hostname use(s), the entry allows 1"
+printf '%s | hostname | 1 |\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
 case_ 1 "negative: an entry without a reason" "| allow | the entry needs" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname'
-printf '%s | resolve | the address is always built from the literal text\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
+printf '%s | hostname | the address is always built from the literal text\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
+case_ 1 "negative: an entry without a count" "| allow | the entry needs" "$m/A.kt" 'fun f(a: io.ktor.network.sockets.InetSocketAddress) = a.hostname'
+printf '%s | resolve | 1 | the address is always built from the literal text\n' "$m/A.kt" > "$r/tools/check/env-apis.allow"
 expect 1 "negative: an unknown api" "'resolve' is none of"
 [ "$rc" = 0 ] && echo "all passed" || echo "FAILED"
 exit "$rc"
