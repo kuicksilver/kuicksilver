@@ -231,39 +231,13 @@ internal class PriorityDictionary private constructor(
         return true
     }
 
-    /**
-     * RFC 8941 section 4.2.7: base64 between colons. Its decoding fails on `=` before the data ends, more than two `=`,
-     * a length of 1 modulo 4, or `=` padding that does not complete a quantum; missing padding is accepted, as the
-     * section asks.
-     */
+    /** RFC 8941 section 4.2.7 ([sfByteSequenceEnd]). */
     private fun byteSequence(): Boolean {
-        pos++
-        var data = 0
-        var padding = 0
-        while (pos < s.length) {
-            val c = s[pos++]
-            when {
-                c == ':' -> {
-                    if (data % 4 == 1 || (padding > 0 && (data + padding) % 4 != 0)) return false
-                    kind = KIND_OTHER
-                    return true
-                }
-
-                c == '=' -> {
-                    if (++padding > 2) return false
-                }
-
-                c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/' -> {
-                    if (padding > 0) return false
-                    data++
-                }
-
-                else -> {
-                    return false
-                }
-            }
-        }
-        return false
+        val end = sfByteSequenceEnd(s, pos)
+        if (end < 0) return false
+        pos = end
+        kind = KIND_OTHER
+        return true
     }
 
     /** RFC 8941 section 4.2.8: `?0` or `?1`. */

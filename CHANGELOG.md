@@ -1067,6 +1067,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: a GOAWAY or MAX_PUSH_ID frame whose Length is above 8 bytes (more than its one variable-length integer) closes
   the connection with H3_FRAME_ERROR from its header, as RFC 9114 section 7.1 requires; above 4096 bytes it was
   H3_EXCESSIVE_LOAD, and below that the reader waited for a payload that could only be malformed.
+- HTTP/3: a `Capsule-Protocol` field whose parameters hold a Byte Sequence that is not valid base64 (`:Y:`, `:=YQ:`) is
+  no longer read as `?1`: the byte sequence is checked as RFC 8941 section 4.2.7 says, with the same code as the
+  `priority` field.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

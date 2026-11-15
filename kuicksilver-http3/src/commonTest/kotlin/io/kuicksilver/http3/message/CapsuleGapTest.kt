@@ -22,7 +22,7 @@ class CapsuleGapTest {
      * count; the count is relative to `off`, also when the capsule delivered is empty (complete at its header) and when no
      * capsule completes in the window.
      */
-    @Test fun negative_feedOneCountsFromItsOffset() {
+    @Test fun feedOneCountsFromItsOffset() {
         val p = CapsuleParser(known = setOf(0x00L, 0x41L))
         val junk = byteArrayOf(9, 9, 9)
         val bytes = junk + capsule(0x41, ByteArray(0)) + capsule(0x00, byteArrayOf(1, 2, 3))
@@ -146,7 +146,8 @@ class CapsuleGapTest {
                 "k=a`",
                 "k=a:/",
                 "k=::",
-                "k=:azAZ09+/=:",
+                "k=:azAZ09+/:",
+                "k=:YQ:",
                 "k=?1",
             )
         for (v in wellFormed) assertEquals(true, enabled("?1;$v"), v)
@@ -173,6 +174,11 @@ class CapsuleGapTest {
                 "k=:YQ",
                 "k=:YQ==",
                 "k=:a[:",
+                "k=:Y:",
+                "k=:=YQ:",
+                "k=:a=GVsbG8=:",
+                "k=:azAZ09+/=:",
+                "k=:YQ===:",
                 "k=?",
                 "k=?2",
             )

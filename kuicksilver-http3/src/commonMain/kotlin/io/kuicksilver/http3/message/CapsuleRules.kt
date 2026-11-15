@@ -78,7 +78,7 @@ internal object CapsuleRules {
             c == '-' || c in '0'..'9' -> number(s, start)
             c == '"' -> string(s, start)
             c == '*' || c in 'a'..'z' || c in 'A'..'Z' -> token(s, start)
-            c == ':' -> byteSequence(s, start)
+            c == ':' -> sfByteSequenceEnd(s, start)
             c == '?' -> if (start + 1 < s.length && s[start + 1] in "01") start + 2 else -1
             else -> -1
         }
@@ -126,15 +126,6 @@ internal object CapsuleRules {
         var p = start + 1
         while (p < s.length && (isAsciiAlnum(s[p]) || s[p] in "!#$%&'*+-.^_`|~:/")) p++
         return p
-    }
-
-    private fun byteSequence(
-        s: String,
-        start: Int,
-    ): Int {
-        var p = start + 1
-        while (p < s.length && (isAsciiAlnum(s[p]) || s[p] in "+/=")) p++
-        return if (p < s.length && s[p] == ':') p + 1 else -1
     }
 
     private fun isAsciiAlnum(c: Char): Boolean = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9'

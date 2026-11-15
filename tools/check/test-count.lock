@@ -370,10 +370,10 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.SettingsCodecTest.un
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.VarIntTest.roundTripBoundaries
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.VarIntTest.tooLargeRejected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.VarIntTest.truncatedNeedsMore
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleGapTest.feedOneCountsFromItsOffset
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleGapTest.negative_capsuleExactlyAtTheCeiling
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleGapTest.negative_capsuleProtocolParameterValues
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleGapTest.negative_capsuleProtocolParameters
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleGapTest.negative_feedOneCountsFromItsOffset
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleParserTest.datagramCapsule
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleParserTest.datagramLimitIsIndependentOfCapsuleLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.CapsuleParserTest.lengthAboveMaxRejected
