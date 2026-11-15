@@ -186,7 +186,12 @@ internal class H3Session(
 
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
-    val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
+
+    /**
+     * Requests for [io.kuicksilver.http3.Http3Connection.acceptRequest]: a caller cancelled while it waits (under a timeout,
+     * in a `select`) leaves the next request queued instead of taking it with it ([HandOffQueue]).
+     */
+    val requests = HandOffQueue<ServerRequestImpl>()
 
     /** Test hook: the client sends unsafe requests in 0-RTT too (to exercise the server's RFC 8470 gate). */
     internal var testSendUnsafeEarly = false

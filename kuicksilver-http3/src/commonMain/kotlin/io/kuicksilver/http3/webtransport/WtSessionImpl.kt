@@ -28,6 +28,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.H3Session
+import io.kuicksilver.http3.runtime.HandOffQueue
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.drains
@@ -66,7 +67,9 @@ import kotlin.time.Duration.Companion.seconds
  * enabled, an endpoint MUST ignore receipt of any flow control capsules", section 5.1) is skipped unbuffered by the
  * capsule stream. The peer's streams wait in [bidiIn] and [uniIn] until the application accepts them; how many can be
  * open at once is bounded by the QUIC stream limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts
- * against them until it is finished, and with flow control by the session's own stream limits.
+ * against them until it is finished, and with flow control by the session's own stream limits. An accept cancelled while
+ * it waits or sets the stream up puts the stream back first ([HandOffQueue], [accept]): a stream the application never
+ * got would hold the peer and its stream credit until the session ends.
  *
  * State that the router and the stream pumps share ([streams], the channels' contents at close) is touched on the
  * session's dispatcher only.
@@ -144,14 +147,19 @@ internal class WtSessionImpl(
     /** This session counts among the connection's flow-controlled ones ([H3Session.wtFlowSession]); dispatcher only. */
     private var flowCounted = false
 
-    /** A peer's stream, with the count of its bytes against the session's limit when flow control is on. */
+    /**
+     * A peer's stream waiting for an accept, with the count of its bytes against the session's limit when flow control is
+     * on; [tracked] once an accept wrapped it but its caller was cancelled before it returned.
+     */
     private class Incoming(
         val stream: QuicStream,
         val count: WtInCount?,
-    )
+    ) {
+        var tracked: WtStreamImpl? = null
+    }
 
-    private val bidiIn = Channel<Incoming>(Channel.UNLIMITED)
-    private val uniIn = Channel<Incoming>(Channel.UNLIMITED)
+    private val bidiIn = HandOffQueue<Incoming>()
+    private val uniIn = HandOffQueue<Incoming>()
     private val streams = HashSet<WtStreamImpl>()
     private val datagramsIn = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
     private val drainFlow = MutableStateFlow(false)
@@ -227,7 +235,8 @@ internal class WtSessionImpl(
         headerLength: Int,
     ) {
         val count = flow?.let { WtInCount.start(h3, stream, it, headerLength) { reason -> flowControlError(reason) } }
-        if ((if (bidi) bidiIn else uniIn).trySend(Incoming(stream, count)).isFailure) {
+        if (!(if (bidi) bidiIn else uniIn).offer(Incoming(stream, count))) {
+            count?.stop()
             goneRaw(stream, bidi)
             return
         }
@@ -327,9 +336,12 @@ internal class WtSessionImpl(
                 uniIn.close()
                 for (ch in listOf(bidiIn to true, uniIn to false)) {
                     while (true) {
-                        val q = ch.first.tryReceive().getOrNull() ?: break
-                        q.count?.stop()
-                        goneRaw(q.stream, ch.second)
+                        val i = ch.first.tryTake() ?: break
+                        // a tracked one is in [streams], ended next (its gone() stops its count)
+                        if (i.tracked == null) {
+                            i.count?.stop()
+                            goneRaw(i.stream, ch.second)
+                        }
                     }
                 }
                 flow?.end(sessionClosed())
@@ -458,6 +470,7 @@ internal class WtSessionImpl(
         headerLength: Int = 0,
         peer: Boolean = false,
         peerCount: WtInCount? = null,
+        into: Incoming? = null,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
             // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
@@ -488,6 +501,7 @@ internal class WtSessionImpl(
                 throw sessionClosed()
             }
             streams += s
+            into?.tracked = s
             s
         }
 
@@ -566,15 +580,32 @@ internal class WtSessionImpl(
 
     override suspend fun openUni(): WebTransportSendStream = open(bidi = false)
 
-    override suspend fun acceptBidi(): WebTransportBidiStream =
-        (bidiIn.receiveCatching().getOrNull() ?: throw sessionClosed()).let {
-            track(it.stream, readable = true, writable = true, peer = true, peerCount = it.count)
-        }
+    override suspend fun acceptBidi(): WebTransportBidiStream = accept(bidiIn, bidi = true)
 
-    override suspend fun acceptUni(): WebTransportReceiveStream =
-        (uniIn.receiveCatching().getOrNull() ?: throw sessionClosed()).let {
-            track(it.stream, readable = true, writable = false, peer = true, peerCount = it.count)
+    override suspend fun acceptUni(): WebTransportReceiveStream = accept(uniIn, bidi = false)
+
+    /**
+     * The next stream of [q], wrapped and tracked. [track] returns through withContext, which throws the caller's
+     * cancellation even after the stream was wrapped: the stream then goes back to the head of [q] for the next accept
+     * (or, once the session closed, is ended as every other stream of the session).
+     */
+    private suspend fun accept(
+        q: HandOffQueue<Incoming>,
+        bidi: Boolean,
+    ): WtStreamImpl {
+        val i = q.receive() ?: throw sessionClosed()
+        // wrapped by an accept whose caller was cancelled: never tracked twice
+        i.tracked?.let { return it }
+        try {
+            return track(i.stream, readable = true, writable = bidi, peer = true, peerCount = i.count, into = i)
+        } catch (e: CancellationException) {
+            // track() runs under NonCancellable, so only its return throws this: the stream is wrapped and tracked by now. A
+            // session closed meanwhile no longer takes it back; [close] ended it with the session's other streams, and ending
+            // it again here (on the session's dispatcher, as [close] does) covers a close that drained the queue just before
+            if (!q.putBack(i)) i.tracked?.let { s -> h3.scope.launch(h3.dispatcher) { s.gone() } }
+            throw e
         }
+    }
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
         if (closedInfo.isCompleted) DatagramSendResult.Closed else capsules.trySendDatagram(payload)

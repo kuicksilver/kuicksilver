@@ -15,6 +15,7 @@ import io.kuicksilver.http3.runtime.request
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,10 +88,15 @@ public class Http3Connection private constructor(
         return session.connect(request, protocol)
     }
 
-    /** Server: the next request; malformed requests are answered at the stream level and never returned. */
+    /**
+     * Server: the next request; malformed requests are answered at the stream level and never returned. A caller cancelled
+     * while it waits takes no request with it: the next call returns it. A wrapper that is itself cancelled after this
+     * returned (`withTimeout`, `async`, `withContext`) may still drop the request it got, so accept in one long-lived loop
+     * rather than polling with a timeout.
+     */
     public suspend fun acceptRequest(): Http3ServerRequest {
         check(role == Http3Role.Server) { "acceptRequest() is server-only" }
-        return session.requests.receive()
+        return session.requests.receive() ?: throw ClosedReceiveChannelException("the connection is closed")
     }
 
     /**

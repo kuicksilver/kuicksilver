@@ -221,8 +221,7 @@ class LimitsTest {
                     assertEquals(
                         null,
                         p.server.session.requests
-                            .tryReceive()
-                            .getOrNull()
+                            .tryTake()
                             ?.path,
                         "a cancelled request was queued",
                     )

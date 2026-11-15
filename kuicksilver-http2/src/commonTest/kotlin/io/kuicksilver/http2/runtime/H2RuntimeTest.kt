@@ -21,16 +21,22 @@ import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackEncoder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.IOException
 import kotlinx.io.readByteArray
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -1571,6 +1577,89 @@ class H2RuntimeTest {
             r.release()
             assertEquals(0, server.openRequests.value)
         }
+
+    /**
+     * A request handed to a receiver of [H2ServerConnection.requests] that is cancelled while being resumed (kotlinx.coroutines'
+     * prompt cancellation) goes back to the queue: the next receiver gets it and answers it, and it is released once.
+     */
+    @Test fun negative_aRequestReceiverCancelledWhileBeingResumedLosesNoRequest() =
+        runTest {
+            val (client, server, _) = pair()
+            val steps = StepDispatcher()
+            val receiver = backgroundScope.launch(steps, start = CoroutineStart.UNDISPATCHED) { server.requests.receive() }
+            val s = client.get("/lost")
+            runCurrent()
+            val resumed = assertNotNull(steps.tasks.tryReceive().getOrNull(), "the request was not handed to the receiver")
+            receiver.cancel()
+            resumed.run()
+            while (!receiver.isCompleted) {
+                steps.tasks
+                    .tryReceive()
+                    .getOrThrow()
+                    .run()
+            }
+            assertTrue(receiver.isCancelled)
+            runCurrent()
+            val again = assertNotNull(server.requests.tryReceive().getOrNull(), "the request was lost")
+            assertEquals("/lost", again.path)
+            again.respond(204, endStream = true)
+            assertEquals(204, s.response().status)
+            again.release()
+            runCurrent()
+            assertEquals(0, server.openRequests.value)
+            s.release()
+        }
+
+    /** Once the connection ended the request cannot go back to the queue: it is released, and nothing counts as open. */
+    @Test fun anUndeliveredRequestOfAnEndedConnectionIsReleased() =
+        runTest {
+            val (client, server, _) = pair()
+            val steps = StepDispatcher()
+            val receiver = backgroundScope.launch(steps, start = CoroutineStart.UNDISPATCHED) { server.requests.receive() }
+            client.get("/lost")
+            runCurrent()
+            val resumed = assertNotNull(steps.tasks.tryReceive().getOrNull())
+            receiver.cancel()
+            server.abort(IOException("gone"))
+            runCurrent()
+            resumed.run()
+            while (!receiver.isCompleted) {
+                steps.tasks
+                    .tryReceive()
+                    .getOrThrow()
+                    .run()
+            }
+            runCurrent()
+            assertEquals(0, server.openRequests.value, "the undelivered request still counts as open")
+        }
+
+    /** Requests nobody received before the connection ended are released at its close: openRequests reaches 0. */
+    @Test fun negative_requestsNeverReceivedAreReleasedWhenTheConnectionEnds() =
+        runTest {
+            val (client, server, _) = pair()
+            runCurrent() // the server's SETTINGS: the client may open two streams
+            client.get("/a")
+            client.get("/b")
+            runCurrent()
+            assertEquals(2, server.openRequests.value)
+            server.abort(IOException("gone"))
+            runCurrent()
+            server.awaitClosed()
+            assertEquals(0, server.openRequests.value, "requests left in the queue still count as open")
+            assertTrue(server.requests.tryReceive().isClosed)
+        }
+
+    /** A dispatcher whose tasks wait in [tasks] until the test runs them. */
+    private class StepDispatcher : CoroutineDispatcher() {
+        val tasks = Channel<Runnable>(Channel.UNLIMITED)
+
+        override fun dispatch(
+            context: CoroutineContext,
+            block: Runnable,
+        ) {
+            tasks.trySend(block)
+        }
+    }
 }
 
 /** An RFC 7541 string literal without Huffman coding: a 7-bit prefixed length (section 5.1), then the octets. */

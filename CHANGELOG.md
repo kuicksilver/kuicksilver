@@ -1008,6 +1008,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: `QuicStream.reset` after all of a stream's data and its FIN were acknowledged no longer sends a RESET_STREAM.
   RFC 9000 section 3.1 lets a sender abandon a stream only from the "Ready", "Send" or "Data Sent" states; in "Data
   Recvd" there is nothing left to abandon, as `resetAt` already treated it.
+- HTTP/3 Capsule Protocol: a collector of `CapsuleStream.capsules` cancelled while it waited could lose the capsule
+  being handed to it (a coroutine channel's receive drops an element taken by a receiver cancelled before it resumes),
+  and one cancelled while it handled a capsule lost the next one. Capsules now wait in a queue they leave only when a
+  running collector is about to get them: the next collector gets them, in order. What a wrapper around the collection
+  (`withTimeout`, `async`) does with a capsule already delivered stays the wrapper's: collect in one long-lived coroutine
+  rather than polling `first()` under a timeout, and directly: operators that collect ahead in another coroutine
+  (`buffer`, `flowOn`, `conflate`, `produceIn`, `shareIn`, `stateIn`, and `collectLatest` by design) lose the capsules
+  they took and had not delivered when the collection is cancelled.
+- HTTP/3 server: `Http3Connection.acceptRequest` cancelled while it waited could lose the request being handed to it,
+  which was then never answered and kept counting as open (a graceful shutdown waited for it). The next call now
+  returns it. A request returned to a `withTimeout` or `async` that was cancelled meanwhile is still dropped by that
+  wrapper (kotlinx.coroutines behaviour): accept in a long-lived loop rather than polling under a timeout.
+- WebTransport: `acceptBidi` and `acceptUni` cancelled while they waited, or while they set the stream up, lost it; the
+  peer's stream stayed open and unread, holding its data and stream credit until the session ended. The stream now goes
+  back to the head of the queue for the next accept (the same caveat about wrappers as for `acceptRequest`).
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
