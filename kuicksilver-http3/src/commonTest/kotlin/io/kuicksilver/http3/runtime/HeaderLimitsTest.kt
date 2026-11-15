@@ -80,6 +80,7 @@ class HeaderLimitsTest {
         /** Nothing of the field-section limits stays with [s]: no reservation, waiter, buffered byte, pending head or timer. */
         suspend fun assertNoHeaderState(s: H3Session) {
             awaitCondition("the request-head deadlines to be disarmed") { s.headDeadlinesArmedForTest.load() == 0 }
+            awaitCondition("the unidirectional-stream header deadlines to be disarmed") { s.uniDeadlinesArmed.load() == 0 }
             withContext(s.dispatcher) {
                 assertEquals(0L, s.headerBudget.reserved, "bytes still reserved")
                 assertEquals(0, s.headerBudget.waiting, "readers still waiting for the budget")
@@ -169,6 +170,127 @@ class HeaderLimitsTest {
                 assertNothingHeld(server)
                 assertEquals(2, withContext(server.session.dispatcher) { server.session.headDeadlinesPassedForTest })
                 assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /** The peer's control and QPACK streams, so every later unidirectional stream is known not to be one of them. */
+    private suspend fun RawPeer.openCriticalStreams() {
+        openControl()
+        uni(io.kuicksilver.http3.frame.StreamType.QPACK_ENCODER)
+        uni(io.kuicksilver.http3.frame.StreamType.QPACK_DECODER)
+    }
+
+    /**
+     * A unidirectional stream whose type never completes (half a varint) is stopped with H3_STREAM_CREATION_ERROR at
+     * `maxHeaderBlockTime` (RFC 9114 section 6.2: an unknown type, "If reading is aborted, the recipient SHOULD use the
+     * H3_STREAM_CREATION_ERROR error code"; "MUST NOT consider unknown stream types to be a connection error"). Before, it
+     * held a reader and a stream slot for the connection's life.
+     */
+    @Test fun negative_unidirectionalStreamWithoutItsTypeIsStopped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, fastDeadline)
+                val raw = RawPeer(c)
+                raw.openCriticalStreams()
+                awaitCondition("the critical streams to be known") { server.session.criticalStreamsSeen.value == 3 }
+                val u = c.openUni()
+                u.output.writeFully(byteArrayOf(0x40))
+                u.output.flush()
+                assertEquals(Http3ErrorCode.STREAM_CREATION_ERROR, withTimeout(5.seconds) { u.awaitSendStopped() })
+                assertNothingHeld(server)
+                assertEquals(1, withContext(server.session.dispatcher) { server.session.uniDeadlinesPassedForTest })
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * A stalled type could belong to one of the peer's critical streams (a type value may be sent longer than its one byte),
+     * which must never be stopped this way (RFC 9114 section 6.2.1: closing it is a connection error). While the peer's
+     * QPACK encoder stream is missing, a stream that sent `0x40` waits past the deadline; it turns out to be that stream
+     * (`0x40 0x02`, a two-byte 2) and works. Once every critical stream is known, the next stalled stream is stopped.
+     */
+    @Test fun negative_aStalledTypeIsNeverStoppedWhileItMayBeACriticalStream() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, fastDeadline)
+                val raw = RawPeer(c)
+                raw.openControl()
+                raw.uni(io.kuicksilver.http3.frame.StreamType.QPACK_DECODER)
+                awaitCondition("two critical streams to be known") { server.session.criticalStreamsSeen.value == 2 }
+                val encoder = c.openUni()
+                encoder.output.writeFully(byteArrayOf(0x40))
+                encoder.output.flush()
+                delay(600) // a real wait: past maxHeaderBlockTime, which must not stop a stream that may be critical
+                assertEquals(0, withContext(server.session.dispatcher) { server.session.uniDeadlinesPassedForTest })
+                encoder.output.writeFully(byteArrayOf(0x02))
+                encoder.output.flush()
+                awaitCondition("the encoder stream to be known") { server.session.criticalStreamsSeen.value == 3 }
+                val stalled = c.openUni()
+                stalled.output.writeFully(byteArrayOf(0x40))
+                stalled.output.flush()
+                assertEquals(Http3ErrorCode.STREAM_CREATION_ERROR, withTimeout(5.seconds) { stalled.awaitSendStopped() })
+                assertEquals(1, withContext(server.session.dispatcher) { server.session.uniDeadlinesPassedForTest })
+                assertFalse(server.closed.isCompleted, "the late critical stream is a working QPACK encoder stream")
+            }
+        }
+
+    /** A unidirectional WebTransport stream whose Session ID never completes is stopped with WT_BUFFERED_STREAM_REJECTED. */
+    @Test fun negative_webTransportUnidirectionalStreamWithoutItsSessionIdIsStopped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, webTransportFast)
+                val raw = RawPeer(c)
+                raw.openCriticalStreams()
+                val u = c.openUni()
+                u.output.writeFully(byteArrayOf(0x40, 0x54, 0x40)) // WT_UNI, then one byte of a two-byte Session ID
+                u.output.flush()
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, withTimeout(5.seconds) { u.awaitSendStopped() })
+                assertNothingHeld(server)
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * A FIN is no abort: a whole request that waits in the budget's line behind 4 unfinished heads (its bytes all arrived,
+     * FIN included) is served once the line moves, not dropped as if its stream had been reset.
+     */
+    @Test fun aFinishedHeadWaitingInLineIsServed() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val blockers = (0 until 4).map { c.openBidi() }
+                for (b in blockers) {
+                    b.output.writeFully(headersHeader(131_072) + ByteArray(10))
+                    b.output.flush()
+                }
+                val budget = server.session.headerBudget
+                awaitCondition(
+                    "the budget to fill",
+                ) { withContext(server.session.dispatcher) { budget.capacity - budget.reserved < 131_072 } }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET)) // whole, with its FIN: only its reservation is missing
+                st.output.flushAndClose()
+                awaitCondition("the request to wait in line") { withContext(server.session.dispatcher) { budget.waiting == 1 } }
+                val serverSide =
+                    withContext(server.session.dispatcher) {
+                        server.session.pendingHeaders
+                            .getValue(st.id)
+                            .first
+                    }
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                withTimeout(5.seconds) { serverSide.receivedFinalSize!!.await() } // its FIN arrived
+                blockers.forEach { it.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                assertEquals("GET", r.method)
+                r.respond(204).finish()
+                assertTrue(st.input.readAllBytes().isNotEmpty())
+                assertNothingHeld(server)
             }
         }
 

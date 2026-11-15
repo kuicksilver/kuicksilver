@@ -31,6 +31,16 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.rememberWithTickets
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
+
+/** The peer's critical stream types: control, QPACK encoder, QPACK decoder (RFC 9114 section 6.2, RFC 9204 section 4.2). */
+private const val CRITICAL_STREAM_TYPES = 3
 
 // The peer's unidirectional streams: control, QPACK encoder and decoder streams, and what arrives on them (RFC 9114 sections 6.2 and 7.2, RFC 9204 section 4.2).
 
@@ -41,6 +51,65 @@ import kotlinx.coroutines.CancellationException
  * a glitch token, so a peer that only opens and abandons streams still meets H3_EXCESSIVE_LOAD (section 10.5).
  */
 internal suspend fun H3Session.readUni(st: QuicStream) {
+    // the stream's header (its type; a WebTransport stream's Session ID too) must arrive within maxHeaderBlockTime of its
+    // first byte, as a request head must: a stream that never sends it would hold its reader and stream slot as long as the
+    // peer keeps the connection alive (RFC 9000 section 21.6). Its type unknown, it is an unknown type to RFC 9114 section
+    // 6.2: reading is aborted with H3_STREAM_CREATION_ERROR, never a connection error. A critical stream must not be
+    // stopped that way (section 6.2.1: "the receiver MUST NOT request that the sender close the control stream"), and
+    // every type value fits one byte but may be
+    // sent longer: while one of the peer's control and QPACK streams is still missing, the stalled stream could be it, and
+    // it is stopped only once the last of them was identified.
+    val reader = currentCoroutineContext()[Job]!!
+    val header = UniHeader()
+    val deadline =
+        scope.launch {
+            delay(settings.maxHeaderBlockTime)
+            if (!header.known) criticalStreamsSeen.first { it >= CRITICAL_STREAM_TYPES }
+            if (header.settled) return@launch
+            header.settled = true
+            uniDeadlinesPassedForTest++
+            reader.cancel()
+            runCatching { st.stopSending(header.rejectCode) }
+            if (!header.known) {
+                discardedUniStreams.value++
+                guarded { glitch("unidirectional stream without its type in time") }
+            }
+        }
+    uniDeadlinesArmed.incrementAndFetch()
+    deadline.invokeOnCompletion { uniDeadlinesArmed.decrementAndFetch() }
+
+    fun headerRead() {
+        header.settled = true
+        deadline.cancel()
+    }
+    try {
+        readUniArmed(st, header, ::headerRead)
+    } finally {
+        deadline.cancel()
+    }
+}
+
+/** Where a peer's unidirectional stream is in its header, and the code its deadline stops it with. */
+private class UniHeader {
+    /** The header was read (or given up): the deadline stands down. */
+    var settled = false
+
+    /** The type was read: the stream is no critical stream that could still be identified. */
+    var known = false
+
+    /**
+     * H3_STREAM_CREATION_ERROR for a type that never arrived (RFC 9114 section 6.2: "If reading is aborted, the recipient
+     * SHOULD use the H3_STREAM_CREATION_ERROR error code"); WT_BUFFERED_STREAM_REJECTED for a WebTransport stream whose
+     * Session ID never came (it reached no session, draft-ietf-webtrans-http3-16 section 4.6).
+     */
+    var rejectCode = Http3ErrorCode.STREAM_CREATION_ERROR
+}
+
+private suspend fun H3Session.readUniArmed(
+    st: QuicStream,
+    header: UniHeader,
+    headerRead: () -> Unit,
+) {
     val (type, typeLength) =
         try {
             st.input.readVarIntSizedOrNull()
@@ -56,6 +125,8 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
             glitch("unidirectional stream ended or reset before its type")
             return
         }
+    header.known = true
+    if (type != StreamType.WT_UNI || !settings.webTransport) headerRead()
     when (type) {
         StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER -> {
             if (!peerUni.add(type)) throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "second stream of type $type")
@@ -93,7 +164,8 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
 
         StreamType.WT_UNI -> {
             if (settings.webTransport) {
-                wt.onUni(st, typeLength)
+                header.rejectCode = Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED
+                wt.onUni(st, typeLength, headerRead)
             } else {
                 st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
                 discardedUniStreams.value++

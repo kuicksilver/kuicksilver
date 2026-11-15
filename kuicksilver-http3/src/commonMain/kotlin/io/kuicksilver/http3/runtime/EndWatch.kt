@@ -7,44 +7,48 @@ package io.kuicksilver.http3.runtime
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.yield
 
 /**
  * What a stream's reader waiting on the connection's state (the [HeaderBudget], QPACK inserts) also wakes for, without
- * polling: the end of the peer's half of its stream ([streamEnd], `QuicStream.receivedFinalSize`: a FIN, a reset, or
- * the stream lost with its connection) and [connectionEnd]. When either ends, [abandoned] says whether the reader gives
- * up, and with what.
+ * polling: the peer aborting its half of the stream ([streamAborted], `QuicStream.receiveAborted`: a RESET_STREAM or a
+ * rejected 0-RTT, never a FIN) and [connectionEnd]. [giveUp] turns either into what the reader throws: with the stream's
+ * abort cause, or with null when the connection ended (null back: the reader goes on waiting, never woken by it again).
  */
 internal class EndWatch(
-    private val streamEnd: Deferred<*>?,
+    private val streamAborted: Deferred<Throwable>?,
     private val connectionEnd: Job,
-    /** A [streamEnd] that failed (the stream lost with its connection) is thrown; else the wait goes on for the rest. */
-    private val streamLossFails: Boolean = true,
-    private val abandoned: () -> Throwable?,
+    private val giveUp: (streamCause: Throwable?) -> Throwable?,
 ) {
-    /**
-     * Returns once [ready] completed; throws what [abandoned] gives when the stream or the connection ends first, or the
-     * failure of [streamEnd] (its stream was lost) with [streamLossFails]. A FIN gives nothing to throw: the reader goes on waiting for [ready]
-     * and the connection only (the stream's bytes are all there).
-     */
+    /** Returns once [ready] completed; throws what [giveUp] gives when the stream is aborted or the connection ends first. */
     suspend fun await(ready: Job) {
-        var stream = streamEnd
         var connection: Job? = connectionEnd
         while (true) {
-            val isReady =
-                select<Boolean> {
-                    ready.onJoin { true }
-                    stream?.onJoin { false }
-                    connection?.onJoin { false }
+            val woke =
+                select<Int> {
+                    ready.onJoin { READY }
+                    streamAborted?.onJoin { ABORTED }
+                    connection?.onJoin { CONNECTION }
                 }
-            if (isReady) return
-            // a RESET_STREAM may be surfaced to the input right after its final size: look once more after it
-            abandoned()?.let { throw it }
-            yield()
-            abandoned()?.let { throw it }
-            if (streamLossFails) stream?.let { s -> if (s.isCompleted) s.getCompletionExceptionOrNull()?.let { throw it } }
-            if (stream?.isCompleted == true) stream = null
-            if (connection?.isCompleted == true) connection = null // nothing to give up for: never wake for it again
+            when (woke) {
+                READY -> {
+                    return
+                }
+
+                ABORTED -> {
+                    throw giveUp(streamAborted!!.getCompleted()) ?: error("an aborted stream must give up")
+                }
+
+                else -> {
+                    giveUp(null)?.let { throw it }
+                    connection = null
+                }
+            }
         }
+    }
+
+    private companion object {
+        const val READY = 0
+        const val ABORTED = 1
+        const val CONNECTION = 2
     }
 }

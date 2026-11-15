@@ -2073,7 +2073,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   reserved before any of it is taken from the transport, and frames that do not fit wait with their bytes left in the
   stream's flow-control window. The client applies both to response heads. With WebTransport on, a server's
   WebTransport streams must send their signal and Session ID within the deadline too (else
-  `WT_BUFFERED_STREAM_REJECTED`). The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+  `WT_BUFFERED_STREAM_REJECTED`), and every peer's unidirectional stream its type (else `STOP_SENDING
+  H3_STREAM_CREATION_ERROR`, never while it could still be one of the peer's control and QPACK streams) and, for
+  WebTransport, its Session ID. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
 - HTTP/3 (RFC 9114 section 10.5): reserved (GREASE) frames and empty DATA frames were free in any number, so 2 000 000
   two-byte frames in one request never ended the connection. The first 8 of a stream (and of the control stream) stay
   free; each further one spends a glitch token, as unknown frame types do, and a flood ends the connection with

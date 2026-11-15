@@ -67,23 +67,24 @@ class HeaderBudgetTest {
         }
 
     /**
-     * A waiter whose stream ends with a reset wakes at once (no polling), gives up with that reason, leaves the line, and
-     * the next one gets in.
+     * A waiter whose stream the peer aborts wakes at once (no polling), gives up with that reason, leaves the line, and the
+     * next one gets in.
      */
     @Test fun negative_abandonedWaiterLeavesTheLineWithItsReason() =
         runBlocking {
             val b = HeaderBudget(10)
             b.reserve(8)
-            val end = kotlinx.coroutines.CompletableDeferred<Long>()
+            val aborted = kotlinx.coroutines.CompletableDeferred<Throwable>()
             val reason = IllegalStateException("stream reset")
-            val watch = EndWatch(end, Job()) { if (end.isCompleted) reason else null }
             val gone = kotlinx.coroutines.CompletableDeferred<Throwable>()
             val first =
-                launch(start = CoroutineStart.UNDISPATCHED) { gone.complete(runCatching { b.reserve(10, watch) }.exceptionOrNull()!!) }
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    gone.complete(runCatching { b.reserve(10, EndWatch(aborted, Job()) { it }) }.exceptionOrNull()!!)
+                }
             val second = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(2) }
             yield()
             assertEquals(2, b.waiting)
-            end.complete(10)
+            aborted.complete(reason)
             assertEquals(reason, gone.await())
             first.join()
             second.join()
@@ -91,14 +92,17 @@ class HeaderBudgetTest {
             assertEquals(10, b.reserved)
         }
 
-    /** A FIN is no reason to give up (the head's bytes are all there): the waiter stays in line and gets its grant. */
-    @Test fun aFinishedStreamKeepsWaitingForItsGrant() =
+    /**
+     * A connection end that gives nothing to give up for (a QPACK wait whose inserts may still come) leaves the waiter in
+     * line, never woken by it again, and it gets its grant.
+     */
+    @Test fun aWaiterWithNothingToGiveUpForKeepsItsPlace() =
         runBlocking {
             val b = HeaderBudget(10)
             b.reserve(8)
-            val end = kotlinx.coroutines.CompletableDeferred<Long>()
-            val w = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(5, EndWatch(end, Job()) { null }) }
-            end.complete(5)
+            val connection = Job()
+            val w = launch(start = CoroutineStart.UNDISPATCHED) { b.reserve(5, EndWatch(null, connection) { null }) }
+            connection.complete()
             repeat(5) { yield() }
             assertEquals(1, b.waiting)
             b.release(8)
@@ -106,26 +110,21 @@ class HeaderBudgetTest {
             assertEquals(5, b.reserved)
         }
 
-    /** The connection's end wakes a waiter that then gives up with the connection's reason; a lost stream gives its own. */
-    @Test fun negative_connectionEndAndStreamLossEndTheWait() =
+    /** The connection's end wakes a waiter that then gives up with the connection's reason. */
+    @Test fun negative_connectionEndEndsTheWait() =
         runBlocking {
             val b = HeaderBudget(10)
             b.reserve(10)
             val connection = Job()
             val closedReason = IllegalStateException("connection closed")
             val a =
-                async(start = CoroutineStart.UNDISPATCHED) {
-                    runCatching { b.reserve(1, EndWatch(null, connection) { if (connection.isCompleted) closedReason else null }) }
-                }
-            val lost = kotlinx.coroutines.CompletableDeferred<Long>()
-            val c = async(start = CoroutineStart.UNDISPATCHED) { runCatching { b.reserve(1, EndWatch(lost, Job()) { null }) } }
+                async(
+                    start = CoroutineStart.UNDISPATCHED,
+                ) { runCatching { b.reserve(1, EndWatch(null, connection) { it ?: closedReason }) } }
             yield()
-            assertEquals(2, b.waiting)
+            assertEquals(1, b.waiting)
             connection.complete()
-            val lossReason = IllegalStateException("stream lost")
-            lost.completeExceptionally(lossReason)
             assertEquals(closedReason, a.await().exceptionOrNull())
-            assertEquals(lossReason, c.await().exceptionOrNull())
             assertEquals(0, b.waiting)
             assertEquals(10, b.reserved)
         }

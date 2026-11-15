@@ -54,7 +54,7 @@ the codepoints are those of the older drafts.
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13` (the versions,
 `offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:238` (the 0-or-1 check),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:310` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:733` (the client's draft-02
 request field).
 

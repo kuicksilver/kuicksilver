@@ -40,6 +40,9 @@ internal class StreamRuntime(
         internal set
 
     private val inChannel: StreamInput? = if (recv) StreamInput(this) else null
+
+    /** The peer sends on this stream (it has an input). */
+    internal val receives: Boolean get() = inChannel != null
     private val outChannel: StreamOutput? = if (send) StreamOutput(this) else null
     override val input: ByteReadChannel get() = inChannel ?: throw IllegalStateException("stream $id is send-only")
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
@@ -321,7 +324,44 @@ internal class StreamRuntime(
     ) {
         val e = QuicException.StreamError.Reset(id, code, Initiator.Peer)
         if (afterData) inChannel?.closeAfterBuffered(e) else inChannel?.closeWith(e)
+        if (inChannel != null) settleReceiveAbort(e)
     }
+
+    /**
+     * Why the peer's half was aborted, set once on the loop: its RESET_STREAM (or RESET_STREAM_AT), or the rejected 0-RTT
+     * that dropped the stream; null while neither happened. Never a FIN, and not the connection's end, which its observers
+     * watch on their own.
+     */
+    @Volatile
+    private var receiveAbortCause: Throwable? = null
+
+    /** Made only by a reader of [receiveAborted], once for all of them. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val receiveAbortWaiter = kotlin.concurrent.atomics.AtomicReference<kotlinx.coroutines.CompletableDeferred<Throwable>?>(null)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun settleReceiveAbort(e: Throwable) {
+        if (receiveAbortCause != null) return
+        receiveAbortCause = e
+        receiveAbortWaiter.load()?.complete(e)
+    }
+
+    /**
+     * Completes with the cause once the peer aborted its half of this stream (`io.kuicksilver.quic.receiveAborted`): a
+     * RESET_STREAM or RESET_STREAM_AT, or a rejected 0-RTT that dropped the stream. A FIN never completes it, so a waiter
+     * tells an aborted stream from a finished one exactly. The loop sets the cause before it reads the waiter, this reads
+     * the cause after the waiter was published: one of the two sees the other ([confirmOnLoop]).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val receiveAborted: kotlinx.coroutines.Deferred<Throwable>
+        get() {
+            receiveAbortWaiter.load()?.let { return it }
+            val made = kotlinx.coroutines.CompletableDeferred<Throwable>()
+            if (!receiveAbortWaiter.compareAndSet(null, made)) return receiveAbortWaiter.load()!!
+            receiveAbortCause?.let { made.complete(it) }
+            confirmOnLoop { receiveAbortCause?.let { made.complete(it) } }
+            return made
+        }
 
     internal fun peerStopped(code: Long) {
         settleStop(code)
@@ -396,6 +436,7 @@ internal class StreamRuntime(
         dropped = true
         val e = QuicException.StreamError.EarlyDataRejected(id)
         finalSizesLost(e)
+        if (inChannel != null) settleReceiveAbort(e)
         inChannel?.closeWith(e)
         outChannel?.closeWith(e)
         settleStop(e)

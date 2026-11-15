@@ -27,6 +27,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.receiveAborted
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.rememberedApplicationData
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -123,21 +124,18 @@ internal class H3Session(
         }
     }
 
-    /** What a reader waiting for the [headerBudget] wakes for: [st]'s peer half or the connection ending. */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    fun budgetWatch(st: QuicStream): EndWatch =
-        EndWatch(st.receivedFinalSize, closed) { st.input.closedCause ?: if (closed.isCompleted) connectionError() else null }
+    /**
+     * What a reader waiting for the [headerBudget] wakes for: the peer aborting [st]'s half (it gives up with that reset),
+     * or the connection ending (it gives up with the connection's reason). A FIN keeps it waiting: its bytes are all there.
+     */
+    fun budgetWatch(st: QuicStream): EndWatch = EndWatch(st.receiveAborted, closed) { cause -> cause ?: connectionError() }
 
     /**
-     * What a field section waiting for QPACK inserts wakes for: [st]'s peer half ending, or no insert being able to come.
-     * It gives up ([StreamAbandoned]) when the stream failed or no insert can come.
+     * What a field section waiting for QPACK inserts wakes for: the peer aborting [st]'s half, or no insert being able to
+     * come any more ([noMoreInserts]); either gives it up ([StreamAbandoned]). A stream lost with its connection still
+     * decodes when the encoder stream's bytes that arrived bring its inserts.
      */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    fun insertsWatch(st: QuicStream): EndWatch =
-        // a stream lost with the connection may still decode: the encoder stream's bytes that arrived are still read
-        EndWatch(st.receivedFinalSize, noMoreInsertsEvent, streamLossFails = false) {
-            if (st.input.closedCause != null || noMoreInserts()) StreamAbandoned() else null
-        }
+    fun insertsWatch(st: QuicStream): EndWatch = EndWatch(st.receiveAborted, noMoreInsertsEvent) { StreamAbandoned() }
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
 
@@ -435,6 +433,12 @@ internal class H3Session(
 
     /** Server: request streams rejected because their head missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
     internal var headDeadlinesPassedForTest = 0
+
+    /** The peer's unidirectional streams stopped because their header missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
+    internal var uniDeadlinesPassedForTest = 0
+
+    /** Unidirectional-stream header deadlines still armed (none may outlive its stream's header). */
+    internal val uniDeadlinesArmed = AtomicInt(0)
 
     /** Server: request-head deadlines still armed (a test hook: none may outlive its stream's head). */
     internal val headDeadlinesArmedForTest = AtomicInt(0)

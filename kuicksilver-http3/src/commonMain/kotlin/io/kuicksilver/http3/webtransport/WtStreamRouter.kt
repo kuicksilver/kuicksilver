@@ -90,11 +90,12 @@ internal class WtStreamRouter(
     /** Streams waiting for their session (a test hook). */
     val bufferedCount = MutableStateFlow(0)
 
-    /** A peer's unidirectional stream whose type `0x54` was read, in [typeLength] bytes. */
+    /** A peer's unidirectional stream whose type `0x54` was read, in [typeLength] bytes; [headerRead] as in [onBidi]. */
     suspend fun onUni(
         st: QuicStream,
         typeLength: Int,
-    ) = route(st, bidi = false, typeLength)
+        headerRead: () -> Unit = {},
+    ) = route(st, bidi = false, typeLength, headerRead)
 
     /**
      * A bidirectional stream whose `WT_STREAM` signal `0x41` was read, in [typeLength] bytes; [headerRead] runs once its
