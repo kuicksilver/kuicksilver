@@ -205,6 +205,9 @@ internal class Path(
     /** Server, while [waitsForPeerCid]: the peer ID the connection kept from the path it left, which this path must not send with. */
     var keptPeer: ConnectionIdManager.Peer? = null
 
+    /** Server, while [waitsForPeerCid]: the ID of ours (sequence number) the client used on the path the connection left; -1 if unknown. */
+    var waitDcidSeq: Long = -1L
+
     /** Server, while [waitsForPeerCid]: the address is validated again once the path can send (a PATH_CHALLENGE cannot leave before). */
     var revalidateOnceSending: Boolean = false
 

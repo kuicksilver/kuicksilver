@@ -222,7 +222,7 @@ public class ConnectionCore internal constructor(
     internal var pathRevertsForTest = 0
 
     /** Times a reverted path waiting for a peer connection ID could send again. */
-    internal var pathWaitReleasesForTest = 0
+    internal val pathWaitReleasesForTest = IntArray(3) // by io.kuicksilver.quic.core.WaitRelease
 
     /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
     internal var testBeforeSwitch: ((PathId) -> Unit)? = null
