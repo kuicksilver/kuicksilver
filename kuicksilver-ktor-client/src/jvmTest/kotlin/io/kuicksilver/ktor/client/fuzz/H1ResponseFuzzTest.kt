@@ -23,6 +23,7 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.client.h1.AfterResponse
 import io.kuicksilver.ktor.client.h1.HeadLimitedInput
+import io.kuicksilver.ktor.client.h1.ResponseFraming
 import io.kuicksilver.ktor.client.h1.readResponse
 import io.kuicksilver.ktor.client.h1.readResponseHeadBytes
 import kotlinx.coroutines.CompletableDeferred
@@ -106,8 +107,15 @@ class H1ResponseFuzzTest {
                     assertTrue(end <= wire.size, "the engine took $end of ${wire.size} bytes")
                     val took = wire.copyOfRange(headEnd, end)
                     val status = response.statusCode.value
-                    val te = response.headers.getAll(HttpHeaders.TransferEncoding)?.joinToString(",")
+                    val te = response.headers.getAll(HttpHeaders.TransferEncoding)
                     val cl = response.headers[HttpHeaders.ContentLength]
+                    // whether chunked is the final coding: the engine's own reading of the field (empty list elements and
+                    // quoted parameters included), the one place that decides it
+                    val framing =
+                        ResponseFraming.of(
+                            response.headers.entries().associate { it.key to it.value },
+                            http10 = response.version == HttpProtocolVersion.HTTP_1_0,
+                        )
                     when {
                         request.method == HttpMethod.Head || status == 204 || status == 304 -> {
                             assertEquals(0, body.size + took.size, "a body for HEAD, a 204 or a 304 (status $status)")
@@ -115,12 +123,7 @@ class H1ResponseFuzzTest {
 
                         // chunked when it is the final coding (RFC 9112 section 6.3 item 4); any other final coding is
                         // read until the close, as is every coding in HTTP/1.0
-                        te != null && response.version != HttpProtocolVersion.HTTP_1_0 &&
-                            te
-                                .substringAfterLast(',')
-                                .substringBefore(';')
-                                .trim()
-                                .equals("chunked", ignoreCase = true) -> {
+                        te != null && framing.delimited -> {
                             val reference = dechunk(took)
                             assertTrue(reference != null && reference.contentEquals(body), "a chunked body that is not what its chunks say")
                         }

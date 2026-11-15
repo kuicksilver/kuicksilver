@@ -47,8 +47,9 @@ import kotlin.time.Duration.Companion.seconds
  * head limit, in virtual time. Nothing in the pipeline waits for time here, so it must have ended, its output closed,
  * before virtual time moves at all: a connection that would only end at a deadline is a hang. Every request the handler
  * gets has a method that is a token and a target without whitespace or control characters, and what the server sends is
- * a sequence of HTTP/1.1 responses ([checkResponses]): no more final responses than requests, each body as its framing
- * says (none to HEAD), and nothing after `Connection: close`. (`100 Continue` is written by the call layer above the
+ * a sequence of HTTP/1.1 responses ([checkResponses]): no more final responses than requests, as many as requests when
+ * nothing ended the connection early, each body as its framing says (none to HEAD), and nothing after
+ * `Connection: close`; a reset connection only for a failing handler or a malformed or cut request body. (`100 Continue` is written by the call layer above the
  * pipeline, which this target does not run.)
  *
  * The pipeline answers any failure of its head checks, of a body's decoding and of the handler with a 400 or a 500 (or
@@ -137,29 +138,48 @@ class H1RequestFuzzTest {
             assertTrue(job.isCompleted, "the connection is still open after the input ended (it would end only at a deadline)")
             assertTrue(wrong.isEmpty(), "the handler got $wrong")
             assertTrue(reader.isCompleted, "the output was not closed after the connection ended")
-            val heads = sequentialPass(wire)
+            val pass = sequentialPass(wire)
             reset?.let { cause ->
-                // a failed response: the handler's, or a malformed request body's that the handler read
-                val known =
-                    generateSequence(cause) { it.cause }.any {
-                        it is HandlerFailure || it is MalformedRequestBody ||
-                            it is IOException
-                    }
-                if (!known) throw AssertionError("the connection was reset by an unexpected failure: $cause", cause)
+                // a failed response resets the connection: the handler's own failure (mode 2), or a handler's read of a
+                // request body that was malformed or cut short; any other cause under the reset is a bug
+                val causes = generateSequence(cause) { it.cause }.toList()
+                val expected =
+                    (handlerMode == 2 && causes.any { it is HandlerFailure }) ||
+                        (
+                            pass.ending == Ending.MALFORMED_BODY &&
+                                causes.any { it is MalformedRequestBody || it is MalformedChunkedBodyException }
+                        ) ||
+                        (pass.ending == Ending.CUT_BODY && causes.last() is EOFException)
+                if (!expected) throw AssertionError("the connection was reset by an unexpected failure: ${causes.last()}", cause)
             }
-            checkResponses(received.readByteArray(), heads, complete = reset == null)
+            val answered = checkResponses(received.readByteArray(), pass, complete = reset == null)
+            // every request answered, when nothing ended the connection early: no reset, no failing handler, input that
+            // ends after a whole request, and no response that closed the connection
+            if (reset == null && handlerMode != 2 && pass.ending == Ending.CLEAN && !pass.open && !answered.closed) {
+                val last = pass.heads.indexOfFirst { it.endsConnection }
+                val want = if (last >= 0) last + 1 else pass.heads.size
+                assertTrue(answered.finals == want, "${answered.finals} final response(s) to $want request(s)")
+            }
         }
 
-    /** A request head as [sequentialPass] read it: whether it was HEAD, or made a tunnel. */
+    /**
+     * A request head as [sequentialPass] read it: whether it was HEAD, made a tunnel, or asked to end the connection after
+     * its response (`Connection: close`, or HTTP/1.0 without `keep-alive`).
+     */
     private class Head(
         val head: Boolean,
         val tunnel: Boolean = false,
+        val endsConnection: Boolean = false,
     )
+
+    /** How [sequentialPass] stopped. */
+    private enum class Ending { CLEAN, MALFORMED_BODY, CUT_BODY, OTHER }
 
     /** What [sequentialPass] read: the heads in order, and whether the pipeline may read past the last one. */
     private class Pass(
         val heads: List<Head>,
         val open: Boolean,
+        val ending: Ending = Ending.OTHER,
     )
 
     /**
@@ -181,7 +201,7 @@ class H1RequestFuzzTest {
             while (true) {
                 inHead = true
                 input.startHead()
-                if (!input.skipEmptyLines()) return Pass(heads, open = false)
+                if (!input.skipEmptyLines()) return Pass(heads, open = false, Ending.CLEAN)
                 input.checkRequestHead()
                 val request = parseRequest(input) ?: return Pass(heads, open = false)
                 try {
@@ -192,7 +212,14 @@ class H1RequestFuzzTest {
                     val fields = requestFields(request, input.keptFieldValues, version)
                     val method = request.method.value
                     val tunnel = method == "CONNECT" || fields["Upgrade"] != null
-                    heads += Head(method == "HEAD", tunnel)
+                    val options =
+                        fields
+                            .getAll("Connection")
+                            .orEmpty()
+                            .flatMap { it.split(',') }
+                            .map { it.trim().lowercase() }
+                    val ends = "close" in options || (version == HttpProtocolVersion.HTTP_1_0 && "keep-alive" !in options)
+                    heads += Head(method == "HEAD", tunnel, ends)
                     val framing = RequestFraming.of(request, fields)
                     if (framing.fault != null) return Pass(heads, open = false)
                     if (tunnel) return Pass(heads, open = true)
@@ -211,10 +238,10 @@ class H1RequestFuzzTest {
                 }
             }
         } catch (_: MalformedChunkedBodyException) {
-            return Pass(heads, open = false)
+            return Pass(heads, open = false, Ending.MALFORMED_BODY)
         } catch (_: EOFException) {
             // inside a body (the request is counted) or inside a head the pipeline then refuses
-            return Pass(if (inHead) heads + Head(input.headMethod) else heads, open = false)
+            return if (inHead) Pass(heads + Head(input.headMethod), open = false) else Pass(heads, open = false, Ending.CUT_BODY)
         } catch (_: RequestHeadRefused) {
         } catch (_: ParserException) {
         } catch (_: TooLongLineException) {
@@ -231,17 +258,23 @@ class H1RequestFuzzTest {
      * the rest; and nothing follows a response that says `Connection: close`. Once past the requests the pass could follow
      * (a tunnel or an upgrade), the rest is not checked.
      */
+    private class Answered(
+        val finals: Int,
+        val closed: Boolean,
+    )
+
     private fun checkResponses(
         sent: ByteArray,
         pass: Pass,
         complete: Boolean,
-    ) {
+    ): Answered {
         var pos = 0
         var final = 0
+        var closed = false
         val shown = { sent.decodeToString().take(200).visible() }
         while (pos < sent.size) {
             val headEnd = indexOf(sent, END, pos)
-            if (headEnd < 0 && !complete) return // a reset cut the last response
+            if (headEnd < 0 && !complete) return Answered(final, closed) // a reset cut the last response
             assertTrue(headEnd >= 0, "a response head without its empty line at $pos: ${shown()}")
             val lines = String(sent, pos, headEnd - pos, Charsets.ISO_8859_1).split("\r\n")
             assertTrue(STATUS_LINE.matches(lines[0]), "status line '${lines[0].visible()}' in ${shown()}")
@@ -251,7 +284,7 @@ class H1RequestFuzzTest {
             if (status / 100 == 1 && status != 101) continue // an interim response (the pipeline sends none of its own)
             if (final >= pass.heads.size) {
                 assertTrue(pass.open, "final response ${final + 1} to ${pass.heads.size} request(s): ${shown()}")
-                return
+                return Answered(final, closed = true)
             }
             val request = pass.heads[final++]
             val te = fields.firstOrNull { it.first == "transfer-encoding" }?.second
@@ -261,13 +294,13 @@ class H1RequestFuzzTest {
 
                 te != null -> {
                     pos = skipChunked(sent, pos)
-                    if (pos < 0 && !complete) return
+                    if (pos < 0 && !complete) return Answered(final, closed)
                     assertTrue(pos >= 0, "a malformed chunked response body: ${shown()}")
                 }
 
                 cl != null -> {
                     pos += cl.toInt()
-                    if (pos > sent.size && !complete) return
+                    if (pos > sent.size && !complete) return Answered(final, closed)
                     assertTrue(pos <= sent.size, "a response body shorter than its Content-Length $cl: ${shown()}")
                 }
 
@@ -275,11 +308,13 @@ class H1RequestFuzzTest {
                     pos = sent.size
                 }
             }
-            if ((request.tunnel && status / 100 == 2) || status == 101) return
+            if ((request.tunnel && status / 100 == 2) || status == 101) return Answered(final, closed = true)
             if (fields.any { it.first == "connection" && it.second.split(',').any { o -> o.trim().equals("close", ignoreCase = true) } }) {
+                closed = true
                 assertTrue(pos == sent.size, "${sent.size - pos} bytes after a response with Connection: close: ${shown()}")
             }
         }
+        return Answered(final, closed)
     }
 
     /** The end of the chunked body at [from] in [b], or -1 when it is not one. */

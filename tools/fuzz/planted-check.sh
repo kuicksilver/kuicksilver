@@ -16,6 +16,8 @@
 #   server-hang    a request chunk of 0x2a7 bytes waits 40 s before it is read    seed-chunk-2a7 of h1Request
 #                  (the connection ends only after that wait: it is still open at virtual time 0)
 #   server-content the 400 to a HEAD request carries content                         seed-refused-head of h1Request
+#   server-reset   every response is followed by a reset (IllegalStateException)    seed-get of h1Request
+#   server-drop    the pipeline stops reading after a safe request                  seed-pipelined of h1Request
 #   server-head    a request head with the method BREW throws IllegalStateException  seed-second-head of h1Request
 #                  (the second head of a connection: the pipeline answers it with a 400)
 # To check that fuzzing finds a plant, not only the input written for it: delete that seed in the copy and run
@@ -30,9 +32,12 @@ rm -rf "$copy"; mkdir -p "$copy"
 for f in local.properties samples/compose-demo/local.properties; do [ ! -f "$root/$f" ] || cp "$root/$f" "$copy/$f"; done
 [ ! -d "$root/build/openssl" ] || { mkdir -p "$copy/build"; cp -R "$root/build/openssl" "$copy/build/"; }
 
-python3 -I - "$copy" <<'PY'
+# the plants that would hide each other (a reset after every response) run in groups of their own, one Gradle run each
+bad=0
+for group in 1 2 3; do
+python3 -I - "$copy" "$root" "$group" <<'PY'
 import sys, os
-root = sys.argv[1]
+root, original, group = sys.argv[1], sys.argv[2], int(sys.argv[3])
 client = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ChunkedBody.kt"
 server = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/ChunkedBody.kt"
 head = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/RequestHeadCheck.kt"
@@ -42,6 +47,9 @@ exchange = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/cl
 pipeline = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/ServerPipeline.kt"
 plants = [
     (pipeline, "            if (!head) bytes(BAD_REQUEST_BODY)\n", "            bytes(BAD_REQUEST_BODY)\n"),
+    (pipeline, "        closedCause?.let { throw it }\n    } catch (thrown: Throwable) {\n",
+     "        closedCause?.let { throw it }\n        if (sent) throw IllegalStateException(\"PLANTED-reset\")\n    } catch (thrown: Throwable) {\n"),
+    (pipeline, "                    running += handlerJob\n", "                    running += handlerJob\n                    break\n"),
     (exchange, "                val copied = input.copyTo(out, contentLength)\n",
      "                val copied = input.copyTo(out, contentLength)\n"
      "                if (contentLength == 5L) out.writeFully(byteArrayOf(0x21))\n"),
@@ -64,7 +72,13 @@ plants = [
      "        buffer[2] == 'E'.code.toByte() && buffer[3] == 'W'.code.toByte() && buffer[4] == ' '.code.toByte()\n"
      '    ) throw IllegalStateException("PLANTED-server-head")\n'),
 ]
+late = {"PLANTED-reset": 2, "                    break\n": 3}  # the plants of groups 2 and 3, by a part of their text
+for f in {f for f, _, _ in plants}:  # every planted file as in the checkout, then this group's plants
+    with open(os.path.join(original, f)) as src, open(os.path.join(root, f), "w") as dst:
+        dst.write(src.read())
 for f, anchor, replacement in plants:
+    if next((g for k, g in late.items() if k in replacement), 1) != group:
+        continue
     p = os.path.join(root, f)
     s = open(p).read()
     if s.count(anchor) != 1:
@@ -73,15 +87,16 @@ for f, anchor, replacement in plants:
 PY
 
 cd "$copy"
+rm -f kuicksilver-ktor-*/build/test-results/jvmTest/TEST-io.kuicksilver.ktor.*.fuzz.H1*.xml
 if [ -x "$HOME/.kuicksilver-tools/quiet-gradle" ]; then g=("$HOME/.kuicksilver-tools/quiet-gradle"); else g=(./gradlew --max-workers=2); fi
 # shellcheck disable=SC2086 # KSL_GRADLE_ARGS is a list of arguments
 "${g[@]}" ${KSL_GRADLE_ARGS:-} --continue \
   :kuicksilver-ktor-client:jvmTest --tests 'io.kuicksilver.ktor.client.fuzz.H1ResponseFuzzTest' \
   :kuicksilver-ktor-server:jvmTest --tests 'io.kuicksilver.ktor.server.fuzz.H1RequestFuzzTest' > "$copy/../gradle.log" 2>&1 || true
 
-python3 -I - "$copy" <<'PY'
+python3 -I - "$copy" "$group" <<'PY' || bad=1
 import sys, os, re, html
-root = sys.argv[1]
+root, group = sys.argv[1], int(sys.argv[2])
 results = "build/test-results/jvmTest/TEST-io.kuicksilver.ktor.{0}.fuzz.{1}.xml"
 expect = [  # plant, module, class, input, text the failure must contain
     ("client-chunk", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-chunk-1f3", "PLANTED-client-chunk"),
@@ -91,11 +106,16 @@ expect = [  # plant, module, class, input, text the failure must contain
     ("client-head", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-head-request", "a body for HEAD"),
     ("server-chunk", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-1f3", "PLANTED-server-chunk"),
     ("server-content", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-refused-head", "Connection: close"),
+    ("server-reset", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-get", "reset by an unexpected failure"),
+    ("server-drop", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-pipelined", "final response(s) to"),
     ("server-hang", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-2a7", "still open"),
     ("server-head", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-second-head", "PLANTED-server-head"),
 ]
 bad = 0
+groups = {"server-reset": 2, "server-drop": 3}
 for plant, module, cls, case, text in expect:
+    if groups.get(plant, 1) != group:
+        continue
     p = os.path.join(root, module, results.format(*cls))
     if not os.path.exists(p):
         print(f"FAIL {plant}: no test results ({p}); see build/planted-check/gradle.log"); bad += 1; continue
@@ -111,3 +131,6 @@ for plant, module, cls, case, text in expect:
         print(f"ok   {plant}: {case} fails with '{text}'")
 sys.exit(1 if bad else 0)
 PY
+cd "$root"
+done
+exit $bad
