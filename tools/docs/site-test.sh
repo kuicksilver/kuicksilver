@@ -79,8 +79,8 @@ grep -q 'href="https://github.com/kuicksilver/kuicksilver/blob/main/README.md"' 
   && pass "a snapshot links to main" || fail "snapshot ref"
 mkdir -p "$tmp/only"; cp -R "$out/0.4.0-rc1" "$tmp/only/"
 "${site[@]}" index "$tmp/only" 2>/dev/null
-grep -q 'Kuicksilver 0.4.0-rc1 guide' "$tmp/only/latest/guide/index.html" && pass "index: a pre-release is latest when there is no final release" \
-  || fail "index without a final release"
+[ ! -e "$tmp/only/latest" ] && ! grep -q 'href="latest/' "$tmp/only/index.html" && grep -q 'No final release yet' "$tmp/only/index.html" \
+  && pass "negative_prereleaseNeverLatest: no latest/ without a final release" || fail "negative_prereleaseNeverLatest: a pre-release became latest"
 [ "$(sed -n 's/.*<h2>Latest release: \([^<]*\)<.*/\1/p' "$out/index.html")" = "0.3.0" ] && pass "landing names latest" || fail "landing latest"
 
 # negative controls

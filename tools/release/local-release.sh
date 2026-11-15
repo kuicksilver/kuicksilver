@@ -42,7 +42,8 @@
 #
 # --github-prerelease (docs/release.md, "Prereleases on GitHub only"): a prerelease (X.Y.Z-alpha|beta|rcN, a final version
 # is refused, also in a dry run) for a GitHub prerelease only, never for Maven Central. Steps 1 to 5 as above, except
-# that the Central Portal token is not read (and its ORG_GRADLE_PROJECT_ variables are unset), the count against the
+# that the Central Portal token is not read (its ORG_GRADLE_PROJECT_ variables are unset, Gradle gets it empty with
+# -PmavenCentralUsername= -PmavenCentralPassword=, and publishToMavenCentral is excluded with -x), the count against the
 # Central limits is reported but never refuses. The Swift package is prepared and committed as for a release, its binary
 # target the zip of the GitHub prerelease. Instead of step 6: kuicksilver-<v>-maven-repository.zip, the signed
 # publication as a Maven repository with checksums and maven-metadata.xml (tools/release/github-repository.py), its
@@ -50,7 +51,8 @@
 # on them, and kuicksilver-<v>-SHA256SUMS of every asset, signed. Nothing is uploaded; the script prints the commands in
 # their order, the checks of tools/release/swift-package-check.sh before the immutable Swift package tag included.
 #
-# Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--github-prerelease] [--resume] [--repro]
+# Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--github-prerelease | --central-prerelease]
+#                                       [--resume] [--repro]
 #                                       [--release-commit <sha>] [--allow-over-limit] [--allow-toolchain-drift]
 #   --dry-run    everything but the upload; the refusals of step 1 become warnings; signed when a key is configured, else
 #                -Pkuicksilver.sign=false. The file count is that of the signed upload either way.
@@ -61,6 +63,8 @@
 #                            the tip of a branch.
 #   --allow-over-limit       publish although the count is above the Central limits (30 days of grace, then refused).
 #   --allow-toolchain-drift  warn instead of refusing when the NDK or Xcode differs from gradle/toolchains.toml.
+#   --central-prerelease     a prerelease to Maven Central after all: without it (or --github-prerelease) a prerelease
+#                            version is refused, also in a dry run, as Central grants a few releases a month only.
 # Env: KSL_GRADLE  the Gradle launcher, which sets its own --max-workers (default ./gradlew --max-workers=2)
 #      KSL_CENTRAL_MAX_FILES (2620), KSL_CENTRAL_MAX_BYTES (100000000)  the portal's limits for this namespace
 # Credentials (never in the repository, never printed): ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* variables,
@@ -71,9 +75,9 @@ started=$(date +%s); given="$*"
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 
-version=""; dry=0; unsigned=0; resume=0; repro=0; release_commit=""; allow_over=0; allow_drift=0; gh=0
+version=""; dry=0; unsigned=0; resume=0; repro=0; release_commit=""; allow_over=0; allow_drift=0; gh=0; central_pre=0
 while [ $# -gt 0 ]; do case "$1" in
-  --dry-run) dry=1 ;; --github-prerelease) gh=1 ;; --unsigned) unsigned=1 ;; --resume) resume=1 ;; --repro) repro=1 ;; --allow-over-limit) allow_over=1 ;;
+  --dry-run) dry=1 ;; --github-prerelease) gh=1 ;; --central-prerelease) central_pre=1 ;; --unsigned) unsigned=1 ;; --resume) resume=1 ;; --repro) repro=1 ;; --allow-over-limit) allow_over=1 ;;
   --allow-toolchain-drift) allow_drift=1 ;; --release-commit) release_commit="${2:?--release-commit <sha>}"; shift ;;
   -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
   -*) echo "unknown option $1" >&2; exit 2 ;;
@@ -109,6 +113,10 @@ echo "-- preconditions"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "REFUSED: version '$version' is not X.Y.Z[-alpha|beta|rcN]" >&2; exit 1; }
 # a final version goes to Maven Central only; a dry run refuses it too, as it would build another kind of release
 [ "$gh" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --github-prerelease takes a prerelease (X.Y.Z-alphaN|betaN|rcN), not $version: a final version goes to Maven Central" >&2; exit 1; }
+[ "$gh" = 0 ] || [ "$central_pre" = 0 ] || { echo "REFUSED: --github-prerelease and --central-prerelease exclude each other" >&2; exit 1; }
+[ "$central_pre" = 0 ] || [[ "$version" == *-* ]] || { echo "REFUSED: --central-prerelease takes a prerelease, not $version" >&2; exit 1; }
+# Central grants a few releases a month and never removes one: a prerelease goes to GitHub only unless asked for
+[ "$gh" = 1 ] || [ "$central_pre" = 1 ] || [[ "$version" != *-* ]] || { echo "REFUSED: $version is a prerelease: --github-prerelease publishes it on GitHub only (docs/release.md, \"Prereleases on GitHub only\"); --central-prerelease sends it to Maven Central after all" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || refuse "the working tree is not clean (git status)"
 if [ "$dry" = 0 ]; then   # a dry run may be offline: it uses what was fetched last
   # Maven Central never takes a version twice, and a second deployment of a published one only fails in the portal;
@@ -246,6 +254,8 @@ if [ "$unsigned" = 1 ]; then
   signed=0; echo "  --unsigned: the local publication is not signed"
 fi
 sign_args=(); [ "$signed" = 1 ] || sign_args=(-Pkuicksilver.sign=false)
+# --github-prerelease: Gradle gets the Central token empty (over any gradle.properties) and cannot run the Central upload
+[ "$gh" = 1 ] && sign_args+=(-PmavenCentralUsername= -PmavenCentralPassword= -x publishToMavenCentral)
 P=(-Pkuicksilver.version="$version" -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost ${sign_args[@]+"${sign_args[@]}"})
 
 # ------------------------------------------------------------------------------------------------------------- 2. OpenSSL
@@ -473,7 +483,9 @@ step "privacy: no home-directory path in the SBOM and provenance" python3 -I too
 if [ "$gh" = 1 ]; then
   # the checksums of every asset of the GitHub prerelease, their signatures included; then the list itself signed
   assets=("$repo_zip" "$repo_doc" "$sbom_zip" "$prov" "$xcf")
-  if [ "$signed" = 1 ]; then for f in "${assets[@]}"; do [ -f "$f.asc" ] && assets+=("$f.asc"); done; fi
+  if [ "$signed" = 1 ]; then   # a signed run signed every asset above: a missing signature stops it
+    for f in "${assets[@]}"; do [ -f "$f.asc" ] || { echo "FAIL: $f.asc is missing in a signed run" >&2; exit 1; }; assets+=("$f.asc"); done
+  fi
   step "github: SHA256SUMS of the assets"                        python3 -I tools/release/github-repository.py sums --out "$sums_file" "${assets[@]}"
   if [ "$signed" = 1 ]; then
     step "sign: SHA256SUMS (release key)"                        "${G[@]}" "${P[@]}" signReleaseFiles -Pkuicksilver.release.sign="$sums_file"
@@ -488,13 +500,16 @@ fi
 # the Swift package: its next commit, naming the zip above; signed, tagged and pushed by hand after the GitHub release
 # (docs/release.md, step 6). Never fatal: the release is complete without it, and it can be made again by hand.
 echo "-- Swift package kuicksilver/kuicksilver-swift (committed, not signed, tagged or pushed)"
-swift_args=("$version" "$xcf_sum" --source-commit "$head"); [ "$dry" = 1 ] && swift_args+=(--dry-run)
+swift_out="$out/kuicksilver-swift"
+swift_args=("$version" "$xcf_sum" --source-commit "$head" --out "$swift_out"); [ "$dry" = 1 ] && swift_args+=(--dry-run)
 swift_manual="tools/release/swift-package.sh finish $version $xcf_sum --source-commit $head"
 n=$((n+1)); swift_log="$logs/$(printf '%02d' $n).log"
 if bash tools/release/swift-package.sh finish "${swift_args[@]}" > "$swift_log" 2>&1; then
   printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "ok"
   grep -E ' on (main|release/)|WARN' "$swift_log" | sed 's/^ */     /'
   swift_next=$(sed -n '/^  Swift package, once/,$p' "$swift_log")
+  # what will be public (and its tag immutable): UTC dates, no home-directory path in any file
+  step "swift package: UTC dates, no home-directory path"      bash tools/release/swift-package-check.sh files "$version" --package "$swift_out"
 else
   printf '[%2d] %-58s%s\n' "$n" "swift package: commit $version" "FAILED (not fatal, see $swift_log)"
   tail -5 "$swift_log" | sed 's/^/     | /'
@@ -515,13 +530,18 @@ GitHub prerelease $version built and signed; nothing is uploaded, nothing goes t
 order (docs/release.md, "Prereleases on GitHub only"; the Swift package tag is immutable, so its checks come first):
   1. The Swift package against the local zip (an empty package, iOS Simulator and iOS builds):
        tools/release/swift-package-check.sh local $version
-  2. git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
-  3. gh release create v$version --prerelease --verify-tag --title "Kuicksilver $version" \\
-       --notes-file <the CHANGELOG section of $version, with $repo_doc appended> \\
-       $(printf '%s ' "${assets[@]}")
-  4. The zip of the published release against Package.swift (download, SHA-256):
+  2. The tag (UTC, like every commit and tag here):
+       export TZ=UTC
+       git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
+  3. The GitHub release as a draft (not public yet, and pages.yml does not run):
+       gh release create v$version --draft --prerelease --verify-tag --title "Kuicksilver $version" \\
+         --notes-file <the CHANGELOG section of $version, with $repo_doc appended> \\
+         $(printf '%s ' "${assets[@]}")
+  4. The draft's zip against Package.swift (gh download, GitHub's digest, SHA-256), then publish it, then the public URL:
+       tools/release/swift-package-check.sh remote $version --draft
+       gh release edit v$version --draft=false
        tools/release/swift-package-check.sh remote $version
-  5. Only then the Swift package:
+  5. Only then the Swift package (swift-package-check.sh prepush right before its push):
 $swift_next
   6. From an empty package, exact: "$version":
        tools/release/swift-package-check.sh resolve $version
@@ -543,7 +563,7 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   2. Press Publish. It reads PUBLISHING, then PUBLISHED (minutes); repo1.maven.org follows within about an hour.
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
-  4. Then, and only then: git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
+  4. Then, and only then: TZ=UTC git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
      and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
      $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).

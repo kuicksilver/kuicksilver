@@ -5,7 +5,7 @@
 #   <outdir>/<version>/api/     the aggregated Dokka HTML of the published modules (./gradlew :dokkaGenerate)
 #   <outdir>/<version>/guide/   docs/guide/*.md as HTML
 #   <outdir>/index.html         the landing page: the latest release's guide and API, and every version in <outdir>
-#   <outdir>/latest/            a copy of the newest final release in <outdir> (a pre-release or snapshot only without one)
+#   <outdir>/latest/            a copy of the newest final release in <outdir> (none without one: never a pre-release)
 # Versions already in <outdir> are kept. Every relative link of the guide and landing pages is checked at the end, and the
 # API reference against the ratchet in tools/docs/api-baseline.properties (tools/docs/site.py check).
 #   Usage: bash tools/docs/site.sh <version> <outdir>        e.g. bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site

@@ -12,7 +12,9 @@
 #            commit (unsigned, as kinchpik). It prints what the maintainer runs in a terminal once the GitHub release
 #            v<version> is published (before that the zip's URL does not resolve): sign the commit and make the tag
 #            <version> (plain SemVer, as Swift packages tag: 0.3.0, 0.3.0-rc1) with the release key, as the main tag is
-#            made, verify both, push. Nothing is signed, tagged or pushed here. Re-running finish is safe: it clones
+#            made, verify both, check them (tools/release/swift-package-check.sh prepush: UTC dates, the tag on the
+#            commit, no home-directory path), push. Commit and tag are made with TZ=UTC. Nothing is signed, tagged or
+#            pushed here. Re-running finish is safe: it clones
 #            afresh (the manual way after a failed or rejected push).
 #
 # Which branch: the newest line (the highest X.Y among the package's tags, or a higher one) moves main; a release of an
@@ -119,7 +121,8 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
 
 # --------------------------------------------------------------------------------------------------------- commit
 "${G[@]}" add -A
-"${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
+# UTC: the commit (and the tag made on it by hand, see below) never carries the maintainer's time zone
+TZ=UTC "${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
 out_abs=$(cd "$out" && pwd)
@@ -129,10 +132,11 @@ cat <<NEXT
   Swift package, once the GitHub release v$version is published (SwiftPM downloads $url),
   in a terminal with the release key, as the main tag is made:
     cd $q_out
-    export GPG_TTY=\$(tty)
+    export GPG_TTY=\$(tty) TZ=UTC
     git commit --amend --no-edit -S$fpr
     git tag -s -u $fpr $version -m "Kuicksilver $version"
     git verify-commit HEAD && git verify-tag $version
+    $q_root/tools/release/swift-package-check.sh prepush $version --package $q_out
     git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git $branch refs/tags/$version
   --atomic: both or neither, so a rejected branch never leaves the (immutable) tag behind. If the push is rejected
   ($branch moved since the clone: not a fast-forward), never force it: run

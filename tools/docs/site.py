@@ -5,7 +5,8 @@
   site.py build --version V --ref R --api DIR --guide DIR --out OUT
       OUT/V/api/     a copy of the Dokka HTML in DIR
       OUT/V/guide/   DIR/*.md rendered to HTML (markdown-it-py, tools/docs/requirements.txt)
-      OUT/index.html the landing page, OUT/latest/ a copy of the newest release; both recomputed from every version in OUT,
+      OUT/index.html the landing page, OUT/latest/ a copy of the newest final release (none without one: never a
+                     prerelease or snapshot); both recomputed from every version in OUT,
                      so building into a copy of the published site adds a version and keeps the others
   site.py index OUT  only the landing page and OUT/latest/, from the versions already in OUT (the Pages workflow, after it
                      put a newly built version into the published site)
@@ -190,23 +191,29 @@ def landing(out):
     if not versions:
         sys.exit(f"site.py: no version directory in {out}")
     finals = [v for v in versions if VERSION.match(v).group(4) is None]
-    releases = [v for v in versions if not v.endswith("-SNAPSHOT")]
-    latest = (finals or releases or versions)[-1]   # the newest final release; a pre-release or snapshot only without one
-    tmp = os.path.join(out, ".latest.tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    shutil.copytree(os.path.join(out, latest), tmp)
+    # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is not on Maven Central,
+    # so its pages as "the" version would name coordinates that do not resolve there. Without a final release: none.
+    latest = finals[-1] if finals else None
     shutil.rmtree(os.path.join(out, "latest"), ignore_errors=True)
-    os.rename(tmp, os.path.join(out, "latest"))
+    if latest:
+        tmp = os.path.join(out, ".latest.tmp")
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(os.path.join(out, latest), tmp)
+        os.rename(tmp, os.path.join(out, "latest"))
+    head = (
+        f"<h2>Latest release: {html.escape(latest)}</h2>\n"
+        '<ul><li><a href="latest/guide/index.html">Guide</a>: QUIC, HTTP/3, TLS, the Ktor engines, deployment, '
+        "configuration and troubleshooting</li>\n"
+        '<li><a href="latest/api/index.html">API reference</a>: every public declaration of the published modules</li></ul>\n'
+        if latest else "<h2>No final release yet</h2>\n<p>Every version below is a prerelease or a snapshot.</p>\n"
+    )
     rows = "".join(
         f'<tr><td>{html.escape(v)}</td><td><a href="{v}/guide/index.html">Guide</a></td>'
         f'<td><a href="{v}/api/index.html">API reference</a></td></tr>' for v in reversed(versions)
     )
     body = (
         "<h1>Kuicksilver</h1>\n<p>QUIC, HTTP/3 and TLS 1.3 for Kotlin Multiplatform, with Ktor client and server engines.</p>\n"
-        f"<h2>Latest release: {html.escape(latest)}</h2>\n"
-        '<ul><li><a href="latest/guide/index.html">Guide</a>: QUIC, HTTP/3, TLS, the Ktor engines, deployment, '
-        "configuration and troubleshooting</li>\n"
-        '<li><a href="latest/api/index.html">API reference</a>: every public declaration of the published modules</li></ul>\n'
+        f"{head}"
         f"<h2>All versions</h2>\n<table><tr><th>Version</th><th></th><th></th></tr>{rows}</table>\n"
         f'<p>Source code, releases and issues: <a href="{REPO}">{REPO}</a>.</p>'
     )
@@ -400,7 +407,7 @@ def main():
             sys.exit("site.py: check --baseline needs --version")
         return check(args.out, args.version, args.baseline, args.undocumented, args.sources)
     if args.cmd == "index":
-        print(f"site.py: latest is {landing(args.out)}", file=sys.stderr)
+        print(f"site.py: latest is {landing(args.out) or 'none (no final release)'}", file=sys.stderr)
         return 0
     if not VERSION.match(args.version):
         sys.exit(f"site.py: '{args.version}' is not a version (X.Y.Z or X.Y.Z-suffix)")
@@ -409,7 +416,7 @@ def main():
     shutil.copytree(args.api, os.path.join(target, "api"))
     render_guide(args.guide, os.path.join(target, "guide"), args.version, args.ref)
     latest = landing(args.out)
-    print(f"site.py: {target} built; latest is {latest}", file=sys.stderr)
+    print(f"site.py: {target} built; latest is {latest or 'none (no final release)'}", file=sys.stderr)
     return 0
 
 

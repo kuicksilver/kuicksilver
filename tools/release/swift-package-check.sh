@@ -2,31 +2,39 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Checks of the Swift package commit that tools/release/swift-package.sh finish made (build/release/kuicksilver-swift),
-# in the order of docs/release.md ("Prereleases on GitHub only"). A tag of kuicksilver/kuicksilver-swift
-# is immutable, so local and remote run before it is pushed, resolve after.
+# in the order of docs/release.md ("Prereleases on GitHub only"). A tag of kuicksilver/kuicksilver-swift is immutable,
+# so every check but resolve runs before it is pushed.
 #
-#   local    before anything is published: Package.swift names the release URL of <version> and the SHA-256 of the
-#            local Kuicksilver.xcframework.zip; a copy of the package with the binary target pointing at that zip
-#            (path:) instead of the URL, and an empty package depending on it by path that imports Kuicksilver and
-#            uses it, resolved by SwiftPM on this Mac and built with xcodebuild for the iOS Simulator and for iOS
+#   files    the commit: its author and committer dates are UTC (+0000), and no tracked file names a home directory
+#            (tools/check/build-paths.py). local-release.sh runs it after making the commit.
+#   local    before anything is published: files, then Package.swift names the release URL of <version> and the
+#            SHA-256 of the local Kuicksilver.xcframework.zip; a copy of the package with the binary target pointing at
+#            that zip (path:) instead of the URL, and an empty package depending on it by path that imports Kuicksilver
+#            and uses it, resolved by SwiftPM on this Mac and built with xcodebuild for the iOS Simulator and for iOS
 #            devices (the xcframework has these two slices only, no macOS one).
-#   remote   once the GitHub release v<version> is published, before the tag: the zip downloaded from the URL that
-#            Package.swift names has the SHA-256 Package.swift names, which is the local zip's as well.
+#   remote   the zip of the GitHub release v<version> has the SHA-256 Package.swift names, which is the local zip's as
+#            well. --draft: the release is still a draft, so the asset is fetched with gh (authenticated; a draft's
+#            asset URL does not resolve publicly) and GitHub's own digest of it is compared too, when gh reports one;
+#            without --draft: downloaded from the public URL Package.swift names (the release is published).
+#   prepush  right before the push: files, and the tag <version> exists, is annotated, names HEAD and has a UTC tagger
+#            date.
 #   resolve  after the tag is pushed: an empty package naming kuicksilver-swift with exact: "<version>" resolves (SwiftPM
 #            fetches the tag and downloads the zip, checking its checksum) and builds for the iOS Simulator.
 #
 # Exit 0 when every check passed, 1 on a failed check, 2 on a usage error. Nothing is tagged, pushed or uploaded.
-# Usage: tools/release/swift-package-check.sh local|remote|resolve <version> [--package <dir>] [--zip <file>]
+# Usage: tools/release/swift-package-check.sh files|local|remote|prepush|resolve <version> [--package <dir>] [--zip <file>]
+#                                             [--draft]
 # Env: KSL_SWIFT_FETCH  a command that downloads <url> to <file> (default curl -fsSL --retry 3 -o <file> <url>)
+#      KSL_GH  the gh command for --draft (default gh)
 #      KSL_SWIFT_PACKAGE_URL  the package repository resolve names (default https://github.com/kuicksilver/kuicksilver-swift)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 cmd="${1:-}"; [ $# -gt 0 ] && shift
-case "$cmd" in local|remote|resolve) ;; -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
-  *) echo "usage: $0 local|remote|resolve <version> [--package <dir>] [--zip <file>] (see --help)" >&2; exit 2 ;; esac
-version=""; pkg=build/release/kuicksilver-swift; zip=build/release/Kuicksilver.xcframework.zip
+case "$cmd" in files|local|remote|prepush|resolve) ;; -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+  *) echo "usage: $0 files|local|remote|prepush|resolve <version> [--package <dir>] [--zip <file>] [--draft] (see --help)" >&2; exit 2 ;; esac
+version=""; pkg=build/release/kuicksilver-swift; zip=build/release/Kuicksilver.xcframework.zip; draft=0
 while [ $# -gt 0 ]; do case "$1" in
-  --package) pkg="${2:?--package <dir>}"; shift ;; --zip) zip="${2:?--zip <file>}"; shift ;;
+  --package) pkg="${2:?--package <dir>}"; shift ;; --zip) zip="${2:?--zip <file>}"; shift ;; --draft) draft=1 ;;
   -*) echo "unknown option $1" >&2; exit 2 ;;
   *) [ -z "$version" ] || { echo "one version only" >&2; exit 2; }; version="$1" ;;
 esac; shift; done
@@ -75,9 +83,23 @@ check_manifest() {
   echo "OK: $pkg/Package.swift names $url"
   sum="$s"
 }
+# the commit: UTC dates (a time zone in a commit or tag of a public repository says where the maintainer is), no home path
+check_files() {
+  local G=(git -C "$pkg") d files
+  "${G[@]}" rev-parse -q --verify HEAD >/dev/null 2>&1 || fail "$pkg has no commit (tools/release/swift-package.sh finish makes it)"
+  d=$("${G[@]}" log -1 --format='%ad %cd' --date=format:%z HEAD)
+  [ "$d" = "+0000 +0000" ] || fail "the commit $("${G[@]}" rev-parse --short HEAD) has author/committer zones $d, not +0000 +0000 (make it with TZ=UTC)"
+  echo "OK: the commit's author and committer dates are UTC"
+  files=(); while IFS= read -r f; do files+=("$pkg/$f"); done < <("${G[@]}" ls-files)
+  [ ${#files[@]} -gt 0 ] || fail "the commit in $pkg has no files"
+  python3 -I tools/check/build-paths.py "${files[@]}" > "$tmp/paths.log" 2>&1 || { sed 's/^/  | /' "$tmp/paths.log" >&2; fail "a file of the Swift package names a home directory"; }
+  echo "OK: no file of the Swift package names a home directory (${#files[@]} files)"
+}
 
 case "$cmd" in
+files) check_files ;;
 local)
+  check_files
   check_manifest
   [ -f "$zip" ] || fail "$zip is missing (tools/release/xcframework.sh $version makes it)"
   [ "$(sha "$zip")" = "$sum" ] || fail "$zip has SHA-256 $(sha "$zip"), Package.swift names $sum"
@@ -95,20 +117,47 @@ EOF
   (cd "$tmp/consumer" && swift package resolve > "$tmp/resolve.log" 2>&1) || { sed 's/^/  | /' "$tmp/resolve.log" >&2; fail "SwiftPM does not resolve the package on this Mac"; }
   echo "OK: SwiftPM resolves the package with the local zip on this Mac"
   build_ios "$tmp/consumer" "generic/platform=iOS Simulator" "generic/platform=iOS"
-  echo "local check of the Swift package $version passed: next, the GitHub release v$version, then $0 remote $version"
+  echo "local check of the Swift package $version passed: next, the draft GitHub release v$version, then $0 remote $version --draft"
   ;;
 remote)
   check_manifest
-  if [ -n "${KSL_SWIFT_FETCH:-}" ]; then read -r -a F <<< "$KSL_SWIFT_FETCH"; "${F[@]}" "$url" "$tmp/remote.zip" || fail "cannot download $url"
-  else curl -fsSL --retry 3 -o "$tmp/remote.zip" "$url" || fail "cannot download $url (is the GitHub release v$version published?)"; fi
+  if [ "$draft" = 1 ]; then
+    read -r -a GH <<< "${KSL_GH:-gh}"
+    "${GH[@]}" release download "v$version" -R kuicksilver/kuicksilver -p Kuicksilver.xcframework.zip -D "$tmp/dl" >/dev/null 2>&1 \
+      || fail "gh cannot download Kuicksilver.xcframework.zip of the release v$version (is the draft made, gh logged in?)"
+    mv "$tmp/dl/Kuicksilver.xcframework.zip" "$tmp/remote.zip" || fail "gh downloaded no Kuicksilver.xcframework.zip"
+    # GitHub's digest of the asset as it stores it ("sha256:<hex>"), when this gh and the API report one
+    gd=$("${GH[@]}" release view "v$version" -R kuicksilver/kuicksilver --json assets \
+      -q '.assets[] | select(.name == "Kuicksilver.xcframework.zip") | .digest // ""' 2>/dev/null || true)
+    if [ -n "$gd" ]; then
+      [ "$gd" = "sha256:$sum" ] || fail "GitHub's digest of the asset is $gd, Package.swift names $sum: do not publish the release"
+      echo "OK: GitHub's digest of the asset is sha256:$sum"
+    else echo "  note: gh reports no digest for the asset; the downloaded file is compared"; fi
+    where="the draft release v$version"
+  else
+    if [ -n "${KSL_SWIFT_FETCH:-}" ]; then read -r -a F <<< "$KSL_SWIFT_FETCH"; "${F[@]}" "$url" "$tmp/remote.zip" || fail "cannot download $url"
+    else curl -fsSL --retry 3 -o "$tmp/remote.zip" "$url" || fail "cannot download $url (is the GitHub release v$version published?)"; fi
+    where="$url"
+  fi
   got=$(sha "$tmp/remote.zip")
-  [ "$got" = "$sum" ] || fail "$url has SHA-256 $got, Package.swift names $sum: do not push the tag"
-  echo "OK: $url has the SHA-256 Package.swift names ($sum)"
+  [ "$got" = "$sum" ] || fail "the zip of $where has SHA-256 $got, Package.swift names $sum: do not push the tag"
+  echo "OK: the zip of $where has the SHA-256 Package.swift names ($sum)"
   if [ -f "$zip" ]; then
     [ "$(sha "$zip")" = "$got" ] || fail "the downloaded zip differs from $zip"
     echo "OK: it is $zip"
   fi
-  echo "remote check of the Swift package $version passed: the tag $version may be pushed"
+  if [ "$draft" = 1 ]; then echo "remote check of the draft passed: publish the release, then $0 remote $version"
+  else echo "remote check of the Swift package $version passed: the tag $version may be made and pushed"; fi
+  ;;
+prepush)
+  check_files
+  G=(git -C "$pkg")
+  [ "$("${G[@]}" cat-file -t "refs/tags/$version" 2>/dev/null)" = tag ] || fail "no annotated tag $version in $pkg"
+  [ "$("${G[@]}" rev-parse "$version^{commit}")" = "$("${G[@]}" rev-parse HEAD)" ] || fail "the tag $version does not name HEAD"
+  tz=$("${G[@]}" for-each-ref --format='%(taggerdate:format:%z)' "refs/tags/$version")
+  [ "$tz" = "+0000" ] || fail "the tag $version has the tagger zone $tz, not +0000 (delete it and tag again with TZ=UTC)"
+  echo "OK: the tag $version names HEAD, tagger date UTC"
+  echo "prepush check of the Swift package $version passed"
   ;;
 resolve)
   consumer "$tmp/consumer" ".package(url: \"${KSL_SWIFT_PACKAGE_URL:-https://github.com/kuicksilver/kuicksilver-swift}\", exact: \"$version\")" kuicksilver-swift

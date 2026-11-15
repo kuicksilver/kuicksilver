@@ -92,8 +92,13 @@ t "main, 0.2.1 while release/0.2.x exists"               "refuse:release/0.2.x e
 t "main, 0.3.1 (no release/0.3.x, tree is 0.3.0)"        "refuse:0.3.0-SNAPSHOT"        main 0.3.1
 t "release/0.2.x, 0.2.1"                                 ok:push_branch=release/0.2.x   release/0.2.x 0.2.1
 t "release/0.2.x, 0.2.2 without the version bump"        "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2
-t "release/0.2.x, 0.2.2-rc1 without the version bump"    "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2-rc1
-t "release/0.4.x, 0.4.0-rc1 (coordinates not checked)"   ok:push_branch=release/0.4.x   release/0.4.x 0.4.0-rc1
+t "release/0.2.x, 0.2.2-rc1 without the version bump"    "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2-rc1 --central-prerelease
+t "release/0.4.x, 0.4.0-rc1 (coordinates not checked)"   ok:push_branch=release/0.4.x   release/0.4.x 0.4.0-rc1 --central-prerelease
+# a prerelease goes to Central only when asked for (its quota), never by default
+t "negative_prereleaseWithoutMode"                       "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1
+t "negative_prereleaseWithoutModeDryRun"                 "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1 --dry-run
+t "negative_centralPrereleaseFinalVersion"               "refuse:--central-prerelease takes a prerelease" release/0.2.x 0.2.1 --central-prerelease
+t "negative_bothPrereleaseModes"                         "refuse:exclude each other"    release/0.4.x 0.4.0-rc1 --github-prerelease --central-prerelease
 t "release/0.2.x, 0.3.0"                                 "refuse:maintenance branch of" release/0.2.x 0.3.0
 t "release/0.2.x, 1.2.1"                                 "refuse:maintenance branch of" release/0.2.x 1.2.1
 t "release/0.1.x, 0.2.1"                                 "refuse:maintenance branch of" release/0.1.x 0.2.1
@@ -171,7 +176,7 @@ sp_pass() { pass=$((pass+1)); printf 'ok   %s\n' "$1"; }
 sp_fail() { fail=$((fail+1)); printf 'FAIL %s: %s\n' "$1" "$2"; }
 sp() { # <label> <ok|refuse> <pattern|-> <prepare|finish> <args...>: runs swift-package.sh (output in $sp_out, checkout in $tmp/sp)
   local label="$1" exp="$2" pat="$3" rc; shift 3
-  sp_out=$(KSL_SWIFT_REPO="${SP_REPO:-$tmp/sp.git}" bash "$root/tools/release/swift-package.sh" "$@" --out "$tmp/sp" 2>&1); rc=$?
+  sp_out=$(TZ=Asia/Tokyo KSL_SWIFT_REPO="${SP_REPO:-$tmp/sp.git}" bash "$root/tools/release/swift-package.sh" "$@" --out "$tmp/sp" 2>&1); rc=$?
   if [ "$([ $rc = 0 ] && echo ok || echo refuse)" != "$exp" ]; then sp_fail "$label" "exit $rc: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   elif [ "$pat" != - ] && ! grep -qE -- "$pat" <<< "$sp_out"; then sp_fail "$label" "no '$pat' in: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   else return 0; fi; return 1
@@ -193,6 +198,9 @@ if sp "$L" ok "commit [0-9a-f]+ on main, checksum $S1 \(unsigned, no tag yet\)" 
       && grep -q 'upToNextMinor(from: "0.3.0")' "$tmp/sp/README.md" && grep -q 'kuicksilver/kuicksilver@1234567' <<< "$(git -C "$tmp/sp" log -1 --format=%B)" \
       && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae> %G?')" = "kinchpik <339333647+kinchpik@users.noreply.github.com> N" ] \
       && grep -q 'git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68' <<< "$sp_out" \
+      && [ "$(git -C "$tmp/sp" log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ] \
+      && grep -qx '    export GPG_TTY=$(tty) TZ=UTC' <<< "$sp_out" \
+      && grep -qx "    $(printf %q "$root")/tools/release/swift-package-check.sh prepush 0.3.0 --package $tmp/sp" <<< "$sp_out" \
       && grep -q 'git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 0.3.0 -m "Kuicksilver 0.3.0"' <<< "$sp_out" \
       && grep -q "git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/0.3.0" <<< "$sp_out" \
       && grep -qx "    cd $tmp/sp" <<< "$sp_out" \
@@ -250,19 +258,45 @@ fi
 # release is a stub download (KSL_SWIFT_FETCH copies $KSL_TEST_REMOTE). Its iOS builds need a real xcframework: not here
 printf 'a' > "$tmp/zip-a"; printf 'b' > "$tmp/zip-b"
 printf '#!/bin/sh\n[ -f "$KSL_TEST_REMOTE" ] || exit 22\ncp "$KSL_TEST_REMOTE" "$2"\n' > "$tmp/bin/fetch"; chmod +x "$tmp/bin/fetch"
+# gh for --draft: release download copies $KSL_TEST_REMOTE into -D <dir>, release view prints $KSL_TEST_DIGEST
+printf '%s\n' '#!/bin/sh' 'case "$1 $2" in' \
+  '  "release download") [ -f "$KSL_TEST_REMOTE" ] || exit 1; while [ $# -gt 0 ]; do [ "$1" = -D ] && d="$2"; shift; done' \
+  '    mkdir -p "$d" && cp "$KSL_TEST_REMOTE" "$d/Kuicksilver.xcframework.zip" ;;' \
+  '  "release view") printf "%s\n" "${KSL_TEST_DIGEST:-}" ;;' '  *) exit 2 ;;' 'esac' > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
 spc() { # <label> <ok|refuse> <pattern> <remote file> <args...>
   local label="$1" exp="$2" pat="$3" rc out; export KSL_TEST_REMOTE="$4"; shift 4
-  out=$(KSL_SWIFT_FETCH="$tmp/bin/fetch" bash "$root/tools/release/swift-package-check.sh" "$@" --package "$tmp/sp" 2>&1); rc=$?
+  out=$(KSL_GH="$tmp/bin/gh" KSL_SWIFT_FETCH="$tmp/bin/fetch" bash "$root/tools/release/swift-package-check.sh" "$@" --package "$tmp/sp" 2>&1); rc=$?
   if [ "$([ $rc = 0 ] && echo ok || echo refuse)" = "$exp" ] && grep -qE -- "$pat" <<< "$out"; then sp_pass "$label"
   else sp_fail "$label" "exit $rc: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
 }
-spc "swift check: remote zip matches Package.swift and the local zip" ok "may be pushed" "$tmp/zip-a" remote 1.1.0-rc1 --zip "$tmp/zip-a"
+spc "swift check: remote zip matches Package.swift and the local zip" ok "may be made and pushed" "$tmp/zip-a" remote 1.1.0-rc1 --zip "$tmp/zip-a"
 spc "negative_swiftCheckRemoteChecksum"         refuse "do not push the tag"               "$tmp/zip-b" remote 1.1.0-rc1 --zip "$tmp/zip-a"
 spc "negative_swiftCheckRemoteNotTheLocalZip"   refuse "differs from"                      "$tmp/zip-a" remote 1.1.0-rc1 --zip "$tmp/zip-b"
 spc "negative_swiftCheckRemoteUnreachable"      refuse "cannot download"                   "$tmp/none"  remote 1.1.0-rc1 --zip "$tmp/zip-a"
 spc "negative_swiftCheckOtherVersion"           refuse "not https://.*/v1.1.0-rc2/"        "$tmp/zip-a" remote 1.1.0-rc2
 spc "negative_swiftCheckLocalChecksum"          refuse "Package.swift names $S1"           "$tmp/zip-a" local 1.1.0-rc1 --zip "$tmp/zip-b"
 spc "negative_swiftCheckLocalNoZip"             refuse "is missing"                        "$tmp/zip-a" local 1.1.0-rc1 --zip "$tmp/none"
+KSL_TEST_DIGEST="sha256:$S1" spc "swift check: draft asset and GitHub's digest" ok "remote check of the draft passed" "$tmp/zip-a" remote 1.1.0-rc1 --draft --zip "$tmp/zip-a"
+spc "swift check: draft asset, no digest reported" ok "reports no digest"         "$tmp/zip-a" remote 1.1.0-rc1 --draft --zip "$tmp/zip-a"
+KSL_TEST_DIGEST="sha256:$S2" spc "negative_swiftCheckDraftDigest" refuse "GitHub's digest of the asset is sha256:$S2" "$tmp/zip-a" remote 1.1.0-rc1 --draft
+spc "negative_swiftCheckDraftChecksum"          refuse "do not push the tag"               "$tmp/zip-b" remote 1.1.0-rc1 --draft
+spc "negative_swiftCheckDraftMissing"           refuse "gh cannot download"                "$tmp/none"  remote 1.1.0-rc1 --draft
+# the commit and its tag: UTC dates (the Swift package repository is public, its tags immutable), no home path
+spc "swift check: files of the commit"          ok     "no file of the Swift package"      "$tmp/zip-a" files 1.1.0-rc1
+spc "negative_swiftCheckPrepushNoTag"           refuse "no annotated tag 1.1.0-rc1"        "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag 1.1.0-rc1
+spc "negative_swiftCheckPrepushLightweightTag"  refuse "no annotated tag 1.1.0-rc1"        "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=Asia/Tokyo git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a 1.1.0-rc1 -m x
+spc "negative_swiftCheckPrepushTaggerZone"      refuse "tagger zone [+]0900"                "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a 1.1.0-rc1 -m x
+spc "swift check: prepush, UTC tag on HEAD"     ok     "prepush check .* passed"           "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
+TZ=Asia/Tokyo git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-edit --no-gpg-sign --reset-author
+spc "negative_swiftCheckCommitZone"             refuse "zones [+]0900 [+]0900"               "$tmp/zip-a" files 1.1.0-rc1
+spc "negative_swiftCheckLocalCommitZone"        refuse "zones [+]0900"                      "$tmp/zip-a" local 1.1.0-rc1 --zip "$tmp/zip-a"
+printf 'built in /Users/someone/src\n' > "$tmp/sp/NOTES"; git -C "$tmp/sp" add NOTES
+TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-edit --no-gpg-sign --reset-author
+spc "negative_swiftCheckHomePath"               refuse "names a home directory"            "$tmp/zip-a" files 1.1.0-rc1
 
 # the local-gate check itself (local-release.sh from the marker line to the toolchain check) on fixture records: only a
 # full run's passing stamp is a gate; a run of some steps (local-matrix.sh --only/--from) never is, whatever its file says
@@ -358,6 +392,25 @@ if [ -f "$doc" ] && grep -q "includeGroup(\"io.kuicksilver\")" "$doc" && grep -q
     && grep -q "not on Maven Central" "$doc" && grep -qF "kuicksilver-swift\", exact: \"$V\")" "$doc" && cmp -s "$doc" <(unzip -p "$zip" "kuicksilver-$V-maven-repository/README.md") \
     && ! grep -qE '/Users/|/home/' "$doc"; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+L="github repository: instructions that work (download, signatures, Kotlin Multiplatform)"
+# every asset SHA256SUMS lists must come with the documented download, or `shasum -c` fails on the missing ones
+cover=$(python3 -I - "$doc" "$V" <<'PY'
+import fnmatch, re, shlex, sys
+doc, v = open(sys.argv[1]).read(), sys.argv[2]
+line = next((l for l in doc.splitlines() if l.startswith("gh release download")), None)
+if line is None: sys.exit("no gh release download line")
+a = shlex.split(line); pats = [a[i + 1] for i, x in enumerate(a) if x in ("-p", "--pattern")]
+names = [f"kuicksilver-{v}-maven-repository.zip", f"kuicksilver-{v}-maven-repository.md", f"kuicksilver-{v}-sbom.zip",
+         f"kuicksilver-{v}.intoto.jsonl", "Kuicksilver.xcframework.zip", f"kuicksilver-{v}-SHA256SUMS"]
+names += [n + ".asc" for n in names]
+miss = [n for n in names if pats and not any(fnmatch.fnmatchcase(n, q) for q in pats)]
+print("missing: " + " ".join(miss) if miss else "ok")
+PY
+)
+if [ "$cover" = ok ] && grep -qF "implementation(project.dependencies.platform(\"io.kuicksilver:kuicksilver-bom:$V\"))" "$doc" \
+    && grep -q 'sourceSets.commonMain.dependencies' "$doc" && grep -q '^gpg --import kuicksilver-release-key.asc' "$doc" \
+    && grep -q 'every artifact,$' "$doc"; then
+  pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L: $cover"; fi
 L="github repository: the same input gives the same zip"
 mkdir -p "$gr_dir/again"; touch "$(dirname "$gr_dir")/m2/io/kuicksilver/kuicksilver-bom/$V/kuicksilver-bom-$V.pom"   # a newer mtime
 if python3 -I "$gr" pack --m2 "$(dirname "$gr_dir")/m2" --out-dir "$gr_dir/again" --time 1794688855 --version "$V" --signed >/dev/null 2>&1 \
@@ -378,6 +431,55 @@ L="negative_githubRepositorySumsMissingFile"
 out=$(python3 -I "$gr" sums --out "$gr_dir/SUMS2" "$gr_dir/a.bin" "$gr_dir/missing.bin" 2>&1)
 if [ $? != 0 ] && grep -q 'missing.bin: no such asset' <<< "$out" && [ ! -e "$gr_dir/SUMS2" ]; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+
+# the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
+# publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)
+# and so is the signature check: nothing is built or signed. The run must end before any Central upload (a missing exit
+# would reach publishToMavenCentral), print the draft release with every asset and its signature, and SHA256SUMS must
+# list exactly those assets
+tail_block=$(awk '/^# --github-prerelease: the publication as a Maven repository zip/ {on = 1} on' "$root/tools/release/local-release.sh")
+grep -q 'gh release create' <<< "$tail_block" || { echo "FAIL: no GitHub prerelease block found in local-release.sh"; exit 2; }
+p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(' "$root/tools/release/local-release.sh")
+[ "$(wc -l <<< "$p_lines" | tr -d ' ')" = 2 ] || { echo "FAIL: the Gradle arguments of local-release.sh not found"; exit 2; }
+tl="$tmp/tail"; mkdir -p "$tl/out/logs"; mk_m2 "$tl/m2" signed
+printf 'x' > "$tl/x"; (cd "$tl" && zip -q out/Kuicksilver.xcframework.zip x)
+git init -q --bare -b main "$tl/swift.git"
+tail_out=$(cd "$root" && KSL_SWIFT_REPO="$tl/swift.git" TL="$tl" V="$V" bash -c '
+  set -euo pipefail
+  version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; gh=1; dry=0; problems=0; n=0; started=1794688855
+  given="$V --github-prerelease"; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
+  head=$(git rev-parse HEAD); short=$(git rev-parse --short=7 HEAD); xcf_sum=$(shasum -a 256 "$xcf" | cut -d" " -f1)
+  sha() { shasum -a 256 "$@" | cut -d" " -f1; }
+  step() { local name="$1" log; shift; n=$((n+1)); log="$logs/$(printf %02d $n).log"; printf "[%2d] %s " "$n" "$name"
+    if "$@" > "$log" 2>&1; then echo ok; else echo FAIL; tail -5 "$log"; exit 1; fi; }
+  gradle() { printf "%s\n" "$*" >> "$TL/tasks"; local a f
+    for a in "$@"; do case "$a" in
+      sbomZip) (cd "$TL" && printf "{}" > bom.json && zip -q "$out/kuicksilver-$version-sbom.zip" bom.json) ;;
+      -Pkuicksilver.release.sign=*) for f in $(tr , " " <<< "${a#*=}"); do
+        printf -- "-----BEGIN PGP SIGNATURE-----\n\nc2ln\n-----END PGP SIGNATURE-----\n" > "$f.asc"; done ;;
+    esac; done; }
+  bash() { if [ "$1" = tools/release/verify-signature.sh ]; then echo "OK (stub)"; else command bash "$@"; fi; }
+  G=(gradle); sign_args=()
+  '"$p_lines"'
+  '"$tail_block"'
+  ' 2>&1); tail_rc=$?
+L="github prerelease: the end of a run (no upload, assets, signatures, SHA256SUMS)"
+printed=$(sed -n '/gh release create/,/swift-package-check.sh remote/p' <<< "$tail_out" | tr ' ' '\n' | grep "^$tl/out/" | sort -u)
+sums=$(awk '{print $2}' "$tl/out/kuicksilver-$V-SHA256SUMS" 2>/dev/null | sort)
+want=$(sed 's|.*/||' <<< "$printed" | grep -vE -- '-SHA256SUMS(\.asc)?$' | sort)
+bad=""
+while read -r f; do
+  [ -f "$f" ] || bad="$bad missing:$f"
+  case "$f" in *.asc) ;; *) grep -qxF "$f.asc" <<< "$printed" || bad="$bad unsigned:$f" ;; esac
+done <<< "$printed"
+central=$(sed 's/-x publishToMavenCentral//g' "$tl/tasks" 2>/dev/null | grep -c publishToMavenCentral || true)
+if [ "$tail_rc" = 0 ] && [ -z "$bad" ] && [ "$(wc -l <<< "$printed" | tr -d ' ')" = 12 ] && [ "$sums" = "$want" ] \
+    && [ "$central" = 0 ] && grep -q -- '-PmavenCentralUsername= -PmavenCentralPassword= -x publishToMavenCentral' "$tl/tasks" \
+    && grep -q -- '--draft --prerelease' <<< "$tail_out" && grep -qx '       export TZ=UTC' <<< "$tail_out" \
+    && grep -q 'swift package: UTC dates, no home-directory path ok' <<< "$tail_out" \
+    && [ "$(git -C "$tl/out/kuicksilver-swift" log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ]; then
+  pass=$((pass+1)); echo "ok   $L"
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc central=$central bad=$bad"; printf '%s\n' "$tail_out" | tail -15 | sed 's/^/     | /'; fi
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published

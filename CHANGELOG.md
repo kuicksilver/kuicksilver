@@ -617,10 +617,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   signs a prerelease as a Central release does, uploads nothing and reads no Central credentials, and writes a signed
   Maven repository zip of the publication (`kuicksilver-<version>-maven-repository.zip`, with checksums and
   `maven-metadata.xml`), a file on how to consume it, and a signed `SHA256SUMS` of the assets for the GitHub prerelease.
-  It refuses a final version. The Swift package commit is prepared as for a release, and
-  `tools/release/swift-package-check.sh` checks it before its immutable tag is pushed (`local`: an empty package built
-  for the iOS Simulator and iOS against the local zip; `remote`: the published zip's SHA-256 against `Package.swift`)
-  and after (`resolve`: `exact: "<version>"`). 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
+  It refuses a final version; without it a prerelease is refused unless `--central-prerelease` sends it to Central.
+  The Swift package commit is prepared as for a release (in UTC), and `tools/release/swift-package-check.sh` checks it
+  before its immutable tag is pushed (`local`: an empty package built for the iOS Simulator and iOS against the local
+  zip; `remote --draft`: the draft release's zip and GitHub's digest against `Package.swift`, then `remote` at the public
+  URL; `prepush`: UTC commit and tag dates, no home-directory path) and after (`resolve`: `exact: "<version>"`). The
+  documentation site is no longer built for a published prerelease, and `/latest/` is only ever a final release. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
   "Prereleases on GitHub only").
 
 ### Changed

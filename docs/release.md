@@ -124,7 +124,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    ```
    (A prerelease for GitHub only, never uploaded to Central: `--github-prerelease`, see
    [Prereleases on GitHub only](#prereleases-on-github-only).)
-   The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
+   The script refuses a malformed or `-SNAPSHOT` version, a prerelease without `--github-prerelease` or
+   `--central-prerelease`, a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
    exists (locally or on origin: a release fetches origin first, a dry run uses what was fetched last), a branch behind
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
@@ -196,7 +197,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    <version>` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
    `io.kuicksilver:kuicksilver-quic:<version>` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
-6. Only after the deployment is published: `git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
+6. Only after the deployment is published: `TZ=UTC git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
    `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
@@ -205,10 +206,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    exactly as the script printed (step 5 of its last lines):
    ```
    cd build/release/kuicksilver-swift
-   export GPG_TTY=$(tty)
+   export GPG_TTY=$(tty) TZ=UTC
    git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
    git tag -s -u 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68 <version> -m "Kuicksilver <version>"
    git verify-commit HEAD && git verify-tag <version>
+   <checkout>/tools/release/swift-package-check.sh prepush <version> --package .   # UTC dates, tag on HEAD, no home path
    git push --atomic https://github.com/kuicksilver/kuicksilver-swift.git main refs/tags/<version>   # release/<X.Y>.x for an older line
    ```
    `--atomic` pushes the branch and the tag together or not at all: without it a rejected branch would still leave the
@@ -228,7 +230,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
 8. Interop images: after the tag is pushed, *Actions → interop-image → Run workflow* on the tag `v<version>` publishes
    the two QUIC Interop Runner endpoint images to GHCR ([below](#interop-images-on-ghcr)).
-9. Documentation site (from 0.3.0): publishing the GitHub release starts `.github/workflows/pages.yml`, which builds the
+9. Documentation site (from 0.3.0): publishing the GitHub release (not a prerelease) starts `.github/workflows/pages.yml`, which builds the
    guide and the API reference of the tag (`tools/docs/site.sh <version>`), adds them to the `gh-pages` branch under
    `/<version>/` (earlier versions stay), points `/latest/` at the newest final release and deploys the branch to
    <https://kuicksilver.github.io/kuicksilver/> with `actions/deploy-pages` (Pages enabled once: [step 7](#once-accounts-keys-dns) above).
@@ -278,13 +280,16 @@ the preconditions and the gate record, the twelve OpenSSL builds, the five JNI l
 signed `publishToMavenLocal` into `build/release/m2`, the AAR and klib checks, the home-directory scan of every
 published file and the xcframework zip, the SBOM, the provenance and their signatures. The differences:
 
-- The Central Portal token is not read, and its `ORG_GRADLE_PROJECT_mavenCentral*` variables are unset; the signing key
-  is required as for a release. Nothing is uploaded, and no Gradle publish task to Central runs.
+- The Central Portal token is not read: its `ORG_GRADLE_PROJECT_mavenCentral*` variables are unset, every Gradle call
+  gets `-PmavenCentralUsername= -PmavenCentralPassword=` (empty, over any `gradle.properties`) and
+  `-x publishToMavenCentral`. The signing key is required as for a release. Nothing is uploaded.
 - The count against the Central limits is printed but never refuses.
 - The Swift package is prepared and committed as for a release (`tools/release/swift-package.sh`, in
   `build/release/kuicksilver-swift`): `Package.swift` names
   `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` of the GitHub
-  prerelease and its checksum, and the README `exact: "<version>"`. Nothing there is signed, tagged or pushed.
+  prerelease and its checksum, and the README `exact: "<version>"`. The commit is made in UTC, and
+  `tools/release/swift-package-check.sh files` checks its dates and that no file names a home directory. Nothing there
+  is signed, tagged or pushed.
 - Instead of the deployment, `tools/release/github-repository.py` makes, in `build/release/`:
   - `kuicksilver-<version>-maven-repository.zip`: every file of the publication of `<version>` (artifacts, POMs, Gradle
     module metadata, `.asc`), with the `.md5`, `.sha1`, `.sha256` and `.sha512` of each artifact and a
@@ -296,36 +301,49 @@ published file and the xcframework zip, the SBOM, the provenance and their signa
     `settings.gradle.kts`, and the BOM).
   - Both are scanned for home-directory paths, are subjects of the provenance and are signed with the release key.
   - `kuicksilver-<version>-SHA256SUMS`: the SHA-256 of every asset (the two files above, the SBOM archive, the
-    provenance, `Kuicksilver.xcframework.zip` and their `.asc`), itself signed and scanned.
+    provenance, `Kuicksilver.xcframework.zip` and their `.asc`; a signed run stops when one is missing), itself
+    signed and scanned.
 
 The script ends with the commands to run by hand, in this order. A tag of `kuicksilver/kuicksilver-swift` can never be
-moved or deleted, so everything SwiftPM will read is checked before that tag is pushed:
+moved or deleted, so everything SwiftPM will read is checked before that tag is pushed, and the GitHub release stays a
+draft (not public, and `pages.yml` does not run) until its zip is checked. Every commit and tag is made with
+`TZ=UTC`: a time zone in a public commit or tag says where the maintainer is.
 
 1. `tools/release/swift-package-check.sh local <version>`: `Package.swift` of the prepared commit names the release URL
    of `<version>` and the SHA-256 of `build/release/Kuicksilver.xcframework.zip`; a copy of the package whose binary
    target is that zip (`path:`), and an empty package that depends on it by path, imports `Kuicksilver` and reads
    `KuicksilverInfo.shared.VERSION`, resolve on the Mac and build with `xcodebuild` for the iOS Simulator and for iOS
    devices (the xcframework has these two slices only, so there is no macOS build).
-2. The signed tag `v<version>` and its push (`git tag -s v<version> ...`, `git push origin <branch> v<version>`).
-3. `gh release create v<version> --prerelease --verify-tag` with the CHANGELOG section (and the instructions file) as
-   notes and every asset attached, `Kuicksilver.xcframework.zip` among them.
-4. `tools/release/swift-package-check.sh remote <version>`: the zip downloaded from the URL `Package.swift` names has the
-   SHA-256 `Package.swift` names, and is the local zip. A mismatch stops here: fix the release asset, never the tag.
+2. The signed tag `v<version>` and its push (`export TZ=UTC`, `git tag -s v<version> ...`,
+   `git push origin <branch> v<version>`).
+3. `gh release create v<version> --draft --prerelease --verify-tag` with the CHANGELOG section (and the instructions
+   file) as notes and every asset attached, `Kuicksilver.xcframework.zip` among them.
+4. `tools/release/swift-package-check.sh remote <version> --draft`: the draft's zip, fetched with `gh` (a draft's asset
+   has no public URL), has the SHA-256 `Package.swift` names, so has GitHub's own digest of the asset, and it is the
+   local zip. Then `gh release edit v<version> --draft=false` publishes the release, and
+   `swift-package-check.sh remote <version>` checks the zip at the public URL `Package.swift` names. A mismatch stops
+   here: fix the release asset, never the tag.
 5. The Swift package commit signed, tagged `<version>` and pushed exactly as the script prints it (as in
-   [Every release](#every-release), step 6).
+   [Every release](#every-release), step 6): `swift-package-check.sh prepush <version>` right before the push checks
+   that the commit and the tag have UTC dates, that the annotated tag names the commit and that no file names a home
+   directory.
 6. `tools/release/swift-package-check.sh resolve <version>`: an empty package with
    `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", exact: "<version>")` resolves (SwiftPM fetches
    the tag and checks the zip's checksum) and builds for the iOS Simulator.
 7. Maven: an empty Gradle project as the instructions file says (download, `shasum -a 256 -c`, unzip, the `file:`
    repository).
 
-Publishing the GitHub release starts `pages.yml`, which adds the documentation of `<version>` to the site
-(`/latest/` stays the newest final release; with none on the site yet, as for 0.3.0-rc1, it is the prerelease until the
-final version replaces it). `tools/verify/verify-release.sh` reads Maven Central and does not
+`pages.yml` does not run for a published prerelease (its pages would name Maven Central coordinates that do not
+resolve); *Run workflow* with the version still builds them, and `/latest/` is only ever a final release
+(`tools/docs/site.py`: without one there is no `/latest/`). `tools/verify/verify-release.sh` reads Maven Central and does not
 apply to such a prerelease: check it with `shasum -a 256 -c kuicksilver-<version>-SHA256SUMS` and
 `tools/release/verify-signature.sh` on the assets. `tools/release/local-release-test.sh` runs the mode's refusals, its
-credential check, `github-repository.py` against fixture publications and the refusals of `swift-package-check.sh`
-(its download stubbed; its iOS builds need a real xcframework and are run by hand).
+credential check, the end of a run on a fixture publication with Gradle and the signature check stubbed (no upload,
+every printed asset signed and in `SHA256SUMS`), `github-repository.py` against fixture publications and the checks of
+`swift-package-check.sh` (`gh` and the download stubbed; its iOS builds need a real xcframework and are run by hand).
+
+Without `--github-prerelease` the script refuses a prerelease version, also in a dry run: Central's monthly quota is
+small. `--central-prerelease` sends a prerelease to Maven Central after all.
 
 ## Supply chain: SBOM and provenance
 

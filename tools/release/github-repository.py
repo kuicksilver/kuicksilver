@@ -46,11 +46,13 @@ def metadata(artifact, version, stamp):
 def readme(version, signed):
     top = f"kuicksilver-{version}-maven-repository"
     url = f"{REPO}/releases/download/v{version}"
-    verify = (f"""Every asset has a detached signature (`.asc`) by the release key `{KEY}`
-(`tools/release/kuicksilver-release-key.asc` in the repository), and so has every file inside the repository:
+    verify = (f"""Every asset has a detached signature (`.asc`) by the release key `{KEY}`, and so has every artifact,
+POM and module file inside the repository. The key is `tools/release/kuicksilver-release-key.asc` of the repository:
 
 ```
+gpg --import kuicksilver-release-key.asc
 gpg --verify {top}.zip.asc {top}.zip
+gpg --verify kuicksilver-{version}-SHA256SUMS.asc kuicksilver-{version}-SHA256SUMS
 ```
 
 """ if signed else "")
@@ -62,11 +64,12 @@ as a Maven repository in one zip (`{top}.zip`). The final version goes to Maven 
 ## Download and check
 
 ```
-gh release download v{version} -R kuicksilver/kuicksilver -p 'kuicksilver-{version}*'
+gh release download v{version} -R kuicksilver/kuicksilver
 shasum -a 256 -c kuicksilver-{version}-SHA256SUMS
 ```
 
-or by URL: `{url}/{top}.zip` and `{url}/kuicksilver-{version}-SHA256SUMS`.
+(every asset of the release, as `SHA256SUMS` lists them all), or each by URL, such as `{url}/{top}.zip` and
+`{url}/kuicksilver-{version}-SHA256SUMS`.
 
 {verify}## Use it from Gradle
 
@@ -95,7 +98,18 @@ dependencyResolutionManagement {{
 }}
 ```
 
-`build.gradle.kts` (in a Kotlin Multiplatform project, in `commonMain.dependencies`):
+`build.gradle.kts` of a Kotlin Multiplatform module:
+
+```kotlin
+kotlin {{
+    sourceSets.commonMain.dependencies {{
+        implementation(project.dependencies.platform("{GROUP}:kuicksilver-bom:{version}"))
+        implementation("{GROUP}:kuicksilver-ktor-client")   // or kuicksilver-http3, kuicksilver-quic
+    }}
+}}
+```
+
+of a JVM or Android module:
 
 ```kotlin
 dependencies {{

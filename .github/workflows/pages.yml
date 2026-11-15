@@ -9,8 +9,8 @@
 # it runs on the macOS image with the pinned Xcode, like build.yml's apple job, and gets the mingw OpenSSL from
 # openssl-mingw, which builds it in Docker exactly as build.yml's openssl-docker job does. publish adds the version to
 # the gh-pages branch, which keeps every published version, recomputes /latest/ and the landing page, and pushes the
-# branch; deploy publishes that tree with actions/deploy-pages. Runs on a published release, or by hand for a version
-# (from 0.3.0, the first release with tools/docs/site.sh). Never on push.
+# branch; deploy publishes that tree with actions/deploy-pages. Runs on a published release (not on a prerelease), or by
+# hand for a version (from 0.3.0, the first release with tools/docs/site.sh). Never on push.
 name: pages
 on:
   release:
@@ -31,7 +31,9 @@ env:
 jobs:
   openssl-mingw:
     # the mingw-x64 OpenSSL of build.yml's openssl-docker job, built the same way (fetch.sh checks the tarball's signature
-    # and SHA-256) and from the same cache
+    # and SHA-256) and from the same cache. A published prerelease does not start the site (docs/release.md, "Prereleases
+    # on GitHub only"): every later job needs this one, so all are skipped; by hand, any version still builds
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: ubuntu-24.04
     permissions:
       contents: read
