@@ -1077,6 +1077,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the minimum window.
 - QUIC: a lost FIN took a sending stream from "Data Sent" back to "Send", a transition RFC 9000 section 3.1 does not
   have; the FIN is now sent again from "Data Sent".
+- QUIC: a client checked no Stateless Reset during the handshake: the server's connection ID it sends its Handshake
+  packets to was not counted as used until a short header packet went out, so the reset token of the server's transport
+  parameters was ignored (RFC 9000 section 10.3.1: the tokens "associated with the connection IDs and remote addresses
+  for datagrams it has recently sent"). A reset that arrives before a 0-RTT answer now ends the connection and drops
+  what was held for the answer.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

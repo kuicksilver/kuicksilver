@@ -149,6 +149,16 @@ internal class ConnectionIdManager(
         return hit
     }
 
+    /**
+     * A long header packet went out with [cid] as its Destination Connection ID: the peer ID it names is used, so its reset token
+     * counts from now on (RFC 9000 section 10.3.1: the tokens "associated with the connection IDs and remote addresses for
+     * datagrams it has recently sent"). During the handshake the client sends to the server's sequence 0 without asking
+     * [activePeerCid]; without this the server's reset token was never checked before the first short header packet.
+     */
+    fun noteLongHeaderSent(cid: ConnectionId) {
+        for (i in peer.indices) if (peer[i].cid == cid) peer[i].used = true
+    }
+
     internal fun markUsedForTest(seq: Long) {
         peer.firstOrNull { it.seq == seq }?.used = true
     }

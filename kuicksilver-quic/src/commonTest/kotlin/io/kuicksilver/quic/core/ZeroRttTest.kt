@@ -384,6 +384,81 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * A Stateless Reset can end the connection before the 0-RTT answer: the server's stateless_reset_token arrives in
+     * EncryptedExtensions, the answer only with the handshake's end (its Finished), and a server flight split over datagrams (here
+     * a full handshake with its certificate: a server without 0-RTT cannot resume) leaves a gap between the two in which a reset
+     * matches (RFC 9000 section 10.3: a reset may answer a long header packet too). The answer never comes and counts as no
+     * acceptance: what the 0-RTT stream held is dropped and the hold ends.
+     */
+    @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedByAStatelessResetBeforeTheAnswer() {
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = null,
+                serverTls =
+                    CoreFixtures.server(
+                        chain =
+                            listOf(io.kuicksilver.quic.TestCerts.server) + List(4) { io.kuicksilver.quic.TestCerts.testCa },
+                    ),
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket()))
+                    id = c.openStream(bidi = false)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        try {
+            val toClient = ArrayList<ByteArray>()
+            p.filterToClient = { _, bytes ->
+                toClient += bytes
+                false
+            }
+            p.step()
+            p.client.resetStream(id, 4)
+            p.step()
+            assertEquals(listOf("size 5", "finished"), heldOf(p, id))
+            // the server's datagrams one by one, until the client knows the reset token but not the answer
+            var fed = 0
+            while (p.client.peerTp?.statelessResetToken == null && fed < 50) {
+                // more of the server's flight comes as the client's acknowledgements lift its amplification limit
+                if (fed == toClient.size && !p.runUntil(limit = 1.seconds) { toClient.size > fed }) break
+                val d = toClient[fed++]
+                val b = PacketBuffer.of(d)
+                try {
+                    p.client.handleDatagram(b, d.size, CoreFixtures.serverAddr, Ecn.NotEct, p.now)
+                } finally {
+                    b.close()
+                }
+                p.step() // the client acknowledges: it sends to the server's connection ID, whose reset token then counts
+            }
+            val token = assertNotNull(p.client.peerTp?.statelessResetToken, "EncryptedExtensions arrived (fed $fed of ${toClient.size})")
+            // TLS may know the refusal already (ServerHello without the PSK); the hold ends only with the handshake (settleZeroRtt)
+            assertEquals(ConnectionState.Handshaking, p.client.state, "after $fed of ${toClient.size} datagrams")
+            assertTrue(p.client.streams.zeroRttPending)
+            assertEquals(
+                listOf("size 5", "finished"),
+                p.client.streams.heldUntilAnswer
+                    .ofStream(id),
+            )
+            val reset = ByteArray(40) { (0x40 + it).toByte() } // a short header the client cannot read, ending with the token
+            token.copyInto(reset, reset.size - 16)
+            val b = PacketBuffer.of(reset)
+            try {
+                p.client.handleDatagram(b, reset.size, CoreFixtures.serverAddr, Ecn.NotEct, p.now)
+            } finally {
+                b.close()
+            }
+            p.drainEvents(p.client, p.clientEvents)
+            assertIs<QuicException.ConnectionLost.StatelessReset>(p.closedReason(p.clientEvents))
+            assertNothingHeld(p)
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
     /** RESET_STREAM_AT with reliable size 0 (WebTransport's reset of a stream without header) waits the same way. */
     @Test fun earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept() {
         val withAt = quicConfig { resetStreamAt = true }

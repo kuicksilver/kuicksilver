@@ -1041,6 +1041,7 @@ internal class PacketBuilder(
         }
         p.zeroRtt = type == PacketType.ZeroRtt
         sp.commitPn(pn)
+        if (type != PacketType.OneRtt) c.cids.noteLongHeaderSent(c.remoteCid)
         p.pn = pn
         p.timeSent = now
         p.size = end - start
