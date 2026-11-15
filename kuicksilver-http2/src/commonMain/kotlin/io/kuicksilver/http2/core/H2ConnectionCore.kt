@@ -90,6 +90,9 @@ internal class H2ConnectionCore(
     internal val control = ArrayDeque<ByteArray>()
 
     internal var wroteSincePing = true
+
+    /** We wrote DATA since the peer's last tiny increment to the connection window ([TINY_CREDIT]). */
+    internal var wroteDataSinceTinyCredit = true
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
     internal val dataReady = DataScheduler()
@@ -884,6 +887,10 @@ internal class H2ConnectionCore(
             }
         if (frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
         if (frame[3].toInt() <= 0x1) wroteSincePing = true // DATA or HEADERS
+        if (frame[3].toInt() == 0x0) {
+            wroteDataSinceTinyCredit = true
+            s.wroteSinceTinyCredit = true
+        }
         if (frame[3].toInt() == 0x0 && s.out.none { it is OutItem.Data }) {
             s.dataQueued = false
             tryWake(s)
@@ -1129,6 +1136,13 @@ internal class H2ConnectionCore(
 
     internal companion object {
         private const val MAX_PINGS_OUT = 16
+
+        /**
+         * A WINDOW_UPDATE increment below this many bytes is tiny (RFC 9113 section 10.5: "Providing tiny increments to flow
+         * control in WINDOW_UPDATE frames"): readers credit at least 4 KiB or half a window at a time (Go, nghttp2, Chromium,
+         * Firefox, OkHttp), or exactly what our last DATA frame carried (Jetty's SimpleFlowControlStrategy).
+         */
+        const val TINY_CREDIT = 1_024
 
         /**
          * How long the other streams' DATA waits for a more urgent stream's writer that was just told to hand over its

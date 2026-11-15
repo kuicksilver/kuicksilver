@@ -491,6 +491,16 @@ internal fun H2ConnectionCore.onWindowUpdate(
     now: Long,
 ) {
     val id = f.streamId
+    // section 10.5: "Providing tiny increments to flow control in WINDOW_UPDATE frames" and "Large numbers of small or empty
+    // frames" are abuses, and "Implementations SHOULD track the use of these features and set limits on their use". A tiny
+    // increment is free right after DATA of ours on that window (a reader that credits each frame it read); otherwise it
+    // is a glitch. Larger increments are bounded by the window: 2^31 - 1 is reached after at most 2^21 of them
+    if (f.increment in 1 until H2ConnectionCore.TINY_CREDIT) {
+        val s = if (id == 0) null else streams[id]
+        val free = if (id == 0) wroteDataSinceTinyCredit else s?.wroteSinceTinyCredit == true
+        if (!free) glitch(now, "WINDOW_UPDATE of ${f.increment}")
+        if (id == 0) wroteDataSinceTinyCredit = false else s?.wroteSinceTinyCredit = false
+    }
     if (id == 0) {
         if (f.increment == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0 on the connection")
         connSendWindow += f.increment

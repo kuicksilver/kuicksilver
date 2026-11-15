@@ -87,7 +87,9 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.nega
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_refusedStreamsBetweenFinishedRoundsEndCalm
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_resetsWeAreMadeToSendWithoutReading
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_settingsFloodWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_tinyWindowUpdateFloodEndsCalm
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.negative_zeroLengthFieldBlockFloodWithoutReading
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.tinyCreditsAfterOurDataAreFree
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodClassesTest.windowUpdateFloodsHoldNothing
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.clientIsNotPunishedForServerResets
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.FloodTest.negative_continuationBytesAboveListSize
@@ -2334,10 +2336,10 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_rapidResetDoesNotRunHandlersUnbounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_repeatOffenderBackoff
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_slowReadDoesNotPinResponses
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_windowUpdateFloodsEnd
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.repeatOffenderBackoffIsOffByDefault
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.slowFieldBlockIsNotAFloodStrike
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.sustainedCancellationsBelowTheRefillRateAreNotPunished
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.windowUpdateFloodHoldsNothing
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.connectionPointSchemeIsTheConnections
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.earlyResponseStopsTheRequestWithNoError
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2ResponseTest.idleConnectionGetsGoAwayAndCloses

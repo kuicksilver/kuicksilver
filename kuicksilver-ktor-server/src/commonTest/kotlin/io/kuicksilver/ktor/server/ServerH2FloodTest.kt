@@ -267,26 +267,27 @@ class ServerH2FloodTest {
         }
 
     /**
-     * WINDOW_UPDATE frames are never answered and build no state (core.FloodClassesTest): 100 000 of them on the connection
-     * end nothing, are no flood strike, and the connection still serves; an increment that takes the window above 2^31 - 1
-     * ends it with FLOW_CONTROL_ERROR (RFC 9113 section 6.9.1), not a flood limit.
+     * WINDOW_UPDATE floods (RFC 9113 section 10.5: "Providing tiny increments to flow control"): 100 000 increments of one
+     * byte with no DATA of ours in between are glitches and end with ENHANCE_YOUR_CALM, a flood strike; increments of
+     * 64 KiB are bounded by the window and end with FLOW_CONTROL_ERROR above 2^31 - 1 (section 6.9.1), no strike. Neither
+     * is answered or builds state (core.FloodClassesTest).
      */
-    @Test fun windowUpdateFloodHoldsNothing() =
+    @Test fun negative_windowUpdateFloodsEnd() =
         serverTest {
             val (server, port) = floodServer(Handlers())
             try {
                 RawH2Client.connect(port).use { raw ->
                     raw.preface()
                     raw.flood(100_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 0, 0, 1)) }
-                    raw.headers(1, RawH2Client.get())
-                    val f = assertNotNull(raw.await(within = 15.seconds) { (it.stream == 1 && it.endStream) || it.type == RawFrame.GOAWAY })
-                    assertEquals(1, f.stream, "$f")
-                    raw.write(
-                        RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0x7f, 0xff.toByte(), 0xff.toByte(), 0xff.toByte())),
-                    )
+                    withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+                }
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.flood(40_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 1, 0, 0)) }
                     raw.goAwaySeen()?.let { assertEquals(0x3L, it.errorCode) }
                 }
-                assertEquals(0L, server.engine.h2FloodEnds.value)
+                assertServes(port)
+                assertEquals(1L, server.engine.h2FloodEnds.value)
             } finally {
                 server.stop(100, 500)
             }

@@ -1905,6 +1905,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   refused in a row, so neither flood ended; both now end with ENHANCE_YOUR_CALM after the budget (10 000 by default).
   Refusals before our SETTINGS are acknowledged stay free. A driver's `reset` never throws when the budget runs out:
   the connection ends with the GOAWAY instead.
+- HTTP/2 (RFC 9113 section 10.5, "Providing tiny increments to flow control in WINDOW_UPDATE frames"; "Implementations
+  SHOULD track the use of these features and set limits on their use"): WINDOW_UPDATE frames were neither answered nor
+  counted, so 100 000 increments of one byte went on without end. An increment below 1024 bytes is now a glitch unless
+  DATA of ours went out on that window since the previous one (a reader that credits each frame it read stays free);
+  larger increments stay uncounted, bounded by the 2^31 - 1 window.
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

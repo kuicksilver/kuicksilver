@@ -541,11 +541,20 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   the connection; a response's interim (1xx) field sections together stay within SETTINGS_MAX_HEADER_LIST_SIZE (past it
   the client discards the response); receive windows grow only as the application reads, and a reset or released
   stream's unread content goes back to the connection (memory per connection stays within the connection window, 15 MiB
-  at most); a sender holds at most one DATA frame per stream, so a peer that opens its windows a byte at a time
-  (CVE-2019-9511, the data dribble) makes us hold one byte per stream; per-frame work does not grow with the number of
-  streams. WINDOW_UPDATE frames are neither answered nor counted (as in nghttp2 and Go): they build no state, a flood of
-  them costs the attacker a frame for each frame of our work, and one that takes the connection window above 2^31 - 1
-  ends with FLOW_CONTROL_ERROR (§6.9.1).
+  at most); a sender holds at most one DATA frame per stream; per-frame work does not grow with the number of streams.
+  WINDOW_UPDATE (§10.5: "Providing tiny increments to flow control in WINDOW_UPDATE frames can cause a sender to
+  generate a large number of DATA frames"; "Implementations SHOULD track the use of these features and set limits on
+  their use"): an increment below 1024 bytes is a glitch unless DATA of ours went out on that window (the stream's, or
+  the connection's) since the previous tiny one. Readers credit at least 4 KiB or half a window (Go, nghttp2, Chromium,
+  Firefox, OkHttp), or exactly the frame they read (Jetty's SimpleFlowControlStrategy), which follows our DATA and stays
+  free. Larger increments are not counted: they are bounded by the window itself (at most 2^21 of them before the
+  connection window passes 2^31 - 1 and the connection ends with FLOW_CONTROL_ERROR, §6.9.1), and on a stream that has
+  ended they change nothing, since Go's client still credits a body it reads after our END_STREAM, 4 KiB at a time, and
+  counting those would end healthy connections. None is answered or builds state. The data dribble (CVE-2019-9511): a
+  peer that opens its windows a byte at a time without reading makes us hold one byte per stream and its increments end
+  it as glitches; one that reads every 1-byte frame before its next increment gets one frame of ours for each 13-byte
+  frame of its own, no amplification and nothing held, the efficient tracking of outbound frames §10.5 asks for, and is
+  not counted (it is indistinguishable from a slow reader with a tiny window, which h2spec 6.9.1 requires us to serve).
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS after ALPN `h2` (no h2c), TLS 1.3,
@@ -685,10 +694,11 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `.negative_trackedAddressesAreBounded`, `.negative_penalisedAddressesOutliveEviction`, `.ipv6CountsByItsSlash56`;
   `core.FloodTest.negative_zeroRefillRateNeverRefills`; every flood class against both cores with a peer that reads
   nothing, each with its measured bound (at most 10 000 control frames, 170 000 bytes for PING answers; one DATA frame per
-  stream for the data dribble): `core.FloodClassesTest.*`; floods the engine must judge (malformed requests and refusals
+  stream for the data dribble; tiny increments end as glitches, 64 KiB ones after 32 768 frames with FLOW_CONTROL_ERROR):
+  `core.FloodClassesTest.*`; floods the engine must judge (malformed requests and refusals
   read by the client): `runtime.H2ServerFloodTest.negative_malformedRequestFloodEndsCalm`,
   `.negative_refusedRequestFloodEndsCalm`; end to end: `ServerH2FloodTest.negative_floodClassesWithoutReadingEndCalm`,
-  `.windowUpdateFloodHoldsNothing`, and against the client engine from a hostile server
+  `.negative_windowUpdateFloodsEnd`, and against the client engine from a hostile server
   `ClientH2FloodTest.negative_pingFloodFromTheServer`, `.negative_settingsFloodFromTheServer`,
   `.negative_emptyDataFloodFromTheServer`, `.negative_priorityAndUnknownFloodFromTheServer`; h2spec 2.6.0 (`tools/interop/h2spec.sh`, 146 of 146).
 - **Fuzzing:** Jazzer targets `http2.frames` (`FrameDecoder` fed in input-chosen pieces: only its own errors escape, no

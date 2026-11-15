@@ -292,52 +292,115 @@ class FloodClassesTest {
         c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
     }
 
+    /**
+     * RFC 9113 section 10.5 lists "Providing tiny increments to flow control in WINDOW_UPDATE frames" and "Large numbers of
+     * small or empty frames" among the abuses, and "Implementations SHOULD track the use of these features and set limits
+     * on their use". An increment below 1024 bytes on a window we wrote no DATA against since the last such increment is a
+     * glitch: a flood of them (here +1 on the connection, and on a stream that has ended) ends with ENHANCE_YOUR_CALM.
+     */
     @Test
-    fun windowUpdateFloodsHoldNothing() {
-        // WINDOW_UPDATE frames are not answered and build no state: a flood of them is processing the attacker pays for
-        // byte for byte (nghttp2 and Go do not count them either). What it can reach is bounded: the connection window
-        // above 2^31 - 1 ends with FLOW_CONTROL_ERROR (section 6.9.1), increments on finished streams change nothing.
+    fun negative_tinyWindowUpdateFloodEndsCalm() {
         for (role in Role.entries) {
             val p = peer(role)
             val conn = p.flood(100_000) { FrameEncoder.windowUpdate(0, 1) }
-            assertEquals(false, p.core.isClosed, "$role")
-            assertEquals(0, conn.control, "$role: $conn")
-            p.send(FrameEncoder.windowUpdate(0, (H2.MAX_WINDOW - H2.DEFAULT_WINDOW - 100_000 + 1).toInt()))
-            p.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR)
+            println("WINDOW_UPDATE +1 flood, $role core: $conn")
+            p.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+            assertTrue(conn.frames in 9_990..10_002, "$role: $conn")
+            assertEquals(0, conn.control, "$role: never answered")
 
             val q = peer(role)
             val id = q.openForData()
             q.send(q.data(id, 0, endStream = true))
             if (role == Role.SERVER) q.core.sendHeaders(id, OK, endStream = true) // the stream is closed both ways
             q.events()
-            val closed = q.flood(100_000) { FrameEncoder.windowUpdate(id, H2.MAX_WINDOW.toInt()) }
+            val closed = q.flood(100_000) { FrameEncoder.windowUpdate(id, 1) }
+            q.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+            assertTrue(closed.frames in 9_990..10_002, "$role: $closed")
+        }
+    }
+
+    /**
+     * Credit that follows our DATA is what a reader sends, however small: an implementation that credits each DATA frame it
+     * read (Jetty's SimpleFlowControlStrategy) gets a stream of 10-byte frames and answers each with 10-byte increments on
+     * the stream and the connection, 20 000 times, and is not punished.
+     */
+    @Test
+    fun tinyCreditsAfterOurDataAreFree() {
+        val s = peer(Role.SERVER)
+        s.send(s.headers(1, endStream = true))
+        s.core.sendHeaders(1, OK, endStream = false)
+        repeat(20_000) {
+            assertEquals(10, s.core.sendData(1, ByteArray(10), 0, 10, endStream = false))
+            s.read()
+            s.send(FrameEncoder.windowUpdate(0, 10), FrameEncoder.windowUpdate(1, 10))
+        }
+        assertEquals(false, s.core.isClosed)
+    }
+
+    /**
+     * Large increments are bounded by the window itself: with nothing of ours written, the connection window passes
+     * 2^31 - 1 after at most 2^31 / increment frames and the connection ends with FLOW_CONTROL_ERROR (section 6.9.1); none
+     * is answered or builds state. Increments on a finished stream change nothing (Go's client credits a body it still
+     * reads after our END_STREAM, 4 KiB at a time, so they are not counted).
+     */
+    @Test
+    fun windowUpdateFloodsHoldNothing() {
+        for (role in Role.entries) {
+            val p = peer(role)
+            val conn = p.flood(100_000) { FrameEncoder.windowUpdate(0, 65_536) }
+            println("WINDOW_UPDATE 64 KiB flood, $role core: $conn")
+            p.assertConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR)
+            assertEquals((H2.MAX_WINDOW - H2.DEFAULT_WINDOW).toInt() / 65_536 + 1, conn.frames, "$role")
+            assertEquals(0, conn.control, "$role: $conn")
+
+            val q = peer(role)
+            val id = q.openForData()
+            q.send(q.data(id, 0, endStream = true))
+            if (role == Role.SERVER) q.core.sendHeaders(id, OK, endStream = true)
+            q.events()
+            val closed = q.flood(100_000) { FrameEncoder.windowUpdate(id, 4_096) }
             assertEquals(false, q.core.isClosed, "$role")
             assertTrue(closed.control <= 1 && closed.streams <= 1, "$role: $closed")
         }
     }
 
+    /**
+     * CVE-2019-9511, the data dribble: the peer opens its windows a byte at a time. The core takes at most one frame per
+     * stream from the writer ("Inefficient tracking of outstanding outbound frames can lead to overload", section 10.5),
+     * so a peer that does not read makes us hold one byte per stream, and its increments, which no DATA of ours follows,
+     * end it with ENHANCE_YOUR_CALM. A peer that reads each 1-byte frame before the next increment costs us one frame for
+     * each frame it sends, and holds no more.
+     */
     @Test
     fun negative_dataDribbleHoldsOneFramePerStream() {
-        // CVE-2019-9511: the peer opens its windows a byte at a time and never reads, so we would queue DATA in 1-byte pieces;
-        // the core takes at most one frame per stream from the writer, so what it holds is one byte per stream
-        val p = peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 100))
-        p.send(FrameEncoder.settings(intArrayOf(0x4), longArrayOf(0)))
-        for (i in 0 until 100) {
-            p.send(p.headers(1 + 2 * i, endStream = true))
-            p.core.sendHeaders(1 + 2 * i, OK, endStream = false)
-        }
-        p.events()
-        val body = ByteArray(1 shl 20)
-        val h =
-            p.flood(100_000) { i ->
-                val id = 1 + 2 * (i % 100)
-                // the writer is offered its window as soon as it has some: it takes what fits
-                p.core.sendData(id, body, 0, body.size, endStream = false)
-                FrameEncoder.windowUpdate(id, 1)
+        for (reads in listOf(false, true)) {
+            val p = peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 100))
+            p.send(FrameEncoder.settings(intArrayOf(0x4), longArrayOf(0)))
+            for (i in 0 until 100) {
+                p.send(p.headers(1 + 2 * i, endStream = true))
+                p.core.sendHeaders(1 + 2 * i, OK, endStream = false)
             }
-        println("data dribble, server core: $h")
-        assertEquals(false, p.core.isClosed)
-        assertTrue(h.queuedData <= 100, "$h")
-        assertTrue(h.control <= 1, "$h") // the SETTINGS ACK
+            p.events()
+            p.read()
+            val body = ByteArray(1 shl 20)
+            val h =
+                p.flood(if (reads) 50_000 else 100_000) { i ->
+                    val id = 1 + 2 * (i % 100)
+                    // the writer is offered its window as soon as it has some: it takes what fits
+                    p.core.sendData(id, body, 0, body.size, endStream = false)
+                    // time passes for a peer that reads (the core waits up to REFILL_GRACE_NANOS for a woken writer)
+                    if (reads) p.now += 3 * MS
+                    if (reads) p.read()
+                    FrameEncoder.windowUpdate(id, 1)
+                }
+            println("data dribble (reading: $reads), server core: $h")
+            assertTrue(h.queuedData <= 100, "$h")
+            assertTrue(h.control <= 1, "$h")
+            if (reads) {
+                assertEquals(false, p.core.isClosed, "${p.allEvents.filterIsInstance<H2Event.Closed>().map { it.reason }}")
+            } else {
+                p.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
+            }
+        }
     }
 }
