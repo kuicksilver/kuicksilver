@@ -32,6 +32,7 @@ import kotlinx.io.EOFException
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -196,69 +197,109 @@ class ClientWebSocketCloseTest {
     /**
      * The same against a server that never reads: the session gets the close wait (200 ms here) to write its Close, then
      * the connection is closed hard and given back, not held for good. The server, reading only once the connection was
-     * released, finds the large frame cut off and no Close.
+     * released, finds the data cut off and no Close: nothing the session had not written by the end of the close wait
+     * reaches it.
+     *
+     * That the Close cannot be written needs more data ahead of it than the way to a server that reads nothing takes:
+     * the channels in between, and both kernels' socket buffers, which the system sizes (Linux autotunes them up to
+     * `tcp_wmem` and `tcp_rmem`: the Android emulator's 8 MiB and 16 MiB took a whole 16 MiB frame and the Close behind it
+     * within 200 ms, a JVM on macOS or desktop Linux far less). So each attempt says which case it saw, from what the
+     * server read: a Close that arrived was written within the close wait, and the attempt is repeated with twice the
+     * data until one leaves the Close unwritten. Every attempt must release the connection, not keep it.
      */
     @Test fun negative_anUnwrittenCloseIsBoundedByTheCloseWait() =
         clientTest {
-            val selector = SelectorManager(Dispatchers.IO)
-            val listener = bindTcp(selector, "127.0.0.1", 0)
-            val released = CompletableDeferred<Boolean>()
-            val events =
-                object : KuicksilverEventListener() {
-                    override fun connectionReleased(
-                        request: io.ktor.client.request.HttpRequestData,
-                        protocol: io.ktor.http.HttpProtocolVersion,
-                        kept: Boolean,
-                    ) {
-                        released.complete(kept)
-                    }
+            val data = ByteArray(BIG)
+            var frames = 1
+            while (true) {
+                val read = unwrittenCloseAttempt(data, frames)
+                val written = List(frames) { "binary $BIG" } + "close 4002 client bye"
+                if (read.none { it.startsWith("close") }) {
+                    // the case under test: the data cut off (inside a frame or between two), and no Close after it
+                    assertTrue(read.last() == "cut" || read.last() == "end", "no Close after the close wait: $read")
+                    assertTrue(read.dropLast(1).all { it == "binary $BIG" }, "only whole frames before the cut: $read")
+                    assertTrue(read.size - 1 <= frames, "no more frames than were sent: $read")
+                    break
                 }
-            try {
-                coroutineScope {
-                    val served =
-                        async {
-                            listener.accept().use { s ->
-                                val input = s.openReadChannel()
-                                val output = s.openWriteChannel(autoFlush = true)
-                                output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
-                                released.await() // reads nothing before the client gave the connection up
-                                readClientFrames(input)
-                            }
-                        }
-                    testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
-                        (c.engine as KuicksilverEngine).h1.webSocketCloseWaitMillis = 200
-                        val port = (listener.localAddress as InetSocketAddress).port
-                        val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
-                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
-                        launch { session.close(CloseReason(4002, "client bye")) }
-                        session.call.coroutineContext[Job]!!.join()
-                        assertEquals(false, withTimeout(10.seconds) { released.await() }, "released, not kept")
-                        val frames = withTimeout(20.seconds) { served.await() }
-                        assertEquals("end", frames.last(), "no Close after the close wait: $frames")
-                    }
-                }
-            } finally {
-                listener.close()
-                selector.close()
+                // everything, the Close included, fit into the buffers within the close wait: written in order
+                assertEquals(written, read, "a Close that arrived was written within the close wait, after the data")
+                frames *= 2
+                check(frames <= MAX_FRAMES) { "$read: ${frames / 2} frames of $BIG bytes and the Close fit into the buffers" }
             }
         }
+
+    /**
+     * One session that sends [frames] frames of [data] to a server that reads nothing, then its Close; the connection must
+     * be released, not kept. Returns what the server read once it was.
+     */
+    private suspend fun unwrittenCloseAttempt(
+        data: ByteArray,
+        frames: Int,
+    ): List<String> {
+        val selector = SelectorManager(Dispatchers.IO)
+        val listener = bindTcp(selector, "127.0.0.1", 0)
+        val released = CompletableDeferred<Boolean>()
+        val events =
+            object : KuicksilverEventListener() {
+                override fun connectionReleased(
+                    request: io.ktor.client.request.HttpRequestData,
+                    protocol: io.ktor.http.HttpProtocolVersion,
+                    kept: Boolean,
+                ) {
+                    released.complete(kept)
+                }
+            }
+        try {
+            return coroutineScope {
+                val served =
+                    async {
+                        listener.accept().use { s ->
+                            val input = s.openReadChannel()
+                            val output = s.openWriteChannel(autoFlush = true)
+                            output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                            released.await() // reads nothing before the client gave the connection up
+                            readClientFrames(input)
+                        }
+                    }
+                testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
+                    (c.engine as KuicksilverEngine).h1.webSocketCloseWaitMillis = 200
+                    val port = (listener.localAddress as InetSocketAddress).port
+                    val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                    repeat(frames) { session.outgoing.send(Frame.Binary(true, data)) }
+                    launch { session.close(CloseReason(4002, "client bye")) }
+                    session.call.coroutineContext[Job]!!.join()
+                    assertEquals(false, withTimeout(10.seconds) { released.await() }, "released, not kept")
+                    withTimeout(20.seconds) { served.await() }
+                }
+            }
+        } finally {
+            listener.close()
+            selector.close()
+        }
+    }
 
     private companion object {
         /** Far more than the loopback socket and the channels in between take before the writer waits. */
         const val BIG = 16 shl 20
+
+        /** The most frames of [BIG] bytes an attempt of [negative_anUnwrittenCloseIsBoundedByTheCloseWait] sends. */
+        const val MAX_FRAMES = 8
     }
 }
 
 /**
  * The client's frames on [input] (masked, RFC 6455 section 5.3) up to its Close or the end of the stream: `binary <size>`,
- * `text <size>`, `close <code> <reason>`, `end` when the stream ended without a Close (a frame it cut keeps its line).
+ * `text <size>`, `close <code> <reason>`; when the stream ended without a Close, `end` between two frames, `cut` inside one
+ * (the frame it cut keeps its line).
  */
 internal suspend fun readClientFrames(input: ByteReadChannel): List<String> {
     val frames = ArrayList<String>()
     try {
         readFramesInto(input, frames)
+    } catch (e: FrameCut) {
+        frames += "cut" // the stream ended inside a frame
     } catch (e: Exception) {
-        frames += "end" // the stream ended, between frames or inside one
+        frames += "end" // the stream ended between frames
     }
     return frames
 }
@@ -268,38 +309,61 @@ private suspend fun readFramesInto(
     frames: MutableList<String>,
 ) {
     while (true) {
-        val b0 = input.readByte().toInt() and 0xff
-        val b1 = input.readByte().toInt() and 0xff
-        val length =
-            when (val l = b1 and 0x7f) {
-                126 -> input.readByteArray(2).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
-                127 -> input.readByteArray(8).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
-                else -> l.toLong()
-            }
-        val mask = input.readByteArray(4)
-        when (b0 and 0x0f) {
-            0x8 -> {
-                val p = input.readByteArray(length.toInt())
-                for (i in p.indices) p[i] = (p[i].toInt() xor mask[i % 4].toInt()).toByte()
-                val code = if (p.size >= 2) ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff) else -1
-                frames += "close $code ${p.copyOfRange(minOf(2, p.size), p.size).decodeToString()}"
-                return
-            }
+        val b0 = input.readByte().toInt() and 0xff // the stream may end here, between frames
+        try {
+            readFrameAfter(b0, input, frames)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: FrameCut) {
+            throw e
+        } catch (e: Exception) {
+            throw FrameCut(e)
+        }
+        if (frames.last().startsWith("close")) return
+    }
+}
 
-            0x2 -> {
-                frames += "binary $length"
-                if (input.discard(length) < length) throw EOFException("frame cut")
-            }
+/** The stream ended inside a frame ([readClientFrames]). */
+private class FrameCut(
+    cause: Throwable? = null,
+) : Exception(cause)
 
-            0x1 -> {
-                frames += "text $length"
-                if (input.discard(length) < length) throw EOFException("frame cut")
-            }
+/** The rest of the frame whose first byte is [b0]. */
+private suspend fun readFrameAfter(
+    b0: Int,
+    input: ByteReadChannel,
+    frames: MutableList<String>,
+) {
+    val b1 = input.readByte().toInt() and 0xff
+    val length =
+        when (val l = b1 and 0x7f) {
+            126 -> input.readByteArray(2).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
+            127 -> input.readByteArray(8).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
+            else -> l.toLong()
+        }
+    val mask = input.readByteArray(4)
+    when (b0 and 0x0f) {
+        0x8 -> {
+            val p = input.readByteArray(length.toInt())
+            for (i in p.indices) p[i] = (p[i].toInt() xor mask[i % 4].toInt()).toByte()
+            val code = if (p.size >= 2) ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff) else -1
+            frames += "close $code ${p.copyOfRange(minOf(2, p.size), p.size).decodeToString()}"
+            return
+        }
 
-            else -> {
-                frames += "opcode ${b0 and 0x0f} $length"
-                if (input.discard(length) < length) throw EOFException("frame cut")
-            }
+        0x2 -> {
+            frames += "binary $length"
+            if (input.discard(length) < length) throw EOFException("frame cut")
+        }
+
+        0x1 -> {
+            frames += "text $length"
+            if (input.discard(length) < length) throw EOFException("frame cut")
+        }
+
+        else -> {
+            frames += "opcode ${b0 and 0x0f} $length"
+            if (input.discard(length) < length) throw EOFException("frame cut")
         }
     }
 }
