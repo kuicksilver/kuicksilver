@@ -5,6 +5,7 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -107,6 +108,10 @@ class MultiLoopTest {
                                         st.output.flushAndClose()
                                     }
                                     val got = st.input.readExactly(data.size)
+                                    // the echo's FIN too before the close: the bytes can all be here while the server's
+                                    // flushAndClose has not run yet (its coroutine shares this thread with the other 99),
+                                    // and a CONNECTION_CLOSE before it fails that write (run 43654092978, Windows)
+                                    assertEquals(-1, st.input.readAvailable(ByteArray(1)), "the echo ends with its FIN")
                                     c.close()
                                     assertContentEquals(data, got)
                                 }
