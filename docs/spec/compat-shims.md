@@ -55,7 +55,7 @@ the codepoints are those of the older drafts.
 `offeredIn` at :38, `WtSettings.ours` at :133, `WtTokens.LEGACY` at :147),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:447` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:480` (the client's draft-02
 request field).
 
 **On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`

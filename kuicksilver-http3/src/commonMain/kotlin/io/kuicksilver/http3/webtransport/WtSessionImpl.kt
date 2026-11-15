@@ -24,6 +24,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.H3Session
+import io.kuicksilver.http3.runtime.HandOffQueue
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.drains
@@ -59,7 +60,9 @@ import kotlin.time.Duration.Companion.seconds
  * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read, every other type
  * (flow-control capsules included, section 5.1) is skipped unbuffered by the capsule stream. The peer's streams wait in
  * [bidiIn] and [uniIn] until the application accepts them; how many can be open at once is bounded by the QUIC stream
- * limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished.
+ * limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished. An accept
+ * cancelled before it returned (a timeout, a `select`) puts its stream back first ([HandOffQueue], [accept]): a stream
+ * the application never got would hold the peer and its stream credit until the session ends.
  *
  * State that the router and the stream pumps share ([streams], the channels' contents at close) is touched on the
  * session's dispatcher only.
@@ -77,8 +80,16 @@ internal class WtSessionImpl(
 
     /** The CONNECT stream as capsules; built first, so a peer message that cannot carry capsules fails the accept. */
     internal val capsules: CapsuleStream = stream.useCapsuleProtocol(CAPSULES)
-    private val bidiIn = Channel<QuicStream>(Channel.UNLIMITED)
-    private val uniIn = Channel<QuicStream>(Channel.UNLIMITED)
+    private val bidiIn = HandOffQueue<Incoming>()
+    private val uniIn = HandOffQueue<Incoming>()
+
+    /** A peer's stream waiting for an accept; [tracked] once an accept wrapped it but its caller was cancelled before it returned. */
+    private class Incoming(
+        val st: QuicStream,
+    ) {
+        var tracked: WtStreamImpl? = null
+    }
+
     private val streams = HashSet<WtStreamImpl>()
     private val datagramsIn = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
     private val drainFlow = MutableStateFlow(false)
@@ -131,7 +142,7 @@ internal class WtSessionImpl(
         stream: QuicStream,
         bidi: Boolean,
     ) {
-        if ((if (bidi) bidiIn else uniIn).trySend(stream).isFailure) goneRaw(stream, bidi)
+        if (!(if (bidi) bidiIn else uniIn).offer(Incoming(stream))) goneRaw(stream, bidi)
     }
 
     private suspend fun readCapsules() {
@@ -189,7 +200,10 @@ internal class WtSessionImpl(
                 bidiIn.close()
                 uniIn.close()
                 for (ch in listOf(bidiIn to true, uniIn to false)) {
-                    while (true) goneRaw(ch.first.tryReceive().getOrNull() ?: break, ch.second)
+                    while (true) {
+                        val i = ch.first.tryTake() ?: break
+                        if (i.tracked == null) goneRaw(i.st, ch.second) // a tracked one is in [streams], ended next
+                    }
                 }
                 for (s in streams.toList()) s.gone()
                 streams.clear()
@@ -296,6 +310,7 @@ internal class WtSessionImpl(
         readable: Boolean,
         writable: Boolean,
         headerLength: Int = 0,
+        into: Incoming? = null,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
             // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
@@ -306,6 +321,7 @@ internal class WtSessionImpl(
                 throw sessionClosed()
             }
             streams += s
+            into?.tracked = s
             s
         }
 
@@ -358,11 +374,28 @@ internal class WtSessionImpl(
 
     override suspend fun openUni(): WebTransportSendStream = open(bidi = false)
 
-    override suspend fun acceptBidi(): WebTransportBidiStream =
-        track(bidiIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = true)
+    override suspend fun acceptBidi(): WebTransportBidiStream = accept(bidiIn, bidi = true)
 
-    override suspend fun acceptUni(): WebTransportReceiveStream =
-        track(uniIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = false)
+    override suspend fun acceptUni(): WebTransportReceiveStream = accept(uniIn, bidi = false)
+
+    /**
+     * The next stream of [q], wrapped and tracked. [track] returns through withContext, which throws the caller's
+     * cancellation even after the stream was wrapped: the stream then goes back to the head of [q] for the next accept
+     * (or, once the session closed, is ended as every other stream of the session).
+     */
+    private suspend fun accept(
+        q: HandOffQueue<Incoming>,
+        bidi: Boolean,
+    ): WtStreamImpl {
+        val i = q.receive() ?: throw sessionClosed()
+        i.tracked?.let { return it }
+        try {
+            return track(i.st, readable = true, writable = bidi, into = i)
+        } catch (e: CancellationException) {
+            if (!q.putBack(i)) i.tracked?.gone() ?: goneRaw(i.st, bidi)
+            throw e
+        }
+    }
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
         if (closedInfo.isCompleted) DatagramSendResult.Closed else capsules.trySendDatagram(payload)
