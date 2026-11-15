@@ -59,4 +59,4 @@ private const val PARAMETER = "[ \\t]*;[ \\t]*$TOKEN[ \\t]*=[ \\t]*(?:$TOKEN|$QU
 
 private val OWS = Regex("\\G[ \\t]*")
 private val ELEMENT = Regex("\\G($TOKEN)((?:$PARAMETER)*)")
-private val SEPARATOR = Regex("\\G[ \\t]*(?:,|$)")
+private val SEPARATOR = Regex("\\G[ \\t]*(?:,|\\z)")

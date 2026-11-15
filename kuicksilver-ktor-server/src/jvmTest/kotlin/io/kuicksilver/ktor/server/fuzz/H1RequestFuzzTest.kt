@@ -34,6 +34,8 @@ import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInfo
+import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -360,6 +362,26 @@ class H1RequestFuzzTest {
     ): Int {
         for (i in from..b.size - what.size) if ((what.indices).all { b[i + it] == what[it] }) return i
         return -1
+    }
+
+    /**
+     * [TE_FAULTS] names RequestFraming's fault for each way a Transfer-Encoding value itself is wrong: a reworded fault
+     * fails here instead of silently turning off the reverse check of [checkFraming].
+     */
+    @Test fun negative_transferEncodingFaultsAreTheOnesChecked() {
+        for (te in listOf("chunked x", "gzip", "chunked, gzip, chunked")) {
+            val fault = RequestFraming.of(HttpProtocolVersion.HTTP_1_1, "/", listOf("s"), listOf(te), emptyList()).fault
+            assertTrue(fault in TE_FAULTS, "Transfer-Encoding $te: fault $fault")
+        }
+        assertEquals(
+            TE_FAULTS.size,
+            setOf("chunked x", "gzip", "chunked, gzip, chunked")
+                .map {
+                    RequestFraming.of(HttpProtocolVersion.HTTP_1_1, "/", listOf("s"), listOf(it), emptyList()).fault
+                }.toSet()
+                .size,
+            "one fault per kind",
+        )
     }
 
     /**
