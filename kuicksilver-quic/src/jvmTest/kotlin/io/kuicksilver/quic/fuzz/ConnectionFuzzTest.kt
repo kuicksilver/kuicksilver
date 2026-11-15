@@ -101,7 +101,7 @@ class ConnectionFuzzTest {
  * - 6 BLOCK: `arg & 1` toggles dropping every datagram from that side to the other (`arg & 1 == 0`: one round). A
  *   blocked direction holds one side at an encryption level the other has left, so it still sends CRYPTO there
  *   (Initial or Handshake data past what TLS consumed: the sealed CRYPTO streams, RFC 9001 section 4.1.3).
- * - 7 PATH: `arg` 0 and 15 one round; otherwise one of the E_* operations on the path from that side (the side sends, or for
+ * - 7 PATH: `arg` 0 one round; otherwise one of the E_* operations on the path from that side (the side sends, or for
  *   [E_RESET], [E_PTB] receives): [E_MTU] `[m]` the link MTU becomes 1180 + 4m (255: 65527) — larger datagrams vanish; [E_ICMP]
  *   toggles a router that answers them with a Packet Too Big; [E_PTB] `[variant][mtu num][len]` a forged Packet Too Big to that
  *   side's endpoint (variant 0 quotes its latest datagram, 1 garbage, 2 a stranger's destination, 3 a truncated quote);
@@ -115,7 +115,9 @@ class ConnectionFuzzTest {
  *   Retry to the client (0 the server's last one again, 1 a fresh valid one, 2 a bad integrity tag, 3 the client's own DCID as
  *   source, 4 an empty token); [E_VN] `[variant]` a Version Negotiation to the client (0 the server's last one, 1 one that offers
  *   only v2, 2 one that lists the client's version); [E_PTB_INFLIGHT] `[m]` a router's Packet Too Big claiming an MTU of
- *   1228 + 2m for the first datagram queued from that side; [E_PREFERRED_DOWN] the server's preferred-address socket goes down.
+ *   1228 + 2m for the first datagram queued from that side; [E_PREFERRED_DOWN] the server's preferred-address socket goes down;
+ *   [E_REDIRECT] the client's datagrams queued towards the server come from the server's active peer address to its active local
+ *   address (the client's NAT maps back to the address the server went to, and a router sends them to that server address).
  *
  * A [num] is one byte `b` < 0xf8 for its own value, else `b - 0xf7` big-endian bytes masked to 62 bits.
  */
@@ -155,6 +157,7 @@ internal object ConnProgram {
     const val E_VN = 12
     const val E_PTB_INFLIGHT = 13
     const val E_PREFERRED_DOWN = 14
+    const val E_REDIRECT = 15
 
     /** Frame selectors of the FRAME op. */
     val FRAME_KINDS =
@@ -279,7 +282,7 @@ internal object ConnProgram {
             e: Int,
             vararg bytes: ByteArray,
         ) = apply {
-            require(e in 1..14)
+            require(e in 1..15)
             op(7, side, e)
             for (b in bytes) out.write(b)
         }
@@ -676,7 +679,7 @@ internal class ConnectionFuzz(
             }
 
             else -> {
-                if (arg == 0 || arg == 15) step() else path(side, arg)
+                if (arg == 0) step() else path(side, arg)
             }
         }
     }
@@ -869,6 +872,16 @@ internal class ConnectionFuzz(
 
             ConnProgram.E_PREFERRED_DOWN -> {
                 net.preferredDown()
+            }
+
+            ConnProgram.E_REDIRECT -> {
+                net.serverCore?.let { s ->
+                    val to = if (s.path.socket == PREFERRED_SOCKET) EndpointNet.PREFERRED else EndpointNet.SERVER
+                    val from = s.path.remote
+                    net.aliasClient(from)
+                    val q = net.toServer
+                    for (i in q.indices) q[i] = Flight(q[i].bytes, from, to, q[i].ecn)
+                }
             }
 
             else -> {

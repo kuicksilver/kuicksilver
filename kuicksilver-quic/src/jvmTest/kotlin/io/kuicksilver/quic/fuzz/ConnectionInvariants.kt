@@ -206,7 +206,7 @@ internal class ConnectionInvariants(
             noteTowards(side, key, f.to)
             if (hv.type == PacketType.OneRtt) {
                 try {
-                    cidReuse(side, key, socket, f.to)
+                    cidReuse(side, key, socket, f.to, f.from)
                 } catch (e: IllegalStateException) {
                     fail(
                         "${e.message}; this one to ${f.to}${frames(
@@ -229,6 +229,7 @@ internal class ConnectionInvariants(
         dcid: String,
         socket: PathId,
         to: InetSocketAddress,
+        local: InetSocketAddress,
     ) {
         val sockets = dcidSockets[side].getOrPut(dcid) { HashSet() }
         sockets += socket.value
@@ -237,8 +238,58 @@ internal class ConnectionInvariants(
             val dests = dcidDestinations.getOrPut(dcid) { HashSet() }
             dests += to
             if (dests.size > 1) fail("client sent connection ID $dcid to $dests (RFC 9000 section 9.5)")
+        } else {
+            serverDestinations(dcid, local, to)
         }
     }
+
+    /**
+     * RFC 9000 section 9.5: "an endpoint MUST NOT reuse a connection ID when sending to more than one destination address", except that
+     * one that receives "packets from a new source address with the same Destination Connection ID ... MAY continue to use the current
+     * connection ID with the new remote address while still sending from the same local address". The server may send the client's ID
+     * [dcid] from [local] to a second client address only when a client datagram from there to [local] carried the ID of ours the client
+     * used from the first address when the server first sent [dcid] there.
+     */
+    private fun serverDestinations(
+        dcid: String,
+        local: InetSocketAddress,
+        to: InetSocketAddress,
+    ) {
+        val firsts = serverDcidUses.getOrPut(dcid) { LinkedHashMap() }
+        if (to in firsts) return
+        val there = (oursFrom[to to local] ?: emptySet<String>()).map { handshakeId(it) }
+        for ((a1, ours) in firsts) {
+            if (ours == null || handshakeId(ours) !in there) {
+                fail(
+                    "server sent the client's connection ID $dcid from $local to $to after $a1, " +
+                        "but the client never used there the ID of ours it used from $a1 ($ours) (RFC 9000 section 9.5)",
+                )
+            }
+        }
+        firsts[to] = lastOursFrom[to to local]
+    }
+
+    /**
+     * The handshake's IDs are one: the client's first DCID and a Retry's SCID stand for our sequence-0 ID until the client has it (it
+     * changes to it on our first Initial, not by choice).
+     */
+    private fun handshakeId(id: String): String {
+        val c = net.client
+        if (id == hex(c.odcid.toByteArray()) || id == c.retryScid?.let { hex(it.toByteArray()) }) {
+            return net.serverCore
+                ?.cids
+                ?.localCidOf(0)
+                ?.let { hex(it.toByteArray()) } ?: id
+        }
+        return id
+    }
+
+    /** Server: the client's IDs it sent with, by destination: the ID of ours the client last used from that address then. */
+    private val serverDcidUses = HashMap<String, LinkedHashMap<InetSocketAddress, String?>>()
+
+    /** The IDs of ours in client datagrams by (client address, server address), and the latest one. */
+    private val oursFrom = HashMap<Pair<InetSocketAddress, InetSocketAddress>, HashSet<String>>()
+    private val lastOursFrom = HashMap<Pair<InetSocketAddress, InetSocketAddress>, String>()
 
     /** RFC 9000 sections 8.1 and 9.3: three times what an unvalidated address sent, at most. */
     private fun amplification(
@@ -320,6 +371,18 @@ internal class ConnectionInvariants(
         return " " + h.frames.joinToString(",", "[", "]") { it.toString().take(60) }
     }
 
+    /** The ID of ours (hex) the first packet of a client datagram [f] carries, when it parses. */
+    private fun serverCid(f: Flight): String? {
+        val b = PacketBuffer.of(f.bytes)
+        try {
+            if (!PacketHeaderCodec.parse(b, 0, f.bytes.size, 8, hv)) return null
+            if (hv.type == null || hv.dcidLen == 0) return null
+            return hex(ByteArray(hv.dcidLen) { b[hv.dcidOff + it] })
+        } finally {
+            b.close()
+        }
+    }
+
     private fun frameNames(h: CollectingHandler): String = h.frames.joinToString(",", "[", "]") { it::class.simpleName ?: "?" }
 
     override fun delivered(
@@ -328,7 +391,13 @@ internal class ConnectionInvariants(
     ) {
         val size = f.bytes.size
         if (TRACE) println("t=${net.now} ${name(side)} gets ${f.from}->${f.to} ${size}B ${f.ecn}")
-        if (side == 1) receivedFrom[f.from] = (receivedFrom[f.from] ?: 0L) + size
+        if (side == 1) {
+            receivedFrom[f.from] = (receivedFrom[f.from] ?: 0L) + size
+            serverCid(f)?.let { ours ->
+                oursFrom.getOrPut(f.from to f.to) { HashSet() } += ours
+                lastOursFrom[f.from to f.to] = ours
+            }
+        }
         if (size > maxDelivered[1 - side]) maxDelivered[1 - side] = size
         ecnDelivered[side][f.ecn.ordinal]++
         if (f.ecn == Ecn.Ect0 || f.ecn == Ecn.Ce) markedArrived[1 - side] = true
@@ -617,8 +686,8 @@ internal class ConnectionInvariants(
         val pairs = HashSet<List<Any?>>()
         for (p in c.paths.all) {
             if (p.handshakeCandidate) continue
-            // a path is a local and a peer address (RFC 9000 section 9.5): a multi-homed socket may hold one per local address
-            if (!pairs.add(listOf(p.socket.value, p.local?.toString(), p.remoteKey, p.remote.port))) {
+            // packets find their path by socket and peer address (Paths.byRemote; a path keeps the local address it was made with)
+            if (!pairs.add(listOf(p.socket.value, p.remoteKey, p.remote.port))) {
                 fail(
                     "${name(
                         side,

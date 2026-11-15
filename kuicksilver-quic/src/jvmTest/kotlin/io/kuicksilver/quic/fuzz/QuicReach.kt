@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicLong
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal object QuicReach {
-    /** The features the seeded programs must reach (ConnectionSeededTest). */
+    /**
+     * The features the seeded programs must reach (ConnectionSeededTest). A wait released by the client's packets with the same ID of
+     * ours (`migration.waitReleased.sameId`) is counted but not required: this harness's client never goes back to an ID it changed
+     * from, so only PathTest.negative_theClientsPacketsWithTheSameIdEndTheWait reaches it.
+     */
     val FEATURES =
         listOf(
             "pmtud.enabled",
@@ -56,7 +60,8 @@ internal object QuicReach {
             "migration.fallback",
             "migration.reverted",
             "migration.noViablePath",
-            "migration.waitReleased",
+            "migration.waitReleased.newId",
+            "migration.waitReleased.retirePriorTo",
         )
 
     private val counts = ConcurrentHashMap<String, AtomicLong>()
@@ -126,7 +131,13 @@ internal object QuicReach {
         if (c.ecnCeEvents > 0) hit("ecn.ceCongestion")
         if (c.pathFallbacksForTest > 0) hit("migration.fallback")
         if (c.pathRevertsForTest > 0) hit("migration.reverted")
-        if (c.pathWaitReleasesForTest > 0) hit("migration.waitReleased")
+        for (w in io.kuicksilver.quic.core.WaitRelease.entries) {
+            if (c.pathWaitReleasesForTest[w.ordinal] >
+                0
+            ) {
+                hit("migration.waitReleased.${w.name.replaceFirstChar { it.lowercase() }}")
+            }
+        }
         if (c.role == TlsRole.Client) {
             if (c.retryReceivedForTest) hit("retry.received")
             if (c.receivedVnVersions != null) hit("vn.received")

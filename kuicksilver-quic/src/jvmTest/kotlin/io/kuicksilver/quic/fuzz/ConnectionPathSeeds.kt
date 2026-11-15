@@ -302,6 +302,21 @@ internal object ConnectionPathSeeds {
                 .steps(4)
                 .build()
                 .let { it.copyOfRange(1, it.size) }
+        // the same revert, then the client's NEW_CONNECTION_ID retires every ID below its own (Retire Prior To): the new one is
+        // current, and the reverted path sends again with it
+        m["revert-then-retire-prior-to"] =
+            hex(
+                "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
+                    "128412121235f512121c24397c12121232e3f524121231113c3c085ef5f512121212",
+            )
+        // the same revert, then the client's packets reach the reverted path (E_REDIRECT) with another ID of ours than it used on the
+        // path the server left (it moved to the preferred address and retired that one): the path keeps waiting (RFC 9000 section 9.5)
+        m["revert-then-client-with-another-id"] =
+            hex(
+                "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
+                    "128412121235f512121c24397c12121232e3f52403f901f40103f901f40112f7121203f901f40103f901f40112f71212f5f7" +
+                    "1212",
+            )
         m["no-viable-path"] =
             hex(
                 "00a49c9ca4e47f3113113113313914ff31131102f42e3df4f52ef43af4f5f4464646f43d000a00001100000005fd02f42e3d" +
@@ -434,7 +449,7 @@ internal object ConnectionPathSeeds {
                 }
 
                 else -> {
-                    val e = r.nextInt(1, 15)
+                    val e = r.nextInt(1, 16)
                     val args =
                         when (e) {
                             E_MTU, E_ECN_PATH, E_MIGRATE, E_CAPS, E_RETRY, E_VN, E_PTB_INFLIGHT -> arrayOf(one(r.nextInt(256)))
