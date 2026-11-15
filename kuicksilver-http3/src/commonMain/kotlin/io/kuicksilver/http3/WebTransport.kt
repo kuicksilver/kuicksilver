@@ -249,14 +249,14 @@ public sealed class WebTransportException(
 }
 
 /**
- * Waits until the session's CONNECT stream ended in both directions: after [WebTransportSession.closed], what the session
+ * Waits until [session]'s CONNECT stream ended in both directions: after [WebTransportSession.closed], what the session
  * sent, its close capsule and FIN included, was answered, so the connection may now close without the peer seeing a lost
  * connection instead of the session's close. Returns at once for a session of another implementation; it does not return
  * when the connection is lost first, so bound the wait.
  */
 @InternalKuicksilverApi
-public suspend fun WebTransportSession.awaitExchangeEnd() {
-    (this as? io.kuicksilver.http3.webtransport.WtSessionImpl)?.exchangeEnded?.await()
+public suspend fun awaitWebTransportExchangeEnd(session: WebTransportSession) {
+    (session as? io.kuicksilver.http3.webtransport.WtSessionImpl)?.exchangeEnded?.await()
 }
 
 /**

@@ -33,7 +33,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
-import io.kuicksilver.http3.awaitExchangeEnd
+import io.kuicksilver.http3.awaitWebTransportExchangeEnd
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
@@ -655,7 +655,7 @@ internal class H3Pool(
                     withTimeoutOrNull(EXCHANGE_END_TIMEOUT) {
                         // the exchange's end, or the connection's (which ends the exchange without telling it)
                         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                        val exchange = launch { session.awaitExchangeEnd() }
+                        val exchange = launch { awaitWebTransportExchangeEnd(session) }
                         kotlinx.coroutines.selects.select {
                             exchange.onJoin {}
                             connection.closed.onAwait {}

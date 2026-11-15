@@ -132,7 +132,7 @@ internal class H3Session(
     /**
      * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over, each with
      * whether it is a draft-02 request (which picks its version, [io.kuicksilver.http3.webtransport.wtServerVersion]).
-     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
+     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through `wtSessionAdmitted` and
      * [wtSessionEnded].
      */
     val wtSessions = LinkedHashMap<Long, Boolean>()
@@ -494,7 +494,7 @@ internal class H3Session(
     /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
     private var wtFlowSessions = 0
 
-    /** [wtFlowSessions] for whoever follows it from elsewhere: the sessions' shares of the send buffer ([WtSendShare]). */
+    /** [wtFlowSessions] for whoever follows it from elsewhere: the sessions' shares of the send buffer (`WtSendShare`). */
     internal val wtFlowSessionCount = MutableStateFlow(0)
 
     /** [wtFlowSessions] and the receive-window floor it asks for (a test hook; session dispatcher only). */
