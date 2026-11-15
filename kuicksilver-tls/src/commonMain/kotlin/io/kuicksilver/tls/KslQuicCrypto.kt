@@ -253,7 +253,15 @@ internal class KslQuicTlsSession(
                 throw t
             }
         } else {
-            stapleFor(ssl, config)
+            try {
+                stapleFor(ssl, config)
+            } catch (t: Throwable) {
+                // as for a client above: a session that failed to build is nobody's to close
+                Ksl.sslFree(ssl)
+                ssl = 0L
+                lease.close()
+                throw t
+            }
         }
     }
 
