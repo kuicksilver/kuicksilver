@@ -781,31 +781,52 @@ internal class ConnectionRuntime(
         t.close()
     }
 
+    /** Test hook: runs on the loop right after [open] made its stream, before it is handed to the caller. */
+    internal var openedForTest: ((QuicStream) -> Unit)? = null
+
+    /**
+     * A stream of ours, once the peer's limit allows it. A caller cancelled while the stream is handed back (the
+     * cancellation lands as withContext returns) never gets it: it is given up here as an application would (RESET_STREAM,
+     * and STOP_SENDING on a bidirectional one, with the default code), so the peer, which counts it opened as soon as a
+     * later stream of ours arrives, sees it end and returns its credit, as [abandonUndelivered] does for accepted streams.
+     */
     private suspend fun open(
         bidi: Boolean,
         priority: StreamPriority,
-    ): QuicStream =
-        withContext(loop.dispatcher) {
-            val ticker = newTicker()
-            openWaiters += ticker
-            try {
-                while (true) {
-                    if (finished) throw closedDeferred.await()
-                    val id = core.openStream(bidi, priority)
-                    if (id >= 0) {
-                        val s = stream(id, priority)
-                        loop.flush(core)
-                        return@withContext s
+    ): QuicStream {
+        var made: StreamRuntime? = null
+        try {
+            return withContext(loop.dispatcher) {
+                val ticker = newTicker()
+                openWaiters += ticker
+                try {
+                    while (true) {
+                        if (finished) throw closedDeferred.await()
+                        val id = core.openStream(bidi, priority)
+                        if (id >= 0) {
+                            val s = stream(id, priority)
+                            made = s
+                            loop.flush(core)
+                            openedForTest?.invoke(s)
+                            return@withContext s
+                        }
+                        ticker.receive()
                     }
-                    ticker.receive()
+                    @Suppress("UNREACHABLE_CODE")
+                    throw IllegalStateException()
+                } finally {
+                    tickers.remove(ticker)
+                    openWaiters.remove(ticker)
                 }
-                @Suppress("UNREACHABLE_CODE")
-                throw IllegalStateException()
-            } finally {
-                tickers.remove(ticker)
-                openWaiters.remove(ticker)
             }
+        } catch (e: CancellationException) {
+            made?.let {
+                it.reset(defaultCode())
+                if (bidi) it.stopSending(defaultCode())
+            }
+            throw e
         }
+    }
 
     override suspend fun openBidi(priority: StreamPriority): QuicStream = open(true, priority)
 

@@ -110,6 +110,17 @@ class StreamStateTest {
         assertEquals(-1L, m.highestReceived(4))
     }
 
+    /** A stopped receiving half still tells the runtime the highest offset it received (its bytes are dropped). */
+    @Test fun stoppedHalfStillRaisesTheHighestOffset() {
+        val m = manager(role = TlsRole.Server)
+        recv(m, 0, 0, ByteArray(10))
+        m.stopSending(0, 1)
+        m.events.clear()
+        recv(m, 0, 10, ByteArray(40))
+        assertEquals(50L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
+    }
+
     @Test fun maxDataWithoutGrowthTouchesNoStream() {
         // RFC 9000 section 21.6: a MAX_DATA that raises nothing costs the peer one frame; it must not cost us a pass over every stream
         val m = manager(peerMaxData = 1L shl 20, maxStreams = 1000)

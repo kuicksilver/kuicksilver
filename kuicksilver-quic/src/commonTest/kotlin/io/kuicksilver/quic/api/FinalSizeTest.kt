@@ -4,11 +4,14 @@
 
 package io.kuicksilver.quic.api
 
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -119,6 +122,40 @@ class FinalSizeTest {
                     assertEquals(3000L, assertNotNull(ss.receivedFinalSize).await())
                     assertEquals(3000L, ss.receivedOffset!!.value)
                     assertEquals(0L, assertNotNull(st.receivedOffset).value)
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /**
+     * A stream opened for a caller cancelled as it is handed back is never lost: it is reset, so the peer, which counts it
+     * opened once a later stream arrives, sees it end (and its credit comes back).
+     */
+    @Test fun negative_streamOpenedForACancelledCallerIsReset() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val rt = c as io.kuicksilver.quic.runtime.ConnectionRuntime
+                    val caller = CompletableDeferred<kotlinx.coroutines.Job>()
+                    rt.openedForTest = { kotlinx.coroutines.runBlocking { caller.await() }.cancel() }
+                    val opening = async { c.openUni() }
+                    caller.complete(opening)
+                    assertFailsWith<kotlinx.coroutines.CancellationException> { opening.await() }
+                    rt.openedForTest = null
+                    // a later stream reveals the first to the peer: the first arrives reset
+                    val later = c.openUni()
+                    later.output.writeFully(ByteArray(1), 0, 1)
+                    later.output.flushAndClose()
+                    val first = s.acceptStream()
+                    assertFailsWith<QuicException.StreamError.Reset> {
+                        try {
+                            first.input.readAvailable(ByteArray(1), 0, 1)
+                        } catch (e: Throwable) {
+                            throw generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull() ?: e
+                        }
+                    }
                     c.close()
                     s.close()
                 }
