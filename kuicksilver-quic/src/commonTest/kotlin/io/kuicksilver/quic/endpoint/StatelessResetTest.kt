@@ -635,6 +635,38 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * Found by the connection fuzzer (`connectionTls`, a reset from a stranger): RFC 9000 section 10.3.1, "An endpoint remembers all
+     * stateless reset tokens associated with the connection IDs and remote addresses for datagrams it has recently sent ... The
+     * endpoint identifies a received datagram as a Stateless Reset by comparing the last 16 bytes of the datagram with all stateless
+     * reset tokens associated with the remote address on which the datagram was received." A datagram routed to the connection by our
+     * own ID (so the endpoint's per-address lookup was skipped) was matched against every used token, whatever its source.
+     */
+    @Test fun negative_resetFromAnAddressTheIdWasNeverUsedTowardsIsIgnored() {
+        val p = Pair()
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            // the client retires its earlier IDs for one with a token of its own choosing: the server moves to it and uses it
+            // towards the client's address (clients give no token for their handshake ID)
+            val token = ByteArray(16) { 0x5a }
+            c.testInjectFrames += 3 to (byteArrayOf(0x18, 9, 9, 8) + ByteArray(8) { 0x77 } + token)
+            repeat(6) { p.step() }
+            assertEquals(ConnectionState.Confirmed, s.state)
+
+            fun reset(seed: Int): ByteArray = shortTo(s.localCid.toByteArray(), 60, seed).also { token.copyInto(it, it.size - 16) }
+            // routed to the server's connection by its own ID from an address the client never had: not a reset of it
+            p.feed(p.server, reset(1), InetSocketAddress("10.0.0.9", 40000))
+            assertEquals(ConnectionState.Confirmed, s.state, "a token is matched only for the addresses its ID was used towards")
+            assertEquals(1L, s.stats.invalidResets)
+            p.feed(p.server, reset(2), clientAddr)
+            assertEquals(ConnectionState.Draining, s.state)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_wrongStatelessResetToken() {
         val p = Pair()
         try {
@@ -677,13 +709,13 @@ class StatelessResetTest {
         }
         add(1, 0, 0x11)
         add(2, 2, 0x22) // retire_prior_to = 2 retires sequences 0 and 1
-        m.markUsedForTest(1)
-        m.markUsedForTest(2)
+        m.markUsedForTest(1, serverAddr)
+        m.markUsedForTest(2, serverAddr)
         val dg1 = PacketBuffer.of(ByteArray(40) { 0x11 })
         val dg2 = PacketBuffer.of(ByteArray(40) { 0x22 })
         try {
-            assertFalse(m.matchesPeerToken(dg1, 40), "token of a retired ID never matches")
-            assertTrue(m.matchesPeerToken(dg2, 40))
+            assertFalse(m.matchesPeerToken(dg1, 40, serverAddr), "token of a retired ID never matches")
+            assertTrue(m.matchesPeerToken(dg2, 40, serverAddr))
         } finally {
             dg1.close()
             dg2.close()
@@ -702,10 +734,10 @@ class StatelessResetTest {
             )
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
         m.setPeerResetToken(0, ByteArray(16))
-        m.markUsedForTest(0)
+        m.markUsedForTest(0, serverAddr)
         val dg = PacketBuffer.of(ByteArray(40))
         try {
-            assertFalse(m.matchesPeerToken(dg, 40), "all-zero token advertised by the peer never matches")
+            assertFalse(m.matchesPeerToken(dg, 40, serverAddr), "all-zero token advertised by the peer never matches")
         } finally {
             dg.close()
         }
@@ -731,9 +763,9 @@ class StatelessResetTest {
         }
         val dg = PacketBuffer.of(ByteArray(40) { 9 })
         try {
-            assertFalse(m.matchesPeerToken(dg, 40), "RFC 9000 section 10.3.1: tokens of IDs we never used are not checked")
-            m.markUsedForTest(1)
-            assertTrue(m.matchesPeerToken(dg, 40))
+            assertFalse(m.matchesPeerToken(dg, 40, serverAddr), "RFC 9000 section 10.3.1: tokens of IDs we never used are not checked")
+            m.markUsedForTest(1, serverAddr)
+            assertTrue(m.matchesPeerToken(dg, 40, serverAddr))
         } finally {
             dg.close()
         }

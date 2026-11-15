@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.core
 
+import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
@@ -85,6 +86,48 @@ internal class ConnectionIdManager(
 
         /** Reserved by a path other than the active one (RFC 9000 section 9.5). */
         var heldByPath = false
+
+        /**
+         * The remote addresses (IP and port) our packets carrying this ID went to, the latest [SENT_TOWARDS] of them: its reset token
+         * counts only for a datagram from one of them (RFC 9000 section 10.3.1, "associated with the remote address on which the
+         * datagram was received").
+         */
+        private val towardsIp = arrayOfNulls<AddressClass.IpKey>(SENT_TOWARDS)
+        private val towardsPort = IntArray(SENT_TOWARDS)
+        private var towardsNext = 0
+
+        fun noteSentTowards(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ) {
+            for (i in 0 until SENT_TOWARDS) if (towardsPort[i] == port && towardsIp[i] == ip) return
+            towardsIp[towardsNext] = ip
+            towardsPort[towardsNext] = port
+            towardsNext = (towardsNext + 1) % SENT_TOWARDS
+        }
+
+        fun sentTowards(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ): Boolean {
+            for (i in 0 until SENT_TOWARDS) if (towardsPort[i] == port && towardsIp[i] == ip) return true
+            return false
+        }
+    }
+
+    /** Our packet with the peer's ID [cid] goes to [remote] (whose IP key is [ip]): that ID's token now counts for datagrams from there. */
+    fun noteSentTowards(
+        cid: ConnectionId,
+        ip: AddressClass.IpKey,
+        port: Int,
+    ) {
+        for (i in peer.indices) {
+            val p = peer[i]
+            if (p.cid === cid || p.cid == cid) {
+                p.noteSentTowards(ip, port)
+                return
+            }
+        }
     }
 
     private fun tokenFor(cid: ConnectionId): ByteArray {
@@ -129,17 +172,22 @@ internal class ConnectionIdManager(
         p.token?.let { peerTokens?.removed(it) }
     }
 
-    /** True when the datagram `[0, end)` ends with the token of a peer ID we used and did not retire (RFC 9000 section 10.3.1). */
+    /**
+     * True when the datagram `[0, end)` from [from] ends with the token of a peer ID we used towards [from] and did not retire (RFC
+     * 9000 section 10.3.1).
+     */
     fun matchesPeerToken(
         buf: PacketBuffer,
         end: Int,
+        from: InetSocketAddress,
     ): Boolean {
         var hit = false
+        val ip = AddressClass.ipKey(from)
         for (i in peer.indices) {
             val p = peer[i]
             val t =
                 p.token ?: continue
-            if (p.used &&
+            if (p.used && p.sentTowards(ip, from.port) &&
                 io.kuicksilver.quic.endpoint.StatelessReset
                     .matches(buf, end, t)
             ) {
@@ -149,8 +197,14 @@ internal class ConnectionIdManager(
         return hit
     }
 
-    internal fun markUsedForTest(seq: Long) {
-        peer.firstOrNull { it.seq == seq }?.used = true
+    /** Test hook: our packets carried the peer's ID [seq], to [towards] when given. */
+    internal fun markUsedForTest(
+        seq: Long,
+        towards: InetSocketAddress? = null,
+    ) {
+        val p = peer.firstOrNull { it.seq == seq } ?: return
+        p.used = true
+        towards?.let { p.noteSentTowards(AddressClass.ipKey(it), it.port) }
     }
 
     internal fun peerTokensForTest(): List<kotlin.Pair<ConnectionId, ByteArray?>> = peer.map { it.cid to it.token }
@@ -773,3 +827,6 @@ internal class ConnectionIdManager(
         const val UNIQUE_DRAWS = 16
     }
 }
+
+/** Remote addresses remembered per peer connection ID for its reset token: as many as the paths a connection keeps (4). */
+private const val SENT_TOWARDS = 4

@@ -267,7 +267,7 @@ class PathTest {
             token.copyInto(reset, reset.size - token.size)
             val b = PacketBuffer.of(reset)
             try {
-                assertTrue(c.checkStatelessReset(b, reset.size, p.now), "a Stateless Reset with the server's token")
+                assertTrue(c.checkStatelessReset(b, reset.size, c.remoteAddress, p.now), "a Stateless Reset with the server's token")
             } finally {
                 b.close()
             }

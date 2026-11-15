@@ -205,7 +205,7 @@ internal class PacketReceiver(
         // So the check follows the first packet: one that was handled leaves the datagram alone, whatever came after it
         // A first packet of a space whose keys are gone is ours, so a mismatch there is no invalid reset of the peer's
         if (first != FIRST_HANDLED && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
-            c.checkStatelessReset(data, length, now, countInvalid = first != FIRST_STALE)
+            c.checkStatelessReset(data, length, from, now, countInvalid = first != FIRST_STALE)
         }
     }
 

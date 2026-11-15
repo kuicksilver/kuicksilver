@@ -1041,6 +1041,8 @@ internal class PacketBuilder(
         }
         p.zeroRtt = type == PacketType.ZeroRtt
         sp.commitPn(pn)
+        // the ID's reset token counts for datagrams from there (RFC 9000 section 10.3.1)
+        c.cids.noteSentTowards(dcid, target.remoteKey, target.remote.port)
         p.pn = pn
         p.timeSent = now
         p.size = end - start

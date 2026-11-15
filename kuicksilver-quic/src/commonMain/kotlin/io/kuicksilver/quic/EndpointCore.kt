@@ -646,7 +646,7 @@ public class EndpointCore internal constructor(
         for (i in l.indices) {
             val c = l[i]
             resetCandidatesExaminedForTest++
-            if (c.checkStatelessReset(data, length, now)) {
+            if (c.checkStatelessReset(data, length, from, now)) {
                 markDirty(c)
                 return c
             }
