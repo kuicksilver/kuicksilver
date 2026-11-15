@@ -3398,6 +3398,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negati
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_newCidFromZeroLengthCidPeer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_newLocalIdNeverRepeatsOneInUse
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_retireOfIssuedButUnsentId
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_retiredIdsThatKeepRoutingNeverExceedTheCap
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_retiredLocalIdsStayBounded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.negative_rotationWithAFullRetirementBacklogWaits
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ConnectionIdTest.newConnectionIdIdempotent
