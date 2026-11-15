@@ -407,7 +407,14 @@ internal class ConnectionHandshakeSink(
             protector.close()
             return
         }
-        if (level == 3) requirePeerTransportParameters()
+        if (level == 3) {
+            try {
+                requirePeerTransportParameters()
+            } catch (t: Throwable) {
+                protector.close() // not stored: nobody else would close it (RFC 9001 section 8.2 closes the connection)
+                throw t
+            }
+        }
         if (level == 1 && (core.state != ConnectionState.Handshaking || (direction == Direction.Write) != (core.role == TlsRole.Client))) {
             protector.close()
             return

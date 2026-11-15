@@ -130,6 +130,20 @@ class NativeLeakTest {
             assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
         }
 
+    /** RFC 9001 section 8.2: the 1-RTT keys arrive in the same flight as the missing extension's verdict. */
+    @Test fun negative_missingTransportParameters() {
+        for (role in listOf(TlsRole.Server, TlsRole.Client)) {
+            leakFree({ CorePair(crypto = WithoutPeerTp(it, role)) }) { p ->
+                assertTrue(
+                    p.runUntil(limit = 3.seconds) {
+                        p.closedReason(if (role == TlsRole.Client) p.clientEvents else p.serverEvents) !=
+                            null
+                    },
+                )
+            }
+        }
+    }
+
     /** Three updates by the client, each followed by the server: every generation's keys and the derived next ones. */
     @Test fun negative_keyUpdates() =
         leakFree({ CorePair(crypto = it) }) { p ->
@@ -468,4 +482,35 @@ private class OddKeys(
             }
         }
     }
+}
+
+/** The session of [role] never reports the peer's transport parameters, as if the extension were absent. */
+@OptIn(DelicateKuicksilverApi::class)
+private class WithoutPeerTp(
+    private val inner: QuicCrypto,
+    private val role: TlsRole,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != role) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? {
+                    while (true) {
+                        val e = s.nextEvent() ?: return null
+                        if (e !is TlsEvent.PeerTransportParameters) return e
+                    }
+                }
+            }
+        }
 }
