@@ -988,6 +988,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
+  was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
+  10.2.2). They are dropped when the connection starts closing or draining
+  (`PathTest.negative_owedPathResponsesGoWhenTheConnectionCloses`).
 - QUIC runtime: a STOP_SENDING watcher (`awaitSendStopped`, internal API) waited forever once its stream could no longer
   be stopped. It now ends with the connection's `ConnectionLost` when the connection ended, with
   `StreamError.EarlyDataRejected` when a rejected 0-RTT dropped the stream (RFC 9001 section 4.6.2: the client resets

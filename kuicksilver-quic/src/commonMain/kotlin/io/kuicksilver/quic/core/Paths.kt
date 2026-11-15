@@ -417,6 +417,13 @@ internal class Paths(
         }
     }
 
+    /**
+     * The connection started closing or draining: no PATH_RESPONSE goes any more (a closing endpoint sends only
+     * CONNECTION_CLOSE, a draining one nothing, RFC 9000 sections 10.2.1, 10.2.2), so the owed ones are dropped now rather than
+     * held, up to [MAX_RESPONSES], until the connection is gone.
+     */
+    fun dropAllResponses() = dropResponses { true }
+
     /** Removes the queued responses whose path [drop] selects. */
     private inline fun dropResponses(drop: (Path) -> Boolean) {
         var w = 0

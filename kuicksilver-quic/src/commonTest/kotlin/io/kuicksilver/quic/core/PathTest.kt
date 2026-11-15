@@ -234,6 +234,30 @@ class PathTest {
     }
 
     /**
+     * Found by replaying the committed fuzz corpus: a connection that a flood of PATH_CHALLENGEs closed (or that closed for any
+     * other reason) kept the PATH_RESPONSEs it owed until it was gone, up to [Paths.MAX_RESPONSES] of them. A closing endpoint
+     * sends nothing but CONNECTION_CLOSE and a draining one nothing at all (RFC 9000 sections 10.2.1, 10.2.2), so they are
+     * dropped when the connection starts closing or draining.
+     */
+    @Test fun negative_owedPathResponsesGoWhenTheConnectionCloses() {
+        for (peer in listOf(false, true)) {
+            val (p, _) = connected()
+            try {
+                val s = p.server()
+                repeat(17) { assertTrue(s.paths.queueResponse(it.toLong(), s.paths.active)) }
+                if (peer) {
+                    s.peerClosed(application = true, code = 0, frameType = 0, reasonBytes = ByteArray(0))
+                } else {
+                    s.close(0, "", p.now)
+                }
+                assertEquals(0, s.paths.responses, if (peer) "draining" else "closing")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
      * RFC 9000 section 8.2.2: a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received". A challenge from
      * the client's address that reached another address of a wildcard server was answered from the path's own address (0.3.0
      * cross-review); the answer now leaves from the address the challenge reached, in a datagram of its own, and the path stays.
