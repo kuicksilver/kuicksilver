@@ -13,9 +13,11 @@ import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EcnState
 import io.kuicksilver.quic.PREFERRED_SOCKET
+import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.Path
@@ -649,6 +651,22 @@ internal class ConnectionInvariants(
                 if (side == 0) QuicReach.hit("migration.validated")
             }
 
+            is ConnectionEvent.PathChanged -> {
+                if (side == 1 && e.reason == PathChangeReason.PreferredAddress && !serverMoved) {
+                    serverMoved = true
+                    // the move itself needs a validated path at the preferred address (section 9.6.2). Events are read at the end of the
+                    // round, and by then the path may be validated again: a client migrating from it in the same round makes the server
+                    // check it once more (section 9.3.3), so it must have been validated, not be so still. Later paths there (a NAT
+                    // rebinding of the client) may be unvalidated, as any migration's (section 9.3)
+                    val p = c.paths.byId(e.new)
+                    if (p != null && (p.socket != PREFERRED_SOCKET || p.validatedAt == TimeMark.NEVER)) {
+                        fail(
+                            "server moved to its preferred address without a validated path there (RFC 9000 section 9.6.2): ${p.id} ${p.state}",
+                        )
+                    }
+                }
+            }
+
             else -> {}
         }
     }
@@ -670,13 +688,11 @@ internal class ConnectionInvariants(
         clientRules(net.client)
         net.serverCore?.let { s -> if (!net.serverLostState) waitRules(s) }
         net.serverCore?.let { s ->
-            // the move itself needs a validated path at the preferred address (section 9.6.2); later paths there (a NAT rebinding of the
-            // client) may be unvalidated, as any migration's (section 9.3)
-            if (!serverMoved && s.leftOriginalAddress) {
-                serverMoved = true
-                if (s.paths.all.none { it.socket == PREFERRED_SOCKET && it.state == PathState.Validated }) {
-                    fail("server moved to its preferred address without a validated path there (RFC 9000 section 9.6.2)")
-                }
+            // the move is reported (PathChanged, checked in event); one that was not is a move nothing checked
+            if (!serverMoved &&
+                s.leftOriginalAddress
+            ) {
+                fail("server left its original address without reporting a move to its preferred address")
             }
         }
         val ptb = net.server.ptbAccepted + net.clientEp.ptbAccepted
