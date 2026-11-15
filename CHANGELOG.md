@@ -1080,6 +1080,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
   work (a loaded CI VM) gave up on its own connection. With three streams allowed the streams are now opened without a
   deadline; only a peer whose limit is lower still gets 3 s to raise it.
+- QUIC key update (RFC 9001 section 6.4): "Packets with higher packet numbers MUST be protected with either the same or
+  newer packet protection keys than packets with lower packet numbers", and a packet opened against that order "MUST" be
+  a KEY_UPDATE_ERROR. The check compared a new phase only with the lowest packet number of the current one and let a
+  packet of the current phase lower that number unchecked, so old keys on pn 20 and new ones on pn 15 (or, after our own
+  update, old keys on 30 and new ones on 25) were accepted. Every packet number opened with a generation of keys is now
+  checked against the highest one opened with older keys and the lowest and highest with newer ones, in both orders of
+  arrival and across consecutive updates. An ACK frame in a packet protected with old keys that acknowledges one of our
+  packets protected with newer keys is a KEY_UPDATE_ERROR as well (section 6.2's MAY).
+- QUIC (RFC 9001 section 6): a TLS KeyUpdate message received in the 1-RTT CRYPTO stream is a connection error 0x010a
+  whatever `QuicCrypto` provides the TLS stack; the transport checks the stream's handshake messages itself (ksl's
+  OpenSSL already refused one). A `ksl` session in QUIC mode refuses `ksl_ssl_key_update` ("Endpoints MUST NOT send a
+  TLS KeyUpdate message"); before, the C API would have written one.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

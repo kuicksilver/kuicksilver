@@ -336,7 +336,7 @@ internal class PacketReceiver(
                 )
             if (pn < 0) return false
             val bit = data[headerStart()].toInt() and 0x04 != 0
-            val aead = kp.readKey(bit, pn) ?: return false
+            val aead = kp.readKey(bit, pn)
             if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, aead)) {
                 c.onAuthenticationFailure(aead.aead)
                 return false
@@ -639,6 +639,9 @@ internal class PacketReceiver(
 
     /** Whether the packet being decoded is a 0-RTT one (its STREAM frames mark their streams as received early). */
     internal val inZeroRtt: Boolean get() = packetType == PacketType.ZeroRtt
+
+    /** The packet being processed is a 1-RTT packet (its key was chosen by the connection's [KeyPhase]). */
+    internal val inOneRtt: Boolean get() = packetType == PacketType.OneRtt
 
     fun dropBufferedLevel(level: Int) {
         buffered.removeAll { it.level == level }

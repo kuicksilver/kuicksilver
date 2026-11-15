@@ -729,6 +729,41 @@ static void test_level_cap(void) {
     END();
 }
 
+/* RFC 9001 section 6: "Endpoints MUST NOT send a TLS KeyUpdate message. Endpoints MUST treat the receipt of a TLS KeyUpdate message
+   as a connection error of type 0x010a, equivalent to a fatal TLS alert of unexpected_message". A QUIC session refuses to write one
+   (key updates are QUIC's own, RFC 9001 section 6.1), and one received at the application level fails with unexpected_message. */
+static void test_tls_key_update(void) {
+    static const uint8_t key_update[] = {24, 0, 0, 1, 0}; /* KeyUpdate, update_not_requested (RFC 8446 section 4.6.3) */
+    for (int receiver = 0; receiver < 2; receiver++) {
+        SECTION(receiver ? "quic_tls_key_update_received_by_client" : "quic_tls_key_update_received_by_server");
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ssl *c = client(cc, "server.test"), *s = server(sc);
+        side cs = {0}, ss = {0};
+        pump(c, s, &cs, &ss, 40, NULL, NULL);
+        CHECK(cs.done && ss.done, "handshake done");
+        ksl_ssl *sender = receiver ? s : c, *to = receiver ? c : s;
+        CHECK(ksl_ssl_key_update(sender, 0) == KSL_ERROR && ksl_ssl_key_update(sender, 1) == KSL_ERROR,
+              "a QUIC session never writes a TLS KeyUpdate");
+        ksl_event ev;
+        int written = 0;
+        ksl_drive(sender);
+        while (ksl_quic_next_event(sender, &ev))
+            if (ev.type == KSL_EV_CRYPTO_SEND)
+                written++;
+        CHECK(written == 0, "nothing written after the refused KeyUpdate");
+        CHECK(ksl_quic_provide(to, KSL_LEVEL_APPLICATION, key_update, sizeof key_update) == KSL_OK, "provided");
+        int alert = 0;
+        CHECK(ksl_drive(to) == KSL_ERROR, "a received KeyUpdate is a fatal error");
+        last_code(to, &alert);
+        CHECK(alert == 10, "unexpected_message (QUIC 0x010a)");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+        END();
+    }
+}
+
 void run_quic(void) {
     test_handshake();
     test_no_hrr_for_x25519_only_client();
@@ -750,4 +785,5 @@ void run_quic(void) {
     test_tp_replace();
     test_previous_level_refused();
     test_level_cap();
+    test_tls_key_update();
 }

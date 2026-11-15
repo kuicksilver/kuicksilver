@@ -490,6 +490,11 @@ int ksl_ssl_new_session_ticket(ksl_ssl *s) {
    goes on under its last keys (ksl_msg_cb). */
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
+    /* RFC 9001 section 6: "Endpoints MUST NOT send a TLS KeyUpdate message"; QUIC updates its packet keys itself (section 6.1) */
+    if (s->mode == KSL_MODE_QUIC) {
+        ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no TLS KeyUpdate in QUIC (RFC 9001 section 6)");
+        return KSL_ERROR;
+    }
     if (s->key_updates_exhausted) {
         ksl_ssl_set_error(
             s, KSL_E_NOT_SUPPORTED,
