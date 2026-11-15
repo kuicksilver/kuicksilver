@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.plugins.websocket.webSocketSession
@@ -143,7 +145,7 @@ class ClientH3WebSocketTest {
                         launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
                         session.call.coroutineContext[Job]!!.join()
                         reading.complete(Unit)
-                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(BIG_TRANSFER_WAIT) { served.await() })
                     }
                 } finally {
                     served.cancel()
@@ -267,7 +269,7 @@ class ClientH3WebSocketTest {
                         // once the session ended, not at once because the call is over
                         (c.engine as KuicksilverEngine).closeHttp3Connections()
                         reading.complete(Unit)
-                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(BIG_TRANSFER_WAIT) { served.await() })
                     }
                 } finally {
                     served.cancel()
@@ -325,7 +327,7 @@ class ClientH3WebSocketTest {
                         val cleanedFirst =
                             kotlinx.coroutines.withTimeoutOrNull(1.seconds) { (c.engine as KuicksilverEngine).cleanup.join() } != null
                         reading.complete(Unit)
-                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(BIG_TRANSFER_WAIT) { served.await() })
                         assertEquals(false, cleanedFirst, "the cleanup ran before the session wrote its Close")
                         withTimeout(20.seconds) { (c.engine as KuicksilverEngine).cleanup.join() }
                     }
@@ -482,6 +484,11 @@ class ClientH3WebSocketTest {
      * HTTP/1.1: the first WebSocket fails with `ConnectTimeoutException`, and the second one, which waited for the
      * host, then connects. Before, the CONNECT waited without a bound while holding the lock, so every later WebSocket
      * to the address, over HTTP/1.1 too, waited forever.
+     *
+     * The connect timeout also bounds the QUIC handshake, so a request answered first sets the connection up outside it:
+     * on a loaded host (a Windows VM) the handshake took longer than the 500 ms, the first WebSocket failed before its
+     * CONNECT was sent, and the test waited for that CONNECT until its own 60 s ran out. The second WebSocket's answer
+     * has its own, longer connect timeout for the same reason; only the first one's wait is under test.
      */
     @Test fun negative_stalledHandshakeTimesOutAndFreesTheHostH3() =
         h3Test {
@@ -504,6 +511,7 @@ class ClientH3WebSocketTest {
                 val served =
                     async {
                         val conn = ep.accept()
+                        conn.acceptRequest().respond(204, io.kuicksilver.http3.Http3Headers(emptyList())).finish() // the set-up
                         conn.acceptRequest() // never answered
                         firstArrived.complete(Unit)
                         val s = conn.acceptRequest().acceptConnect()
@@ -514,14 +522,34 @@ class ClientH3WebSocketTest {
                     testClient(
                         Http3DiscoveryMode.H3Only,
                         engine = { connectTimeout = 500.milliseconds },
-                        block = { install(WebSockets) },
+                        block = {
+                            install(WebSockets)
+                            install(HttpTimeout)
+                        },
                     ).use { c ->
                         val engine = c.engine as KuicksilverEngine
                         val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
+                        // the connection is set up (and SETTINGS seen) with a longer connect timeout than the one under test
+                        val setUp =
+                            c.get("https://127.0.0.1:${ep.localAddress.port}/") {
+                                timeout { connectTimeoutMillis = 10_000 }
+                            }
+                        assertEquals(204, setUp.status.value)
                         coroutineScope {
                             val first = async { runCatching { c.webSocket(url) { for (f in incoming) continue } } }
-                            firstArrived.await()
-                            val second = async { withTimeout(10.seconds) { c.webSocket(url) { for (f in incoming) continue } } }
+                            // the first's CONNECT reached the server, or the first ended without it (named, not a hang)
+                            kotlinx.coroutines.selects.select {
+                                firstArrived.onAwait {}
+                                first.onAwait { r -> throw AssertionError("the first ended before its CONNECT arrived: $r") }
+                            }
+                            val second =
+                                async {
+                                    withTimeout(10.seconds) {
+                                        c.webSocket(url, request = {
+                                            timeout { connectTimeoutMillis = 10_000 }
+                                        }) { for (f in incoming) continue }
+                                    }
+                                }
                             val failure = withTimeout(10.seconds) { first.await() }.exceptionOrNull()
                             assertTrue(failure is io.ktor.client.network.sockets.ConnectTimeoutException, "the first: $failure")
                             second.await()
@@ -597,5 +625,11 @@ class ClientH3WebSocketTest {
     private companion object {
         /** Far more than the server's stream window and the client's send buffer take before the writer waits. */
         const val BIG = 16 shl 20
+
+        /**
+         * How long the server may take to read [BIG] and the Close: a guard against a hang, under the test's own 60 s. About
+         * a second on a laptop; on a loaded Windows VM (the JVM suites beside a busy host) it passed 20 s.
+         */
+        val BIG_TRANSFER_WAIT = 45.seconds
     }
 }
