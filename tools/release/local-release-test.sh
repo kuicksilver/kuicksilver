@@ -23,7 +23,7 @@ done
 FPR=$(gpg --batch --with-colons --list-keys release@example.invalid 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}')
 OTHER_FPR=$(gpg --batch --with-colons --list-keys other@example.invalid 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}')
 gpg --batch --armor --export "$FPR" > "$tmp/test-release-key.asc"
-export KSL_SWIFT_TAG_KEY="$tmp/test-release-key.asc" KSL_SWIFT_TAG_FPR="$FPR"
+export KSL_SWIFT_TAG_KEY="$tmp/test-release-key.asc" KSL_SWIFT_TAG_FPR="$FPR" KSL_RELEASE_KEY_FILE="$tmp/test-release-key.asc" KSL_RELEASE_FPR="$FPR"
 printf '[user]\n\tname = Global Person\n\temail = global@example.invalid\n\tsigningkey = %s\n[gpg]\n\tprogram = gpg\n' "$FPR" > "$GIT_CONFIG_GLOBAL"
 # Maven Central: 0.2.0 is published, nothing else; KSL_CENTRAL_STATUS forces an answer (000: no answer)
 mkdir -p "$tmp/bin"
@@ -365,6 +365,11 @@ git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" commit -q 
 spc "negative_swiftCheckUnsignedCommit"         refuse "the commit [0-9a-f]+ is not signed [(]git commit -S[)]" "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit -S"$OTHER_FPR"; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
 spc "negative_swiftCheckCommitOtherKey"         refuse "the commit [0-9a-f]+ is not signed by $FPR" "$tmp/zip-a" prepush 1.1.0-rc1
+# the signature is read from the commit header only: a message line that starts with "gpgsig " is message
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
+TZ=UTC git -C "$tmp/sp" commit -q --amend -S -m "Kuicksilver 1.1.0-rc1" -m "gpgsig in the message, not a header"
+TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
+spc "swift check: a 'gpgsig ' line in the message"  ok "the commit [0-9a-f]+ is signed by $FPR" "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 TZ=UTC git -C "$tmp/sp" -c user.name=Other -c user.email=o@example.invalid commit -q --amend --no-edit --no-gpg-sign
 spc "negative_swiftCheckCommitterIdentity"      refuse "author[|]committer is"              "$tmp/zip-a" files 1.1.0-rc1
@@ -549,7 +554,13 @@ mhook "negative_hookOtherIdentity" refuse "another author/committer identity" ma
 hg reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a v9 -m v9
 mhook "negative_hookTaggerZone" refuse "tagger zone [+]0500" refs/tags/v9
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a v9 -m v9
-mhook "privacy hook: a UTC tag by the release identity, over commits by the maintainer" ok - main refs/tags/v9
+mhook "negative_hookUnsignedReleaseTag" refuse "tag v9 is not signed" refs/tags/v9
+hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s -u "$OTHER_FPR" v9 -m v9
+mhook "negative_hookReleaseTagOtherKey" refuse "tag v9 is not signed by the release key $FPR" refs/tags/v9
+hg tag -d v9 >/dev/null; hg tag v9
+mhook "negative_hookLightweightReleaseTag" refuse "must be an annotated tag signed by the release key" refs/tags/v9
+hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s v9 -m v9
+mhook "privacy hook: a signed UTC tag by the release identity, over commits by the maintainer" ok - main refs/tags/v9
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
 mhook "negative_hookTagByCommitIdentity" refuse "tagger 'kinchpik <339333647[+]kinchpik@users.noreply.github.com>'" refs/tags/v9
 hg tag -d v9 >/dev/null

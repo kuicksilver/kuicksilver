@@ -626,7 +626,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The Swift package clone gets a pre-push hook that runs those checks on every push of it, and its own git config
   carries the release identity, which the checks require of every commit and tag (both also signed by the release key).
 - Release privacy: `tools/hooks/pre-push` (UTC commit and tag dates, one identity, no maintainer name, home directory or
-  host name in a pushed commit or its author), installed by symlink with the names and the identity in git config
+  host name in a pushed commit or its author, release tags signed by the release key), installed by symlink with the names and the identity in git config
   (`kuicksilver.privacy.names`, `kuicksilver.privacy.identity`, and `kuicksilver.privacy.tagger`, the release key's
   identity `Kuicksilver <hello@kuicksilver.io>` that release tags and the Swift package's commits and tags carry, so that
   GitHub can show them as Verified), and required by

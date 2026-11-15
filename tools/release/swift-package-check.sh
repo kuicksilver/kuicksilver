@@ -103,8 +103,9 @@ verify_signature() { # <tag|commit> <object> <what, for the messages>
     sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$tmp/obj" > "$tmp/obj.payload"
     sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$tmp/obj" > "$tmp/obj.asc"
   else   # the gpgsig header and its continuation lines (one leading space) are the signature; the rest is what it signs
-    awk '/^gpgsig / { s = 1; print substr($0, 8); next } s && /^ / { print substr($0, 2); next } { s = 0 }' "$tmp/obj" > "$tmp/obj.asc"
-    awk '/^gpgsig / { s = 1; next } s && /^ / { next } { s = 0; print }' "$tmp/obj" > "$tmp/obj.payload"
+    # (in the header only: it ends at the first empty line, after which the message may hold any line)
+    awk 'BEGIN { h = 1 } h && /^$/ { h = 0 } h && /^gpgsig / { s = 1; print substr($0, 8); next } h && s && /^ / { print substr($0, 2); next } { s = 0 }' "$tmp/obj" > "$tmp/obj.asc"
+    awk 'BEGIN { h = 1 } h && /^$/ { h = 0 } h && /^gpgsig / { s = 1; next } h && s && /^ / { next } { s = 0; print }' "$tmp/obj" > "$tmp/obj.payload"
   fi
   [ -s "$tmp/obj.asc" ] || fail "$3 is not signed ($([ "$1" = tag ] && echo "git tag -s" || echo "git commit -S"))"
   h=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$h"
