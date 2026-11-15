@@ -313,6 +313,9 @@ internal object ConnectionPathSeeds {
                 .tick(5)
                 .run(10)
                 .build()
+        // the preferred-address socket does neither DF nor ECN, the main one does both: the server's path there must do neither
+        m["preferred-socket-without-df-ecn"] =
+            b(DF or ECN or LIVE, PREFERRED).path(1, E_CAPS, one(3)).path(1, E_CAPS, one(2)).bulk().run(30).bulk(1).run(30).build()
         m["preferred-with-rebinding"] =
             b(DF or ECN, PREFERRED)
                 .bulk()

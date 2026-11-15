@@ -32,6 +32,7 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.narrowedCaps
 import io.kuicksilver.quic.openDatagramIo
 import io.kuicksilver.quic.tokenStoreKey
 import io.kuicksilver.quic.withLiteralHost
@@ -424,6 +425,12 @@ internal class EndpointLoop private constructor(
         runtimes[c] = rt
         observer.opened(rt)
         c.setPathCapabilities(PathId.Initial, io.capabilities.value)
+        // the preferred-address sockets (one per family): a path there gets what they all can do, as followCapabilities narrows it
+        preferredIos.firstOrNull()?.let { first ->
+            var caps = first.capabilities.value
+            for (p in preferredIos) caps = narrowedCaps(caps, p.capabilities.value)
+            c.setSocketCapabilities(PREFERRED_SOCKET, caps)
+        }
         c.onEcnFailed =
             { path ->
                 ioFor(rt, path)?.disableEcnMarking()

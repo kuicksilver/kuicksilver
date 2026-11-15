@@ -201,6 +201,15 @@ internal class EndpointNet(
 
     fun core(side: Int): ConnectionCore? = if (side == 0) client else serverCore
 
+    /** What the server's preferred-address socket can do: the main socket's at the start, narrowed by the program. */
+    var preferredCaps: IoCapabilities = caps[1]
+
+    /** What [side]'s socket [socket] can do. */
+    fun capsOf(
+        side: Int,
+        socket: PathId,
+    ): IoCapabilities = if (side == 1 && socket == PREFERRED_SOCKET) preferredCaps else caps[side]
+
     fun endpoint(side: Int): EndpointCore = if (side == 0) clientEp else server
 
     fun advance(d: Duration) {
@@ -426,6 +435,7 @@ internal class EndpointNet(
             if (c !in serverCores) {
                 serverCores += c
                 c.setPathCapabilities(PathId.Initial, caps[1])
+                if (preferredAddress != null) c.setSocketCapabilities(PREFERRED_SOCKET, preferredCaps)
                 serverCore = c
                 onServerCreated(c)
             }

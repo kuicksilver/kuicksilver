@@ -122,6 +122,32 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * 0.3.0 review: a server's path on its preferred-address socket copied the capabilities of the main socket's path, so a preferred
+     * socket without DF or ECN still ran DPLPMTUD (probes the kernel would fragment or refuse) and marked ECT (marks the socket never
+     * sets, so ECN validation could only fail). A path takes what its own socket does.
+     */
+    @Test fun negative_aServerPathOnThePreferredSocketGetsThatSocketsCapabilities() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        val full = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+        p.onServerCreated = {
+            it.setPathCapabilities(PathId.Initial, full)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, io.kuicksilver.quic.IoCapabilities.Portable)
+        }
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, full)
+            assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
+            val s = p.server.connections().single()
+            val there = s.paths.all.first { it.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+            assertNull(there.pmtud, "no DPLPMTUD on a socket without DF")
+            assertEquals(io.kuicksilver.quic.EcnState.Disabled, there.ecn.state, "no ECN on a socket that does not mark")
+            assertTrue(s.paths.all.any { it.socket == PathId.Initial } || s.paths.active === there)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))

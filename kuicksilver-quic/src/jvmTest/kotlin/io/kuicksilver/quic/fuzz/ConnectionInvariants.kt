@@ -148,7 +148,7 @@ internal class ConnectionInvariants(
         val path = pathFor(c, socket, f.to)
         // ECN marks only from a marking socket, on a path still testing or capable (RFC 9000 section 13.4.2.2)
         if (f.ecn != Ecn.NotEct) {
-            if (!net.caps[side].ecnSend) fail("${name(side)} marked a datagram ${f.ecn} on a socket that does not mark")
+            if (!net.capsOf(side, socket).ecnSend) fail("${name(side)} marked a datagram ${f.ecn} on a socket that does not mark")
             if (path != null && (path.ecn.state == EcnState.Failed || path.ecn.state == EcnState.Disabled)) {
                 fail(
                     "${name(
@@ -568,7 +568,7 @@ internal class ConnectionInvariants(
             // 14.3: an MPS "for each combination of local and remote IP addresses"), and every path of a marking socket validates ECN
             // (section 13.4.2: "for each new connection, when switching to a server's preferred address, and on active connection
             // migration to a new path")
-            val caps = net.caps[side]
+            val caps = net.capsOf(side, p.socket)
             if (caps.df && c.config.pmtud && p.pmtud == null && p.state != PathState.Closed) {
                 fail("${name(side)} path ${p.id.value} (socket ${p.socket.value}, to ${p.remote}) runs no DPLPMTUD on a socket with DF")
             }

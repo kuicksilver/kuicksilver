@@ -252,6 +252,7 @@ public class ConnectionCore internal constructor(
     ) {
         val p =
             paths.byId(path) ?: return
+        socketCaps[p.socket] = caps
         applyCapabilities(p, caps)
         for (i in 0 until paths.all.size) {
             val q = paths.all[i]
@@ -292,16 +293,24 @@ public class ConnectionCore internal constructor(
                 p.pmtud = null
                 if (p.mtu > 1200) setMtu(p, 1200)
             }
-            p.caps =
-                IoCapabilities(
-                    ecnSend = had.ecnSend && caps.ecnSend,
-                    ecnReceive = had.ecnReceive && caps.ecnReceive,
-                    gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
-                    gro = had.gro && caps.gro,
-                    df = had.df && caps.df,
-                    batch = minOf(had.batch, caps.batch),
-                )
+            p.caps = narrowedCaps(had, caps)
         }
+        socketCaps[socket]?.let { socketCaps[socket] = narrowedCaps(it, caps) }
+    }
+
+    /**
+     * What each socket of this connection can do (the endpoint's is [PathId.Initial], the server's preferred-address sockets
+     * [PREFERRED_SOCKET], a client's extra socket its path id): a path made later on a socket takes that socket's capabilities, not
+     * those of the path it came from.
+     */
+    internal val socketCaps = HashMap<PathId, IoCapabilities>(2)
+
+    /** The socket [socket] can do [caps] (the runtime's preferred-address sockets, before any path is on them). */
+    internal fun setSocketCapabilities(
+        socket: PathId,
+        caps: IoCapabilities,
+    ) {
+        socketCaps[socket] = caps
     }
 
     /**
@@ -1314,3 +1323,18 @@ internal fun <T> MutableList<T>.recordForTest(value: T) {
     if (size >= ConnectionCore.TEST_RECORD_LIMIT) removeAt(0)
     add(value)
 }
+
+/** What both [had] and [caps] allow: a socket that lost a feature, or the features two sockets share. */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal fun narrowedCaps(
+    had: IoCapabilities,
+    caps: IoCapabilities,
+): IoCapabilities =
+    IoCapabilities(
+        ecnSend = had.ecnSend && caps.ecnSend,
+        ecnReceive = had.ecnReceive && caps.ecnReceive,
+        gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
+        gro = had.gro && caps.gro,
+        df = had.df && caps.df,
+        batch = minOf(had.batch, caps.batch),
+    )

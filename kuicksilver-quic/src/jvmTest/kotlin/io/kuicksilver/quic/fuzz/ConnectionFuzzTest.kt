@@ -111,7 +111,7 @@ class ConnectionFuzzTest {
  *   side's own connection ID as destination); [E_CRASH] the server endpoint forgets its connection; [E_MIGRATE] `[variant]` the
  *   client opens a path from a new socket and probes it (0), switches to a validated one (1) or closes one (2); [E_STRANGER] the
  *   server's latest datagram reaches the client from an address it never used; [E_PREFERRED_LOSS] toggles losing everything sent
- *   to the preferred address; [E_CAPS] `[variant]` that side's socket stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
+ *   to the preferred address; [E_CAPS] `[variant]` that side's socket (bit 1 on the server: its preferred-address socket) stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
  *   Retry to the client (0 the server's last one again, 1 a fresh valid one, 2 a bad integrity tag, 3 the client's own DCID as
  *   source, 4 an empty token); [E_VN] `[variant]` a Version Negotiation to the client (0 the server's last one, 1 one that offers
  *   only v2, 2 one that lists the client's version); [E_PTB_INFLIGHT] `[m]` a router's Packet Too Big claiming an MTU of
@@ -839,16 +839,18 @@ internal class ConnectionFuzz(
 
             ConnProgram.E_CAPS -> {
                 val v = u8()
-                val had = net.caps[side]
+                val preferred = side == 1 && v and 2 != 0
+                val had = if (preferred) net.preferredCaps else net.caps[side]
                 val caps =
                     if (v and 1 != 0) {
                         IoCapabilities(false, had.ecnReceive, had.gsoMaxSegments, had.gro, had.df, had.batch)
                     } else {
                         IoCapabilities(had.ecnSend, had.ecnReceive, had.gsoMaxSegments, had.gro, false, had.batch)
                     }
-                net.caps[side] = caps
+                if (preferred) net.preferredCaps = caps else net.caps[side] = caps
                 // what the endpoint runtime does when a socket loses a feature (EndpointLoop.followCapabilities)
-                for (c in net.endpoint(side).connections()) c.updateSocketCapabilities(PathId.Initial, caps)
+                val socket = if (preferred) PREFERRED_SOCKET else PathId.Initial
+                for (c in net.endpoint(side).connections()) c.updateSocketCapabilities(socket, caps)
             }
 
             ConnProgram.E_RETRY -> {

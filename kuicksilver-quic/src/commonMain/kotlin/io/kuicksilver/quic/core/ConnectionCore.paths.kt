@@ -498,14 +498,16 @@ private fun ConnectionCore.initServerPath(
 ) = initPathOnSocket(p, active)
 
 /**
- * A path on the socket of [onSocket] gets what that socket does: its capabilities, ECN validated afresh (RFC 9000 section 13.4.2) and
- * DPLPMTUD (RFC 9000 section 14), from [Path.mtu] (1200 on a new address, or what a NAT rebinding inherited).
+ * A new path [p] gets what its socket does (`socketCaps`; [onSocket]'s capabilities when the socket was never described, which
+ * shares it): its capabilities, ECN validated afresh (RFC 9000 section 13.4.2) and DPLPMTUD (RFC 9000 section 14), from [Path.mtu]
+ * (1200 on a new address, or what a NAT rebinding inherited). A server's path on its preferred-address socket so gets that socket's,
+ * not those of the main socket the connection came from.
  */
 private fun ConnectionCore.initPathOnSocket(
     p: Path,
     onSocket: Path,
 ) {
-    p.caps = onSocket.caps
+    p.caps = socketCaps[p.socket] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
     if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
 }
