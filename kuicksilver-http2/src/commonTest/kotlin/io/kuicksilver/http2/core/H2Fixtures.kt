@@ -56,10 +56,14 @@ internal class RawH2Peer(
     }
 
     /** Polls everything the core has and decodes it; field blocks are decoded too (keeps our HPACK in step). */
-    fun read(): List<Frame> {
+    fun read(): List<Frame> = read(Int.MAX_VALUE)
+
+    /** Polls at most [max] bytes in each call to the core, and only once unless [max] is unlimited (a short write). */
+    fun read(max: Int): List<Frame> {
         val out = mutableListOf<Frame>()
+        val b = if (max >= buf.size) buf else ByteArray(max)
         while (true) {
-            val n = core.poll(buf, 0, now)
+            val n = core.poll(b, 0, now)
             if (n == 0) break
             var p = 0
             if (prefaceLeft > 0) {
@@ -68,9 +72,10 @@ internal class RawH2Peer(
                 p = k
             }
             while (p < n) {
-                p += dec.feed(buf, p, n - p)
+                p += dec.feed(b, p, n - p)
                 dec.next()?.let { out += it }
             }
+            if (b !== buf) break
         }
         written += out
         return out

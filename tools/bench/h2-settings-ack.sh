@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# What a SETTINGS acknowledgement held behind DATA (RFC 9113 section 6.5.3) costs an urgent HTTP/2 stream: runs
-# HeldAckInversionBench (kuicksilver-http2 jvmTest; a server and a client connection core joined in memory by a link of
+# How long an HTTP/2 SETTINGS acknowledgement takes (RFC 9113 section 6.5.3) while the peer shrinks
+# SETTINGS_INITIAL_WINDOW_SIZE under queued DATA, and what it costs an urgent stream: runs
+# SettingsAckBench (kuicksilver-http2 jvmTest; a server and a client connection core joined in memory by a link of
 # 100 Mbit/s or 1 Gbit/s, virtual time) on this tree and on a base revision, and prints the urgent stream's delays.
 # Usage:
-#   h2-held-ack.sh [base-rev] [--out DIR]   base-rev defaults to main; DIR to build/bench/h2-held-ack-<date-time>
+#   h2-settings-ack.sh [base-rev] [--out DIR]   base-rev defaults to main; DIR to build/bench/h2-settings-ack-<date-time>
 # The base revision gets the harness copied into a temporary detached worktree (removed afterwards), along with
 # local.properties and build/openssl when this tree has them.
 # Knobs: KSL_BENCH_GRADLE (default ./gradlew) and KSL_BENCH_GRADLE_ARGS (extra Gradle arguments, e.g. --offline).
@@ -18,22 +19,22 @@ while [ $# -gt 0 ]; do
     *) base=$1; shift ;;
   esac
 done
-out=${out:-$root/build/bench/h2-held-ack-$(date -u +%Y%m%d-%H%M%S)}
+out=${out:-$root/build/bench/h2-settings-ack-$(date -u +%Y%m%d-%H%M%S)}
 mkdir -p "$out"; out=$(cd "$out" && pwd)
 gradle=${KSL_BENCH_GRADLE:-./gradlew}
 read -r -a gradle_args <<< "${KSL_BENCH_GRADLE_ARGS:-}"
-harness=kuicksilver-http2/src/jvmTest/kotlin/io/kuicksilver/http2/core/HeldAckInversionBench.kt
-csv="$out/h2-held-ack.csv"
+harness=kuicksilver-http2/src/jvmTest/kotlin/io/kuicksilver/http2/core/SettingsAckBench.kt
+csv="$out/h2-settings-ack.csv"
 echo "tree,link_mbit,bulk_streams,shrinking,responses,p50_ms,p99_ms,max_ms,acks,ack_p50_ms,ack_p99_ms,ack_max_ms" > "$csv"
 
 measure() { # <tree dir> <label>
-  (cd "$1" && KSL_BENCH_H2_HELD_ACK="$csv" KSL_BENCH_H2_HELD_ACK_LABEL="$2" \
-    "$gradle" "${gradle_args[@]}" :kuicksilver-http2:jvmTest --tests '*HeldAckInversionBench*' --rerun >"$out/$2.log" 2>&1) ||
+  (cd "$1" && KSL_BENCH_H2_SETTINGS_ACK="$csv" KSL_BENCH_H2_SETTINGS_ACK_LABEL="$2" \
+    "$gradle" "${gradle_args[@]}" :kuicksilver-http2:jvmTest --tests '*SettingsAckBench*' --rerun >"$out/$2.log" 2>&1) ||
     { echo "the $2 run failed: $out/$2.log" >&2; exit 1; }
 }
 
 measure "$root" "$(git -C "$root" rev-parse --short HEAD)"
-wt="$root/build/bench/h2-held-ack-base"
+wt="$root/build/bench/h2-settings-ack-base"
 git -C "$root" worktree remove --force "$wt" 2>/dev/null || true
 rm -rf "$wt"; git -C "$root" worktree prune
 git -C "$root" worktree add --detach "$wt" "$base" >/dev/null

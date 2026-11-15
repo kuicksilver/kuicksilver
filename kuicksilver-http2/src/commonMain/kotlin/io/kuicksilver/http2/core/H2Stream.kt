@@ -18,7 +18,14 @@ internal sealed interface OutItem {
         val frame: ByteArray,
         /** The payload length, taken from both send windows when queued and given back if the frame is dropped. */
         val length: Int,
-    ) : OutItem
+    ) : OutItem {
+        /**
+         * Taken from the send windows. False after a SETTINGS shrank SETTINGS_INITIAL_WINDOW_SIZE before the frame was
+         * written: its window was given back, and it is taken again from the new window when the frame goes out (RFC 9113
+         * section 6.9.2), in pieces when less is available.
+         */
+        var charged = true
+    }
 }
 
 /** One stream of an [H2ConnectionCore]. */

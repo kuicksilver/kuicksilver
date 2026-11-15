@@ -13,21 +13,22 @@ import java.util.Locale
 import kotlin.test.Test
 
 /**
- * A measurement, not a test: it returns at once unless `KSL_BENCH_H2_HELD_ACK` names an output CSV file
- * (`tools/bench/h2-held-ack.sh` sets it and runs it on two revisions). It measures what a SETTINGS acknowledgement held
- * behind DATA (RFC 9113 section 6.5.3) costs an urgent stream, and how long the acknowledgement waits. A server core and a
+ * A measurement, not a test: it returns at once unless `KSL_BENCH_H2_SETTINGS_ACK` names an output CSV file
+ * (`tools/bench/h2-settings-ack.sh` sets it and runs it on two revisions). It measures how long our SETTINGS
+ * acknowledgement takes (RFC 9113 section 6.5.3) while the peer shrinks SETTINGS_INITIAL_WINDOW_SIZE under DATA already
+ * queued, and what that costs an urgent stream (a revision that held the acknowledgement behind that DATA). A server core and a
  * client core are joined in memory by a server-to-client link of a fixed rate (virtual time in ticks of [TICK_NANOS];
  * the client-to-server direction is unlimited). [bulk] urgency-7 streams have endless bodies, and an urgency-0 request
  * asks for a 1 KiB response every 5 ms. With [shrink], the client's side sends a SETTINGS every [SHRINK_EVERY_NANOS] that
- * alternately halves SETTINGS_INITIAL_WINDOW_SIZE (4 MiB to 2 MiB) and restores it, so every second acknowledgement waits
- * for the DATA the bulk streams already queued. An urgent response's delay runs from the server queueing its DATA to the
+ * alternately halves SETTINGS_INITIAL_WINDOW_SIZE (4 MiB to 2 MiB) and restores it, while the bulk streams have DATA
+ * queued. An urgent response's delay runs from the server queueing its DATA to the
  * client receiving it; an acknowledgement's from the SETTINGS reaching the server to the acknowledgement crossing the link.
  */
-class HeldAckInversionBench {
+class SettingsAckBench {
     @Test
     fun measure() {
-        val out = System.getenv("KSL_BENCH_H2_HELD_ACK") ?: return
-        val label = System.getenv("KSL_BENCH_H2_HELD_ACK_LABEL") ?: "tree"
+        val out = System.getenv("KSL_BENCH_H2_SETTINGS_ACK") ?: return
+        val label = System.getenv("KSL_BENCH_H2_SETTINGS_ACK_LABEL") ?: "tree"
         val rows = mutableListOf<String>()
         for (mbit in listOf(100, 1_000)) {
             for (bulk in listOf(1, 4, 16)) {

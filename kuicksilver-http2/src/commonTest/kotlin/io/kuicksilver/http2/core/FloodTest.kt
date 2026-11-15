@@ -96,16 +96,15 @@ class FloodTest {
     }
 
     @Test
-    fun negative_settingsFloodBehindAHeldAckBounded() {
-        // CVE-2019-9515 with the acknowledgements held: a SETTINGS shrinking the initial window while our DATA is queued
-        // holds its ACK behind that DATA (RFC 9113 section 6.9.2); the peer stops reading, so the DATA is never written,
-        // and floods SETTINGS. The held ACKs count toward the same bound as the queued control frames (a small bound here,
+    fun negative_settingsFloodWithQueuedDataBounded() {
+        // CVE-2019-9515 while a SETTINGS shrinking the initial window has our DATA queued (RFC 9113 section 6.9.2): the peer
+        // stops reading and floods SETTINGS. Every ACK is queued at once, and the queue keeps its bound (a small one here,
         // so the glitch budget does not end the connection first).
         val s = server(Http2Settings(maxControlFramesQueued = 100))
         s.send(s.headers(1, endStream = true))
         s.core.sendHeaders(1, OK, endStream = false)
         assertEquals(16_384, s.core.sendData(1, ByteArray(16_384), 0, 16_384, endStream = false))
-        s.send(FrameEncoder.settings(intArrayOf(0x4), longArrayOf(1_000))) // shrinks: held
+        s.send(FrameEncoder.settings(intArrayOf(0x4), longArrayOf(1_000))) // shrinks: its ACK is queued at once
         assertEquals(1, s.core.controlQueued)
         val settings = FrameEncoder.settings(intArrayOf(0x3), longArrayOf(100))
         var sent = 0
@@ -113,7 +112,7 @@ class FloodTest {
             s.send(settings)
             sent++
         }
-        assertEquals(100, sent) // 1 held + 99 behind it fill the bound of 100; the next one ends the connection
+        assertEquals(100, sent) // 1 + 99 fill the bound of 100; the next one ends the connection
         assertTrue(s.core.controlQueued <= 100)
         s.assertConnectionError(Http2ErrorCode.ENHANCE_YOUR_CALM)
         assertTrue("control frames queued" in s.goAway()!!.debug.decodeToString())
