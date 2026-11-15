@@ -19,6 +19,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.core.releasePathCid
+import io.kuicksilver.quic.core.switchPath
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -184,6 +185,26 @@ class SocketLostTest {
                         },
                         "the validated path is closed",
                     )
+                    c.close()
+                }
+            }
+        }
+
+    /** Third review of 6cacf9c04: a switch that made the path active and then threw leaves the path and its socket alone. */
+    @Test fun negative_aSwitchThatThrowsAfterMakingThePathActiveKeepsItsSocket() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, _) = p.connect()
+                    awaitSpareConnectionId(c)
+                    val core = c.core
+                    core.testBeforeSwitch = { id ->
+                        core.switchPath(core.paths.byId(id)!!, io.kuicksilver.quic.PathChangeReason.ActiveMigration, challengeOld = false)
+                        throw IllegalStateException("after the switch")
+                    }
+                    val io = p.net.open(InetSocketAddress("10.0.0.5", 5555))
+                    assertFailsWith<IllegalStateException> { c.migrate(io) }
+                    assertFalse(io.closed, "the active path's socket stays open")
                     c.close()
                 }
             }
