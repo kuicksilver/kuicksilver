@@ -24,6 +24,18 @@ internal object SettingsId {
     /** `SETTINGS_ENABLE_WEBTRANSPORT` of WebTransport draft-02 to -06, the one Chrome and Firefox send today. */
     const val ENABLE_WEBTRANSPORT_DRAFT02: Long = 0x2b603742
 
+    /**
+     * `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (WebTransport draft-14 and -16 section 5.5.1): the unidirectional streams the
+     * peer may open in each session before a WT_MAX_STREAMS capsule; 0 by default.
+     */
+    const val WT_INITIAL_MAX_STREAMS_UNI: Long = 0x2b64
+
+    /** `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI` (section 5.5.2): the same for bidirectional streams; 0 by default. */
+    const val WT_INITIAL_MAX_STREAMS_BIDI: Long = 0x2b65
+
+    /** `SETTINGS_WT_INITIAL_MAX_DATA` (section 5.5.3): the stream body bytes the peer may send in each session; 0 by default. */
+    const val WT_INITIAL_MAX_DATA: Long = 0x2b61
+
     /** HTTP/2 settings reserved in HTTP/3: receiving one is H3_SETTINGS_ERROR. */
     val H2_RESERVED: Set<Long> = setOf(0x0L, 0x2L, 0x3L, 0x4L, 0x5L)
 }

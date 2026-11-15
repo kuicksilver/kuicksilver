@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -587,13 +589,17 @@ internal class ConnectionRuntime(
 
                 is ConnectionEvent.StreamReadable -> {
                     wrapper(e.id)?.let {
+                        it.noteReceived(core.streamHighestReceived(e.id))
                         it.updateReceivedAll()
                         it.signalReadable()
                     }
                 }
 
                 is ConnectionEvent.StreamWritable -> {
-                    wrapper(e.id)?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                    wrapper(e.id)?.let {
+                        it.ticker.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                        if (it.watchingSend) it.noteSendReleased(core.streamSendReleased(e.id))
+                    }
                 }
 
                 is ConnectionEvent.StreamReset -> {
@@ -606,6 +612,10 @@ internal class ConnectionRuntime(
                 // StreamFinished follows; for a stream still waiting for acceptStream that happens when acceptStream hands it out
                 is ConnectionEvent.StopSendingReceived -> {
                     wrapper(e.id)?.peerStopped(e.code)
+                }
+
+                is ConnectionEvent.StreamFinalSize -> {
+                    wrapper(e.id)?.finalSize(e.sending, e.size)
                 }
 
                 is ConnectionEvent.StreamFinished -> {
@@ -774,31 +784,64 @@ internal class ConnectionRuntime(
         t.close()
     }
 
+    /** [QuicStreamLimits.setReceiveWindowFloor] on the loop. */
+    internal suspend fun setReceiveWindowFloor(bytes: Long) {
+        withContext(loop.dispatcher) {
+            if (finished) return@withContext
+            core.streams.setConnectionWindowFloor(bytes)
+            loop.flush(core)
+        }
+    }
+
+    /** The connection-level limit we last advertised, read on the loop. */
+    internal suspend fun receiveLimit(): Long = withContext(loop.dispatcher) { core.streams.connectionLimit }
+
+    /** Test hook: runs on the loop right after [open] made its stream, before it is handed to the caller. */
+    internal var openedForTest: ((QuicStream) -> Unit)? = null
+
+    /**
+     * A stream of ours, once the peer's limit allows it. A caller cancelled while the stream is handed back (the
+     * cancellation lands as withContext returns) never gets it: it is given up here as an application would (RESET_STREAM,
+     * and STOP_SENDING on a bidirectional one, with the default code), so the peer, which counts it opened as soon as a
+     * later stream of ours arrives, sees it end and returns its credit, as [abandonUndelivered] does for accepted streams.
+     */
     private suspend fun open(
         bidi: Boolean,
         priority: StreamPriority,
-    ): QuicStream =
-        withContext(loop.dispatcher) {
-            val ticker = newTicker()
-            openWaiters += ticker
-            try {
-                while (true) {
-                    if (finished) throw closedDeferred.await()
-                    val id = core.openStream(bidi, priority)
-                    if (id >= 0) {
-                        val s = stream(id, priority)
-                        loop.flush(core)
-                        return@withContext s
+    ): QuicStream {
+        var made: StreamRuntime? = null
+        try {
+            return withContext(loop.dispatcher) {
+                val ticker = newTicker()
+                openWaiters += ticker
+                try {
+                    while (true) {
+                        if (finished) throw closedDeferred.await()
+                        val id = core.openStream(bidi, priority)
+                        if (id >= 0) {
+                            val s = stream(id, priority)
+                            made = s
+                            loop.flush(core)
+                            openedForTest?.invoke(s)
+                            return@withContext s
+                        }
+                        ticker.receive()
                     }
-                    ticker.receive()
+                    @Suppress("UNREACHABLE_CODE")
+                    throw IllegalStateException()
+                } finally {
+                    tickers.remove(ticker)
+                    openWaiters.remove(ticker)
                 }
-                @Suppress("UNREACHABLE_CODE")
-                throw IllegalStateException()
-            } finally {
-                tickers.remove(ticker)
-                openWaiters.remove(ticker)
             }
+        } catch (e: CancellationException) {
+            made?.let {
+                it.reset(defaultCode())
+                if (bidi) it.stopSending(defaultCode())
+            }
+            throw e
         }
+    }
 
     override suspend fun openBidi(priority: StreamPriority): QuicStream = open(true, priority)
 

@@ -45,6 +45,29 @@ public class Http3Settings private constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val webTransport: Boolean,
+    /**
+     * WebTransport sessions a server accepts at once on one connection when flow control is on (draft-ietf-webtrans-http3-16
+     * section 5.2); one more is reset with H3_REQUEST_REJECTED before the application sees it. Without flow control a
+     * connection carries one session whatever this says (section 5.1). Advertised to draft-14 clients as
+     * `SETTINGS_WT_MAX_SESSIONS`. Ignored by a client, whose limit is the server's.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val webTransportMaxSessions: Int,
+    /**
+     * `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI` (section 5.5.2): the bidirectional streams the peer may open in each
+     * WebTransport session before we raise the limit with WT_MAX_STREAMS as its streams end.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val webTransportInitialMaxStreamsBidi: Long,
+    /** `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI` (section 5.5.1): the same for unidirectional streams. */
+    @property:ExperimentalKuicksilverApi
+    public val webTransportInitialMaxStreamsUni: Long,
+    /**
+     * `SETTINGS_WT_INITIAL_MAX_DATA` (section 5.5.3): the stream body bytes the peer may send in each WebTransport
+     * session, raised with WT_MAX_DATA as they are taken from the transport.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val webTransportInitialMaxData: Long,
 ) {
     /** Mutable form of [Http3Settings], used through [http3Settings] or [toBuilder]; ranges are checked by [build]. */
     @KuicksilverDsl
@@ -89,13 +112,52 @@ public class Http3Settings private constructor(
 
         /**
          * WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16); false by default. A server advertises
-         * `SETTINGS_WT_ENABLED`, `SETTINGS_WT_MAX_SESSIONS=1` (draft-14) and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02), so
-         * browsers that still speak the older drafts find theirs; a client advertises the first and the last. [build]
+         * `SETTINGS_WT_ENABLED`, `SETTINGS_WT_MAX_SESSIONS` (draft-14: [webTransportMaxSessions] with flow control, else 1)
+         * and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02), so browsers that still speak the older drafts find theirs; a client
+         * advertises the first and the last. Both add the non-zero `SETTINGS_WT_INITIAL_*` values that declare WebTransport
+         * flow control (section 5), which lets several sessions share a connection. [build]
          * refuses it without [enableConnectProtocol] and [h3Datagram]: sessions are Extended CONNECT requests and carry
          * HTTP datagrams.
          */
         @ExperimentalKuicksilverApi
         public var webTransport: Boolean = false
+
+        /**
+         * WebTransport sessions on one connection when flow control is on (both sides sent a non-zero
+         * `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-16 section 5.1), 1..65535; 4 by default. A server resets a
+         * CONNECT beyond it with H3_REQUEST_REJECTED (section 5.2), and a client opens another connection instead of
+         * putting more on one. The per-session limits below, times this, must fit the QUIC connection's
+         * ([Http3Endpoint] refuses a configuration where they do not, and the connection's receive window is kept at the
+         * open sessions' sum): no
+         * session can then hold every stream slot or the whole connection window. `Http3Connection.client` and `server`
+         * on a QUIC connection made by the caller cannot check this: its configuration must fit them the same way.
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransportMaxSessions: Int = 4
+
+        /**
+         * Bidirectional streams the peer may open in each WebTransport session (section 5.5.2), 0..2^60; 24 by default, so
+         * 4 sessions and their CONNECT streams fit the default 100 QUIC streams. The limit rises with WT_MAX_STREAMS as the
+         * peer's streams end. When this, [webTransportInitialMaxStreamsUni] and [webTransportInitialMaxData] are all 0, we
+         * do not declare WebTransport flow control (section 5.1) and a connection carries one session.
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransportInitialMaxStreamsBidi: Long = 24
+
+        /**
+         * Unidirectional streams the peer may open in each WebTransport session (section 5.5.1), 0..2^60; 24 by default
+         * (4 sessions and the peer's 3 HTTP/3 streams fit the default 100 QUIC streams).
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransportInitialMaxStreamsUni: Long = 24
+
+        /**
+         * Stream body bytes the peer may send in each WebTransport session (section 5.5.3), 0..2^62-1; 3 932 160 by
+         * default (4 sessions fill the default largest QUIC connection window, 15 MiB). The limit rises with WT_MAX_DATA
+         * as the application reads the bytes.
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransportInitialMaxData: Long = 3_932_160
 
         /** Advertises a 4096-byte dynamic table and 16 blocked streams (the dynamic table is off by default). */
         public fun enableQpackDynamicTable() {
@@ -115,6 +177,10 @@ public class Http3Settings private constructor(
             require(!webTransport || (enableConnectProtocol && h3Datagram)) {
                 "webTransport needs enableConnectProtocol and h3Datagram"
             }
+            require(webTransportMaxSessions in 1..65_535) { "webTransportMaxSessions must be 1..65535" }
+            require(webTransportInitialMaxStreamsBidi in 0..(1L shl 60)) { "webTransportInitialMaxStreamsBidi must be 0..2^60" }
+            require(webTransportInitialMaxStreamsUni in 0..(1L shl 60)) { "webTransportInitialMaxStreamsUni must be 0..2^60" }
+            require(webTransportInitialMaxData in 0..((1L shl 62) - 1)) { "webTransportInitialMaxData must be 0..2^62-1" }
             return Http3Settings(
                 qpackMaxTableCapacity,
                 qpackBlockedStreams,
@@ -128,6 +194,10 @@ public class Http3Settings private constructor(
                 glitchProtection,
                 earlyData,
                 webTransport,
+                webTransportMaxSessions,
+                webTransportInitialMaxStreamsBidi,
+                webTransportInitialMaxStreamsUni,
+                webTransportInitialMaxData,
             )
         }
     }
@@ -151,18 +221,60 @@ public class Http3Settings private constructor(
                 glitchProtection
             it.earlyData = earlyData
             it.webTransport = webTransport
+            it.webTransportMaxSessions = webTransportMaxSessions
+            it.webTransportInitialMaxStreamsBidi = webTransportInitialMaxStreamsBidi
+            it.webTransportInitialMaxStreamsUni = webTransportInitialMaxStreamsUni
+            it.webTransportInitialMaxData = webTransportInitialMaxData
         }
+
+    /**
+     * We declare WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.1: a non-zero
+     * `SETTINGS_WT_INITIAL_MAX_STREAMS_UNI`, `_BIDI` or `SETTINGS_WT_INITIAL_MAX_DATA`).
+     */
+    internal val webTransportFlowControl: Boolean
+        get() = webTransportInitialMaxStreamsBidi != 0L || webTransportInitialMaxStreamsUni != 0L || webTransportInitialMaxData != 0L
+
+    /**
+     * With WebTransport flow control, [webTransportMaxSessions] sessions at their initial limits must fit [quic]'s:
+     * their bidirectional streams and CONNECT streams within `maxBidiStreams`, their unidirectional streams and the
+     * peer's three HTTP/3 streams within `maxUniStreams`, their data within `maxConnectionWindow`. Otherwise one session,
+     * or a few, could hold every stream slot (a new CONNECT among them) or the whole connection window, and starve the
+     * others (draft-ietf-webtrans-http3-16 sections 5.1 and 8). IllegalArgumentException when they do not.
+     */
+    internal fun requireWebTransportFits(quic: io.kuicksilver.quic.QuicConfig) {
+        if (!webTransport || !webTransportFlowControl) return
+        val n = webTransportMaxSessions.toLong()
+        require(webTransportInitialMaxStreamsBidi <= quic.maxBidiStreams / n - 1) {
+            "webTransportMaxSessions ($n) x (webTransportInitialMaxStreamsBidi ($webTransportInitialMaxStreamsBidi) + its " +
+                "CONNECT stream) exceeds QuicConfig.maxBidiStreams (${quic.maxBidiStreams})"
+        }
+        require(webTransportInitialMaxStreamsUni <= (quic.maxUniStreams - 3) / n) {
+            "webTransportMaxSessions ($n) x webTransportInitialMaxStreamsUni ($webTransportInitialMaxStreamsUni) + 3 HTTP/3 " +
+                "streams exceeds QuicConfig.maxUniStreams (${quic.maxUniStreams})"
+        }
+        require(webTransportInitialMaxData <= quic.maxConnectionWindow / n) {
+            "webTransportMaxSessions ($n) x webTransportInitialMaxData ($webTransportInitialMaxData) exceeds " +
+                "QuicConfig.maxConnectionWindow (${quic.maxConnectionWindow})"
+        }
+    }
 
     /**
      * The settings a 0-RTT client relies on (RFC 9114 section 7.2.4.2), bound into the server's tickets: a ticket issued
      * under other SETTINGS gets no early data. WebTransport is part of it (draft-ietf-webtrans-http3-16 section 3.2: its
-     * settings must not be reduced for 0-RTT); the suffix is only added when it is on, so tickets of servers without it
-     * stay valid across this release.
+     * settings must not be reduced for 0-RTT, and "If the server accepts 0-RTT, the server MUST NOT reduce these initial
+     * flow control values from those negotiated during the previous session": its flow-control values and session limit
+     * are part of it, so a server that changed them accepts no 0-RTT); the suffix is only added when it is on, so tickets
+     * of servers without it stay valid across this release.
      */
     internal fun earlyDataContext(): ByteArray =
         (
             "h3|$qpackMaxTableCapacity|$qpackBlockedStreams|$maxFieldSectionSize|$enableConnectProtocol|$h3Datagram" +
-                if (webTransport) "|wt" else ""
+                if (webTransport) {
+                    "|wt|$webTransportMaxSessions|$webTransportInitialMaxStreamsBidi|$webTransportInitialMaxStreamsUni|" +
+                        "$webTransportInitialMaxData"
+                } else {
+                    ""
+                }
         ).encodeToByteArray()
 
     /** Holds [Default]. */

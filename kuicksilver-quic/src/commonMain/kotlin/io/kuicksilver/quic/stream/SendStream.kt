@@ -43,6 +43,9 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
     internal var writeRefused = false
 
+    /** The final size reported for it (ConnectionEvent.StreamFinalSize, raised once), or -1 before. */
+    internal var reportedFinalSize = -1L
+
     /**
      * Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water
      * mark once and then never allocates. Empty until the first write: of a connection's four CRYPTO streams one is never written
@@ -82,6 +85,10 @@ internal class SendStream(
 
     /** Bytes still buffered (not yet released by acknowledgement). */
     var buffered: Long = 0
+        private set
+
+    /** Every byte ever taken into the buffer; minus [buffered], the bytes released (acknowledged or dropped by a reset). */
+    var enqueuedTotal: Long = 0
         private set
 
     /** Test hook: range comparisons made by the lost/acknowledged bookkeeping, to prove its cost per call stays bounded. */
@@ -171,6 +178,7 @@ internal class SendStream(
             if (first < len) data.copyInto(ring, 0, off + first, off + len)
             written += len
             buffered += len
+            enqueuedTotal += len
         }
         if (fin) finQueued = true
         if (state == SendState.Ready) state = SendState.Send

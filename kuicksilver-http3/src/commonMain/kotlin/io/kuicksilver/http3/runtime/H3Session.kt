@@ -130,21 +130,26 @@ internal class H3Session(
     val wt = WtStreamRouter(this)
 
     /**
-     * Server: the request stream of the WebTransport CONNECT handed to the application and not yet over; while it is set
-     * another one is refused with H3_REQUEST_REJECTED (one session per connection, draft-ietf-webtrans-http3-16 section
-     * 5.1). Session dispatcher only.
+     * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over, each with
+     * whether it is a draft-02 request (which picks its version, [io.kuicksilver.http3.webtransport.wtServerVersion]).
+     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
+     * [wtSessionEnded].
      */
-    var wtSessionStream: Long? = null
-        set(v) {
-            field = v
-            wtIdle.value = v == null
-        }
+    val wtSessions = LinkedHashMap<Long, Boolean>()
 
-    /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
-    var wtClientBusy = false
+    /** [wtSessions] changed: [wtIdle] follows. */
+    fun wtSessionsChanged() {
+        wtIdle.value = wtSessions.isEmpty()
+    }
+
+    /**
+     * Client: WebTransport sessions being opened or open on this connection: one without flow control (section 5.1), up
+     * to [Http3Settings.webTransportMaxSessions] with it. Dispatcher only.
+     */
+    var wtClientSessions = 0
         set(v) {
             field = v
-            wtIdle.value = !v
+            wtIdle.value = v == 0
         }
 
     /** No WebTransport session holds this connection's slot (a test hook). */
@@ -181,7 +186,12 @@ internal class H3Session(
 
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
-    val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
+
+    /**
+     * Requests for [io.kuicksilver.http3.Http3Connection.acceptRequest]: a caller cancelled while it waits (under a timeout,
+     * in a `select`) leaves the next request queued instead of taking it with it ([HandOffQueue]).
+     */
+    val requests = HandOffQueue<ServerRequestImpl>()
 
     /** Test hook: the client sends unsafe requests in 0-RTT too (to exercise the server's RFC 8470 gate). */
     internal var testSendUnsafeEarly = false
@@ -481,6 +491,60 @@ internal class H3Session(
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()
 
+    /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
+    private var wtFlowSessions = 0
+
+    /** [wtFlowSessions] for whoever follows it from elsewhere: the sessions' shares of the send buffer ([WtSendShare]). */
+    internal val wtFlowSessionCount = MutableStateFlow(0)
+
+    /** [wtFlowSessions] and the receive-window floor it asks for (a test hook; session dispatcher only). */
+    internal val wtFlowSessionsForTest: Pair<Int, Long> get() = wtFlowSessions to wtFloor.value
+
+    /** Test hook: a server session accepted next ends before it starts, as one whose exchange ended during the accept. */
+    internal var endBeforeStartForTest = false
+
+    /**
+     * A WebTransport session with flow control started ([up]) or ended: the connection's receive window is kept at what
+     * the open sessions may have in flight together (draft-16 section 8: a session nobody reads must not hold the whole
+     * connection credit while the others wait), and shrinks back as they end. Session dispatcher only.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    fun wtFlowSession(up: Boolean) {
+        wtFlowSessions += if (up) 1 else -1
+        check(wtFlowSessions >= 0) { "WebTransport session count below 0" }
+        wtFlowSessionCount.value = wtFlowSessions
+        wtFloor.value = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
+        // one sender of the latest value: a stale floor never overtakes a newer one
+        if (wtFloorSender == null) {
+            wtFloorSender =
+                scope.launch {
+                    wtFloor.collect {
+                        io.kuicksilver.quic.runtime.QuicStreamLimits
+                            .setReceiveWindowFloor(quic, it)
+                    }
+                }
+        }
+    }
+
+    /** The floor [wtFlowSession] wants for the connection's receive window. */
+    private val wtFloor = MutableStateFlow(0L)
+    private var wtFloorSender: Job? = null
+
+    /**
+     * Server: the rate of incoming WebTransport sessions (draft-16 section 5.2, "Servers SHOULD limit the rate of incoming
+     * WebTransport sessions on HTTP/3 connections to prevent excessive consumption of resources"): a burst of
+     * [WT_SESSION_BURST] CONNECTs, then [WT_SESSIONS_PER_SECOND] a second, on [glitchClock]. Session dispatcher only.
+     */
+    internal val wtSessionRate = GlitchLimiter(WT_SESSION_BURST, WT_SESSIONS_PER_SECOND)
+
+    /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
+    internal val wtFairness =
+        io.kuicksilver.http3.webtransport
+            .WtFairness()
+
+    /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
+    internal var wtPeerSettings: Map<Long, Long> = emptyMap()
+
     internal fun ourSettings(): List<Pair<Long, Long>> = ourSettingsBuilt().let { ourSettingsForTest?.invoke(it) ?: it }
 
     private fun ourSettingsBuilt(): List<Pair<Long, Long>> =
@@ -490,7 +554,7 @@ internal class H3Session(
             add(SettingsId.MAX_FIELD_SECTION_SIZE to settings.maxFieldSectionSize)
             if (settings.enableConnectProtocol) add(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L)
             add(SettingsId.H3_DATAGRAM to if (settings.h3Datagram) 1L else 0L)
-            if (settings.webTransport) addAll(WtSettings.ours(isServer))
+            if (settings.webTransport) addAll(WtSettings.ours(isServer, settings))
             if (settings.grease) add(FrameType.grease(Random.nextLong(0, 1000)) to Random.nextLong(0, 1L shl 30))
         }
 
@@ -587,9 +651,9 @@ internal class H3Session(
      * WebTransport (RFC 9114 section 6.1). One that ends or is reset before its first bytes is dropped.
      */
     private suspend fun serverBidi(st: QuicStream) {
-        val first =
+        val (first, firstLength) =
             try {
-                st.input.readVarIntOrNull()
+                st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
                 null
             } catch (e: CancellationException) {
@@ -604,7 +668,7 @@ internal class H3Session(
         if (first != FrameType.WT_STREAM) {
             throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "server-initiated bidirectional stream ${st.id}")
         }
-        wt.onBidi(st)
+        wt.onBidi(st, firstLength)
     }
 
     fun takeEarlyPriority(id: Long): StreamPriority? = earlyPriority.remove(id)
@@ -746,6 +810,12 @@ internal class H3Session(
     }
 
     companion object {
+        /** WebTransport CONNECTs a server takes at once on a connection before [WT_SESSIONS_PER_SECOND] applies. */
+        const val WT_SESSION_BURST: Int = 32
+
+        /** WebTransport CONNECTs a server takes a second on a connection after the burst (section 5.2). */
+        const val WT_SESSIONS_PER_SECOND: Int = 8
+
         /**
          * Test hook: sees every session as it is made, before it starts (to install the per-session hooks). It is global, so
          * it is not safe for tests that run in parallel in one process (none do: each module's tests run one after another);

@@ -44,6 +44,68 @@ internal class StreamRuntime(
     override val input: ByteReadChannel get() = inChannel ?: throw IllegalStateException("stream $id is send-only")
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
     internal val readable = Channel<Unit>(Channel.CONFLATED)
+    private val sentFinal =
+        kotlinx.coroutines.CompletableDeferred<Long>().also {
+            if (!send) it.completeExceptionally(IllegalStateException("stream $id is receive-only"))
+        }
+    private val receivedFinal =
+        kotlinx.coroutines.CompletableDeferred<Long>().also {
+            if (!recv) it.completeExceptionally(IllegalStateException("stream $id is send-only"))
+        }
+    private val receivedOffsetFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    override val receivedOffset: kotlinx.coroutines.flow.StateFlow<Long> get() = receivedOffsetFlow
+
+    /** On the loop: the core received up to [offset] on this stream; the flow only grows. */
+    internal fun noteReceived(offset: Long) {
+        if (offset > receivedOffsetFlow.value) receivedOffsetFlow.value = offset
+    }
+
+    private val sendReleasedFlow = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /** [sendReleased] was read: the loop keeps the flow up to date. */
+    @Volatile
+    internal var watchingSend = false
+        private set
+
+    /** Bytes the core took for this stream's sending half (on the loop, by [StreamOutput]). */
+    internal var sentToCore = 0L
+
+    override val sendReleased: kotlinx.coroutines.flow.StateFlow<Long>
+        get() {
+            if (outChannel != null && !watchingSend) {
+                watchingSend = true
+                loop.scope.launch {
+                    if (!current) return@launch
+                    conn.core.watchStreamSend(id)
+                    noteSendReleased(conn.core.streamSendReleased(id))
+                }
+            }
+            return sendReleasedFlow
+        }
+
+    /** On the loop: the core released up to [total] bytes of this stream's send buffer; the flow only grows. */
+    internal fun noteSendReleased(total: Long) {
+        if (total > sendReleasedFlow.value) sendReleasedFlow.value = total
+    }
+
+    override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = sentFinal
+    override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = receivedFinal
+
+    /** On the loop: the core fixed the final size of one half ([io.kuicksilver.quic.ConnectionEvent.StreamFinalSize]). */
+    internal fun finalSize(
+        sending: Boolean,
+        size: Long,
+    ) {
+        (if (sending) sentFinal else receivedFinal).complete(size)
+        if (!sending) noteReceived(size)
+    }
+
+    /** The final sizes will never be known: the connection ended, or a rejected 0-RTT dropped the stream. */
+    private fun finalSizesLost(cause: Throwable) {
+        sentFinal.completeExceptionally(cause)
+        receivedFinal.completeExceptionally(cause)
+    }
+
     internal val ticker = conn.newTicker()
 
     // the loop applies the value the property holds when its turn comes, not the one this setter wrote: setters on several
@@ -116,6 +178,7 @@ internal class StreamRuntime(
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     internal fun finished() {
+        noteSendReleased(sentToCore) // retired: nothing of it is buffered any more
         readable.trySend(Unit)
         conn.removeTicker(ticker)
         done.complete(Unit)
@@ -213,6 +276,7 @@ internal class StreamRuntime(
     internal fun earlyDataRejected() {
         dropped = true
         val e = QuicException.StreamError.EarlyDataRejected(id)
+        finalSizesLost(e)
         inChannel?.closeWith(e)
         outChannel?.closeWith(e)
         settleStop(e)
@@ -220,9 +284,11 @@ internal class StreamRuntime(
     }
 
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
+        finalSizesLost(reason)
         inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
         settleStop(reason)
+        noteSendReleased(sentToCore) // the buffer went with the connection
         done.complete(Unit)
     }
 

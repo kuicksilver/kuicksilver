@@ -93,6 +93,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun getGlitchByFrameType ()[J
 	public final fun getLocalCertificates ()Ljava/util/List;
 	public final fun getMaxDatagramPayload ()I
+	public final fun getMaxSendBuffer ()J
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
 	public final fun getPeerCertificates ()Ljava/util/List;
 	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
@@ -185,6 +186,12 @@ public final class io/kuicksilver/quic/ConnectionEvent$SessionTicket : io/kuicks
 public final class io/kuicksilver/quic/ConnectionEvent$StopSendingReceived : io/kuicksilver/quic/ConnectionEvent {
 	public final fun getCode ()J
 	public final fun getId ()J
+}
+
+public final class io/kuicksilver/quic/ConnectionEvent$StreamFinalSize : io/kuicksilver/quic/ConnectionEvent {
+	public final fun getId ()J
+	public final fun getSending ()Z
+	public final fun getSize ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamFinished : io/kuicksilver/quic/ConnectionEvent {
@@ -1250,6 +1257,10 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 	public abstract fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
 	public abstract fun getPriority ()Lio/kuicksilver/quic/StreamPriority;
 	public fun getReceivedEarly ()Z
+	public fun getReceivedFinalSize ()Lkotlinx/coroutines/Deferred;
+	public fun getReceivedOffset ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getSendReleased ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getSentFinalSize ()Lkotlinx/coroutines/Deferred;
 	public abstract fun reset (J)V
 	public fun resetAt (JJ)V
 	public abstract fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
@@ -1258,6 +1269,10 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 
 public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
 	public static fun getReceivedEarly (Lio/kuicksilver/quic/QuicStream;)Z
+	public static fun getReceivedFinalSize (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/Deferred;
+	public static fun getReceivedOffset (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/flow/StateFlow;
+	public static fun getSendReleased (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/flow/StateFlow;
+	public static fun getSentFinalSize (Lio/kuicksilver/quic/QuicStream;)Lkotlinx/coroutines/Deferred;
 	public static fun resetAt (Lio/kuicksilver/quic/QuicStream;JJ)V
 }
 

@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package io.kuicksilver.http3.webtransport
 
@@ -24,6 +28,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.H3Session
+import io.kuicksilver.http3.runtime.HandOffQueue
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.drains
@@ -39,11 +44,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -56,10 +61,15 @@ import kotlin.time.Duration.Companion.seconds
  * One WebTransport session (draft-ietf-webtrans-http3-16): the Extended CONNECT [stream], spoken as the Capsule Protocol,
  * and the WebTransport streams routed to it.
  *
- * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read, every other type
- * (flow-control capsules included, section 5.1) is skipped unbuffered by the capsule stream. The peer's streams wait in
- * [bidiIn] and [uniIn] until the application accepts them; how many can be open at once is bounded by the QUIC stream
- * limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished.
+ * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read; with flow control
+ * ([flow], section 5) its capsules too, and from draft-14 on the WT_MAX_STREAM_DATA and WT_STREAM_DATA_BLOCKED capsules
+ * that section 5.4 prohibits; every other type (the flow-control capsules without flow control: "if flow control is not
+ * enabled, an endpoint MUST ignore receipt of any flow control capsules", section 5.1) is skipped unbuffered by the
+ * capsule stream. The peer's streams wait in [bidiIn] and [uniIn] until the application accepts them; how many can be
+ * open at once is bounded by the QUIC stream limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts
+ * against them until it is finished, and with flow control by the session's own stream limits. An accept cancelled while
+ * it waits or sets the stream up puts the stream back first ([HandOffQueue], [accept]): a stream the application never
+ * got would hold the peer and its stream credit until the session ends.
  *
  * State that the router and the stream pumps share ([streams], the channels' contents at close) is touched on the
  * session's dispatcher only.
@@ -72,17 +82,91 @@ internal class WtSessionImpl(
     /** The draft this session runs ([wtClientVersion], [wtServerVersion]). */
     internal val version: WtVersion,
 ) : WebTransportSession,
-    WtSessionSink {
+    WtSessionSink,
+    io.kuicksilver.http3.WebTransportDiagnostics {
     override val sessionId: Long get() = stream.streamId
 
+    override val creditStall = CompletableDeferred<String>()
+
+    /** The connection's dispatcher, where [flow] lives (a test hook). */
+    internal val dispatcherForTest get() = h3.dispatcher
+
+    /** Flow control is on for this session (section 5.1): both sides declared it, and the draft has it. */
+    private val flowEnabled = WtFlow.enabled(h3, version)
+
     /** The CONNECT stream as capsules; built first, so a peer message that cannot carry capsules fails the accept. */
-    internal val capsules: CapsuleStream = stream.useCapsuleProtocol(CAPSULES)
-    private val bidiIn = Channel<QuicStream>(Channel.UNLIMITED)
-    private val uniIn = Channel<QuicStream>(Channel.UNLIMITED)
+    internal val capsules: CapsuleStream = stream.useCapsuleProtocol(capsuleConfig(flowEnabled, version))
+
+    /** Capsules flow control sends, written in order by one writer ([start]): a later limit never overtakes an earlier one. */
+    private val capsulesOut = Channel<Capsule>(Channel.UNLIMITED)
+
+    /** The session's flow control (section 5), or null when it is not enabled. Session dispatcher only. */
+    internal val flow: WtSessionFlow? =
+        if (flowEnabled) WtSessionFlow.of(h3, version, { capsulesOut.trySend(it) }) { blockedAtZero() } else null
+
+    /**
+     * The session's turns at the connection's send buffer and its share of it (section 8), with flow control (sessions
+     * share the connection only then), at its CONNECT stream's current urgency: QUIC's `maxSendBuffer` less a reserve of
+     * one part in webTransportMaxSessions + 1, which a session that joins finds free, split between the open sessions.
+     * Session dispatcher only.
+     */
+    private val sendTurns: WtSendTurns? =
+        if (flowEnabled) {
+            val buffer = runCatching { h3.quic.core.maxSendBuffer }.getOrDefault(DEFAULT_SEND_BUFFER)
+            val share = WtSendShare(buffer, buffer / (h3.settings.webTransportMaxSessions + 1), h3.wtFlowSessionCount)
+            WtSendTurns(this, { stream.priority.urgency }, h3.wtFairness.send, share)
+        } else {
+            null
+        }
+
+    /** The session's share of the send buffer, with flow control (a test hook; its counts on the session's dispatcher). */
+    internal val sendShareForTest: WtSendShare? get() = sendTurns?.share
+
+    /**
+     * A draft-14 peer that declared flow control only by `SETTINGS_WT_MAX_SESSIONS` (no initial limits) left us blocked at
+     * a zero limit (session dispatcher): once that lasted [STALL_AFTER], [creditStall] says so, once. It checks that the
+     * limit is still 0, not that a writer still waits (one that gave up meanwhile is reported too).
+     */
+    private fun blockedAtZero() {
+        if (version != WtVersion.Draft14 || WtFlow.declaresInitialLimits(h3.wtPeerSettings) || stallWatch) return
+        stallWatch = true
+        h3.scope.launch {
+            h3.wtTimer(STALL_AFTER)
+            if (flow?.blockedAtZero() == true && !closedInfo.isCompleted) {
+                creditStall.complete(
+                    "WebTransport session $sessionId: the draft-14 peer declared flow control by SETTINGS_WT_MAX_SESSIONS " +
+                        "alone, so its initial limits are 0, and has sent no WT_MAX_STREAMS or WT_MAX_DATA in $STALL_AFTER: " +
+                        "our streams and data wait for it (draft-14 sections 5.1, 5.5)",
+                )
+            }
+        }
+    }
+
+    private var stallWatch = false
+
+    /** This session counts among the connection's flow-controlled ones ([H3Session.wtFlowSession]); dispatcher only. */
+    private var flowCounted = false
+
+    /**
+     * A peer's stream waiting for an accept, with the count of its bytes against the session's limit when flow control is
+     * on; [tracked] once an accept wrapped it but its caller was cancelled before it returned.
+     */
+    private class Incoming(
+        val stream: QuicStream,
+        val count: WtInCount?,
+    ) {
+        var tracked: WtStreamImpl? = null
+    }
+
+    private val bidiIn = HandOffQueue<Incoming>()
+    private val uniIn = HandOffQueue<Incoming>()
     private val streams = HashSet<WtStreamImpl>()
     private val datagramsIn = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
     private val drainFlow = MutableStateFlow(false)
     private val closedInfo = CompletableDeferred<WebTransportCloseInfo>()
+
+    /** The CONNECT stream ended both ways ([ended]): what the session sent, its close capsule included, was answered. */
+    internal val exchangeEnded = CompletableDeferred<Unit>()
     private val watchers = ArrayList<Job>()
 
     /**
@@ -98,9 +182,27 @@ internal class WtSessionImpl(
 
     /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
     fun start() {
+        if (flow != null) {
+            h3.wtFlowSession(up = true)
+            flowCounted = true
+        }
         // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
         // CONNECTION_CLOSE (Firefox) still ends the session with its code
         watchers += h3.drains(h3.scope.launch { readCapsules() })
+        if (flow != null) {
+            watchers +=
+                h3.scope.launch {
+                    for (c in capsulesOut) {
+                        try {
+                            capsules.send(c)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Throwable) {
+                            return@launch // the CONNECT stream is gone: the session ends through its reader
+                        }
+                    }
+                }
+        }
         watchers +=
             h3.scope.launch {
                 try {
@@ -120,6 +222,9 @@ internal class WtSessionImpl(
                         bidiIn.close()
                         uniIn.close()
                         datagramsIn.close()
+                        // the streams nobody accepted end as at any other end of the session ([terminate]), on the
+                        // session's dispatcher; the connection's scope may be over, so not as its child
+                        h3.scope.launch(h3.dispatcher + NonCancellable) { drainIncoming() }
                     }
                 }
             }
@@ -130,8 +235,33 @@ internal class WtSessionImpl(
     override fun onStream(
         stream: QuicStream,
         bidi: Boolean,
+        headerLength: Int,
     ) {
-        if ((if (bidi) bidiIn else uniIn).trySend(stream).isFailure) goneRaw(stream, bidi)
+        val count = flow?.let { WtInCount.start(h3, stream, it, headerLength) { reason -> flowControlError(reason) } }
+        if (!(if (bidi) bidiIn else uniIn).offer(Incoming(stream, count))) {
+            count?.stop()
+            goneRaw(stream, bidi)
+            return
+        }
+        flow?.onPeerStream(bidi)?.let { flowControlError(it) }
+    }
+
+    override fun onRejected(
+        bidi: Int,
+        uni: Int,
+        bytes: Long,
+    ) {
+        flow?.onRejected(bidi, uni, bytes)?.let { flowControlError(it) }
+    }
+
+    /**
+     * The peer broke flow control: section 5 says it "MUST close the WebTransport session with a WT_FLOW_CONTROL_ERROR
+     * error code", which, as an HTTP/3 code and no application code, ends the CONNECT stream with RESET_STREAM and
+     * STOP_SENDING. Session dispatcher only.
+     */
+    internal fun flowControlError(reason: String) {
+        if (closedInfo.isCompleted) return
+        h3.scope.launch { terminate(WebTransportCloseInfo(0, "", WtSessionFlow.error(reason)), End.FlowControl) }
     }
 
     private suspend fun readCapsules() {
@@ -147,6 +277,22 @@ internal class WtSessionImpl(
                     WT_DRAIN_SESSION -> {
                         if (c.value.isNotEmpty()) malformed("WT_DRAIN_SESSION with a value")
                         drainFlow.value = true
+                    }
+
+                    in WtFlow.PROHIBITED -> {
+                        // section 5.4: "Endpoints MUST treat receipt of a WT_MAX_STREAM_DATA or a WT_STREAM_DATA_BLOCKED capsule as
+                        // a session error"
+                        flowControlError(
+                            "capsule 0x${c.type.toString(16)} (WT_MAX_STREAM_DATA or WT_STREAM_DATA_BLOCKED) is not used over HTTP/3",
+                        )
+                    }
+
+                    else -> {
+                        // a flow-control capsule: known only when flow control is on
+                        val v =
+                            WtFlow.valueOf(c)
+                                ?: malformed("capsule 0x${c.type.toString(16)} whose value is not one variable-length integer")
+                        flow?.onCapsule(c.type, v)?.let { flowControlError(it) }
                     }
                 }
             }
@@ -168,8 +314,11 @@ internal class WtSessionImpl(
         throw Http3Exception.MessageError(sessionId, reason)
     }
 
-    /** [Over]: the CONNECT stream already ended both ways, so nothing is sent on it. */
-    private enum class End { Locally, ByPeer, Failed, Over }
+    /**
+     * [Over]: the CONNECT stream already ended both ways, so nothing is sent on it. [FlowControl]: ended like [Failed], with
+     * WT_FLOW_CONTROL_ERROR.
+     */
+    private enum class End { Locally, ByPeer, Failed, FlowControl, Over }
 
     /**
      * The session is over: [closed] completes with [info], the session's streams end with WT_SESSION_GONE, and the CONNECT
@@ -188,9 +337,14 @@ internal class WtSessionImpl(
             withContext(NonCancellable + h3.dispatcher) {
                 bidiIn.close()
                 uniIn.close()
-                for (ch in listOf(bidiIn to true, uniIn to false)) {
-                    while (true) goneRaw(ch.first.tryReceive().getOrNull() ?: break, ch.second)
+                drainIncoming()
+                flow?.end(sessionClosed())
+                // only a session that started counted: one ended before (its exchange over during the accept) did not
+                if (flowCounted) {
+                    flowCounted = false
+                    h3.wtFlowSession(up = false)
                 }
+                capsulesOut.close()
                 for (s in streams.toList()) s.gone()
                 streams.clear()
                 datagramsIn.close()
@@ -210,6 +364,14 @@ internal class WtSessionImpl(
                     End.Failed -> {
                         runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
                         runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+                        null
+                    }
+
+                    End.FlowControl -> {
+                        runCatching { stream.reset(Http3ErrorCode.WT_FLOW_CONTROL_ERROR) }
+                        runCatching { stream.stopSending(Http3ErrorCode.WT_FLOW_CONTROL_ERROR) }
+                        // the capsule reader ends with the stop: nothing more of the peer is read
+                        watchers.firstOrNull()?.let { if (it !== caller) it.cancel() }
                         null
                     }
 
@@ -257,6 +419,7 @@ internal class WtSessionImpl(
      * the stream is left alone. Session dispatcher only.
      */
     fun ended() {
+        exchangeEnded.complete(Unit)
         h3.wt.unregister(sessionId)
         if (!closedInfo.isCompleted) {
             val reader = watchers.firstOrNull()
@@ -278,6 +441,26 @@ internal class WtSessionImpl(
         for (s in streams) if (s.writable) s.st.priority = p
     }
 
+    /**
+     * Ends the peer's streams still waiting in [bidiIn] and [uniIn] once they are closed: an untracked one has its count
+     * stopped and is ended raw; a tracked one is in [streams], ended with them (its gone() stops its count). Session
+     * dispatcher only.
+     */
+    private fun drainIncoming() {
+        for (ch in listOf(bidiIn to true, uniIn to false)) {
+            while (true) {
+                val i = ch.first.tryTake() ?: break
+                if (i.tracked == null) {
+                    i.count?.stop()
+                    goneRaw(i.stream, ch.second)
+                }
+            }
+        }
+    }
+
+    /** The peer's streams waiting for an accept (a test hook). */
+    internal val waitingForTest: Int get() = bidiIn.size + uniIn.size
+
     private fun goneRaw(
         st: QuicStream,
         bidi: Boolean,
@@ -290,79 +473,153 @@ internal class WtSessionImpl(
 
     private fun sessionClosed() = WebTransportException.SessionClosed("WebTransport session $sessionId is closed")
 
-    /** Wraps [st] and tracks it until both its directions ended; a session that closed meanwhile ends it at once. */
+    /**
+     * Wraps [st] and tracks it until both its directions ended; a session that closed meanwhile ends it at once. [peer]: a
+     * stream the peer opened, whose bytes [peerCount] counts; its end gives its slot back (flow control).
+     */
     private suspend fun track(
         st: QuicStream,
         readable: Boolean,
         writable: Boolean,
         headerLength: Int = 0,
+        peer: Boolean = false,
+        peerCount: WtInCount? = null,
+        into: Incoming? = null,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
             // section 3.4: sent at the CONNECT stream's priority, set here on the dispatcher so no update is missed
             if (writable) st.priority = stream.priority
-            val s = WtStreamImpl(h3.scope, st, readable, writable, headerLength) { done -> h3.scope.launch { streams.remove(done) } }
+            val bidi = readable && writable
+            // the peer's half of a bidirectional stream we opened carries no header
+            val inCount =
+                peerCount ?: flow?.takeIf { readable && !peer }?.let { WtInCount.start(h3, st, it, 0) { r -> flowControlError(r) } }
+            val s =
+                WtStreamImpl(
+                    h3.scope,
+                    st,
+                    readable,
+                    writable,
+                    headerLength,
+                    { done ->
+                        h3.scope.launch {
+                            streams.remove(done)
+                            if (peer && !closedInfo.isCompleted) flow?.onPeerStreamClosed(bidi)
+                        }
+                    },
+                    flow,
+                    inCount,
+                    sendTurns,
+                )
             if (closedInfo.isCompleted) {
                 s.gone()
                 throw sessionClosed()
             }
             streams += s
+            into?.tracked = s
             s
         }
 
+    /**
+     * Opens a stream: its stream credit (section 5.6.2: "An endpoint MUST NOT open more streams than permitted by the
+     * current stream limit set by its peer"), the QUIC stream, then its whole header, as one unit on the connection's
+     * scope that the caller only waits for. Section 5.3 counts the streams both sides agree on, so the unit keeps the
+     * count exact: a slot taken for a stream that never existed goes back, and a stream that exists gets its whole header
+     * out, then is reset keeping it when nobody wants it any more (the caller gave up, or the session ended).
+     */
     private suspend fun open(bidi: Boolean): WtStreamImpl {
         if (closedInfo.isCompleted) throw sessionClosed()
-        // the wait for stream credit ends when the session does
-        val st =
-            coroutineScope {
-                val opening =
-                    async {
-                        try {
-                            if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority)
-                        } catch (e: QuicException) {
-                            throw h3.map(e)
-                        }
+        val header = VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId)
+
+        fun unwanted(st: QuicStream) {
+            // section 4.4: RESET_STREAM_AT keeping the header, so the peer counts the stream as we do
+            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
+            if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+        }
+        val unit =
+            h3.scope.async {
+                val f = flow
+                f?.takeStream(bidi) // the wait ends with the session (flow.end); nothing is taken before it returns
+                val st =
+                    try {
+                        val quicOpen = suspend { if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority) }
+                        // in turn with the connection's other sessions when the peer's stream credit runs short (section 8)
+                        val fair = h3.wtFairness.opening(bidi)
+                        if (f == null) quicOpen() else fair.inTurn(this@WtSessionImpl, stream.priority.urgency, 1, quicOpen)
+                    } catch (e: Throwable) {
+                        // no stream the peer will see: the slot goes back
+                        f?.returnStream(bidi)
+                        throw if (e is QuicException) h3.map(e) else e
                     }
-                select {
-                    opening.onAwait { it }
-                    closedInfo.onAwait {
-                        opening.cancel()
-                        // opened just as the session closed: the stream is not handed out, so it is ended here
-                        opening.invokeOnCompletion { e ->
-                            if (e == null) {
-                                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                                opening.getCompleted().let { st ->
-                                    // nothing written yet: RESET_STREAM_AT with reliable size 0 (section 4.4)
-                                    runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, 0) }
-                                    if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
-                                }
-                            }
-                        }
-                        throw sessionClosed()
+                withContext(NonCancellable) {
+                    try {
+                        st.output.writeFully(header)
+                        st.output.flush()
+                    } catch (e: Throwable) {
+                        // only the connection's end gets here (nobody stops a stream it has not seen): the header goes reliably
+                        // as far as it was written
+                        runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
+                        throw h3.map(e)
                     }
                 }
+                // given up while the header went out: the result would be dropped, so the stream is ended here
+                if (!isActive) {
+                    unwanted(st)
+                    throw CancellationException("the opening of a WebTransport stream was given up")
+                }
+                // tracked inside the unit too: a caller cancelled now finds the stream handed over below, never lost
+                track(st, readable = bidi, writable = true, headerLength = header.size)
             }
-        val header = VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId)
         try {
-            st.output.writeFully(header)
-            st.output.flush()
+            return select {
+                unit.onAwait { it }
+                closedInfo.onAwait { throw sessionClosed() }
+            }
         } catch (e: Throwable) {
-            // section 4.4: RESET_STREAM_AT with the header's size as the reliable size, which the transport cuts to what was
-            // written: whatever part of the header got out is still delivered
-            runCatching { st.resetAt(Http3ErrorCode.WT_SESSION_GONE, header.size.toLong()) }
-            throw if (e is CancellationException) e else h3.map(e)
+            // the caller gave up, or the session closed: an opening still waiting stops; a stream it opened is ended, keeping
+            // its header (section 4.4), with application code 0
+            unit.cancel()
+            unit.invokeOnCompletion { ex ->
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                if (ex == null) {
+                    val s = unit.getCompleted()
+                    runCatching { s.reset(0) }
+                    if (bidi) runCatching { s.stopSending(0) }
+                }
+            }
+            throw e
         }
-        return track(st, readable = bidi, writable = true, headerLength = header.size)
     }
 
     override suspend fun openBidi(): WebTransportBidiStream = open(bidi = true)
 
     override suspend fun openUni(): WebTransportSendStream = open(bidi = false)
 
-    override suspend fun acceptBidi(): WebTransportBidiStream =
-        track(bidiIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = true)
+    override suspend fun acceptBidi(): WebTransportBidiStream = accept(bidiIn, bidi = true)
 
-    override suspend fun acceptUni(): WebTransportReceiveStream =
-        track(uniIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = false)
+    override suspend fun acceptUni(): WebTransportReceiveStream = accept(uniIn, bidi = false)
+
+    /**
+     * The next stream of [q], wrapped and tracked. [track] returns through withContext, which throws the caller's
+     * cancellation even after the stream was wrapped: the stream then goes back to the head of [q] for the next accept
+     * (or, once the session closed, is ended as every other stream of the session).
+     */
+    private suspend fun accept(
+        q: HandOffQueue<Incoming>,
+        bidi: Boolean,
+    ): WtStreamImpl {
+        val i = q.receive() ?: throw sessionClosed()
+        // wrapped by an accept whose caller was cancelled: never tracked twice
+        i.tracked?.let { return it }
+        try {
+            return track(i.stream, readable = true, writable = bidi, peer = true, peerCount = i.count, into = i)
+        } catch (e: CancellationException) {
+            // track() runs under NonCancellable, so only its return throws this: the stream is wrapped and tracked by now. A
+            // session closed meanwhile no longer takes it back; [close] ended it with the session's other streams, and ending
+            // it again here (on the session's dispatcher, as [close] does) covers a close that drained the queue just before
+            if (!q.putBack(i)) i.tracked?.let { s -> h3.scope.launch(h3.dispatcher) { s.gone() } }
+            throw e
+        }
+    }
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
         if (closedInfo.isCompleted) DatagramSendResult.Closed else capsules.trySendDatagram(payload)
@@ -397,17 +654,36 @@ internal class WtSessionImpl(
     override fun toString(): String = "WebTransportSession($sessionId, protocol=$protocol)"
 
     companion object {
-        /** WebTransport's capsules on the CONNECT stream; HTTP datagrams always go as QUIC datagrams (section 4.5). */
-        val CAPSULES: CapsuleConfig =
+        /**
+         * WebTransport's capsules on the CONNECT stream; HTTP datagrams always go as QUIC datagrams (section 4.5). The
+         * flow-control capsules are read only when flow control is on ([flowEnabled]), the two HTTP/2 ones section 5.4
+         * prohibits from draft-14 on (draft-02 predates them).
+         */
+        fun capsuleConfig(
+            flowEnabled: Boolean,
+            version: WtVersion,
+        ): CapsuleConfig =
             CapsuleConfig(
-                knownTypes = setOf(WtCloseCapsule.TYPE, WT_DRAIN_SESSION),
+                knownTypes =
+                    buildSet {
+                        add(WtCloseCapsule.TYPE)
+                        add(WT_DRAIN_SESSION)
+                        if (flowEnabled) addAll(WtFlow.CAPSULES)
+                        if (version != WtVersion.Draft02) addAll(WtFlow.PROHIBITED)
+                    },
                 terminalTypes = setOf(WtCloseCapsule.TYPE),
                 maxCapsuleLength = 4 + WtCloseCapsule.MAX_REASON,
                 datagramFallback = false,
             )
 
+        /** How long a session may stay blocked at a draft-14 peer's zero limits before [creditStall] tells. */
+        val STALL_AFTER: Duration = 10.seconds
+
         /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
         val CLOSE_TIMEOUT: Duration = 5.seconds
+
+        /** QUIC's default `maxSendBuffer`, for a transport that does not tell its own. */
+        const val DEFAULT_SEND_BUFFER: Long = 4_194_304
     }
 }
 
@@ -415,7 +691,6 @@ internal class WtSessionImpl(
 internal suspend fun H3Session.webTransport(
     r: Http3Request,
     protocols: List<String>,
-    ownsConnection: Boolean = false,
 ): WebTransportSession {
     check(settings.webTransport) {
         "Http3Settings.webTransport is off on this connection: the session's streams could not be received"
@@ -434,10 +709,21 @@ internal suspend fun H3Session.webTransport(
     val (chosen, refusal) = wtClientVersion(this)
     val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     withContext(dispatcher) {
-        check(!wtClientBusy) {
-            "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one"
+        if (wtClientSessions > 0) {
+            // section 5.1: "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous
+            // WebTransport session"; with it, at most as many as our own limit allows on one connection
+            if (!WtFlow.enabled(this@webTransport, version)) {
+                throw WebTransportException.ConnectionFull(
+                    "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one",
+                )
+            }
+            if (wtClientSessions >= settings.webTransportMaxSessions) {
+                throw WebTransportException.ConnectionFull(
+                    "this connection carries webTransportMaxSessions (${settings.webTransportMaxSessions}) WebTransport sessions",
+                )
+            }
         }
-        wtClientBusy = true
+        wtClientSessions++
     }
     var made: Http3Stream? = null
     try {
@@ -470,16 +756,14 @@ internal suspend fun H3Session.webTransport(
             scope.launch {
                 ended.await()
                 s.ended()
-                wtClientBusy = false
-                // a connection opened for this session alone ends with it, once both directions of the CONNECT did
-                if (ownsConnection) close(Http3ErrorCode.NO_ERROR, "")
+                wtClientSessions--
             }
         }
         made = null
         return s
     } catch (e: Throwable) {
         withContext(NonCancellable + dispatcher) {
-            wtClientBusy = false
+            wtClientSessions--
             made?.let {
                 if (e is CancellationException) {
                     it.reset(Http3ErrorCode.REQUEST_CANCELLED)

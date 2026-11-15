@@ -353,7 +353,14 @@ internal class H3WebTransportResponse(
         // answered once acceptWebTransport has answered (the session's 200, or its own 400): an exception before that
         // leaves the stream to the engine's reset. The call keeps reporting the upgrade's 101 for an accepted session (Ktor's
         // model of it, which RFC 9220 carries as a 2xx) and reports a 400 that went out instead
-        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" })) { sent ->
+        upgrade.acceptAndRun(
+            h3,
+            Http3Headers(h3Headers().fields.filter { it.first != "content-length" }),
+            onCreditStall = {
+                call.application.environment.log
+                    .warn(it)
+            },
+        ) { sent ->
             if (sent != 200) status(HttpStatusCode.fromValue(sent))
             answered = true
         }

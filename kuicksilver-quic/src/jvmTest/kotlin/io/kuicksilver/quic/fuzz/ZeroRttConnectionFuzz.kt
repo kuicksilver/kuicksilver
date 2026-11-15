@@ -1089,6 +1089,11 @@ internal fun sizeBound(
             streams
         }
 
+        // a held final size and StreamFinished, and the stream's id, per stream sent in 0-RTT
+        "streamsHeldFor0Rtt" -> {
+            3 * streams
+        }
+
         "streamControlFrames" -> {
             8 * streams + 64
         }

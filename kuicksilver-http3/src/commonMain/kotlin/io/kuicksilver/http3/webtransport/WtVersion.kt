@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.webtransport
 
+import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.frame.SettingsId
 
 /**
@@ -122,19 +123,49 @@ private const val NO_COMMON_VERSION =
 
 /** The WebTransport settings we interpret and advertise (draft-ietf-webtrans-http3-16 section 3.1); identifiers in [SettingsId]. */
 internal object WtSettings {
-    /** The codepoints this library interprets; the peer's are taken out of `Http3PeerSettings.unknown`. */
-    val ALL: Set<Long> = setOf(SettingsId.WT_ENABLED, SettingsId.WT_MAX_SESSIONS_DRAFT14, SettingsId.ENABLE_WEBTRANSPORT_DRAFT02)
+    /**
+     * The codepoints this library interprets; the peer's are taken out of `Http3PeerSettings.unknown`. The flow-control
+     * ones are among them, so a client keeps them with its tickets and refuses a resumed connection whose server lowered
+     * them after 0-RTT (section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS frame
+     * received in the resumed connection reduces any flow control values from the cached previous values").
+     */
+    val ALL: Set<Long> =
+        setOf(
+            SettingsId.WT_ENABLED,
+            SettingsId.WT_MAX_SESSIONS_DRAFT14,
+            SettingsId.ENABLE_WEBTRANSPORT_DRAFT02,
+            SettingsId.WT_INITIAL_MAX_STREAMS_UNI,
+            SettingsId.WT_INITIAL_MAX_STREAMS_BIDI,
+            SettingsId.WT_INITIAL_MAX_DATA,
+        )
 
     /**
-     * What we advertise. A server announces every version so each browser finds its own, and allows one session
-     * (`WT_MAX_SESSIONS = 1`): without `SETTINGS_WT_INITIAL_*` there is no WebTransport flow control, and a client then
-     * keeps to a single session (section 5.1). A client announces draft-16 and draft-02.
+     * What we advertise. A server announces every version so each browser finds its own; a client announces draft-16 and
+     * draft-02. Both send their non-zero initial flow-control limits (section 5.5), which declare WebTransport flow
+     * control (section 5.1), and a server tells draft-14 clients how many sessions it takes at once
+     * (`SETTINGS_WT_MAX_SESSIONS`, [Http3Settings.webTransportMaxSessions] with flow control, else 1: draft-14 section
+     * 5.1 counts a value above 1 as declaring flow control).
      */
-    fun ours(isServer: Boolean): List<Pair<Long, Long>> =
+    fun ours(
+        isServer: Boolean,
+        settings: Http3Settings,
+    ): List<Pair<Long, Long>> =
         buildList {
             add(SettingsId.ENABLE_WEBTRANSPORT_DRAFT02 to 1L)
-            if (isServer) add(SettingsId.WT_MAX_SESSIONS_DRAFT14 to 1L)
+            if (isServer) {
+                add(
+                    SettingsId.WT_MAX_SESSIONS_DRAFT14 to
+                        if (settings.webTransportFlowControl) settings.webTransportMaxSessions.toLong() else 1L,
+                )
+            }
             add(SettingsId.WT_ENABLED to 1L)
+            if (settings.webTransportInitialMaxStreamsUni != 0L) {
+                add(SettingsId.WT_INITIAL_MAX_STREAMS_UNI to settings.webTransportInitialMaxStreamsUni)
+            }
+            if (settings.webTransportInitialMaxStreamsBidi != 0L) {
+                add(SettingsId.WT_INITIAL_MAX_STREAMS_BIDI to settings.webTransportInitialMaxStreamsBidi)
+            }
+            if (settings.webTransportInitialMaxData != 0L) add(SettingsId.WT_INITIAL_MAX_DATA to settings.webTransportInitialMaxData)
         }
 }
 

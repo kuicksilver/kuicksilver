@@ -1027,6 +1027,32 @@ A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated 
 above its final size, closes the connection with FRAME_ENCODING_ERROR. `QuicConnection.resetStreamAtEnabled` tells
 whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.
 
+### Final sizes (experimental)
+
+`QuicStream.sentFinalSize` and `QuicStream.receivedFinalSize` are `Deferred<Long>` values that complete with the final
+size of each half of a stream (RFC 9000 section 4.5), the flow-control credit it used as both sides count it. The
+sending half's size is known once its reset is queued (`reset`, the reset that answers the peer's STOP_SENDING, or
+`resetAt` once its frame goes out) or once its FIN first went out; the receiving half's as soon as the peer's FIN,
+RESET_STREAM or RESET_STREAM_AT arrives, also when the bytes were never read or after `stopSending`. A protocol that
+counts data across streams, such as WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.4), needs it for a
+stream that was reset. The size counts every byte of the stream, an application's own header too: WebTransport
+subtracts its stream header itself. A stream sent in 0-RTT reports its size only after the server accepted the early
+data; a rejection fails both with `QuicException.StreamError.EarlyDataRejected`, a lost connection with its
+`ConnectionLost`, and a half the stream does not have at once with IllegalStateException. Every caller gets the same
+`Deferred`: await it, never cancel it. In the sans-IO core the same moments raise `ConnectionEvent.StreamFinalSize`,
+once per half.
+
+`QuicStream.receivedOffset` is a `StateFlow<Long>` of the highest offset of the peer's half received so far, read or
+not and in order or not, and then its final size: what QUIC flow control counts (RFC 9000 section 4.1), so a protocol
+with limits of its own across streams can check bytes nobody has read yet.
+
+`QuicStream.sendReleased` is the sending counterpart: a `StateFlow<Long>` of the bytes of our half the connection's send
+buffer (`maxSendBuffer`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
+of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
+shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
+that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
+up to date from its first read on, which catches up with what was released before.
+
 ## Datagrams (RFC 9221)
 
 Both sides advertise `max_datagram_frame_size` (65 535 by default; `maxDatagramFrameSize = 0` turns the extension off and

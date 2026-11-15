@@ -5,6 +5,8 @@ package io.kuicksilver.quic
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * A QUIC stream as two ktor-io channels. Closing [output] sends FIN; closing it with a cause sends
@@ -46,7 +48,9 @@ public interface QuicStream {
 
     /**
      * Abandons sending with RESET_STREAM carrying application error [code] (RFC 9000 section 19.4): [output] fails with
-     * [QuicException.StreamError.Reset] and unsent data is dropped. Returns at once; the loop sends the frame.
+     * [QuicException.StreamError.Reset] and unsent data is dropped. Returns at once; the loop sends the frame. Once all
+     * data and the FIN were acknowledged there is nothing to abandon (section 3.1: a reset leaves only the "Ready",
+     * "Send", or "Data Sent" states), and no frame goes.
      */
     public fun reset(code: Long)
 
@@ -72,6 +76,54 @@ public interface QuicStream {
      * [QuicException.StreamError.Stopped] and buffered data is dropped. Returns at once.
      */
     public fun stopSending(code: Long)
+
+    /**
+     * The final size of our sending half (RFC 9000 section 4.5): the flow-control credit it consumed, as the peer counts it.
+     * Completes once the size can no longer change: once the RESET_STREAM of [reset] or of the answer to the peer's
+     * STOP_SENDING is queued, or the RESET_STREAM_AT of [resetAt] (which waits for its reliable bytes to go out once), with
+     * the size that frame carries; after FIN, once the FIN was first sent, with every byte written (a later reset carries
+     * the same size). A stream opened in 0-RTT completes only once the server accepted it. Fails with the connection's
+     * [QuicException.ConnectionLost] when the connection ends first, with [QuicException.StreamError.EarlyDataRejected]
+     * when a rejected 0-RTT dropped the stream, and at once with IllegalStateException on the peer's unidirectional stream.
+     * The same Deferred is handed to every caller: await it, never cancel it, or the others see the cancellation too. Null
+     * from implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val sentFinalSize: Deferred<Long>? get() = null
+
+    /**
+     * The final size of the peer's sending half (RFC 9000 section 4.5), completed as soon as its FIN, RESET_STREAM or
+     * RESET_STREAM_AT made it known, whether or not the bytes were read (also after [stopSending]): what a protocol that
+     * counts the peer's data across streams needs for a reset stream (draft-ietf-webtrans-http3-16 section 5.4). The size
+     * counts every byte of the stream, an application's own header included. On a client's own stream, while its 0-RTT
+     * awaits the server's answer, it completes only once the server accepted the early data, as [sentFinalSize] does.
+     * Fails like [sentFinalSize] when the
+     * connection ends first or a rejected 0-RTT dropped the stream, and at once with IllegalStateException on our own
+     * unidirectional stream. Shared like [sentFinalSize]: never cancel it. Null from implementations outside this library
+     * that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val receivedFinalSize: Deferred<Long>? get() = null
+
+    /**
+     * The highest offset of the peer's half received so far, whether read or not and in order or not (RFC 9000 section 4.1:
+     * flow control counts it), then its final size once a reset or FIN told it. It only grows; 0 on our own unidirectional
+     * stream. What a protocol that limits the peer's data across streams checks, also for bytes nobody reads yet
+     * (draft-ietf-webtrans-http3-16 section 5.6.4). Null from implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val receivedOffset: StateFlow<Long>? get() = null
+
+    /**
+     * The bytes of our sending half released from the connection's send buffer so far (`QuicConfig.maxSendBuffer`, shared
+     * by every stream): acknowledged by the peer, or dropped by a reset; all of them once the stream retired or the
+     * connection ended. It only grows; the bytes written minus these are what the stream holds of the shared buffer, which
+     * a protocol multiplexing independent users over one connection limits per user. Tracked from its first read on (that
+     * read catches up with what was released before); stays 0 on the peer's unidirectional stream. Null from
+     * implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val sendReleased: StateFlow<Long>? get() = null
 
     /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi

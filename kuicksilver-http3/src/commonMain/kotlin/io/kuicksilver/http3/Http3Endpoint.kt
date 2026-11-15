@@ -267,8 +267,10 @@ public class Http3Endpoint private constructor(
          * of draft-14 or later could be opened or accepted, and our streams could not be reset as section 4.4 requires.
          */
         @OptIn(ExperimentalKuicksilverApi::class)
-        internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig =
-            if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
+        internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig {
+            settings.requireWebTransportFits(this)
+            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
+        }
 
         /**
          * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional

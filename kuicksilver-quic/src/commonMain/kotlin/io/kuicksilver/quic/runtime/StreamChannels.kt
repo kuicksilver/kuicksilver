@@ -297,7 +297,9 @@ internal class StreamOutput(
         // a stream a rejected 0-RTT dropped: its ID may name a new stream of the core by now
         if (!stream.live()) throw ClosedWriteChannelException(closedCause ?: QuicException.StreamError.EarlyDataRejected(stream.id))
         return try {
-            stream.conn.core.writeStream(stream.id, data, off, len, fin)
+            stream.conn.core
+                .writeStream(stream.id, data, off, len, fin)
+                .also { stream.sentToCore += it }
         } catch (e: IllegalStateException) {
             throw ClosedWriteChannelException(
                 closedCause ?: QuicException.StreamError

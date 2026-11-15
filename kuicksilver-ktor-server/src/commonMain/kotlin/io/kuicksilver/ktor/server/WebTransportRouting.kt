@@ -132,6 +132,8 @@ internal class WebTransportUpgrade(
     suspend fun acceptAndRun(
         request: Http3ServerRequest,
         headers: Http3Headers,
+        /** Hears, once, that a draft-14 peer left the session without credit ([watchCreditStall]): the engine logs it. */
+        onCreditStall: (String) -> Unit = {},
         answered: (status: Int) -> Unit = {},
     ) {
         val session =
@@ -144,13 +146,30 @@ internal class WebTransportUpgrade(
                 answered(400)
                 return // the client's fault (a request that rules out capsules): answered with 400
             }
+        val watch = watchCreditStall(session, onCreditStall)
         try {
             handler(session)
         } catch (e: Throwable) {
             val code = if (e is CancellationException) 0L else WEB_TRANSPORT_HANDLER_FAILED
             withContext(NonCancellable) { runCatching { session.close(code) } }
             throw e
+        } finally {
+            watch?.dispose()
         }
         session.close()
     }
+}
+
+/**
+ * Calls [report] once when [session] says a draft-14 peer left it without flow-control credit
+ * (`WebTransportDiagnostics.creditStall`); null for a session that cannot say. Dispose the handle when the session's
+ * handler is done.
+ */
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+internal fun watchCreditStall(
+    session: WebTransportSession,
+    report: (String) -> Unit,
+): kotlinx.coroutines.DisposableHandle? {
+    val stall = (session as? io.kuicksilver.http3.WebTransportDiagnostics)?.creditStall ?: return null
+    return stall.invokeOnCompletion { e -> if (e == null) report(stall.getCompleted()) }
 }

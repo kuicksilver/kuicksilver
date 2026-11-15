@@ -185,6 +185,32 @@ hosted CI only), the C tests under sanitizers
 on Linux, and a physical iOS device ([ios.md, Device checklist](guide/ios.md#device-checklist)). Interop results and
 their analysis are in [docs/spec/interop.md](spec/interop.md).
 
+### Proposed check: lossless hand-offs between coroutines
+
+Not in the gate yet; it is meant to join the static checks under `tools/check` once their shared Kotlin scanner is on
+`main`. A coroutine channel's `receive` has a prompt cancellation guarantee: an element already handed to a receiver
+that is cancelled before it resumes is dropped unless the channel has `onUndeliveredElement`, and a `flow {}` builder's
+`emit` checks the collector's job after the element was taken. Where the element is data or ownership (a capsule, a
+request, a peer's stream, a pooled buffer), that is a loss or a leak; `HandOffQueue` in kuicksilver-http3 is the
+lossless form. The check would flag, in production source sets:
+
+- a `Channel(...)` whose element type is not `Unit` (declared or inferred from the property type) without an
+  `onUndeliveredElement` argument or trailing lambda, when one of `receive`, `receiveCatching`, `onReceive`,
+  `receiveAsFlow`, `consumeAsFlow` or `for (x in ch)` reads it;
+- `produce`, `actor`, `callbackFlow` and `channelFlow` whose element type is not `Unit`;
+- `flow { ... emit(<call that takes an element>) }`, the shape that loses an element to a collector cancelled while it
+  ran.
+
+- `select { ch.onReceive { ... } }` on a channel that is exposed publicly as a `ReceiveChannel`;
+- a public `Flow` backed by an ownership queue (as `CapsuleStream.capsules` is) whose KDoc does not carry the operator
+  caveat: `buffer`, `flowOn`, `conflate`, `produceIn`, `shareIn` and `stateIn` collect ahead in another coroutine and lose
+  what they took and had not delivered when the collection is cancelled.
+
+Each finding is either fixed or listed in an allowlist with its reason ("HTTP datagrams: unreliable by RFC 9297",
+"single internal consumer, cancelled only with its connection"). Negative controls feed it the forms a regex misses:
+an element type inferred from a factory function or a typealias, a channel exposed as `ReceiveChannel` and read in
+another file, `select { ch.onReceive }`, comments and string templates that look like code.
+
 ## 6. Hosted CI
 
 [`.github/workflows/build.yml`](../.github/workflows/build.yml) is the CI counterpart of the local gate: the same step

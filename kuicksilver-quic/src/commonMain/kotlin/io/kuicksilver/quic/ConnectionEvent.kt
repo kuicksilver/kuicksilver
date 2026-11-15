@@ -49,7 +49,11 @@ public sealed interface ConnectionEvent {
         public val id: Long,
     ) : ConnectionEvent
 
-    /** Stream [id][ConnectionEvent.StreamReadable.id] has new data, its end or its reset for [ConnectionCore.readStream]; raised again only after more arrives. */
+    /**
+     * Stream [id][ConnectionEvent.StreamReadable.id] has new data, its end or its reset for [ConnectionCore.readStream], or
+     * data arrived beyond a gap (its highest received offset grew, nothing new to read yet); raised again only after more
+     * arrives.
+     */
     public class StreamReadable internal constructor(
         /** The stream with something to read. */
         public val id: Long,
@@ -59,7 +63,8 @@ public sealed interface ConnectionEvent {
      * Stream [id][ConnectionEvent.StreamWritable.id] can make progress again: acknowledgements freed send-buffer room after [ConnectionCore.writeStream] took fewer bytes
      * than offered, or the peer raised its flow-control credit (MAX_STREAM_DATA, MAX_DATA; RFC 9000 section 4.1) while the stream had
      * data waiting to be sent. Retry the write; the event is a hint, a write may still take fewer bytes when other streams share the
-     * buffer.
+     * buffer. Also, for a stream whose [QuicStream.sendReleased] is followed, once acknowledgements or a reset released
+     * some of its buffered bytes.
      */
     public class StreamWritable internal constructor(
         /** The stream that can be written to again. */
@@ -97,6 +102,24 @@ public sealed interface ConnectionEvent {
     public class StreamFinished internal constructor(
         /** The stream that is done. */
         public val id: Long,
+    ) : ConnectionEvent
+
+    /**
+     * The final size of one half of stream [id][ConnectionEvent.StreamFinalSize.id] is fixed (RFC 9000 section 4.5): for
+     * [sending][ConnectionEvent.StreamFinalSize.sending], once the sending half's reset was queued (RESET_STREAM,
+     * RESET_STREAM_AT, or the answer to the peer's STOP_SENDING) or its FIN first went out; for the receiving half, once the
+     * peer's FIN, RESET_STREAM or RESET_STREAM_AT told it, whether or not the bytes were read.
+     * [size][ConnectionEvent.StreamFinalSize.size] is the flow-control credit the stream consumed. Raised once per half; for
+     * a client stream sent in 0-RTT only after the server accepted it (a rejection drops the stream instead).
+     */
+    @ExperimentalKuicksilverApi
+    public class StreamFinalSize internal constructor(
+        /** The stream whose final size is known. */
+        public val id: Long,
+        /** True for our sending half, false for the peer's (our receiving half). */
+        public val sending: Boolean,
+        /** The final size in bytes. */
+        public val size: Long,
     ) : ConnectionEvent
 
     /**

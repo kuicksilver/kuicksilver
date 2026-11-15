@@ -29,6 +29,7 @@ import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
 import io.kuicksilver.http3.message.priorityFieldValue
+import io.kuicksilver.http3.webtransport.WtFlow
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
@@ -63,10 +64,10 @@ internal suspend fun handleRequestStream(
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
     // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
     if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
-    val firstType =
+    val firstSized =
         if (settings.webTransport) {
             try {
-                st.input.readVarIntOrNull()
+                st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
                 truncated(st, null, null)
                 return@with
@@ -78,10 +79,11 @@ internal suspend fun handleRequestStream(
         } else {
             null
         }
+    val firstType = firstSized?.first
     if (firstType == FrameType.WT_STREAM) {
         bidiSettled(st.id) // a WebTransport stream, not a request: never a session
         st.readAhead = Long.MAX_VALUE // its data carries no field section: read ahead as any stream
-        wt.onBidi(st)
+        wt.onBidi(st, firstSized.second)
         return@with
     }
     if (st.id > maxRequestId) maxRequestId = st.id
@@ -179,13 +181,25 @@ internal suspend fun handleRequestStream(
             return@with
         }
         if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
-            // one session per connection without flow control: a second is refused before the application (section 5.1)
-            if (wtSessionStream != null) {
+            val draft02 =
+                parsed.protocol.equals(WtTokens.LEGACY, ignoreCase = true) && parsed.regular[WtTokens.DRAFT02_REQUEST_FIELD] == "1"
+            // refused before the application: section 5.1 without flow control, section 5.2 (draft-14 section 5.2) over the
+            // limit; the connection stays (draft-14: "The server MUST NOT close the connection if the client opens sessions
+            // exceeding this limit")
+            // section 5.2: faster than the rate, refused unprocessed; a peer that keeps trying spends glitch tokens too
+            if (!wtSessionRate.spend(glitchClock())) {
+                abort(st, Http3ErrorCode.REQUEST_REJECTED)
+                wt.unregister(st.id)
+                glitch("WebTransport sessions above the rate")
+                return@with
+            }
+            if (!wtAdmits(draft02)) {
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)
                 return@with
             }
-            wtSessionStream = st.id
+            wtSessions[st.id] = draft02
+            wtSessionsChanged()
         }
         val req = ServerRequestImpl(this, st, parsed)
         // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
@@ -213,7 +227,7 @@ internal suspend fun handleRequestStream(
             }
         }
         handedOff = true // from here ServerRequestImpl.done() ends the request
-        if (requests.trySend(req).isFailure) {
+        if (!requests.offer(req)) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
             req.done()
             return@with
@@ -231,7 +245,7 @@ internal suspend fun handleRequestStream(
         pendingHeaders.remove(st.id)
         if (!handedOff) {
             requestDone()
-            if (wtSessionStream == st.id) wtSessionEnded(st.id, null)
+            if (st.id in wtSessions) wtSessionEnded(st.id, null)
         }
     }
 }
@@ -241,8 +255,31 @@ internal fun H3Session.wtSessionEnded(
     streamId: Long,
     session: WtSessionImpl?,
 ) {
-    if (wtSessionStream == streamId) wtSessionStream = null
+    if (wtSessions.remove(streamId) != null) wtSessionsChanged()
     session?.ended() ?: wt.unregister(streamId)
+}
+
+/**
+ * Server: whether another WebTransport CONNECT ([draft02]: a draft-02 request) may join the sessions already on this
+ * connection. The first always may (its acceptance checks the client's SETTINGS). Another one needs flow control on for
+ * it and for every session already there, which the client's SETTINGS tell, so they are awaited first (bounded by
+ * [H3Session.wtDeadline]; draft-16 section 7.1: "the server MUST NOT process any incoming WebTransport requests until the
+ * client's SETTINGS have been received"); then: section 5.1, "A server that receives more than one session on an
+ * underlying transport connection when flow control is not enabled MUST reset the excessive CONNECT streams with a
+ * H3_REQUEST_REJECTED status", and section 5.2, "Servers SHOULD limit the rate of incoming WebTransport sessions",
+ * here at most [io.kuicksilver.http3.Http3Settings.webTransportMaxSessions] at once (draft-14 section 5.2: "it MUST reset
+ * all of the CONNECT streams it is not willing to process with the H3_REQUEST_REJECTED status"). Session dispatcher only;
+ * the caller records an admitted session before it suspends again.
+ */
+internal suspend fun H3Session.wtAdmits(draft02: Boolean): Boolean {
+    if (wtSessions.isEmpty()) return true
+    withinWtDeadline { awaitPeerSettings() } ?: return false
+    if (wtSessions.isEmpty()) return true // the others ended meanwhile
+
+    fun flowControlled(d02: Boolean): Boolean = wtServerVersion(this, d02).first?.let { WtFlow.enabled(this, it) } == true
+    return wtSessions.size < settings.webTransportMaxSessions &&
+        flowControlled(draft02) &&
+        wtSessions.values.all { flowControlled(it) }
 }
 
 /**
@@ -497,7 +534,7 @@ internal class ServerRequestImpl(
         val stream = acceptConnect(Http3Headers(fields))
         val s = WtSessionImpl(session, stream, this.headers, protocol, version!!)
         withContext(session.dispatcher) {
-            if (finished) {
+            if (finished || session.endBeforeStartForTest) {
                 s.ended()
             } else {
                 wtSession = s

@@ -172,8 +172,10 @@ public class Http3ClientConfig {
     public var webTransportIgnoresProxy: Boolean = false
 
     /**
-     * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, each on a QUIC connection of its own;
-     * one more fails at once with IllegalStateException, nothing waits. 64 by default, at least 1.
+     * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, over all its connections (they
+     * share the pooled ones, up to `settings.webTransportMaxSessions` a connection); one more fails at once with
+     * IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-16 section 8: "a
+     * WebTransport client SHOULD limit the number of outgoing sessions it will open").
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var maxWebTransportSessions: Int = 64

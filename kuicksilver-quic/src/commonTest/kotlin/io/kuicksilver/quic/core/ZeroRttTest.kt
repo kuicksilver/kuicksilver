@@ -218,6 +218,245 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * The final size of a stream sent in 0-RTT stands only once the server accepted it: reported then, once (the FIN went
+     * out in 0-RTT).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun zeroRttFinalSizeReportedOnceAccepted() {
+        val (p, id) = resumed(ticket())
+        assertTrue(p.handshake())
+        assertEquals(true, p.client.earlyDataAccepted)
+        val finals = p.clientEvents.filterIsInstance<ConnectionEvent.StreamFinalSize>().filter { it.id == id && it.sending }
+        assertEquals(listOf(15L), finals.map { it.size })
+        p.close()
+    }
+
+    /**
+     * A uni stream reset in 0-RTT is done on our side at once, but its size stands only with the server's answer: the
+     * StreamFinished waits with it, so the runtime still holds the stream when the size stands or falls.
+     */
+    private fun resetEarlyUni(
+        ticket: QuicSessionTicket,
+        serverEarly: ServerEarlyData? = early(),
+        serverQuic: QuicConfig = QuicConfig.Default,
+        clientQuic: QuicConfig = QuicConfig.Default,
+        mode: EarlyDataState = EarlyDataState.Allowed,
+        reliable: Long? = null,
+    ): Pair<CorePair, Long> {
+        var id = -1L
+        val p =
+            CorePair(
+                clientQuic = clientQuic,
+                crypto = ksl,
+                clientEarly = mode,
+                serverEarly = serverEarly,
+                serverQuic = serverQuic,
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket))
+                    id = c.openStream(bidi = false)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        // the bytes go out in 0-RTT, then the reset, before the handshake completes
+        p.step()
+        if (reliable == null) p.client.resetStream(id, 4) else p.client.resetStreamAt(id, 4, reliable)
+        p.step()
+        assertTrue(p.clientEvents.none { it is ConnectionEvent.StreamFinished && it.id == id }, "nothing of the stream before the answer")
+        return p to id
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun List<ConnectionEvent>.ofStream(id: Long): List<String> =
+        mapNotNull {
+            when {
+                it is ConnectionEvent.StreamFinalSize && it.id == id && it.sending -> "size ${it.size}"
+                it is ConnectionEvent.StreamFinished && it.id == id -> "finished"
+                else -> null
+            }
+        }
+
+    @Test fun earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept() {
+        val (p, id) = resetEarlyUni(ticket())
+        try {
+            assertTrue(p.handshake())
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.ofStream(id).isNotEmpty() })
+            assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_earlyStreamResetBeforeTheAnswerReportsNothingOnReject() {
+        val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            assertTrue(p.handshake())
+            assertEquals(false, p.client.earlyDataAccepted)
+            p.runUntil(limit = 1.seconds) { false }
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+            assertEquals(0, p.client.streams.sizesForTest()[5], "nothing held after the answer")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RESET_STREAM_AT with reliable size 0 (WebTransport's reset of a stream without header) waits the same way. */
+    @Test fun earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept() {
+        val withAt = quicConfig { resetStreamAt = true }
+        val (p, id) = resetEarlyUni(ticket(serverQuic = withAt, clientQuic = withAt), early(withAt), withAt, withAt, reliable = 0)
+        try {
+            assertTrue(p.handshake())
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
+            assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Accepted with lower limits: the connection fails, and nothing of the 0-RTT stream is reported. */
+    @Test fun negative_earlyStreamOfAnAcceptedThenFailedConnectionReportsNothing() {
+        val (p, id) = resetEarlyUni(t2Lowered())
+        try {
+            p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null }
+            assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Required mode and a rejection: the connection closes, nothing of the stream is reported. */
+    @Test fun negative_earlyStreamOfARequiredRejectionReportsNothing() {
+        val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(3)), mode = EarlyDataState.Required)
+        try {
+            assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
+            assertEquals(emptyList(), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Across a compatible version upgrade (RFC 9369) the held size and end come once, in order. */
+    @Test fun earlyStreamResetAcrossAVersionUpgradeIsReportedOnce() {
+        val (p, id) = resetEarlyUni(ticket(), early(v2v1), v2v1, v1v2)
+        try {
+            assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
+            assertEquals(VersionProfile.V2, p.client.version)
+            assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
+            assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A bidi stream sent and reset in 0-RTT; with [stop], its receiving half is stopped before the answer too. */
+    private fun resetEarlyBidi(
+        ticket: QuicSessionTicket,
+        serverEarly: ServerEarlyData? = early(),
+        stop: Boolean,
+    ): Pair<CorePair, Long> {
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = serverEarly,
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket))
+                    id = c.openStream(bidi = true)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        p.step()
+        p.client.resetStream(id, 4)
+        if (stop) p.client.stopSending(id, 5)
+        p.step()
+        assertTrue(p.clientEvents.none { it is ConnectionEvent.StreamFinished && it.id == id })
+        return p to id
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun List<ConnectionEvent>.bidiOf(id: Long): List<String> =
+        mapNotNull {
+            when {
+                it is ConnectionEvent.StreamFinalSize && it.id == id -> if (it.sending) "sent ${it.size}" else "received ${it.size}"
+                it is ConnectionEvent.StreamFinished && it.id == id -> "finished"
+                else -> null
+            }
+        }
+
+    /** The receiving half ends after the answer (the server's reply read to its FIN): both sizes, then the end. */
+    @Test fun earlyBidiResetThenAnsweredReportsBothSizesBeforeItsEnd() {
+        val (p, id) = resetEarlyBidi(ticket(), stop = false)
+        try {
+            var answered = false
+            assertTrue(
+                p.runUntil(limit = 3.seconds) {
+                    val s = p.server
+                    if (s != null && !answered && p.serverEvents.any { it is ConnectionEvent.StreamOpened && it.id == id }) {
+                        s.writeStream(id, "ok".encodeToByteArray(), 0, 2, fin = true)
+                        answered = true
+                    }
+                    streamText(p.client, id)
+                    "finished" in p.clientEvents.bidiOf(id)
+                },
+            )
+            assertEquals(true, p.client.earlyDataAccepted)
+            val got = p.clientEvents.bidiOf(id)
+            assertEquals("finished", got.last(), "$got")
+            assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
+            assertEquals(listOf("received 2"), got.filter { it.startsWith("received") })
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Its receiving half stopped before the answer: on accept the sizes, then the end; nothing raised before. */
+    @Test fun earlyBidiResetAndStoppedReportsAfterTheAccept() {
+        val (p, id) = resetEarlyBidi(ticket(), stop = true)
+        try {
+            assertTrue(p.handshake())
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.runUntil(limit = 3.seconds) { "finished" in p.clientEvents.bidiOf(id) })
+            val got = p.clientEvents.bidiOf(id)
+            assertEquals("finished", got.last())
+            assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
+            assertEquals(1, got.count { it.startsWith("received") })
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_earlyBidiResetBeforeARejectionReportsNothing() {
+        for (stop in listOf(false, true)) {
+            val (p, id) = resetEarlyBidi(ticket(), serverEarly = early(app = byteArrayOf(9)), stop = stop)
+            try {
+                assertTrue(p.handshake())
+                assertEquals(false, p.client.earlyDataAccepted)
+                p.runUntil(limit = 1.seconds) { false }
+                assertEquals(emptyList(), p.clientEvents.bidiOf(id), "stop=$stop")
+                assertEquals(0, p.client.streams.sizesForTest()[5])
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /** A rejected 0-RTT drops the stream: no final size is ever reported for it (its FIN went out in 0-RTT). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_rejectedZeroRttStreamHasNoFinalSize() {
+        val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        assertTrue(p.handshake())
+        assertEquals(false, p.client.earlyDataAccepted)
+        p.runUntil(limit = 1.seconds) { false }
+        assertTrue(p.clientEvents.none { it is ConnectionEvent.StreamFinalSize && it.id == id && it.sending }, p.clientEvents.toString())
+        p.close()
+    }
+
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
         val (p, id) = resumed(ticket())
         var answeredWhile: ConnectionState? = null
@@ -462,6 +701,15 @@ class ZeroRttTest {
         )
         assertTrue(!replay.isStreamOpenForTest(id))
         p.close()
+    }
+
+    /** A ticket that remembers more than the server will grant: the server accepts 0-RTT with lower limits. */
+    private fun t2Lowered(): QuicSessionTicket {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = tp.initialMaxData * 4
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        return t
     }
 
     @Test fun negative_0rttTransportParamsReduced() {

@@ -13,11 +13,13 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.MemoryNet
 import io.kuicksilver.http3.TestCerts
+import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -60,6 +62,9 @@ class EarlyDataTest {
 
     private class Fixture(
         policy: Http3EarlyDataPolicy,
+        private val clientSettings: Http3Settings = Http3Settings.Default,
+        /** Handles the server's CONNECT requests instead of the echo (which reads the body first). */
+        private val onConnect: (suspend (io.kuicksilver.http3.Http3ServerRequest, Http3Connection) -> Unit)? = null,
         settings: Http3Settings.Builder.() -> Unit = {},
     ) : AutoCloseable {
         val net = MemoryNet()
@@ -118,6 +123,7 @@ class EarlyDataTest {
                         while (true) {
                             val r = c.acceptRequest()
                             scope.launch {
+                                if (r.method == "CONNECT" && onConnect != null) return@launch onConnect(r, c)
                                 r.body.readAllBytes()
                                 if (r.method == "POST") executions.incrementAndFetch()
                                 last = Seen(r.method, r.receivedEarly, c.quic.isHandshakeComplete)
@@ -134,11 +140,15 @@ class EarlyDataTest {
 
         /** A first connection that leaves the client endpoint a ticket (with the server's SETTINGS kept in it). */
         suspend fun warmUp() {
-            val c = client.connectEarly(server.localAddress, H3Fixtures.client())
+            val c = connectEarly()
             repeat(2) { assertEquals(200, c.request(get()).also { it.body.readAllBytes() }.status) }
             c.peerSettings.first { it != null }
             c.close()
         }
+
+        /** A connection with the fixture's client settings, in 0-RTT when a ticket allows. */
+        suspend fun connectEarly(): Http3Connection =
+            client.connectEarly(server.localAddress, H3Fixtures.client(), settings = clientSettings)
 
         fun get(early: Boolean = false) =
             http3Request("GET", "server.test", "/") {
@@ -701,6 +711,76 @@ class EarlyDataTest {
 
     private val maxField = io.kuicksilver.http3.frame.SettingsId.MAX_FIELD_SECTION_SIZE
 
+    /**
+     * draft-ietf-webtrans-http3-16 section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS
+     * frame received in the resumed connection reduces any flow control values from the cached previous values": a
+     * server that accepted 0-RTT and then sends a lower SETTINGS_WT_INITIAL_MAX_DATA, or omits it.
+     */
+    @Test fun negative_webTransportFlowControlLoweredAfter0RttIsSettingsError(): Unit =
+        runBlocking {
+            val data = io.kuicksilver.http3.frame.SettingsId.WT_INITIAL_MAX_DATA
+            val changes =
+                listOf<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>>(
+                    { l -> l.map { if (it.first == data) it.first to it.second - 1 else it } },
+                    { l -> l.filter { it.first != data } },
+                )
+            for (change in changes) {
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) {
+                    enableConnectProtocol = true
+                    webTransport = true
+                }.use { f ->
+                    withTimeout(20.seconds) {
+                        f.start()
+                        f.warmUp()
+                    }
+                    H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                    try {
+                        val end: Throwable =
+                            withTimeout(20.seconds) {
+                                try {
+                                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                                    if (runCatching { c.quic.awaitHandshake() }.isSuccess) {
+                                        assertEquals(true, c.quic.earlyDataAccepted, "the server did not accept 0-RTT")
+                                    }
+                                    c.closed.await()
+                                } catch (e: io.kuicksilver.http3.Http3Exception) {
+                                    e
+                                } catch (e: io.kuicksilver.quic.QuicException) {
+                                    e
+                                }
+                            }
+                        val e = kotlin.test.assertIs<io.kuicksilver.http3.Http3Exception.Protocol>(end, "${end::class.simpleName}: $end")
+                        assertEquals(io.kuicksilver.http3.Http3ErrorCode.SETTINGS_ERROR, e.h3Code, "$e")
+                    } finally {
+                        H3Session.createdForTest = null
+                    }
+                }
+            }
+        }
+
+    /**
+     * Section 3.2: "If the server accepts 0-RTT, the server MUST NOT reduce these initial flow control values": a server
+     * whose WebTransport flow-control values or session limit changed accepts no early data from a ticket issued before;
+     * one with the same values does.
+     */
+    @Test fun webTransportFlowControlChangeInvalidatesEarlyData(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val issuer = io.kuicksilver.http3.webtransport.wtOn
+                val changed =
+                    listOf<Http3Settings.Builder.() -> Unit>(
+                        { webTransportInitialMaxData = 1000 },
+                        { webTransportInitialMaxStreamsBidi = 3 },
+                        { webTransportInitialMaxStreamsUni = 3 },
+                        { webTransportMaxSessions = 2 },
+                    )
+                for (change in changed) {
+                    assertEquals(false, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer.toBuilder().apply(change).build()))
+                }
+                assertEquals(true, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer))
+            }
+        }
+
     @Test fun earlyGetIsAnsweredIn0Rtt(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
@@ -812,6 +892,191 @@ class EarlyDataTest {
                     pending.cancel()
                     v.close()
                 }
+            }
+        }
+
+    /**
+     * draft-ietf-webtrans-http3-16 section 3.2: "Clients cannot initiate WebTransport sessions in 0-RTT packets, as the
+     * CONNECT method is not considered safe". A client that does anyway: [early] sends a WebTransport CONNECT on [c]'s
+     * QUIC connection while its 0-RTT is still unconfirmed, and returns its stream.
+     */
+    private suspend fun earlyWebTransportConnect(c: Http3Connection): io.kuicksilver.quic.QuicStream {
+        assertTrue(!c.quic.isHandshakeComplete, "connectEarly returned before the handshake")
+        val st = c.quic.openBidi()
+        st.output.writeFully(
+            RawPeer(c.quic).headers(
+                st.id,
+                listOf(
+                    ":method" to "CONNECT",
+                    ":protocol" to "webtransport-h3",
+                    ":scheme" to "https",
+                    ":authority" to "server.test",
+                    ":path" to "/wt",
+                ),
+            ),
+        )
+        st.output.flush()
+        return st
+    }
+
+    private val wtServer: Http3Settings.Builder.() -> Unit = {
+        enableConnectProtocol = true
+        webTransport = true
+        webTransportMaxSessions = 1
+    }
+    private val wtClient =
+        io.kuicksilver.http3.http3Settings {
+            enableConnectProtocol = true
+            webTransport = true
+        }
+
+    /** The server's WebTransport sessions are all gone and nothing waits in its fair queues. */
+    private suspend fun assertNoWebTransportLeft(s: H3Session) {
+        val left =
+            withTimeoutOrNull(5.seconds) {
+                while (withContext(s.dispatcher) { s.wtSessions.isNotEmpty() || !s.wtFairness.idleForTest }) kotlinx.coroutines.yield()
+            }
+        assertTrue(left != null, "a WebTransport session slot or a fair queue turn is left")
+    }
+
+    /** A WebTransport CONNECT that came in 0-RTT is held until the handshake completes, then admitted as usual. */
+    @Test fun negative_webTransportConnectIn0RttWaitsForTheHandshake(): Unit =
+        runBlocking {
+            val ranAfterHandshake = kotlinx.coroutines.CompletableDeferred<Boolean>()
+            val onConnect: suspend (io.kuicksilver.http3.Http3ServerRequest, Http3Connection) -> Unit = { r, c ->
+                ranAfterHandshake.complete(c.quic.isHandshakeComplete)
+                r.acceptWebTransport()
+            }
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, wtServer).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.delay = 50.milliseconds
+                    val c = f.connectEarly()
+                    val st = earlyWebTransportConnect(c)
+                    assertEquals(
+                        "200",
+                        io.kuicksilver.http3.webtransport
+                            .readHeaders(st)[":status"],
+                    )
+                    assertEquals(true, c.quic.earlyDataAccepted, "the CONNECT went in accepted 0-RTT")
+                    assertEquals(1, f.heldEarly, "the gate held it")
+                    assertTrue(ranAfterHandshake.await(), "the application saw it only after the handshake")
+                    st.reset(0x10c) // H3_REQUEST_CANCELLED
+                    st.stopSending(0x10c)
+                    assertNoWebTransportLeft(f.accepted.last().session)
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * Under Reject425 a WebTransport CONNECT in 0-RTT is answered 425 Too Early: it never reached the application, and its
+     * slot is free again (with webTransportMaxSessions = 1 the client's CONNECT after the handshake is admitted).
+     */
+    @Test fun negative_webTransportConnectAnswered425LeavesNoSlot(): Unit =
+        runBlocking {
+            val seen = AtomicInt(0)
+            val onConnect: suspend (io.kuicksilver.http3.Http3ServerRequest, Http3Connection) -> Unit = { r, _ ->
+                seen.incrementAndFetch()
+                r.acceptWebTransport()
+            }
+            Fixture(Http3EarlyDataPolicy.Reject425(), wtClient, onConnect, wtServer).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.delay = 50.milliseconds
+                    val c = f.connectEarly()
+                    val st = earlyWebTransportConnect(c)
+                    assertEquals(
+                        "425",
+                        io.kuicksilver.http3.webtransport
+                            .readHeaders(st)[":status"],
+                    )
+                    assertEquals(0, seen.load(), "the application never saw it")
+                    val s = f.accepted.last().session
+                    assertNoWebTransportLeft(s)
+                    c.quic.awaitHandshake()
+                    val session = c.webTransport(http3Request("CONNECT", "server.test", "/wt"))
+                    assertEquals(1, seen.load())
+                    assertTrue(!session.closed.isCompleted)
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * A WebTransport CONNECT held for a handshake that never completes (the connection is lost first) is dropped: the
+     * application never sees it, and nothing of it stays.
+     */
+    @Test fun negative_webTransportConnectHeldWhenTheConnectionIsLostIsDropped(): Unit =
+        runBlocking {
+            val seen = AtomicInt(0)
+            val onConnect: suspend (io.kuicksilver.http3.Http3ServerRequest, Http3Connection) -> Unit = { r, _ ->
+                seen.incrementAndFetch()
+                r.acceptWebTransport()
+            }
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake(), wtClient, onConnect, wtServer).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.delay = 50.milliseconds
+                    val c = f.connectEarly()
+                    earlyWebTransportConnect(c)
+                    while (f.heldEarly < 1) kotlinx.coroutines.yield()
+                    // the client's handshake never reaches the server, which then loses the connection
+                    f.net.drop = { from, _, _ -> from.port == 1111 }
+                    val server = f.accepted.last()
+                    assertTrue(!server.quic.isHandshakeComplete)
+                    server.quic.close()
+                    assertNoWebTransportLeft(server.session)
+                    assertEquals(0, seen.load(), "the held CONNECT never reached the application")
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * A WebTransport CONNECT in 0-RTT the server rejects (its flow-control settings changed since the ticket, section
+     * 3.2): the transport drops it, so the server never sees it and keeps nothing of it, and the stream fails on the
+     * client.
+     */
+    @Test fun negative_webTransportConnectInRejected0RttLeavesNothing(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val seen = AtomicInt(0)
+                var st: io.kuicksilver.quic.QuicStream? = null
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer =
+                            io.kuicksilver.http3.http3Settings {
+                                enableConnectProtocol = true
+                                webTransport = true
+                            },
+                        resumer =
+                            io.kuicksilver.http3.http3Settings {
+                                enableConnectProtocol = true
+                                webTransport = true
+                                webTransportInitialMaxData = 2_000_000
+                            },
+                        resumerRequests = seen,
+                        clientSettings = wtClient,
+                        beforeRequest = { c, release ->
+                            st = earlyWebTransportConnect(c)
+                            release()
+                        },
+                        after = { _, resumed ->
+                            assertTrue(
+                                runCatching {
+                                    io.kuicksilver.http3.webtransport
+                                        .readHeaders(st!!)
+                                }.isFailure,
+                            )
+                            for (s in resumed()) assertNoWebTransportLeft(s.session)
+                        },
+                    )
+                assertEquals(false, accepted, "the server rejected the 0-RTT")
+                assertEquals(1, seen.load(), "only the request sent after the handshake reached the server")
             }
         }
 

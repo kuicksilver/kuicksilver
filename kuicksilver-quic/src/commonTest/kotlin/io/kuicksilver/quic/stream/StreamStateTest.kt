@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
@@ -67,6 +69,56 @@ class StreamStateTest {
             maxStreamsUni = maxStreams,
         )
         return m
+    }
+
+    /**
+     * 1-RTT packets that waited for their keys are read before the handshake completes, so a receiving frame of a stream of
+     * ours can come while our 0-RTT awaits the server's answer (the first draft of this assumed it could not, and the 0-RTT
+     * API test met it). Its final size is held like the sending half's: raised on accept, dropped on reject.
+     */
+    @Test fun receivingFinalSizeOfOurStreamIsHeldUntilTheZeroRttAnswer() {
+        for (accepted in listOf(true, false)) {
+            val m = manager()
+            val id = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
+            m.zeroRttPending = true
+            recv(m, id, 0, byteArrayOf(1, 2), fin = true)
+            assertTrue(m.events.none { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize }, "held, accepted=$accepted")
+            m.settleHeldFinalSizes(accepted)
+            assertEquals(
+                accepted,
+                m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize && it.id == id && !it.sending && it.size == 2L },
+            )
+            assertEquals(0, m.sizesForTest()[5])
+        }
+    }
+
+    /**
+     * Data beyond a gap gives nothing to read, but raises StreamReadable so the runtime learns the highest offset received
+     * (QuicStream.receivedOffset), which flow control counts (RFC 9000 section 4.1).
+     */
+    @Test fun dataBeyondAGapRaisesTheHighestOffset() {
+        val m = manager(role = TlsRole.Server)
+        recv(m, 0, 100, ByteArray(50))
+        assertEquals(150L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
+        m.events.clear()
+        recv(m, 0, 10, ByteArray(20)) // inside what was seen: the highest stays
+        assertEquals(150L, m.highestReceived(0))
+        recv(m, 0, 150, ByteArray(10))
+        assertEquals(160L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
+        assertEquals(-1L, m.highestReceived(4))
+    }
+
+    /** A stopped receiving half still tells the runtime the highest offset it received (its bytes are dropped). */
+    @Test fun stoppedHalfStillRaisesTheHighestOffset() {
+        val m = manager(role = TlsRole.Server)
+        recv(m, 0, 0, ByteArray(10))
+        m.stopSending(0, 1)
+        m.events.clear()
+        recv(m, 0, 10, ByteArray(40))
+        assertEquals(50L, m.highestReceived(0))
+        assertTrue(m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamReadable && it.id == 0L })
     }
 
     @Test fun maxDataWithoutGrowthTouchesNoStream() {

@@ -34,6 +34,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR (RFC 9000 sections 7.4.1, 17.2.3); a third makes the server's new limits
   higher, and the client must keep to the remembered ones until the handshake completes. The campaigns' committed corpora
   (`tools/fuzz/corpus/`) now replay in `jvmTest` (`CommittedCorpusReplayTest`) and in `tools/c-test.sh`.
+- QUIC: `QuicStream.sentFinalSize` and `QuicStream.receivedFinalSize` (experimental) complete with the final size of
+  each half of a stream (RFC 9000 section 4.5) once it can no longer change: after a reset (RESET_STREAM,
+  RESET_STREAM_AT, the answer to STOP_SENDING) with the size the frame carries, or once a FIN fixed it, also when the
+  bytes were never read or reading was stopped. The core reports it with the new `ConnectionEvent.StreamFinalSize`.
+- QUIC: `QuicStream.receivedOffset` (experimental), the highest offset of the peer's half received so far, read or not
+  and in order or not, then its final size: what flow control counts (RFC 9000 section 4.1). `StreamReadable` is now
+  also raised when data beyond a gap raises it.
+- WebTransport flow control and session pooling (draft-ietf-webtrans-http3-16 sections 5 and 8), experimental. Both
+  sides send `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI`/`_UNI` and `SETTINGS_WT_INITIAL_MAX_DATA` from the new
+  `Http3Settings.webTransportInitialMaxStreamsBidi` / `Uni` / `MaxData` (24, 24, 3 932 160 bytes per session) and keep
+  to the peer's limits (WT_MAX_STREAMS, WT_MAX_DATA, the blocked capsules), and a peer that breaks them gets its
+  session closed with WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). With flow control on both sides a
+  connection carries up to `Http3Settings.webTransportMaxSessions` (4) sessions: a server refuses one more, or one
+  above its rate (a burst of 32 a connection, then 8 a second; section 5.2), with H3_REQUEST_REJECTED before the
+  application, and draft-14 clients are told the limit by `SETTINGS_WT_MAX_SESSIONS`. Sessions sharing a connection
+  take weighted turns for its stream credit and send buffer (section 8; urgency weighs, never starves) and each holds at
+  most its part of the send buffer. The Ktor client's `HttpClient.webTransport` now opens sessions on the engine's
+  pooled HTTP/3 connection of the URL's origin, shared with its requests (RFC 9114 section 3.3), and on further
+  connections only when the server cannot take another session; a client keeps to one session per connection without
+  flow control (`WebTransportException.ConnectionFull`, which `Http3Connection.webTransport` now throws for a session
+  the connection cannot take, before anything is sent, where it threw IllegalStateException for a second session; the
+  internal `webTransportOwningConnection` the engine used for its dedicated connections is gone). Requests and sessions
+  on a shared connection are not taken in turns against each other. `Http3Endpoint` refuses settings whose sessions do not fit the
+  QUIC connection's limits. All three initial limits at 0 turn flow control (and pooling) off. A draft-14 peer that
+  leaves a session without credit is reported by the internal `WebTransportDiagnostics.creditStall`, which the Ktor
+  server logs. Docs: `docs/guide/http3.md`, `docs/guide/ktor.md`.
+- QUIC: `QuicStream.sendReleased` (experimental), the bytes of a sending half the connection's shared send buffer
+  (`maxSendBuffer`) released so far, acknowledged or dropped by a reset, so a protocol multiplexing independent users
+  over one connection can give each a share of it; `ConnectionCore.maxSendBuffer` tells the buffer's size. A stream
+  whose count is followed also raises `StreamWritable` when acknowledgements release its bytes.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
@@ -242,7 +272,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
   event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at
   `Debug`). Off by default, so 0.2's behaviour is unchanged; `networkId` stays separate. HTTP/1.1, HTTP/2 and the
-  connections of WebTransport sessions do not migrate.
+  extra connections a server's WebTransport session limit makes do not migrate.
   A WebSocket over HTTP/3 (RFC 9220) moves with its connection: with the option and a server that allows active
   migration, the session carries on across the switch with no reconnect, every message both ways arriving once and in
   order (`ClientMigrationTest.webSocketSurvivesNetworkSwitch`; the network switch is simulated over loopback, the old
@@ -493,8 +523,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a bounded buffer (16 per connection, 5 s each); `Http3Connection.webTransport` opens a session (the `:protocol`
   token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation, ten-second deadlines for the
   server's SETTINGS and for the answer) and
-  `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
-  connection, no WebTransport flow control. A `WebTransportSession` opens and accepts bidirectional and
+  `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. Flow control and
+  several sessions per connection: see the entry below. A `WebTransportSession` opens and accepts bidirectional and
   unidirectional streams, sends and receives datagrams, closes with an application code and reason
   (WT_CLOSE_SESSION, then FIN) and drains; application error codes are mapped into the HTTP/3 space;
   `Http3ErrorCode` has the WebTransport codes.
@@ -508,9 +538,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
   `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it.
-- Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
-  dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
-  (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
+- Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on the
+  Kuicksilver engine's pooled HTTP/3 connection of the URL's origin (see the session pooling entry below;
+  `docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
   `http3 { webTransportIgnoresProxy = true }`; at most `http3 { maxWebTransportSessions }` (64) at once.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
@@ -1097,6 +1127,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   packets then counted as an acknowledgment of rejected 0-RTT and the client closed with PROTOCOL_VIOLATION (RFC 9001
   section 4.6.2 means "an acknowledgment for a 0-RTT packet"). Found by the 0-RTT connection fuzzer; pinned by
   `ZeroRttTest.negative_versionNegotiationAfterZeroRttKeepsTheConnection`.
+- QUIC: `QuicStream.reset` after all of a stream's data and its FIN were acknowledged no longer sends a RESET_STREAM.
+  RFC 9000 section 3.1 lets a sender abandon a stream only from the "Ready", "Send" or "Data Sent" states; in "Data
+  Recvd" there is nothing left to abandon, as `resetAt` already treated it.
+- HTTP/3 Capsule Protocol: a collector of `CapsuleStream.capsules` cancelled while it waited could lose the capsule
+  being handed to it (a coroutine channel's receive drops an element taken by a receiver cancelled before it resumes),
+  and one cancelled while it handled a capsule lost the next one. Capsules now wait in a queue they leave only when a
+  running collector is about to get them: the next collector gets them, in order. What a wrapper around the collection
+  (`withTimeout`, `async`) does with a capsule already delivered stays the wrapper's: collect in one long-lived coroutine
+  rather than polling `first()` under a timeout, and directly: operators that collect ahead in another coroutine
+  (`buffer`, `flowOn`, `conflate`, `produceIn`, `shareIn`, `stateIn`, and `collectLatest` by design) lose the capsules
+  they took and had not delivered when the collection is cancelled.
+- HTTP/3 server: `Http3Connection.acceptRequest` cancelled while it waited could lose the request being handed to it,
+  which was then never answered and kept counting as open (a graceful shutdown waited for it). The next call now
+  returns it. A request returned to a `withTimeout` or `async` that was cancelled meanwhile is still dropped by that
+  wrapper (kotlinx.coroutines behaviour): accept in a long-lived loop rather than polling under a timeout.
+- WebTransport: `acceptBidi` and `acceptUni` cancelled while they waited, or while they set the stream up, lost it; the
+  peer's stream stayed open and unread, holding its data and stream credit until the session ended. The stream now goes
+  back to the head of the queue for the next accept (the same caveat about wrappers as for `acceptRequest`).
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

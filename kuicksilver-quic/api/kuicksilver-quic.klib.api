@@ -358,6 +358,14 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
         abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.quic/QuicStream.output.<get-output>|<get-output>(){}[0]
     open val receivedEarly // io.kuicksilver.quic/QuicStream.receivedEarly|{}receivedEarly[0]
         open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.quic/QuicStream.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
+    open val receivedFinalSize // io.kuicksilver.quic/QuicStream.receivedFinalSize|{}receivedFinalSize[0]
+        open fun <get-receivedFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.receivedFinalSize.<get-receivedFinalSize>|<get-receivedFinalSize>(){}[0]
+    open val receivedOffset // io.kuicksilver.quic/QuicStream.receivedOffset|{}receivedOffset[0]
+        open fun <get-receivedOffset>(): kotlinx.coroutines.flow/StateFlow<kotlin/Long>? // io.kuicksilver.quic/QuicStream.receivedOffset.<get-receivedOffset>|<get-receivedOffset>(){}[0]
+    open val sendReleased // io.kuicksilver.quic/QuicStream.sendReleased|{}sendReleased[0]
+        open fun <get-sendReleased>(): kotlinx.coroutines.flow/StateFlow<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sendReleased.<get-sendReleased>|<get-sendReleased>(){}[0]
+    open val sentFinalSize // io.kuicksilver.quic/QuicStream.sentFinalSize|{}sentFinalSize[0]
+        open fun <get-sentFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sentFinalSize.<get-sentFinalSize>|<get-sentFinalSize>(){}[0]
 
     abstract var priority // io.kuicksilver.quic/QuicStream.priority|{}priority[0]
         abstract fun <get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.quic/QuicStream.priority.<get-priority>|<get-priority>(){}[0]
@@ -477,6 +485,15 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
             final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code.<get-code>|<get-code>(){}[0]
         final val id // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.id.<get-id>|<get-id>(){}[0]
+    }
+
+    final class StreamFinalSize : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize|null[0]
+        final val id // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.id|{}id[0]
+            final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.id.<get-id>|<get-id>(){}[0]
+        final val sending // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.sending|{}sending[0]
+            final fun <get-sending>(): kotlin/Boolean // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.sending.<get-sending>|<get-sending>(){}[0]
+        final val size // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.size|{}size[0]
+            final fun <get-size>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.size.<get-size>|<get-size>(){}[0]
     }
 
     final class StreamFinished : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamFinished|null[0]
@@ -703,6 +720,8 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
         final fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/ConnectionCore.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
     final val maxDatagramPayload // io.kuicksilver.quic/ConnectionCore.maxDatagramPayload|{}maxDatagramPayload[0]
         final fun <get-maxDatagramPayload>(): kotlin/Int // io.kuicksilver.quic/ConnectionCore.maxDatagramPayload.<get-maxDatagramPayload>|<get-maxDatagramPayload>(){}[0]
+    final val maxSendBuffer // io.kuicksilver.quic/ConnectionCore.maxSendBuffer|{}maxSendBuffer[0]
+        final fun <get-maxSendBuffer>(): kotlin/Long // io.kuicksilver.quic/ConnectionCore.maxSendBuffer.<get-maxSendBuffer>|<get-maxSendBuffer>(){}[0]
     final val negotiatedAlpn // io.kuicksilver.quic/ConnectionCore.negotiatedAlpn|{}negotiatedAlpn[0]
         final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.quic/ConnectionCore.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
     final val peerCertificates // io.kuicksilver.quic/ConnectionCore.peerCertificates|{}peerCertificates[0]

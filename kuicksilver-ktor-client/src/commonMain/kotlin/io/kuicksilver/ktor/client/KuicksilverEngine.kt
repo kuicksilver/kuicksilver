@@ -274,7 +274,7 @@ internal class KuicksilverEngine(
 
     override fun close() {
         closed = true
-        h3.refuseDedicated() // at once, so a WebTransport call after close() fails instead of binding an endpoint
+        h3.refuseWebTransport() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
         httpsRecords?.close() // a DNS lookup still running would hold up the cleanup for up to its timeout
         engineJob.complete()
@@ -932,7 +932,7 @@ internal class KuicksilverEngine(
             "client.h2Routes" to h1.h2.routeCount.toLong(),
             "client.h2Refused" to h1.h2Refused.size.toLong(),
             "client.h3Connections" to h3.connectionsForProbe().toLong(),
-            "client.h3Dedicated" to h3.dedicatedCount.value.toLong(),
+            "client.h3WebTransportSessions" to h3.webTransportSessions.value.toLong(),
             "client.brokenAltSvc" to broken.toLong(),
             "client.srtt" to rtts.toLong(),
         )

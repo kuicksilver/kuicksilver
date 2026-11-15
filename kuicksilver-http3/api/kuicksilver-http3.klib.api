@@ -406,6 +406,14 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
         final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
     final val webTransport // io.kuicksilver.http3/Http3Settings.webTransport|{}webTransport[0]
         final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
+    final val webTransportInitialMaxData // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxData|{}webTransportInitialMaxData[0]
+        final fun <get-webTransportInitialMaxData>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxData.<get-webTransportInitialMaxData>|<get-webTransportInitialMaxData>(){}[0]
+    final val webTransportInitialMaxStreamsBidi // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxStreamsBidi|{}webTransportInitialMaxStreamsBidi[0]
+        final fun <get-webTransportInitialMaxStreamsBidi>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxStreamsBidi.<get-webTransportInitialMaxStreamsBidi>|<get-webTransportInitialMaxStreamsBidi>(){}[0]
+    final val webTransportInitialMaxStreamsUni // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxStreamsUni|{}webTransportInitialMaxStreamsUni[0]
+        final fun <get-webTransportInitialMaxStreamsUni>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.webTransportInitialMaxStreamsUni.<get-webTransportInitialMaxStreamsUni>|<get-webTransportInitialMaxStreamsUni>(){}[0]
+    final val webTransportMaxSessions // io.kuicksilver.http3/Http3Settings.webTransportMaxSessions|{}webTransportMaxSessions[0]
+        final fun <get-webTransportMaxSessions>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.webTransportMaxSessions.<get-webTransportMaxSessions>|<get-webTransportMaxSessions>(){}[0]
 
     final fun toBuilder(): io.kuicksilver.http3/Http3Settings.Builder // io.kuicksilver.http3/Http3Settings.toBuilder|toBuilder(){}[0]
 
@@ -448,6 +456,18 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
         final var webTransport // io.kuicksilver.http3/Http3Settings.Builder.webTransport|{}webTransport[0]
             final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
             final fun <set-webTransport>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.webTransport.<set-webTransport>|<set-webTransport>(kotlin.Boolean){}[0]
+        final var webTransportInitialMaxData // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxData|{}webTransportInitialMaxData[0]
+            final fun <get-webTransportInitialMaxData>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxData.<get-webTransportInitialMaxData>|<get-webTransportInitialMaxData>(){}[0]
+            final fun <set-webTransportInitialMaxData>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxData.<set-webTransportInitialMaxData>|<set-webTransportInitialMaxData>(kotlin.Long){}[0]
+        final var webTransportInitialMaxStreamsBidi // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsBidi|{}webTransportInitialMaxStreamsBidi[0]
+            final fun <get-webTransportInitialMaxStreamsBidi>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsBidi.<get-webTransportInitialMaxStreamsBidi>|<get-webTransportInitialMaxStreamsBidi>(){}[0]
+            final fun <set-webTransportInitialMaxStreamsBidi>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsBidi.<set-webTransportInitialMaxStreamsBidi>|<set-webTransportInitialMaxStreamsBidi>(kotlin.Long){}[0]
+        final var webTransportInitialMaxStreamsUni // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsUni|{}webTransportInitialMaxStreamsUni[0]
+            final fun <get-webTransportInitialMaxStreamsUni>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsUni.<get-webTransportInitialMaxStreamsUni>|<get-webTransportInitialMaxStreamsUni>(){}[0]
+            final fun <set-webTransportInitialMaxStreamsUni>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.webTransportInitialMaxStreamsUni.<set-webTransportInitialMaxStreamsUni>|<set-webTransportInitialMaxStreamsUni>(kotlin.Long){}[0]
+        final var webTransportMaxSessions // io.kuicksilver.http3/Http3Settings.Builder.webTransportMaxSessions|{}webTransportMaxSessions[0]
+            final fun <get-webTransportMaxSessions>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.Builder.webTransportMaxSessions.<get-webTransportMaxSessions>|<get-webTransportMaxSessions>(){}[0]
+            final fun <set-webTransportMaxSessions>(kotlin/Int) // io.kuicksilver.http3/Http3Settings.Builder.webTransportMaxSessions.<set-webTransportMaxSessions>|<set-webTransportMaxSessions>(kotlin.Int){}[0]
 
         final fun build(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Settings.Builder.build|build(){}[0]
         final fun enableQpackDynamicTable() // io.kuicksilver.http3/Http3Settings.Builder.enableQpackDynamicTable|enableQpackDynamicTable(){}[0]
@@ -582,6 +602,14 @@ sealed class io.kuicksilver.http3/WebTransportException : kotlinx.io/IOException
             final fun <get-offered>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.http3/WebTransportException.Alpn.offered.<get-offered>|<get-offered>(){}[0]
         final val selected // io.kuicksilver.http3/WebTransportException.Alpn.selected|{}selected[0]
             final fun <get-selected>(): kotlin/String // io.kuicksilver.http3/WebTransportException.Alpn.selected.<get-selected>|<get-selected>(){}[0]
+    }
+
+    final class ConnectionFull : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.ConnectionFull|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.ConnectionFull.<init>|<init>(kotlin.String){}[0]
+    }
+
+    final class FlowControl : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.FlowControl|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.FlowControl.<init>|<init>(kotlin.String){}[0]
     }
 
     final class SessionClosed : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.SessionClosed|null[0]

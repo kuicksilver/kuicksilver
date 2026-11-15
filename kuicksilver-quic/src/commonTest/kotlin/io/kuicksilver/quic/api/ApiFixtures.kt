@@ -48,6 +48,7 @@ internal class ApiPair private constructor(
             serverTls: io.kuicksilver.tls.TlsConfig = CoreFixtures.server(),
             clientListener: io.kuicksilver.quic.ConnectionListener? = null,
             serverConfigure: QuicEndpointConfig.Builder.() -> Unit = {},
+            admission: io.kuicksilver.quic.ConnectionAdmission? = null,
         ): ApiPair {
             val net = MemoryNetwork()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111), df = df)
@@ -69,6 +70,7 @@ internal class ApiPair private constructor(
                             io = { b }
                             serverLogger?.let { logger = it }
                             serverConfigure()
+                            admission?.let { this.admission = it }
                         }.build(),
                 )
             val client =
@@ -94,6 +96,7 @@ internal class ApiPair private constructor(
         serverQuic: QuicConfig,
         crypto: QuicCrypto,
         configure: QuicEndpointConfig.Builder.() -> Unit = {},
+        admission: io.kuicksilver.quic.ConnectionAdmission? = null,
     ): QuicEndpoint {
         server.closeAndJoin()
         val io = net.open(serverIo.localAddress)
@@ -112,6 +115,7 @@ internal class ApiPair private constructor(
                     this.crypto = crypto
                     this.io = { io }
                     configure()
+                    admission?.let { this.admission = it }
                 }.build(),
         )
     }

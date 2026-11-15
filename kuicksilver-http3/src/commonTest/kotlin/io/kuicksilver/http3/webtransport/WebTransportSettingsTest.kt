@@ -86,11 +86,25 @@ class WebTransportSettingsTest {
                 Http3Connection.server(s, wtOn)
                 val m = peerSettingsOf(c)
                 assertEquals(1L, m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02])
-                assertEquals(1L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
+                assertEquals(4L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
                 assertEquals(1L, m[SettingsId.WT_ENABLED])
                 assertEquals(1L, m[SettingsId.ENABLE_CONNECT_PROTOCOL])
                 assertEquals(1L, m[SettingsId.H3_DATAGRAM])
-                // no WebTransport flow control: one session per connection (section 5.1)
+                // WebTransport flow control declared with the default limits (section 5.5)
+                assertEquals(3_932_160L, m[SettingsId.WT_INITIAL_MAX_DATA])
+                assertEquals(24L, m[SettingsId.WT_INITIAL_MAX_STREAMS_UNI])
+                assertEquals(24L, m[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI])
+            }
+        }
+
+    /** Without flow-control limits nothing declares flow control, and a draft-14 client is told one session (section 5.1). */
+    @Test fun negative_serverWithoutFlowControlAdvertisesOneSession() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                Http3Connection.server(s, wtLimits(0, 0, 0))
+                val m = peerSettingsOf(c)
+                assertEquals(1L, m[SettingsId.WT_MAX_SESSIONS_DRAFT14])
                 for (k in listOf(0x2b61L, 0x2b64L, 0x2b65L)) assertNull(m[k], "0x${k.toString(16)}")
             }
         }
