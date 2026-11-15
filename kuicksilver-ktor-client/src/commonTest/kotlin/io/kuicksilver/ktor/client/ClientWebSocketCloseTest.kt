@@ -196,36 +196,16 @@ class ClientWebSocketCloseTest {
 
     /**
      * The same against a server that never reads: the session gets the close wait (200 ms here) to write its Close, then
-     * the connection is closed hard and given back, not held for good. The server, reading only once the connection was
-     * released, finds the data cut off and no Close: nothing the session had not written by the end of the close wait
-     * reaches it.
-     *
-     * That the Close cannot be written needs more data ahead of it than the way to a server that reads nothing takes:
-     * the channels in between, and both kernels' socket buffers, which the system sizes (Linux autotunes them up to
-     * `tcp_wmem` and `tcp_rmem`: the Android emulator's 8 MiB and 16 MiB took a whole 16 MiB frame and the Close behind it
-     * within 200 ms, a JVM on macOS or desktop Linux far less). So each attempt says which case it saw, from what the
-     * server read: a Close that arrived was written within the close wait, and the attempt is repeated with twice the
-     * data until one leaves the Close unwritten. Every attempt must release the connection, not keep it.
+     * the connection is reset and given back, not held for good. The server, reading only once the connection was
+     * released, finds the data cut off by the reset and no Close: what the session had not written by the end of the close
+     * wait never leaves, not even what it had queued (a graceful close went on sending that, after the close wait, and
+     * ended the cut frame with a FIN as if the stream were whole). [unwrittenCloseAttempts] repeats the attempt with more
+     * data while the buffers take the Close.
      */
     @Test fun negative_anUnwrittenCloseIsBoundedByTheCloseWait() =
         clientTest {
-            val data = ByteArray(BIG)
-            var frames = 1
-            while (true) {
-                val read = unwrittenCloseAttempt(data, frames)
-                val written = List(frames) { "binary $BIG" } + "close 4002 client bye"
-                if (read.none { it.startsWith("close") }) {
-                    // the case under test: the data cut off (inside a frame or between two), and no Close after it
-                    assertTrue(read.last() == "cut" || read.last() == "end", "no Close after the close wait: $read")
-                    assertTrue(read.dropLast(1).all { it == "binary $BIG" }, "only whole frames before the cut: $read")
-                    assertTrue(read.size - 1 <= frames, "no more frames than were sent: $read")
-                    break
-                }
-                // everything, the Close included, fit into the buffers within the close wait: written in order
-                assertEquals(written, read, "a Close that arrived was written within the close wait, after the data")
-                frames *= 2
-                check(frames <= MAX_FRAMES) { "$read: ${frames / 2} frames of $BIG bytes and the Close fit into the buffers" }
-            }
+            val read = unwrittenCloseAttempts { data, frames -> unwrittenCloseAttempt(data, frames) }
+            assertEquals("reset", read.last(), "the connection was reset, not ended with a FIN: $read")
         }
 
     /**
@@ -281,25 +261,68 @@ class ClientWebSocketCloseTest {
     private companion object {
         /** Far more than the loopback socket and the channels in between take before the writer waits. */
         const val BIG = 16 shl 20
-
-        /** The most frames of [BIG] bytes an attempt of [negative_anUnwrittenCloseIsBoundedByTheCloseWait] sends. */
-        const val MAX_FRAMES = 8
     }
 }
 
 /**
+ * Attempts of a session that sends frames of 16 MiB to a server that reads nothing and then its Close, until one leaves
+ * the Close unwritten; returns what the server read in that one (frames, then how the stream ended: `cut`, `end` or
+ * `reset`, as [readClientFrames] says). [attempt] runs one session with that many frames and returns what the server read
+ * once the connection was released, which it must check was released and not kept.
+ *
+ * That the Close cannot be written needs more data ahead of it than the way to a server that reads nothing takes: the
+ * channels in between and both kernels' socket buffers, which the system sizes (Linux autotunes them up to `tcp_wmem` and
+ * `tcp_rmem`: the Android emulator's 8 MiB and 16 MiB took a whole 16 MiB frame and the Close behind it within 200 ms, a
+ * JVM on macOS or desktop Linux far less). So each attempt says which case it saw, from what the server read: a Close
+ * that arrived was written within the close wait (all frames whole before it), and the attempt is repeated with twice the
+ * frames, at most [MAX_UNWRITTEN_FRAMES].
+ */
+internal suspend fun unwrittenCloseAttempts(attempt: suspend (data: ByteArray, frames: Int) -> List<String>): List<String> {
+    val size = 16 shl 20
+    val data = ByteArray(size)
+    var frames = 1
+    while (true) {
+        val read = attempt(data, frames)
+        if (read.none { it.startsWith("close") }) {
+            // the case under test: the data cut off (inside a frame or between two), and no Close after it
+            assertTrue(read.dropLast(1).all { it == "binary $size" }, "only frames of the session before the end: $read")
+            assertTrue(read.size - 1 <= frames, "no more frames than were sent: $read")
+            return read
+        }
+        // everything, the Close included, fit into the buffers within the close wait: written in order
+        assertEquals(
+            List(frames) { "binary $size" } + "close 4002 client bye",
+            read,
+            "a Close that arrived was written within the close wait, after the data",
+        )
+        frames *= 2
+        check(frames <= MAX_UNWRITTEN_FRAMES) { "$read: ${frames / 2} frames of $size bytes and the Close fit into the buffers" }
+    }
+}
+
+/** The most frames of 16 MiB an attempt of [unwrittenCloseAttempts] sends. */
+internal const val MAX_UNWRITTEN_FRAMES: Int = 8
+
+/**
  * The client's frames on [input] (masked, RFC 6455 section 5.3) up to its Close or the end of the stream: `binary <size>`,
  * `text <size>`, `close <code> <reason>`; when the stream ended without a Close, `end` between two frames, `cut` inside one
- * (the frame it cut keeps its line).
+ * (the frame it cut keeps its line), `reset` when it failed (the client reset the connection) wherever it was.
  */
 internal suspend fun readClientFrames(input: ByteReadChannel): List<String> {
     val frames = ArrayList<String>()
     try {
         readFramesInto(input, frames)
-    } catch (e: FrameCut) {
-        frames += "cut" // the stream ended inside a frame
     } catch (e: Exception) {
-        frames += "end" // the stream ended between frames
+        frames +=
+            when {
+                input.closedCause != null -> "reset"
+
+                // the stream failed: the client reset it
+                e is FrameCut -> "cut"
+
+                // it ended inside a frame
+                else -> "end" // it ended between frames
+            }
     }
     return frames
 }

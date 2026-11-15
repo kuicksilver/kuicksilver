@@ -1059,6 +1059,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: a WebSocket session over HTTP/1.1 whose Close could not be written within the close wait (a server that
+  does not read) now has its connection reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the
+  connection was closed gracefully: it went on sending what the session had queued for up to 3 s after the close wait
+  and ended the frame it cut with a FIN, as if the stream were whole. A session whose Close went out still has its
+  connection closed after it; a session cut before its writer finished for another reason (its call failed before the
+  session queued its Close, or the writer failed) is reset the same way. HTTP/2 and HTTP/3 streams were already reset.
 - WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
   3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
   own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which

@@ -50,6 +50,7 @@ import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
+import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.tls.SessionCache
@@ -114,6 +115,13 @@ internal class H1Connection(
 
     override fun closeTransportOrderly() {
         orderly?.invoke() ?: closeTransport()
+    }
+
+    // the raw socket first, with a reset: the TLS session's close ends its output, and a raw writer still draining would
+    // send a FIN (and the rest it holds) ahead of the reset
+    override fun abortTransport() {
+        socket.abort()
+        tls?.close()
     }
 
     /**
@@ -1137,20 +1145,27 @@ internal class H1Pool(
 
                                     // the connection ends with the WebSocket session: in the order of RFC 6455 section
                                     // 7.1.1 when the session ended in order (both Closes, its writer done), the server's
-                                    // close first, within T2 (WebSocketLifetime); at once otherwise
+                                    // close first, within T2 (WebSocketLifetime); at once otherwise. A writer that finished
+                                    // (its Close handed on, the server's missing) has what it wrote sent before the FIN;
+                                    // one that did not (cut by the close wait behind a server that does not read, or
+                                    // failed) is aborted: a graceful close would go on sending what it had queued, after
+                                    // the close wait, and the frame it cut would end with a FIN as if the stream were whole
                                     AfterResponse.HandOver -> {
                                         val ws = webSocket
                                         if (ws != null) {
                                             webSocketConnectionForTest?.invoke(conn)
                                             ws.lifetime.invokeOnEnd { cause ->
                                                 try {
-                                                    if (cause == null && ws.output.endRequested && ws.output.closedCause == null) {
+                                                    val writerDone = ws.output.endRequested && ws.output.closedCause == null
+                                                    if (cause == null && writerDone) {
                                                         conn.closeAfterWebSocket(
                                                             ws.lifetime.remainingTransportWaitMillis(),
                                                             ws.inputDone,
                                                         ) { webSocketClosingForTest?.invoke(it) }
-                                                    } else {
+                                                    } else if (writerDone) {
                                                         conn.close()
+                                                    } else {
+                                                        conn.abort()
                                                     }
                                                 } finally {
                                                     conn.close() // a no-op after the close above; a cut-off one ends here

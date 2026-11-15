@@ -79,7 +79,8 @@ internal val WebSocketLifetimeKey: AttributeKey<WebSocketLifetime> = AttributeKe
  * - once the session queued its own Close, its coroutines have the close wait (T1, counted from that Close,
  *   [remainingCloseWaitMillis]) to write it and to see the server's Close; a session still running then (a server that
  *   never answers, or never takes the Close) is cancelled, whichever way its call ended (RFC 6455 section 7.1.1: the
- *   client may close "in abnormal cases"), and its transport is ended at once;
+ *   client may close "in abnormal cases"), and its transport is ended at once (reset when its writer had not finished:
+ *   what it had queued never leaves after the close wait);
  * - a call that ends with a cause before that cancels the session at once, as before;
  * - the engine's cleanup after `client.close()` waits for the session's end (the engine's in-flight job of the call is
  *   held until every [invokeOnEnd] handler has run), so a lingering session is not cut by the pools closing under it.

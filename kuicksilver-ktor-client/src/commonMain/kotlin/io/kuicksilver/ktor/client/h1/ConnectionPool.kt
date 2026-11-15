@@ -82,6 +82,19 @@ internal abstract class PooledConnection(
     protected open fun closeTransportOrderly(): Unit = closeTransport()
 
     /**
+     * [close] that drops what is still queued for the peer: the transport ends at once with a reset where it has one (a TCP
+     * socket with `SO_LINGER` 0), so nothing more leaves after this call. For a connection whose writer did not finish (a
+     * WebSocket session cut by its close wait), where a graceful close would keep sending what it had queued.
+     */
+    fun abort() {
+        if (closedFlag.compareAndSet(0, 1)) abortTransport() else abortClaimedClose()
+        pool?.slotReturned(this)
+    }
+
+    /** Ends the transport at once, dropping what is queued; called once, instead of [closeTransport]. */
+    protected open fun abortTransport(): Unit = closeTransport()
+
+    /**
      * For a close of its own (one that waits for the peer): true for the one caller that may close the transport; that
      * caller gives the slot back with [slotBack] when it is done. [close] and [closeOrderly] meanwhile give the slot back at
      * once and abort that close ([abortClaimedClose]): a pool or an engine that closes the connection ends it now, as

@@ -402,6 +402,62 @@ class ClientWebSocketCloseOrderTest {
             }
         }
 
+    /**
+     * Over TLS, as `ClientWebSocketCloseTest.negative_anUnwrittenCloseIsBoundedByTheCloseWait` without: a server that reads
+     * nothing until the connection was released gets no Close once the close wait (200 ms) is over, and the TCP connection
+     * is reset (no close_notify, no FIN): what the session's writer had queued, encrypted or not, never leaves after the
+     * close wait. Before, the TLS session was dropped and the socket closed gracefully, which went on sending the queued
+     * records for up to 3 s and then a FIN.
+     */
+    @Test fun negative_anUnwrittenCloseOverTlsIsBoundedByTheCloseWait() =
+        clientTest {
+            var ends = emptyList<String>()
+            val read =
+                unwrittenCloseAttempts { data, frames ->
+                    val released = CompletableDeferred<Boolean>()
+                    val result = CompletableDeferred<List<String>>()
+                    var out = emptyList<String>()
+                    val listener =
+                        object : KuicksilverEventListener() {
+                            override fun connectionReleased(
+                                request: io.ktor.client.request.HttpRequestData,
+                                protocol: io.ktor.http.HttpProtocolVersion,
+                                kept: Boolean,
+                            ) {
+                                released.complete(kept)
+                            }
+                        }
+                    rawServer(true, serve = { conn ->
+                        released.await() // reads nothing before the client gave the connection up
+                        val read = readClientFrames(conn.input)
+                        // how the TCP connection under the TLS session ended
+                        withTimeout(20.seconds) { conn.events.all.first { "client FIN" in it || "client RST" in it } }
+                        ends = conn.events.all.value
+                        result.complete(read)
+                    }) { port ->
+                        testClient(engine = { eventListener = listener }, block = { install(WebSockets) }).use { c ->
+                            engine(c).h1.webSocketCloseWaitMillis = 200
+                            coroutineScope {
+                                val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
+                                repeat(frames) {
+                                    session.outgoing.send(
+                                        io.ktor.websocket.Frame
+                                            .Binary(true, data),
+                                    )
+                                }
+                                launch { session.close(CloseReason(4002, "client bye")) }
+                                session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
+                                assertEquals(false, withTimeout(10.seconds) { released.await() }, "released, not kept")
+                            }
+                            out = withTimeout(30.seconds) { result.await() }
+                        }
+                    }
+                    out
+                }
+            assertEquals("reset", read.last(), "the TLS stream failed, it did not end: $read")
+            assertTrue("client RST" in ends && "client FIN" !in ends && "client close_notify" !in ends, "a reset only: $ends")
+        }
+
     @Test fun negative_silentPlainServerClientClosesCleanlyAtT2() = silentServerH1(tls = false, clientFirst = true)
 
     @Test fun negative_silentTlsServerClientClosesCleanlyAtT2() = silentServerH1(tls = true, clientFirst = true)
