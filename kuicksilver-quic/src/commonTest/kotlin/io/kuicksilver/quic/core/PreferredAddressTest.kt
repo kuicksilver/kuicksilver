@@ -265,6 +265,44 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * The same over the null crypto, with the application's path made active directly (a switch right after its validation) and the
+     * carried probe validated afterwards: the move waits for an unused ID and is made with it, never with the ID used toward the
+     * original address (RFC 9000 sections 9.5, 9.6.3).
+     */
+    @Test fun negative_aCarriedProbeAnsweredAfterARetirePriorToWaitsForAnUnusedId() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            p.dropToPreferred = true
+            val c = p.connect()
+            assertTrue(
+                p.runUntil(10.seconds) { c.paths.all.any { it.preferred } && c.state == io.kuicksilver.quic.ConnectionState.Confirmed },
+            )
+            repeat(3) { p.step() }
+            val pid = c.addPath(p.serverAddr, p.now)
+            val app = c.paths.byId(pid)!!
+            val carried = c.paths.all.first { it.preferred && it.socket == pid }
+            app.state = PathState.Validated
+            app.validatedAt = p.now
+            c.dcidFor(app)
+            c.switchPath(app, PathChangeReason.ActiveMigration, challengeOld = false)
+            c.startValidation(carried)
+            assertTrue(p.runUntil(5.seconds) { carried.challenge != 0L } || carried.challenge != 0L)
+            newConnectionId(c, 20, 20, 0x61)
+            val inUse = c.remoteCid
+            c.onPathResponse(carried.challenge)
+            assertTrue(
+                !c.paths.active.isRemote(v4) || c.remoteCid != inUse,
+                "never the original-address ID to the preferred address: remote=${c.paths.active.remote} cid=${c.remoteCid}",
+            )
+            assertTrue(c.preferredMoveWaiting === carried, "the move waits for an ID")
+            newConnectionId(c, 21, 0, 0x71)
+            assertTrue(c.paths.active.isRemote(v4) && c.remoteCid != inUse, "moves once an unused ID arrives")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))
