@@ -1,0 +1,5 @@
+# The ✅ sections of docs/spec/rfc/*.md that name no test, tools/check/rfc-tests.py: <file>#<anchor>.
+# The list only shrinks: --update drops the lines whose section names a test now.
+docs/spec/rfc/9113.md#http-2
+docs/spec/rfc/9204.md#qpack
+docs/spec/rfc/draft-ietf-webtrans-http3.md#webtransport
