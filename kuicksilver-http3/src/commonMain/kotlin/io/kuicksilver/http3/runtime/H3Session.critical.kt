@@ -23,6 +23,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.runtime.QuicStreamLimits
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -33,7 +34,6 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import kotlin.time.Duration
 
@@ -186,21 +186,6 @@ internal suspend fun H3Session.criticalStreamsLoop(deadline: Duration) {
             return
         }
     }
-}
-
-/**
- * [block]'s result, or null when [deadline] ran out first. Unlike `withTimeoutOrNull` a block that returned is never
- * dropped: the timeout fires on another thread, and when it lands after the block returned but before the timeout's scope
- * completed, `withTimeoutOrNull` gives null for a result that already happened (here: critical streams opened and typed,
- * reported as never opened).
- */
-internal suspend fun <T : Any> completedWithin(
-    deadline: Duration,
-    block: suspend () -> T,
-): T? {
-    val result = kotlin.concurrent.atomics.AtomicReference<T?>(null)
-    withTimeoutOrNull(deadline) { result.store(block()) } // no suspension point between the return and the store
-    return result.load()
 }
 
 /**

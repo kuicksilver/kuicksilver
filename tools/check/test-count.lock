@@ -969,8 +969,6 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CommittedCorpusReplayTes
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
-kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.CompletedWithinTest.aBlockStillWaitingGivesNull
-kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
@@ -4966,6 +4964,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.rejec
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.wildcardOneLabel
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.objectReasonsPrintTheirName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.verifyMessageNamesTheReason
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.aBlockStillWaitingGivesNull
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KeylogFileNoNioTest.negative_keylogFileWithoutNioIsRefused
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.answerForms
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.fakeServerAnswerParses

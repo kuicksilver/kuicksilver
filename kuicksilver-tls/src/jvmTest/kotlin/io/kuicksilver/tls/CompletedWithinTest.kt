@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-package io.kuicksilver.http3.runtime
+package io.kuicksilver.tls
 
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 
-/** [completedWithin], the deadline of the critical streams: a block that returned is never reported as timed out. */
+/** [completedWithin]: a block that returned is never reported as timed out. */
 class CompletedWithinTest {
     /**
      * The block returns after the deadline fired but before the timeout's scope completed (it does not suspend, so the
