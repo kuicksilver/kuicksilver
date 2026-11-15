@@ -69,10 +69,11 @@ class TokenStoreRaceTest {
                         }.build(),
                 )
             try {
-                withTimeout(20.seconds) {
+                withTimeout(60.seconds) {
                     val inner = MemoryTokenStore()
-                    val stored = CompletableDeferred<Unit>()
+                    var stored = CompletableDeferred<Unit>()
                     var racing = false
+                    var reached = false
                     val store =
                         object : QuicTokenStore {
                             override suspend fun put(
@@ -86,7 +87,9 @@ class TokenStoreRaceTest {
                             override suspend fun take(key: String): ByteArray? {
                                 val t = inner.take(key)
                                 if (racing) {
-                                    yield() // returns through a resumption, as a real store does
+                                    racing = false
+                                    yield() // returns through a resumption, as a real store does; throws once the deadline fired
+                                    reached = true
                                     val job = currentCoroutineContext().job
                                     while (!job.isCancelled) Thread.onSpinWait() // the deadline fires meanwhile
                                 }
@@ -102,13 +105,24 @@ class TokenStoreRaceTest {
                             accepted.await()
                             c.close()
                         }
-                    connectOnce()
-                    stored.await()
-                    racing = true
-                    val retries = server.stats.retriesSent
-                    connectOnce()
-                    assertEquals(1L, server.stats.newTokensAccepted, "the token the store gave up is in the Initial")
-                    assertEquals(retries, server.stats.retriesSent, "no Retry for the token holder")
+                    // the deadline is the store's fixed bound: a take whose yield outlasted it (a loaded host) does not reach the
+                    // race, and the next connection, with the token it stores, tries again
+                    repeat(5) {
+                        stored = CompletableDeferred()
+                        connectOnce()
+                        stored.await()
+                        racing = true
+                        reached = false
+                        val accepted = server.stats.newTokensAccepted
+                        val retries = server.stats.retriesSent
+                        connectOnce()
+                        if (reached) {
+                            assertEquals(accepted + 1, server.stats.newTokensAccepted, "the token the store gave up is in the Initial")
+                            assertEquals(retries, server.stats.retriesSent, "no Retry for the token holder")
+                            return@withTimeout
+                        }
+                    }
+                    kotlin.test.fail("the store's take never reached the race")
                 }
             } finally {
                 client.close()

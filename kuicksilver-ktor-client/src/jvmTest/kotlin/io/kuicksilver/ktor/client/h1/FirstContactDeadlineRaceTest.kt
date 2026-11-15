@@ -12,9 +12,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlin.concurrent.Volatile
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.fail
 
 /**
  * [prepareFirstContact] reads a body without a length to its end before an HTTP/1.0 server gets it with Content-Length: a
@@ -26,26 +28,46 @@ class FirstContactDeadlineRaceTest {
         firstContactBufferedForTest = null
     }
 
+    @Volatile private var reached = false
+
+    /**
+     * The read of the body before the hook must end within the deadline for the race to happen (a cold JVM's first channel
+     * copy can take longer than 50 ms): a run whose hook was not reached does not count, and the next one gets the deadline
+     * doubled.
+     */
     @Test fun negative_aBodyReadAsTheDeadlineFiresIsKept() =
         runBlocking {
             firstContactBufferedForTest = {
-                yield() // the block completes through a resumption, as a real read does
+                yield() // the block completes through a resumption, as a real read does; throws when the deadline fired
+                reached = true
                 val job = currentCoroutineContext().job
                 while (!job.isCancelled) Thread.onSpinWait() // the deadline fires meanwhile
             }
-            val request =
-                HttpRequestBuilder()
-                    .apply {
-                        url("http://example.test/upload")
-                        method = HttpMethod.Post
-                        // no length: it would go out chunked
-                        setBody(
-                            object : OutgoingContent.ReadChannelContent() {
-                                override fun readFrom(): ByteReadChannel = ByteReadChannel("hello".encodeToByteArray())
-                            },
-                        )
-                    }.build()
-            prepareFirstContact(request, 50) // threw "did not end within 50 ms" for a body it had read
-            assertContentEquals("hello".encodeToByteArray(), request.firstContactBody())
+            var within = 50L
+            repeat(8) {
+                reached = false
+                val request = request()
+                val outcome = runCatching { prepareFirstContact(request, within) }
+                if (reached) {
+                    outcome.getOrThrow() // threw "did not end within" for a body it had read
+                    assertContentEquals("hello".encodeToByteArray(), request.firstContactBody())
+                    return@runBlocking
+                }
+                within *= 2
+            }
+            fail("the body read never ended within ${within / 2} ms")
         }
+
+    private fun request() =
+        HttpRequestBuilder()
+            .apply {
+                url("http://example.test/upload")
+                method = HttpMethod.Post
+                // no length: it would go out chunked
+                setBody(
+                    object : OutgoingContent.ReadChannelContent() {
+                        override fun readFrom(): ByteReadChannel = ByteReadChannel("hello".encodeToByteArray())
+                    },
+                )
+            }.build()
 }
