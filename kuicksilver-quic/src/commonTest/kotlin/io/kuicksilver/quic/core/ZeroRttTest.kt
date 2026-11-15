@@ -1184,6 +1184,65 @@ class ZeroRttTest {
         )
         p.close()
     }
+
+    /**
+     * RFC 9001 sections 6 and 6.4 after each 0-RTT outcome: the key phase state and the 1-RTT CRYPTO stream check start with the
+     * 1-RTT keys, untouched by what 0-RTT did. Both sides update in turn (each packet number opened with the right generation, no
+     * KEY_UPDATE_ERROR), then a TLS KeyUpdate from the client is still 0x010a. The tickets these connections resume came through the
+     * transport's KeyUpdate check of the 1-RTT CRYPTO stream (its control: NewSessionTickets pass).
+     */
+    private fun keyUpdatesAfter(p: CorePair) {
+        assertTrue(p.handshake())
+        assertTrue(
+            p.runUntil(limit = 2.seconds) { p.client.state == ConnectionState.Confirmed && p.server!!.state == ConnectionState.Confirmed },
+        )
+        assertTrue(p.client.initiateKeyUpdate(p.now))
+        assertTrue(p.runUntil(limit = 3.seconds) { p.server!!.keyPhaseForTest!!.generation == 1L })
+        // a packet of the server's phase 1 to be acknowledged (section 6.1), then 3 x PTO (section 6.5)
+        val id = p.server!!.openStream(bidi = false)
+        p.server!!.writeStream(id, ByteArray(100), 0, 100, fin = true)
+        assertTrue(p.runUntil(limit = 5.seconds) { p.server!!.initiateKeyUpdate(p.now) }, "the server's turn")
+        val id2 = p.server!!.openStream(bidi = false) // something to carry phase 0 again
+        p.server!!.writeStream(id2, ByteArray(100), 0, 100, fin = true)
+        assertTrue(p.runUntil(limit = 3.seconds) { p.client.keyPhaseForTest!!.generation == 2L })
+        assertNull(p.closedReason(p.clientEvents))
+        assertNull(p.closedReason(p.serverEvents))
+        p.client.testInjectFrames.addLast(3 to byteArrayOf(0x06, 0, 5, 24, 0, 0, 1, 0)) // CRYPTO at 0: a KeyUpdate
+        assertTrue(p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null })
+        assertEquals(0x010aL, (p.closedReason(p.serverEvents) as QuicException.ConnectionLost.TransportClosed).code)
+    }
+
+    @Test fun keyUpdatesAfterAcceptedZeroRtt() {
+        val (p, _) = resumed(ticket())
+        try {
+            keyUpdatesAfter(p)
+            assertEquals(true, p.client.earlyDataAccepted)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_keyUpdatesAfterRejectedZeroRtt() {
+        val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        try {
+            keyUpdatesAfter(p)
+            assertEquals(false, p.client.earlyDataAccepted)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Lost before the answer: no 1-RTT key, so no key phase and nothing of it left. */
+    @Test fun negative_noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer() {
+        val (p, _) = resumed(ticket())
+        try {
+            p.client.close(0, "end", p.now)
+            p.runUntil(limit = 2.seconds) { false }
+            assertNull(p.client.keyPhaseForTest)
+        } finally {
+            p.close()
+        }
+    }
 }
 
 /** A server whose NewSessionTickets announce [max] in their early_data extension instead of 0xffffffff. */

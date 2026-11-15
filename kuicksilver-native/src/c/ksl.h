@@ -340,8 +340,9 @@ int ksl_ssl_set_session(ksl_ssl *,
                         ksl_session *); /* client, before the handshake; the caller keeps its reference. A session made
                                                                       under KSL_VERIFY_NONE is refused (KSL_E_BAD_ARG) unless this session verifies nothing either */
 void ksl_session_free(ksl_session *);   /* drops one reference; the last one cleanses the secrets */
-int ksl_ssl_new_session_ticket(ksl_ssl *);           /* server: queue one ticket now */
-int ksl_ssl_key_update(ksl_ssl *, int request_peer); /* TCP mode, TLS 1.3 */
+int ksl_ssl_new_session_ticket(ksl_ssl *); /* server: queue one ticket now */
+/* TCP mode, TLS 1.3; KSL_E_NOT_SUPPORTED in QUIC mode (RFC 9001 section 6) */
+int ksl_ssl_key_update(ksl_ssl *, int request_peer);
 /* alert: bits 0-7 alert code, bit 8 set when received from the peer, bits 16-31 the X509_V_ERR_* of a local verification failure */
 int ksl_ssl_last_error(ksl_ssl *, uint32_t *packed, int *alert, char *buf, size_t len);
 int ksl_drive(

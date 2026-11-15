@@ -17,6 +17,12 @@ import io.kuicksilver.tls.TlsRole
 /** Handshake header, legacy_version, random and the legacy_session_id length byte of a ClientHello. */
 private const val HELLO_PREFIX = 39
 
+/** HandshakeType key_update (RFC 8446 section 4). */
+private const val TLS_KEY_UPDATE = 24
+
+/** AlertDescription unexpected_message (RFC 8446 section 6). */
+private const val TLS_UNEXPECTED_MESSAGE = 10
+
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class FrameDispatcher(
     private val c: ConnectionCore,
@@ -32,6 +38,7 @@ internal class FrameDispatcher(
 
     override fun ack(ack: AckFrameView) {
         if (r.space == SpaceId.Application && c.role == TlsRole.Client) c.checkAckAfterRejection(ack)
+        if (r.inOneRtt) c.keyPhase?.checkAckInPacket(ack.largest, r.reader.frameType)
         c.loss.onAck(r.space, ack, r.now, r.arrivedAt)
         c.checkPmtuBlackHoles()
     }
@@ -73,6 +80,7 @@ internal class FrameDispatcher(
         c.cryptoStreams.onData(r.level, offset, data, off, len, c.handshake.done)
         c.cryptoStreams.deliver(r.level) { bytes, n ->
             if (r.level == 0 && c.role == TlsRole.Server) checkClientHello(bytes, n)
+            if (r.level == 3) checkPostHandshakeMessages(bytes, n)
             c.handshake.provide(r.level, bytes, n)
             c.tlsDirty = true
         }
@@ -99,6 +107,45 @@ internal class FrameDispatcher(
         helloPrefix = null
         val tlsClientHello = prefix[0].toInt() == 1 && prefix[4].toInt() == 3 && prefix[5].toInt() == 3
         if (tlsClientHello && prefix[HELLO_PREFIX - 1].toInt() != 0) violation("ClientHello with a legacy_session_id")
+    }
+
+    // the 1-RTT CRYPTO stream as TLS handshake messages (RFC 8446 section 4: a type byte and a 24-bit length): header bytes still
+    // missing, the length being read, and the body bytes left of the current message
+    private var messageHeaderLeft = 4
+    private var messageLength = 0
+    private var messageBodyLeft = 0
+
+    /**
+     * RFC 9001 section 6: "Endpoints MUST treat the receipt of a TLS KeyUpdate message as a connection error of type 0x010a,
+     * equivalent to a fatal TLS alert of unexpected_message". Checked here, ahead of the TLS stack, so the rule holds whatever
+     * [io.kuicksilver.tls.QuicCrypto] provides it (ksl's OpenSSL refuses one too); the bytes arrive in order and may break anywhere.
+     */
+    private fun checkPostHandshakeMessages(
+        bytes: ByteArray,
+        n: Int,
+    ) {
+        var i = 0
+        while (i < n) {
+            if (messageBodyLeft > 0) {
+                val skip = minOf(messageBodyLeft, n - i)
+                messageBodyLeft -= skip
+                i += skip
+                continue
+            }
+            val b = bytes[i++].toInt() and 0xff
+            if (messageHeaderLeft == 4) {
+                if (b == TLS_KEY_UPDATE) {
+                    throw QuicWireException(TransportError.crypto(TLS_UNEXPECTED_MESSAGE), r.reader.frameType, "TLS KeyUpdate message")
+                }
+                messageLength = 0
+            } else {
+                messageLength = (messageLength shl 8) or b
+            }
+            if (--messageHeaderLeft == 0) {
+                messageHeaderLeft = 4
+                messageBodyLeft = messageLength
+            }
+        }
     }
 
     override fun newToken(

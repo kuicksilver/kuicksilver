@@ -3496,6 +3496,16 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.streamEch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.tlsFailureMapsToCryptoError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.transportParametersCidAuthentication
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.verifyPauseRoundTrip
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.ackOfNewPhaseCarriedWithNewKeysIsFine
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_ackOfNewPhaseCarriedWithOldKeys
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_afterOwnUpdateNewPhaseBelowOldPacket
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_afterOwnUpdateOldPacketAboveNewPhaseIsNotOpenedWithOldKeys
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_currentPhaseLoweredBelowAnOldPacket
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_newPhaseBelowReorderedPreviousPhasePacket
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_previousKeyBelowAnOlderGeneration
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_samePacketNumberUnderNewerKeys
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.reorderedPacketsAroundAnUpdateAreFine
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhasePropertyTest.keyPhaseMatchesTheModel
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyUpdateTest.cannotInitiateAgainBeforeAckOfCurrentPhase
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyUpdateTest.cannotInitiateBeforeConfirmed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyUpdateTest.consecutivePeerUpdateWithoutOurAckIsKeyUpdateError
@@ -3706,6 +3716,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.replaye
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.resetCheckFollowsTheFirstPacketOfTheDatagram
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.spinBitIsRandomWhileDisabled
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ReceivePathTest.undecryptableBufferCap32
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.RedTeamKeyPhaseTest.negative_oldKeysAboveANewPhasePacketAfterOurUpdateIsKeyUpdateError
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.RedTeamKeyPhaseTest.negative_oldKeysAboveANewPhasePacketIsKeyUpdateError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.RefusedPacketReplayTest.negative_aReplayedRefusedPacketIsNotProcessedTwice
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.ackOfBytesPastTheReliableSizeKeepsTheBufferExact
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ResetStreamAtTest.fallsBackToResetStreamWithoutPeerSupport
@@ -3725,6 +3737,11 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.neg
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.negative_retransmittedResetStreamIsReportedOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.negative_stopSendingAfterOurResetIsReportedOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.StreamFinalSizeTest.resetAfterAnUnacknowledgedFinCarriesEveryByte
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.TlsKeyUpdateMessageTest.keyUpdateBytesInsideOtherMessagesPass
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.TlsKeyUpdateMessageTest.negative_tlsKeyUpdateAfterOtherMessagesIsCryptoError0x10a
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.TlsKeyUpdateMessageTest.negative_tlsKeyUpdateFromClientIsCryptoError0x10a
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.TlsKeyUpdateMessageTest.negative_tlsKeyUpdateFromServerIsCryptoError0x10a
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.TlsKeyUpdateMessageTest.negative_tlsKeyUpdateSplitAcrossFramesIsCryptoError0x10a
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.VersionUpgradeTest.clientPreferringV2StartsInV1AndUpgrades
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.VersionUpgradeTest.clientStartingInV2
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.VersionUpgradeTest.compatibleUpgradeV1ToV2
@@ -3742,6 +3759,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStream
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterAcceptedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttMaxDatagramFrameSizeReduced
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttReplayRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_0rttTransportParamsReduced
@@ -3756,7 +3774,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_he
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_initialFollowedByZeroRttThatDoesNotFitIsPadded
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_invalidMaxEarlyDataIsProtocolViolation
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_keyUpdatesAfterRejectedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_rejectedZeroRttStreamHasNoFinalSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_resetStreamAtIsPartOfTheEarlyDataContext
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.negative_ticketOfAnotherVersionIsNotUsed
