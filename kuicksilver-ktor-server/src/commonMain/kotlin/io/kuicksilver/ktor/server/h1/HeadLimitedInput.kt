@@ -33,6 +33,9 @@ internal class HeadLimitedInput(
     private val source: ByteReadChannel,
     private val maxHeadBytes: Int,
 ) : ByteReadChannel {
+    /** The connection's input this reads from (tests tell their connection's hooks apart by it). */
+    internal val sourceForTest: ByteReadChannel get() = source
+
     private val buffer = Buffer()
 
     /** Bytes the current head may still take from [source]; negative outside a head. */

@@ -62,6 +62,9 @@ public class TlsConnection private constructor(
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
     private val lock = Mutex()
 
+    /** The transport this connection reads (tests tell their connection's hooks apart by it). */
+    internal val transportInForTest: ByteReadChannel get() = transportIn
+
     /** The context this connection was built from (tests). */
     internal val contextForTest: KslContext get() = ctx
 

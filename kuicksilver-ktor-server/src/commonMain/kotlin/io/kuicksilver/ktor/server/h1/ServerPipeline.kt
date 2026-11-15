@@ -156,17 +156,18 @@ internal fun sendStallTimeout(idle: Duration): Duration = maxOf(idle, MIN_SEND_S
 /** How long input after a refused head is read and dropped, so the client sees the refusal rather than a reset. */
 private val LINGER = 2.seconds
 
-/** Test hook: runs once a request head was parsed, still inside its deadline. */
+/** Test hook: runs once a request head was parsed, still inside its deadline; it gets the connection's input. */
 @kotlin.concurrent.Volatile
-internal var headParsedForTest: (suspend () -> Unit)? = null
+internal var headParsedForTest: (suspend (ByteReadChannel) -> Unit)? = null
 
-/** Test hook: runs once a flush of a response returned, still inside the send-stall deadline. */
+/** Test hook: runs once a flush of a response returned, still inside the send-stall deadline; it gets the output. */
 @kotlin.concurrent.Volatile
-internal var responseFlushedForTest: (suspend () -> Unit)? = null
+internal var responseFlushedForTest: (suspend (ByteWriteChannel) -> Unit)? = null
 
-/** Test hook: runs once the writer took the next response off its channel, still inside the idle timeout. */
+/** Test hook: runs once the writer took the next response off its channel, still inside the idle timeout; it gets the
+ * connection's output. */
 @kotlin.concurrent.Volatile
-internal var pipelineResponseTakenForTest: (suspend () -> Unit)? = null
+internal var pipelineResponseTakenForTest: (suspend (ByteWriteChannel) -> Unit)? = null
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
@@ -1001,7 +1002,7 @@ private suspend fun readRequestHeadInTime(
                 // no suspension point between the return and the store
                 parseRequest(input)?.also {
                     parsed.store(it)
-                    headParsedForTest?.invoke()
+                    headParsedForTest?.invoke(input.sourceForTest)
                 }
             } finally {
                 deadline.cancel()
@@ -1063,7 +1064,7 @@ private suspend fun pipelineWriterLoop(
     while (true) {
         // completedWithin: a response taken off the channel as the idle timeout fires is written, never dropped (its
         // request was read and handled; dropped, its channel was neither written nor cancelled)
-        val next = completedWithin(timeout) { channel.receiveCatching().also { pipelineResponseTakenForTest?.invoke() } }
+        val next = completedWithin(timeout) { channel.receiveCatching().also { pipelineResponseTakenForTest?.invoke(connection.output) } }
         if (next == null) {
             // idle: the reader is waiting for a head that does not come, so the whole connection ends, not only this side
             onEnd("HTTP/1.1 connection idle for $timeout")
@@ -1120,7 +1121,7 @@ private suspend fun ByteReadChannel.copyToClient(
             // completedWithin: a flush the socket took as the stall deadline fired is progress, not a client that stopped
             completedWithin(stall) {
                 output.flush()
-                responseFlushedForTest?.invoke()
+                responseFlushedForTest?.invoke(output)
                 true
             } ?: throw ClientNotReading(stall)
             awaitContent()

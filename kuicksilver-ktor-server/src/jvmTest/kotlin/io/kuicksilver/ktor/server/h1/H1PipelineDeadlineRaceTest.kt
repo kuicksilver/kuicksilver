@@ -21,10 +21,12 @@ import kotlin.concurrent.Volatile
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The HTTP/1.1 pipeline's deadlines on real threads: a step done as its deadline fires (the deadline lands on another thread
@@ -35,7 +37,10 @@ import kotlin.time.Duration.Companion.seconds
  * The race is made by a hook that returns only once the deadline cancelled its block. The work before the hook (parsing a
  * small head, a channel hand-over, a flush into memory) must end before the deadline for the race to happen at all: a
  * cold or loaded JVM can take longer than the first deadline, so a run whose hook was never reached is repeated with the
- * deadline doubled. Only a run that reached the race is judged.
+ * deadline doubled. Only a run that reached the race is judged, and it must have lasted at least the deadline.
+ *
+ * The hooks are global: each run's hook acts only for that run's own connection (the channels it made), and each run
+ * waits for its pipeline to end, so a writer still finishing an earlier run cannot fire a later run's hook.
  */
 class H1PipelineDeadlineRaceTest {
     @AfterTest fun reset() {
@@ -44,16 +49,23 @@ class H1PipelineDeadlineRaceTest {
         responseFlushedForTest = null
     }
 
-    /** Set by [raceOnce] when the block reached the hook in time: the deadline then fires while the block returns. */
-    @Volatile private var reached = false
+    /** One run's race: [hook] acts once, for [mine] only, and returns once the deadline cancelled the calling block. */
+    private class Race(
+        val mine: Any,
+    ) {
+        @Volatile var reached = false
 
-    /** The first call returns only once the deadline cancelled the calling block, without suspending after its yield. */
-    private val raceOnce: suspend () -> Unit = {
-        if (!reached) {
-            yield() // throws when the deadline already fired: the run does not count
-            reached = true
-            val job = currentCoroutineContext().job
-            while (!job.isCancelled) Thread.onSpinWait()
+        /** Completed once the hook returned (the deadline fired), or at once by [answer] for a race that needs no wait. */
+        val over = CompletableDeferred<Unit>()
+
+        val hook: suspend (Any) -> Unit = { of ->
+            if (of === mine && !reached) {
+                yield() // throws when the deadline already fired: the run does not count
+                reached = true
+                val job = currentCoroutineContext().job
+                while (!job.isCancelled) Thread.onSpinWait()
+                over.complete(Unit)
+            }
         }
     }
 
@@ -61,20 +73,25 @@ class H1PipelineDeadlineRaceTest {
 
     /**
      * What the client reads of the answer to one GET over a pipeline with [idle] and [header] deadlines and a send stall of
-     * [send]; the handler writes [ok] and "ab", flushes, waits for [secondHalf], and writes "cd".
+     * [send]; the handler writes [ok] and "ab", flushes, and writes "cd" once the race is over when [holdSecondHalf] (the
+     * flush race: else the whole body could go out in the raced flush, and the client end the run before the deadline
+     * fired), at once otherwise. [arm] installs the run's hook for its channels
+     * (the client's request channel, the server's response channel); the pipeline has ended when this returns.
      */
     @OptIn(InternalAPI::class)
     private fun answer(
         idle: Duration,
         header: Duration,
-        send: Duration = 5.seconds,
-        secondHalf: CompletableDeferred<Unit> = CompletableDeferred(Unit),
-    ): String =
+        send: Duration,
+        holdSecondHalf: Boolean = false,
+        arm: (toServer: ByteChannel, fromServer: ByteChannel) -> Race,
+    ): Pair<Race, Result<String>> =
         runBlocking {
             val toServer = ByteChannel()
             val fromServer = ByteChannel()
+            val race = arm(toServer, fromServer)
             val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-            try {
+            val pipeline =
                 scope.startH1Pipeline(
                     H1Connection(toServer, fromServer, null, null),
                     idle,
@@ -84,46 +101,67 @@ class H1PipelineDeadlineRaceTest {
                     request.release()
                     output.writeStringUtf8(ok + "ab")
                     output.flush()
-                    secondHalf.await()
+                    if (holdSecondHalf) race.over.await()
                     output.writeStringUtf8("cd")
                     output.flush()
                 }
+            try {
                 toServer.writeStringUtf8("GET / HTTP/1.1\r\nHost: s\r\n\r\n")
                 toServer.flush()
-                withTimeout(30.seconds) { fromServer.readByteArray(ok.length + 4).decodeToString() }
+                race to runCatching { withTimeout(30.seconds) { fromServer.readByteArray(ok.length + 4).decodeToString() } }
             } finally {
+                pipeline.cancel()
+                withTimeout(30.seconds) { pipeline.join() }
                 scope.cancel()
             }
         }
 
-    /** Runs [attempt] with the deadline doubled from [first] until a run reached the race (at most 7 tries, 12.8 s). */
+    /** Runs with the deadline doubled from [first] until a run reached the race (at most 7 tries, 12.8 s); its answer. */
     private fun raced(
         first: Duration,
-        attempt: (Duration) -> String,
+        attempt: (Duration) -> Pair<Race, Result<String>>,
     ): String {
         var d = first
         repeat(7) {
-            reached = false
-            val got = runCatching { attempt(d) }
-            if (reached) return got.getOrThrow()
+            val start = TimeSource.Monotonic.markNow()
+            val (race, got) = attempt(d)
+            if (race.reached) {
+                assertTrue(start.elapsedNow() >= d, "a run that raced lasted its deadline (${start.elapsedNow()} < $d)")
+                return got.getOrThrow()
+            }
             d *= 2
         }
         fail("the work before the hook never ended within ${d / 2}")
     }
 
     @Test fun negative_aHeadParsedAsItsDeadlineFiresIsTheRequest() {
-        headParsedForTest = raceOnce
-        assertEquals(ok + "abcd", raced(200.milliseconds) { answer(idle = 30.seconds, header = it) })
+        val got =
+            raced(200.milliseconds) { d ->
+                answer(idle = 30.seconds, header = d, send = 30.seconds) { toServer, _ ->
+                    Race(toServer).also { headParsedForTest = it.hook }
+                }
+            }
+        assertEquals(ok + "abcd", got)
     }
 
     @Test fun negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten() {
-        pipelineResponseTakenForTest = raceOnce
-        assertEquals(ok + "abcd", raced(200.milliseconds) { answer(idle = it, header = 30.seconds) })
+        val got =
+            raced(200.milliseconds) { d ->
+                answer(idle = d, header = 30.seconds, send = 30.seconds) { _, fromServer ->
+                    Race(fromServer).also { pipelineResponseTakenForTest = it.hook }
+                }
+            }
+        assertEquals(ok + "abcd", got)
     }
 
-    /** The first half of the body is flushed as the send-stall deadline fires: the second half follows. */
+    /** The first flush of the response returns as the send-stall deadline fires: the rest of the body follows. */
     @Test fun negative_aFlushDoneAsTheStallDeadlineFiresIsProgress() {
-        responseFlushedForTest = raceOnce
-        assertEquals(ok + "abcd", raced(200.milliseconds) { answer(idle = 30.seconds, header = 30.seconds, send = it) })
+        val got =
+            raced(200.milliseconds) { d ->
+                answer(idle = 30.seconds, header = 30.seconds, send = d, holdSecondHalf = true) { _, fromServer ->
+                    Race(fromServer).also { responseFlushedForTest = it.hook }
+                }
+            }
+        assertEquals(ok + "abcd", got)
     }
 }
