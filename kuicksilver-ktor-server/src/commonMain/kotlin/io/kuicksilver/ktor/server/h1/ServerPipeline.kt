@@ -8,7 +8,7 @@
 // is internal to ktor-server-cio), without its `onClose` hook; a deadline and a size limit for every request head (408,
 // 431), an idle timeout that ends the whole connection, not only its output, and a deadline on response writes that
 // make no progress.
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.ktor.server.h1
 
@@ -154,6 +154,10 @@ internal fun sendStallTimeout(idle: Duration): Duration = maxOf(idle, MIN_SEND_S
 
 /** How long input after a refused head is read and dropped, so the client sees the refusal rather than a reset. */
 private val LINGER = 2.seconds
+
+/** Test hook: runs once a request head was parsed, still inside its deadline. */
+@kotlin.concurrent.Volatile
+internal var headParsedForTest: (suspend () -> Unit)? = null
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
@@ -968,6 +972,9 @@ private suspend fun readRequestHeadInTime(
         return parseRequest(input)
     }
     var started = false
+    // a head parsed as the deadline fires (the deadline cancels this scope from another thread after parseRequest returned,
+    // before the scope completed) is the request, never a 408 for a head that arrived whole
+    val parsed = kotlin.concurrent.atomics.AtomicReference<Request?>(null)
     try {
         return coroutineScope {
             val head = coroutineContext.job
@@ -982,13 +989,18 @@ private suspend fun readRequestHeadInTime(
                 if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
                 started = input.skipEmptyLines()
                 if (started) input.checkRequestHead()
-                parseRequest(input)
+                // no suspension point between the return and the store
+                parseRequest(input)?.also {
+                    parsed.store(it)
+                    headParsedForTest?.invoke()
+                }
             } finally {
                 deadline.cancel()
             }
         }
     } catch (e: CancellationException) {
         currentCoroutineContext().ensureActive() // the connection itself was cancelled: not a deadline
+        parsed.load()?.let { return it }
         if (e is HeadDeadline) throw RequestHeadTimeout(started)
         throw e
     }
