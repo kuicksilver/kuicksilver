@@ -481,6 +481,24 @@ internal class H3Session(
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()
 
+    /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
+    private var wtFlowSessions = 0
+
+    /**
+     * A WebTransport session with flow control started ([up]) or ended: the connection's receive window is kept at what
+     * the open sessions may have in flight together (draft-16 section 8: a session nobody reads must not hold the whole
+     * connection credit while the others wait), and shrinks back as they end. Session dispatcher only.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    fun wtFlowSession(up: Boolean) {
+        wtFlowSessions += if (up) 1 else -1
+        val floor = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
+        scope.launch {
+            io.kuicksilver.quic.runtime.QuicStreamLimits
+                .setReceiveWindowFloor(quic, floor)
+        }
+    }
+
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
     internal var wtPeerSettings: Map<Long, Long> = emptyMap()
 

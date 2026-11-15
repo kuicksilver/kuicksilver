@@ -702,6 +702,92 @@ class WebTransportFlowControlTest {
             assertFlowControlClose(connect, session)
         }
 
+    /**
+     * The draft-14 interop risk made visible: a client that declared flow control only by SETTINGS_WT_MAX_SESSIONS (its
+     * initial limits 0) and never raises them leaves our open waiting at zero credit; after STALL_AFTER the session's
+     * creditStall says so, for the engines' logs. A draft-16 peer with zero limits is not reported this way.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun draft14PeerWithoutCreditIsReported() =
+        h3Test {
+            for (draft14 in listOf(true, false)) {
+                QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                    val (c, s) = q.connect(H3Fixtures.quic)
+                    val server = Http3Connection.server(s, wtOn)
+                    val raw = RawPeer(c)
+                    raw.openControl(if (draft14) draft14Client else wtClientFlowSettings(0, 0, 1))
+                    val (_, session) = rawSession(c, server, raw, if (draft14) WtTokens.LEGACY else WtTokens.H3)
+                    server.session.wtTimer = {} // the stall's ten seconds pass at once
+                    val opening = launch { runCatching { session.openUni() } }
+                    val stall = (session as io.kuicksilver.http3.WebTransportDiagnostics).creditStall
+                    if (draft14) {
+                        assertTrue("SETTINGS_WT_MAX_SESSIONS" in withTimeout(5.seconds) { stall.await() })
+                    } else {
+                        // blocked at zero too (no uni credit), but a draft-16 peer declared its limits: nothing to report
+                        server.awaitFlow(session) { (it.sentForTest[WtFlow.STREAMS_BLOCKED_UNI] ?: 0) == 1 }
+                        assertFalse(stall.isCompleted)
+                    }
+                    opening.cancel()
+                }
+            }
+        }
+
+    /**
+     * Credit for exact reads on streams that stay open and idle: two streams of 1000 bytes without FIN are read exactly
+     * and left alone; a third that needs 3000 more of a 4000-byte window still gets them.
+     */
+    @Test fun negative_exactReadsOfIdleOpenStreamsGiveCreditBack() = idleReaders { input -> input.readFully(ByteArray(1000)) }
+
+    /** The same for a reader that waits for a large amount at once and then leaves the stream alone. */
+    @Test fun negative_awaitContentOfIdleOpenStreamsGivesCreditBack() = idleReaders { input -> input.awaitContent(1000) }
+
+    private fun idleReaders(read: suspend (io.ktor.utils.io.ByteReadChannel) -> Unit) =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 4000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                repeat(2) {
+                    val st = session.openUni()
+                    st.output.writeFully(ByteArray(1000))
+                    st.output.flush() // no FIN: the stream stays open
+                    read(withTimeout(5.seconds) { s.acceptUni() }.input)
+                }
+                val third = session.openUni()
+                launch {
+                    third.output.writeFully(ByteArray(3000))
+                    third.output.flushAndClose()
+                }
+                assertEquals(3000, withTimeout(10.seconds) { s.acceptUni().input.readAllBytes() }.size)
+            }
+        }
+
+    /**
+     * Section 8: the connection's receive window is kept at what its open sessions may have in flight together, so a
+     * session nobody reads cannot hold all of the connection's credit; without a session it stays QUIC's own.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun connectionWindowFollowsTheOpenSessions() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val limits = io.kuicksilver.quic.runtime.QuicStreamLimits
+                assertEquals(io.kuicksilver.quic.QuicConfig.Default.initialConnectionWindow, limits.receiveLimit(p.server.quic))
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                p.client.webTransport(wtReq())
+                withTimeout(5.seconds) { serverSide.await() }
+                withTimeout(5.seconds) {
+                    while (limits.receiveLimit(p.server.quic)!! < wtOn.webTransportInitialMaxData) kotlinx.coroutines.yield()
+                }
+                withTimeout(5.seconds) {
+                    while (limits.receiveLimit(p.client.quic)!! < wtOn.webTransportInitialMaxData) kotlinx.coroutines.yield()
+                }
+            }
+        }
+
     /** One byte beyond the limit is too many (the limit itself passes, below). */
     @Test fun negative_dataOneByteBeyondTheLimitClosesTheSession() =
         rawFlowTest(serverSettings = wtLimits(data = 100)) { _, raw, connect, session ->

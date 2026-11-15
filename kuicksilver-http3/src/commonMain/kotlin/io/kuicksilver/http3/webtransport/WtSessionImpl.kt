@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package io.kuicksilver.http3.webtransport
 
@@ -75,8 +79,11 @@ internal class WtSessionImpl(
     /** The draft this session runs ([wtClientVersion], [wtServerVersion]). */
     internal val version: WtVersion,
 ) : WebTransportSession,
-    WtSessionSink {
+    WtSessionSink,
+    io.kuicksilver.http3.WebTransportDiagnostics {
     override val sessionId: Long get() = stream.streamId
+
+    override val creditStall = CompletableDeferred<String>()
 
     /** The connection's dispatcher, where [flow] lives (a test hook). */
     internal val dispatcherForTest get() = h3.dispatcher
@@ -91,7 +98,29 @@ internal class WtSessionImpl(
     private val capsulesOut = Channel<Capsule>(Channel.UNLIMITED)
 
     /** The session's flow control (section 5), or null when it is not enabled. Session dispatcher only. */
-    internal val flow: WtSessionFlow? = if (flowEnabled) WtSessionFlow.of(h3, version) { capsulesOut.trySend(it) } else null
+    internal val flow: WtSessionFlow? =
+        if (flowEnabled) WtSessionFlow.of(h3, version, { capsulesOut.trySend(it) }) { blockedAtZero() } else null
+
+    /**
+     * A draft-14 peer that declared flow control only by `SETTINGS_WT_MAX_SESSIONS` (no initial limits) left us blocked at
+     * a zero limit (session dispatcher): once that lasted [STALL_AFTER], [creditStall] says so, once.
+     */
+    private fun blockedAtZero() {
+        if (version != WtVersion.Draft14 || WtFlow.declaresInitialLimits(h3.wtPeerSettings) || stallWatch) return
+        stallWatch = true
+        h3.scope.launch {
+            h3.wtTimer(STALL_AFTER)
+            if (flow?.blockedAtZero() == true && !closedInfo.isCompleted) {
+                creditStall.complete(
+                    "WebTransport session $sessionId: the draft-14 peer declared flow control by SETTINGS_WT_MAX_SESSIONS " +
+                        "alone, so its initial limits are 0, and has sent no WT_MAX_STREAMS or WT_MAX_DATA in $STALL_AFTER: " +
+                        "our streams and data wait for it (draft-14 sections 5.1, 5.5)",
+                )
+            }
+        }
+    }
+
+    private var stallWatch = false
 
     /** A peer's stream, with the count of its bytes against the session's limit when flow control is on. */
     private class Incoming(
@@ -120,6 +149,7 @@ internal class WtSessionImpl(
 
     /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
     fun start() {
+        if (flow != null) h3.wtFlowSession(up = true)
         // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
         // CONNECTION_CLOSE (Firefox) still ends the session with its code
         watchers += h3.drains(h3.scope.launch { readCapsules() })
@@ -274,7 +304,10 @@ internal class WtSessionImpl(
                         goneRaw(q.stream, ch.second)
                     }
                 }
-                flow?.end(sessionClosed())
+                flow?.let {
+                    it.end(sessionClosed())
+                    h3.wtFlowSession(up = false)
+                }
                 capsulesOut.close()
                 for (s in streams.toList()) s.gone()
                 streams.clear()
@@ -563,6 +596,9 @@ internal class WtSessionImpl(
                 maxCapsuleLength = 4 + WtCloseCapsule.MAX_REASON,
                 datagramFallback = false,
             )
+
+        /** How long a session may stay blocked at a draft-14 peer's zero limits before [creditStall] tells. */
+        val STALL_AFTER: Duration = 10.seconds
 
         /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
         val CLOSE_TIMEOUT: Duration = 5.seconds

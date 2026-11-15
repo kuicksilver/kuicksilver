@@ -11,8 +11,8 @@ import kotlin.concurrent.Volatile
 /**
  * The application's side of a WebTransport stream's input: chunks the stream's pump took from the transport, handed
  * over one at a time ([deliver] waits while one is still pending), so at most a chunk waits here besides what the
- * application has not read yet. [onRead] hears how many bytes the application read, each time it waits for more or
- * cancels: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-16 section 5.6: "Endpoints
+ * application has not read yet. [onRead] hears how many bytes the application took into its buffer, as it asks for
+ * them: what the session's flow control gives back as credit (draft-ietf-webtrans-http3-16 section 5.6: "Endpoints
  * SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data"), not what only arrived.
  *
  * Like the channel it replaces: only a clean end ([finish], every byte read) is `isClosedForRead`; a failure ([fail],
@@ -27,9 +27,6 @@ internal class WtInput(
 ) : ByteReadChannel {
     private val chunks = Channel<ByteArray>(1)
     private val buf = Buffer()
-
-    /** What [buf] held when the reader last looked: what was removed since then was read. Reader only. */
-    private var held = 0L
 
     @Volatile private var failure: Throwable? = null
 
@@ -57,39 +54,31 @@ internal class WtInput(
 
     override val readBuffer: Source get() {
         failure?.let { throw it }
-        // a reader that reads exactly what it needs (readFully, readByteArray(n)) waits only while bytes are missing: what it
-        // read since is reported here, at its next look at the buffer
-        account()
         return buf
-    }
-
-    private fun account() {
-        val read = held - buf.size
-        if (read > 0) onRead(read)
-        held = buf.size
     }
 
     override suspend fun awaitContent(min: Int): Boolean {
         failure?.let { throw it }
-        account()
         while (buf.size < min) {
             val r = chunks.receiveCatching()
             val chunk = r.getOrNull()
             if (chunk != null) {
+                // taken by the reader, which asked for it: consumed now (whatever the reader then does with its buffer, it
+                // holds at most what it asked for and one chunk), so a reader that reads exactly what it needs and then
+                // waits on another stream never keeps the credit
                 buf.write(chunk)
+                onRead(chunk.size.toLong())
                 continue
             }
             failure?.let { throw it }
             ended = true
             break
         }
-        held = buf.size
         return buf.size >= min
     }
 
     override fun cancel(cause: Throwable?) {
         if (failure == null) {
-            account()
             failure = cause ?: kotlinx.io.IOException("the WebTransport stream's input was cancelled")
         }
         chunks.cancel()

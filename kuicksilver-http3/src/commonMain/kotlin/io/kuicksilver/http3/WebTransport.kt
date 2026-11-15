@@ -25,6 +25,21 @@ import kotlinx.io.IOException
  * throw [WebTransportException.SessionClosed], and the connection's session slot is free once both directions of the
  * CONNECT stream ended. Application error codes, of the session and of its streams, are 0..2^32-1 (section 4.4).
  */
+
+/**
+ * Diagnostics of a WebTransport session for the engines' logs; the sessions of this library implement it.
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public interface WebTransportDiagnostics {
+    /**
+     * Completes with a description when a draft-14 peer that declared WebTransport flow control only by
+     * `SETTINGS_WT_MAX_SESSIONS` above 1 (its initial limits then 0, draft-14 sections 5.1 and 5.5) left this side
+     * blocked at zero credit for ten seconds: it never sent the WT_MAX_STREAMS or WT_MAX_DATA our streams wait for. Never
+     * completes otherwise.
+     */
+    public val creditStall: Deferred<String>
+}
+
 @ExperimentalKuicksilverApi
 public interface WebTransportSession {
     /** The session's id: the QUIC stream id of its Extended CONNECT, which every WebTransport stream and datagram names. */

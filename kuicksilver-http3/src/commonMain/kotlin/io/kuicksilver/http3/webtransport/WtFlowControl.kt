@@ -44,6 +44,12 @@ internal object WtFlow {
     /** The four "flow control capsules" of section 5.6. */
     val CAPSULES: Set<Long> = setOf(MAX_DATA, MAX_STREAMS_BIDI, MAX_STREAMS_UNI, DATA_BLOCKED, STREAMS_BLOCKED_BIDI, STREAMS_BLOCKED_UNI)
 
+    /** Whether settings [s] carry a non-zero initial limit (section 5.5), beyond what declares flow control. */
+    fun declaresInitialLimits(s: Map<Long, Long>): Boolean =
+        (s[SettingsId.WT_INITIAL_MAX_STREAMS_UNI] ?: 0L) != 0L ||
+            (s[SettingsId.WT_INITIAL_MAX_STREAMS_BIDI] ?: 0L) != 0L ||
+            (s[SettingsId.WT_INITIAL_MAX_DATA] ?: 0L) != 0L
+
     /** The capsules section 5.4 prohibits: "Endpoints MUST treat receipt of a WT_MAX_STREAM_DATA or a WT_STREAM_DATA_BLOCKED capsule as a session error". */
     val PROHIBITED: Set<Long> = setOf(MAX_STREAM_DATA, STREAM_DATA_BLOCKED)
 
@@ -120,9 +126,15 @@ internal class WtSessionFlow(
      * 5.6.4), so an equal one is accepted and changes nothing.
      */
     private val equalLimitIsViolation: Boolean = true,
+    /** A sender just started waiting at a limit of 0. */
+    private val onBlockedAtZero: () -> Unit = {},
     /** Queues a capsule on the CONNECT stream; never suspends. */
     private val sendCapsule: (Capsule) -> Unit,
 ) {
+    /** Some sender waits at a limit that is still 0 (the peer never raised it). */
+    fun blockedAtZero(): Boolean =
+        (dataBlockedAt == 0L && peerMaxData == 0L) || (0..1).any { streamsBlockedAt[it] == 0L && peerMaxStreams[it] == 0L }
+
     /** Moves at every change of the counters below and with every capsule sent (a test hook to wait on). */
     val changesForTest = MutableStateFlow(0L)
 
@@ -196,6 +208,7 @@ internal class WtSessionFlow(
             }
             if (streamsBlockedAt[i] != peerMaxStreams[i]) {
                 streamsBlockedAt[i] = peerMaxStreams[i]
+                if (peerMaxStreams[i] == 0L) onBlockedAtZero()
                 send(WtFlow.capsule(if (bidi) WtFlow.STREAMS_BLOCKED_BIDI else WtFlow.STREAMS_BLOCKED_UNI, peerMaxStreams[i]))
             }
             awaitCredit(credit.value)
@@ -233,6 +246,7 @@ internal class WtSessionFlow(
             }
             if (dataBlockedAt != peerMaxData) {
                 dataBlockedAt = peerMaxData
+                if (peerMaxData == 0L) onBlockedAtZero()
                 send(WtFlow.capsule(WtFlow.DATA_BLOCKED, peerMaxData))
             }
             awaitCredit(credit.value)
@@ -384,6 +398,7 @@ internal class WtSessionFlow(
             h3: H3Session,
             version: WtVersion,
             send: (Capsule) -> Unit,
+            onBlockedAtZero: () -> Unit = {},
         ): WtSessionFlow? {
             if (!WtFlow.enabled(h3, version)) return null
             val ours = h3.settings
@@ -397,6 +412,7 @@ internal class WtSessionFlow(
                 peerData = peer[SettingsId.WT_INITIAL_MAX_DATA] ?: 0L,
                 equalLimitIsViolation = version != WtVersion.Draft14,
                 sendCapsule = send,
+                onBlockedAtZero = onBlockedAtZero,
             )
         }
 
