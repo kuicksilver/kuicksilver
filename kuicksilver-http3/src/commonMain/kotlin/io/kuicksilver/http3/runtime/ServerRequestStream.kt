@@ -38,6 +38,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.releaseStreamCredit
@@ -142,9 +143,13 @@ private suspend fun readRequestStream(
                 // reset before its HEADERS were read: no request, but the peer's encoder may count a section that was lost
                 // or dropped with the reset (RFC 9204 section 4.4.2)
                 runCatching { cancelSections(st) }
+                // no request will be answered on it: our direction ends too, or the stream (and its credit) stays open
+                // until the connection ends when the client did not stop it (RFC 9114 section 4.1.1)
+                runCatching { st.reset(Http3ErrorCode.REQUEST_REJECTED) }
                 countClientReset(e)
                 return@with
             } catch (e: StreamAbandoned) {
+                runCatching { st.reset(Http3ErrorCode.REQUEST_REJECTED) }
                 countClientReset(st.input.closedCause)
                 return@with // reset while its HEADERS waited for inserts: the Stream Cancellation went out
             }
@@ -246,6 +251,10 @@ private suspend fun readRequestStream(
             // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
             if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
             req.done()
+        }
+        // the client reset its request (other than with H3_NO_ERROR after a complete early response): it abandoned it
+        (st.input.closedCause?.let { H3Session.transportCause(it) } as? QuicException.StreamError.Reset)?.let {
+            if (it.initiator == Initiator.Peer && it.code != Http3ErrorCode.NO_ERROR) req.peerAbandoned.complete(Unit)
         }
         req.receiveEnded()
     } finally {
@@ -395,6 +404,31 @@ internal class ServerRequestImpl(
      */
     fun applicationDone() {
         if (!engineManaged) st.releaseStreamCredit()
+    }
+
+    /** Completed when the client abandoned the request: it reset the request, or stopped our response (see [awaitAbandoned]). */
+    val peerAbandoned = CompletableDeferred<Unit>()
+
+    /**
+     * Suspends until the client abandoned the request: STOP_SENDING on the response (it will not read it), or a reset of
+     * the request other than with H3_NO_ERROR (RFC 9114 section 4.1.1: "A client can cancel requests by resetting and
+     * aborting the stream with H3_REQUEST_CANCELLED"), or the connection is gone. An engine cancels the request's
+     * handler then, so a cancelled long poll gives its stream back at once instead of when it would have answered. Never
+     * returns for a request kept on a live connection.
+     */
+    suspend fun awaitAbandoned() {
+        kotlinx.coroutines.coroutineScope {
+            val stopped = launch { st.awaitSendStopped().also { peerAbandoned.complete(Unit) } }
+            val lost =
+                launch {
+                    session.quic.closed
+                        .await()
+                        .also { peerAbandoned.complete(Unit) }
+                }
+            peerAbandoned.await()
+            stopped.cancel()
+            lost.cancel()
+        }
     }
 
     /** The engine's handler of this request returned: the stream's credit may go back to the client. Idempotent, any thread. */

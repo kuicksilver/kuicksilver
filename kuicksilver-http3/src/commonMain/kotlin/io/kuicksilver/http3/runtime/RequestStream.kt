@@ -226,6 +226,7 @@ internal suspend fun H3Session.pumpBody(
         val mapped = map(st.input.closedCause ?: if (noMoreInserts()) connectionError() else e)
         out.cancel(mapped)
         trailers.completeExceptionally(mapped)
+        countClientReset(st.input.closedCause) // last: an empty budget ends the connection
     } catch (e: Throwable) {
         // the consumer cancelled the body (its own reason), or the transport failed (a reset, a lost connection)
         val mapped = map(e)

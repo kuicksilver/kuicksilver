@@ -14,6 +14,8 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -45,12 +48,15 @@ class ServerH3FloodTest {
         val maxRunning = MutableStateFlow(0)
         val started = MutableStateFlow(0)
 
-        suspend fun hold() {
+        /** Released by the test: an uncooperative handler waits for it whatever happens, cancellation included. */
+        val gate = CompletableDeferred<Unit>()
+
+        suspend fun hold(cooperative: Boolean = true) {
             val n = running.updateAndGet { it + 1 }
             maxRunning.update { maxOf(it, n) }
             started.update { it + 1 }
             try {
-                awaitCancellation()
+                if (cooperative) awaitCancellation() else withContext(NonCancellable) { gate.await() }
             } finally {
                 running.update { it - 1 }
             }
@@ -89,12 +95,13 @@ class ServerH3FloodTest {
 
     /**
      * Each request is reset once its handler runs, the strongest form: the transport is done with the stream at once,
-     * but the handler is not. The client gets no further than the 100 streams it may open while those handlers run.
+     * but the handler is not, and it ignores the cancellation the engine sends it. The client gets no further than the 100
+     * streams it may open while those handlers run.
      */
     @Test fun negative_h3RapidResetDoesNotRunHandlersUnbounded() =
         h3ServerTest {
             val handlers = Handlers()
-            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold(cooperative = false) } } }
             val (ep, c) = rawH3(port)
             try {
                 coroutineScope {
@@ -111,11 +118,95 @@ class ServerH3FloodTest {
                     client.cancel()
                 }
             } finally {
+                handlers.gate.complete(Unit)
                 c.close()
                 ep.close()
                 server.stop(100, 500)
             }
             withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+        }
+
+    /**
+     * A handler that cooperates is cancelled once its client abandons the request (both directions reset), and the stream
+     * goes back at once: 300 requests reset after their handler started all run, never more than 100 at a time, and none
+     * is left running.
+     */
+    @Test fun abandonedRequestsCancelTheirHandlersAndFreeTheirStreams() =
+        h3ServerTest {
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            val (ep, c) = rawH3(port)
+            try {
+                withTimeout(30.seconds) { repeat(300) { i -> c.rapidReset("/hold") { handlers.started.first { it > i } } } }
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+                assertEquals(300, handlers.started.value)
+                assertTrue(handlers.maxRunning.value <= 100, "handlers at once: ${handlers.maxRunning.value}")
+            } finally {
+                c.close()
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /** STOP_SENDING alone (a client that sent its whole request and no longer wants the answer) cancels the handler too. */
+    @Test fun stopSendingAloneCancelsTheHandler() =
+        h3ServerTest {
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            val (ep, c) = rawH3(port)
+            try {
+                val st = c.openBidi()
+                st.output.writeFully(
+                    rawHeadersFrame(
+                        rawFieldSection(
+                            listOf(
+                                ":method" to "GET",
+                                ":scheme" to "https",
+                                ":authority" to "server.test",
+                                ":path" to "/hold",
+                            ),
+                        ),
+                    ),
+                )
+                st.output.flushAndClose()
+                withTimeout(10.seconds) { handlers.started.first { it == 1 } }
+                st.stopSending(H3_REQUEST_CANCELLED)
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            } finally {
+                c.close()
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /** A connection lost while a handler holds its request (the client is gone without a word) cancels the handler. */
+    @Test fun connectionLossCancelsTheHandler() =
+        h3ServerTest {
+            val handlers = Handlers()
+            val (server, port) = tlsServer { routing { get("/hold") { handlers.hold() } } }
+            val (ep, c) = rawH3(port)
+            try {
+                val st = c.openBidi()
+                st.output.writeFully(
+                    rawHeadersFrame(
+                        rawFieldSection(
+                            listOf(
+                                ":method" to "GET",
+                                ":scheme" to "https",
+                                ":authority" to "server.test",
+                                ":path" to "/hold",
+                            ),
+                        ),
+                    ),
+                )
+                st.output.flushAndClose()
+                withTimeout(10.seconds) { handlers.started.first { it == 1 } }
+                c.close(0x101, "gone") // H3_GENERAL_PROTOCOL_ERROR: an abrupt end, no GOAWAY
+                withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
         }
 
     /** A flood of requests reset at once: every reset spends a glitch token, and the connection ends with H3_EXCESSIVE_LOAD. */

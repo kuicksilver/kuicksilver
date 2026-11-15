@@ -862,7 +862,7 @@ class EarlyDataTest {
                         after = { _, servers ->
                             for (sc in servers()) {
                                 awaitCondition("the server's held stream credit going back") {
-                                    QuicStreamLimits.heldPeerBidiStreams(sc.quic) == 0
+                                    QuicStreamLimits.heldPeerBidiStreamsForTest(sc.quic) == 0
                                 }
                             }
                         },

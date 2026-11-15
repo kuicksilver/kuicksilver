@@ -329,6 +329,13 @@ internal class H3Session(
     /** The peer's unidirectional streams dropped unread: ended or reset before their type, or of an unknown type (a test hook). */
     val discardedUniStreams = MutableStateFlow(0)
     private val glitch = if (settings.glitchProtection) GlitchLimiter() else null
+
+    /**
+     * Server: the budget for the client's request stream resets, apart from [glitch] as nghttp2 keeps its
+     * `stream_reset_ratelim` apart from its glitch limit (1000, 33 a second, the same numbers), so a client cancelling
+     * requests and one sending useless frames each get their own allowance.
+     */
+    private val resetBudget = if (settings.glitchProtection) GlitchLimiter() else null
     private val clock = TimeSource.Monotonic.markNow()
 
     /** The glitch bucket's clock in nanoseconds (it refills 33 tokens a second); a test freezes it so the bucket cannot refill. */
@@ -673,15 +680,21 @@ internal class H3Session(
     }
 
     /**
-     * Server: a request stream [e] says the client reset spends a glitch token (RFC 9114 section 10.5: "An implementation
-     * SHOULD track the use of these features and set limits on their use"), as nghttp2 counts the RST_STREAM frames of an
-     * HTTP/2 client: a client that keeps opening requests and resetting them (Rapid Reset, CVE-2023-44487) meets
-     * H3_EXCESSIVE_LOAD, while one that cancels now and then (a browser leaving a page) stays within the refill.
+     * Server: a request stream [e] says the client reset spends a token of [resetBudget] (RFC 9114 section 10.5: "An
+     * implementation SHOULD track the use of these features and set limits on their use"), as nghttp2 counts the RST_STREAM
+     * frames of an HTTP/2 client: a client that keeps opening requests and resetting them (Rapid Reset, CVE-2023-44487)
+     * meets H3_EXCESSIVE_LOAD, while one that cancels now and then (a browser leaving a page) stays within the refill. Not
+     * counted: a reset with H3_NO_ERROR (a client ending its request after a complete early response, section 4.1), and
+     * one that follows our own STOP_SENDING (the stream then fails with that stop, never with the client's reset).
      */
     fun countClientReset(e: Throwable?) {
         if (!isServer) return
         val reset = transportCause(e ?: return) as? QuicException.StreamError.Reset ?: return
-        if (reset.initiator == Initiator.Peer) glitch("request stream reset by the client")
+        if (reset.initiator != Initiator.Peer || reset.code == Http3ErrorCode.NO_ERROR) return
+        val budget = resetBudget ?: return
+        if (!budget.spend(glitchClock())) {
+            throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "request stream resets above 33/s (burst 1000)")
+        }
     }
 
     /** Spends a glitch token; an empty bucket is a connection error H3_EXCESSIVE_LOAD (RFC 9114 section 8.1). */

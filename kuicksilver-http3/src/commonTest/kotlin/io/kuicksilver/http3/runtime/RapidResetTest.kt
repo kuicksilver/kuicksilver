@@ -15,6 +15,7 @@ import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -23,6 +24,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The HTTP/3 form of Rapid Reset (CVE-2023-44487): the client opens a request and resets it at once (STOP_SENDING and
@@ -72,13 +74,16 @@ class RapidResetTest {
      * Opens a request and resets it in both directions, as the attack does, once [handlerStarted] says its handler runs (a
      * reset that overtakes the HEADERS ends the stream before it is a request: no handler, nothing to hold).
      */
-    private suspend fun RawPeer.rapidReset(handlerStarted: suspend () -> Unit) {
+    private suspend fun RawPeer.rapidReset(
+        code: Long = Http3ErrorCode.REQUEST_CANCELLED,
+        handlerStarted: suspend () -> Unit,
+    ) {
         val st = quic.openBidi()
         st.output.writeFully(headers(st.id, GET))
         peerMayHaveClosed { st.output.flush() }
         handlerStarted()
-        st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
-        st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+        st.stopSending(code)
+        st.reset(code)
     }
 
     @Test fun negative_resetRequestKeepsItsStreamCreditWhileTheHandlerRuns() =
@@ -145,6 +150,77 @@ class RapidResetTest {
             }
         }
 
+    /**
+     * The reset budget is its own (as nghttp2's stream_reset_ratelim beside its glitch limit): 700 resets and 700 unknown
+     * control frames, each within its 1000 tokens, leave the connection open although together they pass 1000.
+     */
+    @Test fun resetsAndOtherGlitchesHaveSeparateBudgets() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val h = Handlers().also { it.gate.complete(Unit) }
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { handle(r, h) }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val unknown = raw.frame(0x2f, ByteArray(0)) // reserved for no extension we know, and no GREASE value
+                raw.control.output.writeFully(
+                    ByteArray(0).let {
+                        var b = it
+                        repeat(700) { b += unknown }
+                        b
+                    },
+                )
+                raw.control.output.flush()
+                repeat(700) { raw.rapidReset {} }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val answer = runCatching { withTimeout(10.seconds) { st.input.readAllBytes() } }
+                assertTrue(answer.isSuccess && answer.getOrThrow().isNotEmpty(), "the request after the resets: $answer")
+                assertTrue(!server.closed.isCompleted)
+                accept.cancel()
+            }
+        }
+
+    /**
+     * A reset with H3_NO_ERROR is how a client ends a request whose complete response came early (RFC 9114 section 4.1):
+     * 1500 of them spend nothing of the reset budget.
+     */
+    @Test fun resetsWithNoErrorAreNotCounted() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val h = Handlers().also { it.gate.complete(Unit) }
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { handle(r, h) }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                repeat(1500) { raw.rapidReset(Http3ErrorCode.NO_ERROR) {} }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val answer = runCatching { withTimeout(10.seconds) { st.input.readAllBytes() } }
+                assertTrue(answer.isSuccess && answer.getOrThrow().isNotEmpty(), "the request after the resets: $answer")
+                assertTrue(!server.closed.isCompleted)
+                accept.cancel()
+            }
+        }
+
     /** A client that cancels some requests (a browser leaving a page) stays within the budget, and its next request is served. */
     @Test fun resetsWithinTheBudgetKeepTheConnection() =
         h3Test {
@@ -166,7 +242,8 @@ class RapidResetTest {
                 val st = c.openBidi()
                 st.output.writeFully(raw.headers(st.id, GET))
                 st.output.flushAndClose()
-                awaitCondition("the request after 200 resets reaching its handler") { h.started.load() > 0 && !server.closed.isCompleted }
+                val answer = runCatching { withTimeout(10.seconds) { st.input.readAllBytes() } }
+                assertTrue(answer.isSuccess && answer.getOrThrow().isNotEmpty(), "the request after 200 resets: $answer")
                 assertTrue(!server.closed.isCompleted)
                 accept.cancel()
             }
