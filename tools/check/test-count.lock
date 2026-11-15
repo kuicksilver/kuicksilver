@@ -4503,6 +4503,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.StreamPriorityConcurrencyTest.c
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.aVerifierThrowingCancellationRejectsThePeerAtOnce
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.lateVerifierAfterTheHandshakeTimeout
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.throwingVerifierFailsTheConnectionOnly
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.api.TokenStoreRaceTest.negative_aTokenTakenAsTheDeadlineFiresIsUsed
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.api.ZeroRttRuntimeSeededTest.nothingStaysPendingAfterTheAnswerOrTheEnd
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.endpoint.ConnectionIdRegistryAllocationTest.closingAConnectionInALargeTableAllocatesLittle
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.endpoint.ConnectionIdRegistryAllocationTest.lookupAllocatesNothing
