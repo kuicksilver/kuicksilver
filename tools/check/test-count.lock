@@ -3550,6 +3550,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LifecycleTest.statsRefl
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LossBurstTest.alternatingLossOnALongPathKeepsTheConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheClient
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheServer
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_aTicketOfAnotherVersionIsClosed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_clientConstructionFailsAfterTheSession
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_clientConstructionFailsInTheResetToken
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_compatibleUpgradeLostDuringTheHandshake
@@ -3566,8 +3567,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_serverConstructionFailsAfterTheSession
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_statelessReset
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_unexpectedKeysFromTheTlsStack
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_unexpectedTicketsAreClosed
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_versionNegotiationRestart
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_versionNegotiationWithoutACommonVersion
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_zeroRttKeysDroppedOnTheirTimer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_zeroRttRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.zeroRttAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.aNewClientAddressTakesTheLocalAddressItsDatagramReached

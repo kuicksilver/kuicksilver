@@ -365,6 +365,76 @@ class NativeLeakTest {
     }
 
     /**
+     * 0-RTT accepted, rejected: the connection runs past 3 x PTO after the client's first 1-RTT packet, so the server drops
+     * its 0-RTT read key on its timer (RFC 9001 section 4.9.3) before the connection ends.
+     */
+    @Test fun negative_zeroRttKeysDroppedOnTheirTimer() {
+        for (accepted in listOf(true, false)) {
+            val ticket = ticket()
+            try {
+                leakFree({
+                    CorePair(
+                        crypto = it,
+                        clientEarly = EarlyDataState.Allowed,
+                        serverEarly = if (accepted) early() else early(app = byteArrayOf(9)),
+                        clientSetup = { c -> early0Rtt(c, ticket) },
+                    )
+                }) { p ->
+                    handshakeAndRun(p)
+                    if (accepted) {
+                        assertTrue(p.server!!.readKeys[1] != null, "the server still holds its 0-RTT read key")
+                        assertTrue(p.runUntil(limit = 5.seconds) { p.server!!.readKeys[1] == null }, "dropped on its timer")
+                    }
+                    p.runUntil(limit = 2.seconds) { false }
+                    p.client.close(0, "", p.now)
+                }
+            } finally {
+                ticket.close()
+            }
+        }
+    }
+
+    /** RFC 9369 section 5: a version 1 ticket is not used for a version 2 connection; the core closes it unused. */
+    @Test fun negative_aTicketOfAnotherVersionIsClosed() {
+        val v2 = quicConfig { versions = listOf(VersionProfile.V2) }
+        var used: Boolean? = null
+        var ticket: QuicSessionTicket? = null
+        leakFree({
+            // the ticket is made after the count began: the core must close it, or the count stays one session higher
+            ticket = ticket()
+            CorePair(
+                clientQuic = v2,
+                serverQuic = quicConfig { versions = listOf(VersionProfile.V2, VersionProfile.V1) },
+                crypto = it,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+                clientSetup = { c -> used = c.useTicket(ticket) },
+            )
+        }) { p ->
+            assertEquals(false, used)
+            assertEquals(true, ticket?.closed, "closed unused")
+            handshakeAndRun(p)
+            p.runUntil(limit = 1.seconds) { false }
+            // the new connection's own tickets are the application's: it closes them
+            p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().forEach { it.ticket.close() }
+            p.client.close(0, "", p.now)
+        }
+    }
+
+    /**
+     * Session tickets where the core takes none: one on a server's session, and one on a client's before the server's
+     * transport parameters (a TLS stack a conformant one is not); the core closes each.
+     */
+    @Test fun negative_unexpectedTicketsAreClosed() {
+        for (role in listOf(TlsRole.Server, TlsRole.Client)) {
+            leakFree({ CorePair(crypto = WithTicket(it, role, ticket())) }) { p ->
+                handshakeAndRun(p)
+                p.client.close(0, "", p.now)
+            }
+        }
+    }
+
+    /**
      * A provider whose TLS stack hands out keys a conformant one never does (QuicCrypto is a public interface): a second
      * Handshake key for each direction, a 0-RTT key in the direction a client never uses, a Handshake key after the
      * handshake was confirmed and its space dropped. The core closes every key it does not keep.
@@ -619,6 +689,33 @@ private class WithoutPeerTp(
                         if (e !is TlsEvent.PeerTransportParameters) return e
                     }
                 }
+            }
+        }
+}
+
+/** The first event of the [role]'s session is a session ticket ([ticket]), before anything else of its handshake. */
+@OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
+private class WithTicket(
+    private val inner: QuicCrypto,
+    private val role: TlsRole,
+    private var ticket: QuicSessionTicket?,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != role) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? = ticket?.let { t -> TlsEvent.SessionTicket(t).also { ticket = null } } ?: s.nextEvent()
             }
         }
 }
