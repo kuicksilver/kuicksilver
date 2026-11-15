@@ -29,34 +29,36 @@ class ObserverAfterLoopEndTest {
 
     @Test fun aFirstReadAfterTheLoopEndedStillSettlesEveryObserver() =
         runBlocking {
-            val p = ApiPair.open()
-            withTimeout(20.seconds) {
-                val (c, s) = p.connect()
-                val st = c.openBidi() as StreamRuntime
-                st.output.writeFully(ByteArray(1234), 0, 1234)
-                st.output.flushAndClose()
-                val ss = s.acceptStream() as StreamRuntime
-                assertEquals(
-                    1234,
-                    ss.input
-                        .readBuffer()
-                        .readByteArray()
-                        .size,
-                )
-                // both endpoints close with the streams' other halves still open; their loops' scopes end
-                p.close()
-                for (loop in listOf(st.loop, ss.loop)) {
-                    val job = loop.scope.coroutineContext[Job]!!
-                    job.join()
-                    assertTrue(job.isCancelled, "the loop's scope ended")
+            // closed by use() too when anything fails before the explicit close (closing twice is a no-op)
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi() as StreamRuntime
+                    st.output.writeFully(ByteArray(1234), 0, 1234)
+                    st.output.flushAndClose()
+                    val ss = s.acceptStream() as StreamRuntime
+                    assertEquals(
+                        1234,
+                        ss.input
+                            .readBuffer()
+                            .readByteArray()
+                            .size,
+                    )
+                    // both endpoints close with the streams' other halves still open; their loops' scopes end
+                    p.close()
+                    for (loop in listOf(st.loop, ss.loop)) {
+                        val job = loop.scope.coroutineContext[Job]!!
+                        job.join()
+                        assertTrue(job.isCancelled, "the loop's scope ended")
+                    }
+                    assertEquals(1234L, st.sentFinalSize.await())
+                    assertEquals(1234L, ss.receivedFinalSize.await())
+                    assertEquals(1234L, ss.receivedOffset.value)
+                    assertEquals(1234L, st.sendReleased.value)
+                    assertFailsWith<QuicException.ConnectionLost> { st.receivedFinalSize.await() }
+                    assertFailsWith<QuicException.ConnectionLost> { ss.sentFinalSize.await() }
+                    Unit
                 }
-                assertEquals(1234L, st.sentFinalSize.await())
-                assertEquals(1234L, ss.receivedFinalSize.await())
-                assertEquals(1234L, ss.receivedOffset.value)
-                assertEquals(1234L, st.sendReleased.value)
-                assertFailsWith<QuicException.ConnectionLost> { st.receivedFinalSize.await() }
-                assertFailsWith<QuicException.ConnectionLost> { ss.sentFinalSize.await() }
-                Unit
             }
         }
 }
