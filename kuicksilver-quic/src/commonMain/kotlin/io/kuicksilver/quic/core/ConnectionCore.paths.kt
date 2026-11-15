@@ -742,7 +742,7 @@ internal fun ConnectionCore.onPathFailed(
     // address fails": the most recently validated path we can send on with an ID never used from another local address (section
     // 9.5: "An endpoint MUST NOT reuse a connection ID when sending from more than one local address"). The choice reserves nothing;
     // only the chosen path takes the spare ID it may need
-    val back = paths.fallback(p) { canSendOnAfter(it, p) }
+    val back = paths.fallback(p) { mayBeActive(it) && canSendOnAfter(it, p) }
     if (back != null) {
         dcidFor(back)
         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)
@@ -856,6 +856,14 @@ private fun ConnectionCore.releasePeerCidWait(
         startValidation(a)
     }
 }
+
+/**
+ * Server, RFC 9000 section 9.6.2: "The server MUST send non-probing packets from its original address until it receives a non-probing
+ * packet from the client at its preferred address and until the server has validated the new path." A path on the preferred-address
+ * socket becomes the active one only through that move ([moveToPreferredSocket]); before it ([leftOriginalAddress] false) a fallback
+ * may not take it, however validated (a client's probe validates it without moving the connection).
+ */
+private fun ConnectionCore.mayBeActive(q: Path): Boolean = q.socket != PREFERRED_SOCKET || leftOriginalAddress
 
 /**
  * Whether [q] can become the active path in place of [failed] without an ID used from another local address, and without reserving

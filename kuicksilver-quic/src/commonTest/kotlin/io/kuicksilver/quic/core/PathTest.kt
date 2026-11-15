@@ -3904,4 +3904,32 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Sixth review (found by the connection fuzzer, connectionNull), RFC 9000 section 9.6.2: "The server MUST send non-probing packets
+     * from its original address until it receives a non-probing packet from the client at its preferred address and until the server
+     * has validated the new path." A path on the preferred-address socket validated only by the client's probe was taken as the
+     * fallback of a failed path, and non-probing packets left the preferred address. The server goes back to that peer address from
+     * its original one instead (section 9.3.2).
+     */
+    @Test fun negative_theFallbackNeverMovesToThePreferredAddressBeforeTheClientDid() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            val q = addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
+            q.peerProbed = true
+            assertFalse(s.leftOriginalAddress)
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertEquals(PathId.Initial, s.paths.active.socket, "non-probing packets stay on the original address")
+            assertTrue(s.paths.active.isRemote(a))
+        } finally {
+            p.close()
+        }
+    }
 }
