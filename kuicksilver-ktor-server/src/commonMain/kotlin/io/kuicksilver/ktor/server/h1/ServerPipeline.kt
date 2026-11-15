@@ -160,6 +160,10 @@ private val LINGER = 2.seconds
 @kotlin.concurrent.Volatile
 internal var headParsedForTest: (suspend () -> Unit)? = null
 
+/** Test hook: runs once a flush of a response returned, still inside the send-stall deadline. */
+@kotlin.concurrent.Volatile
+internal var responseFlushedForTest: (suspend () -> Unit)? = null
+
 /** Test hook: runs once the writer took the next response off its channel, still inside the idle timeout. */
 @kotlin.concurrent.Volatile
 internal var pipelineResponseTakenForTest: (suspend () -> Unit)? = null
@@ -1113,7 +1117,12 @@ private suspend fun ByteReadChannel.copyToClient(
     try {
         while (!isClosedForRead) {
             if (readBuffer.transferTo(output.writeBuffer) > 0) sent = true
-            withTimeoutOrNull(stall) { output.flush() } ?: throw ClientNotReading(stall)
+            // completedWithin: a flush the socket took as the stall deadline fired is progress, not a client that stopped
+            completedWithin(stall) {
+                output.flush()
+                responseFlushedForTest?.invoke()
+                true
+            } ?: throw ClientNotReading(stall)
             awaitContent()
         }
         // a response whose handler failed is "closed for read" too, also before this copy reached it (it waited behind
