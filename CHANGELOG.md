@@ -975,6 +975,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC, Kotlin/Native portable UDP socket: a refused bind (the port taken) returned while its selector's wakeup pipe was
+  still open; ktor-network closes it from the selector's own loop, so a busy process held those descriptors for a while.
+  The bind now waits for that loop to end before it fails.
 - Ktor client, WebSockets: a session closed with `close(reason)` after `HttpClient.webSocketSession()` could end its
   connection without the Close frame (the server saw 1006, "closed without close frame"): Ktor's builder cancels the
   call as soon as the session queues its Close, and the session's writer, running under the call, was cancelled with it,

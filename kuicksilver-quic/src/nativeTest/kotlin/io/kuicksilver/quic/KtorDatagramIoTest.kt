@@ -5,10 +5,12 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -17,7 +19,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, kotlinx.cinterop.ExperimentalForeignApi::class)
 class KtorDatagramIoTest {
     @Test fun loopbackClientSendReceive() =
         runBlocking {
@@ -56,17 +58,35 @@ class KtorDatagramIoTest {
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
-                // the descriptors a refused bind gives back are not all closed when it returns: its selector's wakeup pipe
-                // is closed by the selector's own loop, on Dispatchers.Default, once that loop runs again (ktor-network's
-                // close() only requests termination), so a busy process (the whole suite, a loaded machine) still has
-                // them open for a while. A leak stays: the count is read until it settles, within 10 s
-                var leaked = openDescriptors() - before
-                withTimeoutOrNull(10.seconds) {
-                    while (leaked >= 10) {
-                        delay(20)
-                        leaked = openDescriptors() - before
+                // a refused bind returns once its selector's loop has ended and closed its pipe (KtorDatagramIo.open)
+                val leaked = openDescriptors() - before
+                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+            } finally {
+                held.close()
+            }
+        }
+
+    /**
+     * The same while every thread of `Dispatchers.Default` and `Dispatchers.IO` is busy (as in a loaded run of the whole
+     * suite): the selector's loop, which closes its wakeup pipe, cannot run before them, and a refused bind waits for it
+     * rather than return with the pipe still open. Before, 40 refused binds left 78 descriptors open at this point.
+     */
+    @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
+        runBlocking {
+            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            try {
+                val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
+                assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val before = openDescriptors()
+                // more blocked tasks than either dispatcher has threads, each for 500 ms
+                val busy =
+                    List(512) { i ->
+                        launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { platform.posix.usleep(500_000u) }
                     }
-                }
+                repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                val leaked = openDescriptors() - before
+                busy.joinAll()
                 assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
             } finally {
                 held.close()

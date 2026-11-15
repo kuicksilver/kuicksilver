@@ -10,8 +10,13 @@ import io.ktor.network.sockets.aSocket
 import io.ktor.utils.io.errors.PosixException
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
@@ -140,12 +145,18 @@ internal class KtorDatagramIo private constructor(
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val ip = local.ipBytes()
             if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(unsupportedIpv6(local))
-            val selector = SelectorManager()
+            // the selector's loop runs as a child of selectorJob: close() only asks it to end, and the loop closes its wakeup
+            // pipe on its way out, so a refused bind joins the job to return with nothing of it left open
+            val selectorJob = Job()
+            val selector = SelectorManager(Dispatchers.IO + selectorJob)
             val s =
                 try {
                     aSocket(selector).udp().bind(local)
                 } catch (e: Throwable) {
-                    selector.close() // a refused bind (port taken) must not keep its selection thread and pipe
+                    // a refused bind (port taken) must not keep its selection thread and pipe
+                    selector.close()
+                    selectorJob.complete()
+                    withContext(NonCancellable) { selectorJob.join() }
                     throw e
                 }
             return KtorDatagramIo(selector, s)
