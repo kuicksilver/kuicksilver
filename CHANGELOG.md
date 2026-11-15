@@ -19,6 +19,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
   (the engine's or Ktor's reader or writer) fails; the session may outlive its call while it writes its own Close, so
   this can come after `callEnd`.
+- Fuzzing: the stateful QUIC connection fuzzer (`connectionNull`, `connectionTls`) runs a client and a server endpoint
+  (`EndpointCore`) instead of two bare cores, and the input chooses what the sockets do (DF, ECN marking and reading) and
+  what the run includes: a link MTU that turns into a black hole, routers answering with ICMP Packet Too Big and forged
+  ones, ECN bleaching, remarking, CE marking and ECT-dropping paths, Retry and Version Negotiation (incompatible and
+  compatible, RFC 9368) inside the run and forged ones, Stateless Resets (valid, retired, unused, random, from the wrong
+  address, a server that lost its state), the server's preferred address, client migration and a stranger's copies.
+  New invariants: no datagram but a probe above its path's MTU and no MTU above what the network delivered (RFC 8899
+  section 3, RFC 9000 section 14), no MTU update raising the window, every path of a DF or marking socket running
+  DPLPMTUD and ECN, no ECT mark after validation failed and no validation over a bleaching path (section 13.4.2), receiver
+  counts within what arrived, resets recognised only for used tokens from their address and never answered with one,
+  amplification, connection-ID reuse across addresses (section 9.5), the preferred-address and Retry/Version Negotiation
+  rules. `ConnectionSeededTest` runs fixed programs in `jvmTest` and fails when one of the path, ECN, address, version or
+  reset features is no longer reached; `ConnectionInvariantControlsTest` keeps negative controls. `BbrInvariantFuzzTest`
+  joins the campaign table (`quic.bbrInvariants`), and `CommittedCorpusReplayTest` fails on a table row without exactly
+  five fields or a `tools/fuzz/no-corpus.txt` entry that names no target.
 - Fuzzing: 0-RTT is a dimension of the QUIC connection fuzzing. The new target `quic.zeroRttConnection`
   (`ZeroRttFuzzTest.zeroRttConnection`) resumes a ticket over real TLS and runs every outcome of the server's answer —
   accepted; rejected for another application context, lower limits, `Required` mode, another ALPN or a server without
@@ -1133,6 +1148,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its text. All three now fail without repeating any of the URL (an unsupported scheme is no longer named either: a
   user name before `://` reads as one): a scheme is one only when it is RFC 3986's, the authority ends at `/`, `?` or
   `#`, and the host must be an IP literal or a plain name.
+- QUIC, Stateless Reset (RFC 9000 section 10.3.1): a client ignored a valid reset for the server's handshake-time
+  connection ID when the server had issued no other ID (that ID counted as used only once a NEW_CONNECTION_ID arrived), and
+  waited for its idle timeout; a datagram routed to a connection by one of our own IDs was compared with every used token
+  whatever its source, while a token now counts only for a datagram from a remote address its ID was used towards; and the
+  server's preferred-address socket dropped datagrams of unknown IDs before comparing them with the tokens of the
+  connections there, so a connection that had moved never recognised its client's reset
+  (`StatelessResetTest.negative_resetForTheHandshakeIdEndsAClientThatGotNoOtherId`,
+  `.negative_resetFromAnAddressTheIdWasNeverUsedTowardsIsIgnored`, `.negative_aResetToThePreferredAddressIsRecognised`).
+- QUIC: a switch to a validated path on another local address — `ConnectionCore.switchPath`, `QuicConnection.migrate`, or
+  the fallback after the active path failed validation — kept the connection ID used from the old address when no unused
+  one was left, against RFC 9000 section 9.5 ("MUST NOT reuse a connection ID when sending from more than one local
+  address"). A client's validated path now keeps the ID it probed with until it is closed or fails, the fallback takes only
+  a path it may send on, and `switchPath` throws `IllegalStateException` while no unused ID is left for the path
+  (`PathTest.negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne`).
+- QUIC: a client's path to the server's preferred address, also when probed again from an application's new socket, and a
+  server's handshake-time candidate path kept the portable socket capabilities: after moving to the preferred address the
+  client ran no DPLPMTUD (it stayed at 1200-byte datagrams) and no ECN (RFC 9000 sections 13.4.2, 14.2). They now get their
+  socket's capabilities (`PreferredAddressTest.negative_thePreferredPathGetsTheSocketsDplpmtudAndEcn`,
+  `.negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn`).
 - QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
   was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
   10.2.2). They are dropped when the connection starts closing or draining
