@@ -519,6 +519,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.qpack.StaticTableTest.entr
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.qpack.StaticTableTest.findExactAndName
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.BodyCancelTest.cancelledRequestBodyStopsTheStreamAtOnce
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.BodyCancelTest.cancelledResponseBodyStopsTheStreamAtOnce
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.BodyGapTest.negative_bodyOfExactlyTheDeclaredLengthIsSent
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.BodyGapTest.negative_responseBodyOfExactlyTheDeclaredLengthIsSent
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.BodyReadChannelTest.negative_aFailureBetweenTheReadsIsNoEnd
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.capsuleEqualityAndConfigRanges
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.capsuleProtocolFieldParsing
@@ -546,6 +548,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.tooLargeDoesNotFallBack
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.unknownCapsuleSkipped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.useTwiceFails
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_connectAnswered300IsRejected
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_oversizedControlFrameIsExcessiveLoad
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.bodyThenFinThenCloseReadsWhole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.drainerLaunchedAfterTheEndRuns
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyThenFinThenCloseReadsWhole
@@ -575,6 +579,10 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.ser
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.settingsSentImmediately
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.truncatedFrameAtFinIsFrameError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionTest.unknownUniStreamStoppedNotFatal
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameGoAwayIdAgainIsNoError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ControlGapTest.negative_sameMaxPushIdAgainIsNoError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.DatagramGapTest.negative_quarterStreamIdOf2To60IsDatagramError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.DatagramGapTest.negative_quarterStreamIdOf2To60Minus1IsIdErrorNotDatagramError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.aControlWriteInTheRejectionWindowWaitsInsteadOfSpinning
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.anAttemptTheRejectionInterruptsIsMadeAgain
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.clientSendsSettingsIn0Rtt
@@ -615,6 +623,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.rejectedConnectWithStopBeforeTheClientsFlush
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.serverHalfCloseKeepsClientDirection
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ExtendedConnectTest.streamCarriesThePeersFields
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.FieldLimitGapTest.negative_requestOfExactlyThePeersLimitIsSent
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.GlitchLimiterTest.exhaustsAt1001
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.GlitchLimiterTest.refills33PerSecond
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.GlitchLimiterTest.unknownControlFramesFloodClosesExcessiveLoad
@@ -777,6 +786,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RfcPinTest.frameAf
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RfcPinTest.priorityUpdateForPushIsIdError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RfcPinTest.requestStreamFinBeforeHeadersIsRequestIncomplete
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RfcPinTest.secondQpackStreamIsCreationError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionGapTest.negative_awaitingPeerSettingsEndsWhenTheConnectionCloses
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.goAwayBeforeTheClientSettingsLeaveRefusesRequestsAsNotProcessed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.negative_clientStartFailsWithoutUniStreamCredit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.negative_healthyPeerIsNotHeldToTheDeadline
@@ -786,6 +796,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.n
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.peerNoErrorCloseAfterGoAwayRefusesRequestsAsNotProcessed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.peerNoErrorCloseHandledBeforeItsGoAwayStillRefusesRequests
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.SessionStartTest.threeUniStreamsAreEnough
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsGapTest.negative_loweredWebTransportSettingIsIncompatible
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsTest.negative_aDefaultTheServerNowRestrictsIsIncompatible
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsTest.negative_lowerChangedOrOmittedIsIncompatible
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.StoredSettingsTest.reservedIdentifiersAreNotStored
