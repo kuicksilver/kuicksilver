@@ -165,7 +165,7 @@ announced only the old codepoint, which must then read them as that draft's fram
 **Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
 transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
 take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
-(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:268`); quic-go ties its own removal to a
+(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:270`); quic-go ties its own removal to a
 new ticket format for the same reason.
 
 ## 5. msquic's provisional Initial SCID

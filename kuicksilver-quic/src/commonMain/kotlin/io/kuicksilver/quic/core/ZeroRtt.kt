@@ -250,7 +250,9 @@ private val ConnectionCore.zeroRttLimitReached: Boolean get() {
 internal fun ConnectionCore.settleZeroRtt() {
     val old = remembered ?: return
     remembered = null
-    val tp = peerTp ?: return
+    // onHandshakeDone requires the peer's transport parameters first (requirePeerTransportParameters): every path from here
+    // settles what was held for the answer exactly once
+    val tp = checkNotNull(peerTp) { "0-RTT answer without the server's transport parameters" }
     val accepted = handshake.session.earlyDataAccepted == true
     earlyAccepted = accepted
     if (accepted) {
