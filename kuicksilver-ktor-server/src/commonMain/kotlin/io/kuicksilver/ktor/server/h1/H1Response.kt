@@ -27,6 +27,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.fieldListElements
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
@@ -86,7 +87,8 @@ internal class H1Response(
     }
 
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
-        val isWebSocket = call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
+        // the protocol this 101 switches to, as its own Upgrade field names it (the content's headers are committed)
+        val isWebSocket = switchesToWebSocket(headersBuilder.getAll(HttpHeaders.Upgrade).orEmpty())
         sendResponseMessage(contentReady = false)
 
         // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2) and its limits;
@@ -140,9 +142,31 @@ internal class H1Response(
 
     override suspend fun respondOutgoingContent(content: OutgoingContent) {
         var sent = content
-        if (content is OutgoingContent.ProtocolUpgrade &&
-            call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true
-        ) {
+        // the protocols the 101 would switch to: the content's Upgrade field and any the application set on the response
+        val switched =
+            if (content is OutgoingContent.ProtocolUpgrade) {
+                headersBuilder.getAll(HttpHeaders.Upgrade).orEmpty() + content.headers.getAll(HttpHeaders.Upgrade).orEmpty()
+            } else {
+                emptyList()
+            }
+        if (content is OutgoingContent.ProtocolUpgrade && upgraded != null) {
+            // RFC 9110 section 7.8: a server that sends a 101 MUST send an Upgrade field naming the new protocol, and MUST
+            // NOT switch to a protocol the client did not indicate in its request's Upgrade. An application upgrade that
+            // breaks either is a server error: 500 instead of the switch, and the connection stays HTTP/1.1
+            val problem =
+                upgradeProblem(
+                    call.request.headers
+                        .getAll(HttpHeaders.Upgrade)
+                        .orEmpty(),
+                    switched,
+                )
+            if (problem != null) {
+                call.application.environment.log
+                    .error("Refusing an upgrade the request did not offer (RFC 9110 section 7.8): $problem; answering 500")
+                sent = InvalidUpgradeContent
+            }
+        }
+        if (sent is OutgoingContent.ProtocolUpgrade && switchesToWebSocket(switched)) {
             // before anything is committed, so the refusal can still be an ordinary error response: a handshake that is
             // not RFC 6455's gets 400 or 426 instead of the upgrade (section 4.2.1)
             val refusal = webSocketHandshakeRefusal(call.request.headers, http3 = false)
@@ -407,3 +431,37 @@ internal class H1Response(
 
 /** The content of the 501 that replaces a 2xx to CONNECT. */
 private val TUNNEL_NOT_SUPPORTED = "This server does not support CONNECT tunnels.\n".encodeToByteArray()
+
+/** Whether the protocols of the Upgrade field lines [upgrade] include `websocket` (RFC 6455 section 4.2.2), in any case. */
+internal fun switchesToWebSocket(upgrade: List<String>): Boolean =
+    fieldListElements(upgrade).any { it.equals("websocket", ignoreCase = true) }
+
+/**
+ * Why a 101 with the Upgrade field lines [switched] breaks RFC 9110 section 7.8 for a request that offered the Upgrade
+ * field lines [offered], or null when it does not: it names no protocol (the server MUST send Upgrade), or names one the
+ * client did not indicate (MUST NOT switch to it). Protocols compare case-insensitively (a SHOULD of section 7.8); a
+ * switched `name` without a version matches an offered `name/version`, while a switched version must be the offered one.
+ */
+internal fun upgradeProblem(
+    offered: List<String>,
+    switched: List<String>,
+): String? {
+    val offers = fieldListElements(offered)
+    val switches = fieldListElements(switched)
+    if (switches.isEmpty()) return "the 101 has no Upgrade field naming the new protocol"
+    for (protocol in switches) {
+        val matches =
+            offers.any { offer ->
+                offer.equals(protocol, ignoreCase = true) ||
+                    ('/' !in protocol && offer.substringBefore('/').equals(protocol, ignoreCase = true))
+            }
+        if (!matches) return "the 101 switches to a protocol the request's Upgrade did not offer"
+    }
+    return null
+}
+
+/** The 500 that replaces an application's upgrade the request did not offer ([upgradeProblem]). */
+private val InvalidUpgradeContent: OutgoingContent =
+    object : OutgoingContent.NoContent() {
+        override val status: HttpStatusCode = HttpStatusCode.InternalServerError
+    }

@@ -112,8 +112,8 @@ internal class H1RequestScope(
     val upgraded: CompletableDeferred<Boolean>?,
     /**
      * For a request that offers an upgrade: the connection's input after the request, for the protocol it switches to once
-     * [upgraded] completes with true; it ends empty when the upgrade is not taken. Not the request's body ([input]), which a
-     * request with an upgrade offer never has (it has neither Content-Length nor Transfer-Encoding). Null for other requests.
+     * [upgraded] completes with true; it ends empty when the upgrade is not taken. Not the request's body ([input]): a
+     * request is an upgrade offer only when it has no body (no framing, or `Content-Length: 0`). Null for other requests.
      */
     val upgradeInput: ByteReadChannel? = null,
     val closing: () -> Boolean = { false },

@@ -215,6 +215,26 @@ class H1PipelineUpgradeOfferTest {
             assertFalse(fromServer.isClosedForRead)
         }
 
+    /**
+     * The 101 checks of RFC 9110 section 7.8 ([upgradeProblem]): an Upgrade that names a protocol, each one offered by
+     * the request (any case, any field line; a version only when it is the offered one), and [switchesToWebSocket] on the
+     * list's elements, not on a substring.
+     */
+    @Test fun negative_upgradeResponsesFollowSection7_8() {
+        assertNull(upgradeProblem(listOf("websocket"), listOf("WebSocket")))
+        assertNull(upgradeProblem(listOf("h2c", "foo/1, bar"), listOf("foo")))
+        assertNull(upgradeProblem(listOf("foo/1"), listOf("FOO/1", "", " , foo")))
+        assertNotNull(upgradeProblem(listOf("h2c"), emptyList()))
+        assertNotNull(upgradeProblem(listOf("h2c"), listOf(" , ,\t")))
+        assertNotNull(upgradeProblem(listOf("h2c"), listOf("h2c, foo")))
+        assertNotNull(upgradeProblem(listOf("foo/1"), listOf("foo/2")))
+        assertNotNull(upgradeProblem(listOf("foo"), listOf("foo/1")))
+        assertNotNull(upgradeProblem(emptyList(), listOf("foo")))
+        assertTrue(switchesToWebSocket(listOf("h2c", "WebSocket")))
+        assertFalse(switchesToWebSocket(listOf("x-websocket-tunnel")))
+        assertFalse(switchesToWebSocket(listOf("websocket2, h2c")))
+    }
+
     /** Reads [length] characters (ASCII), or what came before the end. */
     private suspend fun ByteReadChannel.readText(length: Int): String {
         val out = StringBuilder()
