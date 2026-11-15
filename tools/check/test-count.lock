@@ -4886,6 +4886,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.aVerifier
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.lateVerifierAfterTheHandshakeTimeout
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.UncaughtExceptionTest.throwingVerifierFailsTheConnectionOnly
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.api.ZeroRttRuntimeSeededTest.nothingStaysPendingAfterTheAnswerOrTheEnd
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.core.TowardsRingEquivalenceTest.randomizedEquivalence
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.endpoint.ConnectionIdRegistryAllocationTest.closingAConnectionInALargeTableAllocatesLittle
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.endpoint.ConnectionIdRegistryAllocationTest.lookupAllocatesNothing
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.endpoint.StatelessCloseConcurrencyTest.concurrentWritersProduceTheSameBytes
