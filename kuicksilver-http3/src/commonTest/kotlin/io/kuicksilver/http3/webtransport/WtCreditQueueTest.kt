@@ -28,8 +28,9 @@ class WtCreditQueueTest {
     private fun flow(
         data: Long,
         streams: Long = 0,
+        incremental: () -> Boolean = { false },
         later: (() -> Unit) -> Unit = { it() },
-    ) = WtSessionFlow(0, 0, 0, streams, streams, data, later = later) {}
+    ) = WtSessionFlow(0, 0, 0, streams, streams, data, incremental = incremental, later = later) {}
 
     /** A wait that is never served fails the test instead of hanging it. */
     private fun bounded(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(30.seconds) { block() } }
@@ -44,12 +45,23 @@ class WtCreditQueueTest {
      * credit since it started waiting, nothing is ever kept or taken beyond the limit, and every byte taken is counted.
      * At the end, enough credit serves every take and nothing stays kept.
      */
-    @Test fun creditGoesToWaitingStreamsInTheOrderTheyWereMade() =
+    @Test fun creditGoesToWaitingStreamsInTheOrderTheyWereMade() = randomized(incremental = false)
+
+    /**
+     * The same steps in an incremental session (RFC 9218 section 10, "interleaved"): instead of the order, no starvation.
+     * A stream that waits gets credit within as many raises of the limit as there are streams (at most 8 here), however
+     * busy the others are; safety and the count of every byte as above.
+     */
+    @Test fun incrementalSessionStarvesNoWaitingStream() = randomized(incremental = true)
+
+    private fun randomized(incremental: Boolean) =
         bounded {
             repeat(400) { seed ->
                 val rnd = Random(seed)
                 var limit = rnd.nextLong(0, 3000)
-                val f = flow(limit)
+                val f = flow(limit, incremental = { incremental })
+                // a waiting stream: the raises of the limit it saw without getting any credit
+                val raises = HashMap<Int, Int>()
                 val senders = ArrayList<WtSessionFlow.Sender>()
                 val takes = HashMap<Int, Deferred<Int>>()
                 // a waiting stream: what the streams after it had been handed when it started waiting
@@ -65,6 +77,9 @@ class WtCreditQueueTest {
                             taken += runCatching { t.await() }.getOrDefault(0)
                             takes.remove(i)
                             since.remove(i)
+                            raises.remove(i)
+                        } else if (incremental) {
+                            assertTrue((raises[i] ?: 0) <= 8, "seed $seed step $step: stream $i starved over ${raises[i]} raises")
                         } else {
                             val was = since.getOrPut(i) { after(i) }
                             assertEquals(
@@ -91,6 +106,7 @@ class WtCreditQueueTest {
 
                         3 -> {
                             limit += rnd.nextLong(1, 3000)
+                            for (i in takes.keys) raises[i] = (raises[i] ?: 0) + 1
                             f.onCapsule(WtFlow.MAX_DATA, limit)
                         }
 
@@ -202,7 +218,7 @@ class WtCreditQueueTest {
     @Test fun negative_idleStreamKeepsCreditOnlyInTheSameTurn() =
         bounded {
             val turns = ArrayList<() -> Unit>()
-            val f = flow(100) { turns += it }
+            val f = flow(100, later = { turns += it })
             val a = f.sender()
             val b = f.sender()
             assertEquals(100, a.take(100))
@@ -255,5 +271,41 @@ class WtCreditQueueTest {
             assertIs<WebTransportException.SessionClosed>(data.await().exceptionOrNull())
             assertIs<WebTransportException.SessionClosed>(open.await().exceptionOrNull())
             assertTrue(f.creditIdleForTest)
+        }
+
+    /**
+     * Incremental (RFC 9218 section 10): a stream that keeps writing shares every raise of the limit with one that waits,
+     * however small the raise; with one byte at a time they take turns.
+     */
+    @Test fun negative_incrementalSessionSharesEveryGrantWithABusyStream() =
+        bounded {
+            val f = flow(100, incremental = { true })
+            val a = f.sender()
+            val b = f.sender()
+            assertEquals(100, a.take(16_384)) // a writes, and keeps asking
+            val waiting = now { b.take(10) }
+            f.onCapsule(WtFlow.MAX_DATA, 101) // one byte: the grant starts after a's last, at b
+            assertEquals(1, waiting.await())
+            b.idle()
+            val again = now { b.take(10) }
+            f.onCapsule(WtFlow.MAX_DATA, 121)
+            assertEquals(10, again.await(), "half of 20 for each")
+        }
+
+    /** The session's priority is read at every grant: a PRIORITY_UPDATE to incremental lets a waiting stream share at once. */
+    @Test fun priorityChangeTakesEffectAtTheNextGrant() =
+        bounded {
+            var incremental = false
+            val f = flow(100, incremental = { incremental })
+            val a = f.sender()
+            val b = f.sender()
+            assertEquals(100, a.take(16_384))
+            val waiting = now { b.take(10) }
+            f.onCapsule(WtFlow.MAX_DATA, 200) // in order: all of it kept for the busy first stream
+            settle()
+            assertFalse(waiting.isCompleted)
+            incremental = true
+            f.onCapsule(WtFlow.MAX_DATA, 220)
+            assertEquals(10, waiting.await())
         }
 }

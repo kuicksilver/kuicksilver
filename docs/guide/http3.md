@@ -387,19 +387,33 @@ Credit comes back as the application takes the bytes, for a stream that ended cl
 input (read or not), and for a reset or stopped stream once its final size is known; bytes of an open stream that nobody
 reads give none.
 
-This library's sender hands a session's data credit to the session's streams in the order the session handed them to
-the application (`openUni` or `openBidi` returned; for the peer's bidirectional streams, `acceptBidi`): while a stream
-waits for credit, or writes what it was just given, no stream opened after it gets any. A stream that asks for more
-than there is gets what there is at once (one frame's worth, never a wait for all of it) and keeps its place for the
-rest; at most one chunk (16 KiB) is kept for it at a time, and a stream with nothing more to send keeps no place. Opens
-waiting for the peer's stream limit are served in the order they asked. So a peer that reads our streams one after
-another, in the order they were opened, never waits on a stream that got no credit while the credit sits unread in later
-ones, however tight its limit. The order holds within a session: the sessions of a connection still take their
-weighted turns (below), and one session waiting for its credit never holds up another.
+How this library's sender shares a session's data credit between the session's streams follows the session's RFC 9218
+priority (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data), the `incremental`
+parameter of its CONNECT stream, read again at every grant, so a PRIORITY_UPDATE takes effect at the next one:
+
+- Non-incremental (`i=?0`; ask for it with `Http3Request.priority = StreamPriority(u, incremental = false)` on the
+  client, or a `priority: i=?0` field in the server's `acceptWebTransport` answer): in order. The streams are served in
+  the order the session handed them to the application (`openUni` or `openBidi` returned; for the peer's bidirectional
+  streams, `acceptBidi`): while a stream waits for credit, or writes what it was just given, no stream opened after it
+  gets any. A stream that asks for more than there is gets what there is at once (one frame's worth, never a wait for
+  all of it) and keeps its place for the rest; at most one chunk (16 KiB) is kept for it at a time, and a stream with
+  nothing more to send keeps no place. So when the application writes the streams one after another, each written in
+  full before the next, a peer that reads them one after another in that order gets their bytes in that order, and
+  never waits on a stream that got no credit while credit sits in a later one. The cost: a stream that keeps writing
+  holds every later stream of the session for as long as it writes, and when the peer raises the limit in small steps
+  the later streams wait; mark the session incremental to share.
+- Incremental (`i`; the default of an unsignalled CONNECT, which is a tunnel, RFC 9218 sections 10.1 and 11): shared.
+  The credit is split evenly between the streams that wait for it or are writing, and each grant starts one stream
+  further along, so of n streams that keep asking each gets credit within n grants, and a busy stream never holds the
+  others; the order between streams is not kept.
+
+Opens waiting for the peer's stream limit are served in the order they asked, in both modes. The order holds within a
+session: the sessions of a connection still take their weighted turns (below), and one session waiting for its credit
+never holds up another.
 
 Section 5 sets no order, so a sender of another implementation may serve its streams in any order, and credit still
-comes back only as the application reads: when the peer is not this library, or when the application reads a session's
-streams out of the order they were opened, read them concurrently (a coroutine per accepted stream), or give the session
+comes back only as the application reads: when the peer is not this library, when its session is incremental, or when
+the application reads a session's streams out of the order they were opened, read them concurrently (a coroutine per accepted stream), or give the session
 enough data credit for what its peer sends at once; a strictly sequential reader under a tight
 `webTransportInitialMaxData` can otherwise stall the session.
 

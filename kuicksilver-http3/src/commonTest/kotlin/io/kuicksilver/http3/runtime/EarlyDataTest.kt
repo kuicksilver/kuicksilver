@@ -1284,7 +1284,13 @@ class EarlyDataTest {
                                 .wtLimits(data = 4000),
                         onResumerConnect = { r -> serverSide.complete(r.acceptWebTransport()) },
                         after = { c, resumed ->
-                            val session = c.webTransport(http3Request("CONNECT", "server.test", "/wt"))
+                            // in order (non-incremental): the server reads the streams one after another
+                            val session =
+                                c.webTransport(
+                                    http3Request("CONNECT", "server.test", "/wt") {
+                                        priority = io.kuicksilver.quic.StreamPriority(3, incremental = false)
+                                    },
+                                )
                             val s = serverSide.await()
                             launch {
                                 repeat(3) { i ->

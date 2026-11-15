@@ -102,7 +102,12 @@ internal class WtSessionImpl(
 
     /** The session's flow control (section 5), or null when it is not enabled. Session dispatcher only. */
     internal val flow: WtSessionFlow? =
-        if (flowEnabled) WtSessionFlow.of(h3, version, { capsulesOut.trySend(it) }) { blockedAtZero() } else null
+        if (flowEnabled) {
+            // the session's RFC 9218 incremental parameter, read at every grant: in order, or shared between its streams
+            WtSessionFlow.of(h3, version, { capsulesOut.trySend(it) }, { stream.priority.incremental }) { blockedAtZero() }
+        } else {
+            null
+        }
 
     /**
      * The session's turns at the connection's send buffer and its share of it (section 8), with flow control (sessions
@@ -118,6 +123,9 @@ internal class WtSessionImpl(
         } else {
             null
         }
+
+    /** The session's RFC 9218 incremental parameter, which shares its credit between its streams (a test hook). */
+    internal val incrementalForTest: Boolean get() = stream.priority.incremental
 
     /** The session's share of the send buffer, with flow control (a test hook; its counts on the session's dispatcher). */
     internal val sendShareForTest: WtSendShare? get() = sendTurns?.share

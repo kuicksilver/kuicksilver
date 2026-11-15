@@ -4,26 +4,33 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
+import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
@@ -37,7 +44,7 @@ import kotlin.time.Duration.Companion.seconds
 class WtCreditOrderTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    /** The test of 824fe6f17 as it was: twelve streams of 1000 bytes under a limit of 4000, read one after another. */
+    /** The test of 8d9d11739 as it was: twelve streams of 1000 bytes under a limit of 4000, read one after another. */
     @Test fun negative_sequentialReaderUnderATightLimitNeverStalls() = sequential(streams = 12, size = 1000, limit = 4000)
 
     /** Streams five times the limit: every one of them is served in parts (partial grants), and the reader still moves. */
@@ -60,7 +67,7 @@ class WtCreditOrderTest {
         serverWrites: Boolean = false,
     ) = h3Test {
         H3Pair.open(clientSettings = wtLimits(data = limit), serverSettings = wtLimits(data = limit)).useScoped { p ->
-            val (client, server) = pair(p)
+            val (client, server) = pair(p, incremental = false)
             val (writer, reader) = if (serverWrites) server to client else client to server
             launch {
                 repeat(streams) { i ->
@@ -94,7 +101,7 @@ class WtCreditOrderTest {
         limit: Long,
     ) = h3Test {
         H3Pair.open(clientSettings = wtLimits(data = limit), serverSettings = wtLimits(data = limit)).useScoped { p ->
-            val (client, server) = pair(p)
+            val (client, server) = pair(p, incremental = false)
             val n = 4
             launch {
                 repeat(n) { i ->
@@ -123,7 +130,7 @@ class WtCreditOrderTest {
     @Test fun negative_streamResetWhileWaitingPassesItsPlaceOn() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 1000)).useScoped { p ->
-                val (client, server) = pair(p)
+                val (client, server) = pair(p, incremental = false)
                 val first = client.openUni()
                 val second = client.openUni()
                 launch { runCatching { first.output.writeFully(ByteArray(5000)).also { first.output.flush() } } }
@@ -164,8 +171,8 @@ class WtCreditOrderTest {
     @Test fun negative_aSessionWaitingForCreditDoesNotHoldUpAnother() =
         h3Test {
             H3Pair.open(clientSettings = wtLimits(data = 4000), serverSettings = wtLimits(data = 4000)).useScoped { p ->
-                val (ca, sa) = pair(p)
-                val (cb, sb) = pair(p)
+                val (ca, sa) = pair(p, incremental = false)
+                val (cb, sb) = pair(p, incremental = false)
                 for ((tag, c) in listOf(1 to ca, 2 to cb)) {
                     launch {
                         repeat(3) { i ->
@@ -193,12 +200,94 @@ class WtCreditOrderTest {
                 p.client.awaitFlow(cb) { it.creditIdleForTest }
             }
         }
+
+    /**
+     * RFC 9218 section 10 for an incremental session: a stream that keeps writing shares the credit with the others. The
+     * review's case: the first stream writes without end, the second 100 bytes, the server reads both as they come, the
+     * limit is 8000; the second stream's bytes arrive. In a non-incremental session the first stream would hold them as
+     * long as it writes (the cost of the order, [negative_aBusyFirstStreamHoldsTheNextInANonIncrementalSession]).
+     */
+    @Test fun negative_aBusyStreamDoesNotHoldTheOthersInAnIncrementalSession() = busyFirst(incremental = true)
+
+    /** The same in a non-incremental session: the second stream waits while the first writes, and moves once it stops. */
+    @Test fun negative_aBusyFirstStreamHoldsTheNextInANonIncrementalSession() = busyFirst(incremental = false)
+
+    private fun busyFirst(incremental: Boolean) =
+        h3Test {
+            H3Pair.open(clientSettings = wtLimits(data = 8000), serverSettings = wtLimits(data = 8000)).useScoped { p ->
+                val (client, server) = pair(p, incremental)
+                val a = client.openUni()
+                val b = client.openUni()
+                val writing =
+                    launch {
+                        val chunk = ByteArray(4096)
+                        while (true) {
+                            a.output.writeFully(chunk)
+                            a.output.flush()
+                        }
+                    }
+                val sa = server.acceptUni()
+                launch {
+                    b.output.writeFully(ByteArray(100) { 5 })
+                    b.output.flushAndClose()
+                }
+                val sb = server.acceptUni()
+                val reading =
+                    launch {
+                        val buf = ByteArray(4096)
+                        while (sa.input.readAvailable(buf, 0, buf.size) >= 0) yield()
+                    }
+                if (incremental) {
+                    val got = withTimeoutOrNull(5.seconds) { sb.input.readAllBytes() }
+                    writing.cancel()
+                    reading.cancel()
+                    assertEquals(100, assertNotNull(got, "the second stream starved: ${client.flow?.sendersForTest}").size)
+                } else {
+                    // held while the first writes: a strict order, by request
+                    p.client.awaitFlow(client) { f ->
+                        f.sendersForTest.size == 2 &&
+                            f.sendersForTest[1]
+                                .substringAfter(':')
+                                .startsWith("0/")
+                                .not()
+                    }
+                    writing.cancel()
+                    a.output.flushAndClose()
+                    assertEquals(100, withTimeout(10.seconds) { sb.input.readAllBytes() }.size)
+                }
+            }
+        }
+
+    /**
+     * An unsignalled WebTransport CONNECT is a tunnel, scheduled incremental (RFC 9218 sections 10.1, 11): its session
+     * shares the credit between its streams, on both sides, unless the application asks for `i=?0`.
+     */
+    @Test fun unsignalledSessionIsIncremental() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = pair(p)
+                assertTrue(withContext(p.client.session.dispatcher) { (client as WtSessionImpl).incrementalForTest })
+                assertTrue(withContext(p.server.session.dispatcher) { (server as WtSessionImpl).incrementalForTest })
+                val (c2, s2) = pair(p, incremental = false)
+                assertFalse(withContext(p.client.session.dispatcher) { (c2 as WtSessionImpl).incrementalForTest })
+                assertFalse(withContext(p.server.session.dispatcher) { (s2 as WtSessionImpl).incrementalForTest })
+            }
+        }
 }
 
-/** A client session on [p] and the server's side of it. */
-internal suspend fun CoroutineScope.pair(p: H3Pair): Pair<WebTransportSession, WebTransportSession> {
+/**
+ * A client session on [p] and the server's side of it; [incremental] set: both sides schedule the session with that RFC
+ * 9218 `incremental` parameter (the client's request priority, the server's answer carrying the field), else the
+ * defaults of an unsignalled CONNECT.
+ */
+internal suspend fun CoroutineScope.pair(
+    p: H3Pair,
+    incremental: Boolean? = null,
+): Pair<WebTransportSession, WebTransportSession> {
     val serverSide = CompletableDeferred<WebTransportSession>()
-    launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
-    val session = p.client.webTransport(wtReq())
+    val answer = incremental?.let { Http3Headers(listOf("priority" to if (it) "i" else "i=?0")) } ?: Http3Headers.Empty
+    launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport(answer)) }
+    val req = http3Request("CONNECT", "server.test", "/wt") { incremental?.let { priority = StreamPriority(3, it) } }
+    val session = p.client.webTransport(req)
     return session to withTimeout(5.seconds) { serverSide.await() }
 }
