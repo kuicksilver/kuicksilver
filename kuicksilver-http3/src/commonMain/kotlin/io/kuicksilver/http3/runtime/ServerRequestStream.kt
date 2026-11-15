@@ -63,10 +63,10 @@ internal suspend fun handleRequestStream(
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
     // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
     if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
-    val firstType =
+    val firstSized =
         if (settings.webTransport) {
             try {
-                st.input.readVarIntOrNull()
+                st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
                 truncated(st, null, null)
                 return@with
@@ -78,10 +78,11 @@ internal suspend fun handleRequestStream(
         } else {
             null
         }
+    val firstType = firstSized?.first
     if (firstType == FrameType.WT_STREAM) {
         bidiSettled(st.id) // a WebTransport stream, not a request: never a session
         st.readAhead = Long.MAX_VALUE // its data carries no field section: read ahead as any stream
-        wt.onBidi(st)
+        wt.onBidi(st, firstSized.second)
         return@with
     }
     if (st.id > maxRequestId) maxRequestId = st.id

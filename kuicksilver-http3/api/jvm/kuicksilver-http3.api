@@ -391,6 +391,10 @@ public final class io/kuicksilver/http3/Http3Settings {
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
 	public final fun getWebTransport ()Z
+	public final fun getWebTransportInitialMaxData ()J
+	public final fun getWebTransportInitialMaxStreamsBidi ()J
+	public final fun getWebTransportInitialMaxStreamsUni ()J
+	public final fun getWebTransportMaxSessions ()I
 	public final fun toBuilder ()Lio/kuicksilver/http3/Http3Settings$Builder;
 }
 
@@ -410,6 +414,10 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
 	public final fun getWebTransport ()Z
+	public final fun getWebTransportInitialMaxData ()J
+	public final fun getWebTransportInitialMaxStreamsBidi ()J
+	public final fun getWebTransportInitialMaxStreamsUni ()J
+	public final fun getWebTransportMaxSessions ()I
 	public final fun setEarlyData (Lio/kuicksilver/http3/Http3EarlyDataPolicy;)V
 	public final fun setEnableConnectProtocol (Z)V
 	public final fun setEncoderMaxTableCapacity (J)V
@@ -422,6 +430,10 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun setQpackBlockedStreams (J)V
 	public final fun setQpackMaxTableCapacity (J)V
 	public final fun setWebTransport (Z)V
+	public final fun setWebTransportInitialMaxData (J)V
+	public final fun setWebTransportInitialMaxStreamsBidi (J)V
+	public final fun setWebTransportInitialMaxStreamsUni (J)V
+	public final fun setWebTransportMaxSessions (I)V
 }
 
 public final class io/kuicksilver/http3/Http3Settings$Companion {
@@ -474,6 +486,10 @@ public final class io/kuicksilver/http3/WebTransportException$Alpn : io/kuicksil
 	public fun <init> (Ljava/util/List;Ljava/lang/String;)V
 	public final fun getOffered ()Ljava/util/List;
 	public final fun getSelected ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/WebTransportException$FlowControl : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/String;)V
 }
 
 public final class io/kuicksilver/http3/WebTransportException$SessionClosed : io/kuicksilver/http3/WebTransportException {

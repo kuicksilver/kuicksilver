@@ -51,6 +51,11 @@ internal class RawPeer(
 
     fun data(payload: ByteArray): ByteArray = FrameHeaders.frame(FrameType.DATA, payload)
 
+    companion object {
+        /** A DATA frame carrying [payload]. */
+        fun dataFrame(payload: ByteArray): ByteArray = FrameHeaders.frame(FrameType.DATA, payload)
+    }
+
     fun frame(
         type: Long,
         payload: ByteArray,

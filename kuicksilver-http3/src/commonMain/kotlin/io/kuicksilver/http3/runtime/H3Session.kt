@@ -481,6 +481,9 @@ internal class H3Session(
     /** The WebTransport drafts both sides announce, highest first ([WtVersion.common]); empty before the peer's SETTINGS. */
     internal var wtCommonVersions: List<WtVersion> = emptyList()
 
+    /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
+    internal var wtPeerSettings: Map<Long, Long> = emptyMap()
+
     internal fun ourSettings(): List<Pair<Long, Long>> = ourSettingsBuilt().let { ourSettingsForTest?.invoke(it) ?: it }
 
     private fun ourSettingsBuilt(): List<Pair<Long, Long>> =
@@ -490,7 +493,7 @@ internal class H3Session(
             add(SettingsId.MAX_FIELD_SECTION_SIZE to settings.maxFieldSectionSize)
             if (settings.enableConnectProtocol) add(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L)
             add(SettingsId.H3_DATAGRAM to if (settings.h3Datagram) 1L else 0L)
-            if (settings.webTransport) addAll(WtSettings.ours(isServer))
+            if (settings.webTransport) addAll(WtSettings.ours(isServer, settings))
             if (settings.grease) add(FrameType.grease(Random.nextLong(0, 1000)) to Random.nextLong(0, 1L shl 30))
         }
 
@@ -587,9 +590,9 @@ internal class H3Session(
      * WebTransport (RFC 9114 section 6.1). One that ends or is reset before its first bytes is dropped.
      */
     private suspend fun serverBidi(st: QuicStream) {
-        val first =
+        val (first, firstLength) =
             try {
-                st.input.readVarIntOrNull()
+                st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
                 null
             } catch (e: CancellationException) {
@@ -604,7 +607,7 @@ internal class H3Session(
         if (first != FrameType.WT_STREAM) {
             throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "server-initiated bidirectional stream ${st.id}")
         }
-        wt.onBidi(st)
+        wt.onBidi(st, firstLength)
     }
 
     fun takeEarlyPriority(id: Long): StreamPriority? = earlyPriority.remove(id)

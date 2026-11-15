@@ -186,6 +186,16 @@ public sealed class WebTransportException(
     ) : WebTransportException(message)
 
     /**
+     * The session broke WebTransport flow control (draft-ietf-webtrans-http3-16 section 5): the peer opened more streams or
+     * sent more data than our limits allowed, or sent a flow-control capsule that lowered a limit or went beyond 2^60
+     * streams, or a WT_MAX_STREAM_DATA or WT_STREAM_DATA_BLOCKED capsule. The session was closed by resetting its CONNECT
+     * stream with WT_FLOW_CONTROL_ERROR. A session the peer closed that way ends with the peer's reset as the cause instead.
+     */
+    public class FlowControl(
+        message: String,
+    ) : WebTransportException(message)
+
+    /**
      * The peer reset the stream (RESET_STREAM).
      *
      * @property code the peer's application code, or null when its HTTP/3 code is outside the WebTransport range (such as

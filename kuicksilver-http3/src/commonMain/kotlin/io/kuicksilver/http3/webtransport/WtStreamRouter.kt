@@ -8,7 +8,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.IncompleteFrame
-import io.kuicksilver.http3.runtime.readVarIntOrNull
+import io.kuicksilver.http3.runtime.readVarIntSizedOrNull
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -22,10 +22,14 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Where the router hands a WebTransport stream once its session exists; called on the session's dispatcher. */
 internal fun interface WtSessionSink {
-    /** [stream] is positioned after its header (signal or type, then Session ID); [bidi] tells which kind it is. */
+    /**
+     * [stream] is positioned after its header (signal or type, then Session ID), which took [headerLength] bytes; [bidi]
+     * tells which kind it is.
+     */
     fun onStream(
         stream: QuicStream,
         bidi: Boolean,
+        headerLength: Int,
     )
 }
 
@@ -51,6 +55,7 @@ internal class WtStreamRouter(
         val sessionId: Long,
         val stream: QuicStream,
         val bidi: Boolean,
+        val headerLength: Int,
     ) {
         var timer: Job? = null
     }
@@ -65,19 +70,26 @@ internal class WtStreamRouter(
     /** Streams waiting for their session (a test hook). */
     val bufferedCount = MutableStateFlow(0)
 
-    /** A peer's unidirectional stream whose type `0x54` was read. */
-    suspend fun onUni(st: QuicStream) = route(st, bidi = false)
+    /** A peer's unidirectional stream whose type `0x54` was read, in [typeLength] bytes. */
+    suspend fun onUni(
+        st: QuicStream,
+        typeLength: Int,
+    ) = route(st, bidi = false, typeLength)
 
-    /** A bidirectional stream whose `WT_STREAM` signal `0x41` was read. */
-    suspend fun onBidi(st: QuicStream) = route(st, bidi = true)
+    /** A bidirectional stream whose `WT_STREAM` signal `0x41` was read, in [typeLength] bytes. */
+    suspend fun onBidi(
+        st: QuicStream,
+        typeLength: Int,
+    ) = route(st, bidi = true, typeLength)
 
     private suspend fun route(
         st: QuicStream,
         bidi: Boolean,
+        typeLength: Int,
     ) {
-        val sessionId =
+        val (sessionId, idLength) =
             try {
-                st.input.readVarIntOrNull()
+                st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
                 null
             } catch (e: CancellationException) {
@@ -104,15 +116,16 @@ internal class WtStreamRouter(
                 }
             }
         }
+        val headerLength = typeLength + idLength
         sinks[sessionId]?.let {
-            it.onStream(st, bidi)
+            it.onStream(st, bidi, headerLength)
             return
         }
         if (isGone(sessionId) || buffered.size >= MAX_BUFFERED_STREAMS) {
             reject(st, bidi)
             return
         }
-        val b = Buffered(sessionId, st, bidi)
+        val b = Buffered(sessionId, st, bidi, headerLength)
         buffered += b
         bufferedCount.value = buffered.size
         b.timer =
@@ -140,7 +153,7 @@ internal class WtStreamRouter(
         bufferedCount.value = buffered.size
         for (b in mine) {
             b.timer?.cancel()
-            sink.onStream(b.stream, b.bidi)
+            sink.onStream(b.stream, b.bidi, b.headerLength)
         }
     }
 

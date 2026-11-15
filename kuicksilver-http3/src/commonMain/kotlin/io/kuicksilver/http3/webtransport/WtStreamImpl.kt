@@ -44,6 +44,10 @@ internal class WtStreamImpl(
     /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
     private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,
+    /** The session's flow control (draft-ietf-webtrans-http3-16 section 5) for our bytes, or null when it is not enabled. */
+    private val flow: WtSessionFlow? = null,
+    /** The count of the peer's bytes on [input] against the session's limit, or null without flow control. */
+    private val inCount: WtInCount? = null,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
     private val inCh = ByteChannel()
@@ -61,6 +65,9 @@ internal class WtStreamImpl(
     private val inPump: Job?
     private val outPump: Job?
 
+    /** Body bytes taken from the session's credit (flow control; session dispatcher only). */
+    private var outCounted = 0L
+
     init {
         inPump = if (readable) scope.launch { pumpIn() } else null.also { inCh.close() }
         outPump = if (writable) scope.launch { pumpOut() } else null.also { outCh.close() }
@@ -71,6 +78,13 @@ internal class WtStreamImpl(
                 null
             ) {
                 outCh.cancel(IOException("the WebTransport stream $streamId stopped writing", e))
+            }
+        }
+        if (flow != null && writable) {
+            // section 5.4: a reset stream counts its final size, so both sides agree on the credit it used
+            scope.launch {
+                val f = runCatching { st.sentFinalSize?.await() }.getOrNull() ?: return@launch
+                flow.sentFinal(outCounted, maxOf(0L, f - headerLength))
             }
         }
         val pumps = listOfNotNull(inPump, outPump)
@@ -88,15 +102,18 @@ internal class WtStreamImpl(
             while (true) {
                 val n = st.input.readAvailable(buf, 0, buf.size)
                 if (n < 0) break
+                inCount?.taken(n)
                 inCh.writeFully(buf, 0, n)
                 inCh.flush()
             }
             st.input.closedCause?.let { throw it }
             inCh.flushAndClose()
         } catch (e: CancellationException) {
+            inCount?.abandon() // we stopped reading: the rest counts as consumed once its final size is known
             inCh.cancel(IOException("the WebTransport stream $streamId stopped reading", e))
             throw e
         } catch (e: Throwable) {
+            inCount?.abandon() // reset by the peer, or stopped: nobody reads the rest
             if (H3Session.transportCause(e) == null) {
                 // the application cancelled its input while the pump wrote into it: stop the peer (code 0)
                 runCatching { st.stopSending(WtErrorCodes.toHttp3(0)) }
@@ -111,7 +128,20 @@ internal class WtStreamImpl(
             while (true) {
                 val n = outCh.readAvailable(buf, 0, buf.size)
                 if (n < 0) break
-                st.output.writeFully(buf, 0, n)
+                if (flow == null) {
+                    st.output.writeFully(buf, 0, n)
+                } else {
+                    var off = 0
+                    while (off < n) {
+                        // counted before the write: a reset that cuts the write short is settled by the final size
+                        val k = flow.takeData(n - off)
+                        outCounted += k
+                        st.output.writeFully(buf, off, off + k) // start and end index
+                        off += k
+                        // what the credit allowed goes out before waiting for more: the peer's WT_MAX_DATA follows it
+                        if (off < n) st.output.flush()
+                    }
+                }
                 st.output.flush()
             }
             if (outCh.closedCause != null) {

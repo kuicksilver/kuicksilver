@@ -42,6 +42,24 @@ internal suspend fun ByteReadChannel.readVarIntOrNull(): Long? {
 
 internal suspend fun ByteReadChannel.readVarInt(): Long = readVarIntOrNull() ?: eof()
 
+/**
+ * [readVarIntOrNull] with the number of bytes the integer took on the wire, which a non-minimal encoding makes larger
+ * than its value needs (WebTransport counts a stream's body without its header, draft-ietf-webtrans-http3-16 section 5.4).
+ */
+internal suspend fun ByteReadChannel.readVarIntSizedOrNull(): Pair<Long, Int>? {
+    val first = ByteArray(1)
+    if (readAvailable(first, 0, 1) <= 0) {
+        closedCause?.let { throw it }
+        return null
+    }
+    val n = VarInt.encodedLength(first[0])
+    if (n == 1) return VarInt.read(first, 0, 1) to 1
+    val b = ByteArray(n)
+    b[0] = first[0]
+    readExactInto(b, 1, n - 1)
+    return VarInt.read(b, 0, n) to n
+}
+
 private suspend fun ByteReadChannel.readExactInto(
     b: ByteArray,
     off: Int,

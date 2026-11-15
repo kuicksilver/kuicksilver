@@ -51,11 +51,11 @@ older drafts predate `SETTINGS_WT_ENABLED` (draft-02 signals support with `SETTI
 `SETTINGS_WT_MAX_SESSIONS`), so announcing them goes beyond what draft-16 describes, though in the spirit of its §7.1;
 the codepoints are those of the older drafts.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:12` (the versions,
-`offeredIn` at :38, `WtSettings.ours` at :133, `WtTokens.LEGACY` at :147),
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13` (the versions,
+`offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:447` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:576` (the client's draft-02
 request field).
 
 **On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`
@@ -85,8 +85,8 @@ section); only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this
 **Standard text.** None: draft-16 has no such field. RFC 9110 §5.1 lets a recipient ignore an unknown field, so the field
 costs other clients nothing.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:494`; the name and
-value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:153`.
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:495`; the name and
+value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:184`.
 
 **On by default.** No, as shim 1; then always for a request with the draft-02 field.
 
@@ -113,8 +113,8 @@ expected to be one in some versions (second-hand; not run or verified here).
 version both can actually run; §3.1, "both the client and the server enable the extension by sending an empty
 reset_stream_at transport parameter" (as quoted in the draft's [details](rfc/draft-ietf-webtrans-http3.md#s3-1-settings)).
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:92` (`wtClientVersion`)
-and :109 (`wtServerVersion`).
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:93` (`wtClientVersion`)
+and :110 (`wtServerVersion`).
 
 **On by default.** No, as shim 1.
 

@@ -58,6 +58,7 @@ internal class QueueSink : WtSessionSink {
     override fun onStream(
         stream: QuicStream,
         bidi: Boolean,
+        headerLength: Int,
     ) {
         streams.trySend(stream to bidi)
     }

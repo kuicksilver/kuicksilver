@@ -41,9 +41,9 @@ import kotlinx.coroutines.CancellationException
  * a glitch token, so a peer that only opens and abandons streams still meets H3_EXCESSIVE_LOAD (section 10.5).
  */
 internal suspend fun H3Session.readUni(st: QuicStream) {
-    val type =
+    val (type, typeLength) =
         try {
-            st.input.readVarIntOrNull()
+            st.input.readVarIntSizedOrNull()
         } catch (_: IncompleteFrame) {
             null
         } catch (e: CancellationException) {
@@ -93,7 +93,7 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
 
         StreamType.WT_UNI -> {
             if (settings.webTransport) {
-                wt.onUni(st)
+                wt.onUni(st, typeLength)
             } else {
                 st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
                 discardedUniStreams.value++
@@ -249,6 +249,7 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     }
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
     wtCommonVersions = WtVersion.common(m, isServer)
+    wtPeerSettings = m.filterKeys { it in WtSettings.ALL }
     peerSettings.value = ps
     peerSettingsArrived.complete(ps)
 }
