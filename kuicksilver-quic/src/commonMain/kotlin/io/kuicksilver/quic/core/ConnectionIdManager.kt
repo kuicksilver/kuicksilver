@@ -106,6 +106,15 @@ internal class ConnectionIdManager(
             towardsNext = (towardsNext + 1) % SENT_TOWARDS
         }
 
+        /** No packet of ours carried this ID to an address other than [ip] and [port]. */
+        fun sentOnlyTowards(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ): Boolean {
+            for (i in 0 until SENT_TOWARDS) if (towardsIp[i] != null && (towardsPort[i] != port || towardsIp[i] != ip)) return false
+            return true
+        }
+
         fun sentTowards(
             ip: AddressClass.IpKey,
             port: Int,

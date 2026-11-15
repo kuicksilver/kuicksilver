@@ -157,14 +157,20 @@ internal fun ConnectionCore.onNewConnectionId(
 private fun ConnectionCore.resumeCidWaiters() {
     val a = paths.active
     if (a.waitsForPeerCid) {
-        // the reverted active path takes the first ID the client gives; the one it kept from elsewhere is retired
-        val fresh = cids.takePathPeer()
-        if (fresh != null) {
-            val old = cids.currentPeer
-            cids.makeCurrent(fresh)
-            remoteCid = fresh.cid
-            a.waitsForPeerCid = false
-            if (old != null && old !== fresh) cids.releasePathPeer(old)
+        val cur = cids.currentPeer
+        if (cur != null && cur !== a.keptPeer && cids.isActive(cur) && !cur.heldByPath && cur.sentOnlyTowards(a.remoteKey, a.remote.port)) {
+            // the kept ID went (a Retire Prior To) and the current one never went elsewhere
+            remoteCid = cur.cid
+            releasePeerCidWait(a)
+        } else {
+            // the reverted active path takes the first ID the client gives; the one it kept from elsewhere is retired
+            val fresh = cids.takePathPeer()
+            if (fresh != null) {
+                cids.makeCurrent(fresh)
+                remoteCid = fresh.cid
+                if (cur != null && cur !== fresh) cids.releasePathPeer(cur)
+                releasePeerCidWait(a)
+            }
         }
     }
     for (i in 0 until paths.all.size) {
@@ -275,7 +281,14 @@ internal fun ConnectionCore.onPathPacket(
         socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
-        if (rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
+        // a reverted path waiting for an ID: the client's packets from its address carry the ID of ours it used on the path the
+        // connection left, so the current ID may follow it there (RFC 9000 section 9.5: "it MAY continue to use the current
+        // connection ID with the new remote address while still sending from the same local address")
+        if (active.waitsForPeerCid && rxDcidSeq >= 0 && rxDcidSeq == activeDcidSeq) releasePeerCidWait(active)
+        if (rxDcidSeq >= 0) {
+            activeDcidSeq = rxDcidSeq
+            active.lastRxDcidSeq = rxDcidSeq
+        }
         active.lastReceivedAt = now
         return
     }
@@ -499,6 +512,7 @@ private fun ConnectionCore.notePeerDcid(p: Path) {
     if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) {
         p.peerChangedDcid = rxDcidSeq != activeDcidSeq
         p.peerDcidKnown = true
+        p.lastRxDcidSeq = rxDcidSeq
     }
 }
 
@@ -607,7 +621,17 @@ internal fun ConnectionCore.switchPath(
     val oldPeer = cids.currentPeer
     paths.active = p
     p.peerChangedDcid = false // relative to the active path, which this one is now
+    // and the path it leaves: whether the client's packets there carried another ID of ours than on this one (section 9.5), known only
+    // when both showed one
+    if (old.lastRxDcidSeq >= 0 && p.lastRxDcidSeq >= 0) {
+        old.peerChangedDcid = old.lastRxDcidSeq != p.lastRxDcidSeq
+        old.peerDcidKnown = true
+    } else {
+        old.peerDcidKnown = false
+    }
     old.waitsForPeerCid = false // a path that is not the active one sends with an ID of its own (dcidFor), or not at all
+    old.keptPeer = null
+    old.revalidateOnceSending = false
     p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
@@ -775,8 +799,23 @@ private fun ConnectionCore.revertTo(
     paths.lastValidated = k
     switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
     pathRevertsForTest++
+    if (k.waitsForPeerCid) k.keptPeer = cids.currentPeer
     val heard = if (k.validatedAt > k.lastReceivedAt) k.validatedAt else k.lastReceivedAt
-    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) startValidation(k)
+    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
+        // a PATH_CHALLENGE needs an ID too: its validation period starts once the path can send, never while nothing can leave
+        if (k.waitsForPeerCid) k.revalidateOnceSending = true else startValidation(k)
+    }
+}
+
+/** The reverted active path [a] may send again (an ID it may use is current): a validation it postponed starts now. */
+private fun ConnectionCore.releasePeerCidWait(a: Path) {
+    a.waitsForPeerCid = false
+    a.keptPeer = null
+    pathWaitReleasesForTest++
+    if (a.revalidateOnceSending) {
+        a.revalidateOnceSending = false
+        startValidation(a)
+    }
 }
 
 /**

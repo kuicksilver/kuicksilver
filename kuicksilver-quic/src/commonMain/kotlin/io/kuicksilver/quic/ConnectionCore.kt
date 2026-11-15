@@ -221,6 +221,9 @@ public class ConnectionCore internal constructor(
     internal var pathFallbacksForTest = 0
     internal var pathRevertsForTest = 0
 
+    /** Times a reverted path waiting for a peer connection ID could send again. */
+    internal var pathWaitReleasesForTest = 0
+
     /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
     internal var testBeforeSwitch: ((PathId) -> Unit)? = null
     internal var pathResponsesSentForTest = 0

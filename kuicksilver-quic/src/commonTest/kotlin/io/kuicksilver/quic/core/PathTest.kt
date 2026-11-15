@@ -3605,9 +3605,17 @@ class PathTest {
             val q = addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
             q.validatedAt = s.now - 60.seconds
             q.lastReceivedAt = s.now - 60.seconds
+            // the client's packets from there reached this local address with our current ID once: the revert may send at once
+            val k = s.paths.add(failed.socket, a, s.config.congestionController(), s.config.newPathInitialRtt, evict = false)!!
+            k.local = failed.local
+            k.state = PathState.Failed
+            k.peerDcidKnown = true
+            k.validatedAt = s.now - 60.seconds
+            k.lastReceivedAt = s.now - 60.seconds
             leaveSpares(s, 0)
             s.onPathFailed(failed)
-            assertTrue(s.paths.active.isRemote(a))
+            assertSame(k, s.paths.active)
+            assertFalse(k.waitsForPeerCid)
             assertEquals(PathState.Validating, s.paths.active.state, "validated again")
         } finally {
             p.close()
@@ -3672,6 +3680,136 @@ class PathTest {
                 assertTrue((0 until 8).all { b[1 + it] == 0x66.toByte() }, "with the new ID")
             }
             assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Confirmed)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A revert that waits for an ID (the only validated path on the preferred socket, no spare). */
+    private fun waitingRevert(p: EndpointPair): ConnectionCore {
+        val c = p.connect()
+        assertTrue(p.confirmed(c))
+        repeat(5) { p.step() }
+        val s = p.server.connections().single()
+        val failed = s.paths.active
+        addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, InetSocketAddress("10.0.0.8", 40008))
+        leaveSpares(s, 0)
+        s.onPathFailed(failed)
+        assertTrue(s.paths.active.waitsForPeerCid)
+        return s
+    }
+
+    /**
+     * 0.3.0 third review: a NEW_CONNECTION_ID whose Retire Prior To retires the kept ID makes the new one current, and nothing else is
+     * spare: the wait stayed, so the owed RETIRE_CONNECTION_ID never left and the connection hung until its idle timeout.
+     */
+    @Test fun negative_aRetirePriorToThatRetiresTheKeptIdEndsTheWait() {
+        val p = EndpointPair()
+        try {
+            val s = waitingRevert(p)
+            val frame = PacketBuffer.of(ByteArray(8) { 0x66 } + ByteArray(16) { 0x44 })
+            try {
+                s.onNewConnectionId(40, 40, frame, 0, 8, 8)
+            } finally {
+                frame.close()
+            }
+            assertFalse(s.paths.active.waitsForPeerCid)
+            p.batch.clear()
+            assertTrue(s.poll(p.batch, p.now) > 0, "a fresh ID is current: the path sends, its RETIRE_CONNECTION_ID among it")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 third review, RFC 9000 section 9.3.2: a revert to an address not heard from recently started its validation while nothing
+     * could leave; the deadline failed the path, and with it the connection, although the address was a validated one. The validation
+     * waits for the path to be able to send.
+     */
+    @Test fun negative_aStaleRevertWaitingForAnIdIsNotFailedByAValidationItCannotRun() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, InetSocketAddress("10.0.0.8", 40008))
+            leaveSpares(s, 0)
+            p.now += 8.seconds
+            s.onTimeout(p.now)
+            s.onPathFailed(failed)
+            assertTrue(s.paths.active.waitsForPeerCid)
+            repeat(40) {
+                p.now += 100.milliseconds
+                s.onTimeout(p.now)
+                p.batch.clear()
+                s.poll(p.batch, p.now)
+            }
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            val frame = PacketBuffer.of(ByteArray(8) { 0x66 } + ByteArray(16) { 0x44 })
+            try {
+                s.onNewConnectionId(40, 0, frame, 0, 8, 8)
+            } finally {
+                frame.close()
+            }
+            assertEquals(PathState.Validating, s.paths.active.state, "validated again once it can send")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 third review, RFC 9000 section 9.5: the client's packets reach the reverted path from its address with the ID of ours it
+     * used on the path the connection left ("it MAY continue to use the current connection ID with the new remote address while still
+     * sending from the same local address"): the wait ends with the current ID. A client at its active_connection_id_limit gives no
+     * new ID, so this was the only way out.
+     */
+    @Test fun negative_theClientsPacketsWithTheSameIdEndTheWait() {
+        val p = EndpointPair()
+        try {
+            val s = waitingRevert(p)
+            val id = s.remoteCid
+            val c = p.client.connections().single()
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(200), 0, 200, false)
+            p.batch.clear()
+            val n = c.poll(p.batch, p.now)
+            assertTrue(n > 0)
+            for (i in 0 until n) p.feed(p.server, p.batch.buffer(i).toByteArray(p.batch.length(i)), InetSocketAddress("10.0.0.8", 40008))
+            assertFalse(s.paths.active.waitsForPeerCid, "the client kept its ID across the address change")
+            assertEquals(id, s.remoteCid)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Third review, a multi-homed server (a wildcard socket that reports destinations): a path is a local and a peer address (RFC 9000
+     * section 9.5 forbids an ID "when sending from more than one local address"), so the revert does not take over a path from another
+     * local address of the same socket; it makes its own from the failed path's.
+     */
+    @Test fun aRevertKeepsToTheFailedPathsLocalAddressOnAMultiHomedSocket() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val l1 = InetSocketAddress("10.0.0.2", 443)
+            val l2 = InetSocketAddress("10.0.0.20", 443)
+            failed.local = l1
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
+            val other = s.paths.add(failed.socket, a, s.config.congestionController(), s.config.newPathInitialRtt, evict = false)!!
+            other.local = l2
+            other.state = PathState.Failed
+            leaveSpares(s, 0)
+            s.onPathFailed(failed)
+            assertTrue(s.paths.active !== other)
+            assertEquals(l1, s.paths.active.local)
+            assertTrue(s.paths.active.isRemote(a))
         } finally {
             p.close()
         }

@@ -202,6 +202,15 @@ internal class Path(
      */
     var waitsForPeerCid: Boolean = false
 
+    /** Server, while [waitsForPeerCid]: the peer ID the connection kept from the path it left, which this path must not send with. */
+    var keptPeer: ConnectionIdManager.Peer? = null
+
+    /** Server, while [waitsForPeerCid]: the address is validated again once the path can send (a PATH_CHALLENGE cannot leave before). */
+    var revalidateOnceSending: Boolean = false
+
+    /** Server: the sequence number of the ID of ours the client's latest 1-RTT packet on this path carried; -1 before one. */
+    var lastRxDcidSeq: Long = -1L
+
     /** Server: the client probed this path (a PATH_CHALLENGE from it while another path was active), typically to migrate there. */
     var peerProbed: Boolean = false
 
