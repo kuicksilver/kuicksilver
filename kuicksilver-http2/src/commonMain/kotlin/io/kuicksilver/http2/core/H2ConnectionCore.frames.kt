@@ -298,7 +298,7 @@ internal fun H2ConnectionCore.onAltSvc(
     val id = f.streamId
     when {
         id == 0 && f.origin.isEmpty() -> return
-        id != 0 && (f.origin.isNotEmpty() || peerInitiated(id) || isIdle(id)) -> return
+        id != 0 && (f.origin.isNotEmpty() || peerInitiated(id) || isIdle(id) || notYetSent(id)) -> return
     }
     emit(H2Event.AltSvc(id, f.origin.ifEmpty { null }, f.value))
 }

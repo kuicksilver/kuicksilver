@@ -419,6 +419,9 @@ class H2ClientConnectionFuzzTest {
         val d = ClientDriver(core, mirror, mode)
         val streams = 1 + (data[1].toInt() and 0xff) % 8
         repeat(streams) { d.open(post = it % 3 == 2) }
+        // the requests are written before any response can come (a response to a request not yet written is on an idle
+        // stream, section 5.1): the peer reads our first flight whatever the mode
+        drain(core, mirror, now)
         val piece = 1 + (data[0].toInt() and 0xff)
         var p = 3
         var pieces = 0

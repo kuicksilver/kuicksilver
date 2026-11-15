@@ -316,6 +316,16 @@ internal class H2ConnectionCore(
                 "frame type ${f::class.simpleName} inside the field block of stream $blockStream",
             )
         }
+        // section 5.1: our stream is idle to the peer until its HEADERS are written, and "Receiving any frame other than
+        // HEADERS or PRIORITY on a stream in this state MUST be treated as a connection error (Section 5.4.1) of type
+        // PROTOCOL_ERROR"; the peer cannot open our streams with HEADERS either (section 5.1.1)
+        // (frames of extensions are ignored where they make no sense, section 5.5: unknown types and ALTSVC, RFC 7838 section 4)
+        if (f !is Frame.Priority && f !is Frame.Unknown && f !is Frame.AltSvc && f.streamId != 0 && notYetSent(f.streamId)) {
+            throw H2ConnectionError(
+                Http2ErrorCode.PROTOCOL_ERROR,
+                "${f::class.simpleName} on stream ${f.streamId}, idle: its HEADERS were not sent",
+            )
+        }
         frameHook?.invoke(f)
         when (f) {
             is Frame.Data -> onData(f, now)
@@ -335,6 +345,9 @@ internal class H2ConnectionCore(
     }
 
     internal fun peerInitiated(id: Int): Boolean = (id and 1 == 1) == !client
+
+    /** Our stream whose HEADERS are still queued: idle to the peer (section 5.1). */
+    internal fun notYetSent(id: Int): Boolean = streams[id]?.let { it.local && !it.headersSent } == true
 
     /** Idle (section 5.1): never used by its initiator yet. */
     internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id >= nextLocalId

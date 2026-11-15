@@ -205,6 +205,7 @@ kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negat
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_decoderTableStartsAt4096UntilOurSettingsAreAcknowledged
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_evenStreamFromClientIsProtocolError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_frameInsideFieldBlockIsProtocolError
+kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_framesOnARequestNotYetWrittenAreOnAnIdleStream
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_framesOnIdleStreamsAreProtocolErrors
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_headersOnAClosedStreamIsAConnectionError
 kuicksilver-http2/src/commonTest	io.kuicksilver.http2.core.StreamStateTest.negative_invalidPrefaceOrFirstFrame

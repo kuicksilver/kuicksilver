@@ -567,6 +567,11 @@ class SettingsAckTest {
         val open = mutableListOf<Int>()
         val finished = mutableListOf<Int>()
         var goneAway = false
+
+        // a peer knows our stream once its HEADERS were written (section 5.1: idle until then)
+        fun seen(id: Int) =
+            m.p.core.streams[id]
+                ?.let { !it.local || it.headersSent } ?: true
         for (step in 0 until 60) {
             when (r.nextInt(10)) {
                 0 -> {
@@ -623,7 +628,7 @@ class SettingsAckTest {
                 }
 
                 4 -> {
-                    val streams = open + finished
+                    val streams = (open + finished).filter { seen(it) }
                     val id = if (streams.isEmpty() || r.nextInt(3) == 0) 0 else streams[r.nextInt(streams.size)]
                     // up to the maximum, less what a later SETTINGS_INITIAL_WINDOW_SIZE (at most 65 535) may add to a
                     // stream window: that would be the peer's error (exactly 2^31 - 1 is in the negative_* tests)
@@ -637,7 +642,8 @@ class SettingsAckTest {
                 }
 
                 6 -> {
-                    if (open.isNotEmpty()) m.reset(open.removeAt(r.nextInt(open.size)))
+                    val known = open.filter { seen(it) }
+                    if (known.isNotEmpty()) m.reset(known[r.nextInt(known.size)].also { open.remove(it) })
                 }
 
                 else -> {

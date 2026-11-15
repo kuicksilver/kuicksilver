@@ -570,4 +570,33 @@ class StreamStateTest {
         assertEquals(listOf("RstStream"), frames.map { it::class.simpleName!! })
         assertTrue(c.core.sendWindowConserved)
     }
+
+    /**
+     * RFC 9113 section 5.1: a stream is idle until its HEADERS are sent, and "Receiving any frame other than HEADERS or
+     * PRIORITY on a stream in this state MUST be treated as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"; a
+     * server cannot open a client's stream either (section 5.1.1). A request whose HEADERS are still queued is idle to the
+     * server, so a response, DATA, WINDOW_UPDATE or RST_STREAM on it is a connection error; a PRIORITY frame is not.
+     * Found by http2.connectionClient (the response arrived before the request was written).
+     */
+    @Test
+    fun negative_framesOnARequestNotYetWrittenAreOnAnIdleStream() {
+        val frames: List<(RawH2Peer, Int) -> ByteArray> =
+            listOf(
+                { p, id -> p.headers(id, OK, endStream = true) },
+                { p, id -> p.data(id, 1) },
+                { _, id -> FrameEncoder.windowUpdate(id, 100) },
+                { _, id -> FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code) },
+            )
+        for (frame in frames) {
+            val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+            val id = c.core.openStream(GET, endStream = true) // queued, not written
+            c.send(frame(c, id))
+            c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        }
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val id = c.core.openStream(GET, endStream = true)
+        c.send(FrameEncoder.priority(id, 0))
+        assertEquals(false, c.core.isClosed)
+        assertEquals(listOf(id), c.read().filterIsInstance<Frame.Headers>().map { it.streamId })
+    }
 }
