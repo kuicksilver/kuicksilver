@@ -160,6 +160,39 @@ class NativeLeakTest {
             p.client.close(0, "", p.now)
         }
 
+    /**
+     * The derivation of the next 1-RTT keys fails (a native allocation that fails) while a side builds its key phase, for
+     * its read or its write key, server (calls 1 and 2) or client (3 and 4): the connection fails, and what was derived
+     * before the failure is closed with it.
+     */
+    @Test fun negative_nextKeysFailToDerive() {
+        for (failAt in 1..4) {
+            val before = nativeConnectionObjects()
+            val crypto = LeakTrackingCrypto(ksl, failNext = failAt)
+            val p = CorePair(crypto = crypto)
+            try {
+                // as the endpoint loop does: what a core throws fails it (failInternal); here both cores, whichever threw
+                var failed = false
+                while (!failed && p.now < io.kuicksilver.quic.TimeMark(1_000_000_000L) + 3.seconds) {
+                    try {
+                        p.step()
+                    } catch (e: IllegalStateException) {
+                        p.client.failInternal(e)
+                        p.server?.failInternal(e)
+                        failed = true
+                    }
+                    p.advance(5.milliseconds)
+                }
+                assertTrue(failed, "failing at next() call $failAt: the derivation was reached")
+                assertTrue(p.runUntil(limit = 1.seconds) { p.bothClosed() }, "failing at $failAt: ${p.client.state} ${p.server?.state}")
+                assertEquals(emptyList(), crypto.live, "failing at next() call $failAt")
+            } finally {
+                p.close()
+            }
+            assertEquals(before, nativeConnectionObjects(), "failing at $failAt")
+        }
+    }
+
     /** Ended while the previous generation's read key is still kept for reordered packets (RFC 9001 section 6.1). */
     @Test fun negative_endedRightAfterAKeyUpdate() =
         leakFree({ CorePair(crypto = it) }) { p ->

@@ -3554,6 +3554,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_handshakeFailure
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_keyUpdates
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_missingTransportParameters
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_nextKeysFailToDerive
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_peerLostAfterTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_peerLostDuringTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_resetTokensFromKeys
