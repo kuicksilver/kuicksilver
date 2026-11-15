@@ -22,7 +22,7 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientE
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientFallbackTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH1Test.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH2Test.kt	2
-kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH2WebSocketTest.kt	10
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH2WebSocketTest.kt	11
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH3Test.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientMigrationTest.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientPoolTest.kt	6
