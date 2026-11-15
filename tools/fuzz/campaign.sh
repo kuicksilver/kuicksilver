@@ -196,8 +196,8 @@ if [ -n "$only" ]; then
   selected=${only//,/ }
 fi
 
-# One campaign at a time, machine-wide.
-lock=/tmp/kuicksilver-fuzz-campaign.lock
+# One campaign at a time, machine-wide (KSL_FUZZ_LOCK: the tests' own lock, so a real campaign does not stop them).
+lock="${KSL_FUZZ_LOCK:-/tmp/kuicksilver-fuzz-campaign.lock}"
 if ! mkdir "$lock" 2>/dev/null; then
   holder=$(cat "$lock/pid" 2>/dev/null || true)
   if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then die "another campaign is running (pid $holder)"; fi

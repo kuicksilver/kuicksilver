@@ -45,7 +45,7 @@ echo "Done 7 runs in 1 second(s)"
 exit 1
 SH
 chmod +x "$home/.kuicksilver-tools/quiet-gradle" "$tmp/bin/java"
-campaign() { env HOME="$home" KSL_FUZZ_STATE="$state" JAVA_ARGS="$tmp/java-args" PATH="$tmp/bin:$PATH" bash "$repo/tools/fuzz/campaign.sh" "$@"; }
+campaign() { env HOME="$home" KSL_FUZZ_STATE="$state" KSL_FUZZ_LOCK="$tmp/campaign.lock" JAVA_ARGS="$tmp/java-args" PATH="$tmp/bin:$PATH" bash "$repo/tools/fuzz/campaign.sh" "$@"; }
 
 check "minimize with spaces in every path builds the classpath snapshot" 0 "" -- campaign minimize quic.frameDecode
 want="$state/cp/kuicksilver-quic/1-test classes:$cache/dep one.jar"
@@ -58,6 +58,13 @@ check "java got the corpus directory as one argument" 0 "" -- grep -qxF -- "$sta
 check "the reproducer is where the stats say" 0 "" -- test -f "$state/crashes/quic.frameDecode/crash-0123"
 check "status reads the stats of that slice" 0 "crash-0123" -- campaign status
 check "status lists the reproducer whole" 0 "finding: $state/crashes/quic.frameDecode/crash-0123" -- campaign status
+
+# one campaign at a time: a lock held by a live process stops a second run; one left by a dead process is taken over
+mkdir "$tmp/campaign.lock"; echo $$ > "$tmp/campaign.lock/pid"
+check "negative_secondCampaignWhileOneRuns" 2 "another campaign is running (pid $$)" -- campaign run --targets quic.frameDecode --slice 1 --goal 1 --gap 0
+echo 999999 > "$tmp/campaign.lock/pid"
+check "a lock left by a dead campaign is taken over" 0 "" -- campaign run --targets quic.frameDecode --slice 1 --goal 1 --gap 0
+check "  and released when the run ends" 1 "" -- test -e "$tmp/campaign.lock"
 
 # prune: a merge that fails leaves the grown corpus as it was and the command exits non-zero (fuzz.yml then warns); one that
 # succeeds replaces the corpus by its result in one move (a step killed in between caches no half-copied corpus)
