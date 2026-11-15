@@ -7,7 +7,8 @@
 #   - refs/tags/<version>: the object pushed must be the local annotated tag <version> itself (a commit pushed as
 #     HEAD:refs/tags/<version> would make a lightweight, unsigned tag), and tools/release/swift-package-check.sh prepush
 #     <version> must pass (on HEAD, release identity, UTC dates, signed by the release key, no local path or name);
-#   - refs/heads/*: every pushed commit the remote does not have yet has the release identity (KSL_SWIFT_AUTHOR) as author
+#   - refs/heads/*: every pushed commit the remote does not have yet has the release identity (kuicksilver.swift.author
+#     of the clone, as swift-package.sh wrote it) as author
 #     and committer and UTC dates, and the files of the tip pass tools/check/build-paths.py;
 #   - a deletion, or any other ref: refused.
 # What the remote has comes from `git ls-remote`; a remote that cannot be listed refuses the push (without it every commit
@@ -16,7 +17,8 @@
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 pkg="$(git rev-parse --show-toplevel)"
-identity="${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}"
+identity=$(git config kuicksilver.swift.author 2>/dev/null || true)   # written by swift-package.sh
+identity="${identity:-${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}}"
 z=0000000000000000000000000000000000000000
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 remote="${2:-${1:-}}"

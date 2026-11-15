@@ -76,6 +76,7 @@ chmod +x "$hooks/pre-push"; "${G[@]}" config core.hooksPath "$hooks"
 # the release identity in the clone's own config: the maintainer's amend and tag by hand (below) use it, never the Mac's
 # global identity; swift-package-check.sh and the hook refuse any other author, committer or tagger
 "${G[@]}" config user.name "$name"; "${G[@]}" config user.email "$email"
+"${G[@]}" config kuicksilver.swift.author "$author"   # what the checks and the hook require, read back at push time
 if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
 fi

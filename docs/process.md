@@ -220,8 +220,8 @@ xcframework zip, whose asset and GitHub's digest are checked against `Package.sw
 tags are made in UTC, and the checks refuse any other time zone. The clone of the Swift package gets a pre-push hook
 ([`tools/release/swift-package-pre-push.sh`](../tools/release/swift-package-pre-push.sh)) that runs the same checks on
 every push of it, so the immutable tag does not depend on running them by hand: a tag is pushed only as the signed,
-annotated tag of the release identity, never as a bare commit, and the clone's own git config carries that identity,
-whatever the Mac's global one is. The documentation site is not built
+annotated tag of the release identity, never as a bare commit, and the clone's own git config carries that identity
+(`user.name`, `user.email`, and `kuicksilver.swift.author`, which the checks read), whatever the Mac's global one is. The documentation site is not built
 for a prerelease.
 
 ### Privacy pre-push hook
@@ -229,8 +229,9 @@ for a prerelease.
 Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no identity but the
 configured one, no name, home directory or host name in an author, committer, commit message or added line. [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
 `tools/release/local-release.sh` refuses to run until it is installed in the checkout and the names and the identity
-are configured. It checks the commits the remote does not have (by its tracking refs, or by listing a URL; a remote
-that cannot be listed refuses the push), also after a force push. The
+are configured, and while the checkout's `user.name <user.email>` is not that identity (the tag would carry another). The
+hook checks the commits the remote does not have (by a named remote's tracking refs, else by listing it; a remote that
+cannot be listed refuses the push), also after a force push. The
 names live in the checkout's git config, never in the repository (a space in a name matches ' ', '.', '_', '-' or
 nothing; any case):
 

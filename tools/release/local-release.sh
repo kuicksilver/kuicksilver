@@ -242,7 +242,9 @@ elif [ -z "$(git config --get-all kuicksilver.privacy.names || true)" ]; then
   refuse "no kuicksilver.privacy.names in git config: the pre-push hook and the scans need the maintainer's names (docs/process.md)"
 elif [ -z "$(git config kuicksilver.privacy.identity || true)" ]; then
   refuse "no kuicksilver.privacy.identity in git config: the pre-push hook needs the one identity it allows (docs/process.md)"
-else echo "  privacy pre-push hook: installed"; fi
+elif [ "$(git config user.name || true) <$(git config user.email || true)>" != "$(git config kuicksilver.privacy.identity)" ]; then
+  refuse "git config user.name/user.email of this checkout is not kuicksilver.privacy.identity: the tag v$version would carry another identity and the pre-push hook refuse it"
+else echo "  privacy pre-push hook: installed, identity $(git config kuicksilver.privacy.identity)"; fi
 # credentials and signing: presence only, values are never read into this script's output
 gp="${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
 has() { local v="ORG_GRADLE_PROJECT_$1"; [ -n "${!v:-}" ] || grep -qE "^[[:space:]]*$(printf '%s' "$1" | sed 's/\./\\./g')[[:space:]]*[=:][[:space:]]*[^[:space:]]" "$gp" 2>/dev/null; }

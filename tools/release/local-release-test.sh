@@ -299,6 +299,13 @@ out=$(cd "$tmp/sph" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git r
 if [ $? != 0 ] && grep -q "cannot list $tmp/no-such-remote.git" <<< "$out"; then sp_pass "negative_swiftPushUnlistableRemote"
 else sp_fail "negative_swiftPushUnlistableRemote" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
 hpush "swift package: a clean push goes through the hook" ok -
+git init -q --bare -b main "$tmp/spr.git"
+KSL_SWIFT_AUTHOR="Rel Ease <rel@example.invalid>" KSL_SWIFT_REPO="$tmp/spr.git" bash "$root/tools/release/swift-package.sh" finish 3.0.0-rc1 "$SH" --out "$tmp/spr" >/dev/null 2>&1 \
+  || { echo "FAIL: swift-package.sh finish with another identity"; exit 2; }
+TZ=UTC git -C "$tmp/spr" tag -s 3.0.0-rc1 -m "Kuicksilver 3.0.0-rc1"
+out=$(env -u KSL_SWIFT_AUTHOR git -C "$tmp/spr" push --atomic "$tmp/spr.git" main refs/tags/3.0.0-rc1 2>&1)
+if [ $? = 0 ] && [ "$(git -C "$tmp/spr" config kuicksilver.swift.author)" = "Rel Ease <rel@example.invalid>" ]; then sp_pass "swift package: the hook reads the identity the clone stores"
+else sp_fail "swift package: the hook reads the identity the clone stores" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
 out=$(git -C "$tmp/sph" push "$tmp/sph.git" :refs/tags/2.0.0-rc1 2>&1)
 if [ $? != 0 ] && grep -q "deleting refs/tags/2.0.0-rc1 is refused" <<< "$out" && git -C "$tmp/sph.git" rev-parse -q --verify refs/tags/2.0.0-rc1 >/dev/null
 then sp_pass "negative_swiftPushDeleteTag"; else sp_fail "negative_swiftPushDeleteTag" "$(tr '\n' ' ' <<< "$out")"; fi
@@ -554,6 +561,9 @@ mhook "privacy hook: published history is not checked again (URL)" ok - main
 hg remote add r "$hk/remote.git"; hg fetch -q r; hcommit UTC "newer on top"
 out=$(hg push r main 2>&1) && { pass=$((pass+1)); echo "ok   privacy hook: published history is not checked again (named remote)"; } \
   || { fail=$((fail+1)); echo "FAIL privacy hook: named remote: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; }
+hg remote add r2 "$hk/remote.git"; hcommit UTC "newest on top"
+out=$(hg push r2 main 2>&1) && { pass=$((pass+1)); echo "ok   privacy hook: a named remote without tracking refs is listed (no old history)"; } \
+  || { fail=$((fail+1)); echo "FAIL privacy hook: named remote without tracking refs: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; }
 out=$(cd "$hk/w" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" 0000000000000000000000000000000000000000 \
   | sh "$root/tools/hooks/pre-push" "$hk/no-such.git" "$hk/no-such.git" 2>&1)
 if [ $? != 0 ] && grep -q "cannot list $hk/no-such.git" <<< "$out"; then pass=$((pass+1)); echo "ok   negative_hookUnlistableRemote"
@@ -575,6 +585,7 @@ hook_t() { # <label> <ok|refuse>[:<pattern>] <setup: linked|copied|other|none> [
   esac
   [ -z "${4:-}" ] || git -C "$d" config kuicksilver.privacy.names "$4"
   [ -z "${5:-}" ] || git -C "$d" config kuicksilver.privacy.identity "$5"
+  git -C "$d" config user.name "${6:-kinchpik}"; git -C "$d" config user.email 339333647+kinchpik@users.noreply.github.com
   out=$(cd "$d" && bash -c 'refuse() { echo "REFUSED: $*"; }; '"$hook_block" 2>&1)
   got=$(grep -q REFUSED <<< "$out" && echo refuse || echo ok)
   verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
@@ -587,6 +598,7 @@ hook_t "negative_releaseWithoutHook"                 "refuse:privacy pre-push ho
 hook_t "negative_releaseWithOtherHook"               "refuse:privacy pre-push hook is not installed" other "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 hook_t "negative_releaseWithoutPrivacyNames"         "refuse:kuicksilver.privacy.names"             linked "" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 hook_t "negative_releaseWithoutPrivacyIdentity"      "refuse:kuicksilver.privacy.identity"          linked "zorbex quill"
+hook_t "negative_releaseUserIsNotTheIdentity"        "refuse:user.name/user.email of this checkout"  linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" "Global Person"
 
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)

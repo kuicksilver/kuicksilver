@@ -29,8 +29,8 @@
 # Env: KSL_SWIFT_FETCH  a command that downloads <url> to <file> (default curl -fsSL --retry 3 -o <file> <url>)
 #      KSL_GH  the gh command for --draft (default gh)
 #      KSL_SWIFT_PACKAGE_URL  the package repository resolve names (default https://github.com/kuicksilver/kuicksilver-swift)
-#      KSL_SWIFT_AUTHOR  "Name <email>" every commit and tag must carry (default the maintainer, kinchpik; as for
-#                        swift-package.sh)
+#      KSL_SWIFT_AUTHOR  "Name <email>" every commit and tag must carry when the clone has no kuicksilver.swift.author
+#                        (which swift-package.sh writes; default the maintainer, kinchpik)
 #      KSL_SWIFT_TAG_KEY, KSL_SWIFT_TAG_FPR  the public key and fingerprint a tag's signature must verify against (default
 #                        tools/release/kuicksilver-release-key.asc, 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68)
 set -euo pipefail
@@ -46,7 +46,9 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; shift; done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "usage: $0 $cmd <X.Y.Z[-rcN]> (not '$version')" >&2; exit 2; }
 url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/Kuicksilver.xcframework.zip"
-identity="${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}"
+# the identity swift-package.sh stored in the clone, else KSL_SWIFT_AUTHOR, else the maintainer's
+identity=$(git -C "$pkg" config kuicksilver.swift.author 2>/dev/null || true)
+identity="${identity:-${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}}"
 sha() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

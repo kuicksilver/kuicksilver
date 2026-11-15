@@ -31,8 +31,9 @@ for h in "$(hostname 2>/dev/null | cut -d. -f1)" "$(scutil --get LocalHostName 2
   [ ${#h} -ge 4 ] && [ "$h" != localhost ] && PAT="$PAT|$h"
 done
 # what the remote already has is not checked again: a named remote's tracking refs, or for a URL what it lists (a remote
-# that cannot be listed refuses the push: without it every commit, or none, would be checked)
-if [ -n "$1" ] && [ "$1" != "$2" ]; then
+# that cannot be listed refuses the push: without it every commit, or none, would be checked); a named remote without
+# tracking refs yet is listed like a URL
+if [ -n "$1" ] && [ "$1" != "$2" ] && [ -n "$(git for-each-ref --count=1 "refs/remotes/$1/")" ]; then
   known="--remotes=$1"
 elif listed=$(git ls-remote "$2" 2>/dev/null); then
   known=$(printf '%s\n' "$listed" | awk '{print $1}' | sort -u | while read -r s; do git cat-file -e "$s^{commit}" 2>/dev/null && echo "$s"; done)
