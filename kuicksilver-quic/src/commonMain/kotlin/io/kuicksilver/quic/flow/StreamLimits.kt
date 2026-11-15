@@ -87,7 +87,7 @@ internal class StreamLimits(
     /**
      * [0] bidi, [1] uni: the peer reported STREAMS_BLOCKED at the limit we granted when nothing had closed since: the next
      * stream that closes is announced at once, not at the half window (a peer reports each limit once). Cleared with each
-     * MAX_STREAMS. Bit [i] set: that kind (no array per connection).
+     * MAX_STREAMS. Bit `i` set: that kind (no array per connection).
      */
     private var peerBlockedAtGranted = 0
 
