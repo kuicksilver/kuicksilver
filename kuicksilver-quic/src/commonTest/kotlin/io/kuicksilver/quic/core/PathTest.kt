@@ -3932,4 +3932,37 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Seventh review, the edge case of the fuzzer's input: the active path on the original address failed its validation, and the only
+     * validated path to the same peer address is on the preferred-address socket, validated by the client's probe there before any
+     * move. RFC 9000 section 9.3.2 allows the silent close only with "no state about the last validated peer address"; here the
+     * address is validated (address validation does not depend on our local address). The connection stays on the original address
+     * with that address taken as validated (section 9.3: "MAY skip validation of a peer address if that address has been seen
+     * recently"), so non-probing packets keep leaving the original address (section 9.6.2).
+     */
+    @Test fun negative_anAddressValidatedThroughThePreferredSocketKeepsTheConnectionOnTheOriginalAddress() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, failed.remote).peerProbed = true
+            s.startValidation(failed)
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state, "the peer address is validated: no close")
+            assertSame(failed, s.paths.active, "on the original address")
+            assertEquals(PathState.Validated, failed.state)
+            val id = s.openStream(true)
+            s.writeStream(id, ByteArray(500), 0, 500, false)
+            p.batch.clear()
+            val n = s.poll(p.batch, p.now)
+            assertTrue(n > 0)
+            for (i in 0 until n) assertEquals(PathId.Initial, p.batch.path(i), "non-probing packets leave the original address")
+        } finally {
+            p.close()
+        }
+    }
 }
