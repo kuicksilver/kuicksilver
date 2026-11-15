@@ -42,6 +42,7 @@ internal fun ConnectionCore.sizesForTest(): Map<String, Long> {
     m["datagramsQueued"] = datagramQueue.size.toLong()
     m["challengedAddresses"] = challengedAddressesForTest.size.toLong()
     m["mtuUpdates"] = ccMtuUpdatesForTest.size.toLong()
+    m["zeroRttHeld"] = zeroRttHeldForTest().toLong()
     return m
 }
 

@@ -13,7 +13,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInfo
 import kotlin.random.Random
 
-/** Fuzz targets of the transport's 0-RTT state: the server's replay register and what a client ticket remembers. */
+/**
+ * Fuzz targets of the transport's 0-RTT state: the server's replay register, what a client ticket remembers, and whole
+ * 0-RTT connections in every outcome.
+ */
 class ZeroRttFuzzTest {
     @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
 
@@ -117,6 +120,18 @@ class ZeroRttFuzzTest {
         // what was read back encodes again (the client keeps it for the comparison at handshake completion)
         TransportParametersCodec.encode(parsed.third, TlsRole.Server, 0)
         check(parsed.second.length <= 255) { "an ALPN of ${parsed.second.length} characters" }
+    }
+
+    /**
+     * `zeroRttConnection`: a client resumes a ticket and sends 0-RTT to a server that accepts it, rejects it in each of the
+     * ways RFC 9001 section 4.6.2 and RFC 9000 section 7.4.1 allow, or never answers, possibly after a Retry or a Version
+     * Negotiation, while both applications open, write, finish, reset, stop and close streams and the network drops,
+     * duplicates and reorders. The input format and the 0-RTT invariant checked after every round are [ZeroRttProgram] and
+     * [ZeroRttConnectionFuzz].
+     */
+    @FuzzTest(maxDuration = "60s")
+    fun zeroRttConnection(data: ByteArray) {
+        ZeroRttConnectionFuzz(data).run()
     }
 
     private companion object {

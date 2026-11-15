@@ -17,6 +17,7 @@ import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.core.recoveryViolationForTest
 import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.QuicCrypto
@@ -687,62 +688,15 @@ internal class ConnectionFuzz(
                 check(closedSeen[side]) { "${name(side)} reached ${c.state} without a Closed event" }
             }
             c.streams.invariantViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
+            c.streams.sendCreditViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
+            c.recoveryViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
             val sizes = c.sizesForTest()
             for ((key, value) in sizes) {
-                val bound = bound(key, c)
+                val bound = sizeBound(key, c)
                 check(value in 0..bound) { "${name(side)}: $key = $value outside 0..$bound" }
             }
         }
     }
 
     private fun name(side: Int) = if (side == 0) "client" else "server"
-
-    /** Upper bounds of the per-connection collections, from the configuration: what a peer can make the core hold. */
-    private fun bound(
-        key: String,
-        c: ConnectionCore,
-    ): Long {
-        val cfg = c.config
-        val streams = 2 * (cfg.maxBidiStreams + cfg.maxUniStreams) + ConnProgram.MAX_OPS
-        return when (key) {
-            "events" -> 20_000
-
-            "streams", "streamSendLimits", "streamsEarly" -> streams
-
-            "streamControlFrames" -> 8 * streams + 64
-
-            "streamEvents" -> 20_000
-
-            // the gap limit plus the readable range at each stream's read offset, which is always taken
-            "reassemblyRanges" -> cfg.limits.reassemblyRangesPerConnection + streams
-
-            "sendBufferedBytes" -> cfg.maxSendBuffer + 20_000
-
-            "cidsLocal" -> 2L * maxOf(cfg.activeConnectionIdLimit, 8) + 2
-
-            "cidsPeer" -> cfg.activeConnectionIdLimit.toLong() + 1
-
-            "cidsRetiredLocal", "cidsRetiredUntil" -> cfg.limits.retiredConnectionIds.toLong() + 1
-
-            "cidsPendingRetire", "cidsUnackedRetire" -> 4L * cfg.limits.retiredConnectionIds + cfg.activeConnectionIdLimit
-
-            "paths" -> 8
-
-            "pathResponses" -> 16
-
-            "sentInitial", "sentHandshake", "sentApplication" -> 50_000
-
-            "ackRangesInitial", "ackRangesHandshake", "ackRangesApplication" -> cfg.limits.ackRanges.toLong() + 1
-
-            "receiverBufferedBytes" -> cfg.limits.undecryptablePackets.toLong() * 65_536
-
-            "cryptoBufferedBytes" -> 4L * (cfg.limits.cryptoOutOfOrderPerLevel + cfg.limits.cryptoPostHandshake)
-
-            "datagramsQueued" -> cfg.datagramReceiveQueue.toLong()
-
-            "challengedAddresses", "mtuUpdates" -> 64
-
-            else -> throw IllegalStateException("no bound for $key")
-        }
-    }
 }

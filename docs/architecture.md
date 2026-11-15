@@ -210,6 +210,22 @@ time". OpenSSL objects are owned by one loop; immutable contexts are shared.
 reordering, MTU black holes, NAT rebinding and migration; Jazzer fuzz targets for every parser; the QUIC Interop Runner
 against other implementations; negative security controls named `negative_*` after the threat model.
 
+**0-RTT invariant.** Every piece of state that exists before the server answers a client's 0-RTT is settled by the answer
+or by the end of the connection: once a client knows whether its 0-RTT was accepted, or its connection ended first,
+nothing is held back for the answer (`StreamManager.heldUntilZeroRttAnswerForTest`, the `zeroRttHeld` entry of
+`ConnectionCore.sizesForTest`: a new hold must be counted there); after a rejection no 0-RTT packet is left in the sent
+history, so none in flight, in a congestion controller or in loss detection (`ConnectionCore.recoveryViolationForTest`
+checks that bytes in flight and every controller agree with the history), and none of the dropped streams is left in the
+stream manager — no stream, send limit, queued frame or event, connection credit or buffered byte
+(`StreamManager.zeroRttResidueForTest`); the rejection reaches the application once, as `EarlyDataRejected` or as a
+`ZeroRttRejected` close; no event names a stream after its `StreamFinished` or a stream the rejection dropped; and in the
+runtime every stream opened before a rejection is failed and done, and no Deferred, channel or STOP_SENDING watcher of a
+stream or a connection waits once it is gone. The fuzz target `ZeroRttFuzzTest.zeroRttConnection` (`ZeroRttConnectionFuzz`)
+checks the core part after every round of every outcome — accepted, rejected (another application context, lower limits,
+`Required`, another ALPN, a server without 0-RTT), no answer — alone or after a Retry or a Version Negotiation;
+`ZeroRttConnectionSeededTest` runs a fixed seed set of it in `jvmTest`, `ZeroRttRuntimeSeededTest` the runtime part, and
+`ZeroRttInvariantControlsTest` holds one negative control per check.
+
 **Architecture checks.** `checkLayerDependencies` (module dependencies), `tools/check/sans-io.sh` and
 `tools/check/quic-imports.sh` (QUIC core rules), `checkKotlinAbi` (public ABI dumps in each module's `api/`),
 `checkSpdxHeaders`, and the native checks in `tools/check` (exported symbols, glibc floor, keylog disabled, page alignment,

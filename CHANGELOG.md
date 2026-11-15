@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Fuzzing: 0-RTT is a dimension of the QUIC connection fuzzing. The new target `quic.zeroRttConnection`
+  (`ZeroRttFuzzTest.zeroRttConnection`) resumes a ticket over real TLS and runs every outcome of the server's answer —
+  accepted; rejected for another application context, lower limits, `Required` mode, another ALPN or a server without
+  0-RTT; no answer — alone or after a Retry or a Version Negotiation, while both applications open, write, finish, reset,
+  reset at a size, stop, read, close and queue datagrams and the network drops, duplicates and reorders. After every round
+  it checks the 0-RTT invariant (`docs/architecture.md`, "0-RTT invariant"): nothing held, in flight, charged to flow or
+  congestion control or left in the stream manager after the answer or the end, the rejection reported once, no event for
+  a stream that is gone. `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` (the runtime's Deferreds, channels
+  and watchers) run a fixed seed set in `jvmTest`; `ZeroRttInvariantControlsTest` keeps a negative control per check. The
+  connection fuzzer also checks the recovery bookkeeping and the connection's send credit after every step.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
