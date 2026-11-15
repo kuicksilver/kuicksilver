@@ -203,6 +203,7 @@ internal class ConnectionInvariants(
                 )
             }
             used[side] += Triple(key, f.to, f.from)
+            noteTowards(side, key, f.to)
             if (hv.type == PacketType.OneRtt) {
                 try {
                     cidReuse(side, key, socket, f.to)
@@ -423,18 +424,26 @@ internal class ConnectionInvariants(
     }
 
     /**
-     * The remote addresses [side] sent the peer's ID [key] to, the latest four distinct ones in the order first used: what the engine
-     * remembers for its token (RFC 9000 section 10.3.1, "recently sent"; ConnectionIdManager's SENT_TOWARDS).
+     * The remote addresses [side] sent the peer's ID [key] to, as the engine remembers them for its token (RFC 9000 section 10.3.1,
+     * "recently sent"; ConnectionIdManager's ring of SENT_TOWARDS addresses: a known one stays, a new one evicts the oldest).
      */
     private fun towards(
         side: Int,
         key: String,
-    ): List<InetSocketAddress> =
-        used[side]
-            .filter { it.first == key }
-            .map { it.second }
-            .distinct()
-            .takeLast(4)
+    ): List<InetSocketAddress> = rings[side][key] ?: emptyList()
+
+    private val rings = Array(2) { HashMap<String, ArrayDeque<InetSocketAddress>>() }
+
+    private fun noteTowards(
+        side: Int,
+        key: String,
+        to: InetSocketAddress,
+    ) {
+        val r = rings[side].getOrPut(key) { ArrayDeque() }
+        if (to in r) return
+        r.addLast(to)
+        if (r.size > 4) r.removeFirst()
+    }
 
     /** The datagram ends with the token of an ID [side] used, but towards other addresses than its source. */
     private fun strangerReset(
