@@ -149,7 +149,7 @@ commit as the code it records, so the change is in the diff a reviewer reads.
 | [`test-sleeps.py`](../tools/check/test-sleeps.py) | more sleeps in a test file than `tools/check/test-sleeps.lock` records (a new file: none), unless Git (`git diff -M -C` from the merge base with `main`) takes the file for a rename or copy of a locked file of the same source set that has as many fewer: a rename, move or split, which `--update` carries; sleeps removed in one file never pay for new ones in another; or fewer sleeps than the lock, until it is lowered. Sleeps are calls of `delay`, `sleep` (`Thread.sleep`), `usleep`, `nanosleep`, `Sleep`, `parkNanos` and `parkUntil`, also under an import alias, as a reference (`Thread::sleep`) or in a string template, and calls of the test sources' polling helpers whose body sleeps (`eventually { }`), a call resolved as Kotlin sees the name (the file's own function first; a private or local one nowhere else; another file's only in the same package or imported) | `--update` lowers the lock and carries moves; a new file that needs a real wait is named in `tools/check/test-sleeps.allow` with its reason |
 | [`env-apis.py`](../tools/check/env-apis.py) | a host-name lookup in the main Kotlin, Java and C sources of the library modules, also in a string template or as a reference: Ktor's `hostname`, java.net's `hostName` / `getHostName` / `canonicalHostName`, `InetAddress.getLocalHost`, and `gethostname`, `getnameinfo`, `gethostbyaddr`, `GetNameInfoW`, `NSHost` | a use that does no lookup is counted per file in `tools/check/env-apis.allow`, `<path> \| <api> \| <count> \| <reason>`: one use more fails |
 | [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (`Class.test`, `Class#test`, a `.test` of the class named before it, a bare name in a list of tests that is no test and no name of the sources, a class name close to a test class's but in no source), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
-| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error) | none |
+| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error); a commit hash the message cites that is not in the history of the branch (`HEAD` for the hook): one from before a rebase or another branch's (rule below) | none |
 
 What the checks cannot see: `test-discovery.py` reads the brace structure of the sources, not their types, so a test
 whose value comes through a lambda (`= runBlocking { ... }`, a fixture helper) is judged by `test-bytecode.py` alone, and
@@ -177,8 +177,29 @@ chmod +x "$hook"
 ```
 
 The hook reads the first line of the message that is not a comment; Git's own merge, revert and autosquash subjects
-(`Merge ...`, `Revert "..."`, `fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed. It checks the
-subject only.
+(`Merge ...`, `Revert "..."`, `fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed.
+
+**Cited hashes.** A rebase or a rewrite of the dates gives every commit a new hash, and a message that cites an old one
+points at nothing. `commit-msg.sh` reads the whole message (the hook: without `#` lines and below the `git commit -v`
+cut) for words of 7 to 40 hex digits standing alone, not after `/ @ # = + -` or a single `.` (paths, URLs,
+identifiers; `a..b` counts) and not followed by `...` (a truncated value). A word is strong when it is lower case, has
+a digit and a letter and is not quoted; a number (`40636584799`), a word like `defaced`, an upper-case or a quoted
+value (`` `ca5babe14fa53a74` ``) is weak. It is cited after `commit`, `commits`, `review of`, `fix of`, `fixes`,
+`fixed in`, `follow-up to`/`of`, `reverts`, `since`, `before` or `after`, and so are the next hashes of a list after
+one (`Review of a, b and c`). A word that names a commit in this clone (also one only the reflog keeps) fails unless
+one commit with that prefix is in the history of the tip or of `origin/main` (a published commit is never rewritten;
+strong words anywhere, weak ones when cited); a strong cited word that names no commit fails too (a value after
+`since` or `after` is quoted in backticks), and any other word is taken for a value. Each word counts once per
+commit. The message is read bytewise (`LC_ALL=C`, so text in any encoding is read), and a scan that fails is an
+error (exit 2), never a pass. Write another repository's or another
+branch's commit as `<name>@<hash>` (`quic-go@432b156`) or as a URL. Commits already on `origin/main` are not read, so
+the stale citations published before the check stay; Git's `(cherry picked from commit ...)` line names the source on
+another branch and is not read. The CI `lint` job checks out one commit (no `fetch-depth`), so it runs the negative
+controls only; in a shallow clone the range check lists what it would fail as unchecked and passes.
+
+What it cannot see: a stale hash whose object is gone (a fresh clone, after `git gc` dropped the reflog's) and that
+follows no keyword (`a9297c4d3 dropped the deadline`); a weak word whose object is gone; a hash after `@`, in a path
+or a URL; a hash on a `(cherry picked ...)` line; a message whose comment character is not `#` (the hook).
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers

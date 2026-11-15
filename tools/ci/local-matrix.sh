@@ -178,7 +178,8 @@ step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
 # step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
 # never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, and
-# the conventional type of every commit of the branch (docs/process.md, "Repository checks")
+# the conventional type of every commit of the branch and the commit hashes its messages cite (docs/process.md,
+# "Repository checks")
 step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   bash tools/check/doc-refs.sh || rc=1; python3 -I tools/check/code-refs.py || rc=1
   python3 -I tools/check/test-discovery.py || rc=1; python3 -I tools/check/test-count.py || rc=1
