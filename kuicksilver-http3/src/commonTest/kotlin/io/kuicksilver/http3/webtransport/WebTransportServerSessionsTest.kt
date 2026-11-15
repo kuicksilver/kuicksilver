@@ -305,6 +305,21 @@ class WebTransportServerSessionsTest {
             r.refusedConnect()
         }
 
+    /**
+     * The connection's loss ends the peer's streams nobody accepted, as any other end of the session does: they leave the
+     * accept queues (with their counts stopped) instead of staying there.
+     */
+    @Test fun negative_connectionLossEndsTheStreamsNobodyAccepted() =
+        serverTest { r ->
+            val (a, sa) = rawSession(r.c, r.server, r.raw)
+            repeat(3) { r.uniTo(a, "unread $it") }
+            val impl = sa as WtSessionImpl
+            withTimeout(5.seconds) { while (impl.waitingForTest < 3) kotlinx.coroutines.yield() }
+            r.c.close()
+            withTimeout(5.seconds) { sa.closed.await() }
+            withTimeout(5.seconds) { while (impl.waitingForTest > 0) kotlinx.coroutines.yield() }
+        }
+
     /** Two CONNECTs racing for the last slot: exactly one is admitted, the other refused. */
     @Test fun negative_connectsRacingForTheLastSlotAdmitOne() =
         serverTest(serverSettings = wtOn.toBuilder().apply { webTransportMaxSessions = 2 }.build()) { r ->

@@ -222,6 +222,9 @@ internal class WtSessionImpl(
                         bidiIn.close()
                         uniIn.close()
                         datagramsIn.close()
+                        // the streams nobody accepted end as at any other end of the session ([terminate]), on the
+                        // session's dispatcher; the connection's scope may be over, so not as its child
+                        h3.scope.launch(h3.dispatcher + NonCancellable) { drainIncoming() }
                     }
                 }
             }
@@ -334,16 +337,7 @@ internal class WtSessionImpl(
             withContext(NonCancellable + h3.dispatcher) {
                 bidiIn.close()
                 uniIn.close()
-                for (ch in listOf(bidiIn to true, uniIn to false)) {
-                    while (true) {
-                        val i = ch.first.tryTake() ?: break
-                        // a tracked one is in [streams], ended next (its gone() stops its count)
-                        if (i.tracked == null) {
-                            i.count?.stop()
-                            goneRaw(i.stream, ch.second)
-                        }
-                    }
-                }
+                drainIncoming()
                 flow?.end(sessionClosed())
                 // only a session that started counted: one ended before (its exchange over during the accept) did not
                 if (flowCounted) {
@@ -446,6 +440,26 @@ internal class WtSessionImpl(
         val p = stream.priority
         for (s in streams) if (s.writable) s.st.priority = p
     }
+
+    /**
+     * Ends the peer's streams still waiting in [bidiIn] and [uniIn] once they are closed: an untracked one has its count
+     * stopped and is ended raw; a tracked one is in [streams], ended with them (its gone() stops its count). Session
+     * dispatcher only.
+     */
+    private fun drainIncoming() {
+        for (ch in listOf(bidiIn to true, uniIn to false)) {
+            while (true) {
+                val i = ch.first.tryTake() ?: break
+                if (i.tracked == null) {
+                    i.count?.stop()
+                    goneRaw(i.stream, ch.second)
+                }
+            }
+        }
+    }
+
+    /** The peer's streams waiting for an accept (a test hook). */
+    internal val waitingForTest: Int get() = bidiIn.size + uniIn.size
 
     private fun goneRaw(
         st: QuicStream,
