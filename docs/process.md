@@ -219,21 +219,25 @@ xcframework zip, whose asset and GitHub's digest are checked against `Package.sw
 `swift-package-check.sh prepush`; then an empty package resolved with `exact: "<version>"` (`resolve`). Commits and
 tags are made in UTC, and the checks refuse any other time zone. The clone of the Swift package gets a pre-push hook
 ([`tools/release/swift-package-pre-push.sh`](../tools/release/swift-package-pre-push.sh)) that runs the same checks on
-every push of it, so the immutable tag does not depend on running them by hand. The documentation site is not built
+every push of it, so the immutable tag does not depend on running them by hand: a tag is pushed only as the signed,
+annotated tag of the release identity, never as a bare commit, and the clone's own git config carries that identity,
+whatever the Mac's global one is. The documentation site is not built
 for a prerelease.
 
 ### Privacy pre-push hook
 
-Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no name, home directory or
-host name in a commit message or an added line. [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
-`tools/release/local-release.sh` refuses to run until it is installed in the checkout and names are configured. The
+Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no identity but the
+configured one, no name, home directory or host name in an author, committer, commit message or added line. [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
+`tools/release/local-release.sh` refuses to run until it is installed in the checkout and the names and the identity
+are configured. It checks the commits the remote does not have (by its tracking refs, or by listing a URL; a remote
+that cannot be listed refuses the push), also after a force push. The
 names live in the checkout's git config, never in the repository (a space in a name matches ' ', '.', '_', '-' or
 nothing; any case):
 
 ```
 ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 git config --add kuicksilver.privacy.names "<first name> <last name>"     # once per name, alias or spelling
-git config kuicksilver.privacy.identity "<name> <email>"                   # optional: the only author and committer
+git config kuicksilver.privacy.identity "<name> <email>"                   # the only author, committer and tagger
 ```
 
 Commit and tag with `TZ=UTC`. The same names, the user and host names of the Mac and its temporary directories are

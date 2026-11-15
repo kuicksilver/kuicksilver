@@ -73,6 +73,9 @@ G=(git -C "$out")
 out_abs=$(cd "$out" && pwd); hooks="$out_abs/.git/hooks"; mkdir -p "$hooks"
 printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$root/tools/release/swift-package-pre-push.sh" > "$hooks/pre-push"
 chmod +x "$hooks/pre-push"; "${G[@]}" config core.hooksPath "$hooks"
+# the release identity in the clone's own config: the maintainer's amend and tag by hand (below) use it, never the Mac's
+# global identity; swift-package-check.sh and the hook refuse any other author, committer or tagger
+"${G[@]}" config user.name "$name"; "${G[@]}" config user.email "$email"
 if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
 fi
@@ -128,7 +131,7 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
 # --------------------------------------------------------------------------------------------------------- commit
 "${G[@]}" add -A
 # UTC: the commit (and the tag made on it by hand, see below) never carries the maintainer's time zone
-TZ=UTC "${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
+TZ=UTC "${G[@]}" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
 q_out=$(printf %q "$out_abs"); q_root=$(printf %q "$root")   # pasteable even with spaces in the path

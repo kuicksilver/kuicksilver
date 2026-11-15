@@ -329,8 +329,9 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
    here: fix the release asset, never the tag.
 5. The Swift package commit signed, tagged `<version>` and pushed exactly as the script prints it (as in
    [Every release](#every-release), step 6): `swift-package-check.sh prepush <version>` right before the push checks
-   that the commit and the tag have UTC dates, that the annotated tag names the commit and that no file names a home
-   directory.
+   that the commit and the tag have UTC dates and the release identity (set in the clone's own git config), that the
+   annotated tag names the commit and is signed by the release key, and that no file names a home directory; the
+   clone's pre-push hook runs the same checks and refuses a commit pushed as a tag.
 6. `tools/release/swift-package-check.sh resolve <version>`: an empty package with
    `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", exact: "<version>")` resolves (SwiftPM fetches
    the tag and checks the zip's checksum) and builds for the iOS Simulator.

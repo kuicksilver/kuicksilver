@@ -5,7 +5,8 @@
 # in the order of docs/release.md ("Prereleases on GitHub only"). A tag of kuicksilver/kuicksilver-swift is immutable,
 # so every check but resolve runs before it is pushed.
 #
-#   files    the commit: its author and committer dates are UTC (+0000), and no tracked file, the commit message or the
+#   files    the commit: its author and committer are the release identity (KSL_SWIFT_AUTHOR), their dates are UTC
+#            (+0000), and no tracked file, the commit message or the
 #            tag <version> (when there is one) names a home directory (tools/check/build-paths.py). local-release.sh
 #            runs it after making the commit.
 #   local    before anything is published: files, then Package.swift names the release URL of <version> and the
@@ -17,8 +18,8 @@
 #            well. --draft: the release is still a draft, so the asset is fetched with gh (authenticated; a draft's
 #            asset URL does not resolve publicly) and GitHub's own digest of it is compared too, when gh reports one;
 #            without --draft: downloaded from the public URL Package.swift names (the release is published).
-#   prepush  right before the push: files, and the tag <version> exists, is annotated, names HEAD and has a UTC tagger
-#            date.
+#   prepush  right before the push: files, and the tag <version> exists, is annotated, names HEAD, has a UTC tagger
+#            date and the release identity as its tagger, and is signed by the release key.
 #   resolve  after the tag is pushed: an empty package naming kuicksilver-swift with exact: "<version>" resolves (SwiftPM
 #            fetches the tag and downloads the zip, checking its checksum) and builds for the iOS Simulator.
 #
@@ -28,6 +29,10 @@
 # Env: KSL_SWIFT_FETCH  a command that downloads <url> to <file> (default curl -fsSL --retry 3 -o <file> <url>)
 #      KSL_GH  the gh command for --draft (default gh)
 #      KSL_SWIFT_PACKAGE_URL  the package repository resolve names (default https://github.com/kuicksilver/kuicksilver-swift)
+#      KSL_SWIFT_AUTHOR  "Name <email>" every commit and tag must carry (default the maintainer, kinchpik; as for
+#                        swift-package.sh)
+#      KSL_SWIFT_TAG_KEY, KSL_SWIFT_TAG_FPR  the public key and fingerprint a tag's signature must verify against (default
+#                        tools/release/kuicksilver-release-key.asc, 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 cmd="${1:-}"; [ $# -gt 0 ] && shift
@@ -41,6 +46,7 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; shift; done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "usage: $0 $cmd <X.Y.Z[-rcN]> (not '$version')" >&2; exit 2; }
 url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/Kuicksilver.xcframework.zip"
+identity="${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}"
 sha() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -91,6 +97,9 @@ check_files() {
   d=$("${G[@]}" log -1 --format='%ad %cd' --date=format:%z HEAD)
   [ "$d" = "+0000 +0000" ] || fail "the commit $("${G[@]}" rev-parse --short HEAD) has author/committer zones $d, not +0000 +0000 (make it with TZ=UTC)"
   echo "OK: the commit's author and committer dates are UTC"
+  d=$("${G[@]}" log -1 --format='%an <%ae>|%cn <%ce>' HEAD)
+  [ "$d" = "$identity|$identity" ] || fail "the commit's author|committer is '$d', not $identity (the clone's user.name/user.email)"
+  echo "OK: the commit's author and committer are $identity"
   files=(); while IFS= read -r f; do files+=("$pkg/$f"); done < <("${G[@]}" ls-files)
   [ ${#files[@]} -gt 0 ] || fail "the commit in $pkg has no files"
   "${G[@]}" log -1 --format=%B HEAD > "$tmp/commit-message"; files+=("$tmp/commit-message")
@@ -161,7 +170,22 @@ prepush)
   [ "$("${G[@]}" rev-parse "$version^{commit}")" = "$("${G[@]}" rev-parse HEAD)" ] || fail "the tag $version does not name HEAD"
   tz=$("${G[@]}" for-each-ref --format='%(taggerdate:format:%z)' "refs/tags/$version")
   [ "$tz" = "+0000" ] || fail "the tag $version has the tagger zone $tz, not +0000 (delete it and tag again with TZ=UTC)"
-  echo "OK: the tag $version names HEAD, tagger date UTC"
+  who=$("${G[@]}" for-each-ref --format='%(taggername) %(taggeremail)' "refs/tags/$version")
+  [ "$who" = "$identity" ] || fail "the tag $version has the tagger '$who', not $identity"
+  echo "OK: the tag $version names HEAD, tagger $identity, date UTC"
+  # signed by the release key: the signature of the tag object against the pinned key, in a keyring of its own
+  "${G[@]}" cat-file tag "refs/tags/$version" > "$tmp/tag"
+  sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$tmp/tag" > "$tmp/tag.payload"
+  sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$tmp/tag" > "$tmp/tag.asc"
+  [ -s "$tmp/tag.asc" ] || fail "the tag $version is not signed (git tag -s)"
+  gh_home=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$gh_home"
+  key="${KSL_SWIFT_TAG_KEY:-tools/release/kuicksilver-release-key.asc}"; fpr="${KSL_SWIFT_TAG_FPR:-22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68}"
+  gpg --homedir "$gh_home" --batch --import "$key" >/dev/null 2>&1
+  st=$(gpg --homedir "$gh_home" --batch --status-fd 1 --verify "$tmp/tag.asc" "$tmp/tag.payload" 2>/dev/null || true)
+  gpgconf --homedir "$gh_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gh_home"
+  grep -q '^\[GNUPG:\] GOODSIG ' <<< "$st" && grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$" <<< "$st" \
+    || fail "the tag $version is not signed by $fpr"
+  echo "OK: the tag $version is signed by $fpr"
   echo "prepush check of the Swift package $version passed"
   ;;
 resolve)

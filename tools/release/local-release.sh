@@ -240,6 +240,8 @@ if ! cmp -s "$hooks_dir/pre-push" tools/hooks/pre-push || [ ! -x "$hooks_dir/pre
   refuse "the privacy pre-push hook is not installed: ln -sf ../../tools/hooks/pre-push \"\$(git rev-parse --git-common-dir)/hooks/pre-push\" (docs/process.md)"
 elif [ -z "$(git config --get-all kuicksilver.privacy.names || true)" ]; then
   refuse "no kuicksilver.privacy.names in git config: the pre-push hook and the scans need the maintainer's names (docs/process.md)"
+elif [ -z "$(git config kuicksilver.privacy.identity || true)" ]; then
+  refuse "no kuicksilver.privacy.identity in git config: the pre-push hook needs the one identity it allows (docs/process.md)"
 else echo "  privacy pre-push hook: installed"; fi
 # credentials and signing: presence only, values are never read into this script's output
 gp="${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
