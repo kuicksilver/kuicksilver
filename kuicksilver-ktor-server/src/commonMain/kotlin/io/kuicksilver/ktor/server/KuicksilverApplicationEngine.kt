@@ -544,6 +544,18 @@ public class KuicksilverApplicationEngine(
      */
     internal val stopCloseFallback: Duration get() = (stopGraceMillis / 4).coerceAtLeast(0).milliseconds
 
+    /** Test hook: the idle-close fallback each HTTP/3 connection gets with the stop's GOAWAY ([stopCloseFallback]). */
+    @Volatile
+    internal var stopGoAwayFallbackForTest: ((Duration) -> Unit)? = null
+
+    /** The stop's GOAWAY to [c], with [stopCloseFallback] for an idle client. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal suspend fun stopGoAway(c: io.kuicksilver.http3.Http3Connection) {
+        val fallback = stopCloseFallback
+        stopGoAwayFallbackForTest?.invoke(fallback)
+        c.goAway(fallback)
+    }
+
     /** Whether the last stop ran out its grace period and cancelled what was left (tests). */
     @Volatile
     internal var stopWasForcedForTest = false
@@ -756,7 +768,7 @@ public class KuicksilverApplicationEngine(
                         runCatching { l.endpoint.shutdown(stopGraceMillis.milliseconds) }
                     }
                     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                    for (c in l.live()) launch { runCatching { c.goAway(stopCloseFallback) } }
+                    for (c in l.live()) launch { runCatching { stopGoAway(c) } }
                 }
                 withContext(userDispatcher) { monitor.raise(ApplicationStopPreparing, environment) }
                 servers.map { it.rootJob }.joinAll()

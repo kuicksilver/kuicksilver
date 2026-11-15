@@ -25,6 +25,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -34,6 +35,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
@@ -42,6 +44,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -902,28 +905,70 @@ class ServerH3Test {
         }
 
     /**
+     * A server and a QUIC connection to it with ALPN h3 that sends nothing and never closes (an idle browser connection),
+     * returned once the server registered it (its `connectionOpened`, which follows the registration a stop reads).
+     */
+    private suspend fun serverWithAnIdleH3Client(endpoint: QuicEndpoint): Triple<Server, Int, io.kuicksilver.quic.QuicConnection> {
+        val opened = CompletableDeferred<Unit>()
+        val (server, port) =
+            tlsServer({
+                eventListener =
+                    object : KuicksilverServerEventListener() {
+                        override fun connectionOpened(
+                            protocol: io.ktor.http.HttpProtocolVersion,
+                            remote: InetSocketAddress?,
+                        ) {
+                            if (protocol == io.ktor.http.HttpProtocolVersion.HTTP_3_0) opened.complete(Unit)
+                        }
+                    }
+            }) { routing { get("/") { call.respondText("ok") } } }
+        val c =
+            endpoint.connect(
+                InetSocketAddress("127.0.0.1", port),
+                QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
+            )
+        kotlinx.coroutines.withTimeout(10.seconds) { opened.await() }
+        return Triple(server, port, c)
+    }
+
+    /**
      * A client that keeps its idle HTTP/3 connection open after the stop's GOAWAY (a browser, curl; a Kuicksilver client
      * closes it) was closed by the server only three seconds after the final GOAWAY, so a stop with a shorter grace period
      * (Ktor's `stop(500, 500)`, `stop(1000, 2000)`) always ran out its grace and cut every connection left instead of
-     * draining it. The wait is now a quarter of the grace period.
+     * draining it. The wait the stop hands each connection is now a quarter of the grace period: checked on what the stop
+     * passes, not on how long a loaded host takes to stop (a Windows VM ran out a 2.5 s grace period with it).
      */
-    @Test fun aStopShorterThanThreeSecondsEndsGracefullyWithAnIdleClient() =
+    @Test fun aStopGivesAnIdleClientAQuarterOfTheGracePeriod() =
         h3ServerTest {
-            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
             val idle = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            val (server, _, _) = serverWithAnIdleH3Client(idle)
+            val fallbacks = kotlinx.coroutines.flow.MutableStateFlow(emptyList<kotlin.time.Duration>())
+            server.engine.stopGoAwayFallbackForTest = { d -> fallbacks.update { it + d } }
             try {
-                // a QUIC connection with ALPN h3 that sends nothing and never closes: the idle browser connection
-                idle.connect(
-                    InetSocketAddress("127.0.0.1", port),
-                    QuicClientConfig.Builder(ServerFixtures.clientTls(alpn = listOf("h3"))).build(),
-                )
-                kotlinx.coroutines.withTimeout(5.seconds) {
-                    while (server.engine.h3ListenersForProbe.sumOf { it.size() } == 0) delay(10)
-                }
-                // a grace period under the three seconds the server used to wait, with room for a slow host (a CI runner
-                // with a debug Kotlin/Native build): the wait is now 625 ms of it
                 server.engine.stopSuspend(2500, 4000)
+                assertEquals(listOf(625.milliseconds), fallbacks.value)
+            } finally {
+                server.engine.stopGoAwayFallbackForTest = null
+                idle.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /**
+     * With that wait the stop ends gracefully with an idle client: the server closes the connection itself, with
+     * H3_NO_ERROR, before the grace period ran out. The grace period (10 s, a 2.5 s wait) leaves a slow host room.
+     */
+    @Test fun aStopEndsGracefullyWithAnIdleClient() =
+        h3ServerTest {
+            val idle = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            val (server, _, c) = serverWithAnIdleH3Client(idle)
+            try {
+                server.engine.stopSuspend(10_000, 12_000)
                 assertFalse(server.engine.stopWasForcedForTest, "the stop ran out its grace period")
+                val closed = kotlinx.coroutines.withTimeout(10.seconds) { c.closed.await() }
+                val end = assertIs<QuicException.ConnectionLost.ApplicationClosed>(closed)
+                assertEquals(io.kuicksilver.quic.Initiator.Peer, end.initiator)
+                assertEquals(0x100L, end.code) // H3_NO_ERROR
             } finally {
                 idle.close()
                 runCatching { server.stop(100, 500) }

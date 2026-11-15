@@ -164,8 +164,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     // after add(): a stop or a switch to Drain that began meanwhile either saw this connection in live() or is seen
                     // here (RFC 9114 5.2)
                     if (listener.stopping) {
-                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                        launch { runCatching { conn.goAway(stopCloseFallback) } }
+                        launch { runCatching { stopGoAway(conn) } }
                     } else if (advertising == Http3Advertising.Drain) {
                         launch { runCatching { conn.goAway() } }
                     }
