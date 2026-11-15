@@ -1,0 +1,12 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/RecvStream.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/RecvStream.kt
+index 84cbddd1c..56ebb03a9 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/RecvStream.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/RecvStream.kt
+@@ -123,7 +123,6 @@ internal class RecvStream(
+         }
+         if (reliableSize >= 0) checkCode(code, 0x04)
+         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
+-        flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5, 19.10)
+         val advanced = size - highest
+         if (advanced > 0) conn.onData(connReceived + advanced)
+         finalSize = size

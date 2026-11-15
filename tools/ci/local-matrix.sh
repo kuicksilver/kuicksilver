@@ -177,16 +177,17 @@ steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
 # step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
-# never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, and
-# the conventional type of every commit of the branch (docs/process.md, "Repository checks")
+# never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, the
+# record of every fuzz reproducer, and the conventional type of every commit of the branch (docs/process.md, "Repository checks")
 step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   bash tools/check/doc-refs.sh || rc=1; python3 -I tools/check/code-refs.py || rc=1
   python3 -I tools/check/test-discovery.py || rc=1; python3 -I tools/check/test-count.py || rc=1
   python3 -I tools/check/test-sleeps.py || rc=1; python3 -I tools/check/env-apis.py || rc=1
-  python3 -I tools/check/rfc-tests.py || rc=1; bash tools/check/commit-msg.sh --range main..HEAD || rc=1
+  python3 -I tools/check/rfc-tests.py || rc=1; python3 -I tools/check/reproducers.py || rc=1
+  bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
-  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests commit-msg; do
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers commit-msg; do
     bash "tools/check/$t-test.sh" || rc=1
   done
   exit $rc'

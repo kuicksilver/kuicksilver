@@ -150,6 +150,7 @@ commit as the code it records, so the change is in the diff a reviewer reads.
 | [`test-sleeps.py`](../tools/check/test-sleeps.py) | more sleeps in a test file than `tools/check/test-sleeps.lock` records (a new file: none), unless Git (`git diff -M -C` from the merge base with `main`) takes the file for a rename or copy of a locked file of the same source set that has as many fewer: a rename, move or split, which `--update` carries; sleeps removed in one file never pay for new ones in another; or fewer sleeps than the lock, until it is lowered. Sleeps are calls of `delay`, `sleep` (`Thread.sleep`), `usleep`, `nanosleep`, `Sleep`, `parkNanos` and `parkUntil`, also under an import alias, as a reference (`Thread::sleep`) or in a string template, and calls of the test sources' polling helpers whose body sleeps (`eventually { }`), a call resolved as Kotlin sees the name (the file's own function first; a private or local one nowhere else; another file's only in the same package or imported) | `--update` lowers the lock and carries moves; a new file that needs a real wait is named in `tools/check/test-sleeps.allow` with its reason |
 | [`env-apis.py`](../tools/check/env-apis.py) | a host-name lookup in the main Kotlin, Java and C sources of the library modules, also in a string template or as a reference: Ktor's `hostname`, java.net's `hostName` / `getHostName` / `canonicalHostName`, `InetAddress.getLocalHost`, and `gethostname`, `getnameinfo`, `gethostbyaddr`, `GetNameInfoW`, `NSHost` | a use that does no lookup is counted per file in `tools/check/env-apis.allow`, `<path> \| <api> \| <count> \| <reason>`: one use more fails |
 | [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (`Class.test`, `Class#test`, a `.test` of the class named before it, a bare name in a list of tests that is no test and no name of the sources, a class name close to a test class's but in no source), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
+| [`reproducers.py`](../tools/check/reproducers.py) | a file named like a fuzzing artifact (`crash-`, `timeout-`, `oom-`, `leak-`, `slow-unit-`, also with `_` and in any case), tracked or not, anywhere in the tree, without an entry in `tools/fuzz/reproducers.txt`; an entry whose input is gone (renamed or deleted), a link, or no regression or corpus input of a Jazzer target; an unknown state (`live`: the input fails again with the plant; `dead`: it passes even then), a fix that is no commit, a dead entry without a guard test, a guard test that `tools/check/test-count.lock` does not list, that the JVM tests do not run or that belongs to another module, a live entry without the piece of its failure; a plant (`tools/fuzz/plants/<name>.patch`) that is missing, does not apply to the tree (`git apply --check`), changes nothing, touches an input, the tooling or a guard test's own file, or that no entry uses | the entries themselves; `tools/fuzz/reproducers-verify.sh` checks what they claim |
 | [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error) | none |
 
 What the checks cannot see: `test-discovery.py` reads the brace structure of the sources, not their types, so a test
@@ -160,7 +161,9 @@ same-named functions both visible to a file (overloads, members of different cla
 a helper of the main sources (`kuicksilver-testing`) is not followed, a wait written as a busy loop over the clock is no
 call it counts, and a new file Git takes for a copy of a file that lost sleeps may take them over. `env-apis.py` matches names, so a lookup
 reached through a function of another name (a wrapper) is not seen. `rfc-tests.py` checks that a named test exists, not
-that it tests what the row claims.
+that it tests what the row claims. `reproducers.py` knows a reproducer by its name only: one committed under another name
+(`seed-*`) is not asked for an entry, and a plant is a patch a reviewer reads (one that makes a harness throw the expected
+text would pass the verifier); whether the records hold is checked weekly and by hand, not on every change.
 
 **Merging the locks.** `test-count.lock` has one sorted line per test, so two branches that add tests to different
 classes merge without a conflict. On a conflict in any lock (`test-count.lock`, `test-sleeps.lock`, `rfc-tests.lock`),
@@ -245,7 +248,9 @@ change lands; the hosted results are read, not enforced. The other workflows:
 - [`fuzz.yml`](../.github/workflows/fuzz.yml): a fuzzing campaign, one runner per target, weekly (2 hours per target)
   and by hand. A finding fails the job and notifies the maintainers; its reproducer and logs are never uploaded,
   because artifacts of a public repository are public and a finding stays private until it is fixed (that a target
-  found something is visible in the public run, what it found is not);
+  found something is visible in the public run, what it found is not). Its `reproducers` job runs
+  `tools/fuzz/reproducers-verify.sh`: with each plant of `tools/fuzz/reproducers.txt` applied in turn, every live
+  reproducer must fail again with its recorded failure, every dead one must still pass, and every guard test must fail;
 - [`release.yml`](../.github/workflows/release.yml): a hosted release, not used ([release.md](release.md#alternative-the-release-workflow-not-used));
 - [`interop-image.yml`](../.github/workflows/interop-image.yml): publishes the interop images of a released version to
   GHCR, by hand;

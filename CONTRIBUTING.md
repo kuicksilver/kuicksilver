@@ -308,7 +308,13 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   it is fixed ([SECURITY.md](SECURITY.md)). That a target found something is visible in the public run; what it found
   is not. Reproduce it locally with `tools/fuzz/campaign.sh run --targets <target>`. Only `stats.tsv` is uploaded (`fuzz-stats-<target>`);
   the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
-  reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
+  reproduces it, a fix, and an entry of `tools/fuzz/reproducers.txt`: the fix commit, a plant
+  (`tools/fuzz/plants/<name>.patch`, the smallest patch that puts the bug back), the unit test and the piece of the failure
+  the input gives with the plant (`tools/check/reproducers.py` checks the entry's form with the repository checks;
+  `tools/fuzz/reproducers-verify.sh` applies every plant in a copy of the tree and checks that each live input fails
+  again, each dead one still passes and each guard test fails, a few minutes per plant: run it after changing a
+  reproducer, a plant, the guarded code or a harness); delete `build/fuzz-campaign/crashed-<target>` so the campaign
+  takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
   in `build/fuzz-campaign/load-timeouts/` and is not a finding. The hosted fuzzing is `fuzz.yml` alone, which keeps
   findings private. ClusterFuzzLite is not enabled in this repository: on a finding it uploads the input as a workflow
