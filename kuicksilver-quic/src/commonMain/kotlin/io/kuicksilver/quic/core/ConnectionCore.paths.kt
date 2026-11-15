@@ -153,8 +153,33 @@ internal fun ConnectionCore.onNewConnectionId(
     resumeCidWaiters()
 }
 
-/** Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5). */
+/**
+ * Client, RFC 9000 section 9.6.2: the move to the validated preferred-address path [p], with the ID it probed with ("A client constructs
+ * packets using any previously unused active connection ID", section 9.6.1) or, when the server retired that one meanwhile (a Retire
+ * Prior To), a spare one. Never the ID in use toward the original address (section 9.5: "MUST NOT reuse a connection ID when sending to
+ * more than one destination address"): with none, the move waits for the server's next NEW_CONNECTION_ID ([resumeCidWaiters]).
+ */
+private fun ConnectionCore.moveToPreferredAddress(p: Path) {
+    if (movedToPreferred || p === paths.active || dcidFor(p) == null) return
+    val old = paths.active
+    switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
+    movedToPreferred = true
+    if (old !== paths.active) {
+        paths.remove(old)
+        releasePathCid(old)
+    }
+}
+
+/**
+ * Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5), and a client's
+ * move to the validated preferred address that waited for one is made.
+ */
 private fun ConnectionCore.resumeCidWaiters() {
+    if (role == TlsRole.Client) {
+        paths.all.firstOrNull { it.preferred && it.carrier == null && it.state == PathState.Validated && it !== paths.active }?.let {
+            moveToPreferredAddress(it)
+        }
+    }
     val a = paths.active
     if (a.waitsForPeerCid) {
         val cur = cids.currentPeer
@@ -1014,14 +1039,7 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                 return
             }
             if (toPreferred) {
-                // RFC 9000 section 9.6.2: the move happens on the validated path, which keeps the sequence-1 ID it probed with
-                val old = paths.active
-                switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
-                movedToPreferred = true
-                if (old !== paths.active) {
-                    paths.remove(old)
-                    releasePathCid(old)
-                }
+                moveToPreferredAddress(p)
                 return
             }
             // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)

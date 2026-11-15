@@ -1194,6 +1194,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `.negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn`,
   `.negative_aServerPathOnThePreferredSocketGetsThatSocketsCapabilities`,
   `.negative_eachPreferredSocketFamilyKeepsItsOwnCapabilities`, `PathTest.negative_aClosedClientSocketIsForgotten`).
+- QUIC client: the move to the server's preferred address could keep the ID the connection used toward the original
+  address, so one ID went to both (RFC 9000 section 9.5 "MUST NOT reuse a connection ID when sending to more than one
+  destination address"): when the server's Retire Prior To retired the ID the preferred path probed with before the
+  validation finished, the switch took the ID in use toward the original address. The client now moves only with an ID
+  never used toward the original address and, with none, moves once the server's next ID arrives (found by the connection fuzzer over TLS with a compatible version;
+  `PreferredAddressTest.negative_theMoveToThePreferredAddressNeverTakesTheIdUsedTowardTheOriginalOne`).
 - QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
   was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
   10.2.2). They are dropped when the connection starts closing or draining
