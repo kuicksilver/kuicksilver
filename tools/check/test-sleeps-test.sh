@@ -7,7 +7,8 @@
 # import alias, a reference Thread::sleep, LockSupport.parkNanos, a delay inside a string template, a call of a polling
 # helper whose body sleeps (also one that only calls such a helper), and a new file with a sleep. A file renamed, or split
 # in two, inside its source set fails as moved until --update carries the count; a move to another source set is an
-# addition there. An allowlisted new file is recorded by --update; a removed sleep fails until --update lowers the lock;
+# addition there; a sleep removed in one file does not pay for one in a new file. A private helper of another file and
+# a helper of a package not imported are other functions, an imported one counts. An allowlisted new file is recorded by --update; a removed sleep fails until --update lowers the lock;
 # a file gone, an allowlist entry without a reason and one for a file without sleeps fail. Usage: test-sleeps-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +37,7 @@ printf 'fun lib() = Thread.sleep(5)\n' > "$r/kuicksilver-x/src/commonMain/kotlin
 git -C "$r" add -A
 update
 expect 0 "the first --update records the tree; comments, strings, declarations and main code do not count" "3 files, 5 sleeps ("
+git -C "$r" add -A; git -C "$r" -c user.name=t -c user.email=t@example.invalid commit -qm base
 new() { # <what> <body line>: one more sleep in ATest.kt fails, and --update keeps the old count
   kt "$a" "$base" "$2"
   expect 1 "negative: $1" "ATest.kt | added | 3 sleeps, the lock allows 2"
@@ -48,6 +50,10 @@ new "LockSupport.parkNanos" 'fun b() { java.util.concurrent.locks.LockSupport.pa
 new "a delay in a string template" 'suspend fun b() = println("waited ${delay(5)}")'
 new "a call of a polling helper" 'fun b() { eventually { true } }'
 new "a call of a helper that calls a polling helper" 'fun b() = soon { true }'
+kt "$a" 'fun a() { delay(10) }'
+printf 'package x.c\n\nimport kotlin.test.Test\n\nclass CTest {\n    @Test fun waitsHalfASecond() = kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) }\n}\n' > "$r/$d/CTest.kt"; git -C "$r" add -A
+expect 1 "negative: a sleep removed in one file does not pay for one in a new file" "CTest.kt | added | 1 sleeps, the lock allows 0"
+git -C "$r" rm -qf "$d/CTest.kt"
 kt "$a" "$base"
 printf 'void t(void) { struct timespec w = {0, 1}; nanosleep(&w, NULL); usleep(2); }\n' > "$r/$c"; git -C "$r" add -A
 expect 1 "negative: a new usleep in a C test" "test_x.c | added | 2 sleeps, the lock allows 1"
@@ -77,6 +83,17 @@ kt "$d/RenamedTest.kt" 'fun a() { }'
 expect 1 "negative: fewer sleeps must lower the lock" "RenamedTest.kt | stale |"
 update
 expect 0 "--update lowers the lock" "3 files, 4 sleeps ("
+# helpers are resolved as Kotlin sees names: a private helper of another file, or a helper of another package that is not
+# imported, is another function
+mkdir -p "$r/kuicksilver-x/src/jvmTest/kotlin/y"
+printf 'package y\n\nclass TlsTest {\n    private fun stored(k: Int) = awaitTicket(k)\n    private fun awaitTicket(k: Int) { Thread.sleep(5) }\n}\n\nfun settle() { Thread.sleep(1) }\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/y/TlsTest.kt"
+printf 'package z\n\nclass DeflateTest {\n    fun t() { stored(1); stored(2); settle() }\n}\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/y/DeflateTest.kt"
+git -C "$r" add -A
+expect 1 "a private helper of another file, or a helper of a package not imported, is no sleep" "TlsTest.kt | added | 3 sleeps, the lock allows 0"
+if grep -q "DeflateTest.kt" "$tmp/out.txt"; then echo "FAIL: DeflateTest.kt counted another file's helpers"; sed 's/^/  | /' "$tmp/out.txt"; rc=1; fi
+printf 'package z\n\nimport y.settle\n\nclass DeflateTest {\n    fun t() { stored(1); settle() }\n}\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/y/DeflateTest.kt"; git -C "$r" add -A
+expect 1 "negative: an imported helper of another package counts" "DeflateTest.kt | added | 1 sleeps, the lock allows 0"
+git -C "$r" rm -qrf "kuicksilver-x/src/jvmTest/kotlin/y"
 git -C "$r" rm -qf "$c"
 expect 1 "negative: a file gone is stale" "test_x.c | stale |"
 update

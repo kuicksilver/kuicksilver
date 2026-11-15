@@ -45,8 +45,6 @@ kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/Engin
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsResolutionTest.kt	18
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsTest.kt	13
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/SocketAddressAfterCloseTest.kt	3
-kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/WebSocketOutputGuardTest.kt	3
-kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/websocket/PerMessageDeflateTest.kt	2
 kuicksilver-ktor-network/src/jvmCommonTest/kotlin/io/kuicksilver/ktor/network/DescriptorClosed.jvmCommon.kt	1
 kuicksilver-ktor-network/src/jvmTest/kotlin/io/kuicksilver/ktor/network/TcpWriterTest.kt	4
 kuicksilver-ktor-network/src/mingwTest/kotlin/io/kuicksilver/ktor/network/WindowsTcpSocketTest.kt	1
@@ -83,7 +81,6 @@ kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/api/ShutdownTest.kt	2
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/api/StreamBridgeTest.kt	2
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/api/StreamRetirementTest.kt	3
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/qlog/AsyncQlogSinkTest.kt	1
-kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/runtime/BatchReceiverTest.kt	14
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/runtime/EcnFailureTest.kt	3
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/runtime/LoopGroupTest.kt	8
 kuicksilver-quic/src/commonTest/kotlin/io/kuicksilver/quic/runtime/SocketDispatcherThreadTest.kt	2
