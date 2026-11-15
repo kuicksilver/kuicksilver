@@ -1143,6 +1143,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   deadline fired; an HTTP/2 health PING answered at its bound retired a healthy connection; a TLS handshake completed at
   its deadline failed as timed out; the other address family's answer at the end of the Resolution Delay (RFC 8305
   section 3) was taken off its queue and dropped.
+- HTTP/3: a HEADERS frame read whole as its `maxHeaderBlockTime` fired failed its stream with `H3_REQUEST_CANCELLED`
+  (the same `withTimeoutOrNull` race); the section is now kept once it was read.
 - QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
   as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC

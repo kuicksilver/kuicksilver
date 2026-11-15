@@ -15,7 +15,9 @@ import io.kuicksilver.http3.frame.FrameRules
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.quic.Initiator
-import kotlinx.coroutines.withTimeoutOrNull
+import io.kuicksilver.tls.completedWithin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 
@@ -191,6 +193,8 @@ internal class RequestFrames(
     private val streamId: Long? = null,
     /** What a reader waiting for [budget] also wakes for: its stream's or its connection's end; made only when it waits. */
     private val budgetWatch: (() -> EndWatch)? = null,
+    /** Test hook: runs once a HEADERS section under [sectionDeadline] was read whole, with the job of the deadline's scope. */
+    private val afterSectionForTest: (suspend (kotlinx.coroutines.Job) -> Unit)? = null,
 ) {
     private fun ahead(bytes: Long) {
         limitReadAhead?.invoke(bytes.coerceAtLeast(1))
@@ -248,9 +252,14 @@ internal class RequestFrames(
         }
     }
 
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private suspend fun readSectionInTime(len: Int): ByteArray {
         val deadline = sectionDeadline ?: return readSection(len)
-        return withTimeoutOrNull(deadline) { readSection(len) }
+        // a section read whole as the deadline fires is the section: withTimeoutOrNull drops a result when its timeout
+        // (another thread) lands after the block returned, and the stream failed for a frame that had arrived
+        return completedWithin(deadline) {
+            readSection(len).also { afterSectionForTest?.invoke(currentCoroutineContext().job) }
+        }
             ?: throw StreamFailure(
                 Http3ErrorCode.REQUEST_CANCELLED,
                 Http3Exception.Protocol(

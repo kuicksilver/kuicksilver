@@ -1139,6 +1139,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3ConnectionSeededTest.s
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.SectionDeadlineRaceTest.negative_aSectionReadAsItsDeadlineFiresIsTheSection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aCloseWrittenAsTheDeadlineFiresIsNotReset
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aDrainWrittenAsTheDeadlineFiresIsNotReportedUnwritten
