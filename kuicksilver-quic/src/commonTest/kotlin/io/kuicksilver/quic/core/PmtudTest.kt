@@ -893,6 +893,26 @@ class PmtudTest {
         }
     }
 
+    @Test fun negative_losingDfDropsTheMtuTo1200() {
+        // RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer". A path at 1452 whose socket no longer sets DF
+        // (new capabilities) has no DPLPMTUD and nothing keeps a larger datagram from being fragmented: back to 1200, and nothing
+        // larger goes out afterwards
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            c.setPathCapabilities(PathId.Initial, IoCapabilities.Portable) // no DF
+            assertEquals(1200, c.stats.pathMtu)
+            assertEquals(null, c.path.pmtud)
+            val sizesBefore = p.clientDatagramSizes.size
+            transfer(p, c, 100_000)
+            assertTrue(p.clientDatagramSizes.drop(sizesBefore).all { it <= 1200 }, "nothing above 1200 without DF")
+            assertEquals(null, p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_ptbWithEmptyQuoteIgnored() {
         // a message that quotes nothing of ours cannot be checked: ignored
         val (p, c) = pair()

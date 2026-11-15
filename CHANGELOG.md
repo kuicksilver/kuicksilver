@@ -1071,6 +1071,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a path whose socket capabilities change to no DF (`setPathCapabilities`) went on sending datagrams of the
+  size its path MTU search had reached, which the network may then fragment; it goes back to 1200 bytes (RFC 9000
+  section 14: "UDP datagrams MUST NOT be fragmented at the IP layer").
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the

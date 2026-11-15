@@ -3639,6 +3639,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_aPro
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_forgedPtbDropIsProvisionalAndSuspendsPtbs
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_forgedPtbsCannotHoldThePathAtTheBase
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_icmpPtbIgnored
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_losingDfDropsTheMtuTo1200
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_lossesOfPacketsLargerThanTheSizeInUseAreNoBlackHole
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_ptbAboveTheMtuWithZeroLengthIdsDoesNotCapTheSearch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.negative_ptbBelowQuicMinimumIgnored

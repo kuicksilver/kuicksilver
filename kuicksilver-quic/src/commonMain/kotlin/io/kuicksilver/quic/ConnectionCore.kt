@@ -252,6 +252,9 @@ public class ConnectionCore internal constructor(
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
         p.pmtud =
             if (caps.df && config.pmtud) newPmtud(p.mtu) else null
+        // RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer"; without DF (or without DPLPMTUD to watch the
+        // size) only the 1200 bytes every QUIC path carries are safe
+        if (p.pmtud == null) setMtu(p, 1200)
     }
 
     internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
