@@ -56,6 +56,7 @@ import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -63,10 +64,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.EOFException
 import kotlinx.io.readByteArray
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -213,6 +214,10 @@ internal class FirstContactBody(
 
 internal val FirstContactBodyKey: AttributeKey<FirstContactBody> = AttributeKey("kuicksilver.FirstContactBody")
 
+/** Test hook: runs once [prepareFirstContact] read the body to its end, still inside its deadline. */
+@kotlin.concurrent.Volatile
+internal var firstContactBufferedForTest: (suspend () -> Unit)? = null
+
 /** The body [prepareFirstContact] buffered for this request, or null. */
 internal fun HttpRequestData.firstContactBody(): ByteArray? =
     attributes
@@ -249,15 +254,17 @@ internal suspend fun prepareFirstContact(
                 "RFC 9112 section 6.1 forbids Transfer-Encoding then; send a request without it first",
         )
     }
-    // boxed: null is a body over the bound, a missing box the deadline
+    // boxed: null is a body over the bound, a missing box the deadline; completedWithin: a body read to its end as the
+    // deadline fires is kept (it was consumed, and a streamed body cannot be read again)
     val buffered =
-        withTimeoutOrNull(withinMillis.coerceAtLeast(1)) { listOf(bufferBody(body, FIRST_CONTACT_BODY_LIMIT)) }
-            ?: throw IllegalStateException(
-                "the request body has no length and did not end within $withinMillis ms, but $server answered as an " +
-                    "HTTP/1.0 server (no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids " +
-                    "chunked framing then, and a body framed by Content-Length is sent only once it ended (a body that " +
-                    "waits for the response cannot be); give the body a length, or send a request without a body first",
-            )
+        completedWithin(withinMillis.coerceAtLeast(1).milliseconds) {
+            listOf(bufferBody(body, FIRST_CONTACT_BODY_LIMIT)).also { firstContactBufferedForTest?.invoke() }
+        } ?: throw IllegalStateException(
+            "the request body has no length and did not end within $withinMillis ms, but $server answered as an " +
+                "HTTP/1.0 server (no HTTP/1.1 response on this route, no ALPN http/1.1): RFC 9112 section 6.1 forbids " +
+                "chunked framing then, and a body framed by Content-Length is sent only once it ended (a body that " +
+                "waits for the response cannot be); give the body a length, or send a request without a body first",
+        )
     val bytes =
         buffered.single() ?: throw IllegalStateException(
             "the request body has no length and is longer than $FIRST_CONTACT_BODY_LIMIT bytes, but " +

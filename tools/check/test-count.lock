@@ -2073,6 +2073,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTes
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.CommittedCorpusReplayTest.everyCommittedInputPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.H1ResponseFuzzTest.h1Response
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.fuzz.SvcbFuzzTest.svcbMessage
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.h1.FirstContactDeadlineRaceTest.negative_aBodyReadAsTheDeadlineFiresIsKept
 kuicksilver-ktor-client/src/mingwTest	io.kuicksilver.ktor.client.SystemProxyWindowsTest.currentUserSettingsRead
 kuicksilver-ktor-client/src/mingwTest	io.kuicksilver.ktor.client.SystemProxyWindowsTest.readsIeProxyConfig
 kuicksilver-ktor-client/src/mingwTest	io.kuicksilver.ktor.client.WinPacUrlCheckTest.printWhatTheScriptSees
