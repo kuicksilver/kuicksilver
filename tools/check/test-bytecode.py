@@ -22,6 +22,7 @@ Usage: test-bytecode.py [--root <repo>] [--targets jvm,android-host] [classes-di
 """
 import glob
 import os
+import re
 import struct
 import sys
 
@@ -131,14 +132,24 @@ KINDS = {"jvm": ("jvm/test", ("commonTest", "jvmTest", "jvmCommonTest")),
 
 
 def expected(root, kinds):
-    """(class directory, why) of every kuicksilver-* module whose tracked test sources a kind compiles."""
+    """(class directory, why) of every kuicksilver-* module whose tracked test sources a kind compiles: JVM classes only
+    for a module whose build script declares a JVM target, Android host classes for a module with androidHostTest."""
     import subprocess
     out = subprocess.run(["git", "-C", root, "ls-files", "kuicksilver-*/src/*Test/*.kt"], capture_output=True, text=True).stdout
-    want = {}
+    want, jvm = {}, {}
     for f in out.splitlines():
         module, _, sset = f.split("/")[:3]
+        if module not in jvm:  # a JVM target: the kuicksilver.kmp convention (it declares jvm), jvm() or kotlin("jvm")
+            try:
+                with open(os.path.join(root, module, "build.gradle.kts"), encoding="utf-8") as fh:
+                    build = fh.read()
+            except OSError:
+                build = ""
+            jvm[module] = re.search(r'id\("kuicksilver\.kmp"\)|\bjvm\s*[({]|kotlin\("jvm"\)', build) is not None
         for kind in kinds:
             sub, sets = KINDS[kind]
+            if kind == "jvm" and sset == "commonTest" and not jvm[module]:
+                continue  # common tests of a module without a JVM target compile elsewhere (jvmTest implies one)
             if sset in sets and (kind != "android-host" or sset == "androidHostTest"):
                 want.setdefault(os.path.join(root, module, "build", "classes", "kotlin", *sub.split("/")), f"{module}/src/{sset}")
     return want

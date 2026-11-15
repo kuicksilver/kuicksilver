@@ -8,7 +8,8 @@
 # helper whose body sleeps (also one that only calls such a helper), and a new file with a sleep. A file renamed, or split
 # in two, inside its source set fails as moved until --update carries the count; a move to another source set is an
 # addition there; a sleep removed in one file does not pay for one in a new file. A private helper of another file and
-# a helper of a package not imported are other functions, an imported one counts. An allowlisted new file is recorded by --update; a removed sleep fails until --update lowers the lock;
+# a helper of a package not imported are other functions, an imported one counts; an explicit import hides a star
+# import, and fully qualified calls and helpers of objects (imported, or called on the imported object) count. An allowlisted new file is recorded by --update; a removed sleep fails until --update lowers the lock;
 # a file gone, an allowlist entry without a reason and one for a file without sleeps fail. Usage: test-sleeps-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,6 +95,32 @@ if grep -q "DeflateTest.kt" "$tmp/out.txt"; then echo "FAIL: DeflateTest.kt coun
 printf 'package z\n\nimport y.settle\n\nclass DeflateTest {\n    fun t() { stored(1); settle() }\n}\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/y/DeflateTest.kt"; git -C "$r" add -A
 expect 1 "negative: an imported helper of another package counts" "DeflateTest.kt | added | 1 sleeps, the lock allows 0"
 git -C "$r" rm -qrf "kuicksilver-x/src/jvmTest/kotlin/y"
+q="kuicksilver-x/src/jvmTest/kotlin/q"; mkdir -p "$r/$q"
+printf 'package w\n\nfun eventually() { Thread.sleep(1) }\n\nobject Waits {\n    fun settle() { Thread.sleep(1) }\n}\n' > "$r/$q/W.kt"
+printf 'package v\n\nfun eventually() {}\n' > "$r/$q/V.kt"
+helper_case() { # <0|1> <what> <pattern> <body of a file of package z>
+  printf 'package z\n\n%s\n' "$4" > "$r/$q/Z.kt"; git -C "$r" add -A
+  python3 -I "$here/test-sleeps.py" "$r" > "$tmp/out.txt" 2>&1
+  if grep -qF -- "$3" "$tmp/out.txt" && { [ "$1" = 1 ] || ! grep -q "Z.kt" "$tmp/out.txt"; }; then echo "ok: $2"
+  else echo "FAIL: $2 (want '$3')"; sed 's/^/  | /' "$tmp/out.txt"; rc=1; fi
+}
+helper_case 0 "an explicit import hides a star-imported helper of the same name" "W.kt | added" \
+'import v.eventually
+import w.*
+
+class ZTest { fun t() { eventually() } }'
+helper_case 1 "negative: a star-imported helper counts" "Z.kt | added | 1 sleeps" 'import w.*
+
+class ZTest { fun t() { eventually() } }'
+helper_case 1 "negative: a fully qualified helper call counts" "Z.kt | added | 1 sleeps" 'class ZTest { fun t() { w.eventually() } }'
+helper_case 1 "negative: a helper of an object, fully qualified, counts" "Z.kt | added | 1 sleeps" 'class ZTest { fun t() { w.Waits.settle() } }'
+helper_case 1 "negative: a helper imported from an object counts" "Z.kt | added | 1 sleeps" 'import w.Waits.settle
+
+class ZTest { fun t() { settle() } }'
+helper_case 1 "negative: a helper called on an imported object counts" "Z.kt | added | 1 sleeps" 'import w.Waits
+
+class ZTest { fun t() { Waits.settle() } }'
+git -C "$r" rm -qrf "$q"
 git -C "$r" rm -qf "$c"
 expect 1 "negative: a file gone is stale" "test_x.c | stale |"
 update

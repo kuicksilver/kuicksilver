@@ -8,8 +8,8 @@ file, its sleeps: calls of delay, sleep (Thread.sleep, TimeUnit's, POSIX), uslee
 parkNanos and parkUntil, also under an import alias (`import kotlinx.coroutines.delay as pause`) or as a reference
 (`Thread::sleep`), and calls of the polling helpers of the test sources (a function, no test itself, whose name no main
 source declares, whose body calls a sleep or another such helper: `eventually { }`), a call resolved as Kotlin sees the
-name: the file's own function first, a private or local one nowhere else, another file's only in the same package or
-imported. Comments and strings do not count,
+name: a qualified call (`a.eventually { }`, `a.Waits.settle()`) the package or object it names; otherwise the file's own
+function first, a private or local one nowhere else, an explicit import before the same package before a star import. Comments and strings do not count,
 the code of a string template does, a declaration `fun delay(` does not. Test files are the Kotlin files of the test
 source sets (src/<set>Test/, src/test/) and the C tests (kuicksilver-native/src/c/test/).
   added     a file has more than its line (no line: 0), and no file it was renamed or copied from gave them up;
@@ -47,9 +47,12 @@ _DECL = re.compile(r"\bfun\s+(?:<[^>]*>\s*)?(?:[\w.<>?]+\.)?$")
 _CALL = re.compile(r"(::)?\b([A-Za-z_]\w*)\b(\s*(?:<[^>{(;=]*>)?\s*[({])?")
 
 
+_QUAL = re.compile(r"((?:[A-Za-z_]\w*\s*\.\s*)+)$")
+
+
 def calls(code):
-    """[(position, name)] of every call (`name(`, `name {`, `name<T>(`, also `Thread.sleep(`) and reference (`::name`)
-    in code; a declaration `fun name(` is none."""
+    """[(position, name, qualifier)] of every call (`name(`, `name {`, `name<T>(`, also `Thread.sleep(`, `a.b.name(`, the
+    qualifier then `a.b`) and reference (`::name`) in code; a declaration `fun name(` is none."""
     out = []
     for m in _CALL.finditer(code):
         if not (m.group(1) or m.group(3)):
@@ -57,7 +60,8 @@ def calls(code):
         line_start = code.rfind("\n", 0, m.start()) + 1
         if _DECL.search(code[line_start:m.start()]):
             continue
-        out.append((m.start(), m.group(2)))
+        q = _QUAL.search(code[line_start:m.start()]) if not m.group(1) else None
+        out.append((m.start(), m.group(2), re.sub(r"\s+", "", q.group(1))[:-1] if q else ""))
     return out
 
 
@@ -94,7 +98,7 @@ def sleeps(root):
                             pkg=pm.group(1) if pm else "", imports=imports, stars=stars)
         elif f.endswith(".kt") and ks.MAIN_SET.match(f):
             main_names.update(re.findall(r"\bfun\s+(?:<[^>]*>\s*)?(?:[\w.<>?]+\.)?(\w+)\s*\(", ks.read(root, f)))
-    decls, by_name = [], {}  # (file, name, private, the names its body calls)
+    decls, by_name = [], {}  # (file, name, private, the (name, qualifier) its body calls, fully qualified name)
     for f, info in files.items():
         if not f.endswith(".kt"):
             continue
@@ -109,34 +113,48 @@ def sleeps(root):
             head = code[code.rfind("\n", 0, code.rfind("fun", 0, start)) + 1:start]
             local = any(fr.kind in ("function", "block") for fr in ks.stack_at(index, code.rfind("fun", 0, start)))
             private = local or re.search(r"\bprivate\b", head) is not None
-            d = (f, name, private, {n for p, n in info["calls"] if start <= p < end})
+            owners = [fr.name for fr in ks.stack_at(index, code.rfind("fun", 0, start))[1:] if fr.name]
+            fq = ".".join(x for x in [info["pkg"], *owners, name] if x)
+            d = (f, name, private, {(n, q) for p, n, q in info["calls"] if start <= p < end}, fq)
             decls.append(d)
             by_name.setdefault(name, []).append(d)
 
-    def visible(f, name):
-        """The helper declarations a call of name in file f can mean."""
+    def visible(f, name, qual=""):
+        """The helper declarations a call of name (with its qualifier) in file f can mean: a qualified call names a
+        package or an object (`a.eventually`, `a.Waits.settle`, `Waits.settle` with Waits imported); otherwise the
+        file's own function, else an explicit import (which hides star imports), else the same package, else a star
+        import. A qualifier that is no package or object (a receiver) falls back to the unqualified rules."""
         info = files[f]
-        own = [d for d in by_name.get(name, ()) if d[0] == f]
+        cands = by_name.get(name, ())
+        if qual:
+            head, _, rest = qual.partition(".")
+            bases = [qual, f"{info['pkg']}.{qual}" if info["pkg"] else qual]
+            if head in info["imports"]:
+                bases.append(info["imports"][head] + ("." + rest if rest else ""))
+            bases += [f"{star}.{qual}" for star in info["stars"]]
+            hit = [d for d in cands if any(d[4] == f"{b}.{name}" for b in bases) and (not d[2] or d[0] == f)]
+            if hit:
+                return hit
+        own = [d for d in cands if d[0] == f]
         if own or name in info.get("own", ()):
             return own  # the file's own function of that name hides every other
         target = info["imports"].get(name)
-        out = []
-        for d in by_name.get(name, ()):
-            if d[2]:
-                continue
-            pkg = files[d[0]]["pkg"]
-            if pkg == info["pkg"] or pkg in info["stars"] or (target and target == f"{pkg}.{name}"):
-                out.append(d)
-        return out
+        if target:
+            return [d for d in cands if not d[2] and d[4] == target]  # an explicit import hides the rest
+        same = [d for d in cands if not d[2] and files[d[0]]["pkg"] == info["pkg"]]
+        if same:
+            return same
+        return [d for d in cands if not d[2] and any(d[4] == f"{star}.{name}" for star in info["stars"])]
 
     helpers = set()  # (file, name) of the sleeping helpers
     while True:
         new = set()
         for d in decls:
-            f, name, _, called = d
+            f, name, _, called, _ = d
             if (f, name) in helpers:
                 continue
-            if called & files[f]["sleepers"] or any((h[0], h[1]) in helpers for c in called for h in visible(f, c)):
+            if any(c in files[f]["sleepers"] for c, _ in called) or \
+                    any((h[0], h[1]) in helpers for c, q in called for h in visible(f, c, q)):
                 new.add((f, name))
         if not new:
             break
@@ -144,8 +162,8 @@ def sleeps(root):
     out = {}
     for f, info in files.items():
         n = 0
-        for _, name in info["calls"]:
-            if name in info["sleepers"] or (name in by_name and any((h[0], h[1]) in helpers for h in visible(f, name))):
+        for _, name, qual in info["calls"]:
+            if name in info["sleepers"] or (name in by_name and any((h[0], h[1]) in helpers for h in visible(f, name, qual))):
                 n += 1
         if n:
             out[f] = n

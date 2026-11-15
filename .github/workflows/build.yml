@@ -611,6 +611,8 @@ jobs:
         run: $G :kuicksilver-native:bundleAndroidMainAar
       - name: 'android: every compiled host test method can run'
         # the Android host tests run under JUnit on the host JVM; tools/check/test-bytecode.py reads their class files
+        # (the same classes for every API level: once)
+        if: ${{ matrix.api == 35 }}
         run: |
           # shellcheck disable=SC2046   # one Gradle task path per module
           $G $(git ls-files 'kuicksilver-*/src/androidHostTest/*' | cut -d/ -f1 | sort -u | sed 's/.*/:&:compileAndroidHostTest/')

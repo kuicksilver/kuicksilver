@@ -7,7 +7,7 @@
 # JUnit 4, JUnit 5 and FuzzTest annotations alike), a static and a private test, and an abstract class or an interface
 # with tests nothing extends, a class with a private constructor or one that needs an argument each fail; Android host
 # test classes are read from <module>/build/classes/kotlin/android/hostTest, and a module whose JVM test sources have no
-# class directory fails as missing; an empty directory is a usage error, not a pass. Needs javac.
+# class directory fails as missing (only for a module whose build declares a JVM target); an empty directory is a usage error, not a pass. Needs javac.
 # Usage: test-bytecode-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +76,11 @@ layout() { # <want> <what> <pattern> <args...>
 }
 layout 1 "negative: an Android host test that returns a value is read from android/hostTest" "kuicksilver-x/build/classes/kotlin/android/hostTest | x.H.h | returns |"
 layout 1 "negative: a module whose JVM tests were not compiled is no pass" "kuicksilver-x/build/classes/kotlin/jvm/test | missing | kuicksilver-x/src/jvmTest has tests"
+printf 'kotlin { jvm() }\n' > "$repo/kuicksilver-x/build.gradle.kts"
+mkdir -p "$repo/kuicksilver-native-only/src/commonTest/kotlin"; printf 'class N\n' > "$repo/kuicksilver-native-only/src/commonTest/kotlin/N.kt"
+printf 'kotlin { macosArm64() }\n' > "$repo/kuicksilver-native-only/build.gradle.kts"; git -C "$repo" add -A
+layout 1 "a module without a JVM target is not expected to have JVM classes" "1 finding(s)" --targets jvm
+if grep -q "kuicksilver-native-only" "$tmp/res.txt"; then echo "FAIL: a native-only module was expected to have JVM classes"; rc=1; fi
 layout 1 "--targets android-host reads only the host tests" "1 directories, 2 classes, 1 test methods, 1 finding(s)" --targets android-host
 [ "$rc" = 0 ] && echo "all passed" || echo "FAILED"
 exit "$rc"
