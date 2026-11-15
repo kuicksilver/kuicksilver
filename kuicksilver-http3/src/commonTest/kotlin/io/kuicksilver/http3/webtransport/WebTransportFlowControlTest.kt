@@ -34,6 +34,7 @@ import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -453,6 +454,12 @@ class WebTransportFlowControlTest {
     /**
      * Exact reads (readFully, readByteArray(n)) never wait after their last bytes: what they read still gives credit
      * back, on the stream's clean end, so a session of such streams never stalls (section 5.6).
+     *
+     * Every stream is read as it arrives, each by its own reader: the twelve streams are written at once and wait for
+     * credit together, and which of them the sender's next WT_MAX_DATA serves is not in the order they were opened (nothing
+     * in section 5 orders it). A single reader taking the streams one after another could wait on a stream that got no
+     * credit while the credit sat unread in later ones, a stall of the test's own making (credit goes back as the
+     * application reads, by design), not of the exact reads.
      */
     @Test fun negative_exactReadsOfEndedStreamsGiveCreditBack() =
         h3Test {
@@ -469,9 +476,11 @@ class WebTransportFlowControlTest {
                     }
                 }
                 withTimeout(10.seconds) {
-                    repeat(12) {
-                        val r = s.acceptUni()
-                        if (it % 2 == 0) r.input.readFully(ByteArray(1000)) else r.input.readByteArray(1000)
+                    coroutineScope {
+                        repeat(12) {
+                            val r = s.acceptUni()
+                            launch { if (it % 2 == 0) r.input.readFully(ByteArray(1000)) else r.input.readByteArray(1000) }
+                        }
                     }
                 }
             }
