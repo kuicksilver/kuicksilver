@@ -142,7 +142,7 @@ class ZeroRttApiTest {
                 withTimeout(20.seconds) {
                     ticketFrom(p)
                     // a restarted server has other ticket keys: it refuses the ticket's early data
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto, admission)
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto, admission = admission)
                     try {
                         launch { runCatching { server.accept() } } // ends with the server's close
                         p.net.hold(p.clientIo.localAddress)
