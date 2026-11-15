@@ -80,6 +80,48 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * Found by the connection fuzzer (`connectionNull`, a client on a socket with DF and ECN): the path to the preferred address took
+     * the portable capabilities, so after the move the client ran no DPLPMTUD (its datagrams stayed at 1200 bytes) and never set ECT.
+     * RFC 9000 section 14.2: "An endpoint SHOULD use DPLPMTUD (Section 14.3) or PMTUD"; section 13.4.2: "An endpoint thus attempts to
+     * use ECN and validates this for each new connection, when switching to a server's preferred address, and on active connection
+     * migration to a new path." The path is on the client's socket, so it gets what that socket does.
+     */
+    @Test fun negative_thePreferredPathGetsTheSocketsDplpmtudAndEcn() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1))
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred address is probed")
+            val pp = pathTo(c, v4)!!
+            assertTrue(pp.pmtud != null, "DPLPMTUD on the preferred path")
+            assertEquals(io.kuicksilver.quic.EcnState.Testing, pp.ecn.state, "ECN validation on the preferred path")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The same for the preferred address probed again from the socket of an application's migration (RFC 9000 section 9.6.3). */
+    @Test fun negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            p.dropToPreferred = true // the first probe stays pending
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null && c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
+            repeat(3) { p.step() }
+            val caps = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+            // what the runtime's addPath does: the path, then its socket's capabilities
+            val pid = c.addPath(p.serverAddr, p.now)
+            c.setPathCapabilities(pid, caps)
+            val carried = c.paths.all.firstOrNull { it.preferred && it.socket == pid }
+            assertTrue(carried != null, "the preferred address is probed from the new socket")
+            assertTrue(carried.pmtud != null, "DPLPMTUD on the preferred path of the new socket")
+            assertEquals(io.kuicksilver.quic.EcnState.Testing, carried.ecn.state)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))

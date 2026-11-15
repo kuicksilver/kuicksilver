@@ -409,6 +409,7 @@ internal fun ConnectionCore.startPreferredProbe() {
     val p = paths.add(active.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
     p.amplification.validated = true // our own probe toward the server: nothing to amplify against
     p.preferred = true
+    initPathOnSocket(p, active) // the client's socket: its DPLPMTUD and ECN carry over (RFC 9000 sections 13.4.2, 14.2)
     startValidation(p)
 }
 
@@ -438,6 +439,7 @@ internal fun ConnectionCore.probePreferredFrom(
     p.amplification.validated = true // our own probe toward the server
     p.preferred = true
     p.carrier = app
+    initPathOnSocket(p, app) // the application's socket and what it does
     startValidation(p)
 }
 
@@ -493,8 +495,17 @@ private fun ConnectionCore.notePeerDcid(p: Path) {
 private fun ConnectionCore.initServerPath(
     p: Path,
     active: Path,
+) = initPathOnSocket(p, active)
+
+/**
+ * A path on the socket of [onSocket] gets what that socket does: its capabilities, ECN validated afresh (RFC 9000 section 13.4.2) and
+ * DPLPMTUD (RFC 9000 section 14), from [Path.mtu] (1200 on a new address, or what a NAT rebinding inherited).
+ */
+private fun ConnectionCore.initPathOnSocket(
+    p: Path,
+    onSocket: Path,
 ) {
-    p.caps = active.caps
+    p.caps = onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
     if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
 }
@@ -1246,6 +1257,7 @@ private fun ConnectionCore.openHandshakeCandidate(
     val k = paths.add(p.socket, p.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
     k.local = p.local
     k.handshakeCandidate = true
+    initPathOnSocket(k, p) // it may become the active path: what the socket does goes with it
     k.amplification.restore(p.amplification.received, p.amplification.sent, p.amplification.validated)
     k.state = p.state
     k.validatedAt = p.validatedAt
@@ -1287,6 +1299,7 @@ private fun ConnectionCore.openHandshakeMirror(from: InetSocketAddress) {
     val p = paths.active
     val k = paths.add(p.socket, from, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
     k.local = p.local // handshake-time moves follow the client's address only; our end stays the one its first Initial reached
+    initPathOnSocket(k, p)
     handshakeRebindFrom = p.remote
     handshakeRebindTo = from
     k.handshakeCandidate = true

@@ -242,13 +242,27 @@ public class ConnectionCore internal constructor(
     /** The peer addresses of [paths] under which the endpoint lists this connection (`EndpointCore.byRemote`); the endpoint's to keep. */
     internal val registeredRemotes = ArrayList<io.kuicksilver.quic.core.AddressClass.AddrKey>(2)
 
-    /** Tells the path what its socket can do; `ecnSend` starts ECN validation (the first ten packets go out ECT(0)). */
+    /**
+     * Tells the path what its socket can do; `ecnSend` starts ECN validation (the first ten packets go out ECT(0)). A client's probe of
+     * the server's preferred address from that path's socket (RFC 9000 section 9.6.3) gets the same.
+     */
     public fun setPathCapabilities(
         path: PathId,
         caps: IoCapabilities,
     ) {
         val p =
             paths.byId(path) ?: return
+        applyCapabilities(p, caps)
+        for (i in 0 until paths.all.size) {
+            val q = paths.all[i]
+            if (q.carrier === p) applyCapabilities(q, caps)
+        }
+    }
+
+    private fun applyCapabilities(
+        p: io.kuicksilver.quic.core.Path,
+        caps: IoCapabilities,
+    ) {
         p.caps = caps
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
         p.pmtud =
