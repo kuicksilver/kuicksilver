@@ -100,6 +100,10 @@ internal class SendStream(
     /** Bytes written but never sent are waiting. */
     val hasUnsent: Boolean get() = sentEnd < written
 
+    /** The application can still write: not reset (RESET_STREAM or RESET_STREAM_AT) and no FIN queued. */
+    val takesWrites: Boolean get() =
+        state != SendState.ResetSent && state != SendState.ResetRecvd && state != SendState.ResetAt && !finQueued
+
     /** A copy of the bytes queued for retransmission, for [restoreRetransmit]. */
     fun saveRetransmit(): LongArray = lost.copyOf(2 * lostCount)
 

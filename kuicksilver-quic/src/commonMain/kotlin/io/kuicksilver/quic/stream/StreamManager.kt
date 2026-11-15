@@ -193,6 +193,7 @@ internal class StreamManager(
      */
     fun sendCredit(id: Long): Long {
         val s = streams[id]?.send ?: return 0
+        if (!s.takesWrites) return 0
         val limit = sendLimit[id] ?: return 0
         return (minOf(limit.available, connSend.available) - (s.written - s.sentEnd)).coerceAtLeast(0)
     }
@@ -1029,10 +1030,11 @@ internal class StreamManager(
     }
 
     /**
-     * Drops what [s] (the sending half of [id]) still holds for a RESET_STREAM, ours or the answer to STOP_SENDING: its buffer, its
-     * place in the schedule and on the connection-blocked list. Nothing of it waits for flow credit afterwards, so neither
-     * STREAM_DATA_BLOCKED nor DATA_BLOCKED is reported for it again (RFC 9000 section 3.1: "A sender MUST NOT send a STREAM or
-     * STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state or any terminal state").
+     * Drops what [s] (the sending half of [id]) still holds for a RESET_STREAM, ours or the answer to STOP_SENDING: its buffer
+     * and its place in the schedule. Nothing of it waits for flow credit afterwards ([SendStream.reset]), so neither
+     * STREAM_DATA_BLOCKED nor DATA_BLOCKED is reported for it again ([stillStreamBlocked], [stillConnBlocked]; RFC 9000
+     * section 3.1: "A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state or any
+     * terminal state").
      */
     private fun abandonSend(
         id: Long,
@@ -1041,10 +1043,6 @@ internal class StreamManager(
         sendBufferedBytes -= s.reset()
         noteSendReleased(id)
         scheduler.remove(s)
-        if (s.connBlocked) {
-            s.connBlocked = false
-            connBlocked.remove(s)
-        }
         wakeRefusedWriters()
     }
 
@@ -1211,7 +1209,14 @@ internal class StreamManager(
         return limit.stillBlockedAt(limit.maxLimit)
     }
 
-    private fun stillConnBlocked(): Boolean = connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)
+    /**
+     * A reported DATA_BLOCKED still holds: some stream on [connBlocked] still has new data waiting for MAX_DATA. Streams that no
+     * longer wait (reset, reset at a reliable size already sent, closed) leave the list here, whatever took their data away.
+     */
+    private fun stillConnBlocked(): Boolean {
+        connBlocked.removeAll { s -> (streams[s.id]?.send !== s || !s.hasUnsent).also { gone -> if (gone) s.connBlocked = false } }
+        return connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)
+    }
 
     /** True while some data waits for credit the peer has not given: a reported DATA_BLOCKED or STREAM_DATA_BLOCKED still holds. */
     fun flowBlocked(): Boolean {
@@ -1329,7 +1334,7 @@ internal class StreamManager(
      * their current values. Alone for the 0-RTT packets of a rejected 0-RTT, whose streams are reset, not resent.
      */
     fun onConnectionFramesLost(f: SentFrames) {
-        if (f.flags and SentFrames.DATA_BLOCKED != 0 && connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)) {
+        if (f.flags and SentFrames.DATA_BLOCKED != 0 && stillConnBlocked()) {
             queueOnce(ControlKind.DataBlocked, 0, connSend.maxLimit)
         }
         if (f.flags and SentFrames.STREAMS_BLOCKED_BIDI != 0) {

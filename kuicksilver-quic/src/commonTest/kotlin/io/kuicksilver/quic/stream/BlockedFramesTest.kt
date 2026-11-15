@@ -288,4 +288,51 @@ class BlockedFramesTest {
         m.onFramesLost(SentFrames().also { it.flags = SentFrames.DATA_BLOCKED })
         assertTrue(drain(m).of(ControlKind.DataBlocked).isEmpty(), "nothing waits for MAX_DATA")
     }
+
+    /** The same when the reset answers the peer's STOP_SENDING (RFC 9000 section 3.5): DATA_BLOCKED is not repeated for it. */
+    @Test fun negative_stopSendingLeavesNoDataBlockedBehind() {
+        val m = manager(peerMaxData = 500)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(3000), 0, 3000, false)
+        sendOnce(m)
+        sendOnce(m)
+        assertEquals(listOf(500L), drain(m).of(ControlKind.DataBlocked).map { it.a })
+        m.onStopSending(id, 1)
+        assertEquals(1, drain(m).of(ControlKind.ResetStream).size)
+        assertFalse(m.flowBlocked(), "STOP_SENDING answered: nothing waits for MAX_DATA")
+        m.repeatBlockedReports()
+        m.onFramesLost(SentFrames().also { it.flags = SentFrames.DATA_BLOCKED })
+        assertTrue(drain(m).of(ControlKind.DataBlocked).isEmpty())
+    }
+
+    /**
+     * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3) whose reliable bytes were all sent: nothing of the stream
+     * waits for MAX_DATA any more, so DATA_BLOCKED is not repeated for it; with reliable bytes still unsent it still waits.
+     */
+    @Test fun negative_resetAtWithEveryReliableByteSentLeavesNoDataBlocked() {
+        for (reliable in listOf(500L, 700L)) {
+            val m = manager(peerMaxData = 500)
+            m.peerResetStreamAt = true
+            val id = m.open(bidi = false, StreamPriority.Default)
+            m.write(id, ByteArray(3000), 0, 3000, false)
+            sendOnce(m)
+            sendOnce(m)
+            assertEquals(listOf(500L), drain(m).of(ControlKind.DataBlocked).map { it.a })
+            m.resetAt(id, 5, reliable)
+            drain(m)
+            assertEquals(reliable > 500, m.flowBlocked(), "reliable size $reliable, 500 bytes sent")
+            m.repeatBlockedReports()
+            assertEquals(reliable > 500, drain(m).of(ControlKind.DataBlocked).isNotEmpty(), "reliable size $reliable")
+        }
+    }
+
+    /** [StreamManager.sendCredit] is 0 for a stream that cannot send, a reset one included (no write is taken after a reset). */
+    @Test fun negative_resetStreamHasNoSendCredit() {
+        val m = manager(streamWindow = 1000)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(150), 0, 150, false)
+        sendOnce(m)
+        m.reset(id, 1)
+        assertEquals(0L, m.sendCredit(id))
+    }
 }
