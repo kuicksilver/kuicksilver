@@ -111,6 +111,12 @@ internal class ConnectionRuntime(
 
     /** The loop's dispatcher, where the core is touched. */
     internal val loopDispatcher: CoroutineDispatcher get() = loop.dispatcher
+
+    /** See [io.kuicksilver.quic.holdPeerStreamCredit]. */
+    internal fun holdPeerBidiCredit() {
+        loop.scope.launch { core.holdPeerBidiStreamCredit() }
+    }
+
     internal val tickerCountForTest: Int get() = tickers.size
     internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()

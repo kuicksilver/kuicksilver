@@ -299,3 +299,20 @@ public var Http3Connection.beforeTransportClosedForTest: (suspend () -> Unit)?
     set(v) {
         session.beforeTransportClosedForTest = v
     }
+
+/**
+ * For a server engine that runs one handler per request: from now on [this] request keeps its stream's MAX_STREAMS credit
+ * until [handlerEnded], whatever happens to the request meanwhile (the client's reset, a failed response), so the client
+ * never has more handlers running than it may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). Call it
+ * right after [Http3Connection.acceptRequest], and [handlerEnded] exactly when the handler returned or failed.
+ */
+@InternalKuicksilverApi
+public fun Http3ServerRequest.holdStreamUntilHandled() {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.engineManaged = true
+}
+
+/** The engine's handler of [this] request ended (see [holdStreamUntilHandled]). Idempotent. */
+@InternalKuicksilverApi
+public fun Http3ServerRequest.handlerEnded() {
+    (this as? io.kuicksilver.http3.runtime.ServerRequestImpl)?.handlerEnded()
+}

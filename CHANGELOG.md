@@ -1844,6 +1844,17 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- HTTP/3 server, Rapid Reset (CVE-2023-44487; RFC 9114 section 10.5): a request the client opened and reset at once (STOP_SENDING
+  and RESET_STREAM) gave its stream's `MAX_STREAMS` credit back as soon as the transport was done with it, while the
+  request's handler still ran, so a client kept any number of handlers running within a limit of 100 streams (measured
+  against the Ktor engine before the fix: 101 handlers with 100 streams allowed, and growing). A request stream now
+  counts toward the client's limit until the application is done with the request: in the Ktor engine until its handler
+  returned; with `Http3Connection.acceptRequest` until the response ended (complete or abandoned), `reset` was called, an
+  answer failed, or the application read the request body's failure. Every reset of a request stream by the client also
+  spends a glitch token (1000, 33 a second), so a reset flood ends the connection with `H3_EXCESSIVE_LOAD`. QUIC: a peer
+  that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
+  `MAX_STREAMS`, not only at the next half window.
+
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

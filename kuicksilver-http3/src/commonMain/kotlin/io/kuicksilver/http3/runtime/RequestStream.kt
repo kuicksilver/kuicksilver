@@ -239,6 +239,7 @@ internal suspend fun H3Session.pumpBody(
         trailers.completeExceptionally(mapped)
         // trailers may still have been on the way: the peer's encoder must not wait for their acknowledgment (RFC 9204 section 2.2.2.2)
         runCatching { cancelSections(st) }
+        countClientReset(e) // last: an empty budget ends the connection
     }
 }
 

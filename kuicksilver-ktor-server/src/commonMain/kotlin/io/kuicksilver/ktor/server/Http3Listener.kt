@@ -11,6 +11,8 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.http3.handlerEnded
+import io.kuicksilver.http3.holdStreamUntilHandled
 import io.kuicksilver.ktor.server.h1.httpDateNow
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
@@ -192,6 +194,10 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                         } catch (e: Throwable) {
                                             break
                                         }
+                                    // the request's stream counts toward the client's stream limit until its handler returned,
+                                    // also when the client reset it meanwhile (Rapid Reset, CVE-2023-44487; RFC 9114 section 10.5)
+                                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                    req.holdStreamUntilHandled()
                                     launch {
                                         // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
                                         try {
@@ -200,6 +206,9 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                             throw e
                                         } catch (e: Throwable) {
                                             environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                        } finally {
+                                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                                            req.handlerEnded()
                                         }
                                     }
                                 }

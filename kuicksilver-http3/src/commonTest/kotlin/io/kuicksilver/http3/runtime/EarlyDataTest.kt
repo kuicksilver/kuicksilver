@@ -22,6 +22,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.runtime.QuicStreamLimits
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.SessionTicketConfig
 import io.kuicksilver.tls.TlsIdentity
@@ -48,7 +49,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** HTTP/3 over 0-RTT (RFC 8470, RFC 9114 section 7.2.4.2, ADR-0015): early safe requests, gated unsafe ones, 425 and replay. */
-@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 class EarlyDataTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -837,6 +838,62 @@ class EarlyDataTest {
                             while (withContext(s.dispatcher) { s.activeServerRequests.isNotEmpty() }) kotlinx.coroutines.yield()
                         }
                     assertTrue(left != null, "a request the server answered with 425 is still registered")
+                }
+            }
+        }
+
+    /**
+     * The server holds a request stream's MAX_STREAMS credit until its handler is done (Rapid Reset, RFC 9114 section
+     * 10.5): for a request that came in accepted 0-RTT nothing stays held once it was answered.
+     */
+    @Test fun earlyRequestHoldsNoStreamCreditOnceAnsweredWhenAccepted(): Unit = noCreditHeldAfterTheEarlyRequest(accept = true)
+
+    /** The same after a rejected 0-RTT: the request the client sends again holds nothing once answered, and the dropped one never did. */
+    @Test fun earlyRequestHoldsNoStreamCreditOnceAnsweredWhenRejected(): Unit = noCreditHeldAfterTheEarlyRequest(accept = false)
+
+    private fun noCreditHeldAfterTheEarlyRequest(accept: Boolean) =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = if (accept) http3Settings {} else http3Settings { h3Datagram = false },
+                        earlyRequest = true,
+                        after = { _, servers ->
+                            for (sc in servers()) {
+                                awaitCondition("the server's held stream credit going back") {
+                                    QuicStreamLimits.heldPeerBidiStreams(sc.quic) == 0
+                                }
+                            }
+                        },
+                    )
+                assertEquals(accept, accepted)
+            }
+        }
+
+    /**
+     * The connection is lost while the server runs an early request and before the client has the server's handshake
+     * answer: the server's request ends (its answer fails), and nothing of it stays registered.
+     */
+    @Test fun earlyRequestEndsWhenTheConnectionIsLostBeforeTheAnswer(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    val warmed = f.accepted.size
+                    f.last = null
+                    f.net.drop = { from, _, _ -> from == f.server.localAddress } // the client never hears from the server
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    val request = f.scope.launch { runCatching { c.request(f.get(early = true)) } }
+                    awaitCondition("the server taking the early request") { f.accepted.size > warmed && f.last != null }
+                    c.close()
+                    request.cancel()
+                    val sc = f.accepted.last()
+                    withTimeout(10.seconds) { sc.closed.await() }
+                    awaitCondition("the early request ending on the server") {
+                        withContext(sc.session.dispatcher) { sc.session.activeServerRequests.isEmpty() }
+                    }
                 }
             }
         }

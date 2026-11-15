@@ -178,6 +178,29 @@ public fun QuicStream.markTunnel() {
 }
 
 /**
+ * From now on a bidirectional stream the peer opens on [this] connection keeps counting toward the limit we grant it
+ * (MAX_STREAMS, RFC 9000 section 4.6) after both its halves are done, until [releaseStreamCredit] is called for it; the
+ * peer's streams still counted now are held too. An HTTP/3 server releases a request stream when the request's handler
+ * ended, so a client that resets its requests at once cannot run more handlers than it may open streams (Rapid Reset,
+ * CVE-2023-44487). Every held stream must be released once. Takes effect asynchronously, before any release made after
+ * it; ignored for connections of other implementations.
+ */
+@InternalKuicksilverApi
+public fun QuicConnection.holdPeerStreamCredit() {
+    (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.holdPeerBidiCredit()
+}
+
+/**
+ * The application is done with peer stream [this] (see [holdPeerStreamCredit]): once the stream is done in both
+ * directions, now or later, its credit returns to the peer. Idempotent; ignored for streams that are not held and for
+ * streams of other implementations.
+ */
+@InternalKuicksilverApi
+public fun QuicStream.releaseStreamCredit() {
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.releaseCredit()
+}
+
+/**
  * Suspends until the peer sends STOP_SENDING for [this] stream (RFC 9000 section 19.5) and returns its error code; it does
  * not wait for a write to meet the stop. Never returns for a stream the peer does not stop, or for streams of other
  * implementations. HTTP/3 watches its critical streams with it (RFC 9114 section 6.2.1: closed "at any point").

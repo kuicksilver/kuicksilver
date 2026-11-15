@@ -95,6 +95,18 @@ internal class StreamLimits(
         return peerLimit[i]
     }
 
+    /**
+     * The peer reported STREAMS_BLOCKED at the limit we granted: streams that closed since our last MAX_STREAMS (fewer than
+     * the half window [onPeerStreamClosed] waits for) are announced now; returns the new limit, or -1 when none closed.
+     */
+    fun onPeerBlockedAtGranted(bidi: Boolean): Long {
+        val i = idx(bidi)
+        if (peerClosed[i] == closedAtUpdate[i]) return -1
+        closedAtUpdate[i] = peerClosed[i]
+        peerLimit[i] = peerClosed[i] + if (bidi) localMaxBidi else localMaxUni
+        return peerLimit[i]
+    }
+
     /** The reported limit while still blocked at it (a lost STREAMS_BLOCKED goes out again), else -1. */
     fun stillStreamsBlocked(bidi: Boolean): Long {
         val i = idx(bidi)

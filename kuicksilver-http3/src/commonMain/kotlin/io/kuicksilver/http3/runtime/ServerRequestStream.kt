@@ -40,6 +40,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.markTunnel
 import io.kuicksilver.quic.readAhead
+import io.kuicksilver.quic.releaseStreamCredit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -54,10 +55,27 @@ import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.incrementAndFetch
 
-/** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
+/**
+ * A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). The stream keeps its
+ * MAX_STREAMS credit while it is a request the application holds (see [ServerRequestImpl.applicationDone]); one that
+ * never reached the application (refused, aborted, reset before its HEADERS, a WebTransport stream) gives it back here.
+ */
 internal suspend fun handleRequestStream(
     session: H3Session,
     st: QuicStream,
+) {
+    var delivered = false
+    try {
+        readRequestStream(session, st) { delivered = true }
+    } finally {
+        if (!delivered) st.releaseStreamCredit()
+    }
+}
+
+private suspend fun readRequestStream(
+    session: H3Session,
+    st: QuicStream,
+    onDelivered: () -> Unit,
 ) = with(session) {
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
@@ -124,8 +142,10 @@ internal suspend fun handleRequestStream(
                 // reset before its HEADERS were read: no request, but the peer's encoder may count a section that was lost
                 // or dropped with the reset (RFC 9204 section 4.4.2)
                 runCatching { cancelSections(st) }
+                countClientReset(e)
                 return@with
             } catch (e: StreamAbandoned) {
+                countClientReset(st.input.closedCause)
                 return@with // reset while its HEADERS waited for inserts: the Stream Cancellation went out
             }
         val block =
@@ -218,6 +238,7 @@ internal suspend fun handleRequestStream(
             req.done()
             return@with
         }
+        onDelivered() // the application holds it now: it gives the stream's credit back
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
@@ -302,10 +323,14 @@ internal class ServerRequestImpl(
     private var wtSession: WtSessionImpl? = null
     val bodyChannel = ByteChannel()
     override val body: ByteReadChannel =
-        BodyReadChannel(bodyChannel) {
-            // the application wants no more of the request: stop the client now (RFC 9114 section 4.1), not at its next DATA
-            if (!receiveEnded) runCatching { st.stopSending(Http3ErrorCode.NO_ERROR) }
-        }
+        BodyReadChannel(
+            bodyChannel,
+            onCancel = {
+                // the application wants no more of the request: stop the client now (RFC 9114 section 4.1), not at its next DATA
+                if (!receiveEnded) runCatching { st.stopSending(Http3ErrorCode.NO_ERROR) }
+            },
+            onFailureSeen = { applicationDone() }, // the application read that the request failed (a reset, an error)
+        )
     val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
 
@@ -358,8 +383,29 @@ internal class ServerRequestImpl(
         check(!finished) { "request is finished" }
     }
 
+    /** Set by an engine that reports its handler's end ([handlerEnded]): only that gives the stream's credit back then. */
+    @Volatile var engineManaged = false
+
+    /**
+     * The application is done with this request: its response ended (complete or abandoned), it reset the request, or a
+     * call to answer it failed. The stream's MAX_STREAMS credit may go back to the client once the stream is finished at
+     * the transport too; until then a request the client reset still counts, so a client cannot run more handlers than it
+     * may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). An engine that tracks its handlers
+     * ([engineManaged]) gives it back at [handlerEnded] instead. Idempotent, any thread.
+     */
+    fun applicationDone() {
+        if (!engineManaged) st.releaseStreamCredit()
+    }
+
+    /** The engine's handler of this request returned: the stream's credit may go back to the client. Idempotent, any thread. */
+    fun handlerEnded() {
+        st.releaseStreamCredit()
+    }
+
     /** The exchange is over (response sent, both tunnel directions ended, or stream aborted): counts once towards the GOAWAY idle close. */
     fun done() {
+        // a tunnel's exchange ends with both its directions: the application's stream is over (RFC 9114 section 4.4)
+        if (tunnel) applicationDone()
         if (!finished) {
             finished = true
             session.activeServerRequests.remove(st.id)
@@ -554,6 +600,18 @@ internal class ServerRequestImpl(
         status: Int,
         headers: Http3Headers,
         priority: StreamPriority?,
+    ): Http3ResponseWriter =
+        try {
+            respondInternal(status, headers, priority)
+        } catch (e: Throwable) {
+            applicationDone() // the application was told: the request is over for it
+            throw e
+        }
+
+    private suspend fun respondInternal(
+        status: Int,
+        headers: Http3Headers,
+        priority: StreamPriority?,
     ): Http3ResponseWriter {
         require(status in 200..599) { "final status must be 200..599" }
         if (responseStarted) { // a hint; the claim below is on the dispatcher
@@ -690,6 +748,7 @@ internal class ServerRequestImpl(
         st.reset(code)
         st.stopSending(code)
         session.scope.launch { done() }
+        applicationDone()
     }
 }
 
@@ -739,6 +798,7 @@ internal class ResponseWriterImpl(
                 if (!finishing) {
                     st.output.flushAndClose()
                     request?.responseComplete()
+                    request?.applicationDone()
                 }
             } catch (e: Throwable) {
                 // the pump itself was cancelled (the connection is gone): nothing more goes out
@@ -750,6 +810,7 @@ internal class ResponseWriterImpl(
                 abandoned = session.map(e)
                 channel.cancel(abandoned)
                 request?.done()
+                request?.applicationDone()
             }
         }
 
@@ -762,6 +823,14 @@ internal class ResponseWriterImpl(
         // RFC 9114 section 4.4: "Once the CONNECT method has completed, only DATA frames are permitted to be sent on the
         // stream": trailers (a HEADERS frame) are refused before anything changes, and the tunnel can still end with a FIN
         require(trailers == null || !tunnel) { "trailers on a CONNECT tunnel: only DATA follows its 2xx (RFC 9114 section 4.4)" }
+        try {
+            finishInternal(trailers)
+        } finally {
+            request?.applicationDone() // finished, or failed and told the application so
+        }
+    }
+
+    private suspend fun finishInternal(trailers: Http3Headers?) {
         finishing = true
         channel.flushAndClose()
         pump.join()

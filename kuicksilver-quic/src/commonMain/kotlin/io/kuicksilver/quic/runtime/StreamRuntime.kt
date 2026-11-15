@@ -61,6 +61,15 @@ internal class StreamRuntime(
         loop.scope.launch { if (live()) conn.core.markTunnel(id) }
     }
 
+    /** See [io.kuicksilver.quic.releaseStreamCredit]; the MAX_STREAMS it may free goes out with this flush. */
+    internal fun releaseCredit() {
+        loop.scope.launch {
+            if (!live()) return@launch
+            conn.core.releasePeerStreamCredit(id)
+            loop.flush(conn.core)
+        }
+    }
+
     internal fun signalReadable() {
         readable.trySend(Unit)
     }

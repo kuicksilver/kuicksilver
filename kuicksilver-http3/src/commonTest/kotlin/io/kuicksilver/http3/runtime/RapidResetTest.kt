@@ -1,0 +1,207 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
+package io.kuicksilver.http3.runtime
+
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.QuicStreamLimits
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * The HTTP/3 form of Rapid Reset (CVE-2023-44487): the client opens a request and resets it at once (STOP_SENDING and
+ * RESET_STREAM). The transport is done with such a stream immediately, but the application's handler may still run; the
+ * stream's MAX_STREAMS credit must stay taken until the application ended the request, or a client keeps any number of
+ * handlers running within a limit of [LIMIT] streams (RFC 9114 section 10.5).
+ */
+@OptIn(ExperimentalAtomicApi::class)
+class RapidResetTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private class Handlers {
+        val running = AtomicInt(0)
+        val maxRunning = AtomicInt(0)
+        val started = AtomicInt(0)
+
+        /** Requests whose handler saw the client's reset (their trailers failed). */
+        val sawReset = AtomicInt(0)
+        val gate = CompletableDeferred<Unit>()
+
+        fun enter() {
+            started.incrementAndFetch()
+            val n = running.incrementAndFetch()
+            while (true) {
+                val m = maxRunning.load()
+                if (n <= m || maxRunning.compareAndSet(m, n)) break
+            }
+        }
+    }
+
+    /** A handler that ignores the reset: it waits for the gate, then answers (which fails on a reset stream). */
+    private suspend fun handle(
+        r: Http3ServerRequest,
+        h: Handlers,
+    ) {
+        h.enter()
+        try {
+            runCatching { r.trailers.await() }.onFailure { h.sawReset.incrementAndFetch() }
+            h.gate.await()
+            runCatching { r.respond(200).finish() }
+        } finally {
+            h.running.decrementAndFetch()
+        }
+    }
+
+    /**
+     * Opens a request and resets it in both directions, as the attack does, once [handlerStarted] says its handler runs (a
+     * reset that overtakes the HEADERS ends the stream before it is a request: no handler, nothing to hold).
+     */
+    private suspend fun RawPeer.rapidReset(handlerStarted: suspend () -> Unit) {
+        val st = quic.openBidi()
+        st.output.writeFully(headers(st.id, GET))
+        peerMayHaveClosed { st.output.flush() }
+        handlerStarted()
+        st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+        st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+    }
+
+    @Test fun negative_resetRequestKeepsItsStreamCreditWhileTheHandlerRuns() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val h = Handlers()
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { handle(r, h) }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val client =
+                    launch {
+                        repeat(3 * LIMIT.toInt()) { i -> raw.rapidReset { awaitCondition("handler ${i + 1}") { h.started.load() > i } } }
+                    }
+                // every handler of the first LIMIT requests runs and has seen its reset: the transport is done with the streams
+                awaitCondition("$LIMIT handlers seeing their reset") { h.sawReset.load() >= LIMIT }
+                assertEquals(LIMIT.toInt(), h.maxRunning.load(), "handlers at once with $LIMIT streams allowed")
+                assertEquals(
+                    LIMIT,
+                    QuicStreamLimits.peerBidiStreamsGranted(s),
+                    "streams granted while $LIMIT handlers of reset requests run",
+                )
+                h.gate.complete(Unit)
+                client.join()
+                awaitCondition("every handler ending") { h.started.load() == 3 * LIMIT.toInt() && h.running.load() == 0 }
+                assertTrue(h.maxRunning.load() <= LIMIT, "handlers at once: ${h.maxRunning.load()}")
+                accept.cancel()
+                server.close()
+            }
+        }
+
+    /**
+     * The flood itself: every reset of a request stream spends a glitch token (RFC 9114 section 10.5), so 1500 of them
+     * with the bucket's 1000 tokens frozen end the connection with H3_EXCESSIVE_LOAD, and the handlers that ran meanwhile
+     * never outnumbered the streams the client may open.
+     */
+    @Test fun negative_rapidResetFloodEndsWithExcessiveLoad() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L } // no refill: exactly 1000 tokens
+                val h = Handlers().also { it.gate.complete(Unit) }
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { handle(r, h) }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                runCatching { repeat(1500) { raw.rapidReset {} } } // fails once the server closed
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+                assertTrue(h.maxRunning.load() <= LIMIT, "handlers at once: ${h.maxRunning.load()}")
+                accept.cancel()
+            }
+        }
+
+    /** A client that cancels some requests (a browser leaving a page) stays within the budget, and its next request is served. */
+    @Test fun resetsWithinTheBudgetKeepTheConnection() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val h = Handlers().also { it.gate.complete(Unit) }
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { handle(r, h) }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                repeat(200) { raw.rapidReset {} }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                awaitCondition("the request after 200 resets reaching its handler") { h.started.load() > 0 && !server.closed.isCompleted }
+                assertTrue(!server.closed.isCompleted)
+                accept.cancel()
+            }
+        }
+
+    /**
+     * The core API's rule for an application that is not an engine: a request is over for it once it read the request's
+     * failure, also without answering. Its handlers do only that, and more requests than the limit are each served in turn
+     * (the stream's credit came back; a held credit would stop the client at [LIMIT]).
+     */
+    @Test fun handlerThatReadsTheResetGivesTheStreamBack() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val started = AtomicInt(0)
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch {
+                                started.incrementAndFetch()
+                                runCatching { r.body.readAllBytes() } // fails with the reset: the handler returns without an answer
+                            }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                repeat(3 * LIMIT.toInt()) { i -> raw.rapidReset { awaitCondition("handler ${i + 1}") { started.load() > i } } }
+                assertEquals(3 * LIMIT.toInt(), started.load())
+                accept.cancel()
+            }
+        }
+
+    private companion object {
+        const val LIMIT = 8L
+    }
+}

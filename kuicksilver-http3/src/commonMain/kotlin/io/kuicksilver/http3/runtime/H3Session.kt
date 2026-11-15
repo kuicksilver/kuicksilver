@@ -19,6 +19,7 @@ import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.http3.webtransport.WtSettings
 import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.http3.webtransport.WtVersion
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
@@ -27,6 +28,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.holdPeerStreamCredit
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.rememberedApplicationData
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -438,6 +440,9 @@ internal class H3Session(
         // each path reports its own peer address: a change before the collector started (a NAT rebinding right after the handshake)
         // must not leave the session on the path the peer left
         quic.activePath?.let { currentPath = it }
+        // RFC 9114 section 10.5 (Rapid Reset, CVE-2023-44487): a request stream keeps its MAX_STREAMS credit until the
+        // application is done with the request, not only until the client reset it; before the first stream is taken
+        if (isServer) quic.holdPeerStreamCredit()
         scope.launch { acceptLoop() }
         datagrams.start()
         if (isServer) return
@@ -665,6 +670,18 @@ internal class H3Session(
         val limit =
             if (isServer) QuicStreamLimits.peerBidiStreamsGranted(quic) else QuicStreamLimits.localBidiStreamsAllowed(quic)
         return limit != null && id / 4 >= limit
+    }
+
+    /**
+     * Server: a request stream [e] says the client reset spends a glitch token (RFC 9114 section 10.5: "An implementation
+     * SHOULD track the use of these features and set limits on their use"), as nghttp2 counts the RST_STREAM frames of an
+     * HTTP/2 client: a client that keeps opening requests and resetting them (Rapid Reset, CVE-2023-44487) meets
+     * H3_EXCESSIVE_LOAD, while one that cancels now and then (a browser leaving a page) stays within the refill.
+     */
+    fun countClientReset(e: Throwable?) {
+        if (!isServer) return
+        val reset = transportCause(e ?: return) as? QuicException.StreamError.Reset ?: return
+        if (reset.initiator == Initiator.Peer) glitch("request stream reset by the client")
     }
 
     /** Spends a glitch token; an empty bucket is a connection error H3_EXCESSIVE_LOAD (RFC 9114 section 8.1). */

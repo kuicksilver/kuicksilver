@@ -350,10 +350,45 @@ internal class StreamManager(
     /** How often a stream was handed to the scheduler, for the complexity tests. */
     internal val schedulerTouchesForTest: Long get() = scheduler.addsForTest
 
+    /**
+     * Peer bidirectional streams keep their MAX_STREAMS credit after they finished, until [releasePeerCredit] (see
+     * [holdPeerBidiCredit]). Off unless the application asks; as msquic's `QUIC_STREAM_OPEN_FLAG_DELAY_ID_FC_UPDATES` and
+     * quic-go's `RequireStreamCreditRelease`.
+     */
+    private var holdPeerBidi = false
+
+    /** Peer bidirectional streams whose credit is held: live ones and finished ones not yet released (never more than we granted). */
+    private val creditHeld = HashSet<Long>()
+
+    /** [creditHeld] streams that finished: their credit returns when they are released. */
+    private val creditDue = HashSet<Long>()
+
+    /**
+     * From now on, a bidirectional stream the peer opens counts toward the limit we grant it (MAX_STREAMS, RFC 9000 section
+     * 4.6) until [releasePeerCredit], also once both its halves are done: HTTP/3 releases a request stream when its handler
+     * ended, so a peer that resets its requests at once cannot run more handlers than it may open streams (Rapid Reset,
+     * CVE-2023-44487). Streams the peer opened before and that are still counted are held too.
+     */
+    fun holdPeerBidiCredit() {
+        if (holdPeerBidi) return
+        holdPeerBidi = true
+        for (e in streams.values) if (!StreamIds.isLocal(e.id, role) && StreamIds.isBidi(e.id) && !e.countedClosed) creditHeld += e.id
+    }
+
+    /** The application is done with peer stream [id]: once the stream finished (now or later) its credit returns. Idempotent. */
+    fun releasePeerCredit(id: Long) {
+        if (!creditHeld.remove(id)) return
+        if (creditDue.remove(id)) returnCredit(id)
+    }
+
+    /** Streams whose credit is held now, and how many of those already finished (test and fuzzing probe). */
+    internal fun heldCreditForTest(): IntArray = intArrayOf(creditHeld.size, creditDue.size)
+
     private fun newEntry(id: Long): Entry {
         val local = StreamIds.isLocal(id, role)
         val bidi = StreamIds.isBidi(id)
         val e = Entry(id)
+        if (holdPeerBidi && !local && bidi) creditHeld += id
         if (local ||
             bidi
         ) {
@@ -627,12 +662,21 @@ internal class StreamManager(
     private val availableBidi = ConnectionEvent.StreamsAvailable(true)
     private val availableUni = ConnectionEvent.StreamsAvailable(false)
 
-    /** STREAMS_BLOCKED from the peer: below the limit we granted, our MAX_STREAMS was lost or is still in flight, so it goes out again. */
+    /**
+     * STREAMS_BLOCKED from the peer: below the limit we granted, our MAX_STREAMS was lost or is still in flight, so it goes out
+     * again; at that limit, streams that closed since our last MAX_STREAMS are announced now instead of at the next half
+     * window (RFC 9000 section 4.6: the frame tells us the peer "wishes to open a stream but is unable to do so").
+     */
     fun onStreamsBlocked(
         bidi: Boolean,
         limit: Long,
     ) {
-        if (limits.peerMaxStreamsGranted(bidi) > limit) queueMaxStreams(bidi)
+        val granted = limits.peerMaxStreamsGranted(bidi)
+        if (granted > limit) {
+            queueMaxStreams(bidi)
+        } else if (granted == limit && limits.onPeerBlockedAtGranted(bidi) >= 0) {
+            queueMaxStreams(bidi)
+        }
     }
 
     /** When the peer's last DATA_BLOCKED arrived. */
@@ -742,11 +786,20 @@ internal class StreamManager(
     private fun countClosed(e: Entry) {
         if (e.countedClosed || StreamIds.isLocal(e.id, role)) return
         e.countedClosed = true
-        limits.onPeerStreamClosed(StreamIds.isBidi(e.id)).let {
+        // a held stream's credit waits for its release
+        if (e.id in creditHeld) {
+            creditDue += e.id
+            return
+        }
+        returnCredit(e.id)
+    }
+
+    private fun returnCredit(id: Long) {
+        limits.onPeerStreamClosed(StreamIds.isBidi(id)).let {
             if (it >=
                 0
             ) {
-                queueControl(if (StreamIds.isBidi(e.id)) ControlKind.MaxStreamsBidi else ControlKind.MaxStreamsUni, 0, it)
+                queueControl(if (StreamIds.isBidi(id)) ControlKind.MaxStreamsBidi else ControlKind.MaxStreamsUni, 0, it)
             }
         }
     }
