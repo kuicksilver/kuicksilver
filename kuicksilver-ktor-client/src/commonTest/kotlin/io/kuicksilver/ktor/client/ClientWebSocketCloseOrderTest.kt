@@ -368,6 +368,40 @@ class ClientWebSocketCloseOrderTest {
     /** A TLS server that ends with a FIN and no close_notify: the client still follows at once, cleanly, not at T2. */
     @Test fun negative_tlsServerFinWithoutCloseNotifyIsFollowedAtOnce() = serverClosesH1(tls = true, truncated = true)
 
+    /**
+     * The connection is closed (by the pool or the engine, `PooledConnection.close`) while it waits for a silent server's
+     * close: the wait is aborted and the connection closes at once, with a FIN and no reset, its slot given back; before,
+     * a close then did nothing and the connection lingered until T2 (60 s here).
+     */
+    @Test fun negative_aCloseOfTheConnectionAbortsTheWaitForTheServer() =
+        clientTest {
+            val conns = CompletableDeferred<RawConnection>()
+            val handed = CompletableDeferred<io.kuicksilver.ktor.client.h1.H1Connection>()
+            val hook = Events()
+            rawServer(false, serve = { conn ->
+                conns.complete(conn)
+                readClientFrames(conn.input)
+                conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                conn.output.flush()
+                conn.watchEnd()
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    engine(c).h1.webSocketClosingForTest = { hook += it }
+                    engine(c).h1.webSocketConnectionForTest = { handed.complete(it) }
+                    engine(c).h1.webSocketCloseWaitMillis = 60_000
+                    c.webSocketSession("ws://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                    val conn = conns.await()
+                    hook.await("waiting")
+                    handed.await().close()
+                    conn.events.await("client FIN")
+                    assertFalse(hook.has("T2") || hook.has("server closed"), "${hook.timed.value}")
+                    assertFalse(conn.events.has("client RST"), "${conn.events.timed.value}")
+                    withTimeout(10.seconds) { while (engine(c).h1.pool.liveCount != 0) kotlinx.coroutines.yield() }
+                    conn.close()
+                }
+            }
+        }
+
     @Test fun negative_silentPlainServerClientClosesCleanlyAtT2() = silentServerH1(tls = false, clientFirst = true)
 
     @Test fun negative_silentTlsServerClientClosesCleanlyAtT2() = silentServerH1(tls = true, clientFirst = true)
@@ -514,6 +548,7 @@ class ClientWebSocketCloseOrderTest {
         serverEnds: Boolean,
         serverStops: Boolean = false,
         trailing: Boolean = false,
+        serverResets: Boolean = false,
     ) = h3Test {
         val events = Events()
         val hook = Events()
@@ -559,6 +594,11 @@ class ClientWebSocketCloseOrderTest {
                         events += if (s.input.closedCause == null) "client FIN" else "client reset"
                     }
                     endServer.await()
+                    if (serverResets) {
+                        events += "server RESET_STREAM"
+                        s.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                        kotlinx.coroutines.awaitCancellation()
+                    }
                     if (serverStops) {
                         events += "server STOP_SENDING"
                         s.stopSending(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR)
@@ -586,6 +626,16 @@ class ClientWebSocketCloseOrderTest {
                     }
                     hook.await("waiting")
                     when {
+                        serverResets -> {
+                            events.assertClientQuietWhileServerHolds()
+                            endServer.complete(Unit)
+                            // an abort is answered with an abort: RESET_STREAM, no FIN (RFC 9220 section 3)
+                            events.await("client RESET_STREAM")
+                            events.await("client reset")
+                            hook.await("server reset")
+                            assertFalse(events.has("client FIN"), "${events.timed.value}")
+                        }
+
                         serverStops -> {
                             events.assertClientQuietWhileServerHolds()
                             endServer.complete(Unit)
@@ -627,6 +677,13 @@ class ClientWebSocketCloseOrderTest {
     @Test fun h3ServerClosesServerFinFirst() = h3Close(clientFirst = false, serverEnds = true)
 
     @Test fun negative_h3BytesAfterTheServersCloseAreDropped() = h3Close(clientFirst = false, serverEnds = true, trailing = true)
+
+    @Test fun negative_h3ServerResetWhileTheFinIsHeldIsAnsweredWithReset() =
+        h3Close(
+            clientFirst = false,
+            serverEnds = true,
+            serverResets = true,
+        )
 
     @Test fun negative_h3SilentServerGetsFinAtT2AndStopSendingLater() = h3Close(clientFirst = true, serverEnds = false)
 

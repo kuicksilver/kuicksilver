@@ -142,7 +142,8 @@ internal class H1Connection(
      * client MAY initiate the TCP Close", so this side's close_notify (bounded by [ORDERLY_CLOSE_TIMEOUT] more) and FIN go
      * then, cleanly, never a reset. [inputDone] completes once the session stopped reading [input]. [onEvent] (tests) gets
      * "waiting" once everything this side sends before the server's close is out, then "server closed" or "T2". A
-     * cancellation (the end handlers' bound) closes the connection where it stands. The slot comes back when it is over.
+     * cancellation (the end handlers' bound) or a [close] meanwhile (the pool's, the engine's) closes the connection where it
+     * stands. The slot comes back when it is over, or at that [close].
      */
     suspend fun closeAfterWebSocket(
         waitMillis: Long,
@@ -150,6 +151,36 @@ internal class H1Connection(
         onEvent: (String) -> Unit = {},
     ) {
         if (!claimClose()) return
+        try {
+            // in a coroutine of its own, which [close] cancels (abortClaimedClose): the end handler that runs this goes on
+            coroutineScope {
+                val work = launch { closeInOrder(waitMillis, inputDone, onEvent) }
+                lingering = work
+                if (abortRequested) work.cancel()
+                work.join()
+            }
+        } finally {
+            lingering = null
+            tls?.close()
+            socket.close()
+            slotBack()
+        }
+    }
+
+    @kotlin.concurrent.Volatile private var lingering: Job? = null
+
+    @kotlin.concurrent.Volatile private var abortRequested = false
+
+    override fun abortClaimedClose() {
+        abortRequested = true
+        lingering?.cancel()
+    }
+
+    private suspend fun closeInOrder(
+        waitMillis: Long,
+        inputDone: Job,
+        onEvent: (String) -> Unit,
+    ) {
         val deadline =
             kotlin.time.TimeSource.Monotonic
                 .markNow() + waitMillis.milliseconds
@@ -168,15 +199,16 @@ internal class H1Connection(
             if (tls != null) {
                 // close_notify: after the server's, or once T2 is over; then the server's FIN
                 withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.shutdown(drainTimeout = null, stopAwaitingPeer = DONE) }
-                tls.close()
-                if (serverClosed && tcpIn != null) withTimeoutOrNull(left()) { drainToEnd(tcpIn) }
+                // the session's pumps stop before the socket's input is read here: its reader may still be reading it
+                // (the server's input ended without close_notify, or the shutdown above did not wait for the peer)
+                val pumpsStopped = withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.closeAndAwaitPumps() } != null
+                if (serverClosed && pumpsStopped && tcpIn != null) withTimeoutOrNull(left()) { drainToEnd(tcpIn) }
             }
             // this side's FIN after everything written, then the close
             withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { (tcpOut ?: output).flushAndClose() }
         } finally {
             tls?.close()
             socket.close()
-            slotBack()
         }
     }
 }
@@ -267,6 +299,9 @@ internal class H1Pool(
      * side ("waiting"), then saw that close ("server closed") or gave up at T2 ("T2").
      */
     internal var webSocketClosingForTest: ((String) -> Unit)? = null
+
+    /** Tests: the connection a WebSocket session was handed over. */
+    internal var webSocketConnectionForTest: ((H1Connection) -> Unit)? = null
 
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
@@ -1106,6 +1141,7 @@ internal class H1Pool(
                                     AfterResponse.HandOver -> {
                                         val ws = webSocket
                                         if (ws != null) {
+                                            webSocketConnectionForTest?.invoke(conn)
                                             ws.lifetime.invokeOnEnd { cause ->
                                                 try {
                                                     if (cause == null && ws.output.endRequested && ws.output.closedCause == null) {

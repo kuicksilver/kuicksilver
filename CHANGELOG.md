@@ -995,7 +995,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   three close waits (15 s) after the session's Close (docs/guide/ktor.md).
 - Ktor server, WebSockets: the server closes first: an upgraded HTTP/1.1 connection closes as soon as the
   WebSocket ends (before, it stayed open until the client closed it), its FIN follows close_notify at once (before, it
-  waited up to 3 s for the client's close_notify), and over HTTP/3 the client's direction is read to its FIN for up to 5
+  waited up to 3 s for the client's close_notify; this applies to every TLS connection the server engine closes,
+  HTTP/1.1 and HTTP/2 alike: its FIN right after its close_notify, then at most 3 s for the client's close_notify or FIN
+  before the socket closes, the write side first as RFC 9112 section 9.6 has it, and RFC 8446 section 6.1 allows not
+  waiting for the peer's close_notify), and over HTTP/3 the client's direction is read to its FIN for up to 5
   s after the server's FIN, STOP_SENDING H3_NO_ERROR only after that (before, right after the server's FIN).
 - QUIC, Kotlin/Native portable UDP socket: a refused bind (the port taken) returned while its selector's wakeup pipe was
   still open; ktor-network closes it from the selector's own loop, so a busy process held those descriptors for a while.

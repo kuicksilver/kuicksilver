@@ -244,7 +244,10 @@ internal class H3Pool(
     /** A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (tests change it). */
     internal var webSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 
-    /** Tests: a WebSocket waits for the server's FIN ("waiting"); its own goes after it ("server ended") or at T2 ("T2"). */
+    /**
+     * Tests: a WebSocket waits for the server's FIN ("waiting"); its own goes after it ("server ended") or at T2 ("T2"); a
+     * server's reset meanwhile is answered with a reset ("server reset").
+     */
     internal var webSocketClosingForTest: ((String) -> Unit)? = null
 
     /**
@@ -1379,15 +1382,28 @@ internal class H3Pool(
             try {
                 if (cause == null && sentCleanly) {
                     webSocketClosingForTest?.invoke("waiting")
+                    // true: the server's FIN; false: the server reset its direction, an abort (RFC 9220 section 3: "RST
+                    // exceptions are represented with a stream error"), which gets no clean FIN after it but a reset, as
+                    // over HTTP/2; null: T2 passed
                     val serverEnded =
                         withTimeoutOrNull(lifetime.remainingTransportWaitMillis()) {
                             inputDone.join()
                             discardToEnd(stream.input)
                         }
-                    webSocketClosingForTest?.invoke(if (serverEnded != null) "server ended" else "T2")
-                    withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
-                    if (serverEnded == null && withTimeoutOrNull(lifetime.closeWait) { discardToEnd(stream.input) } == null) {
-                        stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                    webSocketClosingForTest?.invoke(
+                        when (serverEnded) {
+                            true -> "server ended"
+                            false -> "server reset"
+                            null -> "T2"
+                        },
+                    )
+                    if (serverEnded == false) {
+                        stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                    } else {
+                        withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
+                        if (serverEnded == null && withTimeoutOrNull(lifetime.closeWait) { discardToEnd(stream.input) } == null) {
+                            stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                        }
                     }
                 } else {
                     if (sentCleanly) {
@@ -1585,13 +1601,13 @@ internal fun quicRaceFailure(attempts: List<Throwable>): Throwable =
 internal fun <T : Throwable> T.withAttempts(attempts: List<Throwable>): T =
     also { t -> attempts.distinct().forEach { t.addSuppressed(it) } }
 
-/** Reads and drops [input] to its end; a failed input (a reset) ends it too. */
-private suspend fun discardToEnd(input: ByteReadChannel) {
+/** Reads and drops [input] to its end: true at the peer's FIN, false when it failed (a reset). */
+private suspend fun discardToEnd(input: ByteReadChannel): Boolean =
     try {
         input.discard()
+        input.closedCause == null
     } catch (e: CancellationException) {
         throw e
     } catch (_: Throwable) {
-        // the stream was reset: its end all the same
+        false
     }
-}

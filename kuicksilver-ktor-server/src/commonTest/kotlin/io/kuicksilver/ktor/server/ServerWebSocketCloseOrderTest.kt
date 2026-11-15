@@ -252,6 +252,50 @@ class ServerWebSocketCloseOrderTest {
             assertEquals(Http3ErrorCode.NO_ERROR, h3Close("/ws", sendFin = false).first)
         }
 
+    /**
+     * A client that sends frames after its Close (8 MiB, RFC 6455 section 5.5.1 forbids them) and withholds its FIN: the
+     * server reads and drops them within its close wait, buffering none, so the client's writes never stall on flow
+     * control; it is stopped with H3_NO_ERROR once the close wait is over. Before, the frame guard went on copying them
+     * into the ended session's input, which nobody read, until that channel was full (about 1 MiB, then the stream's
+     * window), for every such stream for 5 s.
+     */
+    @Test fun negative_h3BytesAfterTheClientsCloseAreDroppedNotBuffered() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routes() }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                try {
+                    c.peerSettings.filterNotNull().first()
+                    val st = rawExtendedConnect(c.quic, "websocket", "/ws", listOf("sec-websocket-version" to "13"))
+                    coroutineScope {
+                        val stopped = async { st.awaitSendStopped() }
+                        assertEquals(1L, readH3Frame(st.input).first, "the 200's HEADERS")
+                        st.output.writeFully(dataFrame(clientClose))
+                        st.output.flush()
+                        // the server's Close and FIN
+                        while (runCatching { readH3Frame(st.input) }.isSuccess) continue
+                        val serverFin = TimeSource.Monotonic.markNow()
+                        // 16 000-byte masked Binary frames (key 0) in DATA frames of 16 008 bytes (a 2-byte varint length)
+                        val ws = byteArrayOf(0x82.toByte(), 0xFE.toByte(), 0x3E, 0x80.toByte(), 0, 0, 0, 0) + ByteArray(16_000)
+                        val frame = byteArrayOf(0, (0x40 or (ws.size shr 8)).toByte(), ws.size.toByte()) + ws
+                        withTimeout(4.seconds) {
+                            repeat(8 * 1024 * 1024 / ws.size) { st.output.writeFully(frame) }
+                            st.output.flush()
+                        }
+                        assertEquals(Http3ErrorCode.NO_ERROR, withTimeout(10.seconds) { stopped.await() })
+                        val took = serverFin.elapsedNow()
+                        assertTrue(took > 4.seconds, "STOP_SENDING $took after the server's FIN")
+                    }
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
     private companion object {
         /** How long the slow clients hold their FIN back: a behaviour under test, not a wait. */
         val SLOW_CLIENT = 500.milliseconds
