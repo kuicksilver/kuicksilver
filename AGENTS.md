@@ -35,6 +35,12 @@ bash tools/check/doc-refs.sh                                 # doc paths, anchor
 bash tools/check/rfc-table.sh                                # RFC compliance summary table format
 bash tools/check/guide-sync.sh                               # guide code samples match the GuideSamplesTest blocks
 bash tools/check/guide-sync-test.sh                          # negative controls of guide-sync.sh
+python3 tools/check/test-discovery.py                        # every @Test can run (none inside a function body, an object, ...)
+python3 tools/check/test-count.py                            # tests per source set vs test-count.lock; --update in the same commit
+python3 tools/check/test-sleeps.py                           # sleeps in tests only go down (test-sleeps.lock); --update lowers it
+python3 tools/check/env-apis.py                              # no host-name lookup in library code (env-apis.allow)
+python3 tools/check/rfc-tests.py                             # the tests a ✅ RFC section names exist, and it names one
+bash tools/check/commit-msg.sh --range main..HEAD            # a conventional type in every commit subject of the branch
 ```
 
 Always pass `--max-workers=2`. The first build of a module compiles OpenSSL for the host; Linux and mingw OpenSSL builds

@@ -8,10 +8,10 @@ practice that no tool enforces, or is partial, this page says so.
 
 | Stage | What | Where | Enforced by a tool |
 |---|---|---|---|
-| [1](#1-a-test-that-fails-before-the-fix) | A test that fails before the fix | [CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests) | no (the test itself, once written, runs everywhere) |
+| [1](#1-a-test-that-fails-before-the-fix) | A test that fails before the fix | [CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests) | partly: that every test can run, the test count per source set and the sleeps in tests are checked ([repository checks](#repository-checks)); that the test failed before the fix is not |
 | [2](#2-review-the-code-and-the-rfc-text) | Code review and a check against the RFC text | [CONTRIBUTING.md, Review checklist](../CONTRIBUTING.md#review-checklist) | no |
 | [3](#3-where-the-rfc-leaves-a-choice-reference-stacks) | Comparison with reference stacks where the RFC leaves a choice | `docs/spec/rfc/<rfc>.md`, peer notes; commit messages | no |
-| [4](#4-the-rfc-compliance-matrix-and-the-threat-model) | The RFC compliance matrix and the threat model | [rfc-compliance.md](spec/rfc-compliance.md), [threat-model.md](spec/threat-model.md) | format and references: yes; content: review |
+| [4](#4-the-rfc-compliance-matrix-and-the-threat-model) | The RFC compliance matrix and the threat model | [rfc-compliance.md](spec/rfc-compliance.md), [threat-model.md](spec/threat-model.md) | format, references and the tests named behind a ✅: yes; content: review |
 | [5](#5-integration-and-the-local-gate) | Integration branch and the local gate on every target | [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh) | yes |
 | [6](#6-hosted-ci) | Hosted CI on pushes and pull requests to `main` and `release/**` | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | runs automatically; no rule requires it green yet (the branch ruleset blocks deletion and force pushes only) |
 | [7](#7-before-a-release-soak-fuzzing-benchmarks) | Soak, fuzzing campaigns, benchmarks | `kuicksilver-soak`, `tools/fuzz`, [benchmarks.md](benchmarks.md) | run by hand; the verdicts are computed |
@@ -26,7 +26,8 @@ threat model lists them. The rule for new tests is no waiting with `sleep` or `d
 network simulator in `kuicksilver-testing` or `MemoryNetwork`, so a failure reproduces from its seed; some older tests
 still poll with a deadline. A new test never uses `delay()` as synchronization: it waits for the event itself (a
 `CompletableDeferred`, a channel, a job), and `tools/ci/flake-hunt.sh` reruns a suite 20 times under CPU load to find
-the tests that still wait with a delay.
+the tests that still wait with a delay. The sleeps that remain may only become fewer, and a test that no runner would
+run, or a drop in the number of tests, fails the gate ([repository checks](#repository-checks)).
 
 No tool checks that a test failed before the fix; reviewers ask for it, and the pull request template has a box for it
 ([`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)). A failing existing test is first treated
@@ -70,7 +71,9 @@ This is a practice of review, not a check a tool runs. The same six QUIC stacks 
   planned, not planned) and links each row to its section in `docs/spec/rfc/<rfc>.md`: the requirement, the files that
   implement it, the tests that pin it, history, notes on peers and open items. A change of behaviour updates the row
   and its details in the same commit. [`tools/check/rfc-table.sh`](../tools/check/rfc-table.sh) checks the table format
-  and that every details link and anchor exists; whether a row is true is a matter of review (stage 2).
+  and that every details link and anchor exists; [`tools/check/rfc-tests.py`](../tools/check/rfc-tests.py) that every
+  test a ✅ section names exists and that a ✅ section names one ([repository checks](#repository-checks)); whether the
+  tests pin what the row claims is a matter of review (stage 2).
 - [docs/spec/threat-model.md](spec/threat-model.md) lists the assets, attackers, threats and mitigations, and in
   [section 5](spec/threat-model.md#5-negative-controls--release-gate-checklist) the negative controls the release gate
   runs. A change that touches a threat updates it in the same commit.
@@ -93,7 +96,7 @@ refuses to start if either fails. What the steps cover:
 
 | Area | Steps (names as the script prints them) |
 |---|---|
-| Lint and documentation | action and image pins, documentation references and their negative controls, the fuzz campaign script on stubs, the reliability report on fixtures, RFC table, links, guide samples (with their negative controls), configuration tables, troubleshooting messages and `llms-full.txt` against the code (with their negative controls), HPACK tables and vectors, ktlint |
+| Lint and documentation | action and image pins, documentation references, the [repository checks](#repository-checks) (tests that cannot run, the test-count floor, sleeps in tests, name-service calls in library code, the tests behind ✅ rows, the commit types of the branch) and their negative controls, the fuzz campaign script on stubs, the reliability report on fixtures, RFC table, links, guide samples (with their negative controls), configuration tables, troubleshooting messages and `llms-full.txt` against the code (with their negative controls), HPACK tables and vectors, ktlint |
 | Build integrity | dependency verification of every configuration, SPDX headers, module layers, ABI dumps, sans-IO architecture checks, shared source sets, the API reference and documentation site built with Dokka warnings as errors |
 | JVM on macOS | every module's JVM tests, the coverage report (no threshold), the engine interop bench (the Ktor client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and Netty's HTTP/2 and HTTP/3 codecs; [interop.md](spec/interop.md#engine-interop-the-ktor-engines-against-other-http-stacks-jvm-2026-11-13)), the samples (`realtime-telemetry`; the Compose demo's build, its iOS framework and its tests), the JNI library and its export whitelist, the Intel-Mac library |
 | JVM on Linux | every module's JVM suite against the manylinux `libksl.so`, x64 and arm64, in Docker; the system-OpenSSL build mode |
@@ -129,6 +132,34 @@ for the Docker JVM steps. Steps that check what an earlier part of the gate
 built (the JNI library's exports, the prefixed OpenSSL archives, the Windows dll, the Linux libraries in the JVM
 interop image) build it themselves, or rebuild it when it is not from this run, so a selection never checks a
 leftover of an earlier build.
+
+### Repository checks
+
+Bug classes that came back after review are checked by scripts under `tools/check/`, each with negative controls on a
+scratch repository (`<name>-test.sh`), in step 3 of the local gate (step 4 runs the negative controls) and in the hosted
+CI's lint job. Each reads the tracked files in about a second. Where a check keeps a lock file, the lock changes in the
+same commit as the code it records, so the change is in the diff a reviewer reads.
+
+| Check | Fails on | Lock or allowlist |
+|---|---|---|
+| [`test-discovery.py`](../tools/check/test-discovery.py) | a `@Test` that no runner runs: declared inside a function body or lambda, at top level, in an object, companion object, object expression or interface, in an inner or private class, private, with parameters, in a class whose constructor needs an argument or an abstract class nothing extends, in a main source set, or in a source set no build script compiles | none: such a test is fixed |
+| [`test-count.py`](../tools/check/test-count.py) | a test source set whose number of tests (`@Test` and `@FuzzTest`, an `@Ignore`'d one not counted) differs from `tools/check/test-count.lock`: a drop means a test was removed, disabled or moved; a rise means the floor must follow | `--update` rewrites the lock; commit it with the change |
+| [`test-sleeps.py`](../tools/check/test-sleeps.py) | more `delay(`, `sleep(` (`Thread.sleep`), `usleep(`, `nanosleep(` or `Sleep(` calls in a test file than `tools/check/test-sleeps.lock` records (a new file: more than none), or fewer, until the lock is lowered | `--update` only lowers the lock; a file that needs a real wait is named in `tools/check/test-sleeps.allow` with its reason |
+| [`env-apis.py`](../tools/check/env-apis.py) | a host-name lookup in the main sources of the library modules: Ktor's `hostname`, java.net's `hostName` / `canonicalHostName`, `InetAddress.getLocalHost`, and in C `gethostname`, `getnameinfo`, `gethostbyaddr` | a use that does no lookup is named in `tools/check/env-apis.allow` with its reason |
+| [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (a `.name` belongs to the class named before it), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
+| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (the gate checks every commit of `main..HEAD` but merges) | none |
+
+The subject check also runs as a Git `commit-msg` hook. To install it in a clone (all its worktrees share the hook; Git
+runs a hook from the top of the working tree, so each worktree runs its own copy of the script):
+
+```sh
+hook="$(git rev-parse --git-path hooks/commit-msg)"
+printf '#!/bin/sh\nexec bash tools/check/commit-msg.sh "$1"\n' > "$hook"
+chmod +x "$hook"
+```
+
+The hook reads the first line of the message that is not a comment; Git's own merge and autosquash subjects (`Merge ...`,
+`fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed. It checks the subject only.
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers

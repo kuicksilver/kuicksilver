@@ -92,6 +92,12 @@ bash tools/check/links.sh                                        # relative link
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 python3 tools/check/code-refs.py                                 # the File.kt:N lines docs/spec cites (--fix re-points moved ones, --write records new ones)
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
+python3 tools/check/rfc-tests.py                                 # the tests a ✅ section of docs/spec/rfc names exist, and it names one
+python3 tools/check/test-discovery.py                            # every @Test can run (not inside a function body, not in an object, ...)
+python3 tools/check/test-count.py                                # the tests per source set against test-count.lock (--update after an intended change)
+python3 tools/check/test-sleeps.py                               # sleeps in tests may only go down (test-sleeps.lock, --update lowers it)
+python3 tools/check/env-apis.py                                  # no host-name lookup in library code (env-apis.allow)
+bash tools/check/commit-msg.sh --range main..HEAD                # a conventional type in every commit subject of the branch
 bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
 bash tools/check/guide-sync-test.sh                              # negative controls of guide-sync.sh
 bash tools/docs/site.sh 0.3.0-SNAPSHOT build/site                # the documentation site (Dokka API reference + guide as HTML); install lines in the script; fails when the API counts differ from tools/docs/api-baseline.properties

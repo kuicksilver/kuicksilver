@@ -72,10 +72,22 @@ jobs:
         run: |
           bash tools/check/doc-refs.sh
           python3 -I tools/check/code-refs.py   # the source lines docs/spec cites, against tools/check/code-refs.lock
-      - name: 'lint: doc-refs negative controls'
+      - name: 'lint: tests that can run and fail, sleeps, name-service calls, tests behind RFC rows'
+        # docs/process.md, "Repository checks"; the commit types are checked by local-matrix.sh over main..HEAD (this
+        # shallow checkout has no history to read them from)
+        run: |
+          rc=0
+          python3 -I tools/check/test-discovery.py || rc=1
+          python3 -I tools/check/test-count.py || rc=1    # the floor in tools/check/test-count.lock
+          python3 -I tools/check/test-sleeps.py || rc=1   # the ratchet in tools/check/test-sleeps.lock
+          python3 -I tools/check/env-apis.py || rc=1      # allowlist tools/check/env-apis.allow
+          python3 -I tools/check/rfc-tests.py || rc=1     # the ratchet in tools/check/rfc-tests.lock
+          exit $rc
+      - name: 'lint: doc-refs and test-check negative controls'
         run: |
           bash tools/check/doc-refs-test.sh
           bash tools/check/code-refs-test.sh
+          for t in test-discovery test-count test-sleeps env-apis rfc-tests commit-msg; do bash "tools/check/$t-test.sh"; done
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'

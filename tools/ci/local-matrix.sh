@@ -176,8 +176,20 @@ aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
-step "lint: documentation references"          bash -c 'bash tools/check/doc-refs.sh && python3 -I tools/check/code-refs.py'
-step "lint: doc-refs negative controls"         bash -c 'bash tools/check/doc-refs-test.sh && bash tools/check/code-refs-test.sh'
+# step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
+# never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, and
+# the conventional type of every commit of the branch (docs/process.md, "Repository checks")
+step "lint: doc refs, test gates, commit types" bash -c 'rc=0
+  bash tools/check/doc-refs.sh || rc=1; python3 -I tools/check/code-refs.py || rc=1
+  python3 -I tools/check/test-discovery.py || rc=1; python3 -I tools/check/test-count.py || rc=1
+  python3 -I tools/check/test-sleeps.py || rc=1; python3 -I tools/check/env-apis.py || rc=1
+  python3 -I tools/check/rfc-tests.py || rc=1; bash tools/check/commit-msg.sh --range main..HEAD || rc=1
+  exit $rc'
+step "lint: doc refs and test gates, negatives" bash -c 'rc=0
+  for t in doc-refs code-refs test-discovery test-count test-sleeps env-apis rfc-tests commit-msg; do
+    bash "tools/check/$t-test.sh" || rc=1
+  done
+  exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh

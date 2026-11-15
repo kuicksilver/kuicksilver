@@ -579,6 +579,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   handshake-timeout diagnosis procedure. `tools/check/guide-sync.sh` requires an import block to equal its test's imports
   (negative controls in `guide-sync-test.sh`), and `tools/release/local-release.sh` refuses a README that still calls the
   version it releases the release in preparation.
+- Build: repository checks for bug classes that came back after review (docs/process.md, "Repository checks"), in
+  steps 3 and 4 of the local gate (now `lint: doc refs, test gates, commit types` and its negative controls; the step
+  count is unchanged) and in the CI `lint` job, each with negative controls: `tools/check/test-discovery.py` (a `@Test`
+  no runner runs, such as one declared inside a helper's body), `test-count.py` (the tests per source set against
+  `test-count.lock`), `test-sleeps.py` (the sleeps per test file may only go down, `test-sleeps.lock`),
+  `env-apis.py` (host-name lookups in library code, `env-apis.allow`), `rfc-tests.py` (the tests a ✅ RFC section
+  names exist, and it names one; `rfc-tests.lock` lists the three sections without one) and `commit-msg.sh` (a
+  conventional type in every commit subject of the branch; also a `commit-msg` hook). The RFC details files named
+  tests that had been renamed, or named them after the wrong class; those names are corrected, and four ✅ sections
+  that named no test now name theirs.
 - Build: `tools/ci/local-matrix.sh --only <steps>` (e.g. `--only 25,48-49,52`) and `--from <n>` run some steps of the
   local gate again after a fix, with the step numbers of a full run. Such a run is never a gate: it writes
   `build/ci/gate/<commit>.partial` (the selection, `result=partial-pass` or `partial-fail`), never the stamp, and
