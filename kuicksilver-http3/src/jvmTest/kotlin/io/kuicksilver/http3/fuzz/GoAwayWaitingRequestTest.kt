@@ -108,4 +108,27 @@ class GoAwayWaitingRequestTest {
         assertIs<Http3Exception.RequestNotProcessed>(e, "the waiting request: $e")
         assertTrue(e.neverSent)
     }
+
+    /**
+     * Many requests queued behind the stream limit when the GOAWAY arrives open no stream at all: each would otherwise
+     * be opened and reset, spending one of the server's reset tokens, so that enough of them turned a graceful shutdown
+     * into H3_EXCESSIVE_LOAD.
+     */
+    @Test fun negative_queuedRequestsOpenNoStreamAfterGoAway() {
+        val first = request("/first")
+        settle()
+        val queued = (0 until 1500).map { request("/q$it") }
+        settle()
+        assertEquals(1L, net.client.openedBidi)
+        scope.launch { server.goAway() }
+        scheduler.runCurrent()
+        net.deliverAll()
+        scheduler.runCurrent()
+        scope.launch { seen[0].respond(200).finish() }
+        settle()
+        assertEquals(200, first.single().getOrThrow())
+        assertEquals(1L, net.client.openedBidi, "streams the client opened")
+        for (q in queued) assertIs<Http3Exception.RequestNotProcessed>(q.singleOrNull()?.exceptionOrNull())
+        assertTrue(!server.closed.isCompleted || server.closed.getCompleted().let { it is Http3Exception.Protocol && it.h3Code == 0x100L })
+    }
 }

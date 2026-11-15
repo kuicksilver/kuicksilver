@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -10,10 +10,12 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
@@ -191,32 +193,58 @@ class RapidResetTest {
         }
 
     /**
-     * A reset with H3_NO_ERROR is how a client ends a request whose complete response came early (RFC 9114 section 4.1):
-     * 1500 of them spend nothing of the reset budget.
+     * H3_NO_ERROR is free only after a complete response (RFC 9114 section 4.1): 1500 requests reset with it before any
+     * response end the connection with H3_EXCESSIVE_LOAD like any other reset flood.
      */
-    @Test fun resetsWithNoErrorAreNotCounted() =
+    @Test fun negative_noErrorResetsBeforeTheResponseAreCounted() =
         h3Test {
             QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 server.session.glitchClock = { 0L }
-                val h = Handlers().also { it.gate.complete(Unit) }
+                // each handler reads the body's failure (the reset), which gives its stream back
                 val accept =
                     launch {
                         while (true) {
                             val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
-                            launch { handle(r, h) }
+                            launch { runCatching { r.body.readAllBytes() } }
                         }
                     }
                 val raw = RawPeer(c)
                 raw.openControl()
-                repeat(1500) { raw.rapidReset(Http3ErrorCode.NO_ERROR) {} }
-                val st = c.openBidi()
-                st.output.writeFully(raw.headers(st.id, GET))
-                st.output.flushAndClose()
-                val answer = runCatching { withTimeout(10.seconds) { st.input.readAllBytes() } }
-                assertTrue(answer.isSuccess && answer.getOrThrow().isNotEmpty(), "the request after the resets: $answer")
-                assertTrue(!server.closed.isCompleted)
+                runCatching { repeat(1500) { raw.rapidReset(Http3ErrorCode.NO_ERROR) {} } } // fails once the server closed
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+                accept.cancel()
+            }
+        }
+
+    /**
+     * A client that ends its request with an H3_NO_ERROR reset once it has the complete response, as section 4.1 allows,
+     * spends nothing: 1500 such requests leave the connection open.
+     */
+    @Test fun noErrorResetsAfterACompleteResponseAreNotCounted() =
+        h3Test {
+            QuicPair.open(quicConfig { maxBidiStreams = LIMIT }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L }
+                val accept =
+                    launch {
+                        while (true) {
+                            val r = runCatching { server.acceptRequest() }.getOrNull() ?: break
+                            launch { runCatching { r.respond(200).finish() } }
+                        }
+                    }
+                val raw = RawPeer(c)
+                raw.openControl()
+                repeat(1500) {
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.headers(st.id, GET)) // no FIN: the request stays open
+                    peerMayHaveClosed { st.output.flush() }
+                    assertTrue(withTimeout(10.seconds) { st.input.readAllBytes() }.isNotEmpty(), "a complete response")
+                    st.reset(Http3ErrorCode.NO_ERROR)
+                }
+                assertTrue(!server.closed.isCompleted, "closed: ${server.closed.takeIf { it.isCompleted }?.getCompleted()}")
                 accept.cancel()
             }
         }
@@ -275,6 +303,34 @@ class RapidResetTest {
                 repeat(3 * LIMIT.toInt()) { i -> raw.rapidReset { awaitCondition("handler ${i + 1}") { started.load() > i } } }
                 assertEquals(3 * LIMIT.toInt(), started.load())
                 accept.cancel()
+            }
+        }
+
+    /**
+     * An engine cancels a handler whose client abandoned the request (`awaitAbandoned`), but not once its response was sent
+     * in full: a late STOP_SENDING or the connection's end then leaves a handler that goes on with other work alone. The
+     * abandonment is signalled directly here; before the response the same signal ends the wait (the control).
+     */
+    @Test fun abandonmentAfterTheFullResponseDoesNotEndTheWait() =
+        h3Test {
+            io.kuicksilver.http3.H3Pair.open().useScoped { p ->
+                val response = async { p.client.request(io.kuicksilver.http3.http3Request("GET", "server.test", "/")) }
+                val early = p.server.acceptRequest() as ServerRequestImpl
+                val earlyWait = launch { early.awaitAbandoned() }
+                early.peerAbandoned.complete(Unit)
+                withTimeout(5.seconds) { earlyWait.join() } // before the response: the abandonment ends the wait
+                early.respond(200).finish()
+                assertEquals(200, response.await().status)
+                val second = async { p.client.request(io.kuicksilver.http3.http3Request("GET", "server.test", "/2")) }
+                val r = p.server.acceptRequest() as ServerRequestImpl
+                r.respond(200).finish()
+                assertEquals(200, second.await().status)
+                val wait = launch { r.awaitAbandoned() }
+                r.peerAbandoned.complete(Unit)
+                repeat(3) { kotlinx.coroutines.withContext(p.server.session.dispatcher) { kotlinx.coroutines.yield() } }
+                kotlinx.coroutines.yield()
+                assertTrue(wait.isActive, "the wait ended after a response sent in full")
+                wait.cancel()
             }
         }
 

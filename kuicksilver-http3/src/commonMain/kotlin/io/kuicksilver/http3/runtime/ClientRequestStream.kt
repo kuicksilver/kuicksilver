@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
@@ -224,7 +225,7 @@ private suspend fun H3Session.requestOnDispatcher(
         checkPeerFieldLimit(-1, fields)
         val st =
             try {
-                quic.openBidi(localPriority(r))
+                openUnlessGoAway(localPriority(r)) ?: throw unsentAfterGoAway()!!
             } catch (e: QuicException) {
                 // a GOAWAY that arrived while the request waited for stream credit: it was never sent, and the client
                 // that closed the idle connection after that GOAWAY must say so, not report the close (RFC 9114 section 5.2)
@@ -271,6 +272,31 @@ private suspend fun H3Session.requestOnDispatcher(
             clientStreams.remove(st.id)
             rejectedByGoAway.remove(st.id)
         }
+    }
+
+/**
+ * Opens the request's stream, or null when a GOAWAY is received or sent while it waits for stream credit: such a request
+ * fails with RequestNotProcessed without opening a stream at all, so a client with many queued requests neither opens
+ * and resets a stream for each (each reset would spend one of the server's reset tokens and could turn a graceful
+ * shutdown into H3_EXCESSIVE_LOAD) nor sends any of them (RFC 9114 section 5.2). A stream the transport handed over
+ * just as the GOAWAY won is ended in both directions.
+ */
+private suspend fun H3Session.openUnlessGoAway(priority: io.kuicksilver.quic.StreamPriority): QuicStream? =
+    kotlinx.coroutines.coroutineScope {
+        val open = async { quic.openBidi(priority) }
+        val won =
+            kotlinx.coroutines.selects.select<QuicStream?> {
+                open.onAwait { it }
+                goAwaySeen.onAwait { null }
+            }
+        if (won != null) return@coroutineScope won
+        open.cancel()
+        val late = runCatching { open.await() }.getOrNull()
+        late?.let {
+            it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+        }
+        null
     }
 
 /** A request that has not opened its stream yet when a GOAWAY was received or sent: never sent (RFC 9114 section 5.2). */

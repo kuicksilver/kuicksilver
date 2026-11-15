@@ -334,7 +334,8 @@ public fun Http3ServerRequest.holdStreamUntilHandled() {
  * Suspends until the client abandoned [this] request: it sent STOP_SENDING for the response, reset the request other
  * than with H3_NO_ERROR (RFC 9114 section 4.1.1), or the connection is gone. A server engine cancels the request's handler then, so the stream it
  * holds ([holdStreamUntilHandled]) goes back to the client at once (as Go's CVE-2023-44487 fix cancels the handler's
- * context). Never returns for a request the client keeps, nor for requests of other implementations.
+ * context). Never returns for a request the client keeps, once the response was sent in full, nor for requests of other
+ * implementations.
  */
 @InternalKuicksilverApi
 public suspend fun Http3ServerRequest.awaitAbandoned() {

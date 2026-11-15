@@ -247,7 +247,15 @@ private suspend fun readRequestStream(
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
-        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, bodyLimit, tunnel = { req.tunnel }) { f ->
+        pumpBody(
+            st,
+            frames,
+            req.bodyChannel,
+            req.trailersDeferred,
+            bodyLimit,
+            tunnel = { req.tunnel },
+            responseComplete = { req.respondedInFull },
+        ) { f ->
             // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
             if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
             req.done()
@@ -414,9 +422,17 @@ internal class ServerRequestImpl(
      * the request other than with H3_NO_ERROR (RFC 9114 section 4.1.1: "A client can cancel requests by resetting and
      * aborting the stream with H3_REQUEST_CANCELLED"), or the connection is gone. An engine cancels the request's
      * handler then, so a cancelled long poll gives its stream back at once instead of when it would have answered. Never
-     * returns for a request kept on a live connection.
+     * returns for a request kept on a live connection, nor once the response was sent in full (a handler that answered
+     * and goes on with other work is not cancelled by a late STOP_SENDING or the connection's end).
      */
     suspend fun awaitAbandoned() {
+        abandonedBeforeTheFullResponse()
+        // a response already sent in full: the handler has nothing left the client could abandon
+        if (respondedInFull) kotlinx.coroutines.awaitCancellation()
+    }
+
+    private suspend fun abandonedBeforeTheFullResponse() {
+        if (respondedInFull) kotlinx.coroutines.awaitCancellation()
         kotlinx.coroutines.coroutineScope {
             val stopped = launch { st.awaitSendStopped().also { peerAbandoned.complete(Unit) } }
             val lost =
@@ -455,7 +471,13 @@ internal class ServerRequestImpl(
      * with H3_NO_ERROR (RFC 9114 section 4.1). The STOP_SENDING goes out here, not from the pump: a CancellationException
      * on the channel reached the pump as its own cancellation and the peer was never stopped.
      */
+
+    /** The whole response was handed to the transport (FIN sent): no abandonment cancels the handler now, and an H3_NO_ERROR reset is free. */
+    @Volatile var respondedInFull = false
+        private set
+
     fun responseComplete() {
+        if (!tunnel) respondedInFull = true
         if (tunnel) {
             sendEnded = true
             if (receiveEnded) done()

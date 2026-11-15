@@ -975,10 +975,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a stream that ended with our RESET_STREAM is reported finished (`ConnectionEvent.StreamFinished`, and the HTTP/3
+  graceful close that waits for it) once the RESET_STREAM is acknowledged, RFC 9000 section 3.1 "Reset Recvd", not when
+  it is sent; the stream is retired and its credit counted at once as before. A server's graceful close no longer
+  overtakes the reset of a request its application abandoned.
+
 - HTTP/3 client: a request waiting for stream credit when the server's GOAWAY arrived was sent on the stream it got
   next, against RFC 9114 section 5.2 ("Endpoints MUST NOT initiate new requests ... after receipt of a GOAWAY frame"),
   or failed with the client's own close of the idle connection; it now fails with `Http3Exception.RequestNotProcessed`
-  (never sent, safe to retry), and so does one waiting when the client sent its own GOAWAY. HTTP/3 server: a request
+  (never sent, safe to retry) without opening a stream, and so does one waiting when the client sent its own GOAWAY. HTTP/3 server: a request
   stream the client reset before its HEADERS stayed open in the server's direction; it is reset with
   H3_REQUEST_REJECTED.
 
@@ -1858,9 +1863,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   counts toward the client's limit until the application is done with the request: in the Ktor engine until its handler
   returned; with `Http3Connection.acceptRequest` until the response ended (complete or abandoned), `reset` was called, an
   answer failed, or the application read the request body's failure. Every reset of a request stream by the client also
-  spends a token of a reset budget of its own (1000, 33 a second; not for resets with H3_NO_ERROR), so a reset flood ends
+  spends a token of a reset budget of its own (1000, 33 a second; not for an H3_NO_ERROR reset after a complete response), so a reset flood ends
   the connection with `H3_EXCESSIVE_LOAD`. The Ktor engine cancels a handler once its client abandons the request
-  (STOP_SENDING, a reset, or the connection lost). QUIC: a peer
+  (STOP_SENDING, a reset, or the connection lost) and its response was not yet sent in full. QUIC: a peer
   that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
   `MAX_STREAMS`, not only at the next half window.
 

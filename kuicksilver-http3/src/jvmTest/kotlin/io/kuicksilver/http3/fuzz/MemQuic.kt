@@ -180,6 +180,9 @@ internal class MemConn(
 
     /** [0] bidi, [1] uni: streams we opened, and how many the peer allows us in total. */
     private val opened = longArrayOf(0, 0)
+
+    /** Bidirectional streams this side opened so far. */
+    val openedBidi: Long get() = opened[0]
     val allowed = arrayOf(MutableStateFlow(bidiLimit), MutableStateFlow(uniLimit))
 
     /** What we granted the peer: its streams that are done (and released when held) raise it. */
@@ -368,6 +371,10 @@ internal class MemStream(
     private val feed = Channel<ByteArray?>(Channel.UNLIMITED)
     private var recvDone = !hasRecv
     private var sendDone = !hasSend
+
+    /** Our RESET_STREAM went out: nothing more is sent, but the half is done only once the reset arrived (its acknowledgment). */
+    private var resetSent = false
+    private var retired = false
     private var recvAll = false
     val done = CompletableDeferred<Unit>()
     private var pumping = false
@@ -407,9 +414,9 @@ internal class MemStream(
                 while (true) {
                     val n = outCh.readAvailable(buf, 0, buf.size)
                     if (n < 0) break
-                    if (n > 0 && !sendDone) conn.net.inflight += MemNet.Piece.Data(other, buf.copyOf(n))
+                    if (n > 0 && !sendDone && !resetSent) conn.net.inflight += MemNet.Piece.Data(other, buf.copyOf(n))
                 }
-                if (outCh.closedCause == null && !sendDone) {
+                if (outCh.closedCause == null && !sendDone && !resetSent) {
                     // done once the FIN arrived (it stands for everything acknowledged, RFC 9000 "Data Recvd")
                     conn.net.inflight += MemNet.Piece.Fin(other)
                 }
@@ -421,8 +428,8 @@ internal class MemStream(
 
     override fun reset(code: Long) {
         // nothing to send, all of it sent (FIN), or already reset or stopped
-        if (sendDone || !hasSend || conn.isClosed) return
-        sendDone = true
+        if (sendDone || resetSent || !hasSend || conn.isClosed) return
+        resetSent = true
         outCh.cancel(QuicException.StreamError.Reset(id, code, Initiator.Local))
         conn.net.inflight.removeAll { (it is MemNet.Piece.Data || it is MemNet.Piece.Fin) && it.to === other }
         conn.net.inflight += MemNet.Piece.Reset(other, code)
@@ -457,7 +464,15 @@ internal class MemStream(
         }
     }
 
+    /** Our RESET_STREAM arrived: the sending half is done ("Reset Recvd", RFC 9000 section 3.1). */
+    fun resetArrived() {
+        if (sendDone) return
+        sendDone = true
+        check()
+    }
+
     fun receivedReset(code: Long) {
+        other.resetArrived()
         feed.close()
         if (!inCh.isClosedForWrite) inCh.cancel(QuicException.StreamError.Reset(id, code, Initiator.Peer))
         recvDone = true
@@ -466,8 +481,8 @@ internal class MemStream(
 
     /** The peer's STOP_SENDING: our sending half fails, and a RESET_STREAM follows (RFC 9000 section 3.5). */
     fun receivedStop(code: Long) {
-        if (sendDone) return
-        sendDone = true
+        if (sendDone || resetSent) return
+        resetSent = true
         outCh.cancel(QuicException.StreamError.Stopped(id, code, Initiator.Peer))
         conn.net.inflight.removeAll { (it is MemNet.Piece.Data || it is MemNet.Piece.Fin) && it.to === other }
         conn.net.inflight += MemNet.Piece.Reset(other, code)
@@ -481,8 +496,16 @@ internal class MemStream(
         done.complete(Unit)
     }
 
+    /**
+     * Retired (its credit counted) once both halves are over, a reset half as soon as its reset went out, as the transport
+     * does; finished for the application ([awaitFinishedHook]) only once a reset also arrived.
+     */
     private fun check() {
-        if (recvDone && sendDone && done.complete(Unit)) conn.finished(this)
+        if (recvDone && (sendDone || resetSent) && !retired) {
+            retired = true
+            conn.finished(this)
+        }
+        if (recvDone && sendDone) done.complete(Unit)
     }
 
     override fun releaseStreamCreditHook() {

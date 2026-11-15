@@ -97,6 +97,8 @@ internal suspend fun H3Session.pumpBody(
     trailers: CompletableDeferred<Http3Headers?>,
     contentLength: Long?,
     tunnel: () -> Boolean = { false },
+    /** Whether our response on [st] was already complete: an H3_NO_ERROR reset then costs nothing ([H3Session.countClientReset]). */
+    responseComplete: () -> Boolean = { false },
     onStreamFailure: suspend (StreamFailure) -> Unit,
 ) {
     val buf = ByteArray(CHUNK)
@@ -226,7 +228,7 @@ internal suspend fun H3Session.pumpBody(
         val mapped = map(st.input.closedCause ?: if (noMoreInserts()) connectionError() else e)
         out.cancel(mapped)
         trailers.completeExceptionally(mapped)
-        countClientReset(st.input.closedCause) // last: an empty budget ends the connection
+        countClientReset(st.input.closedCause, responseComplete()) // last: an empty budget ends the connection
     } catch (e: Throwable) {
         // the consumer cancelled the body (its own reason), or the transport failed (a reset, a lost connection)
         val mapped = map(e)
@@ -240,7 +242,7 @@ internal suspend fun H3Session.pumpBody(
         trailers.completeExceptionally(mapped)
         // trailers may still have been on the way: the peer's encoder must not wait for their acknowledgment (RFC 9204 section 2.2.2.2)
         runCatching { cancelSections(st) }
-        countClientReset(e) // last: an empty budget ends the connection
+        countClientReset(e, responseComplete()) // last: an empty budget ends the connection
     }
 }
 

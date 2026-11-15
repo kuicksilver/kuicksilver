@@ -182,6 +182,9 @@ internal class H3Session(
         }
 
     val goAwayReceived = MutableStateFlow<Long?>(null)
+
+    /** Client: completed when a GOAWAY was received or sent; requests still waiting for a stream then stop waiting. */
+    internal val goAwaySeen = kotlinx.coroutines.CompletableDeferred<Unit>()
     val closed = CompletableDeferred<Throwable>()
     val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
 
@@ -684,13 +687,17 @@ internal class H3Session(
      * implementation SHOULD track the use of these features and set limits on their use"), as nghttp2 counts the RST_STREAM
      * frames of an HTTP/2 client: a client that keeps opening requests and resetting them (Rapid Reset, CVE-2023-44487)
      * meets H3_EXCESSIVE_LOAD, while one that cancels now and then (a browser leaving a page) stays within the refill. Not
-     * counted: a reset with H3_NO_ERROR (a client ending its request after a complete early response, section 4.1), and
-     * one that follows our own STOP_SENDING (the stream then fails with that stop, never with the client's reset).
+     * counted: a reset with H3_NO_ERROR once our response was complete ([responseComplete]: section 4.1 lets a client end
+     * its request so after a complete response), and one that follows our own STOP_SENDING (the stream then fails with that
+     * stop, never with the client's reset). An H3_NO_ERROR reset before the response was complete counts like any other.
      */
-    fun countClientReset(e: Throwable?) {
+    fun countClientReset(
+        e: Throwable?,
+        responseComplete: Boolean = false,
+    ) {
         if (!isServer) return
         val reset = transportCause(e ?: return) as? QuicException.StreamError.Reset ?: return
-        if (reset.initiator != Initiator.Peer || reset.code == Http3ErrorCode.NO_ERROR) return
+        if (reset.initiator != Initiator.Peer || (reset.code == Http3ErrorCode.NO_ERROR && responseComplete)) return
         val budget = resetBudget ?: return
         if (!budget.spend(glitchClock())) {
             throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "request stream resets above 33/s (burst 1000)")
