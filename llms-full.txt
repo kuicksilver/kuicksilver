@@ -1026,6 +1026,32 @@ A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated 
 above its final size, closes the connection with FRAME_ENCODING_ERROR. `QuicConnection.resetStreamAtEnabled` tells
 whether both sides advertised the parameter. WebTransport uses it to keep a stream's header.
 
+#### Final sizes (experimental)
+
+`QuicStream.sentFinalSize` and `QuicStream.receivedFinalSize` are `Deferred<Long>` values that complete with the final
+size of each half of a stream (RFC 9000 section 4.5), the flow-control credit it used as both sides count it. The
+sending half's size is known once its reset is queued (`reset`, the reset that answers the peer's STOP_SENDING, or
+`resetAt` once its frame goes out) or once its FIN first went out; the receiving half's as soon as the peer's FIN,
+RESET_STREAM or RESET_STREAM_AT arrives, also when the bytes were never read or after `stopSending`. A protocol that
+counts data across streams, such as WebTransport flow control (draft-ietf-webtrans-http3-16 section 5.4), needs it for a
+stream that was reset. The size counts every byte of the stream, an application's own header too: WebTransport
+subtracts its stream header itself. A stream sent in 0-RTT reports its size only after the server accepted the early
+data; a rejection fails both with `QuicException.StreamError.EarlyDataRejected`, a lost connection with its
+`ConnectionLost`, and a half the stream does not have at once with IllegalStateException. Every caller gets the same
+`Deferred`: await it, never cancel it. In the sans-IO core the same moments raise `ConnectionEvent.StreamFinalSize`,
+once per half.
+
+`QuicStream.receivedOffset` is a `StateFlow<Long>` of the highest offset of the peer's half received so far, read or
+not and in order or not, and then its final size: what QUIC flow control counts (RFC 9000 section 4.1), so a protocol
+with limits of its own across streams can check bytes nobody has read yet.
+
+`QuicStream.sendReleased` is the sending counterpart: a `StateFlow<Long>` of the bytes of our half the connection's send
+buffer (`maxSendBuffer`, shared by every stream) has let go of, acknowledged by the peer or dropped by a reset, and all
+of them once the stream retired or the connection ended. The bytes written minus these are what the stream holds of the
+shared buffer: a stream the peer never reads keeps what its window did not let out, and a protocol multiplexing users
+that do not trust each other over one connection (WebTransport sessions) can cap each user's share with it. It is kept
+up to date from its first read on, which catches up with what was released before.
+
 ### Datagrams (RFC 9221)
 
 Both sides advertise `max_datagram_frame_size` (65 535 by default; `maxDatagramFrameSize = 0` turns the extension off and
@@ -2077,10 +2103,34 @@ protocols in `WT-Available-Protocols` and the server picks one of `availableProt
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
 String is ignored).
 
-There is no WebTransport flow control, so a connection carries one session: a client refuses a second one with
-`IllegalStateException`, a server resets a second CONNECT with `H3_REQUEST_REJECTED` before the application sees it.
+WebTransport flow control (draft-ietf-webtrans-http3-16 section 5) is on when both sides declare it in their SETTINGS,
+which `webTransport` does by default with `webTransportInitialMaxStreamsBidi`, `webTransportInitialMaxStreamsUni` and
+`webTransportInitialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
+limits; the receiver raises its own as the peer's streams end and as the application reads (WT_MAX_STREAMS,
+WT_MAX_DATA), a blocked sender says so once per limit, and a peer that breaks a limit gets its session closed with
+WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). Several sessions then share a connection: a server takes up
+to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
+(the client gets `Http3Exception.RequestNotProcessed` and can open it on another connection), and a client puts at most
+as many on one connection (`WebTransportException.ConnectionFull` beyond). A server also takes new sessions on a
+connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way. Sessions
+sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which
+a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
+but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
+of the connection's send buffer (`maxSendBuffer`): a reserve stays free for a session that joins, and the rest is split
+between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
+stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
+connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
+kept at what the open sessions may have in flight together. `Http3Endpoint` refuses settings whose sessions do not fit
+the QUIC limits (`maxBidiStreams`, `maxUniStreams`, `maxConnectionWindow`). All three initial limits at 0 turn flow
+control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.
+
+A draft-14 client (Safari) that declares flow control only with `SETTINGS_WT_MAX_SESSIONS` above 1 starts every
+limit it gives at 0 (draft-14 section 5.5): our streams and data to it wait for its WT_MAX_STREAMS and WT_MAX_DATA, and
+the Ktor server logs a warning once a session waited ten seconds. Turning flow control off (the three limits at 0) is
+the way out for such a peer.
+
 WebTransport streams that arrive before their session was accepted wait, 16 per connection for up to 5 s each; the
-others are rejected with `WT_BUFFERED_STREAM_REJECTED`.
+others are rejected with `WT_BUFFERED_STREAM_REJECTED`, and still count against the session's limits once it exists.
 
 ```kotlin
 // guide:http3:webtransport (server)
@@ -2107,9 +2157,9 @@ with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` a
 `drainRequested` turns true on the peer's request, an HTTP/3 GOAWAY, or this side's own `drain()` (the side that asks
 winds down too, draft-ietf-webtrans-http3 section 4.7). Writing the close waits at most five seconds
 for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
-it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
-are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a
-session. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
+it with `withTimeout`. With flow control the session's own limits bound it, besides the QUIC limits (`maxBidiStreams`,
+`maxUniStreams`, the stream and connection windows); without it the flow-control capsules are ignored and the QUIC
+limits alone do. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
 session (section 4.4); a session of draft-14 or later exists only with `reset_stream_at` on both sides, which
 `Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
 RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's
@@ -2664,6 +2714,11 @@ Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's 
   and a malformed control frame, fragment, length or Close frame with 1002.
 - The server's frames are never masked (section 5.1), whatever `WebSockets { masking }` says, and a Close the
   application sends with a code no endpoint may send (1005, 1006, 1015, below 1000, …) goes out without a code.
+- Once the session ended (both Closes), the server closes the connection at once (section 5.5.1: "The server MUST close
+  the underlying TCP connection immediately"): over HTTP/1.1 its FIN, right after close_notify over TLS, without
+  waiting for the client to close first; over HTTP/2 and HTTP/3 its END_STREAM or FIN, after which it waits up to 5 s
+  for the client's, reading what still comes, and only then stops a client that did not end its side (RST_STREAM
+  NO_ERROR, STOP_SENDING H3_NO_ERROR).
 
 The client engine applies the same rules to what servers send ([Client](#client)).
 
@@ -2712,7 +2767,10 @@ was accepted. The route checks the
 origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
-an empty reason. One session per connection, without WebTransport flow control (a mode the draft allows, section 5.1).
+an empty reason. With WebTransport flow control (on by default, see the [HTTP/3 guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#webtransport-experimental))
+a connection carries up to `http3Settings.webTransportMaxSessions` (4) sessions; one more, or one beyond the rate a
+connection takes new sessions at (a burst of 32, then 8 a second), is refused before any route runs. A draft-14 client that leaves a session without flow-control credit for ten seconds is logged once, as a warning,
+through the application's log.
 
 ```kotlin
 // guide:ktor:webtransport-server
@@ -3139,10 +3197,11 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   session after its `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` were checked against the offer (an extension
   or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
   fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
-  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
-  stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
-  resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
-  cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
+  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order sends its
+  END_STREAM only after the server's (at most 5 s after both Closes, then anyway; the stream is reset with CANCEL only
+  when the server's END_STREAM has not come 5 s after that); a handshake refused here, or a call that failed or was
+  cancelled before the session queued its Close, resets the stream with CANCEL (one cancelled after it, as Ktor's
+  `webSocketSession()` always is, first writes that Close: see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 
 #### Connection pool
@@ -3233,6 +3292,33 @@ the name counts as the host. The connect timeout applies twice to such a WebSock
 waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
 arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
 to the address is in neither: only the call (its request timeout or cancellation) bounds it.
+
+A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
+over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
+session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
+it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
+connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
+
+The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
+from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
+over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
+END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
+there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
+STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
+closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
+engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
+client's close_notify is not waited for), END_STREAM or FIN right after the session.
+
+How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
+bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
+is cancelled and the connection or stream ended at once), 5 s for the server's close of the transport (then the client
+closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
+(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
+they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
+before the pools close. A call that ends before the session queued its Close ends the session at once. A coroutine of
+the session that fails is reported to the event listener (`webSocketFailed`).
 
 #### Discovery and Alt-Svc
 
@@ -3581,8 +3667,8 @@ or on a connection to its origin that is open already and whose server allows Ex
 client](#http3-on-the-client)); otherwise it opens over HTTP/1.1 or HTTP/2.
 
 What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
-HTTP/1.1 and HTTP/2; a call on such a connection fails and the application repeats it. The dedicated connections of
-WebTransport sessions do not follow the network either.
+HTTP/1.1 and HTTP/2; a call on such a connection fails and the application repeats it. The extra connections a
+server's WebTransport session limit makes (beyond the pooled one) do not follow the network either.
 
 The Compose Multiplatform demo, [samples/compose-demo](https://github.com/kuicksilver/kuicksilver/blob/main/samples/compose-demo/README.md) (Android and iOS, not
 published), shows both sides: a download over HTTP/3 with `followDefaultNetwork` and the same download over OkHttp
@@ -3697,17 +3783,28 @@ val perHost = HttpClient(Kuicksilver) {
 
 `HttpClient.webTransport(url)` opens a WebTransport session (draft-ietf-webtrans-http3-16) to an `https` URL and
 returns the `WebTransportSession` of `kuicksilver-http3` (streams, datagrams, close; see the
-[HTTP/3 guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#webtransport-experimental)). Like a browser, each session gets a QUIC connection of its own,
-outside the pool: without WebTransport flow control a connection carries one session, and the connection closes once
-the session ended in both directions (after its close reached the server). The engine's trust, identity and QUIC
-settings apply, with WebTransport, Extended CONNECT and `reset_stream_at` turned on for that connection;
+[HTTP/3 guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#webtransport-experimental)). Sessions share the engine's pooled HTTP/3 connection to the URL's
+host and port with each other and with requests (RFC 9114 section 3.3: one connection per address and port): a pooled
+connection set up for requests alone is replaced by a WebTransport-capable one, which carries the origin's requests from
+then on (the old one finishes its requests and closes). With WebTransport flow control on both sides a connection
+carries up to `http3 { settings.webTransportMaxSessions }` (4) sessions, and as many as the server accepts: a session it
+refuses (`H3_REQUEST_REJECTED`, its limit) opens on another connection to the same server, which the next sessions share
+too and which closes with its last session; without flow control each further session gets a connection of its own.
+The pooled connection stays in use while a session or a request uses it, then idles like any other. Requests and
+sessions on it are not taken in turns against each other (the sessions' fair turns are among sessions): both are the
+same application's traffic to one origin, requests keep their own priorities (RFC 9218) and QUIC flow control, and an
+application that wants its bulk requests not to slow a session sends them at a lower urgency. A session to a server
+that refuses it while none of this client's sessions is on the connection (its rate, not its session limit) fails with
+`Http3Exception.RequestNotProcessed` rather than opening another connection. When it is lost,
+every session on it ends with its reason. The engine's trust, identity and QUIC settings apply, with WebTransport,
+Extended CONNECT and `reset_stream_at` turned on for a WebTransport-capable connection;
 `connectTimeout` bounds the setup, then the server's SETTINGS and its answer to the CONNECT get ten seconds each.
 There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`. Refused with
 `UnsupportedOperationException`: `discovery = H1Only` (HTTP/3 is off), and a proxy that applies to the URL —
 WebTransport runs over UDP, which an HTTP proxy does not carry — unless the host is exempt from the proxy or
 `http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }` (64)
-sessions are open at once; one more fails at once with `IllegalStateException`, nothing waits. The connection goes
-straight to the URL's host and port: Alt-Svc is not consulted and 0-RTT is never used; the resolved addresses are tried
+sessions are open at once on the client; one more fails at once with `IllegalStateException`, nothing waits. The
+session goes straight to the URL's host and port: Alt-Svc is not consulted and the CONNECT never goes in 0-RTT; the resolved addresses are tried
 in order within `connectTimeout`, so one whose handshake fails or stalls gives way to the next. Closing the client ends
 the sessions still open with their connections, without a close capsule, and a call after `close()` fails with
 `IllegalStateException`. Only the Kuicksilver engine supports it.
@@ -3962,7 +4059,8 @@ connection is in hand, with `HTTP_2_0` when the server picked `h2`, since 0.3.0)
 with the HTTP/3 failure itself (not the `FallbackReason`, which is on the response, below); `retry` (a request the server
 did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
 (reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
-followed the network, [Connection migration](#connection-migration)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+followed the network, [Connection migration](#connection-migration)); `webSocketFailed` (a coroutine of a WebSocket
+session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin
@@ -5256,6 +5354,10 @@ DER.
 | `enableConnectProtocol` | `Boolean` | `false` |  | 0.2.0 | advertise Extended CONNECT (RFC 9220) |
 | `h3Datagram` | `Boolean` | `true` |  | 0.2.0 | `SETTINGS_H3_DATAGRAM` (always sent); `Http3Endpoint` sends 0 when `QuicConfig.maxDatagramFrameSize` is 0 |
 | `webTransport` | `Boolean` | `false` | needs `enableConnectProtocol` and `h3Datagram` | 0.3.0 | experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); `Http3Endpoint.bind` refuses it when `QuicConfig.maxDatagramFrameSize` is 0, and `Http3Endpoint` turns `QuicConfig.resetStreamAt` on with it |
+| `webTransportMaxSessions` (*experimental*) | `Int` | 4 | 1..65 535 | 0.3.0 | WebTransport sessions one connection carries at once when both sides use WebTransport flow control (draft-16 section 5.1); a server refuses a CONNECT beyond it with `H3_REQUEST_REJECTED`, a client opens another connection. Times the per-session limits below, it must fit the QUIC connection's stream limits and largest window (`Http3Endpoint` refuses a configuration where it does not) |
+| `webTransportInitialMaxStreamsBidi` (*experimental*) | `Long` | 24 | 0..2^60 | 0.3.0 | bidirectional streams the peer may open in each WebTransport session (`SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI`); raised by WT_MAX_STREAMS as the peer's streams end. With all three limits 0 we declare no WebTransport flow control and a connection carries one session |
+| `webTransportInitialMaxStreamsUni` (*experimental*) | `Long` | 24 | 0..2^60 | 0.3.0 | the same for unidirectional streams (`SETTINGS_WT_INITIAL_MAX_STREAMS_UNI`) |
+| `webTransportInitialMaxData` (*experimental*) | `Long` (bytes) | 3 932 160 | 0..2^62-1 | 0.3.0 | stream body bytes the peer may send in each WebTransport session (`SETTINGS_WT_INITIAL_MAX_DATA`); raised by WT_MAX_DATA as the application reads them |
 | `grease` | `Boolean` | `true` |  | 0.2.0 | send a reserved setting, frame and stream type |
 | `maxInformationalResponses` | `Int` | 5 | at least 0 | 0.2.0 | deprecated and ignored since 0.2.1: a client accepts any number of 1xx responses (RFC 9110 section 15.2); their fields together are bounded by `maxFieldSectionSize`, past which the request fails with `H3_EXCESSIVE_LOAD` |
 | `maxEarlyPriorityUpdates` | `Int` | 32 | at least 0 | 0.2.0 | PRIORITY_UPDATE frames remembered for streams not yet open |
@@ -5376,7 +5478,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-on-the-client-experimental)) |
-| `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once, each on its own QUIC connection; at least 1; one more fails at once with `IllegalStateException` |
+| `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | 0.3.0 | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | 0.3.0 | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#why-did-this-request-not-use-http3)) |
 | `connectionMigration` (*experimental*) | `Http3ConnectionMigration?` | `null` (connections stay on the network they were opened on) | 0.3.0 | pooled HTTP/3 connections follow the network (RFC 9000 section 9); `Http3ConnectionMigration.followDefaultNetwork(connectivity)` on Android, `followDefaultNetwork()` on iOS and macOS, your own `NetworkMigrator` elsewhere; events go to `connectionMigrated` ([Connection migration](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-migration)) |
@@ -6072,8 +6174,9 @@ script, the engine logs that once at Info level instead ("detect the proxy autom
 auto-configuration script was found"), as detection is on by default there: those requests use the fixed proxy setting,
 if any, else connect directly, and detection runs again after 5 minutes.
 Set `proxy` or a `proxyResolver` of your own to decide the route yourself.
-A request that fails with `UnsupportedOperationException` naming a proxy scheme (`socks4://`, `https://`) has a proxy
-setting the engine cannot use; it is never bypassed.
+A request that fails with `UnsupportedOperationException` ("the proxy URL's scheme is not supported", or the message
+for an `https://` proxy) has a proxy setting the engine cannot use, such as `socks4://`; it is never bypassed. The
+message does not name the scheme a proxy URL from the environment gave: a user name before `://` reads as one.
 
 #### `H3Only` requests time out
 
