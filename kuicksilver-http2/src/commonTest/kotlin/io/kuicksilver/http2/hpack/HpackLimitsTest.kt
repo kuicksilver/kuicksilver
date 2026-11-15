@@ -74,7 +74,13 @@ class HpackLimitsTest {
         val literal = bytes(0x40, 0x01, 0x61, 0x01, 0x62) // literal with incremental indexing, new name "a", value "b"
         assertContentEquals(shrink + literal, e.encode(listOf("a" to "b")))
         assertContentEquals(bytes(0x80 or 62), e.encode(listOf("a" to "b"))) // now in the table
-        e.encode(listOf("x" to big)) // larger than the table: empties it
+        // larger than the table: sent as a literal with incremental indexing, which empties both tables
+        val sent = e.encode(listOf("x" to big))
+        assertContentEquals(oversized, sent)
+        val peer = HpackDecoder(maxTableSize = 100)
+        decodeAll(peer, shrink + literal)
+        assertEquals(listOf("x" to big), decodeAll(peer, sent))
+        assertEquals(emptyList(), peer.tableEntries())
         assertContentEquals(literal, e.encode(listOf("a" to "b"))) // no longer indexed: sent and added again
     }
 
