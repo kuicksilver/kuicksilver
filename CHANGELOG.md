@@ -1071,6 +1071,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it. A reset now drops the unsent bytes from what the stream waits to send; a stream reset with RESET_STREAM_AT whose
   reliable bytes were all sent no longer keeps DATA_BLOCKED repeating either, and `sendCredit` is 0 for a stream that
   takes no more writes (reset, or its FIN queued).
+- QUIC: persistent congestion (RFC 9002 section 7.6.2: "none of the packets sent between the send times of these two
+  packets are acknowledged") ignored acknowledged ACK-only packets between the two lost ones, as loss detection does not
+  keep them; an acknowledged range now counts whatever it covers, so a path that delivered in between is not collapsed to
+  the minimum window.
 - QUIC: a lost FIN took a sending stream from "Data Sent" back to "Send", a transition RFC 9000 section 3.1 does not
   have; the FIN is now sent again from "Data Sent".
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps

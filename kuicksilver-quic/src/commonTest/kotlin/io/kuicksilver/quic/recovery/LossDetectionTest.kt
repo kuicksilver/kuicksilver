@@ -634,7 +634,7 @@ class LossDetectionTest {
 
     @Test fun persistentCongestionSpansAckOnlyAndSkippedPacketNumbers() {
         // RFC 9002 section 7.6.2: what breaks the period is an acknowledged packet between the two lost ones, not a packet number
-        // that loss detection never stored (ACK-only packets) or never used (a skipped number, RFC 9000 section 21.4)
+        // left unacknowledged (ACK-only packets nobody acknowledged) or never used (a skipped number, RFC 9000 section 21.4)
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         ld.peerAddressValidated = true
@@ -829,21 +829,27 @@ class LossDetectionTest {
     }
 
     /**
-     * RFC 9002 section 7.6.2 as the KDoc of `persistentCongestion` reads it: a range acknowledging only packet numbers loss detection
-     * never stored (ACK-only packets) does not break the period; only an acknowledged stored packet between the two lost ones does.
+     * RFC 9002 section 7.6.2: persistent congestion needs that "across all packet number spaces, none of the packets sent between
+     * the send times of these two packets are acknowledged" - any packet, an ACK-only one too, although loss detection does not
+     * keep ACK-only packets. Packets 2..9 (ACK-only) acknowledged between the lost 1 and 10 show the path delivered in between;
+     * left unacknowledged, the 1.9 s of losses are persistent congestion.
      */
-    @Test fun negative_ackOfAckOnlyPacketsBetweenTheLostOnesKeepsPersistentCongestion() {
-        val (ld, l) = ld()
-        ld.handshakeConfirmed = true
-        ld.peerAddressValidated = true
-        sampleByAck(ld, 0, t0 - 200.milliseconds)
-        send(ld, SpaceId.Application, 1, t0)
-        for (pn in 2L..9L) send(ld, SpaceId.Application, pn, t0 + 100.milliseconds, ackEliciting = false)
-        send(ld, SpaceId.Application, 10, t0 + 2000.milliseconds)
-        send(ld, SpaceId.Application, 11, t0 + 2100.milliseconds)
-        ld.onAck(SpaceId.Application, ack(11L to 11L, 2L to 9L), t0 + 2200.milliseconds)
-        assertEquals(listOf(1L, 10L), l.lost)
-        assertEquals(listOf("0:true"), l.lossByPath, "nothing loss detection stored was acknowledged between 1 and 10")
+    @Test fun negative_acknowledgedAckOnlyPacketsBetweenTheLostOnesBreakPersistentCongestion() {
+        fun lossByPath(ackOnlyAcknowledged: Boolean): List<String> {
+            val (ld, l) = ld()
+            ld.handshakeConfirmed = true
+            ld.peerAddressValidated = true
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            send(ld, SpaceId.Application, 1, t0)
+            for (pn in 2L..9L) send(ld, SpaceId.Application, pn, t0 + 100.milliseconds, ackEliciting = false)
+            send(ld, SpaceId.Application, 10, t0 + 2000.milliseconds)
+            send(ld, SpaceId.Application, 11, t0 + 2100.milliseconds)
+            ld.onAck(SpaceId.Application, if (ackOnlyAcknowledged) ack(11L to 11L, 2L to 9L) else ack(11L to 11L), t0 + 2200.milliseconds)
+            assertEquals(listOf(1L, 10L), l.lost)
+            return l.lossByPath
+        }
+        assertEquals(listOf("0:false"), lossByPath(ackOnlyAcknowledged = true), "2..9 were acknowledged between 1 and 10")
+        assertEquals(listOf("0:true"), lossByPath(ackOnlyAcknowledged = false))
     }
 
     /**
