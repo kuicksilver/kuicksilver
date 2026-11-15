@@ -313,6 +313,7 @@ internal class H2ConnectionCore(
                 "frame type ${f::class.simpleName} inside the field block of stream $blockStream",
             )
         }
+        frameHook?.invoke(f)
         when (f) {
             is Frame.Data -> onData(f, now)
             is Frame.Headers -> startBlock(f.streamId, 0, f.endStream, f.dependency, f.fragment, f.endHeaders, now)
@@ -675,6 +676,9 @@ internal class H2ConnectionCore(
     }
 
     fun nextEvent(): H2Event? = events.removeFirstOrNull()
+
+    /** Called with each frame of the peer as it reaches its handler (a test hook: the fuzz targets' reach counters). */
+    internal var frameHook: ((Frame) -> Unit)? = null
 
     /** Bytes of the field block being collected (a test hook for the CONTINUATION limits). */
     internal val blockBufferCapacity: Int get() = block.capacity

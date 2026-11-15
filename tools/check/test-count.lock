@@ -338,6 +338,8 @@ kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.core.SettingsAckBench.measure
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2ClientConnectionFuzzTest.connectionClient
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2ConnectionFuzzTest.connectionServer
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2FrameFuzzTest.frames
+kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2FuzzReachTest.seedsAndCorpusReachEveryFeature
+kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.H2SeedCorpusTest.corpusMatchesGenerator
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest.hpackDecode
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.fuzz.HpackRoundTripFuzzTest.hpackRoundTrip
 kuicksilver-http2/src/jvmTest	io.kuicksilver.http2.runtime.PriorityConcurrencyTest.updatesNeverOverrideTheResponsesChoice
