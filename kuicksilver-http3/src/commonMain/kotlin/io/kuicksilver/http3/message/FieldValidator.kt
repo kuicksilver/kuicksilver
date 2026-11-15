@@ -380,7 +380,9 @@ internal object PseudoHeaders {
         } else {
             // the explicit priority is the signal: a `priority` header would tell the server something else than we schedule
             for (f in r.headers.fields) if (f.first != "priority") out += f
-            PriorityField.format(p)?.let { out += "priority" to it }
+            // a CONNECT says even RFC 9218's defaults (section 4.2: i=?0): a server takes a CONNECT without the field as an
+            // unsignalled tunnel, which ours schedules incremental (section 10.1), not as the caller's explicit choice
+            (PriorityField.format(p) ?: if (r.method == "CONNECT") "i=?0" else null)?.let { out += "priority" to it }
         }
         return out
     }

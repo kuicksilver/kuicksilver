@@ -46,7 +46,8 @@ public class Http3Request private constructor(
     public val trailers: (suspend () -> Http3Headers?)? = b.trailers
 
     /**
-     * Sent as the `priority` field (RFC 9218 section 5) when not the default u=3, i=false, and used for our own
+     * Sent as the `priority` field (RFC 9218 section 5) when not the default u=3, i=false (on a CONNECT always, as `i=?0`
+     * for the defaults: a server takes a CONNECT without the field as an unsignalled tunnel), and used for our own
      * scheduling of the request stream; it replaces any `priority` field among [headers], so the server's signal and our
      * scheduling agree. Without it a `priority` field among [headers] is sent as given and schedules the stream too (when
      * it parses); without either a CONNECT (a tunnel) is scheduled incremental (sections 10.1, 11), any other request

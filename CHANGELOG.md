@@ -1085,6 +1085,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (for a stream that ended cleanly, once all of it was handed to its input; for a reset or stopped one, by its final
   size); the guide, the configuration table and `Http3Settings` say when to read a peer's streams concurrently.
   `Http3Settings`'s KDoc no longer says the credit follows bytes taken from the transport.
+- HTTP/3: a CONNECT (a tunnel, or an Extended CONNECT such as a WebTransport session) whose `Http3Request.priority`
+  the caller set now always carries the `priority` field, RFC 9218's defaults included (`StreamPriority(3, incremental
+  = false)` is sent as `i=?0`). Before, the defaults wrote no field, and a server took the CONNECT as unsignalled: ours
+  schedules an unsignalled tunnel incremental (RFC 9218 section 10.1), so the caller's in-order choice was lost on the
+  server's side. An ordinary request at the defaults still sends no field.
 - Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket
   after the close wait (a server that does not read), cut inside a frame, or with a failed writer, now has its connection
   reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the connection was closed gracefully: it

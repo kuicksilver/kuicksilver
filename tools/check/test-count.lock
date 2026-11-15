@@ -429,6 +429,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.missingMethodOrSchemeRejected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.missingPathRejected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.negative_classicConnectNeedsAPort
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.negative_explicitDefaultPriorityOnAConnectIsSent
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.negative_h3AuthoritySyntax
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.negative_h3MethodMustBeToken
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.PseudoHeadersTest.negative_h3PathMustBeAbsoluteOrAsterisk

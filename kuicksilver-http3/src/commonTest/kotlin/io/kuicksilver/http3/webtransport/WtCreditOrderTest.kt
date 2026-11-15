@@ -271,9 +271,9 @@ class WtCreditOrderTest {
                 val (c2, s2) = pair(p, incremental = false)
                 assertFalse(withContext(p.client.session.dispatcher) { (c2 as WtSessionImpl).incrementalForTest })
                 assertFalse(withContext(p.server.session.dispatcher) { (s2 as WtSessionImpl).incrementalForTest })
-                // per direction: the client's request priority i=?0 at u=3 writes no field (RFC 9218's defaults), so the
-                // server takes the CONNECT as unsignalled; a `priority: i=?0` header reaches both sides
-                for ((viaHeader, serverIncremental) in listOf(false to true, true to false)) {
+                // the client's explicit priority i=?0 at u=3 reaches the server (a CONNECT always writes the field), and so
+                // does a `priority: i=?0` header
+                for ((viaHeader, serverIncremental) in listOf(false to false, true to false)) {
                     val accepted = CompletableDeferred<WebTransportSession>()
                     launch { accepted.complete(p.server.acceptRequest().acceptWebTransport()) }
                     val c =

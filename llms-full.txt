@@ -2128,10 +2128,11 @@ stream's priority.
 - The client's sending follows the session request's priority: `Http3Request.priority`, else a `priority` field among
   its headers, else the tunnel default below. The server's sending follows the client's signal, the `priority` field
   of the CONNECT request and later PRIORITY_UPDATEs, unless the server overrides it with a `priority` field in its
-  `acceptWebTransport` answer; that field changes only the server's sending. The client sends its priority as a
-  `priority` field only when it differs from RFC 9218's defaults (u=3, i=?0): `StreamPriority(3, incremental = false)`
-  writes no field, and the server then takes the CONNECT as unsignalled (the tunnel default). For in-order sending
-  on both sides at u=3, put `priority: i=?0` among the request's headers instead (or have the server answer with it).
+  `acceptWebTransport` answer; that field changes only the server's sending. A priority set on the request
+  (`Http3Request.priority`) always goes out as a `priority` field on a CONNECT, RFC 9218's defaults included
+  (`StreamPriority(3, incremental = false)` is sent as `i=?0`), so the server does not take it for an unsignalled
+  tunnel; an ordinary request at the defaults still sends no field. A `priority` field among the request's headers
+  does the same.
 - Non-incremental (`i=?0`): in order. The streams are served in
   the order the session handed them to the application (`openUni` or `openBidi` returned; for the peer's bidirectional
   streams, `acceptBidi`): while a stream waits for credit, or writes what it was just given, no stream opened after it

@@ -407,6 +407,30 @@ class PseudoHeadersTest {
         assertEquals(listOf("x-a" to "1", "priority" to "u=0"), fields(StreamPriority(0)))
         assertEquals(listOf("x-a" to "1"), fields(StreamPriority.Default))
     }
+
+    /**
+     * A CONNECT (a tunnel, or an Extended CONNECT such as a WebTransport session) whose caller set the priority explicitly
+     * always carries the field, even RFC 9218's defaults (section 4.2, "The default value of the incremental parameter is
+     * false (0)"): a server without the field takes the CONNECT as unsignalled, and ours schedules an unsignalled tunnel
+     * incremental (section 10.1), so the caller's u=3, i=?0 would be lost. An ordinary request at the defaults sends none.
+     */
+    @Test fun negative_explicitDefaultPriorityOnAConnectIsSent() {
+        fun field(r: io.kuicksilver.http3.Http3Request) = PseudoHeaders.buildRequest(r).filter { it.first == "priority" }.map { it.second }
+        val tunnel =
+            http3Request("CONNECT", "example.com", null) { priority = StreamPriority(3, incremental = false) }
+        val extended =
+            http3Request("CONNECT", "example.com", "/wt") {
+                protocol = "webtransport-h3"
+                priority = StreamPriority(3, incremental = false)
+            }
+        assertEquals(listOf("i=?0"), field(tunnel))
+        assertEquals(listOf("i=?0"), field(extended))
+        assertEquals(StreamPriority(3, incremental = false), PriorityField.parse(field(extended).single()))
+        assertEquals(listOf("u=1"), field(http3Request("CONNECT", "example.com", null) { priority = StreamPriority(1) }))
+        // no explicit priority: the request's own headers as given; an ordinary request at the defaults: no field
+        assertEquals(emptyList(), field(http3Request("CONNECT", "example.com", null)))
+        assertEquals(emptyList(), field(http3Request("GET", "example.com", "/") { priority = StreamPriority.Default }))
+    }
 }
 
 class PriorityFieldTest {
