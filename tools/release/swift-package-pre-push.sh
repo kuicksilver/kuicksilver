@@ -18,7 +18,7 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 pkg="$(git rev-parse --show-toplevel)"
 identity=$(git config kuicksilver.swift.author 2>/dev/null || true)   # written by swift-package.sh
-identity="${identity:-${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}}"
+identity="${identity:-${KSL_SWIFT_AUTHOR:-Kuicksilver <hello@kuicksilver.io>}}"
 z=0000000000000000000000000000000000000000
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 remote="${2:-${1:-}}"

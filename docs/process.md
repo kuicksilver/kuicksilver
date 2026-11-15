@@ -221,7 +221,8 @@ tags are made in UTC, and the checks refuse any other time zone. The clone of th
 ([`tools/release/swift-package-pre-push.sh`](../tools/release/swift-package-pre-push.sh)) that runs the same checks on
 every push of it, so the immutable tag does not depend on running them by hand: a tag is pushed only as the signed,
 annotated tag of the release identity, never as a bare commit, and the clone's own git config carries that identity
-(`user.name`, `user.email`, and `kuicksilver.swift.author`, which the checks read), whatever the Mac's global one is. The documentation site is not built
+(`user.name`, `user.email`, and `kuicksilver.swift.author`, which the checks read): the release key's identity
+`Kuicksilver <hello@kuicksilver.io>` for its commit and its tag, whatever the Mac's global one is. The documentation site is not built
 for a prerelease.
 
 ### Privacy pre-push hook
@@ -229,7 +230,9 @@ for a prerelease.
 Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no identity but the
 configured one, no name, home directory or host name in an author, committer, commit message or added line. [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
 `tools/release/local-release.sh` refuses to run until it is installed in the checkout and the names and the identity
-are configured, and while the checkout's `user.name <user.email>` is not that identity (the tag would carry another). The
+are configured, while the checkout's `user.name <user.email>` is not that identity, and while the tagger is not a user
+ID of the release key (GitHub shows a signed tag as Verified only then). Release tags are made with the tagger per
+command (`git -c user.name=… -c user.email=… tag -s`, as the script prints it), so commits keep the checkout's identity. The
 hook checks the commits the remote does not have (by a named remote's tracking refs, else by listing it; a remote that
 cannot be listed refuses the push), also after a force push. The
 names live in the checkout's git config, never in the repository (a space in a name matches ' ', '.', '_', '-' or
@@ -238,7 +241,8 @@ nothing; any case):
 ```
 ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
 git config --add kuicksilver.privacy.names "<first name> <last name>"     # once per name, alias or spelling
-git config kuicksilver.privacy.identity "<name> <email>"                   # the only author, committer and tagger
+git config kuicksilver.privacy.identity "<name> <email>"                   # the only author and committer
+git config kuicksilver.privacy.tagger "Kuicksilver <hello@kuicksilver.io>"  # the only tagger: the release key's identity
 ```
 
 Commit and tag with `TZ=UTC`. The same names, the user and host names of the Mac and its temporary directories are

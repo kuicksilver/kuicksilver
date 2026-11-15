@@ -211,7 +211,7 @@ if sp "$L" ok "commit [0-9a-f]+ on main, checksum $S1 \(unsigned, no tag yet\)" 
   if [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v0.3.0/Kuicksilver.xcframework.zip ] && [ "$(pkg_line checksum)" = "$S1" ] \
       && ! git -C "$tmp/sp" rev-parse -q --verify refs/tags/0.3.0 >/dev/null && [ -f "$tmp/sp/LICENSE" ] && [ -f "$tmp/sp/licenses/LICENSE.openssl.txt" ] \
       && grep -q 'upToNextMinor(from: "0.3.0")' "$tmp/sp/README.md" && grep -q 'kuicksilver/kuicksilver@1234567' <<< "$(git -C "$tmp/sp" log -1 --format=%B)" \
-      && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae> %G?')" = "kinchpik <339333647+kinchpik@users.noreply.github.com> N" ] \
+      && [ "$(git -C "$tmp/sp" log -1 --format='%an <%ae> %G?')" = "Kuicksilver <hello@kuicksilver.io> N" ] \
       && grep -q 'git commit --amend --no-edit -S22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68' <<< "$sp_out" \
       && [ "$(git -C "$tmp/sp" log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ] \
       && grep -qx '    export GPG_TTY=$(tty) TZ=UTC' <<< "$sp_out" \
@@ -355,10 +355,12 @@ spc "negative_swiftCheckTaggerIdentity"         refuse "tagger 'Other <o@example
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 # the commands the maintainer runs (amend, tag) take the clone's identity, not the global one (Global Person here)
 TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit --no-gpg-sign; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
-spc "swift check: amend and tag ignore the global identity" ok "tagger kinchpik"           "$tmp/zip-a" prepush 1.1.0-rc1
+spc "swift check: amend and tag ignore the global identity" ok "tagger Kuicksilver"           "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 TZ=UTC git -C "$tmp/sp" -c user.name=Other -c user.email=o@example.invalid commit -q --amend --no-edit --no-gpg-sign
 spc "negative_swiftCheckCommitterIdentity"      refuse "author[|]committer is"              "$tmp/zip-a" files 1.1.0-rc1
+TZ=UTC git -C "$tmp/sp" -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com commit -q --amend --no-edit --no-gpg-sign --reset-author
+spc "negative_swiftCheckCommitByCommitIdentity" refuse "author[|]committer is 'kinchpik"     "$tmp/zip-a" files 1.1.0-rc1
 TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit --no-gpg-sign --reset-author
 TZ=Asia/Tokyo git -C "$tmp/sp" commit -q --amend --no-edit --no-gpg-sign --reset-author
 spc "negative_swiftCheckCommitZone"             refuse "zones [+]0900 [+]0900"               "$tmp/zip-a" files 1.1.0-rc1
@@ -515,6 +517,7 @@ git init -q --bare -b main "$hk/remote.git"; git init -q -b main "$hk/w"
 hg() { git -C "$hk/w" -c core.hooksPath="$hk/hooks" "$@"; }
 hg config kuicksilver.privacy.names "zorbex quill"; hg config --add kuicksilver.privacy.names "qzx-alias"
 hg config kuicksilver.privacy.identity "kinchpik <339333647+kinchpik@users.noreply.github.com>"
+hg config kuicksilver.privacy.tagger "Kuicksilver <hello@kuicksilver.io>"
 hcommit() { # <TZ> <message> [file content]: a commit by the configured identity
   [ -z "${3:-}" ] || printf '%s\n' "$3" > "$hk/w/f.txt"; hg add -A >/dev/null 2>&1
   TZ="$1" GIT_AUTHOR_NAME=kinchpik GIT_AUTHOR_EMAIL=339333647+kinchpik@users.noreply.github.com GIT_COMMITTER_NAME=kinchpik \
@@ -534,11 +537,13 @@ hg reset -q --hard HEAD~1; hcommit UTC "path" "see /Users/${USER:-$(id -un)}/x";
 hg reset -q --hard HEAD~1; hcommit UTC "host" "built on $(hostname | cut -d. -f1)"; mhook "negative_hookHostNameAdded" refuse "personal identifiers added" main
 hg reset -q --hard HEAD~1; hg -c user.name=someone -c user.email=s@example.invalid commit -q --allow-empty --no-gpg-sign -m other
 mhook "negative_hookOtherIdentity" refuse "another author/committer identity" main
-hg reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
+hg reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a v9 -m v9
 mhook "negative_hookTaggerZone" refuse "tagger zone [+]0500" refs/tags/v9
+hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a v9 -m v9
+mhook "privacy hook: a UTC tag by the release identity, over commits by the maintainer" ok - main refs/tags/v9
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
-mhook "privacy hook: a UTC tag" ok - refs/tags/v9
-hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -d v9 >/dev/null
+mhook "negative_hookTagByCommitIdentity" refuse "tagger 'kinchpik <339333647[+]kinchpik@users.noreply.github.com>'" refs/tags/v9
+hg tag -d v9 >/dev/null
 TZ=UTC hg -c user.name=Other -c user.email=o@example.invalid tag -a v9 -m v9
 mhook "negative_hookTaggerIdentity" refuse "tagger 'Other <o@example.invalid>'" refs/tags/v9
 hg tag -d v9 >/dev/null
@@ -568,7 +573,9 @@ out=$(cd "$hk/w" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-
   | sh "$root/tools/hooks/pre-push" "$hk/no-such.git" "$hk/no-such.git" 2>&1)
 if [ $? != 0 ] && grep -q "cannot list $hk/no-such.git" <<< "$out"; then pass=$((pass+1)); echo "ok   negative_hookUnlistableRemote"
 else fail=$((fail+1)); echo "FAIL negative_hookUnlistableRemote: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
-hg config --unset kuicksilver.privacy.identity; hcommit UTC "next"
+hg config --unset kuicksilver.privacy.tagger; hcommit UTC "next"
+mhook "negative_hookNoTaggerConfigured" refuse "kuicksilver.privacy.tagger" main
+hg config kuicksilver.privacy.tagger "Kuicksilver <hello@kuicksilver.io>"; hg config --unset kuicksilver.privacy.identity
 mhook "negative_hookNoIdentityConfigured" refuse "kuicksilver.privacy.identity" main
 hg config kuicksilver.privacy.identity "kinchpik <339333647+kinchpik@users.noreply.github.com>"; hg config --unset-all kuicksilver.privacy.names
 mhook "negative_hookNoNamesConfigured" refuse "kuicksilver.privacy.names" main
@@ -576,7 +583,7 @@ mhook "negative_hookNoNamesConfigured" refuse "kuicksilver.privacy.names" main
 # the release script's check of that hook (local-release.sh from "# the privacy pre-push hook" to the credential check)
 hook_block=$(awk '/^# the privacy pre-push hook/ {on = 1} /^# credentials and signing/ {on = 0} on' "$root/tools/release/local-release.sh")
 grep -q 'refuse' <<< "$hook_block" || { echo "FAIL: no pre-push hook check found in local-release.sh"; exit 2; }
-hook_t() { # <label> <ok|refuse>[:<pattern>] <setup: linked|copied|other|none> [names] [identity]
+hook_t() { # <label> <ok|refuse>[:<pattern>] <setup: linked|copied|other|none> [names] [identity] [user name] [tagger]
   local label="$1" exp="${2%%:*}" pat="" d out got verdict; [ "$2" = "${2#*:}" ] || pat="${2#*:}"
   d="$tmp/hookchk-$pass-$fail"; git init -q -b main "$d"; mkdir -p "$d/tools/hooks"; cp "$root/tools/hooks/pre-push" "$d/tools/hooks/"
   case "$3" in
@@ -586,6 +593,8 @@ hook_t() { # <label> <ok|refuse>[:<pattern>] <setup: linked|copied|other|none> [
   [ -z "${4:-}" ] || git -C "$d" config kuicksilver.privacy.names "$4"
   [ -z "${5:-}" ] || git -C "$d" config kuicksilver.privacy.identity "$5"
   git -C "$d" config user.name "${6:-kinchpik}"; git -C "$d" config user.email 339333647+kinchpik@users.noreply.github.com
+  [ "${7-Kuicksilver <hello@kuicksilver.io>}" = "" ] || git -C "$d" config kuicksilver.privacy.tagger "${7-Kuicksilver <hello@kuicksilver.io>}"
+  mkdir -p "$d/tools/release"; cp "$root/tools/release/kuicksilver-release-key.asc" "$d/tools/release/"
   out=$(cd "$d" && bash -c 'refuse() { echo "REFUSED: $*"; }; '"$hook_block" 2>&1)
   got=$(grep -q REFUSED <<< "$out" && echo refuse || echo ok)
   verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
@@ -599,6 +608,9 @@ hook_t "negative_releaseWithOtherHook"               "refuse:privacy pre-push ho
 hook_t "negative_releaseWithoutPrivacyNames"         "refuse:kuicksilver.privacy.names"             linked "" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 hook_t "negative_releaseWithoutPrivacyIdentity"      "refuse:kuicksilver.privacy.identity"          linked "zorbex quill"
 hook_t "negative_releaseUserIsNotTheIdentity"        "refuse:user.name/user.email of this checkout"  linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" "Global Person"
+hook_t "negative_releaseWithoutTagger"               "refuse:no kuicksilver.privacy.tagger"         linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" kinchpik ""
+hook_t "negative_releaseTaggerNotAKeyUid"            "refuse:is not a user ID of the release key"   linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>" kinchpik "kinchpik <339333647+kinchpik@users.noreply.github.com>"
+hook_t "hook check: prints the tag identity"         "ok:tags by Kuicksilver <hello@kuicksilver.io>" linked "zorbex quill" "kinchpik <339333647+kinchpik@users.noreply.github.com>"
 
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)
@@ -612,8 +624,8 @@ hook_t "negative_releaseUserIsNotTheIdentity"        "refuse:user.name/user.emai
 # Each attack below tries to break one of them; an attack must fail the run before the release commands are printed.
 tail_block=$(awk '/^# --github-prerelease: the publication as a Maven repository zip/ {on = 1} on' "$root/tools/release/local-release.sh")
 grep -q 'gh release create' <<< "$tail_block" || { echo "FAIL: no GitHub prerelease block found in local-release.sh"; exit 2; }
-p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(' "$root/tools/release/local-release.sh")
-[ "$(wc -l <<< "$p_lines" | tr -d ' ')" = 2 ] || { echo "FAIL: the Gradle arguments of local-release.sh not found"; exit 2; }
+p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(|^tagger=\$\(git config kuicksilver.privacy.tagger|^tag_id=\(' "$root/tools/release/local-release.sh")
+[ "$(wc -l <<< "$p_lines" | tr -d ' ')" = 4 ] || { echo "FAIL: the Gradle arguments of local-release.sh not found"; exit 2; }
 tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swift-repo>: the tail on <dir>/m2, output in $tail_out
   local d="$1"
   mkdir -p "$d/out/logs"; printf 'x' > "$d/x"; (cd "$d" && zip -q out/Kuicksilver.xcframework.zip x)
@@ -622,7 +634,7 @@ tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swif
     ( git init -q -b main "$d/seed" && cd "$d/seed" && printf 'built in /Users/someone/src\n' > NOTES && git add NOTES \
       && TZ=UTC git -c user.email=t@example.invalid -c user.name=t commit -q -m seed && git push -q "$d/swift.git" main ) || exit 2
   fi
-  tail_out=$(cd "$root" && KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" bash -c '
+  tail_out=$(cd "$root" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=kuicksilver.privacy.tagger GIT_CONFIG_VALUE_0="Kuicksilver <hello@kuicksilver.io>" KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" bash -c '
   set -euo pipefail
   version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; gh=1; dry=0; problems=0; n=0; started=1794688855
   given="$V --github-prerelease"; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
@@ -667,6 +679,7 @@ bad=""; while read -r f; do [ -s "$f" ] || bad="$bad missing:$f"; done <<< "$exp
 if [ "$tail_rc" = 0 ] && [ -z "$bad" ] && [ "$printed" = "$expect" ] && [ "$sums" = "$want" ] \
     && [ "$tail_central" = 0 ] && [ "$(grep -c . "$tl/tasks")" = "$(grep -c -- '-PmavenCentralUsername= -PmavenCentralPassword= -x publishToMavenCentral' "$tl/tasks")" ] \
     && grep -q -- '--draft --prerelease' <<< "$tail_out" && grep -qx '       export TZ=UTC' <<< "$tail_out" \
+    && grep -qF 'git -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s v'"$V" <<< "$tail_out" \
     && grep -q 'swift package: UTC dates, no home-directory path ok' <<< "$tail_out" \
     && [ "$(git -C "$tl/out/kuicksilver-swift" log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ]; then
   pass=$((pass+1)); echo "ok   $L"

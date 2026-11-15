@@ -5,8 +5,9 @@
 # refuses to run without it). Refuses a push when
 #  - a pushed commit has an author or committer date that is not UTC (+0000), or a pushed annotated tag a tagger date
 #    that is not;
-#  - a pushed commit has an author or committer, or a pushed tag a tagger, other than kuicksilver.privacy.identity
-#    (required), or one whose name or e-mail matches the names below;
+#  - a pushed commit has an author or committer other than kuicksilver.privacy.identity, or a pushed tag a tagger other
+#    than kuicksilver.privacy.tagger (the release key's identity, so that GitHub shows the signed tag as Verified; both
+#    required), or one whose name or e-mail matches the names below;
 #  - a pushed commit's message, or a line it adds, names the maintainer: a name of `git config --get-all
 #    kuicksilver.privacy.names` (plain names, any case; a space in one matches ' ', '.', '_', '-' or nothing), the home
 #    directory of the current user (/Users/<user>, /home/<user>, C:\Users\<user>) or this machine's host name.
@@ -21,7 +22,11 @@ if [ -z "$names" ]; then
 fi
 ID=$(git config kuicksilver.privacy.identity)
 if [ -z "$ID" ]; then
-  echo "pre-push: no kuicksilver.privacy.identity in git config: set the only author, committer and tagger allowed (docs/process.md)"; exit 1
+  echo "pre-push: no kuicksilver.privacy.identity in git config: set the only author and committer allowed (docs/process.md)"; exit 1
+fi
+TAGGER=$(git config kuicksilver.privacy.tagger)
+if [ -z "$TAGGER" ]; then
+  echo "pre-push: no kuicksilver.privacy.tagger in git config: set the release key's identity, the only tagger allowed (docs/process.md)"; exit 1
 fi
 # each name as an extended regular expression: metacharacters escaped, a space matching a separator or nothing
 PAT=$(printf '%s\n' "$names" | sed -e 's/[][\.*^$+?(){}|/]/\\&/g' -e 's/ /[ ._-]*/g' | paste -sd '|' -)
@@ -47,7 +52,7 @@ while read -r lref lsha rref rsha; do
     tz=$(git cat-file -p "$lsha" | sed -n 's/^tagger .* \([-+][0-9][0-9][0-9][0-9]\)$/\1/p' | head -1)
     [ "$tz" = "+0000" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger zone ${tz:-none}, not +0000 (tag with TZ=UTC)"; bad=1; }
     who=$(git cat-file -p "$lsha" | sed -n 's/^tagger \(.*>\) [0-9]* [-+][0-9]*$/\1/p' | head -1)
-    [ "$who" = "$ID" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger '$who', not $ID"; bad=1; }
+    [ "$who" = "$TAGGER" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger '$who', not $TAGGER"; bad=1; }
     out=$(git cat-file -p "$lsha" | grep -i -E "$PAT")
     [ -n "$out" ] && { echo "pre-push: personal identifiers in tag ${lref#refs/tags/}:"; echo "$out" | head -5; bad=1; }
   fi

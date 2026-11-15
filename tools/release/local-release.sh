@@ -235,6 +235,12 @@ if ! grep -qs '^sdk.dir=' local.properties && [ -z "${ANDROID_HOME:-}${ANDROID_S
 fi
 # the privacy pre-push hook of this checkout (tools/hooks/pre-push, docs/process.md): the tag and branch pushes that follow
 # a release go through it, so it must be the repository's own and have the maintainer's names to look for
+release_key_uids() { # the user IDs of the pinned release key (tools/release/kuicksilver-release-key.asc), in a keyring of its own
+  local h out; h=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$h"
+  out=$(gpg --homedir "$h" --batch --with-colons --show-keys tools/release/kuicksilver-release-key.asc 2>/dev/null || true)
+  gpgconf --homedir "$h" --kill all >/dev/null 2>&1 || true; rm -rf "$h"
+  awk -F: '/^fpr/ && !f { f = $10 } /^uid/ { u[++n] = $10 } END { if (f == "22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68") for (i = 1; i <= n; i++) print u[i] }' <<< "$out"
+}
 hooks_dir=$(git config core.hooksPath || true); [ -n "$hooks_dir" ] || hooks_dir="$(git rev-parse --git-common-dir)/hooks"
 if ! cmp -s "$hooks_dir/pre-push" tools/hooks/pre-push || [ ! -x "$hooks_dir/pre-push" ]; then
   refuse "the privacy pre-push hook is not installed: ln -sf ../../tools/hooks/pre-push \"\$(git rev-parse --git-common-dir)/hooks/pre-push\" (docs/process.md)"
@@ -243,8 +249,15 @@ elif [ -z "$(git config --get-all kuicksilver.privacy.names || true)" ]; then
 elif [ -z "$(git config kuicksilver.privacy.identity || true)" ]; then
   refuse "no kuicksilver.privacy.identity in git config: the pre-push hook needs the one identity it allows (docs/process.md)"
 elif [ "$(git config user.name || true) <$(git config user.email || true)>" != "$(git config kuicksilver.privacy.identity)" ]; then
-  refuse "git config user.name/user.email of this checkout is not kuicksilver.privacy.identity: the tag v$version would carry another identity and the pre-push hook refuse it"
-else echo "  privacy pre-push hook: installed, identity $(git config kuicksilver.privacy.identity)"; fi
+  refuse "git config user.name/user.email of this checkout is not kuicksilver.privacy.identity: its commits would carry another identity and the pre-push hook refuse them"
+elif [ -z "$(git config kuicksilver.privacy.tagger || true)" ]; then
+  refuse "no kuicksilver.privacy.tagger in git config: the identity of the release key that release tags carry (docs/process.md)"
+elif ! release_key_uids | grep -qxF "$(git config kuicksilver.privacy.tagger)"; then
+  refuse "kuicksilver.privacy.tagger '$(git config kuicksilver.privacy.tagger)' is not a user ID of the release key 22C1F2E4…C8D0EC68 (tools/release/kuicksilver-release-key.asc): GitHub would not show the tags as Verified"
+else echo "  privacy pre-push hook: installed, commits by $(git config kuicksilver.privacy.identity), tags by $(git config kuicksilver.privacy.tagger)"; fi
+# release tags carry the release key's identity, commits keep the checkout's: the printed tag commands set it per command
+tagger=$(git config kuicksilver.privacy.tagger || true); tagger_name="${tagger% <*}"; tagger_email="${tagger##*<}"; tagger_email="${tagger_email%>}"
+tag_id=(-c "user.name=$tagger_name" -c "user.email=$tagger_email")
 # credentials and signing: presence only, values are never read into this script's output
 gp="${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
 has() { local v="ORG_GRADLE_PROJECT_$1"; [ -n "${!v:-}" ] || grep -qE "^[[:space:]]*$(printf '%s' "$1" | sed 's/\./\\./g')[[:space:]]*[=:][[:space:]]*[^[:space:]]" "$gp" 2>/dev/null; }
@@ -544,7 +557,7 @@ order (docs/release.md, "Prereleases on GitHub only"; the Swift package tag is i
        tools/release/swift-package-check.sh local $version
   2. The tag (UTC, like every commit and tag here):
        export TZ=UTC
-       git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
+       git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version
   3. The GitHub release as a draft (not public yet, and pages.yml does not run):
        gh release create v$version --draft --prerelease --verify-tag --title "Kuicksilver $version" \\
          --notes-file <the CHANGELOG section of $version, with $repo_doc appended> \\
@@ -575,7 +588,7 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   2. Press Publish. It reads PUBLISHING, then PUBLISHED (minutes); repo1.maven.org follows within about an hour.
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
-  4. Then, and only then: TZ=UTC git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
+  4. Then, and only then: TZ=UTC git $(printf '%q ' "${tag_id[@]}")tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
      and the GitHub release from the tag with the CHANGELOG section, with these six files attached:
      $sbom_zip(.asc), $prov(.asc) and $xcf(.asc)
      (the zip under exactly that name: the Swift package names it, with checksum $xcf_sum).

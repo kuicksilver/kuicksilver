@@ -75,6 +75,13 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      (non-fast-forward blocked, no bypass), so the history behind every tag stays. A release of an older line goes on
      `release/<X.Y>.x` instead of moving `main` back ([below](#swiftpm-the-kuicksilver-swift-repository)); nothing in
      the release needs a force push or a moved tag.
+9. **Identities and "Verified" on GitHub**: commits of this repository are by the maintainer's identity
+   (`kuicksilver.privacy.identity`); release tags (`v<version>` here) and the Swift package's commits and tags are by the
+   release key's identity `Kuicksilver <hello@kuicksilver.io>` (`kuicksilver.privacy.tagger`, a user ID of the key;
+   `local-release.sh` checks that it is one), so that GitHub can show them as Verified. For that, once, on the GitHub
+   account that pushes them: add `hello@kuicksilver.io` as a verified e-mail address (*Settings → Emails*), and upload
+   the public key `tools/release/kuicksilver-release-key.asc` (*Settings → SSH and GPG keys → New GPG key*). Then check
+   that the first signed tag shows Verified. Setting up the checkout: [process.md](process.md#privacy-pre-push-hook).
 
 ## Every release
 
@@ -200,7 +207,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    <version>` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
    `io.kuicksilver:kuicksilver-quic:<version>` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
-6. Only after the deployment is published: `TZ=UTC git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
+6. Only after the deployment is published: `TZ=UTC git -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s
+   v<version> -m "Kuicksilver <version>"` on the release commit (the tagger is the release key's identity, the checkout's
+   commit identity stays as it is; the script prints the command), push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
    `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
@@ -318,7 +327,8 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
    target is that zip (`path:`), and an empty package that depends on it by path, imports `Kuicksilver` and reads
    `KuicksilverInfo.shared.VERSION`, resolve on the Mac and build with `xcodebuild` for the iOS Simulator and for iOS
    devices (the xcframework has these two slices only, so there is no macOS build).
-2. The signed tag `v<version>` and its push (`export TZ=UTC`, `git tag -s v<version> ...`,
+2. The signed tag `v<version>` and its push (`export TZ=UTC`, `git -c user.name=Kuicksilver -c
+   user.email=hello@kuicksilver.io tag -s v<version> ...` with the tagger of `kuicksilver.privacy.tagger`,
    `git push origin <branch> v<version>`).
 3. `gh release create v<version> --draft --prerelease --verify-tag` with the CHANGELOG section (and the instructions
    file) as notes and every asset attached, `Kuicksilver.xcframework.zip` among them.
@@ -329,7 +339,8 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
    here: fix the release asset, never the tag.
 5. The Swift package commit signed, tagged `<version>` and pushed exactly as the script prints it (as in
    [Every release](#every-release), step 6): `swift-package-check.sh prepush <version>` right before the push checks
-   that the commit and the tag have UTC dates and the release identity (set in the clone's own git config), that the
+   that the commit and the tag have UTC dates and the release key's identity `Kuicksilver <hello@kuicksilver.io>` (set
+   in the clone's own git config), that the
    annotated tag names the commit and is signed by the release key, and that no file names a home directory; the
    clone's pre-push hook runs the same checks and refuses a commit pushed as a tag.
 6. `tools/release/swift-package-check.sh resolve <version>`: an empty package with

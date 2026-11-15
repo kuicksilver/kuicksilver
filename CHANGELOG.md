@@ -627,7 +627,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   carries the release identity, which the checks require of every commit and tag (a tag also signed by the release key).
 - Release privacy: `tools/hooks/pre-push` (UTC commit and tag dates, one identity, no maintainer name, home directory or
   host name in a pushed commit or its author), installed by symlink with the names and the identity in git config
-  (`kuicksilver.privacy.names`, `kuicksilver.privacy.identity`), and required by
+  (`kuicksilver.privacy.names`, `kuicksilver.privacy.identity`, and `kuicksilver.privacy.tagger`, the release key's
+  identity `Kuicksilver <hello@kuicksilver.io>` that release tags and the Swift package's commits and tags carry, so that
+  GitHub can show them as Verified), and required by
   `local-release.sh` (docs/process.md, "Privacy pre-push hook"). `tools/check/build-paths.py` also refuses temporary
   directories (`/tmp/`, `/var/folders/`, ...), home-relative paths, and the user, host and configured names, looked up
   at scan time. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,

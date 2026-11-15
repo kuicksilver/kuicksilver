@@ -30,7 +30,7 @@
 #      KSL_GH  the gh command for --draft (default gh)
 #      KSL_SWIFT_PACKAGE_URL  the package repository resolve names (default https://github.com/kuicksilver/kuicksilver-swift)
 #      KSL_SWIFT_AUTHOR  "Name <email>" every commit and tag must carry when the clone has no kuicksilver.swift.author
-#                        (which swift-package.sh writes; default the maintainer, kinchpik)
+#                        (which swift-package.sh writes; default the release key's identity)
 #      KSL_SWIFT_TAG_KEY, KSL_SWIFT_TAG_FPR  the public key and fingerprint a tag's signature must verify against (default
 #                        tools/release/kuicksilver-release-key.asc, 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68)
 set -euo pipefail
@@ -48,7 +48,7 @@ esac; shift; done
 url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/Kuicksilver.xcframework.zip"
 # the identity swift-package.sh stored in the clone, else KSL_SWIFT_AUTHOR, else the maintainer's
 identity=$(git -C "$pkg" config kuicksilver.swift.author 2>/dev/null || true)
-identity="${identity:-${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}}"
+identity="${identity:-${KSL_SWIFT_AUTHOR:-Kuicksilver <hello@kuicksilver.io>}}"
 sha() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

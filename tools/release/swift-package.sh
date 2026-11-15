@@ -9,10 +9,10 @@
 #            the files rendered (with a stand-in checksum) and read back by `swift package dump-package`.
 #            local-release.sh runs it with its preconditions.
 #   finish   the same on a fresh clone, then the SwiftPM checksum of the release's Kuicksilver.xcframework.zip, and the
-#            commit (unsigned, as kinchpik). It prints what the maintainer runs in a terminal once the GitHub release
-#            v<version> is published (before that the zip's URL does not resolve): sign the commit and make the tag
-#            <version> (plain SemVer, as Swift packages tag: 0.3.0, 0.3.0-rc1) with the release key, as the main tag is
-#            made, verify both, check them (tools/release/swift-package-check.sh prepush: UTC dates, the tag on the
+#            commit (unsigned, as the release key's identity, Kuicksilver <hello@kuicksilver.io>). It prints what the
+#            maintainer runs in a terminal once the GitHub release v<version> is published (before that the zip's URL
+#            does not resolve): sign the commit and make the tag <version> (plain SemVer, as Swift packages tag: 0.3.0,
+#            0.3.0-rc1) with the release key, as the main tag is made, verify both, check them (tools/release/swift-package-check.sh prepush: UTC dates, the tag on the
 #            commit, no home-directory path), push. The clone's pre-push hook runs the same checks on every push
 #            (tools/release/swift-package-pre-push.sh, installed here). Commit and tag are made with TZ=UTC. Nothing is signed, tagged or
 #            pushed here. Re-running finish is safe: it clones
@@ -31,7 +31,8 @@
 # Usage: tools/release/swift-package.sh prepare <version> [--out <dir>] [--dry-run]
 #        tools/release/swift-package.sh finish <version> <checksum> [--source-commit <sha>] [--out <dir>] [--dry-run]
 # Env: KSL_SWIFT_REPO    the package repository to clone (default https://github.com/kuicksilver/kuicksilver-swift.git)
-#      KSL_SWIFT_AUTHOR  "Name <email>" of the commit (default the maintainer, kinchpik)
+#      KSL_SWIFT_AUTHOR  "Name <email>" of the commit and the tag (default the release key's identity, so that GitHub
+#                        shows them as Verified)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68   # the release key (tools/release/kuicksilver-release-key.asc)
@@ -55,7 +56,7 @@ else
 fi
 commit="${commit:-$(git rev-parse HEAD)}"
 repo="${KSL_SWIFT_REPO:-https://github.com/kuicksilver/kuicksilver-swift.git}"
-author="${KSL_SWIFT_AUTHOR:-kinchpik <339333647+kinchpik@users.noreply.github.com>}"
+author="${KSL_SWIFT_AUTHOR:-Kuicksilver <hello@kuicksilver.io>}"
 name="${author% <*}"; email="${author##*<}"; email="${email%>}"
 url="https://github.com/kuicksilver/kuicksilver/releases/download/v$version/Kuicksilver.xcframework.zip"
 problem() { if [ "$dry" = 1 ]; then echo "  WARN (a release would refuse): $*"; else echo "REFUSED: $*" >&2; exit 1; fi; }
