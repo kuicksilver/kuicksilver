@@ -1,0 +1,6 @@
+# http2.hpackDecode: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackDecodeFuzzTestInputs/hpackDecode/c3	cd72315d46b0e0da	f48c75ec24544ead
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackDecodeFuzzTestInputs/hpackDecode/c4	87801341b67026f2	1473653278622be4
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackDecodeFuzzTestInputs/hpackDecode/c5	061a645003e154d3	0cdfed5adbbd7acb
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackDecodeFuzzTestInputs/hpackDecode/c6	4fc3630ddc6a66b6	6a6e2a7314169805

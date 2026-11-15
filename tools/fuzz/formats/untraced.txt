@@ -1,0 +1,17 @@
+# Campaign targets whose committed inputs have no recorded decoding (tools/fuzz/formats/<target>.lock), with the reason:
+# <target> | <reason>. tools/check/fuzz-formats.py wants every jvm target of tools/fuzz/campaign.sh either here or with a
+# lock, never both; CommittedCorpusReplayTest fails for a target here whose program traces its operations.
+quic.frameDecode | the input is the frames themselves: no fuzz-side decoder, the library's parser reads it
+quic.packetHeader | the input is the packet itself: no fuzz-side decoder
+quic.transportParameters | the input is the encoded parameters themselves: no fuzz-side decoder
+quic.retryPacket | the input is the packet itself: no fuzz-side decoder
+quic.packetRecvServer | the input is one datagram, delivered as it is: no fuzz-side decoder
+quic.packetRecvClient | the input is one datagram, delivered as it is: no fuzz-side decoder
+quic.rememberedTicket | a flags bit, then the blob or its parts re-encoded: not traced yet
+tls.clientHelloScan | the input is the ClientHello bytes: no fuzz-side decoder
+tls.zeroRttHello | a program of hello edits and replays: not traced yet
+ktor-network.inflate | the input is the compressed stream with its split points: not traced yet
+ktor-network.wsGuard | a program of WebSocket frames and splits: not traced yet
+client.svcb | the input is the DNS message itself: no fuzz-side decoder
+client.h1Response | a program of response pieces and kinds: not traced yet
+server.h1Request | a program of request pieces and kinds: not traced yet

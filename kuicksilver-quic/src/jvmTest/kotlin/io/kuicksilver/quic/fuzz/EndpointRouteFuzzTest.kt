@@ -33,7 +33,9 @@ class EndpointRouteFuzzTest {
             }
             check(c.state == ConnectionState.Confirmed) { "Null-crypto handshake did not complete" }
             val from = if (data[0].toInt() and 1 != 0) InetSocketAddress("10.0.0.9", 4444) else fuzzClientAddr
+            fuzzOp { "from ${if (data[0].toInt() and 1 != 0) "a stranger" else "the client"}" }
             for (dg in Framing.split(data, 1)) {
+                fuzzOp { "datagram ${dg.size}:${dg.contentHashCode()}" }
                 d.deliver(ep, dg, from)
                 d.service(ep)
                 d.tick(5)

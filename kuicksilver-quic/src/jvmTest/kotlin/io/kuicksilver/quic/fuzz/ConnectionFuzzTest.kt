@@ -249,11 +249,15 @@ internal class ConnectionFuzz(
 
     private fun pattern(n: Int): ByteArray = ByteArray(n) { (it * 7 + 3).toByte() }
 
+    /** The kind of the frame [frame] built last, for the trace. */
+    private var frameKind = ""
+
     /** A well-formed frame of the selected kind with fuzzed fields. */
     private fun frame(): ByteArray {
         val o = ByteArrayOutputStream()
         val kinds = ConnProgram.FRAME_KINDS
         val kind = kinds[u8() % kinds.size]
+        frameKind = kind
         when (kind) {
             "PADDING" -> {
                 repeat(minOf(num(), 64L).toInt() + 1) { o.write(0) }
@@ -470,12 +474,17 @@ internal class ConnectionFuzz(
             pair.filterToServer = { _, _ -> !blocked[0] }
             pair.filterToClient = { _, _ -> !blocked[1] }
             p = 1
+            fuzzOp { "flags live=${flags and 1 != 0} small=$small pmtud=${flags and 4 == 0}" }
             if (flags and 1 == 0) {
                 pair.handshake()
                 checkInvariants()
             }
             var ops = 0
-            while (p < data.size && ops++ < ConnProgram.MAX_OPS) operation(u8())
+            while (p < data.size && ops++ < ConnProgram.MAX_OPS) {
+                val at = p
+                operation(u8())
+                fuzzOp { "@$at $op ->@$p" }
+            }
             repeat(8) {
                 pair.advance(10.milliseconds)
                 step()
@@ -487,6 +496,13 @@ internal class ConnectionFuzz(
 
     private fun core(side: Int): ConnectionCore? = if (side == 0) pair.client else pair.server
 
+    /** What the operation being run was decoded to, for its trace ([fuzzOp]): set by each kind. */
+    private var op = ""
+
+    private inline fun traced(text: () -> String) {
+        if (FuzzTrace.on) op = text()
+    }
+
     private fun operation(o: Int) {
         val kind = o and 7
         val side = (o ushr 3) and 1
@@ -496,16 +512,22 @@ internal class ConnectionFuzz(
                 val n = minOf((u8() shl 8) or u8(), ConnProgram.MAX_FRAME, data.size - p)
                 val bytes = data.copyOfRange(p, p + n)
                 p += n
+                traced { "RAW ${name(side)} level=${arg and 3} bytes=${bytes.size}:${bytes.contentHashCode()}" }
                 inject(side, arg and 3, bytes)
             }
 
             1 -> {
-                inject(side, arg and 3, frame())
+                val f = frame()
+                traced { "FRAME ${name(side)} level=${arg and 3} $frameKind bytes=${f.size}:${f.contentHashCode()}" }
+                inject(side, arg and 3, f)
             }
 
             2 -> {
-                pair.advance((arg * 5).milliseconds)
-                if (arg and 8 != 0) readDatagrams()
+                val ms = arg * 5
+                val read = arg and 8 != 0
+                traced { "STEP ${ms}ms readDatagrams=$read" }
+                pair.advance(ms.milliseconds)
+                if (read) readDatagrams()
                 step()
             }
 
@@ -518,15 +540,19 @@ internal class ConnectionFuzz(
             }
 
             5 -> {
-                pair.advance(if (arg == 15) 3_000.milliseconds else (arg * 100).milliseconds)
+                val ms = if (arg == 15) 3_000 else arg * 100
+                traced { "TICK ${ms}ms" }
+                pair.advance(ms.milliseconds)
                 step()
             }
 
             6 -> {
+                traced { if (arg and 1 != 0) "BLOCK ${name(side)} toggle" else "BLOCK round" }
                 if (arg and 1 != 0) blocked[side] = !blocked[side] else step()
             }
 
             else -> {
+                traced { "ROUND" }
                 step()
             }
         }
@@ -542,9 +568,13 @@ internal class ConnectionFuzz(
         c.testInjectFrames += level to bytes
     }
 
+    /** The stream index byte the application call read last, for the trace (which stream it names depends on the run). */
+    private var index = -1
+
     private fun stream(side: Int): Long? {
         val s = sides[side].streams
         val i = u8()
+        index = i
         return if (s.isEmpty()) null else s[i % s.size]
     }
 
@@ -561,11 +591,16 @@ internal class ConnectionFuzz(
         side: Int,
         arg: Int,
     ) {
-        val c = core(side) ?: return
+        val c = core(side)
+        if (c == null) {
+            traced { "APP ${name(side)} none (no connection: reads nothing)" }
+            return
+        }
         when (arg and 7) {
             0 -> {
                 val n = minOf(num(), 20_000L).toInt()
                 val fin = u8() and 1 != 0
+                traced { "APP ${name(side)} open ${if (arg and 8 == 0) "bidi" else "uni"} write=$n fin=$fin" }
                 api {
                     val id = c.openStream(bidi = arg and 8 == 0)
                     sides[side].streams += id
@@ -576,38 +611,45 @@ internal class ConnectionFuzz(
             1 -> {
                 val id = stream(side)
                 val n = minOf(num(), 20_000L).toInt()
+                traced { "APP ${name(side)} write stream#$index $n" }
                 if (id != null) api { c.writeStream(id, ByteArray(n) { (it * 3).toByte() }, 0, n, false) }
             }
 
             2 -> {
                 val id = stream(side)
                 val n = minOf(num(), 65_536L).toInt()
+                traced { "APP ${name(side)} read stream#$index $n" }
                 if (id != null) api { c.readStream(id, ByteArray(maxOf(n, 1)), 0, n) }
             }
 
             3 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} reset stream#$index code=$code" }
                 if (id != null) api { c.resetStream(id, code) }
             }
 
             4 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} stopSending stream#$index code=$code" }
                 if (id != null) api { c.stopSending(id, code) }
             }
 
             5 -> {
+                traced { "APP ${name(side)} keyUpdate" }
                 c.initiateKeyUpdate(pair.now)
             }
 
             6 -> {
                 val n = minOf(num(), 1500L).toInt()
+                traced { "APP ${name(side)} datagram $n" }
                 if (sides[side].datagrams.size < 16) sides[side].datagrams += ByteArray(n) { 0x5a }
             }
 
             else -> {
                 val code = num()
+                traced { "APP ${name(side)} close code=$code" }
                 api { c.close(code, "fuzz", pair.now) }
             }
         }
@@ -618,6 +660,10 @@ internal class ConnectionFuzz(
         arg: Int,
     ) {
         val q = if (side == 0) pair.toServer else pair.toClient
+        traced {
+            val what = listOf("dropFirst", "duplicateFirst", "reverse", if (arg and 4 != 0) "markCe" else "markEct0")[arg and 3]
+            "NET towards ${name(1 - side)} $what rebind=${arg and 8 != 0 && side == 0}"
+        }
         when (arg and 3) {
             0 -> {
                 q.removeFirstOrNull()

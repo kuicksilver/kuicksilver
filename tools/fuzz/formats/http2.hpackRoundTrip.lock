@@ -1,0 +1,4 @@
+# http2.hpackRoundTrip: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackRoundTripFuzzTestInputs/hpackRoundTrip/lists	a8c15712cd49b03c	9592b409bd62aea5
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/HpackRoundTripFuzzTestInputs/hpackRoundTrip/sensitive	28a13e43a0ff86c0	334c384b640bce8f

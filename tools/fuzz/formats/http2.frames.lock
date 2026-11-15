@@ -1,0 +1,7 @@
+# http2.frames: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2FrameFuzzTestInputs/frames/headers-continuation-data	a171135796374241	3a9c436f58e87106
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2FrameFuzzTestInputs/frames/oversized	99a1c471f7b42228	bb6bbda78d5846c9
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2FrameFuzzTestInputs/frames/push-promise-unknown	6d0721cc13515889	24e80f6324eeeb1c
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2FrameFuzzTestInputs/frames/rst-priority-window	7a35767ab6789136	6cf3235fad0db05d
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2FrameFuzzTestInputs/frames/settings-ping-goaway	d53e8c52e82c600e	97738f1a7cf58487

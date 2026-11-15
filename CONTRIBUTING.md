@@ -282,7 +282,15 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the `ksl` parsing code. Their committed inputs run as regression tests in `jvmTest`: the seeds and reproducers in the
   resources through Jazzer, and the campaigns' minimized corpora in `tools/fuzz/corpus/<target>/` through
   `CommittedCorpusReplayTest` (in each module's `FuzzCase.kt`, for the module's rows of the campaign.sh table; a target
-  without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test fails for one that is in neither);
+  without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test fails for one that is in neither).
+  The same test replays the regression inputs too and checks that each committed input of a target whose program traces
+  its operations (`fuzzOp`, one call per decoded operation stating what it does) still decodes as
+  `tools/fuzz/formats/<target>.lock` records: a change to a program's decoder (`ConnProgram`, `ZeroRttProgram`, the
+  pieces of the HTTP/2 and HTTP/3 targets) that makes a committed input do something else fails there. Rewrite the old
+  inputs so that they keep their meaning (their fingerprints then stay as they were), or record them again with
+  `KUICKSILVER_FUZZ_FORMATS=record` (`dump:<dir>` writes each input's trace, to compare) and give the reason in
+  `tools/fuzz/formats/changes.txt`; new inputs (a `minimize`, a new reproducer) are recorded the same way. A new target
+  traces its program or is listed with its reason in `tools/fuzz/formats/untraced.txt` (`tools/check/fuzz-formats.py`);
   `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan. `tools/fuzz/gen-seeds.sh` regenerates the
   QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
   write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.

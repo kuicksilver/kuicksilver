@@ -28,6 +28,7 @@ class H3FrameFuzzTest {
         if (data.isEmpty()) return
         val control = data[0].toInt() and 1 == 0
         val server = data[0].toInt() and 2 == 0
+        fuzzOp { "${if (control) "control" else "request"} stream, ${if (server) "server" else "client"} side, frames from offset 1" }
         var p = 1
         var first = true
         try {
@@ -62,6 +63,7 @@ class H3FrameFuzzTest {
     fun capsules(data: ByteArray) {
         if (data.isEmpty()) return
         val cut = (data[0].toInt() and 0xff) % data.size
+        fuzzOp { "capsules [1, ${1 + maxOf(0, cut - 1)}) then [${maxOf(1, cut)}, ${data.size}) then FIN" }
         val parser = CapsuleParser(maxCapsuleLength = 4096, maxDatagramLength = 1024, known = setOf(0x00, 0x2843))
         try {
             parser.feed(data, 1, maxOf(0, cut - 1)) { _, _ -> }
@@ -83,6 +85,7 @@ class QpackDecodeFuzzTest {
     fun qpackDecode(data: ByteArray) {
         if (data.size < 2) return
         val n = minOf(data[0].toInt() and 0xff, data.size - 1)
+        fuzzOp { "encoder stream [1, ${1 + n}) field section [${1 + n}, ${data.size})" }
         val d = QpackDecoder(4096, 16, 65_536)
         qpackContract {
             d.onEncoderStream(data, 1, n)

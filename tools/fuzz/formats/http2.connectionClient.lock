@@ -1,0 +1,5 @@
+# http2.connectionClient: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ClientConnectionFuzzTestInputs/connectionClient/interim-goaway-refused	5a0d30e13e3e1543	66513a7b7b085204
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ClientConnectionFuzzTestInputs/connectionClient/response-with-trailers	ba6143d50bcbfc38	b23881c58a84c594
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ClientConnectionFuzzTestInputs/connectionClient/window-ping-malformed	6a89c977abc01cbc	4077e6c467f766ba

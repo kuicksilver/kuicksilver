@@ -196,6 +196,16 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
         javaLauncher.set(project.extensions.getByType<org.gradle.jvm.toolchain.JavaToolchainService>().launcherFor { languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(v)) })
     }
     providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
+    // a module with fuzz targets replays the committed corpora and checks the recorded decoding of every committed input
+    // (CommittedCorpusReplayTest in its FuzzCase.kt): they are inputs of its JVM tests, so a changed corpus or lock runs them again
+    val fuzz = project.file("src/jvmTest/kotlin").walkTopDown().any { it.name == "FuzzCase.kt" }
+    if (fuzz) {
+        inputs.dir(rootProject.file("tools/fuzz/corpus")).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("fuzzCorpus")
+        inputs.dir(rootProject.file("tools/fuzz/formats")).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("fuzzFormats")
+        inputs.files(rootProject.file("tools/fuzz/campaign.sh"), rootProject.file("tools/fuzz/no-corpus.txt"))
+            .withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("fuzzTargets")
+        inputs.property("fuzzFormatsMode", providers.environmentVariable("KUICKSILVER_FUZZ_FORMATS").orElse(""))
+    }
 }
 // Flake hunting (tools/ci/flake-hunt.sh): -Pkuicksilver.test.repeat=<N> runs the JVM suite N times in one build, jvmTest
 // then jvmTestRepeat2..N, each with its own results directory and jvmTest's filter (--tests included);

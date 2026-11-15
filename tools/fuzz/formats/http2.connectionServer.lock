@@ -1,0 +1,8 @@
+# http2.connectionServer: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/continuation	ea53a47f27bbe24a	aa86810d2c375e29
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/finding-peer-list-limit-1	7553a638ea41b9a9	a53230fc125bbab2
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/get-then-data	9a666714d60710f7	3b42ea57e90711e9
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/made-you-reset	ce5cfb3af9e424f2	2d665f31d4b6ce35
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/rapid-reset	4c1636909b2e010a	b1d3c9400015a368
+kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz/H2ConnectionFuzzTestInputs/connectionServer/rapid-reset-burst	63b0edb46fa861c7	17435cc2269c31ce

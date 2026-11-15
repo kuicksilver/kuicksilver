@@ -1,0 +1,3 @@
+# Why recorded decodings of committed fuzz inputs changed (tools/check/fuzz-formats.py): one line per change,
+# <YYYY-MM-DD> | <targets, comma-separated> | <reason>. A line added on a branch lets the inputs of the targets it names
+# decode otherwise than on the merge base with main; lines already on main count for nothing.

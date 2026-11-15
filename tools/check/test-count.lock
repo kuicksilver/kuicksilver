@@ -4513,6 +4513,15 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.ConnectionFuzzTest.connect
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.EndpointRouteFuzzTest.endpointRoute
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FrameDecodeFuzzTest.frameDecode
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzHarnessTest.internalFailureOfAServerConnectionFailsTheTarget
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.aProgramDecodesToTheSameOperationsInEveryRun
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.bytesTheDecoderDoesNotReadKeepTheTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_aRunThatDecodesNothingHasNoFingerprint
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_aZeroRttProgramWithAnotherOutcomeIsAnotherTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_anotherFrameKindIsAnotherTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_anotherLengthIsAnotherTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_anotherRawPayloadIsAnotherTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_operationsReadOutOfStepAreAnotherTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.overRealTlsTooTheTraceIsTheSameInEveryRun
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.PacketHeaderFuzzTest.packetHeader
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.PacketReceiveFuzzTest.multiPacket
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.PacketReceiveFuzzTest.packetRecvClient
