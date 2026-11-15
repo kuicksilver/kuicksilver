@@ -1059,6 +1059,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
+  the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
+  selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.
+  The engines' sockets now have their selector run a selection after every close.
 - WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
   credit comes back only as the application reads, so an application that reads a session's streams strictly one after
   another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and

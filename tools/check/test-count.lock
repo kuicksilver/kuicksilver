@@ -2116,6 +2116,9 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeball
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeballsTest.nextAttemptAfter250ms
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeballsTest.winnerClosedWhenTheCallerIsCancelledBeforeItReturns
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HttpsGetTest.httpsGetAgainstLocalServerWithPin
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_abortOfABlockedWriterResetsThePeer
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_abortOfAnIdleSocketResetsThePeer
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_closeOfAnIdleSocketReleasesTheDescriptor
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.KtorVersionPolicyTest.otherMinorOrMajorFails
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.KtorVersionPolicyTest.runtimeKtorIsSupported
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.KtorVersionPolicyTest.sameMinorPasses

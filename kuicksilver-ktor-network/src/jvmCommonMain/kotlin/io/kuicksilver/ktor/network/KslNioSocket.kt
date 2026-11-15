@@ -301,6 +301,7 @@ internal class KslNioSocket(
     private fun closeDescriptor() {
         runCatching { nio.close() }
         runCatching { selector.notifyClosed(selectable) }
+        selector.releaseClosedChannels()
     }
 
     override fun close() {
@@ -342,10 +343,14 @@ internal class KslNioSocket(
         val r = reader
         if (r == null) {
             delegate.close()
+            selector.releaseClosedChannels()
             return
         }
         r.job.cancel()
-        r.job.invokeOnCompletion { delegate.close() }
+        r.job.invokeOnCompletion {
+            delegate.close()
+            selector.releaseClosedChannels()
+        }
     }
 
     override fun dispose(): Unit = close()
@@ -389,7 +394,85 @@ internal class KslNioServerSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
+    /** Registered with a selector (tests: an accept waited on it). */
+    internal val isRegisteredForTest: Boolean get() = nio.isRegistered
+
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()
+}
+
+/**
+ * Makes this selector run one selection, so that the channels closed on it are really closed: their descriptors released,
+ * and a socket closed with `SO_LINGER` 0 ([KslNioSocket.abort]) sending its reset.
+ *
+ * The JDK closes a non-blocking channel that is still registered with a selector only once a selection of that selector
+ * deregisters its cancelled key (`SocketChannelImpl.implCloseNonBlockingMode`: `tryClose()` refuses while `isRegistered()`;
+ * `SelectorImpl.processDeregisterQueue` then calls `kill()`, which closes the descriptor). ktor's `ActorSelectorManager`
+ * selects only while some interest is pending: `notifyClosed` cancels the key and wakes a selection in progress, but a
+ * selector with nothing pending waits on its queue and never selects again until the next interest. Its socket stayed
+ * open behind the closed channel: an aborted connection sent no reset and no FIN (the peer waited for ever), and a closed
+ * one kept its descriptor (its peer's writes were still taken). A listener closed on an idle selector after an accept
+ * was given up refused connections at once when tried (ktor's server socket), so [KslNioServerSocket] does not ask for it.
+ *
+ * The selection is asked for with an interest that is ready at once: WRITE on the sink of a new pipe. Its key is
+ * deregistered by the next selection on this selector in turn, so at most one such pipe end waits per idle selector.
+ */
+internal fun SelectorManager.releaseClosedChannels() {
+    val selector = this
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO + CoroutineName("ksl-selector-release")) {
+        val sink =
+            try {
+                val pipe = selector.provider.openPipe()
+                pipe.source().close() // never registered: closed at once
+                pipe.sink().also { it.configureBlocking(false) }
+            } catch (_: Throwable) {
+                return@launch
+            }
+        val selectable = PipeSinkSelectable(sink)
+        try {
+            // the selection deregisters the keys cancelled before it; bounded, for a selector that closes meanwhile
+            selectable.interestOp(SelectInterest.WRITE, true)
+            withTimeoutOrNull(RELEASE_SELECTION_TIMEOUT) { selector.select(selectable, SelectInterest.WRITE) }
+        } catch (_: Throwable) {
+            // the selector is closed: it deregistered everything
+        } finally {
+            runCatching { sink.close() }
+            runCatching { selector.notifyClosed(selectable) }
+        }
+    }
+}
+
+/** How long [releaseClosedChannels] waits for its selection. */
+private val RELEASE_SELECTION_TIMEOUT: Duration = 5.seconds
+
+/** The pipe sink [releaseClosedChannels] waits on, as ktor's selector wants a [Selectable]. */
+private class PipeSinkSelectable(
+    override val channel: java.nio.channels.Pipe.SinkChannel,
+) : Selectable {
+    override val suspensions: io.ktor.network.selector.InterestSuspensionsMap =
+        io.ktor.network.selector
+            .InterestSuspensionsMap()
+
+    @Volatile private var ops = 0
+
+    override val isClosed: Boolean get() = !channel.isOpen
+
+    override val interestedOps: Int get() = ops
+
+    override fun interestOp(
+        interest: SelectInterest,
+        state: Boolean,
+    ) {
+        ops = if (state) ops or interest.flag else ops and interest.flag.inv()
+    }
+
+    override fun close() {
+        channel.close()
+    }
+
+    override fun dispose() {
+        close()
+    }
 }
