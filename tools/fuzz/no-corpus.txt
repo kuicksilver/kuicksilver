@@ -4,11 +4,7 @@
 # fails for a target that has none and is not listed here, and for a listed target that has one: run
 # `tools/fuzz/campaign.sh minimize <target>` after its first campaign and remove its line.
 quic.zeroRttConnection
-http2.frames
-http2.hpackDecode
-http2.connectionServer
-http2.connectionClient
-http2.hpackRoundTrip
+http3.h3Connection
 ktor-network.inflate
 ktor-network.wsGuard
 client.h1Response
