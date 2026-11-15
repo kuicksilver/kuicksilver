@@ -487,7 +487,11 @@ class WebTransportFlowControlTest {
                 } else {
                     p.client.awaitFlow(session) { (it.sentForTest[WtFlow.STREAMS_BLOCKED_UNI] ?: 0) >= 1 }
                 }
-                waiting.cancel()
+                // given up while it still waits: joined, so its opening has stopped before any new credit can come. A
+                // cancellation still pending when the first stream's slot came back let the opening take that slot and
+                // open a stream after all (then reset, as nobody wanted it), and the open below waited for the slot of
+                // a stream this test never accepts (a loaded host's test thread, preempted between the two)
+                waiting.cancelAndJoin()
                 p.client.awaitFlow(session) { it.openedForTest(false).first == 1L }
                 if (waitsForQuic) {
                     // the QUIC credit of a retired stream may come late (the server batches MAX_STREAMS): the counts agree
