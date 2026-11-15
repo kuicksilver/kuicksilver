@@ -229,8 +229,9 @@ for a prerelease.
 
 Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no identity but the
 configured one, no name, home directory or host name in an author, committer, commit message or added line; and a
-release tag (`v*`) is pushed only as an annotated tag signed by the release key (checked against
-`tools/release/kuicksilver-release-key.asc` and its pinned fingerprint). [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
+tag (only release tags are pushed here, whatever their name) is pushed only as an annotated tag signed by the release
+key (checked against `tools/release/kuicksilver-release-key.asc` and its pinned fingerprint).
+[`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
 `tools/release/local-release.sh` refuses to run until it is installed in the checkout and the names and the identity
 are configured, while the checkout's `user.name <user.email>` is not that identity, and while the tagger is not a user
 ID of the release key (GitHub shows a signed tag as Verified only then). Release tags are made with the tagger per

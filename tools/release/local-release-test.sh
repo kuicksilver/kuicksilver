@@ -23,7 +23,7 @@ done
 FPR=$(gpg --batch --with-colons --list-keys release@example.invalid 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}')
 OTHER_FPR=$(gpg --batch --with-colons --list-keys other@example.invalid 2>/dev/null | awk -F: '/^fpr/ {print $10; exit}')
 gpg --batch --armor --export "$FPR" > "$tmp/test-release-key.asc"
-export KSL_SWIFT_TAG_KEY="$tmp/test-release-key.asc" KSL_SWIFT_TAG_FPR="$FPR" KSL_RELEASE_KEY_FILE="$tmp/test-release-key.asc" KSL_RELEASE_FPR="$FPR"
+export KSL_SWIFT_TAG_KEY="$tmp/test-release-key.asc" KSL_SWIFT_TAG_FPR="$FPR" KSL_RELEASE_KEY_FILE="$tmp/test-release-key.asc" KSL_RELEASE_FPR="$FPR" KSL_HOOK_TEST=1
 printf '[user]\n\tname = Global Person\n\temail = global@example.invalid\n\tsigningkey = %s\n[gpg]\n\tprogram = gpg\n' "$FPR" > "$GIT_CONFIG_GLOBAL"
 # Maven Central: 0.2.0 is published, nothing else; KSL_CENTRAL_STATUS forces an answer (000: no answer)
 mkdir -p "$tmp/bin"
@@ -558,9 +558,18 @@ mhook "negative_hookUnsignedReleaseTag" refuse "tag v9 is not signed" refs/tags/
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s -u "$OTHER_FPR" v9 -m v9
 mhook "negative_hookReleaseTagOtherKey" refuse "tag v9 is not signed by the release key $FPR" refs/tags/v9
 hg tag -d v9 >/dev/null; hg tag v9
-mhook "negative_hookLightweightReleaseTag" refuse "must be an annotated tag signed by the release key" refs/tags/v9
+mhook "negative_hookLightweightReleaseTag" refuse "v9: every tag pushed here is a release tag" refs/tags/v9
+# every tag pushed here is a release tag, whatever its name
+TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a 1.0.4 -m 1.0.4; mhook "negative_hookUnsignedTagAnyName" refuse "tag 1.0.4 is not signed" refs/tags/1.0.4
+hg tag 1.0.5; mhook "negative_hookLightweightTagAnyName" refuse "1.0.5: every tag pushed here is a release tag" refs/tags/1.0.5
+TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -a V1.0.6 -m V1.0.6; mhook "negative_hookUnsignedTagCapitalV" refuse "tag V1.0.6 is not signed" refs/tags/V1.0.6
+hg tag -d 1.0.4 1.0.5 V1.0.6 >/dev/null
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s v9 -m v9
 mhook "privacy hook: a signed UTC tag by the release identity, over commits by the maintainer" ok - main refs/tags/v9
+# the throwaway key counts only in a test run (KSL_HOOK_TEST=1): without the flag, the pinned release key decides
+TZ=UTC hg -c user.name=Kuicksilver -c user.email=hello@kuicksilver.io tag -s v10 -m v10
+KSL_HOOK_TEST= mhook "negative_hookKeyOverrideWithoutTestFlag" refuse "tag v10 is not signed by the release key 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68" refs/tags/v10
+hg tag -d v10 >/dev/null
 hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
 mhook "negative_hookTagByCommitIdentity" refuse "tagger 'kinchpik <339333647[+]kinchpik@users.noreply.github.com>'" refs/tags/v9
 hg tag -d v9 >/dev/null

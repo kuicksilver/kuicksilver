@@ -5,8 +5,8 @@
 # refuses to run without it). Refuses a push when
 #  - a pushed commit has an author or committer date that is not UTC (+0000), or a pushed annotated tag a tagger date
 #    that is not;
-#  - a pushed release tag (refs/tags/v*) is not an annotated tag signed by the release key (checked against
-#    tools/release/kuicksilver-release-key.asc and its pinned fingerprint);
+#  - a pushed tag (any: only release tags are pushed here) is not an annotated tag signed by the release key (checked
+#    against tools/release/kuicksilver-release-key.asc and its pinned fingerprint);
 #  - a pushed commit has an author or committer other than kuicksilver.privacy.identity, or a pushed tag a tagger other
 #    than kuicksilver.privacy.tagger (the release key's identity, so that GitHub shows the signed tag as Verified; both
 #    required), or one whose name or e-mail matches the names below;
@@ -47,12 +47,15 @@ elif listed=$(git ls-remote "$2" 2>/dev/null); then
 else
   echo "pre-push: cannot list $2 (what it already has decides what is checked): push refused"; exit 1
 fi
-# a release tag (v*) is signed by the release key: its signature checked against the pinned public key of the checkout in
-# a keyring of its own (GOODSIG and VALIDSIG on the primary fingerprint). KSL_RELEASE_KEY_FILE, KSL_RELEASE_FPR: tests
+# every tag pushed here is a release tag, signed by the release key: its signature checked against the pinned public key
+# of the checkout in a keyring of its own (GOODSIG and VALIDSIG on the primary fingerprint). KSL_RELEASE_KEY_FILE and
+# KSL_RELEASE_FPR replace the key only together with KSL_HOOK_TEST=1 (the tests)
 verify_release_tag() { # <tag object> <name>
   vt=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$vt"
-  key=${KSL_RELEASE_KEY_FILE:-$(git rev-parse --show-toplevel)/tools/release/kuicksilver-release-key.asc}
-  fpr=${KSL_RELEASE_FPR:-22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68}
+  key=$(git rev-parse --show-toplevel)/tools/release/kuicksilver-release-key.asc; fpr=22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68
+  if [ "${KSL_HOOK_TEST:-}" = 1 ]; then   # tools/release/local-release-test.sh only: a throwaway key in place of the release key
+    key=${KSL_RELEASE_KEY_FILE:-$key}; fpr=${KSL_RELEASE_FPR:-$fpr}
+  fi
   git cat-file tag "$1" > "$vt/obj"
   sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$vt/obj" > "$vt/payload"
   sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$vt/obj" > "$vt/sig.asc"
@@ -76,10 +79,10 @@ while read -r lref lsha rref rsha; do
     [ "$who" = "$TAGGER" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger '$who', not $TAGGER"; bad=1; }
     out=$(git cat-file -p "$lsha" | grep -i -E "$PAT")
     [ -n "$out" ] && { echo "pre-push: personal identifiers in tag ${lref#refs/tags/}:"; echo "$out" | head -5; bad=1; }
-    case "$rref" in refs/tags/v*) verify_release_tag "$lsha" "${rref#refs/tags/}" || bad=1 ;; esac
+    case "$rref" in refs/tags/*) verify_release_tag "$lsha" "${rref#refs/tags/}" || bad=1 ;; esac
   fi
-  case "$rref" in refs/tags/v*) [ "$(git cat-file -t "$lsha" 2>/dev/null)" = tag ] \
-    || { echo "pre-push: ${rref#refs/tags/} is a release tag: it must be an annotated tag signed by the release key (git tag -s)"; bad=1; } ;; esac
+  case "$rref" in refs/tags/*) [ "$(git cat-file -t "$lsha" 2>/dev/null)" = tag ] \
+    || { echo "pre-push: ${rref#refs/tags/}: every tag pushed here is a release tag: an annotated tag signed by the release key (git tag -s)"; bad=1; } ;; esac
   # the commits to check: those the remote does not have; a force push over a commit not here is no exception
   if [ "$rsha" != "$z" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then range="$rsha..$lsha"; else range="$lsha --not $known"; fi
   if ! revs=$(git rev-list $range); then echo "pre-push: cannot list the commits of $rref ($range)"; bad=1; continue; fi
