@@ -193,10 +193,13 @@ class HandOffCancellationTest {
                     c.close()
                 }
                 val got = ArrayList<Int>()
-                k.run(this) {
-                    s.capsules.collect {
-                        got += it.value.decodeToString().toInt()
-                        taken.value = got.size
+                // bounded: with a capsule lost the run would wait for it, and the assertion below names the seed
+                withTimeoutOrNull(15.seconds) {
+                    k.run(this) {
+                        s.capsules.collect {
+                            got += it.value.decodeToString().toInt()
+                            taken.value = got.size
+                        }
                     }
                 }
                 assertEquals((0 until n).toList(), got, "$k")

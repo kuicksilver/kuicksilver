@@ -980,7 +980,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and one cancelled while it handled a capsule lost the next one. Capsules now wait in a queue they leave only when a
   running collector is about to get them: the next collector gets them, in order. What a wrapper around the collection
   (`withTimeout`, `async`) does with a capsule already delivered stays the wrapper's: collect in one long-lived coroutine
-  rather than polling `first()` under a timeout.
+  rather than polling `first()` under a timeout, and directly: operators that collect ahead in another coroutine
+  (`buffer`, `flowOn`, `conflate`, `produceIn`, `shareIn`, `stateIn`, and `collectLatest` by design) lose the capsules
+  they took and had not delivered when the collection is cancelled.
 - HTTP/3 server: `Http3Connection.acceptRequest` cancelled while it waited could lose the request being handed to it,
   which was then never answered and kept counting as open (a graceful shutdown waited for it). The next call now
   returns it. A request returned to a `withTimeout` or `async` that was cancelled meanwhile is still dropped by that

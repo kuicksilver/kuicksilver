@@ -184,7 +184,9 @@ public interface CapsuleStream {
      * connection closed. While nobody collects, reading pauses after [CapsuleConfig.receiveQueue] capsules, DATAGRAM
      * capsules behind them included. A collector cancelled while it waits or handles a capsule leaves the next one for the
      * next collector; a wrapper cancelled after a capsule was delivered (`withTimeout` around `first()`) may still drop
-     * that one, so collect in one long-lived coroutine.
+     * that one, so collect in one long-lived coroutine. Operators that collect ahead in another coroutine (`buffer`,
+     * `flowOn`, `conflate`, `produceIn`, `shareIn`, `stateIn`, and `collectLatest` by design) hold capsules they took and
+     * have not delivered yet; those are lost when the collection is cancelled, so collect this flow directly.
      */
     public val capsules: Flow<Capsule>
 

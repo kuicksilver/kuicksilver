@@ -151,6 +151,11 @@ lossless form. The check would flag, in production source sets:
 - `flow { ... emit(<call that takes an element>) }`, the shape that loses an element to a collector cancelled while it
   ran.
 
+- `select { ch.onReceive { ... } }` on a channel that is exposed publicly as a `ReceiveChannel`;
+- a public `Flow` backed by an ownership queue (as `CapsuleStream.capsules` is) whose KDoc does not carry the operator
+  caveat: `buffer`, `flowOn`, `conflate`, `produceIn`, `shareIn` and `stateIn` collect ahead in another coroutine and lose
+  what they took and had not delivered when the collection is cancelled.
+
 Each finding is either fixed or listed in an allowlist with its reason ("HTTP datagrams: unreliable by RFC 9297",
 "single internal consumer, cancelled only with its connection"). Negative controls feed it the forms a regex misses:
 an element type inferred from a factory function or a typealias, a channel exposed as `ReceiveChannel` and read in

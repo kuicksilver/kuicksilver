@@ -167,10 +167,13 @@ class HandOffQueueTest {
                 q.close()
             }
             val got = ArrayList<Int>()
-            k.run(this) {
-                q.asFlow().collect {
-                    got += it
-                    taken.value = got.size
+            // bounded: with an element lost the run would wait for it, and the assertion below names the seed
+            withTimeoutOrNull(15.seconds) {
+                k.run(this) {
+                    q.asFlow().collect {
+                        got += it
+                        taken.value = got.size
+                    }
                 }
             }
             assertEquals((0 until n).toList(), got, "$k")
