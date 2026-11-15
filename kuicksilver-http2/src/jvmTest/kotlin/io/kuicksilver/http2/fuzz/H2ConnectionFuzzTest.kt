@@ -25,8 +25,9 @@ import kotlin.time.Duration.Companion.seconds
  * 8441: a server advertises it, a client opens a WebSocket stream once the server did), bits 3 and 4 how the peer reads
  * ([Drain]), bit 5 a clock of one second per piece instead of one millisecond (the budgets refill, the SETTINGS
  * acknowledgement, field block and graceful GOAWAY deadlines pass), bit 6 the driver's own actions (PING, GOAWAY,
- * resets, priorities, trailers or more requests) taken from the last byte of each piece. Mode 0 is the drive of the first
- * versions of these targets.
+ * resets, priorities, trailers or more requests) taken from the last byte of each piece, bit 7 (client) the server's
+ * frames before the client's first flight is read, so they can reach requests the server has not seen. Mode 0 is the
+ * drive of the first versions of these targets.
  */
 internal class Mode(
     m: Int,
@@ -36,6 +37,7 @@ internal class Mode(
     val drain = Drain.entries[(m shr 3) and 3]
     val tick = if (m and 0x20 != 0) 1_000_000_000L else 1_000_000L
     val actions = m and 0x40 != 0
+    val serverFirst = m and 0x80 != 0
 
     enum class Drain {
         /** Everything we wrote is read after every piece. */
@@ -195,6 +197,7 @@ class H2ConnectionFuzzTest {
         }
         d.drive(now, 1)
         drain(core, mirror, now)
+        mirror.atEnd(core.isClosed)
         reach?.let { r -> generateSequence { core.nextEvent() }.forEach { r.event(it) } }
     }
 
@@ -419,9 +422,9 @@ class H2ClientConnectionFuzzTest {
         val d = ClientDriver(core, mirror, mode)
         val streams = 1 + (data[1].toInt() and 0xff) % 8
         repeat(streams) { d.open(post = it % 3 == 2) }
-        // the requests are written before any response can come (a response to a request not yet written is on an idle
-        // stream, section 5.1): the peer reads our first flight whatever the mode
-        drain(core, mirror, now)
+        // a server answers what it read: our first flight (preface, SETTINGS, requests) goes first, unless the mode sends
+        // the server's frames ahead of it, onto requests it has not seen (section 5.1: idle streams, a connection error)
+        if (!mode.serverFirst) drain(core, mirror, now)
         val piece = 1 + (data[0].toInt() and 0xff)
         var p = 3
         var pieces = 0
@@ -442,6 +445,7 @@ class H2ClientConnectionFuzzTest {
         }
         d.drive(now)
         drain(core, mirror, now)
+        mirror.atEnd(core.isClosed)
         reach?.let { r -> generateSequence { core.nextEvent() }.forEach { r.event(it) } }
     }
 

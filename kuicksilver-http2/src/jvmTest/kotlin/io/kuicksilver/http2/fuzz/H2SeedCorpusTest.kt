@@ -61,7 +61,10 @@ class H2SeedCorpusTest {
         drain: Mode.Drain = Mode.Drain.EVERY_PIECE,
         slow: Boolean = false,
         actions: Boolean = false,
-    ): Int = preset or (if (connect) 4 else 0) or (drain.ordinal shl 3) or (if (slow) 0x20 else 0) or (if (actions) 0x40 else 0)
+        serverFirst: Boolean = false,
+    ): Int =
+        preset or (if (connect) 4 else 0) or (drain.ordinal shl 3) or (if (slow) 0x20 else 0) or (if (actions) 0x40 else 0) or
+            (if (serverFirst) 0x80 else 0)
 
     private fun u32(v: Int) = byteArrayOf((v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte())
 
@@ -454,7 +457,14 @@ class H2SeedCorpusTest {
         conv("connect-setting-taken-back", 1, mode(connect = true)) {
             cat(settings(SettingId.ENABLE_CONNECT_PROTOCOL to 1), ack, settings(SettingId.ENABLE_CONNECT_PROTOCOL to 0))
         }
-        conv("goaway-refuses", 4, mode()) { p -> cat(ack, p.headers(1, ok), FrameEncoder.goAway(1, 0, ByteArray(0)), p.headers(3, ok)) }
+        // the server answers before it could have read the request: a connection error (section 5.1, an idle stream)
+        conv("response-before-request", 1, mode(serverFirst = true)) { p -> cat(ack, p.headers(1, ok)) }
+        // stream 1 stays open, so the connection outlives the GOAWAY: HEADERS on refused stream 3 is STREAM_CLOSED
+        conv(
+            "goaway-refuses",
+            4,
+            mode(),
+        ) { p -> cat(ack, p.headers(1, ok, endStream = false), FrameEncoder.goAway(1, 0, ByteArray(0)), p.headers(3, ok)) }
         conv("rst-streams", 3, mode(drain = Mode.Drain.SHORT_READS)) { p ->
             cat(
                 ack,

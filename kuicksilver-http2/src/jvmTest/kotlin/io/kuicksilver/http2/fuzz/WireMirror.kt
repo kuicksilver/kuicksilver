@@ -110,6 +110,25 @@ internal class WireMirror(
         if (blockStream >= 0 && (f !is Frame.Continuation || f.streamId != blockStream)) {
             return close("a frame inside the field block of stream $blockStream")
         }
+        // section 5.1: a stream of ours is idle to the peer until our HEADERS for it (or a later stream's, section 5.1.1)
+        // arrived; a frame on it other than PRIORITY is a connection error (extension frames are ignored, section 5.5).
+        // Checked only while no frame of ours is partly written: the core counts a stream as used once it took its HEADERS.
+        // A field block is judged when it ends (the core decodes it then): HEADERS without END_HEADERS waits for its last
+        // CONTINUATION.
+        val judged =
+            if (f is Frame.Headers) {
+                f.endHeaders
+            } else if (f is Frame.Continuation) {
+                f.endHeaders
+            } else {
+                f !is Frame.PushPromise ||
+                    f.endHeaders
+            }
+        if (judged && f.streamId != 0 && ours(f.streamId) && f.streamId > lastOpened && f !is Frame.Priority && f !is Frame.Unknown &&
+            f !is Frame.AltSvc && !ourDecoder.inFrame && ourBlock == null
+        ) {
+            return close("${f::class.simpleName} on stream ${f.streamId}, which we have not used")
+        }
         when (f) {
             is Frame.Data -> {
                 if (f.data.isEmpty() && !f.endStream) {
@@ -120,10 +139,12 @@ internal class WireMirror(
             }
 
             is Frame.Headers -> {
+                if (!ours(f.streamId)) peerHighest = maxOf(peerHighest, f.streamId)
                 startBlock(f.streamId, f.fragment.size, f.endHeaders)
             }
 
             is Frame.PushPromise -> {
+                promised += f.promisedStreamId
                 startBlock(f.streamId, f.fragment.size, f.endHeaders)
             }
 
@@ -174,6 +195,22 @@ internal class WireMirror(
 
     private fun window(id: Int): Long = windows.getOrPut(id) { initialWindow }
 
+    /** A stream identifier of ours (section 5.1.1: a client's are odd, a server's even). */
+    private fun ours(id: Int): Boolean = (id and 1 == 1) == client
+
+    /** Idle to the peer (section 5.1): a stream of ours not used yet, or one of the peer's it has not opened or promised. */
+    private fun idle(id: Int): Boolean = if (ours(id)) id > lastOpened else id > peerHighest && id !in promised
+
+    /**
+     * At the end of the input, with the connection still open and everything we wrote read: every SETTINGS of the peer was
+     * acknowledged and every PING answered (sections 6.5.3, 6.7).
+     */
+    fun atEnd(closed: Boolean) {
+        if (closed) return
+        check(pendingSettings.isEmpty()) { "${pendingSettings.size} SETTINGS of the peer never acknowledged" }
+        check(pings.isEmpty()) { "${pings.size} PINGs of the peer never answered" }
+    }
+
     /** After the core took the same bytes: what the protocol makes a connection error has ended it. */
     fun afterReceive(closed: Boolean) {
         mustBeClosed?.let { check(closed) { "the connection must be closed: $it" } }
@@ -188,6 +225,10 @@ internal class WireMirror(
     private var lastGoAway = Int.MAX_VALUE
     private var goneWithError = false
     private val resetByUs = HashSet<Int>()
+    private val endedByUs = HashSet<Int>()
+    private var ourBlockEnds = false
+    private var peerHighest = 0
+    private val promised = HashSet<Int>()
     private var lastOpened = 0
     private val opened = HashSet<Int>()
 
@@ -235,6 +276,7 @@ internal class WireMirror(
 
             is Frame.Data -> {
                 checkStreamOpenForUs(f.streamId, "DATA")
+                if (f.endStream) endedByUs += f.streamId
                 check(f.flowLength <= H2.MIN_MAX_FRAME_SIZE) { "DATA of ${f.flowLength} bytes" }
                 val n = f.flowLength.toLong()
                 check(n <= connectionWindow) { "DATA of $n on stream ${f.streamId} beyond the connection window $connectionWindow" }
@@ -254,6 +296,7 @@ internal class WireMirror(
                     opened += f.streamId
                 }
                 ourBlockStream = f.streamId
+                ourBlockEnds = f.endStream
                 ourBlock = f.fragment
                 if (f.endHeaders) endOurBlock()
             }
@@ -265,7 +308,16 @@ internal class WireMirror(
                 if (f.endHeaders) endOurBlock()
             }
 
+            is Frame.WindowUpdate -> {
+                if (f.streamId != 0) {
+                    // section 5.1: never on an idle stream; section 5.4.2: nothing after our RST_STREAM
+                    check(!idle(f.streamId)) { "WINDOW_UPDATE on idle stream ${f.streamId}" }
+                    check(f.streamId !in resetByUs) { "WINDOW_UPDATE on stream ${f.streamId} after our RST_STREAM" }
+                }
+            }
+
             is Frame.RstStream -> {
+                check(!idle(f.streamId)) { "RST_STREAM on idle stream ${f.streamId}" } // section 6.4
                 // the core forgets which streams it reset beyond its recently-closed list: checked while that list holds them all
                 check(f.streamId !in resetByUs || streamsSeen.size >= 200) { "a second RST_STREAM on stream ${f.streamId}" }
                 resetByUs += f.streamId
@@ -287,6 +339,7 @@ internal class WireMirror(
         what: String,
     ) {
         check(id !in resetByUs) { "$what on stream $id after our RST_STREAM" }
+        check(id !in endedByUs) { "$what on stream $id after our END_STREAM" } // section 5.1: half-closed (local)
         if (id in resetByPeer) {
             check(mayFinish.remove(id)) { "$what on stream $id after the peer's RST_STREAM was processed" }
         }
@@ -295,6 +348,7 @@ internal class WireMirror(
     private fun endOurBlock() {
         val block = ourBlock!!
         ourBlock = null
+        if (ourBlockEnds) endedByUs += ourBlockStream
         val got = mutableListOf<Pair<String, String>>()
         try {
             hpack.decode(block) { n, v -> got += n to v }
