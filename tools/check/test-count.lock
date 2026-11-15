@@ -4524,6 +4524,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.FlushAllocationTest.aFl
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.FlushRetentionTest.aClosedConnectionIsNotHeldByTheLoopsFlush
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.KslRandomConcurrencyTest.perLoopSourcesAreIndependent
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.KslRandomConcurrencyTest.sharedSourceIsThreadSafe
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.ObserverAfterLoopEndTest.aFirstReadAfterTheLoopEndedStillSettlesEveryObserver
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.StreamObserverRaceTest.firstReadersRacingTheLoopNeverLoseAValue
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.stream.StreamManagerRetentionJvmTest.finishedPeerStreamsRetainNothingPerStream
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.KtorDatagramIoDefunctTest.defunctErrnoBecomesSocketDefunct
