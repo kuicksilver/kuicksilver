@@ -4,7 +4,7 @@
 
 package io.kuicksilver.quic.api
 
-import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
@@ -16,7 +16,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -54,12 +53,10 @@ class FinalSizeTest {
                     st.output.writeFully(ByteArray(3000), 0, 3000)
                     st.output.flush()
                     val ss = s.acceptStream()
-                    val buf = ByteArray(1)
-                    ss.input.readAvailable(buf, 0, 1)
+                    ss.input.readFully(3000) // every byte went out: the reset's final size is 3000
                     st.reset(9)
-                    val sent = assertNotNull(st.sentFinalSize).await()
-                    assertEquals(sent, assertNotNull(ss.receivedFinalSize).await())
-                    assertTrue(sent in 1L..3000L, "$sent")
+                    assertEquals(3000L, assertNotNull(st.sentFinalSize).await())
+                    assertEquals(3000L, assertNotNull(ss.receivedFinalSize).await())
                     c.close()
                     s.close()
                 }
@@ -75,10 +72,11 @@ class FinalSizeTest {
                     st.output.writeFully(ByteArray(5000), 0, 5000)
                     st.output.flush()
                     val ss = s.acceptStream()
-                    // the receiver stops before reading: the answering RESET_STREAM still tells it how much the sender used
+                    ss.input.readFully(5000)
+                    // the receiver stops reading: the answering RESET_STREAM still tells it how much the sender used
                     ss.stopSending(3)
-                    val got = assertNotNull(ss.receivedFinalSize).await()
-                    assertEquals(assertNotNull(st.sentFinalSize).await(), got)
+                    assertEquals(5000L, assertNotNull(ss.receivedFinalSize).await())
+                    assertEquals(5000L, assertNotNull(st.sentFinalSize).await())
                     c.close()
                     s.close()
                 }
@@ -94,11 +92,11 @@ class FinalSizeTest {
                     val st = c.openUni()
                     st.output.writeFully(ByteArray(40_000), 0, 40_000)
                     st.output.flush()
-                    st.resetAt(5, 10)
                     val ss = s.acceptStream()
-                    val sent = assertNotNull(st.sentFinalSize).await()
-                    assertEquals(sent, assertNotNull(ss.receivedFinalSize).await())
-                    assertTrue(sent >= 10, "$sent")
+                    ss.input.readFully(40_000)
+                    st.resetAt(5, 10)
+                    assertEquals(40_000L, assertNotNull(st.sentFinalSize).await())
+                    assertEquals(40_000L, assertNotNull(ss.receivedFinalSize).await())
                     c.close()
                     s.close()
                 }
@@ -138,4 +136,8 @@ class FinalSizeTest {
                 }
             }
         }
+}
+
+private suspend fun io.ktor.utils.io.ByteReadChannel.readFully(n: Int) {
+    readByteArray(n)
 }

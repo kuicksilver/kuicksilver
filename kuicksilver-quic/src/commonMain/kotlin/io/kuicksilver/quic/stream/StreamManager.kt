@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
@@ -156,6 +158,20 @@ internal class StreamManager(
 
     // ---- 0-RTT (RFC 9000 section 7.4.1, ADR-0015) ----
     private val early = HashSet<Long>()
+
+    /**
+     * Client: 0-RTT was attempted and the server's answer is not known yet. The final size of a sending half of ours is
+     * held until then ([settleHeldFinalSizes]): a rejection drops the stream, whose size then never stood.
+     */
+    var zeroRttPending = false
+    private val heldFinalSizes = ArrayList<ConnectionEvent.StreamFinalSize>()
+
+    /** The server answered our 0-RTT: the held final sizes are reported when it was [accepted], dropped otherwise. */
+    fun settleHeldFinalSizes(accepted: Boolean) {
+        zeroRttPending = false
+        if (accepted) events += heldFinalSizes
+        heldFinalSizes.clear()
+    }
 
     fun markReceivedEarly(id: Long) {
         if (streams.containsKey(id)) early += id
@@ -320,6 +336,13 @@ internal class StreamManager(
                 if (snd.sentEnd > snd.written && snd.reliableSize < 0) {
                     return "stream $id sent ${snd.sentEnd} beyond what was written (${snd.written})"
                 }
+                // a reported final size never changes (RFC 9000 section 4.5): a later reset carries it, and no byte follows it
+                val reported = snd.reportedFinalSize
+                if (reported >= 0) {
+                    val reset = snd.state == SendState.ResetSent || snd.state == SendState.ResetRecvd || snd.state == SendState.ResetAt
+                    val now = if (reset) snd.finalSizeForReset else snd.written
+                    if (now != reported || snd.sentEnd > reported) return "stream $id reported final size $reported, now $now"
+                }
             }
         }
         for (bidi in booleanArrayOf(true, false)) {
@@ -341,6 +364,9 @@ internal class StreamManager(
 
     /** Test hook: the acknowledged (released) prefix of stream [id], -1 for no such sending half. */
     internal fun releasedForTest(id: Long): Long = streams[id]?.send?.releasedUpTo ?: -1
+
+    /** The state of [id]'s sending half, or null (a test hook). */
+    internal fun sendStateForTest(id: Long): String? = streams[id]?.send?.state?.name
 
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
@@ -759,14 +785,18 @@ internal class StreamManager(
         }
     }
 
-    /** Reports the final size of [s]'s sending half once, when it can no longer change (RFC 9000 section 4.5). */
+    /**
+     * Reports the final size of [s]'s sending half once, when it can no longer change (RFC 9000 section 4.5); held while
+     * the server's answer to our 0-RTT is pending ([zeroRttPending]).
+     */
     private fun reportSentFinal(
         s: SendStream,
         size: Long,
     ) {
-        if (s.finalSizeReported) return
-        s.finalSizeReported = true
-        events += ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
+        if (s.reportedFinalSize >= 0) return
+        s.reportedFinalSize = size
+        val e = ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
+        if (zeroRttPending && StreamIds.isLocal(s.id, role)) heldFinalSizes += e else events += e
     }
 
     /** Reports the final size of the receiving half [r] of stream [id] when a frame just fixed it ([before] was unknown). */
@@ -800,11 +830,9 @@ internal class StreamManager(
     ) {
         val s =
             streams[id]?.send ?: return
-        if (s.state ==
-            SendState.ResetSent
-        ) {
-            return
-        }
+        // RFC 9000 section 3.1: the sender abandons a stream from "the "Ready", "Send", or "Data Sent" states"; once every
+        // byte and the FIN were acknowledged (Data Recvd) there is nothing to abandon, so no RESET_STREAM goes
+        if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
         val finalSize = s.finalSizeForReset
         val resetCode = codeAfterResetAt(s, code)
         sendBufferedBytes -= s.reset()
@@ -955,6 +983,8 @@ internal class StreamManager(
             w.bytes(buf, 0, range.length)
             frames.addStream(s.id, range.offset, range.length, range.fin)
             s.markSent(range.offset, range.length, range.fin)
+            // the FIN went out: every byte was written before it and a later reset carries the same size (sentEnd == written)
+            if (range.fin) reportSentFinal(s, s.written)
             announceResetAtIfDue(s)
             scheduler.onSent(s)
             return true
@@ -1022,7 +1052,6 @@ internal class StreamManager(
             }
             sendBufferedBytes -=
                 s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
-            if (s.state == SendState.DataRecvd) reportSentFinal(s, s.written)
             if (s.state == SendState.DataRecvd || s.state == SendState.ResetSent) maybeClose(s.id)
         }
         if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()

@@ -43,8 +43,8 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
     internal var writeRefused = false
 
-    /** Its final size was reported (ConnectionEvent.StreamFinalSize, raised once). */
-    internal var finalSizeReported = false
+    /** The final size reported for it (ConnectionEvent.StreamFinalSize, raised once), or -1 before. */
+    internal var reportedFinalSize = -1L
 
     /**
      * Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water

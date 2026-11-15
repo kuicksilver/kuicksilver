@@ -257,6 +257,7 @@ type is experimental, so are its members.
 | 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
 | `QuicEndpoint.shutdown(grace, code, reason)` | graceful shutdown |
 | `ConnectionCore.glitchByFrameType` (delicate) | glitch accounting per frame type |
+| `QuicStream.sentFinalSize` / `receivedFinalSize`, `ConnectionEvent.StreamFinalSize` | the final size of each stream half (RFC 9000 section 4.5) |
 
 ### `kuicksilver-http3`
 

@@ -223,6 +223,9 @@ class ZeroRttApiTest {
                         p.net.release(p.clientIo.localAddress)
                         val e = assertFailsWith<QuicException.StreamError.EarlyDataRejected> { early.input.readAll() }
                         assertEquals(early.id, e.streamId)
+                        // negative: the FIN left in 0-RTT, but the rejection dropped the stream, so its size never stood
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        assertFailsWith<QuicException.StreamError.EarlyDataRejected> { early.sentFinalSize!!.await() }
                         second.awaitHandshake()
                         assertEquals(false, second.earlyDataAccepted)
                         assertEquals("three!", second.echo("three"), "a new stream after the rejection")

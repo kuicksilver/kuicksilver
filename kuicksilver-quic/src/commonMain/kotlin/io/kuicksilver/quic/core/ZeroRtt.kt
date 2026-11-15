@@ -205,6 +205,7 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
     val (_, alpn, tp) = stored
     if (!handshake.session.enableEarlyData(null, null)) return false
     remembered = tp
+    streams.zeroRttPending = true
     rememberedAlpn = alpn
     rememberedApplication = blob.let(::rememberedApplication)
     // section 7.4.1: never the remembered ack_delay_exponent, max_ack_delay, connection IDs, preferred_address or reset token
@@ -252,6 +253,8 @@ internal fun ConnectionCore.settleZeroRtt() {
     val tp = peerTp ?: return
     val accepted = handshake.session.earlyDataAccepted == true
     earlyAccepted = accepted
+    // the final sizes of streams sent in 0-RTT stand now, or go with the streams below
+    streams.settleHeldFinalSizes(accepted)
     if (accepted) {
         val lower =
             tp.activeConnectionIdLimit < old.activeConnectionIdLimit ||

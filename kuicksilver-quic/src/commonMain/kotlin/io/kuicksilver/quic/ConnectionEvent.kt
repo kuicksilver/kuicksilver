@@ -101,11 +101,13 @@ public sealed interface ConnectionEvent {
 
     /**
      * The final size of one half of stream [id][ConnectionEvent.StreamFinalSize.id] is fixed (RFC 9000 section 4.5): for
-     * [sending][ConnectionEvent.StreamFinalSize.sending], once the sending half was reset (RESET_STREAM, RESET_STREAM_AT, or the
-     * answer to the peer's STOP_SENDING) or all its data and FIN were acknowledged; for the receiving half, once the peer's FIN,
-     * RESET_STREAM or RESET_STREAM_AT told it, whether or not the bytes were read. [size][ConnectionEvent.StreamFinalSize.size]
-     * is the flow-control credit the stream consumed. Raised once per half.
+     * [sending][ConnectionEvent.StreamFinalSize.sending], once the sending half's reset was queued (RESET_STREAM,
+     * RESET_STREAM_AT, or the answer to the peer's STOP_SENDING) or its FIN first went out; for the receiving half, once the
+     * peer's FIN, RESET_STREAM or RESET_STREAM_AT told it, whether or not the bytes were read.
+     * [size][ConnectionEvent.StreamFinalSize.size] is the flow-control credit the stream consumed. Raised once per half; for
+     * a client stream sent in 0-RTT only after the server accepted it (a rejection drops the stream instead).
      */
+    @ExperimentalKuicksilverApi
     public class StreamFinalSize internal constructor(
         /** The stream whose final size is known. */
         public val id: Long,

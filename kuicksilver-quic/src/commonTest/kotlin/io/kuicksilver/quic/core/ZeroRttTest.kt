@@ -218,6 +218,33 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * The final size of a stream sent in 0-RTT stands only once the server accepted it: reported then, once (the FIN went
+     * out in 0-RTT).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun zeroRttFinalSizeReportedOnceAccepted() {
+        val (p, id) = resumed(ticket())
+        assertTrue(p.handshake())
+        assertEquals(true, p.client.earlyDataAccepted)
+        val finals = p.clientEvents.filterIsInstance<ConnectionEvent.StreamFinalSize>().filter { it.id == id && it.sending }
+        assertEquals(listOf(15L), finals.map { it.size })
+        p.close()
+    }
+
+    /** A rejected 0-RTT drops the stream: no final size is ever reported for it (its FIN went out in 0-RTT). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_rejectedZeroRttStreamHasNoFinalSize() {
+        val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        assertTrue(p.handshake())
+        assertEquals(false, p.client.earlyDataAccepted)
+        p.runUntil(limit = 1.seconds) { false }
+        assertTrue(p.clientEvents.none { it is ConnectionEvent.StreamFinalSize && it.id == id && it.sending }, p.clientEvents.toString())
+        p.close()
+    }
+
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
         val (p, id) = resumed(ticket())
         var answeredWhile: ConnectionState? = null

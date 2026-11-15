@@ -156,7 +156,7 @@ announced only the old codepoint, which must then read them as that draft's fram
 **Removal.** Once no peer is shown to need it (none is today; removal is not decided). The removal must mind remembered
 transport parameters: a client that remembered `reset_stream_at` from a server that sent only the old codepoint would
 take that server's next 0-RTT acceptance for a lowered capability and close with PROTOCOL_VIOLATION
-(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:267`); quic-go ties its own removal to a
+(`kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:270`); quic-go ties its own removal to a
 new ticket format for the same reason.
 
 ## 5. msquic's provisional Initial SCID
@@ -220,7 +220,7 @@ duplicate and never woke the application for the FIN (`kuicksilver->quiche:hands
 sum of the Offset and Length fields of a STREAM frame with a FIN flag" — the FIN of a duplicate frame still gives the
 final size.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:191-194`.
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:194-197`.
 
 **On by default.** Yes; no switch.
 
