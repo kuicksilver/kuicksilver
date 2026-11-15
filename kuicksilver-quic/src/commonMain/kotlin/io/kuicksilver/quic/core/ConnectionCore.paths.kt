@@ -56,6 +56,8 @@ internal fun ConnectionCore.setMtu(
  * it came on and the destination it quotes), quote the start of one of our packets there (a short header with the peer ID that path
  * uses, or a long header with our ID as source), and claim a size this path did send something larger than. ICMP is spoofable:
  * even then it only settles probes or drops the size to 1200 provisionally, until a probe of the old size settles it ([Pmtud.onPtb]).
+ * A quote that matched no connection ID bytes (zero-length IDs) rests on the address and port alone, which RFC 9000 section 14.2.1
+ * does not count as validation ("when possible, connection IDs"): such a message may end probes, never lower the size in use.
  */
 internal fun ConnectionCore.acceptPacketTooBig(
     quote: ByteArray,
@@ -69,9 +71,11 @@ internal fun ConnectionCore.acceptPacketTooBig(
     val m = p.pmtud ?: return false
     if (p.socket != socket || !p.isRemote(to) || p.largestSent <= payload) return false
     val first = quote[0].toInt() and 0xff
+    var idBytes = 0
     val ours =
         if (first and 0x80 == 0) {
             val d = dcidFor(p) ?: return false
+            idBytes = d.length
             // at least one byte past the ID: with a zero-length peer ID the first byte alone would do, which any datagram matches
             len >= 1 + d.length + 1 && d.contentEquals(quote, 1, d.length)
         } else {
@@ -80,10 +84,11 @@ internal fun ConnectionCore.acceptPacketTooBig(
             val dl = quote[5].toInt() and 0xff
             if (len < 7 + dl) return false
             val sl = quote[6 + dl].toInt() and 0xff
+            idBytes = dl + sl
             len >= 7 + dl + sl && remoteCid.length == dl && remoteCid.contentEquals(quote, 6, dl) && localCid.length == sl &&
                 localCid.contentEquals(quote, 7 + dl, sl)
         }
-    if (!ours) return false
+    if (!ours || (idBytes == 0 && payload < m.current)) return false
     if (m.onPtb(payload, now)) setMtu(p, m.current)
     return true
 }

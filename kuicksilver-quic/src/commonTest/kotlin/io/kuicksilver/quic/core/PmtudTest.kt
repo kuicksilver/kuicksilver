@@ -818,8 +818,7 @@ class PmtudTest {
         assertEquals(0, m.confirmingForTest, "the drop stands")
         assertEquals(1300, m.nextProbeSize(t + 1.seconds), "the search starts at the PTB size")
         m.onProbeSent(11, 1300)
-        assertEquals(1452, m.takeLostProbeIn(10, 10))
-        m.onProbeAcked(1452, t + 1100.milliseconds)
+        assertTrue(m.ackLostProbesIn(10, 10, t + 1100.milliseconds))
         assertEquals(1452, m.current)
         assertEquals(0, m.probeInFlightForTest, "the smaller probe in flight is settled")
         assertTrue(m.ptbSuspendedForTest)
@@ -841,6 +840,26 @@ class PmtudTest {
         assertEquals(1452, m.nextProbeSize(t + 10.milliseconds))
     }
 
+    @Test fun negative_ptbBelowTheMtuWithZeroLengthIdsIsIgnored() {
+        // with a zero-length peer connection ID the quote matches no ID bytes: any short-header-looking datagram passes, so the message
+        // rests on the address and port alone (RFC 9000 section 14.2.1: validation includes "when possible, connection IDs"). It may
+        // not lower the size in use; one at or above it still ends larger probes
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY // as with a server whose Source Connection ID was empty
+            ptb(p, c, 1328, quote = byteArrayOf(0x43, 0x11))
+            ptb(p, c, 1328, quote = quoteOf(c, ByteArray(0)))
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(2L, p.client.stats.ptbIgnored)
+            assertEquals(1452, c.stats.pathMtu, "not lowered")
+            assertEquals(0, c.path.pmtud!!.confirmingForTest)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_ptbWithEmptyQuoteIgnored() {
         // a message that quotes nothing of ours cannot be checked: ignored
         val (p, c) = pair()
@@ -857,22 +876,52 @@ class PmtudTest {
         }
     }
 
+    @Test fun negative_aProbeSentBeforeThePtbNeitherOverturnsItNorRaisesTheSize() {
+        // the search reached 1400 with a 1420 probe in flight; the path shrinks and a genuine PTB (payload 1300) drops the size to
+        // 1200. The 1420 probe, sent before the PTB, is acknowledged afterwards, in time or late: it tells about the path before the
+        // PTB, so it neither restores the old size nor suspends PTB processing (RFC 8899 section 8 trusts "subsequent probes")
+        for (late in listOf(false, true)) {
+            val m = Pmtud(upperBound = 1452, start = 1400)
+            val t = io.kuicksilver.quic.TimeMark(1_000_000_000L)
+            val size = m.nextProbeSize(t)
+            assertTrue(size > 1400, "a probe above 1400: $size")
+            m.onProbeSent(7, size)
+            if (late) m.onProbeDeclaredLost(7, t + 5.milliseconds)
+            assertTrue(m.onPtb(1300, t + 10.milliseconds))
+            assertEquals(1200, m.current)
+            if (late) {
+                assertTrue(!m.ackLostProbesIn(7, 7, t + 20.milliseconds), "late=$late: a probe lost before the PTB is no longer matched")
+            } else {
+                m.onProbeAcked(size, 7, t + 20.milliseconds)
+            }
+            assertEquals(1200, m.current, "late=$late: not restored")
+            assertTrue(!m.ptbSuspendedForTest, "late=$late: not suspended")
+            assertEquals(1400, m.nextProbeSize(t + 20.milliseconds), "late=$late: the probe of the old size still decides")
+            m.onProbeSent(8, 1400)
+            m.onProbeAcked(1400, 8, t + 40.milliseconds)
+            assertEquals(1400, m.current, "late=$late: a probe sent after the PTB overturns it")
+            assertTrue(m.ptbSuspendedForTest)
+        }
+    }
+
     /**
-     * Property over random interleavings of forged and genuine PTBs (any size), probes acknowledged when they fit a link of random MTU
-     * and lost otherwise, and timers: ICMP never raises the size above what an acknowledged probe showed, an accepted PTB below the
-     * size in use always lands at the base (RFC 8899 section 4.6.2), the timers never stay in the past, and once PTBs stop the
-     * search reaches the link again (no PTB sequence holds the path at the base).
+     * Property over random interleavings of forged and genuine PTBs (any size), probes acknowledged when they fit the link of their
+     * sending (random MTU, which may shrink mid-way with a genuine PTB) and lost otherwise, acknowledgments late or in time, and timers:
+     * ICMP never raises the size above what an acknowledged probe showed, an accepted PTB below the size in use always lands at the
+     * base (RFC 8899 section 4.6.2), the timers never stay in the past, after a genuine PTB for a shrunk link no probe sent before it
+     * lifts the size above the new link, and once PTBs stop the search reaches the link again.
      */
     @Test fun negative_ptbSequencesKeepTheSearchSafeAndLive() {
         for (seed in 0 until 200) {
             val rnd = kotlin.random.Random(seed)
-            val link = 1200 + rnd.nextInt(0, 300)
+            var link = 1200 + rnd.nextInt(0, 300)
             val m = Pmtud(upperBound = 1452)
             var now = io.kuicksilver.quic.TimeMark(1_000_000_000L)
             var pn = 0L
-            var inFlight: Pair<Long, Int>? = null
-            val lateLost = ArrayList<Pair<Long, Int>>()
+            var inFlight: Triple<Long, Int, Int>? = null // packet number, size, link MTU when it was sent
+            val lateLost = ArrayList<Triple<Long, Int, Int>>()
             var acked = 1200
+            var bound = Int.MAX_VALUE // after a genuine PTB for a shrunk link: the new link
 
             fun step(ptbs: Boolean) {
                 now += rnd.nextInt(10, 700).milliseconds
@@ -883,40 +932,45 @@ class PmtudTest {
                     if (dropped) assertEquals(1200, m.current, "$at: a PTB drop lands at the base")
                     if (!dropped) assertEquals(before, m.current, "$at: no change unless reported")
                 }
-                inFlight?.let { (n, size) ->
+                inFlight?.let { (n, size, sentLink) ->
                     inFlight = null
-                    if (size <= link && rnd.nextInt(10) < 8) {
-                        m.onProbeAcked(size, now)
+                    if (size <= sentLink && rnd.nextInt(10) < 8) {
+                        m.onProbeAcked(size, n, now)
                         acked = maxOf(acked, size)
                     } else {
                         m.onProbeDeclaredLost(n, now)
-                        if (size <= link) lateLost += n to size // acknowledged after all, later
+                        if (size <= sentLink) lateLost += Triple(n, size, sentLink) // acknowledged after all, later
                     }
                 }
                 if (lateLost.isNotEmpty() && rnd.nextInt(4) == 0) {
-                    val (n, _) = lateLost.removeAt(0)
-                    val size = m.takeLostProbeIn(n, n)
-                    if (size > 0) {
-                        m.onProbeAcked(size, now)
-                        acked = maxOf(acked, size)
-                    }
+                    val (n, size, _) = lateLost.removeAt(0)
+                    if (m.ackLostProbesIn(n, n, now)) acked = maxOf(acked, size)
                 }
                 m.onTimeout(now)
                 assertTrue(m.timeout() > now, "$at: a timer left in the past")
                 val size = m.nextProbeSize(now)
                 if (size > 0) {
                     m.onProbeSent(++pn, size)
-                    inFlight = pn to size
+                    inFlight = Triple(pn, size, link)
                 }
                 assertTrue(m.current in 1200..acked, "$at: ${m.current} above the largest acknowledged probe $acked")
+                assertTrue(m.current <= bound, "$at: ${m.current} above the shrunk link $bound after its PTB")
             }
             repeat(300) { step(ptbs = true) }
+            if (rnd.nextBoolean()) {
+                // during a later climb a probe the link carries is in flight above the size in use; the link shrinks below the size in
+                // use and a genuine PTB reports it: that probe's acknowledgment (sent before the PTB) must not lift the size above the
+                // new link
+                var guard = 0
+                while (inFlight.let { it == null || it.second <= m.current || it.second > link } && guard++ < 10_000) step(ptbs = false)
+                if (guard < 10_000 && m.current > 1200) {
+                    link = 1200 + rnd.nextInt(0, m.current - 1200)
+                    if (m.onPtb(link, now)) bound = link
+                }
+            }
             // the PTBs stop: within the suspension, the re-search interval and a search, the path is back at the link's size
             repeat(4000) { step(ptbs = false) }
-            assertTrue(
-                m.current > minOf(link, 1452) - 20,
-                "seed $seed link $link: the search did not come back: ${m.current}",
-            )
+            assertTrue(m.current > minOf(link, 1452) - 20, "seed $seed link $link: the search did not come back: ${m.current}")
         }
     }
 

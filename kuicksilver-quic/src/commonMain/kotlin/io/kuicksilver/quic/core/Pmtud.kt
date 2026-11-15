@@ -31,7 +31,7 @@ import kotlin.time.Duration.Companion.seconds
  * reported size as its first point ("can be used to initialize a search algorithm"). A probe of the old size acknowledged at any time
  * after such a drop suspends Packet Too Big processing for [ptbSuspend] (RFC 8899 section 8: "a PL sender could therefore suspend
  * processing of PTB messages (e.g., in a robustness mode after detecting that subsequent probes actually confirm that a size larger
- * than the PTB_SIZE is supported by a path)"), so forged messages cost at most one round of probing at the base per [ptbSuspend]. The
+ * than the PTB_SIZE is supported by a path)"), so forged messages cost about one probe round trip at the base per [ptbSuspend] (the probe goes once the congestion window has room). Only probes sent after the drop count: one sent before it is about the path before the PTB. The
  * black-hole detector never relies on a Packet Too Big. Nothing else of this class trusts ICMP.
  */
 internal class Pmtud(
@@ -111,6 +111,10 @@ internal class Pmtud(
     /** The size before a drop that stands (the probe of it failed): a late acknowledgment of a probe that large still disproves the PTB. */
     private var ptbDisproveSize = 0
 
+    /** The largest probe packet number sent so far, and that number when the last PTB drop happened: probes up to it were sent before. */
+    private var lastProbePn = -1L
+    private var ptbAfterPn = -1L
+
     /** Until when Packet Too Big messages are not processed (RFC 8899 section 8 robustness mode); [TimeMark.NEVER]: they are. */
     private var ptbSuspendedUntil: TimeMark = TimeMark.NEVER
 
@@ -155,6 +159,11 @@ internal class Pmtud(
         ptbResearchAt = researchAt
         ptbDisproveSize = 0
         ptbHint = base + (payload - base) / step * step
+        // probes sent up to now went out before the drop: their acknowledgments, late or not, are about the path before the PTB
+        // (RFC 8899 section 8 trusts "subsequent probes"), so they neither overturn it nor raise the size
+        ptbAfterPn = lastProbePn
+        for (i in 0 until SENT_PROBES) sentLost[i] = false
+        lostProbes = 0
         undoCurrent = 0
         bigLost = 0
         firstBigLostPn = -1L
@@ -267,10 +276,13 @@ internal class Pmtud(
         probeDeadline = now + maxOf(probeTimer, pto * 3)
     }
 
+    /** The probe sent as packet [pn] of [size] bytes was acknowledged at [now]; one sent before the last PTB drop changes nothing. */
     fun onProbeAcked(
         size: Int,
+        pn: Long,
         now: TimeMark,
     ) {
+        if (pn <= ptbAfterPn) return
         val disputed = if (ptbFrom > 0) ptbFrom else ptbDisproveSize
         if (disputed > 0 && size >= disputed) {
             // the size the PTB disputed gets through: the PTB was wrong (forged or stale); PTBs are not processed for a while
@@ -321,6 +333,7 @@ internal class Pmtud(
         size: Int,
     ) {
         if (probeInFlight && size == probeSize) probePn = pn
+        if (pn > lastProbePn) lastProbePn = pn
         if (sentLost[sentNext]) lostProbes--
         sentPn[sentNext] = pn
         sentSize[sentNext] = size
@@ -367,6 +380,26 @@ internal class Pmtud(
             }
         }
         return 0
+    }
+
+    /**
+     * Each probe declared lost whose packet number is in [smallest]..[largest] is acknowledged after all ([takeLostProbeIn],
+     * [onProbeAcked]); false when there was none.
+     */
+    fun ackLostProbesIn(
+        smallest: Long,
+        largest: Long,
+        now: TimeMark,
+    ): Boolean {
+        var any = false
+        while (hasLostProbes) {
+            var pn = -1L
+            for (i in 0 until SENT_PROBES) if (sentLost[i] && sentPn[i] in smallest..largest) pn = sentPn[i]
+            if (pn < 0) break
+            onProbeAcked(takeLostProbeIn(pn, pn), pn, now)
+            any = true
+        }
+        return any
     }
 
     /**

@@ -455,7 +455,9 @@ the missing half throws `IllegalStateException`.
 Every path runs CUBIC with HyStart++ (RFC 9438, RFC 9406) by default; NewReno stays available through
 `quicConfig { congestionController = { NewReno() } }`, and any `CongestionController` implementation can be plugged in.
 The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes and RTT samples (`onRttSample`), and
-answers with the window, the pacing rate and the burst size. A connection that migrates to a new IP starts the new path
+answers with the window, the pacing rate and the burst size. Every ECN-CE report reaches `onEcnCe`, and like `onLoss`
+the controller reduces at most once per recovery period, which losses and CE reports share (RFC 9002 appendix B.6): a
+custom controller applies that check itself. A connection that migrates to a new IP starts the new path
 from the initial window; a NAT rebinding keeps the state.
 
 #### Choosing a congestion controller
@@ -535,10 +537,13 @@ too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the con
 and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
 `ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries. One
 below it drops the MTU to 1200 at once, provisionally: a probe of the old size follows, and when it is acknowledged the
-old size comes back and further Packet Too Big messages are ignored for ten minutes; when it is lost the search starts
-again from 1200, trying the reported size first (without the minute's black-hole pause). EMSGSIZE on a probe settles
-that size at once. ICMP is easy to forge, so nothing else trusts it: a forged message costs at most one probe's round
-trip at 1200 bytes every ten minutes.
+old size comes back and further Packet Too Big messages are ignored for ten minutes (only a probe sent after the drop
+counts); when it is lost the search starts again from 1200, trying the reported size first (without the minute's
+black-hole pause). EMSGSIZE on a probe settles that size at once. ICMP is easy to forge, so nothing else trusts it: a
+forged message costs about one probe round trip at 1200 bytes every ten minutes (the probe goes once the congestion
+window has room for it), and with zero-length connection IDs, where the quote proves only the address and port, a
+Packet Too Big never lowers the size. A congestion window still at its initial value when the size drops stays at the
+smaller initial window after a restore: an MTU change never raises the window in bytes (RFC 8899 section 3 item 7).
 
 | Platform | Hints |
 |---|---|

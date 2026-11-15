@@ -480,9 +480,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and at most 64 a second per endpoint are looked at (`EndpointStats.ptbAccepted`, `ptbIgnored`). It ends larger probes
   at once. One below the size in use drops the MTU to 1200 at once (RFC 8899 section 4.6.2: "The PLPMTU SHOULD be set to
   BASE_PLPMTU"), provisionally (RFC 9000 section 14.2.1): a probe of the old size follows, and its acknowledgment
-  restores that size and suspends Packet Too Big processing for 600 s (RFC 8899 section 8), so forged messages cost at
-  most one probe's round trip at 1200 bytes per 600 s; when that probe is lost, the search starts from 1200 with the
-  reported size first, without the black-hole pause. EMSGSIZE on a probe settles that size at once.
+  restores that size and suspends Packet Too Big processing for 600 s (RFC 8899 section 8); only a probe sent after the
+  drop counts. Forged messages therefore cost about one probe round trip at 1200 bytes per 600 s (the probe goes once
+  the congestion window has room for it); when that probe is lost, the search starts from 1200 with the reported size
+  first, without the black-hole pause. A congestion window still at its initial value when the size drops is lowered
+  with it and not raised again on a restore (RFC 8899 section 3 item 7: an MTU update "MUST NOT increase the
+  congestion window measured in bytes"). With zero-length connection IDs the quote proves only the address and port,
+  so such a message never lowers the size in use. EMSGSIZE on a probe settles that size at once.
 - Native (`ksl` ABI 7): on Linux and Android the accelerated UDP socket reads the ICMP error queue (`IP_RECVERR` /
   `IPV6_RECVERR`, set with DF) and keeps ICMP Packet Too Big messages, with the quoted start of the datagram and its
   destination, as hints for path MTU discovery (`ksl_udp_take_ptb`); every platform counts sends lost to `EMSGSIZE`
@@ -702,6 +706,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: `CongestionController.onEcnCe` is now called for every valid ECN-CE report of the path, not once per recovery
+  period the core kept for CE reports alone (RFC 9002 section 7.3.2 and appendix B.6: losses and CE reports share one
+  recovery period, which only the controller knows). Migration: a custom controller must apply its own recovery-period
+  check in `onEcnCe`, judged by `sentTime` against the start of its current recovery period, as it already does in
+  `onLoss`; NewReno, CUBIC and BBR do.
 - Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
   (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
   was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
