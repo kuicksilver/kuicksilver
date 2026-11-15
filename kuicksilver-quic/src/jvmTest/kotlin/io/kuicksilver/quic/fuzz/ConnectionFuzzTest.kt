@@ -115,7 +115,7 @@ class ConnectionFuzzTest {
  *   server address; before 0.3.0's fuzzer review the byte 3 meant 0), and for a byte of exactly 4: toggles losing the server's
  *   datagrams to the client's newest socket's address (one direction to one address broken; before, 4 meant 1); [E_STRANGER] the
  *   server's latest datagram reaches the client from an address it never used; [E_PREFERRED_LOSS] toggles losing everything sent
- *   to the preferred address; [E_CAPS] `[variant]` that side's socket (bit 1 on the server: its preferred-address socket) stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
+ *   to the preferred address; [E_CAPS] `[variant]` that side's socket (bit 1 on the server: its preferred-address socket) stops ECN marking (bit 0) or DF; on the client a byte of exactly 16 ([CAPS_CLIENT_SOCKET]) reads one more, `[b]`: client socket b shr 1 (modulo the sockets opened, the first one then the migration sockets in order) stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
  *   Retry to the client (0 the server's last one again, 1 a fresh valid one, 2 a bad integrity tag, 3 the client's own DCID as
  *   source, 4 an empty token); [E_VN] `[variant]` a Version Negotiation to the client (0 the server's last one, 1 one that offers
  *   only v2, 2 one that lists the client's version); [E_PTB_INFLIGHT] `[m]` a router's Packet Too Big claiming an MTU of
@@ -169,6 +169,12 @@ internal object ConnProgram {
 
     /** The byte of [E_MIGRATE] that toggles losing the server's datagrams to the client's newest socket. */
     const val MIGRATE_DROP_TO_NEW_SOCKET = 4
+
+    /**
+     * The byte of the client's [E_CAPS] that narrows a socket it names in a further byte, the first or a migration socket (0.3.0; no
+     * committed input's client [E_CAPS] had this byte or the next one when it was given this meaning).
+     */
+    const val CAPS_CLIENT_SOCKET = 16
 
     /** Frame selectors of the FRAME op. */
     val FRAME_KINDS =
@@ -860,6 +866,10 @@ internal class ConnectionFuzz(
 
             ConnProgram.E_CAPS -> {
                 val v = u8()
+                if (side == 0 && v == ConnProgram.CAPS_CLIENT_SOCKET) {
+                    clientSocketCaps()
+                    return
+                }
                 val preferred = side == 1 && v and 2 != 0
                 val had = if (preferred) net.preferredCaps else net.caps[side]
                 val caps =
@@ -950,6 +960,31 @@ internal class ConnectionFuzz(
         val src = if (v == 4 || v == 7) checks.stranger(side) else from
         val q = if (side == 0) net.toClient else net.toServer
         if (q.size < 64) q += Flight(b, src, to)
+    }
+
+    /**
+     * [ConnProgram.CAPS_CLIENT_SOCKET] `[b]`: the client socket number b shr 1, modulo the sockets opened (the first, then each
+     * migration socket in order), stops ECN marking (bit 0) or DF, as the endpoint runtime follows a socket that loses a feature.
+     */
+    private fun clientSocketCaps() {
+        val b = u8()
+        val sockets = net.clientSocketIds()
+        val socket = sockets[(b shr 1) % sockets.size]
+        val had = net.capsOf(0, socket)
+        val caps =
+            if (b and 1 != 0) {
+                IoCapabilities(false, had.ecnReceive, had.gsoMaxSegments, had.gro, had.df, had.batch)
+            } else {
+                IoCapabilities(had.ecnSend, had.ecnReceive, had.gsoMaxSegments, had.gro, false, had.batch)
+            }
+        net.setClientSocketCaps(socket, caps)
+        for (c in net.endpoint(0).connections()) c.updateSocketCapabilities(socket, caps)
+        if (socket != PathId.Initial &&
+            net.client.paths.all
+                .any { it.socket == socket }
+        ) {
+            QuicReach.hit("migration.socketCapsLost")
+        }
     }
 
     private fun migrate() {

@@ -208,7 +208,7 @@ internal class EndpointNet(
      * What the client's extra sockets ([addClientSocket]) can do: what its first socket could when each was opened. A program that
      * narrows the first socket's capabilities ([caps]) leaves them as they are, as the runtime follows each socket on its own.
      */
-    private val clientSocketCaps = HashMap<PathId, IoCapabilities>()
+    private val clientSocketCaps = LinkedHashMap<PathId, IoCapabilities>()
 
     /** What [side]'s socket [socket] can do. */
     fun capsOf(
@@ -250,6 +250,17 @@ internal class EndpointNet(
         clientSocketAddr[socket] = a
         newestClientSocketAddress = a
         clientSocketCaps[socket] = caps[0]
+    }
+
+    /** The client's sockets: the first, then the migration sockets in the order they were opened. */
+    fun clientSocketIds(): List<PathId> = listOf(PathId.Initial) + clientSocketCaps.keys
+
+    /** The client's socket [socket] can do only [c] from now on. */
+    fun setClientSocketCaps(
+        socket: PathId,
+        c: IoCapabilities,
+    ) {
+        if (socket == PathId.Initial) caps[0] = c else clientSocketCaps[socket] = c
     }
 
     /** The address of the client's latest extra socket ([addClientSocket]), if any. */

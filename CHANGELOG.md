@@ -24,7 +24,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   what the run includes: a link MTU that turns into a black hole, routers answering with ICMP Packet Too Big and forged
   ones, ECN bleaching, remarking, CE marking and ECT-dropping paths, Retry and Version Negotiation (incompatible and
   compatible, RFC 9368) inside the run and forged ones, Stateless Resets (valid, retired, unused, random, from the wrong
-  address, a server that lost its state), the server's preferred address, client migration and a stranger's copies.
+  address, a server that lost its state), the server's preferred address, client migration (a migration socket losing
+  ECN marking or DF included) and a stranger's copies.
   New invariants: no datagram but a probe above its path's MTU and no MTU above what the network delivered (RFC 8899
   section 3, RFC 9000 section 14), no MTU update raising the window, every path of a DF or marking socket running
   DPLPMTUD and ECN, no ECT mark after validation failed and no validation over a bleaching path (section 13.4.2), receiver

@@ -69,6 +69,7 @@ internal object QuicReach {
             "migration.noViablePath",
             "migration.waitReleased.newId",
             "migration.waitReleased.retirePriorTo",
+            "migration.socketCapsLost",
         )
 
     private val counts = ConcurrentHashMap<String, AtomicLong>()
