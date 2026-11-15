@@ -1869,7 +1869,7 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   the connection with `H3_EXCESSIVE_LOAD`. The Ktor engine cancels a handler once its client abandons the request
   (STOP_SENDING, a reset, or the connection lost) and its response was not yet sent in full. QUIC: a peer
   that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
-  `MAX_STREAMS`, not only at the next half window.
+  `MAX_STREAMS`, or about the next one to close when none has, not only at the next half window.
 
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113

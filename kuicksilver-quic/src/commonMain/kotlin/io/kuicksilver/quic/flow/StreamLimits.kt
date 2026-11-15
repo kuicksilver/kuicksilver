@@ -84,27 +84,41 @@ internal class StreamLimits(
         blockedReportedAt[idx(bidi)] = -1
     }
 
+    /**
+     * [0] bidi, [1] uni: the peer reported STREAMS_BLOCKED at the limit we granted when nothing had closed since: the next
+     * stream that closes is announced at once, not at the half window (a peer reports each limit once). Cleared with each
+     * MAX_STREAMS.
+     */
+    private val peerBlockedAtGranted = BooleanArray(2)
+
     /** A peer-initiated stream closed; returns the new MAX_STREAMS value when it is time to send one, else -1. */
     fun onPeerStreamClosed(bidi: Boolean): Long {
         val i = idx(bidi)
         peerClosed[i]++
         val concurrency = if (bidi) localMaxBidi else localMaxUni
-        if (peerClosed[i] - closedAtUpdate[i] < (concurrency + 1) / 2) return -1
+        if (!peerBlockedAtGranted[i] && peerClosed[i] - closedAtUpdate[i] < (concurrency + 1) / 2) return -1
+        return announce(i)
+    }
+
+    private fun announce(i: Int): Long {
+        peerBlockedAtGranted[i] = false
         closedAtUpdate[i] = peerClosed[i]
-        peerLimit[i] = peerClosed[i] + concurrency
+        peerLimit[i] = peerClosed[i] + if (i == 0) localMaxBidi else localMaxUni
         return peerLimit[i]
     }
 
     /**
      * The peer reported STREAMS_BLOCKED at the limit we granted: streams that closed since our last MAX_STREAMS (fewer than
-     * the half window [onPeerStreamClosed] waits for) are announced now; returns the new limit, or -1 when none closed.
+     * the half window [onPeerStreamClosed] waits for) are announced now; returns the new limit, or -1 when none closed (the
+     * report is then remembered: the next stream to close is announced at once).
      */
     fun onPeerBlockedAtGranted(bidi: Boolean): Long {
         val i = idx(bidi)
-        if (peerClosed[i] == closedAtUpdate[i]) return -1
-        closedAtUpdate[i] = peerClosed[i]
-        peerLimit[i] = peerClosed[i] + if (bidi) localMaxBidi else localMaxUni
-        return peerLimit[i]
+        if (peerClosed[i] == closedAtUpdate[i]) {
+            peerBlockedAtGranted[i] = true
+            return -1
+        }
+        return announce(i)
     }
 
     /** The reported limit while still blocked at it (a lost STREAMS_BLOCKED goes out again), else -1. */

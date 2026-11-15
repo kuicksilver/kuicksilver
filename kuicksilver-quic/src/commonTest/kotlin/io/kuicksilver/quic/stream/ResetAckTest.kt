@@ -145,4 +145,69 @@ class ResetAckTest {
         m.onFramesAcked(SentFrames().also { it.addId(SentFrames.ID_RESET_STREAM_AT, id, 0x10c, 0, 0) })
         assertTrue(m.finished(id))
     }
+
+    private fun limited(limit: Long): StreamManager =
+        StreamManager(
+            TlsRole.Server,
+            QuicConfig.Default,
+            RecvFlowController(786_432, 15_728_640),
+            SendFlowController(1L shl 40),
+            StreamLimits(TlsRole.Server, limit, limit),
+        ).also { it.applyPeerParameters(1L shl 30, 1L shl 30, 1L shl 30, 100, 100) }
+
+    private fun StreamManager.maxStreamsBidi(): List<Long> =
+        generateSequence { takeControlFrame() }.filter { it.kind == ControlKind.MaxStreamsBidi }.map { it.a }.toList()
+
+    /**
+     * STREAMS_BLOCKED at the limit we granted before the acknowledgment of our reset returns a stream's credit: the peer
+     * reports each limit once, so the credit the acknowledgment frees is announced at once, below the half window.
+     */
+    @Test fun negative_streamsBlockedBeforeTheResetAcknowledgmentIsAnsweredAtTheAcknowledgment() {
+        val m = limited(4)
+        for (k in 0 until 4) {
+            val id = 4L * k
+            m.onStopSending(id, 0x10c)
+            m.onResetStream(id, 0x10c, 0)
+            m.read(id, ByteArray(1), 0, 1)
+        }
+        m.onStreamsBlocked(true, 4) // nothing counted closed yet: remembered
+        assertEquals(emptyList(), m.maxStreamsBidi())
+        m.onFramesAcked(ack(0)) // one stream's credit: below the half window of 2
+        assertEquals(listOf(5L), m.maxStreamsBidi(), "announced at once")
+        m.onFramesAcked(ack(4)) // the report was answered: back to the half window
+        assertEquals(emptyList(), m.maxStreamsBidi())
+    }
+
+    /** The same with held credit (an HTTP/3 request whose handler ends after the peer reported STREAMS_BLOCKED). */
+    @Test fun negative_streamsBlockedBeforeACreditReleaseIsAnsweredAtTheRelease() {
+        val m = limited(4)
+        m.holdPeerBidiCredit()
+        for (k in 0 until 4) {
+            val id = 4L * k
+            m.onResetStream(id, 0x10c, 0)
+            m.read(id, ByteArray(1), 0, 1)
+            m.write(id, ByteArray(0), 0, 0, fin = true)
+        }
+        val f = SentFrames()
+        val b =
+            io.kuicksilver.native.PacketBuffer
+                .allocate(1200)
+        try {
+            while (m.writeStreamFrame(
+                    io.kuicksilver.quic.wire
+                        .WireWriter(b, 0, 1200),
+                    f,
+                )
+            ) {
+                continue
+            }
+        } finally {
+            b.close()
+        }
+        m.onFramesAcked(f) // every stream finished, all four held
+        m.onStreamsBlocked(true, 4)
+        assertEquals(emptyList(), m.maxStreamsBidi())
+        m.releasePeerCredit(0)
+        assertEquals(listOf(5L), m.maxStreamsBidi(), "announced at once")
+    }
 }
