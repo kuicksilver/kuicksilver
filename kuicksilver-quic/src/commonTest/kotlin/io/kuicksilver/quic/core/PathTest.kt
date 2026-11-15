@@ -3613,6 +3613,27 @@ class PathTest {
             p.close()
         }
     }
+
+    /** 0.3.0 re-review: what each migration socket could do stayed in the connection after its path was closed (one entry per migrate). */
+    @Test fun negative_aClosedClientSocketIsForgotten() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val before = c.socketCaps.size
+            repeat(3) { k ->
+                val pid = c.addPath(p.serverAddr, p.now)
+                c.setPathCapabilities(pid, io.kuicksilver.quic.IoCapabilities.Portable)
+                assertTrue(c.socketCaps.size > before)
+                c.closePath(pid)
+                assertEquals(before, c.socketCaps.size, "after closing path $k")
+            }
+        } finally {
+            p.close()
+        }
+    }
+
     /**
      * Self-attack on the revert without a usable ID: data, a key update and a PATH_CHALLENGE owed must all wait (any datagram would carry
      * the ID used toward another address); the next NEW_CONNECTION_ID lets them out, with the new ID, and the connection never closed.

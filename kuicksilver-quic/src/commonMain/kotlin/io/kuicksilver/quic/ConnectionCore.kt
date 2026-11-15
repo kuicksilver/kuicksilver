@@ -259,7 +259,7 @@ public class ConnectionCore internal constructor(
     ) {
         val p =
             paths.byId(path) ?: return
-        socketCaps[p.socket] = caps
+        socketCaps[socketKey(p.socket, p.remote)] = caps
         applyCapabilities(p, caps)
         for (i in 0 until paths.all.size) {
             val q = paths.all[i]
@@ -283,17 +283,20 @@ public class ConnectionCore internal constructor(
     internal fun serverLocal(l: InetSocketAddress?): InetSocketAddress? = if (role == TlsRole.Server) l else null
 
     /**
-     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
-     * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
-     * or a smaller batch shrink theirs. A gain waits for the next path (validation would have to start over).
+     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]; for the server's preferred-address
+     * sockets, one per address family, [v6] names which ([PREFERRED_SOCKET] is both). Only losses apply to the paths already on it: no
+     * ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments or a smaller batch shrink theirs.
+     * A gain waits for the next path (validation would have to start over).
      */
     internal fun updateSocketCapabilities(
         socket: PathId,
         caps: IoCapabilities,
+        v6: Boolean? = null,
     ) {
         for (i in 0 until paths.all.size) {
             val p = paths.all[i]
             if (p.socket != socket) continue
+            if (v6 != null && socket == PREFERRED_SOCKET && isV6(p.remote) != v6) continue
             val had = p.caps
             if (had.ecnSend && !caps.ecnSend) p.ecn.socketStoppedMarking()
             if (had.df && !caps.df) {
@@ -302,22 +305,55 @@ public class ConnectionCore internal constructor(
             }
             p.caps = narrowedCaps(had, caps)
         }
-        socketCaps[socket]?.let { socketCaps[socket] = narrowedCaps(it, caps) }
+        for (k in socketKeys(socket, v6)) socketCaps[k]?.let { socketCaps[k] = narrowedCaps(it, caps) }
     }
+
+    private fun isV6(a: InetSocketAddress): Boolean =
+        io.kuicksilver.quic.core.AddressClass
+            .ipBytes(a)
+            .size == 16
+
+    /** The keys of [socketCaps] for [socket]: its own, or for [PREFERRED_SOCKET] the one of the family [v6] names (both when null). */
+    private fun socketKeys(
+        socket: PathId,
+        v6: Boolean?,
+    ): List<Long> {
+        val base = socket.value.toLong() * 2
+        return if (socket != PREFERRED_SOCKET) {
+            listOf(base)
+        } else if (v6 == null) {
+            listOf(base, base + 1)
+        } else {
+            listOf(base + if (v6) 1 else 0)
+        }
+    }
+
+    /** The [socketCaps] key of a path to [remote] on [socket]: the server's preferred-address sockets are one per address family. */
+    internal fun socketKey(
+        socket: PathId,
+        remote: InetSocketAddress,
+    ): Long = socket.value.toLong() * 2 + if (socket == PREFERRED_SOCKET && isV6(remote)) 1 else 0
 
     /**
      * What each socket of this connection can do (the endpoint's is [PathId.Initial], the server's preferred-address sockets
-     * [PREFERRED_SOCKET], a client's extra socket its path id): a path made later on a socket takes that socket's capabilities, not
-     * those of the path it came from.
+     * [PREFERRED_SOCKET] (one per address family), a client's extra socket its path id), by [socketKey]: a path made later on a socket
+     * takes that socket's capabilities, not those of the path it came from. A client's entry goes when its socket's last path does.
      */
-    internal val socketCaps = HashMap<PathId, IoCapabilities>(2)
+    internal val socketCaps = HashMap<Long, IoCapabilities>(2)
 
-    /** The socket [socket] can do [caps] (the runtime's preferred-address sockets, before any path is on them). */
+    /** The socket [socket] can do [caps] (the runtime's preferred-address sockets, of the family [v6] names or both, before any path is on them). */
     internal fun setSocketCapabilities(
         socket: PathId,
         caps: IoCapabilities,
+        v6: Boolean? = null,
     ) {
-        socketCaps[socket] = caps
+        for (k in socketKeys(socket, v6)) socketCaps[k] = caps
+    }
+
+    /** A client's socket [socket] has no path left: what it could do is forgotten (each migration brings a new socket). */
+    internal fun forgetSocketIfUnused(socket: PathId) {
+        if (socket == PathId.Initial || socket == PREFERRED_SOCKET) return
+        if (paths.all.none { it.socket == socket }) for (k in socketKeys(socket, null)) socketCaps.remove(k)
     }
 
     /**
@@ -1236,6 +1272,7 @@ public class ConnectionCore internal constructor(
             paths.remove(it)
             releasePathCid(it)
         }
+        forgetSocketIfUnused(p.socket)
     }
 
     /** Glitch tokens spent per frame type (index 31 for anything above; 0 for an undecryptable packet, 1 for a PING flood), for diagnostics. */

@@ -522,7 +522,7 @@ private fun ConnectionCore.initPathOnSocket(
     p: Path,
     onSocket: Path,
 ) {
-    p.caps = socketCaps[p.socket] ?: onSocket.caps
+    p.caps = socketCaps[socketKey(p.socket, p.remote)] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
     if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
 }

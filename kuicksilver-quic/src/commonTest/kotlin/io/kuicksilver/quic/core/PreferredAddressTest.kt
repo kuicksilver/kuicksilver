@@ -148,6 +148,35 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * 0.3.0 re-review, RFC 9000 section 14 ("SHOULD use DPLPMTUD"): the server has a preferred-address socket per address family; one
+     * entry for both let the IPv6 socket's capabilities (no DF, no ECN) decide for the path on the IPv4 one, and a loss reported by the
+     * IPv6 socket narrowed the IPv4 path.
+     */
+    @Test fun negative_eachPreferredSocketFamilyKeepsItsOwnCapabilities() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        val full = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+        val portable = io.kuicksilver.quic.IoCapabilities.Portable
+        p.onServerCreated = {
+            it.setPathCapabilities(PathId.Initial, full)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, full, v6 = false)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
+        }
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, full)
+            assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
+            val s = p.server.connections().single()
+            val there = s.paths.all.first { it.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+            assertTrue(there.pmtud != null, "DPLPMTUD on the IPv4 preferred socket")
+            s.updateSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
+            assertTrue(there.pmtud != null, "a loss of the IPv6 socket leaves the IPv4 path alone")
+            assertTrue(there.ecn.state != io.kuicksilver.quic.EcnState.Disabled, "ECN on the IPv4 preferred socket")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))
