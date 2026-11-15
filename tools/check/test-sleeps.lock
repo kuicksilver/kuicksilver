@@ -31,6 +31,7 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientW
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketConnectingTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/InactivityTest.kt	6
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt	7
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/RequestDnsTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/ContentTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/ContractHarness.kt	4
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/contract/ContractSupport.kt	1
