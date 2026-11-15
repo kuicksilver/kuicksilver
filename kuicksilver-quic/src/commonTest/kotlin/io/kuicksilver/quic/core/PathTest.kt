@@ -3870,4 +3870,38 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Fifth review, RFC 9000 section 9.3.2: "an endpoint MUST revert to using the last validated peer address when validation of a new
+     * peer address fails". After a migration the previous path is validated again (section 9.3.3); when the new path's validation failed
+     * first, the previous one, under that re-validation, counted as no validated address and the connection closed (NoViablePath).
+     * It goes back there, with its re-validation still to complete.
+     */
+    @Test fun negative_aNewPathFailingWhileThePreviousIsValidatedAgainRevertsToIt() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val k = s.paths.active
+            val n =
+                s.paths.add(
+                    k.socket,
+                    InetSocketAddress("10.0.0.9", 40009),
+                    s.config.congestionController(),
+                    s.config.newPathInitialRtt,
+                    evict = false,
+                )!!
+            n.local = k.local
+            s.startValidation(n)
+            s.switchPath(n, io.kuicksilver.quic.PathChangeReason.PeerMigration, challengeOld = false)
+            s.startValidation(k) // section 9.3.3: the previous path is validated again
+            s.onPathFailed(n)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state, "the last validated peer address is known")
+            assertSame(k, s.paths.active)
+        } finally {
+            p.close()
+        }
+    }
 }

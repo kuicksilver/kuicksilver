@@ -753,7 +753,13 @@ internal fun ConnectionCore.onPathFailed(
     // goes back to the last validated peer address from the failed path's own local address; only without any validated peer address
     // does the connection close, silently (section 9.3.2: "If an endpoint has no state about the last validated peer address, it MUST
     // close the connection silently")
-    val last = paths.fallback(p) ?: paths.lastValidated.takeIf { it !== p && it.state == PathState.Validated }
+    // a path validated before and being validated again (section 9.3.3: the previous path after a migration) is still a validated
+    // peer address: its re-validation goes on there
+    val last =
+        paths.fallback(p) ?: paths.lastValidated.takeIf { it !== p && it.state == PathState.Validated }
+            ?: paths.all
+                .filter { it !== p && it.state == PathState.Validating && it.validatedAt != TimeMark.NEVER && !it.handshakeCandidate }
+                .maxByOrNull { it.validatedAt.nanos }
     if (role == TlsRole.Server && last != null && !p.isRemote(last.remote)) {
         revertTo(p, last)
         return
@@ -806,7 +812,18 @@ private fun ConnectionCore.revertTo(
         val spare = cids.takePathPeer()
         if (spare != null) k.peerCid = spare else k.waitsForPeerCid = true
     }
-    k.state = PathState.Validated
+    if (k.state == PathState.Validating && k.validatedAt != TimeMark.NEVER) {
+        // a re-validation under way: it goes on where it can send; on a path that waits for an ID it starts again once it can
+        if (k.waitsForPeerCid) {
+            k.state = PathState.Validated
+            k.challengePending = false
+            k.challengeDeadline = TimeMark.NEVER
+            k.nextChallengeAt = TimeMark.NEVER
+            k.revalidateOnceSending = true
+        }
+    } else {
+        k.state = PathState.Validated
+    }
     k.amplification.validated = true
     paths.lastValidated = k
     switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
