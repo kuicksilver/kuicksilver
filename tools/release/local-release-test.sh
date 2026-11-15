@@ -282,7 +282,7 @@ KSL_TEST_DIGEST="sha256:$S2" spc "negative_swiftCheckDraftDigest" refuse "GitHub
 spc "negative_swiftCheckDraftChecksum"          refuse "do not push the tag"               "$tmp/zip-b" remote 1.1.0-rc1 --draft
 spc "negative_swiftCheckDraftMissing"           refuse "gh cannot download"                "$tmp/none"  remote 1.1.0-rc1 --draft
 # the commit and its tag: UTC dates (the Swift package repository is public, its tags immutable), no home path
-spc "swift check: files of the commit"          ok     "no file of the Swift package"      "$tmp/zip-a" files 1.1.0-rc1
+spc "swift check: files of the commit"          ok     "no file, commit message or tag"    "$tmp/zip-a" files 1.1.0-rc1
 spc "negative_swiftCheckPrepushNoTag"           refuse "no annotated tag 1.1.0-rc1"        "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag 1.1.0-rc1
 spc "negative_swiftCheckPrepushLightweightTag"  refuse "no annotated tag 1.1.0-rc1"        "$tmp/zip-a" prepush 1.1.0-rc1
@@ -297,6 +297,13 @@ spc "negative_swiftCheckLocalCommitZone"        refuse "zones [+]0900"          
 printf 'built in /Users/someone/src\n' > "$tmp/sp/NOTES"; git -C "$tmp/sp" add NOTES
 TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-edit --no-gpg-sign --reset-author
 spc "negative_swiftCheckHomePath"               refuse "names a home directory"            "$tmp/zip-a" files 1.1.0-rc1
+git -C "$tmp/sp" rm -q NOTES
+TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-gpg-sign --reset-author -m 'from C:\Users\someone\src'
+spc "negative_swiftCheckHomePathInMessage"      refuse "names a home directory"            "$tmp/zip-a" files 1.1.0-rc1
+TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-gpg-sign --reset-author -m 'Kuicksilver 1.1.0-rc1'
+TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a 1.1.0-rc1 -m 'tagged in /home/someone/sp'
+spc "negative_swiftCheckHomePathInTag"          refuse "names a home directory"            "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 
 # the local-gate check itself (local-release.sh from the marker line to the toolchain check) on fixture records: only a
 # full run's passing stamp is a gate; a run of some steps (local-matrix.sh --only/--from) never is, whatever its file says
@@ -434,21 +441,33 @@ if [ $? != 0 ] && grep -q 'missing.bin: no such asset' <<< "$out" && [ ! -e "$gr
 
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)
-# and so is the signature check: nothing is built or signed. The run must end before any Central upload (a missing exit
-# would reach publishToMavenCentral), print the draft release with every asset and its signature, and SHA256SUMS must
-# list exactly those assets
+# and so is the signature check: nothing is built or signed. The invariants of the mode, for every run:
+#   I1 nothing reaches Central: no Gradle call runs publishToMavenCentral, every one gets -x publishToMavenCentral and the
+#      Central token empty, and the run ends before the Central upload (a missing exit would reach it);
+#   I2 every published asset is signed and listed in SHA256SUMS: the printed draft release attaches exactly the twelve
+#      expected files (six assets and their .asc), each exists, and SHA256SUMS lists exactly the six and their .asc;
+#   I3 nothing published has a non-UTC date or a local path: the Swift package commit is +0000 and a commit or file
+#      that is not makes the run fail, as does a home path in the publication; a final version never gets this far.
+# Each attack below tries to break one of them; an attack must fail the run before the release commands are printed.
 tail_block=$(awk '/^# --github-prerelease: the publication as a Maven repository zip/ {on = 1} on' "$root/tools/release/local-release.sh")
 grep -q 'gh release create' <<< "$tail_block" || { echo "FAIL: no GitHub prerelease block found in local-release.sh"; exit 2; }
 p_lines=$(grep -E '^\[ "\$gh" = 1 \] && sign_args\+=|^P=\(' "$root/tools/release/local-release.sh")
 [ "$(wc -l <<< "$p_lines" | tr -d ' ')" = 2 ] || { echo "FAIL: the Gradle arguments of local-release.sh not found"; exit 2; }
-tl="$tmp/tail"; mkdir -p "$tl/out/logs"; mk_m2 "$tl/m2" signed
-printf 'x' > "$tl/x"; (cd "$tl" && zip -q out/Kuicksilver.xcframework.zip x)
-git init -q --bare -b main "$tl/swift.git"
-tail_out=$(cd "$root" && KSL_SWIFT_REPO="$tl/swift.git" TL="$tl" V="$V" bash -c '
+tail_run() { # <dir> <version> <attack: none|unsigned-sbom|commit-zone|home-swift-repo>: the tail on <dir>/m2, output in $tail_out
+  local d="$1"
+  mkdir -p "$d/out/logs"; printf 'x' > "$d/x"; (cd "$d" && zip -q out/Kuicksilver.xcframework.zip x)
+  git init -q --bare -b main "$d/swift.git"
+  if [ "$3" = home-swift-repo ]; then   # the package repository already holds a file naming a home directory
+    ( git init -q -b main "$d/seed" && cd "$d/seed" && printf 'built in /Users/someone/src\n' > NOTES && git add NOTES \
+      && TZ=UTC git -c user.email=t@example.invalid -c user.name=t commit -q -m seed && git push -q "$d/swift.git" main ) || exit 2
+  fi
+  tail_out=$(cd "$root" && KSL_SWIFT_REPO="$d/swift.git" TL="$d" V="$2" ATTACK="$3" bash -c '
   set -euo pipefail
   version=$V; out=$TL/out; logs=$out/logs; m2=$TL/m2; signed=1; gh=1; dry=0; problems=0; n=0; started=1794688855
   given="$V --github-prerelease"; stamp=$TL/none.stamp; xcf=$out/Kuicksilver.xcframework.zip; push_branch=main
   head=$(git rev-parse HEAD); short=$(git rev-parse --short=7 HEAD); xcf_sum=$(shasum -a 256 "$xcf" | cut -d" " -f1)
+  # an explicit zone in the environment overrides TZ for git
+  [ "$ATTACK" = commit-zone ] && export GIT_AUTHOR_DATE="2026-11-15T10:00:00+0500" GIT_COMMITTER_DATE="2026-11-15T10:00:00+0500"
   sha() { shasum -a 256 "$@" | cut -d" " -f1; }
   step() { local name="$1" log; shift; n=$((n+1)); log="$logs/$(printf %02d $n).log"; printf "[%2d] %s " "$n" "$name"
     if "$@" > "$log" 2>&1; then echo ok; else echo FAIL; tail -5 "$log"; exit 1; fi; }
@@ -456,6 +475,8 @@ tail_out=$(cd "$root" && KSL_SWIFT_REPO="$tl/swift.git" TL="$tl" V="$V" bash -c 
     for a in "$@"; do case "$a" in
       sbomZip) (cd "$TL" && printf "{}" > bom.json && zip -q "$out/kuicksilver-$version-sbom.zip" bom.json) ;;
       -Pkuicksilver.release.sign=*) for f in $(tr , " " <<< "${a#*=}"); do
+        # the signing that leaves one file unsigned
+        [ "$ATTACK" = unsigned-sbom ] && [ "$f" = "$out/kuicksilver-$version-sbom.zip" ] && continue
         printf -- "-----BEGIN PGP SIGNATURE-----\n\nc2ln\n-----END PGP SIGNATURE-----\n" > "$f.asc"; done ;;
     esac; done; }
   bash() { if [ "$1" = tools/release/verify-signature.sh ]; then echo "OK (stub)"; else command bash "$@"; fi; }
@@ -463,23 +484,46 @@ tail_out=$(cd "$root" && KSL_SWIFT_REPO="$tl/swift.git" TL="$tl" V="$V" bash -c 
   '"$p_lines"'
   '"$tail_block"'
   ' 2>&1); tail_rc=$?
-L="github prerelease: the end of a run (no upload, assets, signatures, SHA256SUMS)"
+  tail_central=$(sed 's/-x publishToMavenCentral//g' "$d/tasks" 2>/dev/null | grep -c publishToMavenCentral || true)
+}
+tail_attack() { # <label> <pattern of the refusal> <dir> <version> <attack>: the run must fail, before anything is printed to publish
+  local label="$1" pat="$2"; shift 2
+  tail_run "$@"
+  if [ "$tail_rc" != 0 ] && grep -qE -- "$pat" <<< "$tail_out" && ! grep -q 'gh release create' <<< "$tail_out" && [ "$tail_central" = 0 ]; then
+    pass=$((pass+1)); echo "ok   $label"
+  else fail=$((fail+1)); echo "FAIL $label: rc=$tail_rc central=$tail_central"; printf '%s\n' "$tail_out" | tail -8 | sed 's/^/     | /'; fi
+}
+# the run as it should go, in a +0500 zone and with a stray file next to the assets (it is no asset)
+tl="$tmp/tail"; mk_m2 "$tl/m2" signed; mkdir -p "$tl/out"; printf 'stray' > "$tl/out/kuicksilver-$V-extra.zip"
+TZ=Asia/Yekaterinburg tail_run "$tl" "$V" none
+L="github prerelease: the end of a run (I1 no upload, I2 assets signed and listed, I3 UTC)"
 printed=$(sed -n '/gh release create/,/swift-package-check.sh remote/p' <<< "$tail_out" | tr ' ' '\n' | grep "^$tl/out/" | sort -u)
+expect=$(for f in "kuicksilver-$V-maven-repository.zip" "kuicksilver-$V-maven-repository.md" "kuicksilver-$V-sbom.zip" \
+    "kuicksilver-$V.intoto.jsonl" Kuicksilver.xcframework.zip "kuicksilver-$V-SHA256SUMS"; do echo "$tl/out/$f"; echo "$tl/out/$f.asc"; done | sort)
 sums=$(awk '{print $2}' "$tl/out/kuicksilver-$V-SHA256SUMS" 2>/dev/null | sort)
-want=$(sed 's|.*/||' <<< "$printed" | grep -vE -- '-SHA256SUMS(\.asc)?$' | sort)
-bad=""
-while read -r f; do
-  [ -f "$f" ] || bad="$bad missing:$f"
-  case "$f" in *.asc) ;; *) grep -qxF "$f.asc" <<< "$printed" || bad="$bad unsigned:$f" ;; esac
-done <<< "$printed"
-central=$(sed 's/-x publishToMavenCentral//g' "$tl/tasks" 2>/dev/null | grep -c publishToMavenCentral || true)
-if [ "$tail_rc" = 0 ] && [ -z "$bad" ] && [ "$(wc -l <<< "$printed" | tr -d ' ')" = 12 ] && [ "$sums" = "$want" ] \
-    && [ "$central" = 0 ] && grep -q -- '-PmavenCentralUsername= -PmavenCentralPassword= -x publishToMavenCentral' "$tl/tasks" \
+want=$(sed 's|.*/||' <<< "$expect" | grep -vE -- '-SHA256SUMS(\.asc)?$' | sort)
+bad=""; while read -r f; do [ -s "$f" ] || bad="$bad missing:$f"; done <<< "$expect"
+if [ "$tail_rc" = 0 ] && [ -z "$bad" ] && [ "$printed" = "$expect" ] && [ "$sums" = "$want" ] \
+    && [ "$tail_central" = 0 ] && [ "$(grep -c . "$tl/tasks")" = "$(grep -c -- '-PmavenCentralUsername= -PmavenCentralPassword= -x publishToMavenCentral' "$tl/tasks")" ] \
     && grep -q -- '--draft --prerelease' <<< "$tail_out" && grep -qx '       export TZ=UTC' <<< "$tail_out" \
     && grep -q 'swift package: UTC dates, no home-directory path ok' <<< "$tail_out" \
     && [ "$(git -C "$tl/out/kuicksilver-swift" log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ]; then
   pass=$((pass+1)); echo "ok   $L"
-else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc central=$central bad=$bad"; printf '%s\n' "$tail_out" | tail -15 | sed 's/^/     | /'; fi
+else fail=$((fail+1)); echo "FAIL $L: rc=$tail_rc central=$tail_central bad=$bad"; printf '%s\n' "$tail_out" | tail -15 | sed 's/^/     | /'; fi
+# the attacks
+a="$tmp/attack-unsigned"; mk_m2 "$a/m2" signed
+tail_attack "negative_tailUnsignedAsset (I2)"        "sbom.zip.asc is missing in a signed run" "$a" "$V" unsigned-sbom
+a="$tmp/attack-stray"; mk_m2 "$a/m2" signed; printf 'x' > "$a/m2/io/kuicksilver/kuicksilver-bom/$V/notes.txt"
+tail_attack "negative_tailUnsignedFileInPublication (I2)" "no signature notes.txt.asc" "$a" "$V" none
+a="$tmp/attack-zone"; mk_m2 "$a/m2" signed
+tail_attack "negative_tailSwiftCommitZone (I3)"      "zones [+]0500 [+]0500"            "$a" "$V" commit-zone
+a="$tmp/attack-home-swift"; mk_m2 "$a/m2" signed
+tail_attack "negative_tailHomePathInSwiftPackage (I3)" "names a home directory"         "$a" "$V" home-swift-repo
+a="$tmp/attack-home-pom"; mk_m2 "$a/m2" signed
+printf '<project><url>file:/home/someone/kuicksilver</url></project>\n' > "$a/m2/io/kuicksilver/kuicksilver-bom/$V/kuicksilver-bom-$V.pom"
+tail_attack "negative_tailHomePathInPom (I3)"         "privacy: no home-directory path in the repository zip FAIL" "$a" "$V" none
+a="$tmp/attack-final"; V=0.4.0 mk_m2 "$a/m2" signed
+tail_attack "negative_tailFinalVersion"               "is not a prerelease"              "$a" 0.4.0 none
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published

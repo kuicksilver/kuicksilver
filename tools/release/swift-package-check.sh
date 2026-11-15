@@ -5,8 +5,9 @@
 # in the order of docs/release.md ("Prereleases on GitHub only"). A tag of kuicksilver/kuicksilver-swift is immutable,
 # so every check but resolve runs before it is pushed.
 #
-#   files    the commit: its author and committer dates are UTC (+0000), and no tracked file names a home directory
-#            (tools/check/build-paths.py). local-release.sh runs it after making the commit.
+#   files    the commit: its author and committer dates are UTC (+0000), and no tracked file, the commit message or the
+#            tag <version> (when there is one) names a home directory (tools/check/build-paths.py). local-release.sh
+#            runs it after making the commit.
 #   local    before anything is published: files, then Package.swift names the release URL of <version> and the
 #            SHA-256 of the local Kuicksilver.xcframework.zip; a copy of the package with the binary target pointing at
 #            that zip (path:) instead of the URL, and an empty package depending on it by path that imports Kuicksilver
@@ -92,8 +93,12 @@ check_files() {
   echo "OK: the commit's author and committer dates are UTC"
   files=(); while IFS= read -r f; do files+=("$pkg/$f"); done < <("${G[@]}" ls-files)
   [ ${#files[@]} -gt 0 ] || fail "the commit in $pkg has no files"
-  python3 -I tools/check/build-paths.py "${files[@]}" > "$tmp/paths.log" 2>&1 || { sed 's/^/  | /' "$tmp/paths.log" >&2; fail "a file of the Swift package names a home directory"; }
-  echo "OK: no file of the Swift package names a home directory (${#files[@]} files)"
+  "${G[@]}" log -1 --format=%B HEAD > "$tmp/commit-message"; files+=("$tmp/commit-message")
+  if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+    "${G[@]}" cat-file -p "refs/tags/$version" > "$tmp/tag-object"; files+=("$tmp/tag-object")
+  fi
+  python3 -I tools/check/build-paths.py "${files[@]}" > "$tmp/paths.log" 2>&1 || { sed 's/^/  | /' "$tmp/paths.log" >&2; fail "a file, the commit message or the tag of the Swift package names a home directory"; }
+  echo "OK: no file, commit message or tag of the Swift package names a home directory (${#files[@]} checked)"
 }
 
 case "$cmd" in

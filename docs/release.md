@@ -288,7 +288,8 @@ published file and the xcframework zip, the SBOM, the provenance and their signa
   `build/release/kuicksilver-swift`): `Package.swift` names
   `https://github.com/kuicksilver/kuicksilver/releases/download/v<version>/Kuicksilver.xcframework.zip` of the GitHub
   prerelease and its checksum, and the README `exact: "<version>"`. The commit is made in UTC, and
-  `tools/release/swift-package-check.sh files` checks its dates and that no file names a home directory. Nothing there
+  `tools/release/swift-package-check.sh files` checks its dates and that no file, nor the commit message, names a home
+  directory. Nothing there
   is signed, tagged or pushed.
 - Instead of the deployment, `tools/release/github-repository.py` makes, in `build/release/`:
   - `kuicksilver-<version>-maven-repository.zip`: every file of the publication of `<version>` (artifacts, POMs, Gradle
@@ -338,8 +339,11 @@ resolve); *Run workflow* with the version still builds them, and `/latest/` is o
 (`tools/docs/site.py`: without one there is no `/latest/`). `tools/verify/verify-release.sh` reads Maven Central and does not
 apply to such a prerelease: check it with `shasum -a 256 -c kuicksilver-<version>-SHA256SUMS` and
 `tools/release/verify-signature.sh` on the assets. `tools/release/local-release-test.sh` runs the mode's refusals, its
-credential check, the end of a run on a fixture publication with Gradle and the signature check stubbed (no upload,
-every printed asset signed and in `SHA256SUMS`), `github-repository.py` against fixture publications and the checks of
+credential check, the end of a run on a fixture publication with Gradle and the signature check stubbed, which must
+keep three invariants (nothing reaches Central; every published asset is signed and listed in `SHA256SUMS`; nothing
+published has a non-UTC date or a home-directory path) and attacks on each that must stop the run (an unsigned asset,
+an unsigned file in the publication, a `+0500` zone in the environment, a home path in the Swift package repository
+or in a POM, a final version), `github-repository.py` against fixture publications and the checks of
 `swift-package-check.sh` (`gh` and the download stubbed; its iOS builds need a real xcframework and are run by hand).
 
 Without `--github-prerelease` the script refuses a prerelease version, also in a dry run: Central's monthly quota is
