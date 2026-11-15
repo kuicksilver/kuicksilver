@@ -415,41 +415,80 @@ internal class KslNioServerSocket(
  * one kept its descriptor (its peer's writes were still taken). A listener closed on an idle selector after an accept
  * was given up refused connections at once when tried (ktor's server socket), so [KslNioServerSocket] does not ask for it.
  *
- * The selection is asked for with an interest that is ready at once: WRITE on the sink of a new pipe. Its key is
- * deregistered by the next selection on this selector in turn, so at most one such pipe end waits per idle selector.
+ * The selection is asked for with an interest that is ready at once: WRITE on the sink of a new pipe (a datagram
+ * channel where a pipe cannot be opened). Requests are coalesced per selector: one round runs at a time, and a request
+ * made while one runs gets one more round after it (a round deregisters only the keys cancelled before it starts), so
+ * closing many sockets at once costs a few rounds, not one pipe each. The waker's own key is deregistered by the next
+ * selection in turn: at most one waker waits per idle selector. A round that cannot open any waker is counted
+ * ([releaseFailures]); the closed channels then wait for the selector's next selection, as before.
  */
 internal fun SelectorManager.releaseClosedChannels() {
+    val state = synchronized(releaseStates) { releaseStates.getOrPut(this) { ReleaseState() } }
+    state.requested.set(true)
+    if (!state.running.compareAndSet(false, true)) return // the round in flight, or the one after it, serves this one
     val selector = this
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO + CoroutineName("ksl-selector-release")) {
-        val sink =
-            try {
-                val pipe = selector.provider.openPipe()
-                pipe.source().close() // never registered: closed at once
-                pipe.sink().also { it.configureBlocking(false) }
-            } catch (_: Throwable) {
-                return@launch
-            }
-        val selectable = PipeSinkSelectable(sink)
-        try {
-            // the selection deregisters the keys cancelled before it; bounded, for a selector that closes meanwhile
-            selectable.interestOp(SelectInterest.WRITE, true)
-            withTimeoutOrNull(RELEASE_SELECTION_TIMEOUT) { selector.select(selectable, SelectInterest.WRITE) }
-        } catch (_: Throwable) {
-            // the selector is closed: it deregistered everything
-        } finally {
-            runCatching { sink.close() }
-            runCatching { selector.notifyClosed(selectable) }
+        while (true) {
+            state.requested.set(false) // the requests before this point are served by the round below
+            selectOnce(selector)
+            state.running.set(false)
+            // a request after the reset above: one more round, unless its own caller started it
+            if (!state.requested.get() || !state.running.compareAndSet(false, true)) break
         }
     }
 }
 
-/** How long [releaseClosedChannels] waits for its selection. */
+/** Per selector: a release round runs, and a request came since the running round started. */
+private class ReleaseState {
+    val running = AtomicBoolean(false)
+    val requested = AtomicBoolean(false)
+}
+
+/** The release state of each selector, dropped with the selector. */
+private val releaseStates = java.util.WeakHashMap<SelectorManager, ReleaseState>()
+
+/** Wakers [releaseClosedChannels] opened (tests: rounds are coalesced). */
+internal val releaseWakersOpened = AtomicLong()
+
+/** Release rounds that could open no waker (no pipe and no datagram channel: descriptors exhausted). */
+internal val releaseFailures = AtomicLong()
+
+/** One selection on [selector]: WRITE on a waker channel, ready at once; bounded, for a selector that closes meanwhile. */
+private suspend fun selectOnce(selector: SelectorManager) {
+    val waker: SelectableChannel? =
+        runCatching<SelectableChannel> {
+            val pipe = selector.provider.openPipe()
+            pipe.source().close() // never registered: closed at once
+            pipe.sink()
+        }.recoverCatching { selector.provider.openDatagramChannel() } // a datagram channel is writable at once too
+            .getOrNull()
+    if (waker == null) {
+        releaseFailures.incrementAndGet()
+        return
+    }
+    releaseWakersOpened.incrementAndGet()
+    val selectable = WakerSelectable(waker)
+    try {
+        waker.configureBlocking(false)
+        selectable.interestOp(SelectInterest.WRITE, true)
+        withTimeoutOrNull(RELEASE_SELECTION_TIMEOUT) { selector.select(selectable, SelectInterest.WRITE) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        // the selector is closed: it deregistered everything
+    } finally {
+        runCatching { waker.close() }
+        runCatching { selector.notifyClosed(selectable) }
+    }
+}
+
+/** How long a release round waits for its selection. */
 private val RELEASE_SELECTION_TIMEOUT: Duration = 5.seconds
 
-/** The pipe sink [releaseClosedChannels] waits on, as ktor's selector wants a [Selectable]. */
-private class PipeSinkSelectable(
-    override val channel: java.nio.channels.Pipe.SinkChannel,
+/** The channel [releaseClosedChannels] waits on, as ktor's selector wants a [Selectable]. */
+private class WakerSelectable(
+    override val channel: java.nio.channels.SelectableChannel,
 ) : Selectable {
     override val suspensions: io.ktor.network.selector.InterestSuspensionsMap =
         io.ktor.network.selector

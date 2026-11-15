@@ -9,6 +9,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.discard
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -38,24 +39,40 @@ class IdleSelectorCloseTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /** A socket that never read nor wrote: its selector never had an interest. */
-    @Test fun negative_abortOfAnIdleSocketResetsThePeer() = abortResetsThePeer(writeFirst = false)
+    @Test fun negative_abortOfAnIdleSocketResetsThePeer() = abortResetsThePeer(Writer.None)
 
     /**
-     * A writer held by a peer that does not read, aborted: its selector goes idle once the writer was cancelled. Whether
-     * it is idle before the abort's close depends on timing (it passed before the fix here; a 300 ms or 2 s pause before
-     * the abort hung), so this one guards the case rather than shows it.
+     * A socket whose writer sent what it had and waits for more, aborted: its selector waits for nothing, and the abort
+     * goes through the writer's cancellation ([KslNioSocket]'s closeDescriptor), not the plain close of the case above.
+     * The peer reads what was sent first, so the writer is idle when the abort comes.
      */
-    @Test fun negative_abortOfABlockedWriterResetsThePeer() = abortResetsThePeer(writeFirst = true)
+    @Test fun negative_abortOfASocketWithAnIdleWriterResetsThePeer() = abortResetsThePeer(Writer.Idle)
 
-    private fun abortResetsThePeer(writeFirst: Boolean) =
+    /**
+     * A writer held by a peer that does not read, aborted 2 s after it got stuck. Whether its selector still selects
+     * then depends on timing: without the release it hung 1 of 4 times here (the client's socket stayed ESTABLISHED), so
+     * this case guards rather than shows the bug.
+     */
+    @Test fun negative_abortOfABlockedWriterResetsThePeer() = abortResetsThePeer(Writer.Blocked)
+
+    private enum class Writer { None, Idle, Blocked }
+
+    private fun abortResetsThePeer(writer: Writer) =
         idleSelectorTest { server, clientSelector ->
             val client = connectTcp(clientSelector, InetSocketAddress("127.0.0.1", server.port()))
             val peer = server.accept()
             val input = peer.openReadChannel()
-            if (writeFirst) {
+            if (writer == Writer.Idle) {
+                val out = client.openWriteChannel()
+                out.writeFully(ByteArray(1000))
+                out.flush()
+                val got = ByteArray(1000)
+                withTimeout(10.seconds) { input.readFully(got) } // the writer sent it all: it waits on its channel
+                client.abort()
+            } else if (writer == Writer.Blocked) {
                 val out = client.openWriteChannel()
                 val progress = Channel<Unit>(Channel.CONFLATED)
-                val writer =
+                val writing =
                     async {
                         runCatching {
                             val chunk = ByteArray(64 * 1024)
@@ -68,15 +85,18 @@ class IdleSelectorCloseTest {
                     }
                 // until the writer is stuck: no chunk for 300 ms (the peer reads nothing)
                 while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                kotlinx.coroutines.delay(2.seconds) // the scenario, not a synchronization: the selector goes idle
                 client.abort()
-                writer.await()
+                writing.await()
             } else {
                 client.abort()
             }
             // the peer reads what reached it, then the reset: never a clean end, never a wait for ever. It writes a byte
-            // every 100 ms meanwhile: macOS on loopback sometimes drops an abort's own reset (a plain JDK socket aborted
-            // right after its peer's window filled shows it), while a segment that reaches a connection that is gone is
-            // always answered with one; to a descriptor still open the bytes are only taken
+            // every 100 ms meanwhile: macOS ignores a reset that reaches a socket whose receive window is 0 (a capture on
+            // lo0 shows the client's reset on the wire and the peer staying ESTABLISHED; the same reset sent again in
+            // answer to the peer's next segment is taken), and a segment to a connection that is gone is always answered
+            // with one. To a descriptor still open the bytes are only taken: the client has no read interest, so they do
+            // not wake its selector either
             val probeOut = peer.openWriteChannel()
             val probe =
                 launch {

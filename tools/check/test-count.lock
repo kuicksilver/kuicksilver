@@ -2121,6 +2121,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeball
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HappyEyeballsTest.winnerClosedWhenTheCallerIsCancelledBeforeItReturns
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.HttpsGetTest.httpsGetAgainstLocalServerWithPin
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_abortOfABlockedWriterResetsThePeer
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_abortOfASocketWithAnIdleWriterResetsThePeer
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_abortOfAnIdleSocketResetsThePeer
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.IdleSelectorCloseTest.negative_closeOfAnIdleSocketReleasesTheDescriptor
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.KtorVersionPolicyTest.otherMinorOrMajorFails
@@ -2284,6 +2285,7 @@ kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPoli
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.otherVersionFailsFastUnlessTurnedOff
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.propertyTurnsTheCheckOff
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.readsTheJarManifest
+kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.ReleaseCoalescingTest.negative_manyClosesCostAFewRounds
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.closeAfterTheWriterFinishedReleasesTheSocket
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.negative_aCancelledReadChannelEndsABackedUpReadLoop
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.negative_aFailedStreamResetsTheConnection

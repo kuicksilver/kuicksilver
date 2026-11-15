@@ -305,10 +305,15 @@ internal const val MAX_UNWRITTEN_FRAMES: Int = 8
 
 /**
  * Runs [block] (reading what a client sent) while a byte is written to the client every 100 ms: a probe, so that a client
- * whose connection is gone answers with a reset. An abort's own reset is not always taken: macOS on loopback sometimes
- * drops it (a plain JDK socket aborted with `SO_LINGER` 0 right after its peer's window filled, and the peer read
- * everything and then waited), while a segment that reaches a connection that is gone is always answered with one.
- * Writes that fail are ignored: they fail once the client reset the connection.
+ * whose connection is gone answers with a reset. The abort's own reset always goes out, but macOS does not take one that
+ * reaches a socket whose receive window is 0, as this server's is when the client aborts (it read nothing): on lo0 each
+ * abort's reset (flags R and ACK) is on the wire, and in 8 of 22 runs without the probe the server stayed ESTABLISHED until its own close,
+ * which the client answered with the same reset, taken then. A segment to a connection that is gone is always answered
+ * with one. Writes that fail are ignored: they fail once the client reset the connection.
+ *
+ * The probe also wakes the client's selector when the client's socket is still open (it had a read interest), which
+ * releases a close the JDK deferred: these tests pass without `releaseClosedChannels`. The guard of that fix is
+ * `IdleSelectorCloseTest` (ktor-network), whose idle sockets have no read interest.
  */
 internal suspend fun <T> probing(
     output: io.ktor.utils.io.ByteWriteChannel,
