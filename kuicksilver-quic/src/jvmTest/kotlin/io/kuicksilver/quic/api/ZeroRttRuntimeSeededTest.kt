@@ -104,7 +104,9 @@ class ZeroRttRuntimeSeededTest {
         }
 
         suspend fun open(bidi: Boolean): StreamRuntime? {
-            // an open waits while the remembered stream limit is reached: then it is a job of its own
+            // an open waits while the remembered stream limit is reached: then it is a job of its own. Which way an open goes
+            // depends on the scheduler only when it is slower than 300 ms; both ways are held to the same checks (a stream the
+            // open returned is checked as a stream, a pending open as a job that must end), so the verdict does not depend on it
             val d = scope.async { if (bidi) conn.openBidi() else conn.openUni() }
             val s = withTimeoutOrNull(300.milliseconds) { d.await() }
             if (s == null) {

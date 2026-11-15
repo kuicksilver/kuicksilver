@@ -913,6 +913,7 @@ class SeedCorpusTest {
                 ZeroRttProgram.SMALL,
                 ZeroRttProgram.LOWERED,
                 ZeroRttProgram.OVERRUN or ZeroRttProgram.SMALL,
+                ZeroRttProgram.HIGHER,
             )) {
                 val every =
                     ZeroRttProgram

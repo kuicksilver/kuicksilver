@@ -62,7 +62,9 @@ import kotlin.time.Duration.Companion.seconds
  * looks to the client like one that lowered a limit (RFC 9000 section 7.4.1: it "MUST NOT set values ... that are
  * smaller than the remembered values"; the client closes with PROTOCOL_VIOLATION); [OVERRUN] the ticket remembers four
  * times the server's flow-control limits and more streams, so the client's 0-RTT can break the server's real limits
- * (section 17.2.3: "A server SHOULD treat a violation of remembered limits ... as a connection error").
+ * (section 17.2.3: "A server SHOULD treat a violation of remembered limits ... as a connection error"); [HIGHER] the
+ * ticket remembers a quarter of the flow-control limits and fewer streams, so the accepting server's new parameters are
+ * higher, and the client must still keep to the remembered ones until the handshake completes (section 7.4.1).
  *
  * An op byte `o`: kind `o & 7`, side `(o >> 3) & 1` (0 the client, 1 the server), argument `o >> 4`:
  * - 0 APP: action `arg & 7` of that side's application — 0 open a stream (`arg & 8`: unidirectional) and write [num]
@@ -96,6 +98,7 @@ internal object ZeroRttProgram {
     const val NO_RESET_AT = 8
     const val LOWERED = 16
     const val OVERRUN = 32
+    const val HIGHER = 64
 
     const val MAX_OPS = 300
 
@@ -353,7 +356,7 @@ internal class ZeroRttConnectionFuzz(
         if (data.size < 2) return
         KslLoader.ensureLoaded()
         val ticket = Tickets.take(small)
-        if (flags and (ZeroRttProgram.LOWERED or ZeroRttProgram.OVERRUN) != 0) inflate(ticket)
+        if (flags and (ZeroRttProgram.LOWERED or ZeroRttProgram.OVERRUN or ZeroRttProgram.HIGHER) != 0) inflate(ticket)
         val serverQuic = serverQuic()
         val serverTls = if (outcome == ZeroRttProgram.REJECT_ALPN) Tickets.altServerTls else Tickets.serverTls
         val early =
@@ -402,6 +405,14 @@ internal class ZeroRttConnectionFuzz(
                 TlsRole.Server,
             )
         if (lowered) tp.activeConnectionIdLimit += 5
+        if (flags and ZeroRttProgram.HIGHER != 0) {
+            tp.initialMaxData /= 4
+            tp.initialMaxStreamDataBidiLocal /= 4
+            tp.initialMaxStreamDataBidiRemote /= 4
+            tp.initialMaxStreamDataUni /= 4
+            tp.initialMaxStreamsBidi = maxOf(1L, tp.initialMaxStreamsBidi / 2)
+            tp.initialMaxStreamsUni = maxOf(1L, tp.initialMaxStreamsUni / 2)
+        }
         if (overrun) {
             tp.initialMaxData *= 4
             tp.initialMaxStreamDataBidiLocal *= 4
@@ -797,9 +808,6 @@ internal class ZeroRttConnectionFuzz(
     /** The server accepted the client's 0-RTT (its session no longer answers once the connection is released). */
     private var serverAcceptedEarly = false
 
-    /** 0-RTT packets the client had sealed when it first held 1-RTT keys; -1 before. */
-    private var sealedAtOneRtt = -1L
-
     /** The client learnt the server's answer to its 0-RTT in this round. */
     private fun onAnswer() {
         answered = true
@@ -846,10 +854,31 @@ internal class ZeroRttConnectionFuzz(
             }
         }
         val c = pair.client
-        // RFC 9000 section 17.2.3: "A client MUST NOT send 0-RTT packets once it starts processing 1-RTT packets from the server"
-        if (c.writeKeys[3] != null) {
-            if (sealedAtOneRtt < 0) sealedAtOneRtt = c.zeroRttPacketsSealed
-            check(c.zeroRttPacketsSealed == sealedAtOneRtt) { "client: 0-RTT packets sealed after the 1-RTT keys arrived" }
+        // RFC 9000 section 17.2.3: "A client MUST NOT send 0-RTT packets once it starts processing 1-RTT packets from the
+        // server". Packet numbers rise in the shared space: no 0-RTT packet may number above the first 1-RTT one, whichever
+        // round (or poll within one) sealed it
+        // RFC 9000 section 7.4.1: on the remembered parameters, nothing used or sent beyond them, however high the server's new ones
+        c.remembered?.let { r ->
+            if (!isClosing(c)) {
+                c.streams
+                    .rememberedLimitViolationForTest(
+                        r.initialMaxData,
+                        r.initialMaxStreamDataBidiRemote,
+                        r.initialMaxStreamDataUni,
+                        r.initialMaxStreamsBidi,
+                        r.initialMaxStreamsUni,
+                    )?.let { throw IllegalStateException("client, before the answer: $it") }
+            }
+        }
+        if (c.zeroRttSealedAtOneRttKey >= 0) {
+            check(c.zeroRttPacketsSealed == c.zeroRttSealedAtOneRttKey) {
+                "client: ${c.zeroRttPacketsSealed - c.zeroRttSealedAtOneRttKey} 0-RTT packets sealed after the 1-RTT key arrived"
+            }
+        }
+        if (c.oneRttFirstPn >= 0 && c.zeroRttLastPn >= 0) {
+            check(c.zeroRttLastPn < c.oneRttFirstPn) {
+                "client: 0-RTT packet ${c.zeroRttLastPn} sealed after the first 1-RTT packet ${c.oneRttFirstPn}"
+            }
         }
         if (c.earlyAccepted == false) {
             check(

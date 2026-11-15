@@ -80,6 +80,11 @@ class ZeroRttConnectionSeededTest {
             for (s in 0 until seeds) run(70_000L + 10L * flags + s, ACCEPT, flags, faults = false, expect = Expect.ClosedForLimits)
             for (s in 0 until seeds) run(80_000L + 10L * flags + s, ACCEPT, flags, faults = true)
         }
+        // the server sends higher limits than the ticket remembers: accepted, the client keeps to the remembered ones until then
+        for (flags in listOf(ZeroRttProgram.HIGHER, ZeroRttProgram.HIGHER or SMALL)) {
+            for (s in 0 until seeds) run(90_000L + 10L * flags + s, ACCEPT, flags, faults = false, expect = Expect.Accepted)
+            for (s in 0 until seeds) run(95_000L + 10L * flags + s, ACCEPT, flags, faults = true)
+        }
         // a 0-RTT request beyond the server's real stream window (2048): the server refuses it before the client could
         val beyond =
             ZeroRttProgram

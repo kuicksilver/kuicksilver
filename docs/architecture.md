@@ -212,8 +212,12 @@ against other implementations; negative security controls named `negative_*` aft
 
 **0-RTT invariant.** Every piece of state that exists before the server answers a client's 0-RTT is settled by the answer
 or by the end of the connection: once a client knows whether its 0-RTT was accepted, or its connection ended first,
-nothing is held back for the answer (`StreamManager.heldUntilZeroRttAnswerForTest`, the `zeroRttHeld` entry of
-`ConnectionCore.sizesForTest`: a new hold must be counted there); after a rejection no 0-RTT packet is left in the sent
+nothing is held back for the answer (`StreamManager.heldUntilAnswer`, the one queue for events that stand only if the
+server takes the 0-RTT carrying them, settled by the answer and by the end of the connection; the `zeroRttHeld` entry of
+`ConnectionCore.sizesForTest` counts it. Nothing is held yet: the check guards that queue, and a hold added later, such as
+the final sizes of streams sent in 0-RTT, must go through it rather than a list of its own); no client 0-RTT packet is
+sealed after the 1-RTT key arrived or numbered above the first 1-RTT packet; while the client runs on the remembered
+transport parameters no limit it uses and nothing it sent exceeds them, however high the server's new ones; after a rejection no 0-RTT packet is left in the sent
 history, so none in flight, in a congestion controller or in loss detection (`ConnectionCore.recoveryViolationForTest`
 checks that bytes in flight and every controller agree with the history), and none of the dropped streams is left in the
 stream manager — no stream, send limit, queued frame or event, connection credit or buffered byte

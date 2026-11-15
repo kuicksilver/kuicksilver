@@ -161,6 +161,7 @@ internal fun ConnectionCore.onAuthenticationFailure(aead: Aead) {
  * the limit).
  */
 internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
+    if (oneRttFirstPn < 0) oneRttFirstPn = pn
     if (++oneRttSinceRotation >= config.limits.cidRotationPackets &&
         state == ConnectionState.Confirmed
     ) {
@@ -431,6 +432,9 @@ internal class ConnectionHandshakeSink(
                     core.readKeys[3] = r
                     core.writeKeys[3] = w
                 }
+        }
+        if (level == 3 && direction == Direction.Write && core.zeroRttSealedAtOneRttKey < 0) {
+            core.zeroRttSealedAtOneRttKey = core.zeroRttPacketsSealed
         }
         if (level == 3 && direction == Direction.Write && core.writeKeys[1] != null) {
             core.writeKeys[1]?.close()

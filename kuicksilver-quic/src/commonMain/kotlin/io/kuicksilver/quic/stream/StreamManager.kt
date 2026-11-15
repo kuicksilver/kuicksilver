@@ -345,14 +345,50 @@ internal class StreamManager(
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
 
     /**
-     * Fuzzing probe (0-RTT): items a client holds back until the server answers its 0-RTT. Every list such a hold keeps
-     * (events, final sizes, ...) must be counted here; none exists yet. Once the answer is known, or the connection ended,
-     * it must be 0: a held item that outlives the answer is never delivered, or is delivered for a stream that is gone.
+     * Client: events held back until the server answers our 0-RTT, facts about a stream that stand only if the server took
+     * the 0-RTT that carried them. [settleHeldUntilAnswer] reports them at an acceptance and drops them at a rejection or at
+     * the end of the connection. No event is held yet; a hold puts its events here rather than in a list of its own, so the
+     * 0-RTT invariant ([heldUntilZeroRttAnswerForTest]) covers it.
      */
-    internal fun heldUntilZeroRttAnswerForTest(): Int = testInjectHeld
+    internal val heldUntilAnswer = ArrayList<ConnectionEvent>()
 
-    /** Test hook: items the probe counts as held (the negative controls of the 0-RTT invariant). */
-    internal var testInjectHeld = 0
+    /** The server answered our 0-RTT ([accepted]), or the connection ended (false): what was held is reported or dropped. */
+    fun settleHeldUntilAnswer(accepted: Boolean) {
+        if (heldUntilAnswer.isEmpty()) return
+        if (accepted) events += heldUntilAnswer
+        heldUntilAnswer.clear()
+    }
+
+    /** Fuzzing probe (0-RTT): events still held for the server's answer; 0 once it is known or the connection ended. */
+    internal fun heldUntilZeroRttAnswerForTest(): Int = heldUntilAnswer.size
+
+    /**
+     * Fuzzing probe (0-RTT), while the client still runs on the remembered transport parameters: no limit it uses, and
+     * nothing it sent, exceeds them (RFC 9000 section 7.4.1: "a client MUST only use remembered transport parameters;
+     * importantly, it MUST NOT use updated values that it learns from the server's updated transport parameters"), or the
+     * violation.
+     */
+    internal fun rememberedLimitViolationForTest(
+        maxData: Long,
+        bidiRemote: Long,
+        uni: Long,
+        maxStreamsBidi: Long,
+        maxStreamsUni: Long,
+    ): String? {
+        if (connSend.maxLimit > maxData || connSend.used > maxData) {
+            return "connection limit ${connSend.maxLimit} (used ${connSend.used}) above the remembered $maxData"
+        }
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            val cap = if (StreamIds.isBidi(id)) bidiRemote else uni
+            val sent = streams[id]?.send?.sentEnd ?: 0L
+            if (limit.maxLimit > cap || sent > cap) return "stream $id limit ${limit.maxLimit} (sent $sent) above the remembered $cap"
+        }
+        if (nextIndex[0] > maxStreamsBidi || nextIndex[1] > maxStreamsUni) {
+            return "opened ${nextIndex[0]} bidi / ${nextIndex[1]} uni streams, remembered $maxStreamsBidi / $maxStreamsUni"
+        }
+        return null
+    }
 
     /** Fuzzing probe: the IDs of every stream in the map. */
     internal fun streamIdsForTest(): List<Long> = streams.keys.toList()

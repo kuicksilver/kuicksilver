@@ -196,6 +196,12 @@ public class ConnectionCore internal constructor(
     internal var zeroRttFirstPn = -1L
     internal var zeroRttLastPn = -1L
 
+    /** The packet number of the first 1-RTT packet sealed (-1 before one): RFC 9000 section 17.2.3 puts every 0-RTT packet before it. */
+    internal var oneRttFirstPn = -1L
+
+    /** [zeroRttPacketsSealed] when the 1-RTT write key arrived (-1 before): no 0-RTT packet is sealed after it (section 17.2.3). */
+    internal var zeroRttSealedAtOneRttKey = -1L
+
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null

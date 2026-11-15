@@ -10,6 +10,7 @@ import io.kuicksilver.quic.recovery.SpaceId
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
  * Negative controls of the 0-RTT invariant ([ZeroRttConnectionFuzz]): each corrupts one thing the invariant covers, the way a
@@ -123,7 +124,52 @@ class ZeroRttInvariantControlsTest {
     }
 
     @Test fun negative_itemHeldAfterTheAnswerIsCaught() {
-        caught(accepted, "zeroRttHeld") { p, now -> if (now) p.client.streams.testInjectHeld = 1 }
+        // held after the answer, as a hold that missed the settlement would leave it
+        caught(accepted, "zeroRttHeld") { p, now -> if (now) p.client.streams.heldUntilAnswer += ConnectionEvent.StreamWritable(0) }
+    }
+
+    /** The queue the invariant counts is the one the answer settles: held before it, released at an acceptance, dropped at a rejection or close. */
+    @Test fun heldEventsAreSettledByTheAnswerOrTheEnd() {
+        for (program in listOf(accepted, rejected, closedEarly)) {
+            var held = false
+            ZeroRttConnectionFuzz(program, tamper = { p, _ ->
+                if (!held && p.client.earlyAccepted == null && p.client.isStreamOpenForTest(0)) {
+                    held = true
+                    p.client.streams.heldUntilAnswer += ConnectionEvent.StreamWritable(0)
+                }
+            }).run()
+            assertTrue(held, "an event was held before the answer")
+        }
+    }
+
+    private val closedEarly =
+        ZeroRttProgram
+            .Builder(ACCEPT, 0)
+            .open(0, 500, fin = false)
+            .step()
+            .close(0, 4)
+            .settle()
+            .build()
+
+    @Test fun negative_limitAboveTheRememberedOneBeforeTheAnswerIsCaught() {
+        caught(accepted, "above the remembered") { p, _ ->
+            val r = p.client.remembered
+            if (r != null && p.client.earlyAccepted == null) p.client.connSend.onMaxUpdate(r.initialMaxData + 1)
+        }
+    }
+
+    @Test fun negative_zeroRttAfterTheOneRttKeyIsCaught() {
+        caught(accepted, "sealed after the 1-RTT key arrived") { p, _ ->
+            val c = p.client
+            if (c.zeroRttSealedAtOneRttKey >= 0 && c.zeroRttPacketsSealed == c.zeroRttSealedAtOneRttKey) c.zeroRttPacketsSealed++
+        }
+    }
+
+    @Test fun negative_zeroRttNumberedAfterOneRttIsCaught() {
+        caught(accepted, "sealed after the first 1-RTT packet") { p, _ ->
+            val c = p.client
+            if (c.oneRttFirstPn >= 0 && c.zeroRttLastPn in 0 until c.oneRttFirstPn) c.zeroRttLastPn = c.oneRttFirstPn + 1
+        }
     }
 
     @Test fun negative_streamTheApplicationCannotReachIsCaught() {

@@ -26,7 +26,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection fuzzer also checks the recovery bookkeeping and the connection's send credit after every step. Two modes
   make a ticket remember more than the server sends: an accepting server then looks lowered and the client must close
   with PROTOCOL_VIOLATION, and a client whose 0-RTT breaks the server's real limits must be refused with
-  FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR (RFC 9000 sections 7.4.1, 17.2.3).
+  FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR (RFC 9000 sections 7.4.1, 17.2.3); a third makes the server's new limits
+  higher, and the client must keep to the remembered ones until the handshake completes. The campaigns' committed corpora
+  (`tools/fuzz/corpus/`) now replay in `jvmTest` (`CommittedCorpusReplayTest`) and in `tools/c-test.sh`.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
@@ -995,7 +997,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC runtime: a STOP_SENDING watcher (`awaitSendStopped`, internal API) waited forever once its stream could no longer
   be stopped. It now ends with the connection's `ConnectionLost` when the connection ended, with
   `StreamError.EarlyDataRejected` when a rejected 0-RTT dropped the stream (RFC 9001 section 4.6.2: the client resets
-  "application state bound to those streams"), and with `IllegalStateException` once both halves are done; HTTP/3's
+  "application state bound to those streams"), and returns null once both halves are done without one; HTTP/3's
   watchers of its critical streams, which stayed suspended for the rest of a connection whose 0-RTT was rejected, end
   quietly. Found by the 0-RTT runtime invariant test; pinned by `SendStoppedTest` and
   `ZeroRttApiTest.negative_sendStoppedWatcherOfARejectedStreamEnds`.

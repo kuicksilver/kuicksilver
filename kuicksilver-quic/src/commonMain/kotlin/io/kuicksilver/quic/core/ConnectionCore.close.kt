@@ -45,6 +45,7 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
         false
     timers.closeDeadline = now + pto() * 3
     paths.dropAllResponses()
+    streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     events += ConnectionEvent.Closed(reason)
     // `now` must be the moment the closing state begins (a fresh `loop.now()`, see ConnectionRuntime.close), never a cached
     // time: tools/interop/closing-challenge.py takes this connection_closed time as proof that our client was closing before a
@@ -65,6 +66,7 @@ internal fun ConnectionCore.failInternal(e: Throwable) {
 /** Idle and handshake timeouts close without a CONNECTION_CLOSE (RFC 9000 section 10.1). */
 internal fun ConnectionCore.silentClose(reason: QuicException.ConnectionLost) {
     closedReason = reason
+    streams.settleHeldUntilAnswer(false)
     events += ConnectionEvent.Closed(reason)
     qlog?.connectionClosed(reason, now)
     markClosed()
@@ -116,6 +118,7 @@ internal fun ConnectionCore.peerClosed(
     state = ConnectionState.Draining
     timers.closeDeadline = now + pto() * 3
     paths.dropAllResponses()
+    streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     // RFC 9000 section 10.2.2: a closing endpoint that receives CONNECTION_CLOSE may drain; the connection already ended with our
     // own reason, reported once
     if (closing) return
@@ -169,6 +172,7 @@ internal fun ConnectionCore.checkStatelessReset(
     state = ConnectionState.Draining
     timers.closeDeadline = now + pto() * 3
     paths.dropAllResponses()
+    streams.settleHeldUntilAnswer(false) // an answer that never comes stands for no acceptance
     val reason = QuicException.ConnectionLost.StatelessReset()
     closedReason = reason
     events += ConnectionEvent.Closed(reason)

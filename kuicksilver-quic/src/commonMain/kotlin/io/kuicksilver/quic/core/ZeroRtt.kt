@@ -252,6 +252,7 @@ internal fun ConnectionCore.settleZeroRtt() {
     val tp = peerTp ?: return
     val accepted = handshake.session.earlyDataAccepted == true
     earlyAccepted = accepted
+    streams.settleHeldUntilAnswer(accepted)
     if (accepted) {
         val lower =
             tp.activeConnectionIdLimit < old.activeConnectionIdLimit ||
