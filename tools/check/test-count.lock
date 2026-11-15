@@ -4579,6 +4579,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.ZeroRttInvariantControlsTe
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.BatchReceiverAllocationTest.aFlowingBatchAllocatesNothing
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.FlushAllocationTest.aFlushOnTheAcceleratedSocketAllocatesNothing
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.FlushRetentionTest.aClosedConnectionIsNotHeldByTheLoopsFlush
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.IdleAfterStallTest.negative_aPeerPacketQueuedBeforeTheIdleDeadlineKeepsTheConnection
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.KslRandomConcurrencyTest.perLoopSourcesAreIndependent
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.KslRandomConcurrencyTest.sharedSourceIsThreadSafe
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.runtime.ObserverAfterLoopEndTest.aFirstReadAfterTheLoopEndedStillSettlesEveryObserver
