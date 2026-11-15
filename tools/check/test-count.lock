@@ -1704,6 +1704,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.nat64SynthesizesIpv4LiteralsAndAnswers
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_aNameWithAaaaNeverWaitsForTheNat64Prefix
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_aRoutedPrivateIpv4AnswerStaysIpv4
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_anAnswerAtTheEndOfTheResolutionDelayIsUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_cancelledLookUpUnderAContendedLockLeavesNoStuckEntry
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_noSynthesisOnADualStackNetwork

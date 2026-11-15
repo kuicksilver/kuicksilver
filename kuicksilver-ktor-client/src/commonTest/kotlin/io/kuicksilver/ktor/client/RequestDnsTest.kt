@@ -157,6 +157,28 @@ class RequestDnsTest {
             assertEquals(emptyList(), r.addresses(false))
         }
 
+    /**
+     * RFC 8305 section 3: the other family's answer that arrives as the Resolution Delay ends (virtual time: its lookup ends
+     * at the same instant, ordered before the delay's timer) is used. A receive bounded by withTimeoutOrNull had the answer
+     * handed to it and was then cancelled by the timer: the answer was taken off the channel and dropped.
+     */
+    @Test fun negative_anAnswerAtTheEndOfTheResolutionDelayIsUsed() =
+        runTest {
+            val dns =
+                dns { _, v6 ->
+                    if (v6) {
+                        kotlinx.coroutines.delay(io.kuicksilver.ktor.network.RESOLUTION_DELAY)
+                        listOf(v6(1))
+                    } else {
+                        listOf(addr(1))
+                    }
+                }
+            assertEquals(
+                setOf("[2001:db8::1]:443", "192.0.2.1:443"),
+                dns.answered("a.example", 443).map { it.toString() }.toSet(),
+            )
+        }
+
     // ---- addresses an HTTPS answer carried (RFC 9460 section 5): one family alone is used, the other still looked up
 
     @Test fun seededIpv4IsUsedAndIpv6StillLookedUp() =

@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -23,6 +23,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -194,7 +196,17 @@ internal class RequestDns private constructor(
                     }
                 val first = answers.receive()
                 val positive = first.getOrNull().orEmpty().isNotEmpty()
-                val second = if (positive) withTimeoutOrNull(RESOLUTION_DELAY) { answers.receive() } else answers.receive()
+                // a select, not withTimeoutOrNull around receive: the answer is either taken by the select or left in the
+                // channel; a receive cancelled by the timeout after the answer was handed to it would drop it
+                val second =
+                    if (positive) {
+                        select<Result<List<TcpAddress>>?> {
+                            answers.onReceive { it }
+                            onTimeout(RESOLUTION_DELAY) { null }
+                        }
+                    } else {
+                        answers.receive()
+                    }
                 lookups.forEach { it.cancel() }
                 listOfNotNull(first, second)
             }
