@@ -181,8 +181,8 @@ sp() { # <label> <ok|refuse> <pattern|-> <prepare|finish> <args...>: runs swift-
   elif [ "$pat" != - ] && ! grep -qE -- "$pat" <<< "$sp_out"; then sp_fail "$label" "no '$pat' in: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   else return 0; fi; return 1
 }
-ptag() { # <version> <branch>: what the maintainer does after finish (here unsigned)
-  git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q --atomic "$tmp/sp.git" "$2" "refs/tags/$1"
+ptag() { # <version> <branch>: what the maintainer does after finish (here unsigned, in UTC; the clone's hook checks it)
+  TZ=UTC git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t tag -a "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q --atomic "$tmp/sp.git" "$2" "refs/tags/$1" > "$tmp/ptag.log" 2>&1
 }
 git init -q --bare -b main "$tmp/sp.git"
 S1=$(printf a | shasum -a 256 | cut -d' ' -f1); S2=$(printf b | shasum -a 256 | cut -d' ' -f1)
@@ -220,7 +220,7 @@ sp "swift package: older line with nothing below it" refuse "0.2.0 is older than
   && sp_pass "swift package: older line with nothing below it"
 # an older line after a newer one: main stays on 0.3.x, 0.2.3 goes on release/0.2.x (a new branch, then on top of it)
 git -C "$tmp/sp" checkout -q --orphan old && git -C "$tmp/sp" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m "0.2.2" \
-  && git -C "$tmp/sp" tag 0.2.2 && git -C "$tmp/sp" push -q "$tmp/sp.git" refs/tags/0.2.2
+  && git -C "$tmp/sp" tag 0.2.2 && git -C "$tmp/sp" push -q --no-verify "$tmp/sp.git" refs/tags/0.2.2
 L="swift package: older line on release/0.2.x from its newest tag"
 if sp "$L" ok "branch release/0.2.x \(an older line than 0.3: main stays on the newest\)" finish 0.2.3 "$S1"; then
   if [ "$(git -C "$tmp/sp" rev-parse HEAD~1)" = "$(git -C "$tmp/sp" rev-parse '0.2.2^{commit}')" ] && grep -q "push --atomic https://github.com/kuicksilver/kuicksilver-swift.git release/0.2.x refs/tags/0.2.3" <<< "$sp_out" \
@@ -253,6 +253,33 @@ if sp "$L" ok "on main" finish 1.1.0-rc1 "$S1"; then
     && [ "$(pkg_line url)" = https://github.com/kuicksilver/kuicksilver/releases/download/v1.1.0-rc1/Kuicksilver.xcframework.zip ] \
     && sp_pass "$L" || sp_fail "$L" "requirement or URL wrong"
 fi
+
+# the pre-push hook swift-package.sh installs in its clone (tools/release/swift-package-pre-push.sh): a push of a tag with
+# a +0500 tagger date, of a commit naming a home directory, or of a +0500 commit is refused; the clean one goes through
+git init -q --bare -b main "$tmp/sph.git"
+SH=$(printf '%s' c | shasum -a 256 | cut -d' ' -f1)
+KSL_SWIFT_REPO="$tmp/sph.git" bash "$root/tools/release/swift-package.sh" finish 2.0.0-rc1 "$SH" --out "$tmp/sph" >/dev/null 2>&1 \
+  || { echo "FAIL: swift-package.sh finish for the hook cases"; exit 2; }
+hpush() { # <label> <ok|refuse> <pattern|->: pushes main and the tag 2.0.0-rc1 of $tmp/sph to $tmp/sph.git
+  local out rc; out=$(git -C "$tmp/sph" push --atomic "$tmp/sph.git" main refs/tags/2.0.0-rc1 2>&1); rc=$?
+  if [ "$([ $rc = 0 ] && echo ok || echo refuse)" = "$2" ] && { [ "$3" = - ] || grep -qE -- "$3" <<< "$out"; } \
+      && { [ "$2" = ok ] || ! git -C "$tmp/sph.git" rev-parse -q --verify refs/tags/2.0.0-rc1 >/dev/null; }; then sp_pass "$1"
+  else sp_fail "$1" "exit $rc: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
+}
+htag() { git -C "$tmp/sph" tag -d 2.0.0-rc1 >/dev/null 2>&1; TZ="$1" git -C "$tmp/sph" -c user.email=t@example.invalid -c user.name=t tag -a 2.0.0-rc1 -m "Kuicksilver 2.0.0-rc1"; }
+[ "$(git -C "$tmp/sph" config core.hooksPath)" = "$(cd "$tmp/sph" && pwd)/.git/hooks" ] && [ -x "$tmp/sph/.git/hooks/pre-push" ] \
+  && sp_pass "swift package: the clone has its pre-push hook" || sp_fail "swift package: the clone has its pre-push hook" "no hook"
+htag Asia/Yekaterinburg; hpush "negative_swiftPushTaggerZone"     refuse "tagger zone [+]0500"
+htag UTC; printf 'built in /Users/someone/src\n' > "$tmp/sph/NOTES"; git -C "$tmp/sph" add NOTES
+TZ=UTC git -C "$tmp/sph" -c user.email=t@example.invalid -c user.name=t commit -q --no-gpg-sign -m notes; htag UTC
+hpush "negative_swiftPushHomePath"        refuse "names a home directory"
+git -C "$tmp/sph" reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg git -C "$tmp/sph" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-edit --no-gpg-sign --reset-author; htag UTC
+hpush "negative_swiftPushCommitZone"      refuse "[+]0500"
+TZ=UTC git -C "$tmp/sph" -c user.email=t@example.invalid -c user.name=t commit -q --amend --no-edit --no-gpg-sign --reset-author; htag UTC
+hpush "swift package: a clean push goes through the hook" ok -
+out=$(git -C "$tmp/sph" push "$tmp/sph.git" :refs/tags/2.0.0-rc1 2>&1)
+if [ $? != 0 ] && grep -q "deleting refs/tags/2.0.0-rc1 is refused" <<< "$out" && git -C "$tmp/sph.git" rev-parse -q --verify refs/tags/2.0.0-rc1 >/dev/null
+then sp_pass "negative_swiftPushDeleteTag"; else sp_fail "negative_swiftPushDeleteTag" "$(tr '\n' ' ' <<< "$out")"; fi
 
 # tools/release/swift-package-check.sh on the 1.1.0-rc1 commit just made (checksum S1, the SHA-256 of "a"); the GitHub
 # release is a stub download (KSL_SWIFT_FETCH copies $KSL_TEST_REMOTE). Its iOS builds need a real xcframework: not here
@@ -438,6 +465,62 @@ L="negative_githubRepositorySumsMissingFile"
 out=$(python3 -I "$gr" sums --out "$gr_dir/SUMS2" "$gr_dir/a.bin" "$gr_dir/missing.bin" 2>&1)
 if [ $? != 0 ] && grep -q 'missing.bin: no such asset' <<< "$out" && [ ! -e "$gr_dir/SUMS2" ]; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
+
+# tools/hooks/pre-push, the privacy guard of this repository, on pushes from a throwaway repository to a bare one: names
+# come from git config kuicksilver.privacy.names (none are in the repository), the identity from kuicksilver.privacy.identity
+hk="$tmp/hook"; mkdir -p "$hk/hooks"; ln -s "$root/tools/hooks/pre-push" "$hk/hooks/pre-push"
+git init -q --bare -b main "$hk/remote.git"; git init -q -b main "$hk/w"
+hg() { git -C "$hk/w" -c core.hooksPath="$hk/hooks" "$@"; }
+hg config kuicksilver.privacy.names "zorbex quill"; hg config --add kuicksilver.privacy.names "qzx-alias"
+hg config kuicksilver.privacy.identity "kinchpik <339333647+kinchpik@users.noreply.github.com>"
+hcommit() { # <TZ> <message> [file content]: a commit by the configured identity
+  [ -z "${3:-}" ] || printf '%s\n' "$3" > "$hk/w/f.txt"; hg add -A >/dev/null 2>&1
+  TZ="$1" GIT_AUTHOR_NAME=kinchpik GIT_AUTHOR_EMAIL=339333647+kinchpik@users.noreply.github.com GIT_COMMITTER_NAME=kinchpik \
+    GIT_COMMITTER_EMAIL=339333647+kinchpik@users.noreply.github.com hg commit -q --allow-empty --no-gpg-sign -m "$2"
+}
+mhook() { # <label> <ok|refuse> <pattern|-> <push args...>
+  local label="$1" exp="$2" pat="$3" out rc; shift 3
+  out=$(hg push "$hk/remote.git" "$@" 2>&1); rc=$?
+  if [ "$([ $rc = 0 ] && echo ok || echo refuse)" = "$exp" ] && { [ "$pat" = - ] || grep -qE -- "$pat" <<< "$out"; }; then pass=$((pass+1)); echo "ok   $label"
+  else fail=$((fail+1)); echo "FAIL $label: exit $rc: $(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
+}
+hcommit UTC "base" "hello"; mhook "privacy hook: a clean UTC commit" ok - main
+hcommit Asia/Yekaterinburg "zoned"; mhook "negative_hookCommitZone" refuse "non-UTC dates" main
+hg reset -q --hard HEAD~1; hcommit UTC "by Zorbex.Quill"; mhook "negative_hookNameInMessage" refuse "personal identifiers in commit messages" main
+hg reset -q --hard HEAD~1; hcommit UTC "data" "contact QZX-ALIAS"; mhook "negative_hookNameAdded" refuse "personal identifiers added" main
+hg reset -q --hard HEAD~1; hcommit UTC "path" "see /Users/${USER:-$(id -un)}/x"; mhook "negative_hookHomePathAdded" refuse "personal identifiers added" main
+hg reset -q --hard HEAD~1; hcommit UTC "host" "built on $(hostname | cut -d. -f1)"; mhook "negative_hookHostNameAdded" refuse "personal identifiers added" main
+hg reset -q --hard HEAD~1; hg -c user.name=someone -c user.email=s@example.invalid commit -q --allow-empty --no-gpg-sign -m other
+mhook "negative_hookOtherIdentity" refuse "another author/committer identity" main
+hg reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
+mhook "negative_hookTaggerZone" refuse "tagger zone [+]0500" refs/tags/v9
+hg tag -d v9 >/dev/null; TZ=UTC hg -c user.name=kinchpik -c user.email=339333647+kinchpik@users.noreply.github.com tag -a v9 -m v9
+mhook "privacy hook: a UTC tag" ok - refs/tags/v9
+hg config --unset-all kuicksilver.privacy.names; hcommit UTC "next"
+mhook "negative_hookNoNamesConfigured" refuse "kuicksilver.privacy.names" main
+
+# the release script's check of that hook (local-release.sh from "# the privacy pre-push hook" to the credential check)
+hook_block=$(awk '/^# the privacy pre-push hook/ {on = 1} /^# credentials and signing/ {on = 0} on' "$root/tools/release/local-release.sh")
+grep -q 'refuse' <<< "$hook_block" || { echo "FAIL: no pre-push hook check found in local-release.sh"; exit 2; }
+hook_t() { # <label> <ok|refuse>[:<pattern>] <setup: linked|copied|other|none> [names]
+  local label="$1" exp="${2%%:*}" pat="" d out got verdict; [ "$2" = "${2#*:}" ] || pat="${2#*:}"
+  d="$tmp/hookchk-$pass-$fail"; git init -q -b main "$d"; mkdir -p "$d/tools/hooks"; cp "$root/tools/hooks/pre-push" "$d/tools/hooks/"
+  case "$3" in
+    linked) ln -s ../../tools/hooks/pre-push "$d/.git/hooks/pre-push" ;; copied) cp "$root/tools/hooks/pre-push" "$d/.git/hooks/" ;;
+    other) printf '#!/bin/sh\nexit 0\n' > "$d/.git/hooks/pre-push"; chmod +x "$d/.git/hooks/pre-push" ;; none) ;;
+  esac
+  [ -z "${4:-}" ] || git -C "$d" config kuicksilver.privacy.names "$4"
+  out=$(cd "$d" && bash -c 'refuse() { echo "REFUSED: $*"; }; '"$hook_block" 2>&1)
+  got=$(grep -q REFUSED <<< "$out" && echo refuse || echo ok)
+  verdict=FAIL; if [ "$got" = "$exp" ] && { [ -z "$pat" ] || grep -qE -- "$pat" <<< "$out"; }; then verdict=ok; fi
+  [ $verdict = ok ] && pass=$((pass+1)) || fail=$((fail+1))
+  printf '%-4s %-58s exp=%-6s got=%-6s | %s\n' "$verdict" "$label" "$exp" "$got" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"
+}
+hook_t "hook check: linked, names configured"        ok      linked "zorbex quill"
+hook_t "hook check: copied, names configured"        ok      copied "zorbex quill"
+hook_t "negative_releaseWithoutHook"                 "refuse:privacy pre-push hook is not installed" none "zorbex quill"
+hook_t "negative_releaseWithOtherHook"               "refuse:privacy pre-push hook is not installed" other "zorbex quill"
+hook_t "negative_releaseWithoutPrivacyNames"         "refuse:kuicksilver.privacy.names"             linked
 
 # the end of a --github-prerelease run (local-release.sh from its Maven repository step to its last line) on a fixture
 # publication. Gradle is a stub that records its arguments (sbomZip writes an archive, signReleaseFiles a .asc per file)

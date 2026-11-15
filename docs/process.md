@@ -217,7 +217,27 @@ against the local zip (`tools/release/swift-package-check.sh local`); the GitHub
 xcframework zip, whose asset and GitHub's digest are checked against `Package.swift` (`swift-package-check.sh remote
 --draft`) before it is published, and the public URL once it is (`remote`); then the Swift package tag, after
 `swift-package-check.sh prepush`; then an empty package resolved with `exact: "<version>"` (`resolve`). Commits and
-tags are made in UTC, and the checks refuse any other time zone. The documentation site is not built for a prerelease.
+tags are made in UTC, and the checks refuse any other time zone. The clone of the Swift package gets a pre-push hook
+([`tools/release/swift-package-pre-push.sh`](../tools/release/swift-package-pre-push.sh)) that runs the same checks on
+every push of it, so the immutable tag does not depend on running them by hand. The documentation site is not built
+for a prerelease.
+
+### Privacy pre-push hook
+
+Nothing published may say who or where the maintainer is: no time zone in a commit or tag, no name, home directory or
+host name in a commit message or an added line. [`tools/hooks/pre-push`](../tools/hooks/pre-push) refuses such a push;
+`tools/release/local-release.sh` refuses to run until it is installed in the checkout and names are configured. The
+names live in the checkout's git config, never in the repository (a space in a name matches ' ', '.', '_', '-' or
+nothing; any case):
+
+```
+ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+git config --add kuicksilver.privacy.names "<first name> <last name>"     # once per name, alias or spelling
+git config kuicksilver.privacy.identity "<name> <email>"                   # optional: the only author and committer
+```
+
+Commit and tag with `TZ=UTC`. The same names, the user and host names of the Mac and its temporary directories are
+also looked for in every release output by `tools/check/build-paths.py`, at scan time.
 
 - **Signatures.** Every artifact on Maven Central and the `v<version>` tag are signed with the release key
   (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`).

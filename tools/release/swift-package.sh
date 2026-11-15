@@ -13,7 +13,8 @@
 #            v<version> is published (before that the zip's URL does not resolve): sign the commit and make the tag
 #            <version> (plain SemVer, as Swift packages tag: 0.3.0, 0.3.0-rc1) with the release key, as the main tag is
 #            made, verify both, check them (tools/release/swift-package-check.sh prepush: UTC dates, the tag on the
-#            commit, no home-directory path), push. Commit and tag are made with TZ=UTC. Nothing is signed, tagged or
+#            commit, no home-directory path), push. The clone's pre-push hook runs the same checks on every push
+#            (tools/release/swift-package-pre-push.sh, installed here). Commit and tag are made with TZ=UTC. Nothing is signed, tagged or
 #            pushed here. Re-running finish is safe: it clones
 #            afresh (the manual way after a failed or rejected push).
 #
@@ -67,6 +68,11 @@ else
   git init -q "$out"; echo "  $out: a new repository (dry run without $repo)"
 fi
 G=(git -C "$out")
+# the clone's pre-push hook (tools/release/swift-package-pre-push.sh): a push that would publish a non-UTC date, a local
+# path or name, or a tag not on the checked commit is refused, whether or not the checks were run by hand
+out_abs=$(cd "$out" && pwd); hooks="$out_abs/.git/hooks"; mkdir -p "$hooks"
+printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$root/tools/release/swift-package-pre-push.sh" > "$hooks/pre-push"
+chmod +x "$hooks/pre-push"; "${G[@]}" config core.hooksPath "$hooks"
 if "${G[@]}" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
   problem "tag $version is already in $repo ($("${G[@]}" rev-parse --short "$version^{commit}")): a released Swift package version is never moved"
 fi
@@ -125,7 +131,6 @@ if [ "$cmd" = prepare ]; then echo "  prepared: $repo, branch $branch, no tag $v
 TZ=UTC "${G[@]}" -c "user.name=$name" -c "user.email=$email" -c core.hooksPath=/dev/null commit -q --no-gpg-sign \
   -m "Kuicksilver $version" -m "Kuicksilver.xcframework.zip of https://github.com/kuicksilver/kuicksilver/releases/tag/v$version
 (SHA-256 $sum), built from kuicksilver/kuicksilver@$commit."
-out_abs=$(cd "$out" && pwd)
 q_out=$(printf %q "$out_abs"); q_root=$(printf %q "$root")   # pasteable even with spaces in the path
 echo "  $out: commit $("${G[@]}" rev-parse --short HEAD) on $branch, checksum $sum (unsigned, no tag yet)"
 cat <<NEXT

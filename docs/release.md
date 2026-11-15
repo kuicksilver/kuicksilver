@@ -125,7 +125,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    (A prerelease for GitHub only, never uploaded to Central: `--github-prerelease`, see
    [Prereleases on GitHub only](#prereleases-on-github-only).)
    The script refuses a malformed or `-SNAPSHOT` version, a prerelease without `--github-prerelease` or
-   `--central-prerelease`, a branch other than `main` or the version's own
+   `--central-prerelease`, a checkout without the privacy pre-push hook and its names
+   ([process.md](process.md#privacy-pre-push-hook)), a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
    exists (locally or on origin: a release fetches origin first, a dry run uses what was fetched last), a branch behind
    its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
@@ -165,8 +166,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      The published AAR's three `libksl.so` and the static archives in each Kotlin/Native `cinterop-ksl` klib get the
      same checks as the JVM libraries (`tools/check/native-release.sh`: the pinned OpenSSL inside, no instrumentation or
      debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives). No file of the publication
-     and not `Kuicksilver.xcframework.zip` may name a home directory of macOS, Linux or Windows, looked for inside every
-     jar, AAR and klib (`tools/check/build-paths.py`): 0.2.0 and 0.2.1 were withdrawn for such a path. The SBOM archive
+     and not `Kuicksilver.xcframework.zip` may name a home directory of macOS, Linux or Windows, a temporary directory
+     (`/tmp/`, `/var/folders/`, ...), a home-relative path, the user or host name of the Mac or a name of
+     `git config kuicksilver.privacy.names`, looked for inside every jar, AAR and klib (`tools/check/build-paths.py`,
+     the names only at scan time): 0.2.0 and 0.2.1 were withdrawn for a home directory path. The SBOM archive
      and the provenance below are scanned the same way once they are made, before anything is uploaded.
    - The supply-chain files of [Supply chain](#supply-chain-sbom-and-provenance), for the GitHub release and not for
      Central: `build/release/kuicksilver-<version>-sbom.zip` (the CycloneDX SBOM of every publication, checked against

@@ -2,7 +2,9 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/check/build-paths.py: clean artifacts pass; a home directory in a jar entry, in a jar nested
-# in an AAR, in a static archive, in a klib's cstubs.bc, in a Windows DLL and in an entry name fails. Usage: build-paths-test.sh
+# in an AAR, in a static archive, in a klib's cstubs.bc, in a Windows DLL and in an entry name fails; so do temporary
+# directories, home-relative paths, host, user and configured private names, without false positives on the forms that
+# release outputs hold. Usage: build-paths-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -51,6 +53,30 @@ mkdir -p "$tmp/n3"
 python3 -I -c 'import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z: z.writestr("/Users/someone/leak.txt", "x")' "$tmp/n3/names.zip"
 expect 1 "negative: a home directory as an entry name" "$tmp/n3/names.zip"
+
+# temporary directories, home-relative paths, and the names of this machine and its user (looked up at scan time;
+# KSL_PRIVACY_NAMES adds names, as `git config kuicksilver.privacy.names` does on the maintainer's machine)
+export KSL_PRIVACY_NAMES="zorbex-host,Zorbex Quill"
+mk "$tmp/t1.a" '!<arch>\n/tmp/build-xyz/ksl.o'; expect 1 "negative: /tmp/ in a static archive" "$tmp/t1.a"
+mk "$tmp/t2.so" '\x7fELF /private/tmp/k/ksl.c'; expect 1 "negative: /private/tmp/" "$tmp/t2.so"
+mk "$tmp/t3.so" '\x7fELF /var/folders/6r/abc/T/ksl.c'; expect 1 "negative: /var/folders/ (macOS temp)" "$tmp/t3.so"
+mk "$tmp/t4.so" '\x7fELF /private/var/folders/6r/abc/T/ksl.c'; expect 1 "negative: /private/var/folders/" "$tmp/t4.so"
+mk "$tmp/t5.so" '\x7fELF /var/tmp/ksl.c'; expect 1 "negative: /var/tmp/" "$tmp/t5.so"
+mk "$tmp/t6.json" '{"dir": "~/Projects/kuicksilver/build"}'; expect 1 "negative: ~/<dir>/ as text" "$tmp/t6.json"
+mk "$tmp/t7.txt" 'Built on zorbex-host.'; expect 1 "negative: a host name without a path" "$tmp/t7.txt"
+mk "$tmp/t8.txt" 'signed by ZORBEX QUILL'; expect 1 "negative: a configured private name, any case" "$tmp/t8.txt"
+me="${USER:-$(id -un)}"
+case "$(printf '%s' "$me" | tr 'A-Z' 'a-z')" in
+  root|runner|admin|user|build|builder|ubuntu|docker|jenkins) echo "ok: (the user name $me is generic: not looked for)" ;;
+  *) if [ ${#me} -ge 4 ]; then mk "$tmp/t9.txt" "made by $me today"; expect 1 "negative: the current user name without a path" "$tmp/t9.txt"; fi ;;
+esac
+host=$(hostname 2>/dev/null | cut -d. -f1)
+if [ ${#host} -ge 4 ] && [ "$host" != localhost ]; then mk "$tmp/t10.txt" "compiled on $host"; expect 1 "negative: this host's name, found without configuration" "$tmp/t10.txt"; fi
+mkdir -p "$tmp/fp"
+mk "$tmp/fp/kdoc.txt" '/** `~/.cache/kuicksilver/` or `~/Library/Caches/kuicksilver/` */ ~/** KDoc'
+mk "$tmp/fp/code.bin" '\x00~/\xa9\xcf /usr/local/tmp/x TestRunner zorbex-hostname Zorbex_Quillish'
+expect 0 "no false positive: documented ~/ caches, ~/ in code, /usr/local/tmp, a name inside a longer word" "$tmp/fp"
+unset KSL_PRIVACY_NAMES
 
 [ "$rc" = 0 ] && echo "all passed" || echo "FAILED"
 exit "$rc"

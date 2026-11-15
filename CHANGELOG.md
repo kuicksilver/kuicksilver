@@ -622,7 +622,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   before its immutable tag is pushed (`local`: an empty package built for the iOS Simulator and iOS against the local
   zip; `remote --draft`: the draft release's zip and GitHub's digest against `Package.swift`, then `remote` at the public
   URL; `prepush`: UTC commit and tag dates, no home-directory path) and after (`resolve`: `exact: "<version>"`). The
-  documentation site is no longer built for a published prerelease, and `/latest/` is only ever a final release. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
+  documentation site is no longer built for a published prerelease, and `/latest/` is only ever a final release.
+  The Swift package clone gets a pre-push hook that runs those checks on every push of it.
+- Release privacy: `tools/hooks/pre-push` (UTC commit and tag dates, no maintainer name, home directory or host name in
+  a pushed commit), installed by symlink with the names in git config (`kuicksilver.privacy.names`), and required by
+  `local-release.sh` (docs/process.md, "Privacy pre-push hook"). `tools/check/build-paths.py` also refuses temporary
+  directories (`/tmp/`, `/var/folders/`, ...), home-relative paths, and the user, host and configured names, looked up
+  at scan time. 0.3.0-rc1 is published this way, not on Maven Central (docs/release.md,
   "Prereleases on GitHub only").
 
 ### Changed

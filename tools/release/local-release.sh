@@ -233,6 +233,14 @@ xcode_have=$(xcodebuild -version 2>/dev/null | sed -n 's/^Xcode //p')
 if ! grep -qs '^sdk.dir=' local.properties && [ -z "${ANDROID_HOME:-}${ANDROID_SDK_ROOT:-}" ]; then
   [ -d "$HOME/Library/Android/sdk" ] && export ANDROID_HOME="$HOME/Library/Android/sdk" || refuse "no Android SDK (sdk.dir in local.properties or ANDROID_HOME)"
 fi
+# the privacy pre-push hook of this checkout (tools/hooks/pre-push, docs/process.md): the tag and branch pushes that follow
+# a release go through it, so it must be the repository's own and have the maintainer's names to look for
+hooks_dir=$(git config core.hooksPath || true); [ -n "$hooks_dir" ] || hooks_dir="$(git rev-parse --git-common-dir)/hooks"
+if ! cmp -s "$hooks_dir/pre-push" tools/hooks/pre-push || [ ! -x "$hooks_dir/pre-push" ]; then
+  refuse "the privacy pre-push hook is not installed: ln -sf ../../tools/hooks/pre-push \"\$(git rev-parse --git-common-dir)/hooks/pre-push\" (docs/process.md)"
+elif [ -z "$(git config --get-all kuicksilver.privacy.names || true)" ]; then
+  refuse "no kuicksilver.privacy.names in git config: the pre-push hook and the scans need the maintainer's names (docs/process.md)"
+else echo "  privacy pre-push hook: installed"; fi
 # credentials and signing: presence only, values are never read into this script's output
 gp="${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
 has() { local v="ORG_GRADLE_PROJECT_$1"; [ -n "${!v:-}" ] || grep -qE "^[[:space:]]*$(printf '%s' "$1" | sed 's/\./\\./g')[[:space:]]*[=:][[:space:]]*[^[:space:]]" "$gp" 2>/dev/null; }

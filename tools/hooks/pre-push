@@ -1,0 +1,51 @@
+#!/bin/sh
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The privacy guard of a maintainer's checkout (docs/process.md, "Privacy pre-push hook"; tools/release/local-release.sh
+# refuses to run without it). Refuses a push when
+#  - a pushed commit has an author or committer date that is not UTC (+0000), or a pushed annotated tag a tagger date
+#    that is not;
+#  - kuicksilver.privacy.identity is set and a pushed commit has another author or committer;
+#  - a pushed commit's message, or a line it adds, names the maintainer: a name of `git config --get-all
+#    kuicksilver.privacy.names` (plain names, any case; a space in one matches ' ', '.', '_', '-' or nothing), the home
+#    directory of the current user (/Users/<user>, /home/<user>, C:\Users\<user>) or this machine's host name.
+# The names live in the checkout's git config only, never in the repository; a push is refused while none are set.
+# Install: ln -sf ../../tools/hooks/pre-push "$(git rev-parse --git-common-dir)/hooks/pre-push"
+z=0000000000000000000000000000000000000000
+names=$(git config --get-all kuicksilver.privacy.names)
+if [ -z "$names" ]; then
+  echo "pre-push: no kuicksilver.privacy.names in git config: set the maintainer's names first (docs/process.md)"; exit 1
+fi
+ID=$(git config kuicksilver.privacy.identity)
+# each name as an extended regular expression: metacharacters escaped, a space matching a separator or nothing
+PAT=$(printf '%s\n' "$names" | sed -e 's/[][\.*^$+?(){}|/]/\\&/g' -e 's/ /[ ._-]*/g' | paste -sd '|' -)
+u=${USER:-$(id -un)}
+[ -n "$u" ] && PAT="$PAT|/Users/$u|/home/$u|[A-Za-z]:\\\\+Users\\\\+$u"
+for h in "$(hostname 2>/dev/null | cut -d. -f1)" "$(scutil --get LocalHostName 2>/dev/null)"; do
+  [ ${#h} -ge 4 ] && [ "$h" != localhost ] && PAT="$PAT|$h"
+done
+bad=0
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && continue
+  if [ "$(git cat-file -t "$lsha" 2>/dev/null)" = tag ]; then   # an annotated tag: its tagger date must be UTC too
+    tz=$(git cat-file -p "$lsha" | sed -n 's/^tagger .* \([-+][0-9][0-9][0-9][0-9]\)$/\1/p' | head -1)
+    [ "$tz" = "+0000" ] || { echo "pre-push: tag ${lref#refs/tags/} has the tagger zone ${tz:-none}, not +0000 (tag with TZ=UTC)"; bad=1; }
+    out=$(git cat-file -p "$lsha" | grep -i -E "$PAT")
+    [ -n "$out" ] && { echo "pre-push: personal identifiers in tag ${lref#refs/tags/}:"; echo "$out" | head -5; bad=1; }
+  fi
+  if [ "$rsha" = "$z" ]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
+  out=$(git log --format='%h %ad %cd %s' --date=format:%z $range | awk '$2!="+0000" || $3!="+0000"')
+  [ -n "$out" ] && { echo "pre-push: commits with non-UTC dates (commit with TZ=UTC):"; echo "$out"; bad=1; }
+  if [ -n "$ID" ]; then
+    out=$(git log --format='%h %an <%ae> | %cn <%ce>' $range | grep -v -F "$ID | $ID")
+    [ -n "$out" ] && { echo "pre-push: commits with another author/committer identity:"; echo "$out"; bad=1; }
+  fi
+  out=$(git log --format='%h %B' $range | grep -i -E "$PAT")
+  [ -n "$out" ] && { echo "pre-push: personal identifiers in commit messages:"; echo "$out" | head -20; bad=1; }
+  for c in $(git rev-list $range); do
+    out=$(git show --format= --no-color --no-ext-diff -U0 "$c" | grep -E '^\+' | grep -v '^+++' | grep -i -E "$PAT")
+    [ -n "$out" ] && { echo "pre-push: personal identifiers added in $(git rev-parse --short "$c"):"; echo "$out" | cut -c1-200 | head -20; bad=1; }
+  done
+done
+[ $bad -eq 0 ] || echo "pre-push: push refused (privacy guard tools/hooks/pre-push)"
+exit $bad
