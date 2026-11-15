@@ -604,6 +604,10 @@ sealed class io.kuicksilver.http3/WebTransportException : kotlinx.io/IOException
             final fun <get-selected>(): kotlin/String // io.kuicksilver.http3/WebTransportException.Alpn.selected.<get-selected>|<get-selected>(){}[0]
     }
 
+    final class ConnectionFull : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.ConnectionFull|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.ConnectionFull.<init>|<init>(kotlin.String){}[0]
+    }
+
     final class FlowControl : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.FlowControl|null[0]
         constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.FlowControl.<init>|<init>(kotlin.String){}[0]
     }

@@ -217,13 +217,14 @@ class WebTransportSessionTest {
             }
         }
 
-    @Test fun clientRefusesSecondSession() =
+    /** Section 5.1: without the server's flow control a client keeps to one session per connection. */
+    @Test fun negative_clientRefusesSecondSessionWithoutFlowControl() =
         h3Test {
-            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(0, 0, 0)).useScoped { p ->
                 val serverSide = CompletableDeferred<WebTransportSession>()
                 launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
                 val first = p.client.webTransport(wtReq())
-                assertFailsWith<IllegalStateException> { p.client.webTransport(wtReq()) }
+                assertFailsWith<WebTransportException.ConnectionFull> { p.client.webTransport(wtReq()) }
                 // the first lives on: a stream the client opens for it reaches the server's session
                 val uni = p.client.quic.openUni()
                 uni.output.writeFully(VarInt.encode(StreamType.WT_UNI) + VarInt.encode(first.sessionId) + "alive".encodeToByteArray())
@@ -597,7 +598,7 @@ class WebTransportSessionTest {
                 assertIs<WebTransportException.Timeout>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
                 assertEquals(Http3ErrorCode.REQUEST_CANCELLED, resetCode(st))
                 // the slot is free again
-                assertFalse(withContext(client.session.dispatcher) { client.session.wtClientBusy })
+                assertEquals(0, withContext(client.session.dispatcher) { client.session.wtClientSessions })
             }
         }
 

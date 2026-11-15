@@ -488,6 +488,10 @@ public final class io/kuicksilver/http3/WebTransportException$Alpn : io/kuicksil
 	public final fun getSelected ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/http3/WebTransportException$ConnectionFull : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
 public final class io/kuicksilver/http3/WebTransportException$FlowControl : io/kuicksilver/http3/WebTransportException {
 	public fun <init> (Ljava/lang/String;)V
 }

@@ -142,11 +142,14 @@ internal class H3Session(
         wtIdle.value = wtSessions.isEmpty()
     }
 
-    /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
-    var wtClientBusy = false
+    /**
+     * Client: WebTransport sessions being opened or open on this connection: one without flow control (section 5.1), up
+     * to [Http3Settings.webTransportMaxSessions] with it. Dispatcher only.
+     */
+    var wtClientSessions = 0
         set(v) {
             field = v
-            wtIdle.value = !v
+            wtIdle.value = v == 0
         }
 
     /** No WebTransport session holds this connection's slot (a test hook). */

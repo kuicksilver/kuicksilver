@@ -18,6 +18,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.fullPath
 import io.ktor.http.hostWithPort
+import io.ktor.http.takeFrom
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.util.AttributeKey
 import io.ktor.util.date.GMTDate
@@ -31,7 +32,9 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
+import io.kuicksilver.http3.awaitExchangeEnd
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
@@ -73,6 +76,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -166,8 +171,21 @@ internal fun isPeerShutdownClose(e: Throwable): Boolean =
 internal class H3Entry(
     val deferred: CompletableDeferred<Http3Connection>,
     val createdAt: Long,
+    /** Set up WebTransport-capable (its SETTINGS, Extended CONNECT, `reset_stream_at`): sessions may join it, requests use it. */
+    val webTransport: Boolean = false,
 ) {
+    /** Requests and WebTransport sessions using the connection. */
     val active = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /** WebTransport sessions open on it. */
+    val wtSessions = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /**
+     * The sessions it carried when the server refused one more (H3_REQUEST_REJECTED, draft-16 section 5.2), or -1: no new
+     * session is tried on it while it carries that many or more.
+     */
+    @kotlin.concurrent.Volatile
+    var wtFullAt: Int = -1
 
     /**
      * Where this connection goes: the literal the pool's Happy Eyeballs race connected it to, then the server's preferred
@@ -353,19 +371,21 @@ internal class H3Pool(
         }
 
     /** Entries of the connection map, retired ones included, open or not (the resource probe). */
-    internal suspend fun connectionsForProbe(): Int = lock.withLock { (connections.values + retired).distinct().size }
+    internal suspend fun connectionsForProbe(): Int =
+        lock.withLock { (connections.values + retired + wtExtras.values.flatten()).distinct().size }
 
     /** Test hook: the (origin, alternative) entries tracked, retired ones included. */
-    internal suspend fun entryCountForTest(): Int = lock.withLock { (connections.values + retired).distinct().size }
+    internal suspend fun entryCountForTest(): Int =
+        lock.withLock { (connections.values + retired + wtExtras.values.flatten()).distinct().size }
 
     /** Test hook: whether the endpoint is bound. */
     internal val endpointBoundForTest: Boolean get() = endpoint != null
 
-    /** Dedicated connections of WebTransport sessions, open or being set up (a test hook and the resource probe). */
-    internal val dedicatedCount = kotlinx.coroutines.flow.MutableStateFlow(0)
+    /** WebTransport sessions of this client, open or being set up (the `maxWebTransportSessions` cap, a test hook and the resource probe). */
+    internal val webTransportSessions = kotlinx.coroutines.flow.MutableStateFlow(0)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private val maxDedicated = config.http3.maxWebTransportSessions
+    private val maxSessions = config.http3.maxWebTransportSessions
 
     init {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -374,67 +394,252 @@ internal class H3Pool(
         }
     }
 
+    /** The engine's HTTP/3 settings with WebTransport and Extended CONNECT on: a WebTransport-capable connection's. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val wtSettings: io.kuicksilver.http3.Http3Settings =
+        config.http3.settings
+            .toBuilder()
+            .apply {
+                enableConnectProtocol = true
+                webTransport = true
+            }.build()
+
     /**
-     * A QUIC connection to [originHost]:[port] for one WebTransport session, outside the pool: never shared with requests
-     * and closed with its session. The engine's endpoint, trust and QUIC settings, with WebTransport, Extended CONNECT and
-     * `reset_stream_at` turned on (draft-ietf-webtrans-http3-16 sections 3.1, 4.4). [connectTimeoutMillis] bounds the lookup
-     * and the handshakes: the resolved addresses are tried in order, each with an equal share of what is left, so an
-     * address whose handshake fails or stalls gives way to the next. At most `maxWebTransportSessions` such connections
-     * exist at once; one more fails at once (IllegalStateException), nothing queues.
+     * WebTransport-capable connections beyond the pooled one of their (origin, address) key, by key: made when the server
+     * refused another session on the pooled one (its limit, draft-16 section 5.2) or a session could not join it (no flow
+     * control, section 5.1). Sessions share them too; each closes with its last session (it is retired from the start).
+     * Under [lock].
+     */
+    private val wtExtras = HashMap<String, MutableList<H3Entry>>()
+
+    /**
+     * Test hook: runs in [webTransport] once a connection was picked, before the CONNECT ("connection"), and once the
+     * session is open, before it is tracked ("connected").
+     */
+    internal var webTransportStepForTest: (suspend (step: String) -> Unit)? = null
+
+    /**
+     * A WebTransport session to [url] (`HttpClient.webTransport`): on the pooled WebTransport-capable connection of the URL's
+     * host and port (RFC 9114 section 3.3), made or swapped in for a request-only one as needed ([connectionEntryOnce]),
+     * else on an extra one with room, else on a new extra one. A connection the session cannot join is passed over: the
+     * HTTP/3 layer refuses a second session without flow control or beyond `webTransportMaxSessions`
+     * ([WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
+     * request was processed, RFC 9114 section 4.1.1) marks the connection full at its current count. At most two refusals,
+     * then the server's answer is the caller's. At most `maxWebTransportSessions` sessions are open at once; one more fails
+     * at once (IllegalStateException), nothing queues.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    suspend fun dedicated(
-        originHost: String,
-        port: Int,
+    suspend fun webTransport(
+        url: io.ktor.http.Url,
+        request: io.kuicksilver.http3.Http3Request,
+        protocols: List<String>,
         connectTimeoutMillis: Long,
-    ): Http3Connection {
-        check(!refusingDedicated && !closed) { "the client is closed" }
+    ): io.kuicksilver.http3.WebTransportSession {
+        check(!refusingWebTransport && !closed) { "the client is closed" }
         while (true) {
-            val n = dedicatedCount.value
-            check(n < maxDedicated) { "maxWebTransportSessions ($maxDedicated) WebTransport sessions are open on this client" }
-            if (dedicatedCount.compareAndSet(n, n + 1)) break
+            val n = webTransportSessions.value
+            check(n < maxSessions) { "maxWebTransportSessions ($maxSessions) WebTransport sessions are open on this client" }
+            if (webTransportSessions.compareAndSet(n, n + 1)) break
         }
         var handedOut = false
         try {
-            val c = connectDedicated(originHost, port, connectTimeoutMillis)
-            // tracked from now on, before its CONNECT: closeHttp3Connections() sends it GOAWAY too, and a CONNECT not sent
-            // yet then fails with RequestNotProcessed instead of starting a session that escapes the drain
-            val entry = c to drainEpoch.load()
-            afterDedicatedEpochForTest?.invoke()
-            dedicatedConnections.update { it + entry }
-            c.closed.invokeOnCompletion {
-                dedicatedCount.update { it - 1 }
-                dedicatedConnections.update { s -> s - entry }
+            val t = H3Target(url.host, url.host, url.port)
+            val data =
+                io.ktor.client.request
+                    .HttpRequestBuilder()
+                    .apply {
+                        this.url.takeFrom(url)
+                        method = HttpMethod("CONNECT")
+                    }.build()
+            val dns = config.newRequestDns()
+            val passed = HashSet<H3Entry>()
+            var refusals = 0
+            while (true) {
+                val (e, c) = sessionConnection(t, data, dns, passed, connectTimeoutMillis)
+                val session =
+                    try {
+                        webTransportStepForTest?.invoke("connection")
+                        c.webTransport(request, protocols)
+                    } catch (x: Throwable) {
+                        e.release(clock())
+                        when {
+                            x is io.kuicksilver.http3.WebTransportException.ConnectionFull -> {
+                                passed += e
+                                continue
+                            }
+
+                            x is Http3Exception.RequestNotProcessed && x.neverSent && e.drained -> {
+                                throw IllegalStateException(
+                                    "WebTransport CONNECT not sent: HttpClient.closeHttp3Connections() took HTTP/3 out of use while " +
+                                        "the session was being set up; call webTransport again (or fall back) once HTTP/3 should be used",
+                                    x,
+                                )
+                            }
+
+                            x is Http3Exception.RequestNotProcessed -> {
+                                // the server refused it unprocessed (its session limit) or sent GOAWAY: another connection
+                                if (!x.neverSent) e.wtFullAt = e.wtSessions.load()
+                                passed += e
+                                if (++refusals > 2) throw x
+                                continue
+                            }
+
+                            else -> {
+                                throw x
+                            }
+                        }
+                    }
+                e.wtSessions.addAndFetch(1)
+                handedOut = true
+                webTransportStepForTest?.invoke("connected")
+                track(session, c, e)
+                return session
             }
-            handedOut = true
-            return c
         } finally {
-            if (!handedOut) dedicatedCount.update { it - 1 }
+            if (!handedOut) webTransportSessions.update { it - 1 }
         }
     }
 
+    /** Whether a new session may be tried on [e]'s connection [c]: usable, not drained, below the count a server refused. */
+    private fun H3Entry.takesSessions(c: Http3Connection): Boolean =
+        c.usable() && !drained && (wtFullAt < 0 || wtSessions.load() < wtFullAt)
+
+    /**
+     * The connection to try a session to [t] on, counted as in use ([H3Entry.active]): the pooled one, else an extra one,
+     * else a new extra one, none of [passed].
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private suspend fun connectDedicated(
+    private suspend fun sessionConnection(
+        t: H3Target,
+        data: HttpRequestData,
+        dns: RequestDns,
+        passed: Set<H3Entry>,
+        connectTimeoutMillis: Long,
+    ): Pair<H3Entry, Http3Connection> {
+        val (main, mc) = acquire(t, data, dns, wt = true)
+        if (main !in passed && main.takesSessions(mc)) return main to mc
+        main.release(clock())
+        // an extra connection with room, one still being set up included (sessions racing past a full connection share
+        // one new connection instead of opening one each, RFC 9114 section 3.3), else a new one; counted under the lock
+        val perConnection = wtSettings.webTransportMaxSessions
+        val (e, made) =
+            lock.withLock {
+                val found =
+                    wtExtras[t.key]?.firstOrNull { e ->
+                        e !in passed &&
+                            if (e.deferred.isCompleted) {
+                                e.deferred.getCompletedOrNull()?.let { e.takesSessions(it) } == true
+                            } else {
+                                e.active.load() < perConnection
+                            }
+                    }
+                if (found != null) {
+                    found.active.addAndFetch(1)
+                    found to false
+                } else {
+                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true)
+                    e.active.addAndFetch(1)
+                    e.retire() // kept for the sessions of [t] and closed with its last one
+                    wtExtras.getOrPut(t.key) { ArrayList() } += e
+                    e to true
+                }
+            }
+        if (made) {
+            try {
+                val c = connectWebTransport(t.originHost, t.port, dns, connectTimeoutMillis)
+                c.closed.invokeOnCompletion { launchUnderLock { wtExtras[t.key]?.remove(e) } }
+                e.deferred.complete(c)
+            } catch (x: Throwable) {
+                // the sessions waiting for it try another connection; our own cancellation is not theirs
+                e.deferred.completeExceptionally(
+                    if (x is CancellationException) IllegalStateException("the connection's setup was given up", x) else x,
+                )
+                withContext(NonCancellable) { lock.withLock { wtExtras[t.key]?.remove(e) } }
+                e.release(clock())
+                throw x
+            }
+        }
+        if (!made) {
+            try {
+                e.deferred.await()
+            } catch (x: Throwable) {
+                e.release(clock())
+                currentCoroutineContext().ensureActive()
+                // the setup another session started failed: this one tries the pooled and extra connections again
+                return sessionConnection(t, data, dns, passed + e, connectTimeoutMillis)
+            }
+        }
+        return e to e.deferred.getCompletedOrNull()!!
+    }
+
+    /** Runs [block] under [lock] from a completion handler (which cannot suspend). */
+    private fun launchUnderLock(block: () -> Unit) {
+        (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch { lock.withLock { block() } }
+    }
+
+    /**
+     * Tracks [session] on [entry]'s connection [connection] until it ends: the connection stays in use ([H3Entry.active])
+     * while it is open and until its CONNECT stream ended both ways (its close capsule and FIN answered, within
+     * [EXCHANGE_END_TIMEOUT]), so a connection that closes with its last user never cuts the session's close short; then
+     * it idles as any pooled connection (an extra one closes). A session that opened on a connection [goAwayAll] drained
+     * meanwhile is drained at once.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun track(
+        session: io.kuicksilver.http3.WebTransportSession,
+        connection: Http3Connection,
+        entry: H3Entry,
+    ) {
+        val pair = session to connection
+        sessions.update { it + pair }
+        session.closed.invokeOnCompletion {
+            sessions.update { s -> s - pair }
+            entry.wtSessions.addAndFetch(-1)
+            webTransportSessions.update { n -> n - 1 }
+            (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
+                try {
+                    withTimeoutOrNull(EXCHANGE_END_TIMEOUT) {
+                        // the exchange's end, or the connection's (which ends the exchange without telling it)
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        val exchange = launch { session.awaitExchangeEnd() }
+                        kotlinx.coroutines.selects.select {
+                            exchange.onJoin {}
+                            connection.closed.onAwait {}
+                        }
+                        exchange.cancel()
+                    }
+                } finally {
+                    entry.release(clock())
+                }
+            }
+        }
+        if (entry.drained) {
+            withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!connection.closed.isCompleted) connection.goAway() } }
+            runCatching { session.drain() } // bounded by drain's own limit
+        }
+    }
+
+    /**
+     * A WebTransport-capable QUIC connection to [originHost]:[port] outside the pool map (an extra one): the engine's
+     * endpoint, trust and QUIC settings with WebTransport, Extended CONNECT and `reset_stream_at` on (draft-16 sections 3.1,
+     * 4.4). [connectTimeoutMillis] bounds the lookup and the handshakes, raced over the resolved addresses.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectWebTransport(
         originHost: String,
         port: Int,
+        dns: RequestDns,
         connectTimeoutMillis: Long,
     ): Http3Connection {
         val ep = endpoint()
-        val settings =
-            config.http3.settings
-                .toBuilder()
-                .apply {
-                    enableConnectProtocol = true
-                    webTransport = true
-                }.build()
         val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
-        val q = quicWithin(connectTimeoutMillis).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
+        val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
         val failures = ArrayList<Throwable>()
         try {
             withTimeout(connectTimeoutMillis) {
-                made = raceQuic(originHost, port, config.newRequestDns(), failures) { remote -> ep.connect(remote, tls, q, settings) }
+                made = raceQuic(originHost, port, dns, failures) { remote -> ep.connect(remote, tls, q, wtSettings) }
             }
         } catch (e: TimeoutCancellationException) {
             if (made == null) {
@@ -484,15 +689,15 @@ internal class H3Pool(
      * Requests already running keep the endpoint until the cleanup ([close]) ends it.
      */
     @kotlin.concurrent.Volatile
-    private var refusingDedicated = false
+    private var refusingWebTransport = false
 
-    /** The client is closing: [dedicated] refuses from now on. */
-    fun refuseDedicated() {
-        refusingDedicated = true
+    /** The client is closing: [webTransport] refuses from now on. */
+    fun refuseWebTransport() {
+        refusingWebTransport = true
     }
 
     fun close() {
-        refusingDedicated = true
+        refusingWebTransport = true
         closed = true
         endpoint?.close()
         endpoint = null
@@ -508,68 +713,28 @@ internal class H3Pool(
 
     private fun Http3Connection.usable(): Boolean = !ended() && goAwayReceived.value == null
 
-    /** WebTransport sessions of this client and their dedicated connections ([trackSession]), for [goAwayAll]. */
+    /** WebTransport sessions of this client and their connections ([track]), for [goAwayAll]. */
     private val sessions =
         kotlin.concurrent.atomics.AtomicReference(emptySet<Pair<io.kuicksilver.http3.WebTransportSession, Http3Connection>>())
-
-    /** Dedicated connections from [dedicated] on, with the [drainEpoch] they were made in, for [goAwayAll]. */
-    private val dedicatedConnections = kotlin.concurrent.atomics.AtomicReference(emptySet<Pair<Http3Connection, Int>>())
-
-    /** Moved by every [goAwayAll], before it looks at the sessions: a session tracked after that sees it moved. */
-    private val drainEpoch = kotlin.concurrent.atomics.AtomicInt(0)
-
-    /**
-     * Tracks a WebTransport [session] on its dedicated [connection] until the session is over. When a [goAwayAll] ran since
-     * the connection was made (it got a GOAWAY, but the session was not tracked yet), the session is drained at once.
-     */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    suspend fun trackSession(
-        session: io.kuicksilver.http3.WebTransportSession,
-        connection: Http3Connection,
-    ) {
-        val entry = session to connection
-        sessions.update { it + entry }
-        session.closed.invokeOnCompletion { sessions.update { s -> s - entry } }
-        val madeIn = dedicatedConnections.load().firstOrNull { it.first === connection }?.second
-        if (madeIn != null && madeIn != drainEpoch.load()) {
-            // a goAwayAll ran since the connection was made and may not have seen it: GOAWAY and drain here
-            withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!connection.closed.isCompleted) connection.goAway() } }
-            runCatching { session.drain() } // bounded by drain's own limit
-        }
-    }
-
-    /** Whether a [goAwayAll] ran since [connection] was handed out by [dedicated]. */
-    fun drainedSince(connection: Http3Connection): Boolean {
-        val madeIn = dedicatedConnections.load().firstOrNull { it.first === connection }?.second ?: return false
-        return madeIn != drainEpoch.load()
-    }
-
-    /** Test hook: runs in [dedicated] between reading the drain epoch and registering the connection. */
-    internal var afterDedicatedEpochForTest: (suspend () -> Unit)? = null
-
-    /** Test hook: runs in [goAwayAll] between reading the dedicated connections and moving the drain epoch. */
-    internal var goAwayAllBeforeEpochForTest: (suspend () -> Unit)? = null
-
-    /** Test hook: runs in `webTransport` between [dedicated] and the CONNECT, and between the CONNECT and [trackSession]. */
-    internal var webTransportStepForTest: (suspend (step: String) -> Unit)? = null
 
     /** WebTransport sessions tracked (tests). */
     internal val sessionCountForTest: Int get() = sessions.load().size
 
     /**
-     * `HttpClient.closeHttp3Connections()`. First, under the lock, every pooled connection leaves the pool: an established one
-     * is drained ([H3Entry.drain]: no request is handed it any more), one still being set up is retired (the requests
-     * waiting for it use it, and it closes after the last one, or when [evictExpired] finds it unused). Then, concurrently in
-     * [scope], every drained connection gets our GOAWAY (RFC 9114 section 5.2; a client announces 0, it accepts no pushes)
-     * within [GOAWAY_TIMEOUT] and closes at once when idle, else at its last request; every dedicated WebTransport
-     * connection gets our GOAWAY too (a CONNECT not sent yet then fails), and every tracked session WT_DRAIN_SESSION
-     * (draft-ietf-webtrans-http3 section 4.7) after it, within drain()'s own limit. Returns once those are written or timed out.
+     * `HttpClient.closeHttp3Connections()`. First, under the lock, every pooled connection, and every extra WebTransport
+     * one, leaves the pool: an established one is drained ([H3Entry.drain]: no request or session is handed it any more,
+     * and a session that opens on it after this is drained at once, [track]), one still being set up is retired (the
+     * requests waiting for it use it, and it closes after the last one, or when [evictExpired] finds it unused). Then,
+     * concurrently in [scope], every drained connection gets our GOAWAY (RFC 9114 section 5.2; a client announces 0, it
+     * accepts no pushes; a CONNECT not sent yet then fails) within [GOAWAY_TIMEOUT] and closes at once when idle, else at its
+     * last user; every tracked session gets WT_DRAIN_SESSION (draft-ietf-webtrans-http3 section 4.7) after its connection's
+     * GOAWAY, within drain()'s own limit. Returns once those are written or timed out.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     suspend fun goAwayAll(scope: CoroutineScope) {
         val drained = ArrayList<Pair<H3Entry, Http3Connection>>()
         lock.withLock {
-            for (e in connections.values.distinct()) {
+            for (e in (connections.values + wtExtras.values.flatten()).distinct()) {
                 val c = e.deferred.getCompletedOrNull()
                 if (c != null) {
                     e.drain()
@@ -577,25 +742,20 @@ internal class H3Pool(
                 } else if (!e.deferred.isCompleted) {
                     e.retire()
                 }
-                if (e !in retired) retired += e
+                addRetired(e)
             }
             connections.clear()
+            wtExtras.clear()
         }
-        // dedicated connections are read BEFORE the epoch moves, sessions AFTER: a connection missing from this read was
-        // added after it, so it read the old epoch (and its session is drained when tracked) or started after this call
-        // began moving the epoch; a session missing from the later read sees the moved epoch in trackSession
-        val dedicatedNow = dedicatedConnections.load()
-        goAwayAllBeforeEpochForTest?.invoke()
-        drainEpoch.addAndFetch(1)
+        val withSession = sessions.load()
         val jobs = ArrayList<Job>()
         for ((e, c) in drained) {
             jobs +=
                 scope.launch {
                     withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!c.closed.isCompleted) c.goAway() } }
-                    e.closeIfIdle()
+                    if (withSession.none { it.second === c }) e.closeIfIdle()
                 }
         }
-        val withSession = sessions.load()
         for ((session, c) in withSession) {
             jobs +=
                 scope.launch {
@@ -605,12 +765,24 @@ internal class H3Pool(
                     runCatching { session.drain() }
                 }
         }
-        // dedicated connections whose session is not tracked yet: a CONNECT not sent yet fails (RequestNotProcessed)
-        for ((c, _) in dedicatedNow) {
-            if (withSession.any { it.second === c }) continue
-            jobs += scope.launch { withTimeoutOrNull(GOAWAY_TIMEOUT) { runCatching { if (!c.closed.isCompleted) c.goAway() } } }
-        }
         jobs.joinAll()
+    }
+
+    /**
+     * Under the lock: [e] joins [retired], and leaves it as soon as its connection ended (or its setup failed), not only
+     * at the next [evictExpired]: the probe and [goAwayAll] see live connections only.
+     */
+    private fun addRetired(e: H3Entry) {
+        if (e in retired) return
+        retired += e
+        e.deferred.invokeOnCompletion { failed ->
+            val c = e.deferred.getCompletedOrNull()
+            if (failed != null || c == null) {
+                launchUnderLock { retired.remove(e) }
+            } else {
+                c.closed.invokeOnCompletion { launchUnderLock { retired.remove(e) } }
+            }
+        }
     }
 
     private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
@@ -622,7 +794,7 @@ internal class H3Pool(
      */
     private fun retireUnderEveryKey(e: H3Entry) {
         connections.entries.removeAll { it.value === e }
-        if (e !in retired) retired += e
+        addRetired(e)
         e.retire()
     }
 
@@ -642,6 +814,8 @@ internal class H3Pool(
         val now = clock()
         for ((k, other) in connections) {
             if (other === e || originOfKey(k) != t.originHost || other.drained || other.pastLifetime(now)) continue
+            // a WebTransport-capable connection serves requests too, not the other way round
+            if (e.webTransport && !other.webTransport) continue
             val o = other.deferred.getCompletedOrNull()?.takeIf { it.usable() } ?: continue
             val there = other.connectedTo ?: continue
             if (there.sameAs(here)) {
@@ -674,6 +848,7 @@ internal class H3Pool(
     private suspend fun shareSameAddress(
         t: H3Target,
         dns: RequestDns,
+        wt: Boolean = false,
     ) {
         val now = clock()
 
@@ -681,10 +856,15 @@ internal class H3Pool(
         val candidates =
             lock.withLock {
                 val existing = connections[t.key]
-                if (existing != null && (!existing.deferred.isCompleted || existing.shareable() != null)) return
+                if (existing != null && (!wt || existing.webTransport) &&
+                    (!existing.deferred.isCompleted || existing.shareable() != null)
+                ) {
+                    return
+                }
                 connections.entries
                     .filter { (k, e) ->
-                        k != t.key && originOfKey(k) == t.originHost && (!e.deferred.isCompleted || e.shareable() != null)
+                        k != t.key && originOfKey(k) == t.originHost && (!wt || e.webTransport) &&
+                            (!e.deferred.isCompleted || e.shareable() != null)
                     }.map { it.value }
                     .distinct()
             }
@@ -716,7 +896,9 @@ internal class H3Pool(
             } ?: return
         lock.withLock {
             val existing = connections[t.key]
-            if (existing != null && (!existing.deferred.isCompleted || existing.shareable() != null)) return
+            if (existing != null && (!wt || existing.webTransport) && (!existing.deferred.isCompleted || existing.shareable() != null)) {
+                return
+            }
             if (match.shareable() == null || connections.values.none { it === match }) return
             // a replaced connection of [t] past its lifetime finishes its requests first, as when a new one replaces it
             val old = existing?.deferred?.getCompletedOrNull()
@@ -739,10 +921,11 @@ internal class H3Pool(
         t: H3Target,
         data: HttpRequestData,
         dns: RequestDns,
+        wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         while (true) {
             try {
-                return connectionEntryOnce(t, data, dns)
+                return connectionEntryOnce(t, data, dns, wt)
             } catch (_: SetupAbandoned) {
                 // the caller that was setting the connection up was cancelled: not a failure of the origin, so this caller
                 // starts (or joins) a new setup instead of failing or falling back
@@ -768,23 +951,28 @@ internal class H3Pool(
         t: H3Target,
         data: HttpRequestData,
         dns: RequestDns,
+        wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
-        shareSameAddress(t, dns)
+        shareSameAddress(t, dns, wt)
         val (e, connect) =
             lock.withLock {
                 val existing = connections[t.key]
                 val done = existing?.deferred?.takeIf { it.isCompleted }?.getCompletedOrNull()
-                if (existing != null &&
+                // a WebTransport session needs a WebTransport-capable connection; a request takes either kind
+                val fits = existing == null || !wt || existing.webTransport
+                if (existing != null && fits &&
                     (!existing.deferred.isCompleted || (done != null && done.usable() && !existing.pastLifetime(clock())))
                 ) {
                     existing to false
                 } else {
-                    // past its lifetime with requests in flight: it finishes them first ([evictExpired] closes it)
-                    if (existing != null && done != null && done.usable()) {
+                    // past its lifetime, or not WebTransport-capable when a session needs it (RFC 9114 section 3.3: one
+                    // connection per origin, the capable one serving the requests from now on): it finishes what it carries
+                    // first ([evictExpired] closes it); one still being set up is closed once set up and unused
+                    if (existing != null && ((done != null && done.usable()) || !existing.deferred.isCompleted)) {
                         retireUnderEveryKey(existing)
                     }
-                    H3Entry(CompletableDeferred(), clock()).also { connections[t.key] = it } to true
+                    H3Entry(CompletableDeferred(), clock(), webTransport = wt).also { connections[t.key] = it } to true
                 }
             }
         val d = e.deferred
@@ -804,7 +992,10 @@ internal class H3Pool(
                         raceQuic(t.host, t.port, dns, failures, { won, a ->
                             attempts.update { it + (won to Destination.of(a)) }
                         }) { remote ->
-                            if (config.http3.earlyData) {
+                            if (wt) {
+                                // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
+                                ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
+                            } else if (config.http3.earlyData) {
                                 // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                                 // the handshake timer (a request sent early then fails, and falls back, at that time)
                                 ep
@@ -1025,6 +1216,7 @@ internal class H3Pool(
         data: HttpRequestData,
         dns: RequestDns,
         prefer: Http3Connection? = null,
+        wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         // the connection the h3/h1 race set up for this request: used even when closeHttp3Connections() retired it while
         // it was being set up (it serves the requests that waited for it), instead of a second handshake
@@ -1039,7 +1231,7 @@ internal class H3Pool(
             if (e != null) return e to prefer
         }
         while (true) {
-            val (e, c) = connectionEntry(t, data, dns)
+            val (e, c) = connectionEntry(t, data, dns, wt)
             beforeCountForTest?.invoke(c)
             val counted =
                 lock.withLock {
@@ -1414,6 +1606,9 @@ internal class H3Pool(
 
         /** How long `closeHttp3Connections()` waits for each GOAWAY to be written (WT_DRAIN_SESSION has drain()'s own 5 s). */
         val GOAWAY_TIMEOUT = 5.seconds
+
+        /** How long a connection stays in use after a WebTransport session on it closed, for its CONNECT exchange to end. */
+        val EXCHANGE_END_TIMEOUT = 5.seconds
 
         /** Connection-specific fields (RFC 9114 section 4.2) and HTTP/1.1 WebSocket handshake fields RFC 9220 drops. */
         val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te")

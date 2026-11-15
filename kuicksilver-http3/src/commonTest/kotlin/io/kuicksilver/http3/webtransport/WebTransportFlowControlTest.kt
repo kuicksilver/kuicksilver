@@ -44,6 +44,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -878,6 +879,53 @@ class WebTransportFlowControlTest {
                     1 to wtOn.webTransportInitialMaxData,
                     withContext(server.session.dispatcher) { server.session.wtFlowSessionsForTest },
                 )
+            }
+        }
+
+    /** With flow control on both sides a client opens several sessions on one connection, each with its own streams. */
+    @Test fun clientOpensSeveralSessionsOnOneConnection() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val accepted = kotlinx.coroutines.channels.Channel<WebTransportSession>(4)
+                launch { repeat(3) { accepted.send(p.server.acceptRequest().acceptWebTransport()) } }
+                val sessions = List(3) { p.client.webTransport(wtReq()) }
+                val server = List(3) { withTimeout(5.seconds) { accepted.receive() } }.associateBy { it.sessionId }
+                for (c in sessions) {
+                    val st = c.openUni()
+                    st.output.writeFully("to ${c.sessionId}".encodeToByteArray())
+                    st.output.flushAndClose()
+                    assertEquals(
+                        "to ${c.sessionId}",
+                        assertNotNull(server[c.sessionId])
+                            .acceptUni()
+                            .input
+                            .readAllBytes()
+                            .decodeToString(),
+                    )
+                }
+            }
+        }
+
+    /** The client's own webTransportMaxSessions caps the sessions it puts on one connection. */
+    @Test fun negative_clientBeyondItsOwnLimitIsRefused() =
+        h3Test {
+            val client = wtOn.toBuilder().apply { webTransportMaxSessions = 2 }.build()
+            H3Pair.open(clientSettings = client, serverSettings = wtOn).useScoped { p ->
+                launch { repeat(2) { p.server.acceptRequest().acceptWebTransport() } }
+                repeat(2) { p.client.webTransport(wtReq()) }
+                assertFailsWith<WebTransportException.ConnectionFull> { p.client.webTransport(wtReq()) }
+            }
+        }
+
+    /** Section 5.2: a server at its limit refuses with H3_REQUEST_REJECTED, which reaches the client as not processed. */
+    @Test fun negative_serverAtItsLimitRefusesUnprocessed() =
+        h3Test {
+            val server = wtOn.toBuilder().apply { webTransportMaxSessions = 1 }.build()
+            H3Pair.open(clientSettings = wtOn, serverSettings = server).useScoped { p ->
+                launch { p.server.acceptRequest().acceptWebTransport() }
+                p.client.webTransport(wtReq())
+                val e = assertFailsWith<io.kuicksilver.http3.Http3Exception.RequestNotProcessed> { p.client.webTransport(wtReq()) }
+                assertTrue(e.retrySafe)
             }
         }
 

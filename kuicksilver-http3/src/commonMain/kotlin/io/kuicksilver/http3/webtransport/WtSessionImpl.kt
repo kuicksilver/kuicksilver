@@ -156,6 +156,9 @@ internal class WtSessionImpl(
     private val datagramsIn = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
     private val drainFlow = MutableStateFlow(false)
     private val closedInfo = CompletableDeferred<WebTransportCloseInfo>()
+
+    /** The CONNECT stream ended both ways ([ended]): what the session sent, its close capsule included, was answered. */
+    internal val exchangeEnded = CompletableDeferred<Unit>()
     private val watchers = ArrayList<Job>()
 
     /**
@@ -410,6 +413,7 @@ internal class WtSessionImpl(
      * the stream is left alone. Session dispatcher only.
      */
     fun ended() {
+        exchangeEnded.complete(Unit)
         h3.wt.unregister(sessionId)
         if (!closedInfo.isCompleted) {
             val reader = watchers.firstOrNull()
@@ -642,7 +646,6 @@ internal class WtSessionImpl(
 internal suspend fun H3Session.webTransport(
     r: Http3Request,
     protocols: List<String>,
-    ownsConnection: Boolean = false,
 ): WebTransportSession {
     check(settings.webTransport) {
         "Http3Settings.webTransport is off on this connection: the session's streams could not be received"
@@ -661,10 +664,21 @@ internal suspend fun H3Session.webTransport(
     val (chosen, refusal) = wtClientVersion(this)
     val version = chosen ?: throw Http3Exception.Settings(refusal!!)
     withContext(dispatcher) {
-        check(!wtClientBusy) {
-            "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one"
+        if (wtClientSessions > 0) {
+            // section 5.1: "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous
+            // WebTransport session"; with it, at most as many as our own limit allows on one connection
+            if (!WtFlow.enabled(this@webTransport, version)) {
+                throw WebTransportException.ConnectionFull(
+                    "this connection already has a WebTransport session: without WebTransport flow control a client keeps to one",
+                )
+            }
+            if (wtClientSessions >= settings.webTransportMaxSessions) {
+                throw WebTransportException.ConnectionFull(
+                    "this connection carries webTransportMaxSessions (${settings.webTransportMaxSessions}) WebTransport sessions",
+                )
+            }
         }
-        wtClientBusy = true
+        wtClientSessions++
     }
     var made: Http3Stream? = null
     try {
@@ -697,16 +711,14 @@ internal suspend fun H3Session.webTransport(
             scope.launch {
                 ended.await()
                 s.ended()
-                wtClientBusy = false
-                // a connection opened for this session alone ends with it, once both directions of the CONNECT did
-                if (ownsConnection) close(Http3ErrorCode.NO_ERROR, "")
+                wtClientSessions--
             }
         }
         made = null
         return s
     } catch (e: Throwable) {
         withContext(NonCancellable + dispatcher) {
-            wtClientBusy = false
+            wtClientSessions--
             made?.let {
                 if (e is CancellationException) {
                     it.reset(Http3ErrorCode.REQUEST_CANCELLED)

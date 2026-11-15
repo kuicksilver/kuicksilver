@@ -202,6 +202,16 @@ public sealed class WebTransportException(
     ) : WebTransportException(message)
 
     /**
+     * Client: the connection cannot take one more session: it has one and no WebTransport flow control (section 5.1:
+     * "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous WebTransport
+     * session"), or it carries `Http3Settings.webTransportMaxSessions` already. Nothing was sent; another connection to
+     * the same server can take it.
+     */
+    public class ConnectionFull(
+        message: String,
+    ) : WebTransportException(message)
+
+    /**
      * The session broke WebTransport flow control (draft-ietf-webtrans-http3-16 section 5): the peer opened more streams or
      * sent more data than our limits allowed, or sent a flow-control capsule that lowered a limit or went beyond 2^60
      * streams, or a WT_MAX_STREAM_DATA or WT_STREAM_DATA_BLOCKED capsule. The session was closed by resetting its CONNECT
@@ -232,6 +242,17 @@ public sealed class WebTransportException(
 }
 
 /**
+ * Waits until the session's CONNECT stream ended in both directions: after [WebTransportSession.closed], what the session
+ * sent, its close capsule and FIN included, was answered, so the connection may now close without the peer seeing a lost
+ * connection instead of the session's close. Returns at once for a session of another implementation; it does not return
+ * when the connection is lost first, so bound the wait.
+ */
+@InternalKuicksilverApi
+public suspend fun WebTransportSession.awaitExchangeEnd() {
+    (this as? io.kuicksilver.http3.webtransport.WtSessionImpl)?.exchangeEnded?.await()
+}
+
+/**
  * Client: opens a WebTransport session with an Extended CONNECT to [request]'s authority and path (its method is replaced
  * by CONNECT). Needs `Http3Settings.webTransport` on this connection (IllegalStateException otherwise) and waits up to
  * ten seconds for the server's SETTINGS, which must offer WebTransport, Extended CONNECT and HTTP datagrams
@@ -242,8 +263,10 @@ public sealed class WebTransportException(
  * `WT-Protocol` answer that names another protocol closes the session with WT_ALPN_ERROR and throws
  * [WebTransportException.Alpn], one that is no valid Structured Field String is ignored ([WebTransportSession.protocol]
  * is null). A non-2xx answer throws [Http3Exception.ConnectRejected]
- * (redirects are not followed, section 3.2). A second session while one is open throws IllegalStateException (one
- * session per connection, section 5.1).
+ * (redirects are not followed, section 3.2). Several sessions share the connection when both sides declared WebTransport
+ * flow control (section 5.1), up to `Http3Settings.webTransportMaxSessions`; one more, or a second without flow control,
+ * throws [WebTransportException.ConnectionFull] before anything is sent, and a server that refuses one more (its limit,
+ * section 5.2) answers with H3_REQUEST_REJECTED, [Http3Exception.RequestNotProcessed].
  */
 @ExperimentalKuicksilverApi
 public suspend fun Http3Connection.webTransport(
@@ -252,22 +275,6 @@ public suspend fun Http3Connection.webTransport(
 ): WebTransportSession {
     check(role == Http3Role.Client) { "webTransport() is client-only" }
     return session.webTransport(request, protocols)
-}
-
-/**
- * [webTransport] on a connection opened for this session alone (the Ktor client engine's dedicated connections): the
- * connection closes with H3_NO_ERROR once the session's CONNECT stream ended in both directions, after the close
- * capsule and FIN went out and were answered, so the peer sees the session's close code rather than a lost
- * connection. The caller closes the connection itself when this throws.
- */
-@InternalKuicksilverApi
-@ExperimentalKuicksilverApi
-public suspend fun Http3Connection.webTransportOwningConnection(
-    request: Http3Request,
-    protocols: List<String> = emptyList(),
-): WebTransportSession {
-    check(role == Http3Role.Client) { "webTransport() is client-only" }
-    return session.webTransport(request, protocols, ownsConnection = true)
 }
 
 /**
