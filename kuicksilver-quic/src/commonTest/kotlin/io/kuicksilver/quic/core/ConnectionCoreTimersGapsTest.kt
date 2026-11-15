@@ -68,7 +68,7 @@ class ConnectionCoreTimersGapsTest {
      * RFC 9000 section 10.1: an idle connection "is silently closed and its state discarded when it remains idle for longer than the
      * minimum of the max_idle_timeout value advertised by both endpoints"; the timer fires when the runtime calls at its deadline.
      */
-    @Test fun negative_idleTimerFiresAtItsDeadline() {
+    @Test fun idleTimerFiresAtItsDeadline() {
         val p = CorePair(serverQuic = quicConfig { maxIdleTimeout = 2.seconds })
         try {
             assertTrue(runExact(p) { bothConfirmed(p) })
@@ -84,7 +84,7 @@ class ConnectionCoreTimersGapsTest {
      * Keep-alive PINGs, a transfer and the closing period (RFC 9000 section 10.2: "at least three times the current PTO"), all on
      * exact deadlines.
      */
-    @Test fun negative_keepAliveTransferAndClosingFireAtTheirDeadlines() {
+    @Test fun keepAliveTransferAndClosingFireAtTheirDeadlines() {
         val p =
             CorePair(
                 clientQuic = quicConfig { keepAlive = 500.milliseconds },
@@ -134,7 +134,7 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /** The handshake timeout (QuicConfig.handshakeTimeout) fires at its deadline when the server never answers. */
-    @Test fun negative_handshakeTimeoutFiresAtItsDeadline() {
+    @Test fun handshakeTimeoutFiresAtItsDeadline() {
         val p = CorePair()
         p.filterToClient = { _, _ -> false }
         try {
@@ -146,7 +146,7 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /** QuicEndpointConfig.maxConnectionLifetime: the connection closes with NO_ERROR at exactly its lifetime deadline. */
-    @Test fun negative_lifetimeDeadlineFiresAtItsDeadline() {
+    @Test fun lifetimeDeadlineFiresAtItsDeadline() {
         val p = CorePair(clientQuic = quicConfig { keepAlive = 200.milliseconds })
         try {
             assertTrue(runExact(p) { bothConfirmed(p) })
@@ -164,7 +164,7 @@ class ConnectionCoreTimersGapsTest {
      * with every datagram vanishing no ACK ever declares them lost, so the first 1-RTT PTO with the test still unanswered ends it
      * (EcnValidator.onPto) and the probes go unmarked.
      */
-    @Test fun negative_ecnBlackHoleFailsAtTheFirstOneRttPto() {
+    @Test fun ecnBlackHoleFailsAtTheFirstOneRttPto() {
         val ecn = IoCapabilities(ecnSend = true, ecnReceive = true, gsoMaxSegments = 1, gro = false, df = false, batch = 1)
         val p = EndpointPair()
         p.serverEcnReceive = true
@@ -213,7 +213,7 @@ class ConnectionCoreTimersGapsTest {
      * RFC 9000 section 13.3: "An updated value is sent in a MAX_DATA frame if the packet containing the most recently sent MAX_DATA
      * frame is declared lost". A lost packet that carried only MAX_DATA queues it again.
      */
-    @Test fun negative_lostMaxDataOnlyPacketQueuesMaxDataAgain() {
+    @Test fun lostMaxDataOnlyPacketQueuesMaxDataAgain() {
         val p = CorePair()
         try {
             val s = quietServer(p)
@@ -226,10 +226,11 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /**
-     * RFC 9002 section 6.2.4: a probe "SHOULD carry data when possible"; a PTO taking a packet that carried only MAX_DATA sends the
-     * update again (KDoc of requeueForProbe), not a bare PING.
+     * RFC 9002 section 6.2.4: "An endpoint SHOULD include new data in packets that are sent on PTO expiration. Previously sent data
+     * MAY be sent if no new data can be sent." A PTO taking a packet that carried only MAX_DATA sends the update again (KDoc of
+     * requeueForProbe), not a bare PING.
      */
-    @Test fun negative_ptoProbeOfAMaxDataOnlyPacketCarriesMaxData() {
+    @Test fun ptoProbeOfAMaxDataOnlyPacketCarriesMaxData() {
         val p = CorePair()
         try {
             val s = quietServer(p)
@@ -242,7 +243,7 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /** The *_BLOCKED repeat timer (RFC 9000 section 4.1) of a sender the receiver never unblocks fires at each of its deadlines. */
-    @Test fun negative_blockedRepeatTimerFiresAtItsDeadlines() {
+    @Test fun blockedRepeatTimerFiresAtItsDeadlines() {
         val p =
             CorePair(serverQuic = quicConfig { initialConnectionWindow = 4000 })
         try {
@@ -258,7 +259,7 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /** RFC 9000 section 13.3: "NEW_TOKEN frames are retransmitted if the packet containing them is lost" (the current token only). */
-    @Test fun negative_lostNewTokenIsSentAgain() {
+    @Test fun lostNewTokenIsSentAgain() {
         val p = CorePair()
         try {
             val s = quietServer(p)
@@ -297,7 +298,7 @@ class ConnectionCoreTimersGapsTest {
     }
 
     /** RFC 9221 section 5: a lost DATAGRAM is reported to the sender, also the one with id 0. */
-    @Test fun negative_lossOfDatagramIdZeroIsReported() {
+    @Test fun lossOfDatagramIdZeroIsReported() {
         val p = CorePair()
         try {
             val s = quietServer(p)

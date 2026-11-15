@@ -297,7 +297,7 @@ class AckTrackerTest {
     }
 
     /** A gap filled between two ranges merges them, and a packet below every range after that becomes its own range. */
-    @Test fun negative_packetBelowAllRangesAfterAMergeIsKept() {
+    @Test fun packetBelowAllRangesAfterAMergeIsKept() {
         val a = AckTracker(64)
         for (pn in listOf(10L, 12L, 11L, 5L)) a.onPacketReceived(pn, true, t0)
         assertEquals(listOf(10L to 12L, 5L to 5L), ackFrame(a, t0).ranges)
@@ -309,9 +309,11 @@ class AckTrackerTest {
      * packet ... when the packet has a packet number larger than the highest-numbered ack-eliciting packet that has been received
      * and there are missing packets between that packet and this packet", also when the highest so far is packet 0.
      */
-    @Test fun negative_gapAfterPacketZeroIsAcknowledgedAtOnce() {
+    @Test fun gapAfterPacketZeroIsAcknowledgedAtOnce() {
         val a = AckTracker(64)
-        a.onPacketReceived(0, false, t0)
+        a.onPacketReceived(0, true, t0)
+        ackFrame(a, t0) // packet 0 acknowledged: nothing pending
+        assertFalse(a.ackRequired)
         a.onPacketReceived(2, true, t0)
         assertTrue(a.ackRequired, "packet 1 is missing")
     }
@@ -331,7 +333,7 @@ class AckTrackerTest {
     }
 
     /** RFC 9000 section 19.3.2: "ECT1 Count: A variable-length integer representing the total number of packets received with the ECT(1) codepoint". */
-    @Test fun negative_ect1PacketsAreCounted() {
+    @Test fun ect1PacketsAreCounted() {
         val a = AckTracker(64)
         a.onEcn(io.kuicksilver.quic.Ecn.Ect1)
         a.onEcn(io.kuicksilver.quic.Ecn.Ect0)
@@ -341,7 +343,7 @@ class AckTrackerTest {
     }
 
     /** The size the builder reserves for the ACK frame ([AckTracker.ackOverhead]) is the size [AckTracker.writeAck] writes. */
-    @Test fun negative_ackOverheadMatchesTheWrittenFrame() {
+    @Test fun ackOverheadMatchesTheWrittenFrame() {
         val a = AckTracker(64)
         assertEquals(0, a.ackOverhead(t0, 3))
         for (pn in listOf(0L, 1L, 5L, 9L, 300L)) a.onPacketReceived(pn, true, t0)

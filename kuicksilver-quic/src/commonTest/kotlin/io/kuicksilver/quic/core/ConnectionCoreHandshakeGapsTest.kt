@@ -47,7 +47,7 @@ class ConnectionCoreHandshakeGapsTest {
      * RFC 9002 section 6.2.4: "the sender SHOULD send ack-eliciting packets from other packet number spaces with in-flight data". A
      * server whose Initial PTO fires with its Handshake flight unacknowledged too probes the Handshake space with that flight's data.
      */
-    @Test fun negative_initialPtoAlsoResendsTheHandshakeFlight() {
+    @Test fun initialPtoAlsoResendsTheHandshakeFlight() {
         val p = CorePair()
         try {
             p.filterToServer = { i, _ -> i == 0 } // the client's first Initial only: nothing the server sends is ever acknowledged
@@ -85,8 +85,8 @@ class ConnectionCoreHandshakeGapsTest {
     }
 
     /**
-     * RFC 9000 section 14.1: a client "MUST expand the payload of all UDP datagrams carrying Initial packets to at least 1200 bytes"
-     * and only an Initial starts a server connection (section 7.2: the server's connection begins with the client's Initial). A
+     * RFC 9000 section 14.1: "A client MUST expand the payload of all UDP datagrams carrying Initial packets to at least the
+     * smallest allowed maximum datagram size of 1200 bytes", and only an Initial starts a server connection (section 7.2: the server's connection begins with the client's Initial). A
      * well-formed 1200-byte Handshake or 0-RTT long-header datagram for an unknown connection creates nothing.
      */
     @Test fun negative_aLongHeaderOtherThanInitialStartsNoServerConnection() {
@@ -174,7 +174,7 @@ class ConnectionCoreHandshakeGapsTest {
     }
 
     /** The first [ConnectionCore.NEW_TOKENS_KEPT] NEW_TOKEN frames of a connection are kept and cost nothing; the next one is a glitch. */
-    @Test fun negative_newTokensUpToTheKeptCountAreAllKept() {
+    @Test fun newTokensUpToTheKeptCountAreAllKept() {
         val p = CorePair()
         try {
             assertTrue(p.handshake())

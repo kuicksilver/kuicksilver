@@ -43,7 +43,7 @@ class RecvStreamGapsTest {
     /**
      * RFC 9000 section 4.5: "Once a final size for a stream is known, it cannot change. If a RESET_STREAM or STREAM frame is received
      * indicating a change in the final size for the stream, an endpoint SHOULD respond with an error of type FINAL_SIZE_ERROR", also
-     * when the known final size is 0; and "a RESET_STREAM_AT frame with a final size below the data received" likewise.
+     * when the known final size is 0; a RESET_STREAM_AT frame carrying another final size is the same change.
      */
     @Test fun negative_finalSizeZeroCannotChange() {
         val err = TransportError.FINAL_SIZE_ERROR
@@ -54,7 +54,7 @@ class RecvStreamGapsTest {
     }
 
     /** RFC 9000 section 3.2: "Data Recvd" once every byte up to the final size arrived, also for a final size of 0; not with a gap. */
-    @Test fun negative_dataRecvdExactlyWhenEveryByteArrived() {
+    @Test fun dataRecvdExactlyWhenEveryByteArrived() {
         val empty = stream()
         empty.data(0, 0, fin = true)
         assertEquals(RecvState.DataRecvd, empty.state)
@@ -97,7 +97,7 @@ class RecvStreamGapsTest {
     }
 
     /** A reset drops the buffered bytes: their reassembly ranges go back to the connection's budget. */
-    @Test fun negative_resetReleasesBufferedRanges() {
+    @Test fun resetReleasesBufferedRanges() {
         for (at in listOf(false, true)) {
             val r = stream()
             val before = budget.used
@@ -135,7 +135,7 @@ class RecvStreamGapsTest {
     }
 
     /** After RESET_STREAM_AT the reader gets the reliable bytes and no more; reading the last of them surfaces the reset at once. */
-    @Test fun negative_readStopsAtTheReliableSizeAndSurfacesTheReset() {
+    @Test fun readStopsAtTheReliableSizeAndSurfacesTheReset() {
         val r = stream()
         r.data(0, 100)
         r.onResetAt(1, 100, 50, conn(), 100)
@@ -163,7 +163,7 @@ class RecvStreamGapsTest {
         val plain = stream()
         plain.onReset(1, 10, conn(), 0)
         plain.onReset(2, 10, conn(), 10)
-        assertEquals(1L, plain.resetCode, "a repeated RESET_STREAM is ignored (RFC 9000 permits no other code; the first stands)")
+        assertEquals(1L, plain.resetCode, "a repeated RESET_STREAM is ignored (the first code stands)")
 
         val read = stream()
         read.data(0, 10, fin = true)
@@ -175,7 +175,7 @@ class RecvStreamGapsTest {
     }
 
     /** A new stream has seen no reset: nothing to surface, any first code accepted. */
-    @Test fun negative_freshStreamHasNoReset() {
+    @Test fun freshStreamHasNoReset() {
         val r = stream()
         assertFalse(r.takeResetAtReached())
         r.data(0, 10)

@@ -53,7 +53,7 @@ class PacketNumbersTest {
      * RFC 9000 appendix A.2: "num_unacked = full_pn + 1" without an acknowledgement, else "full_pn - largest_acked"; "min_bits =
      * log(num_unacked, 2) + 1"; "num_bytes = ceil(min_bits / 8)". The edges of one byte: 128 unacknowledged numbers fit, 129 do not.
      */
-    @Test fun negative_encodedLengthEdgesOfAppendixA2() {
+    @Test fun encodedLengthEdgesOfAppendixA2() {
         assertEquals(1, PacketNumbers.encodedLength(127, -1), "128 unacknowledged")
         assertEquals(2, PacketNumbers.encodedLength(128, -1), "129 unacknowledged")
         assertEquals(1, PacketNumbers.encodedLength(128, 0), "largest acknowledged 0: 128 unacknowledged")

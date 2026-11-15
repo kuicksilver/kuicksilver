@@ -271,7 +271,8 @@ class BlockedFramesTest {
 
     /**
      * The same for the connection: a stream reset while it waited for MAX_DATA no longer waits, so DATA_BLOCKED is neither
-     * repeated nor sent again when lost (RFC 9000 section 4.1: it reports data "blocked due to connection-level flow control").
+     * repeated nor sent again when lost (RFC 9000 section 19.12: "A sender SHOULD send a DATA_BLOCKED frame (type=0x14) when it
+     * wishes to send data but is unable to do so due to connection-level flow control"; a reset stream wishes to send nothing).
      */
     @Test fun negative_resetStreamLeavesNoDataBlockedBehind() {
         val m = manager(peerMaxData = 500)

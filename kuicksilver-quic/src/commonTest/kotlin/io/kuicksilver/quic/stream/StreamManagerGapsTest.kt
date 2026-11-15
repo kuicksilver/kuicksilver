@@ -126,7 +126,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9000 section 3.2: "Data Recvd" and "Data Read" both mean every byte up to the FIN is (or was) held; "Recv" does not. */
-    @Test fun negative_receivedAllIsExactlyDataRecvdOrDataRead() {
+    @Test fun receivedAllIsExactlyDataRecvdOrDataRead() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(10), fin = true)
         recv(m, 4, 0, ByteArray(10))
@@ -147,7 +147,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9000 section 4.1: a stream's send credit is the peer's initial limit for its type and initiator. */
-    @Test fun negative_newStreamsTakeTheLimitOfTheirKind() {
+    @Test fun newStreamsTakeTheLimitOfTheirKind() {
         val m = manager()
         m.applyPeerParameters(111, 222, 333, 100, 100)
         assertEquals(222L, m.sendCredit(m.open(bidi = true, StreamPriority.Default)), "initial_max_stream_data_bidi_remote")
@@ -157,10 +157,10 @@ class StreamManagerGapsTest {
     }
 
     /**
-     * RFC 9000 section 4.6: "A sender SHOULD send a STREAMS_BLOCKED frame ... when it wishes to open a stream but is unable to do so
-     * due to the maximum stream limit set by its peer", also when that limit is 0.
+     * RFC 9000 section 19.14: "A sender SHOULD send a STREAMS_BLOCKED frame (type=0x16 or 0x17) when it wishes to open a stream but
+     * is unable to do so due to the maximum stream limit set by its peer", also when that limit is 0.
      */
-    @Test fun negative_streamsBlockedIsSentAtALimitOfZero() {
+    @Test fun streamsBlockedIsSentAtALimitOfZero() {
         val m = manager(maxStreams = 0)
         assertEquals(-1L, m.open(bidi = true, StreamPriority.Default))
         val c = controlKinds(m).single()
@@ -225,7 +225,7 @@ class StreamManagerGapsTest {
     }
 
     /** Each change a reader can act on raises StreamReadable: a filled gap, a FIN beyond a gap, a FIN alone completing unread data. */
-    @Test fun negative_readableForGapFillFinBeyondGapAndBareFin() {
+    @Test fun readableForGapFillFinBeyondGapAndBareFin() {
         val gap = manager(TlsRole.Server)
         recv(gap, 0, 5, ByteArray(5))
         gap.events.clear()
@@ -249,7 +249,7 @@ class StreamManagerGapsTest {
      * RFC 9000 section 3.5: after STOP_SENDING nothing reads the stream, so the bytes that still arrive go straight back to the
      * connection window (MAX_DATA follows), and a duplicate of them raises no StreamReadable.
      */
-    @Test fun negative_bytesForAStoppedStreamReturnConnectionCredit() {
+    @Test fun bytesForAStoppedStreamReturnConnectionCredit() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(1))
         m.stopSending(0, 3)
@@ -267,7 +267,7 @@ class StreamManagerGapsTest {
      * application, and the rest of the final size goes back to the connection window; with nothing readable yet no
      * StreamReadable is raised.
      */
-    @Test fun negative_resetStreamAtSurfacesOnceTheReliableBytesWereRead() {
+    @Test fun resetStreamAtSurfacesOnceTheReliableBytesWereRead() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(100))
         assertEquals(100, m.read(0, ByteArray(100), 0, 100))
@@ -294,7 +294,7 @@ class StreamManagerGapsTest {
     ) = m.events.count { it is ConnectionEvent.StreamWritable && it.id == id }
 
     /** Room freed in the shared send buffer by STOP_SENDING, a reset or RESET_STREAM_AT wakes a writer the buffer refused. */
-    @Test fun negative_freedSendBufferWakesRefusedWriters() {
+    @Test fun freedSendBufferWakesRefusedWriters() {
         for (how in listOf("stop", "reset", "resetAt")) {
             val m = manager()
             m.peerResetStreamAt = true
@@ -313,7 +313,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9000 section 3.1: STOP_SENDING moves our send-only stream to "Reset Sent", where nothing is left of it: it is retired. */
-    @Test fun negative_stopSendingRetiresOurSendOnlyStream() {
+    @Test fun stopSendingRetiresOurSendOnlyStream() {
         val m = manager()
         val id = m.open(bidi = false, StreamPriority.Default)
         m.write(id, ByteArray(10), 0, 10, fin = false)
@@ -323,7 +323,7 @@ class StreamManagerGapsTest {
     }
 
     /** MAX_STREAM_DATA: true when it raised the limit or names a retired stream, false when it changed nothing (a glitch). */
-    @Test fun negative_maxStreamDataReportsWhetherItChangedAnything() {
+    @Test fun maxStreamDataReportsWhetherItChangedAnything() {
         val m = manager(streamWindow = 100)
         val id = m.open(bidi = false, StreamPriority.Default)
         m.events.clear()
@@ -337,7 +337,7 @@ class StreamManagerGapsTest {
     }
 
     /** MAX_DATA wakes each stream that waited for connection credit once, and only those still waiting for it. */
-    @Test fun negative_maxDataWakesConnectionBlockedStreamsOnce() {
+    @Test fun maxDataWakesConnectionBlockedStreamsOnce() {
         val m = manager(peerMaxData = 100, streamWindow = 150)
         val a = m.open(bidi = false, StreamPriority.Default)
         m.write(a, ByteArray(300), 0, 300, fin = false)
@@ -381,7 +381,7 @@ class StreamManagerGapsTest {
     }
 
     /** A DATA_BLOCKED repeat is answered again once a full RTT passed since the last one (one answer per RTT, RFC 9000 section 4.1). */
-    @Test fun negative_dataBlockedIsAnsweredAgainAfterOneRtt() {
+    @Test fun dataBlockedIsAnsweredAgainAfterOneRtt() {
         val m = manager(TlsRole.Server)
         m.onDataBlocked(0, t0, srtt)
         assertEquals(1, controlKinds(m).count { it.kind == ControlKind.MaxData })
@@ -413,7 +413,7 @@ class StreamManagerGapsTest {
     }
 
     /** A write the shared send buffer cut short gets exactly one StreamWritable once acknowledgements free room; a full write none. */
-    @Test fun negative_refusedWriterGetsOneWritablePerRefusal() {
+    @Test fun refusedWriterGetsOneWritablePerRefusal() {
         val m = manager()
         val a = m.open(bidi = true, StreamPriority.Default)
         m.write(a, ByteArray(100), 0, 100, fin = false)
@@ -485,7 +485,7 @@ class StreamManagerGapsTest {
     }
 
     /** Bytes RESET_STREAM_AT drops from the buffer count as released for a watched stream. */
-    @Test fun negative_resetAtReleaseRaisesWritableForAWatchedStream() {
+    @Test fun resetAtReleaseRaisesWritableForAWatchedStream() {
         val m = manager()
         m.peerResetStreamAt = true
         val id = m.open(bidi = false, StreamPriority.Default)
@@ -498,7 +498,7 @@ class StreamManagerGapsTest {
     }
 
     /** RESET_STREAM_AT whose reliable bytes were all acknowledged already ends the stream at once ("Reset Sent", retired). */
-    @Test fun negative_resetAtAfterTheReliableBytesWereAcknowledgedRetiresTheStream() {
+    @Test fun resetAtAfterTheReliableBytesWereAcknowledgedRetiresTheStream() {
         val m = manager()
         m.peerResetStreamAt = true
         val id = m.open(bidi = false, StreamPriority.Default)
@@ -510,7 +510,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9000 section 3.5: after STOP_SENDING nothing reads the stream: its buffered bytes are dropped (reassembly budget back). */
-    @Test fun negative_stopSendingDropsBufferedBytes() {
+    @Test fun stopSendingDropsBufferedBytes() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 5, ByteArray(10))
         assertTrue(m.reassemblyRanges > 0)
@@ -519,7 +519,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9218 section 4: a stream made less urgent waits behind the more urgent ones, also when it was the most urgent. */
-    @Test fun negative_priorityChangeOfTheMostUrgentStreamTakesEffect() {
+    @Test fun priorityChangeOfTheMostUrgentStreamTakesEffect() {
         val m = manager()
         val a = m.open(bidi = true, StreamPriority.Critical)
         val b = m.open(bidi = true, StreamPriority.Default)
@@ -530,7 +530,7 @@ class StreamManagerGapsTest {
     }
 
     /** RFC 9218 section 4: incremental streams of one urgency share the frames in turn. */
-    @Test fun negative_incrementalStreamsTakeTurns() {
+    @Test fun incrementalStreamsTakeTurns() {
         val m = manager()
         val p = StreamPriority(3, incremental = true)
         val a = m.open(bidi = true, p)
@@ -542,7 +542,7 @@ class StreamManagerGapsTest {
     }
 
     /** A packet without room for a STREAM frame's bytes sends nothing and keeps the stream scheduled for the next one. */
-    @Test fun negative_noRoomForBytesKeepsTheStreamScheduled() {
+    @Test fun noRoomForBytesKeepsTheStreamScheduled() {
         val m = manager()
         val id = m.open(bidi = false, StreamPriority.Default)
         m.write(id, ByteArray(100), 0, 100, fin = false)
@@ -562,7 +562,7 @@ class StreamManagerGapsTest {
      * RFC 9000 sections 19.12/19.13: "A sender SHOULD send a STREAM_DATA_BLOCKED frame (type=0x15) when it wishes to send data but
      * is unable to do so due to stream-level flow control" (and DATA_BLOCKED likewise), also at a limit of 0.
      */
-    @Test fun negative_blockedFramesAreSentAtALimitOfZero() {
+    @Test fun blockedFramesAreSentAtALimitOfZero() {
         val s = manager(streamWindow = 0)
         val a = s.open(bidi = false, StreamPriority.Default)
         s.write(a, ByteArray(10), 0, 10, fin = false)
@@ -618,7 +618,7 @@ class StreamManagerGapsTest {
     }
 
     /** A control frame pushed back (it did not fit the packet) is the next one taken. */
-    @Test fun negative_pushedBackControlFrameComesFirst() {
+    @Test fun pushedBackControlFrameComesFirst() {
         val m = manager(TlsRole.Server)
         m.onDataBlocked(0, t0, srtt)
         m.onStreamsBlocked(true, 0)
@@ -694,7 +694,7 @@ class StreamManagerGapsTest {
     }
 
     /** The size the packet builder reserves for a stream control frame is the size the frame is written with (never less). */
-    @Test fun negative_controlOverheadIsTheWrittenSize() {
+    @Test fun controlOverheadIsTheWrittenSize() {
         val m = manager()
         val b = PacketBuffer.allocate(64)
         try {

@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 class ConnectionCoreGapsTest {
     /**
-     * RFC 9000 section 10.2.2: "An endpoint that has entered the draining state MUST NOT send any packets"; a local close requested
+     * RFC 9000 section 10.2.2: "an endpoint in the draining state MUST NOT send any packets"; a local close requested
      * while draining changes nothing either (the connection already ended with the peer's reason, reported once).
      */
     @Test fun negative_drainingConnectionSendsNothingAndIgnoresALocalClose() {
@@ -47,7 +47,7 @@ class ConnectionCoreGapsTest {
     }
 
     /** RFC 9000 section 10.2: "The closing and draining connection states ... SHOULD persist for at least three times the current PTO". */
-    @Test fun negative_closingStateEndsInTheFuture() {
+    @Test fun closingStateEndsInTheFuture() {
         val p = CorePair()
         try {
             assertTrue(p.handshake())
@@ -76,7 +76,7 @@ class ConnectionCoreGapsTest {
     }
 
     /** A peer's reason phrase of exactly 1024 bytes is kept whole (the cut is only above 1 KiB). */
-    @Test fun negative_peerReasonOfExactly1024BytesIsKept() {
+    @Test fun peerReasonOfExactly1024BytesIsKept() {
         val p = CorePair()
         try {
             assertTrue(p.handshake())

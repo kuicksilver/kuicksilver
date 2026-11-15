@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  * answers exactly while the acknowledged numbers form at most [ACKED_KEEP] ranges (beyond that it may only err towards true).
  */
 class PacketNumberSpaceTest {
-    @Test fun negative_ackedRangesAnswerExactlyWithinCapacityAndConservativelyBeyond() {
+    @Test fun ackedRangesAnswerExactlyWithinCapacityAndConservativelyBeyond() {
         forAllSeeded(300, seed = 9002) { rnd, _ ->
             val sp = PacketNumberSpace(SpaceId.Application)
             val acked = BooleanArray(UNIVERSE)
@@ -39,7 +39,7 @@ class PacketNumberSpaceTest {
         }
     }
 
-    @Test fun negative_bridgingRangeMergesEveryRangeItSpans() {
+    @Test fun bridgingRangeMergesEveryRangeItSpans() {
         val sp = PacketNumberSpace(SpaceId.Application)
         sp.recordAcked(10, 10)
         sp.recordAcked(20, 20)
@@ -77,7 +77,7 @@ class PacketNumberSpaceTest {
     }
 
     /** A range above every kept one after a merge freed a slot is kept (the scan must not read the freed slot). */
-    @Test fun negative_rangeAboveAllAfterAMergeIsKept() {
+    @Test fun rangeAboveAllAfterAMergeIsKept() {
         val sp = PacketNumberSpace(SpaceId.Application)
         sp.recordAcked(10, 10)
         sp.recordAcked(12, 12)
@@ -94,7 +94,7 @@ class PacketNumberSpaceTest {
      * Filling the gaps between [ACKED_KEEP] ranges merges them all, so later ranges find room and the oldest small ranges are not
      * forgotten (forgetting them makes the check report 1..2, never acknowledged, as acknowledged).
      */
-    @Test fun negative_gapFillingFreesSlotsForLaterRanges() {
+    @Test fun gapFillingFreesSlotsForLaterRanges() {
         val sp = PacketNumberSpace(SpaceId.Application)
         sp.recordAcked(0, 0)
         sp.recordAcked(3, 3)
@@ -120,7 +120,7 @@ class PacketNumberSpaceTest {
     }
 
     /** RFC 9002 section 7.6.2 across spaces: acknowledged send times strictly between the two lost packets' send times count. */
-    @Test fun negative_ackedSendTimesAreComparedStrictly() {
+    @Test fun ackedSendTimesAreComparedStrictly() {
         val sp = PacketNumberSpace(SpaceId.Handshake)
         sp.recordAckedTime(TimeMark(100))
         assertTrue(sp.anyAckedSentBetween(TimeMark(99), TimeMark(101)))
@@ -129,14 +129,14 @@ class PacketNumberSpaceTest {
     }
 
     /** Beyond the kept send times, a forgotten one still counts (conservatively) for an interval that starts before it. */
-    @Test fun negative_forgottenAckedSendTimesStillCount() {
+    @Test fun forgottenAckedSendTimesStillCount() {
         val sp = PacketNumberSpace(SpaceId.Handshake)
         for (t in 1L..(ACKED_TIMES_KEEP + 1L)) sp.recordAckedTime(TimeMark(t * 100))
         assertTrue(sp.anyAckedSentBetween(TimeMark(50), TimeMark(150)), "100 was forgotten but was acknowledged")
     }
 
     /** Pruning a full set of ranges keeps the rest, and a forgotten number at the prune point still counts. */
-    @Test fun negative_pruningAFullSetKeepsWhatLiesAbove() {
+    @Test fun pruningAFullSetKeepsWhatLiesAbove() {
         val sp = PacketNumberSpace(SpaceId.Application)
         for (k in 0L..32L) sp.recordAcked(2 * k, 2 * k) // 33 ranges: 0 is forgotten into the unknown-below mark
         sp.pruneAckedBelow(0)

@@ -36,7 +36,7 @@ class SendStreamModelTest {
         val fin: Boolean,
     )
 
-    @Test fun negative_sendStreamFollowsTheByteModel() =
+    @Test fun sendStreamFollowsTheByteModel() =
         forAllSeeded(400, seed = 31L) { rnd, _ ->
             val s = SendStream(0, StreamPriority.Default)
             val m = Model()
@@ -155,7 +155,7 @@ class SendStreamModelTest {
     }
 
     /** The retransmission queue saved before a mirrored flight is put back as it was, ranges included. */
-    @Test fun negative_restoreRetransmitPutsTheSavedRangesBack() {
+    @Test fun restoreRetransmitPutsTheSavedRangesBack() {
         val s = SendStream(0, StreamPriority.Default)
         s.enqueue(ByteArray(300), 0, 300, false)
         val r = SendRange()
@@ -238,7 +238,7 @@ class SendStreamModelTest {
     }
 
     /** Lost ranges one byte apart stay apart: the byte between them was not lost and is not resent. */
-    @Test fun negative_lostRangesOneByteApartStayApart() {
+    @Test fun lostRangesOneByteApartStayApart() {
         val s = SendStream(0, StreamPriority.Default)
         s.enqueue(ByteArray(100), 0, 100, false)
         s.send(100)

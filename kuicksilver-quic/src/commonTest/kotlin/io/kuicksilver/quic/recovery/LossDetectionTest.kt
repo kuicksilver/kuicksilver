@@ -782,7 +782,7 @@ class LossDetectionTest {
      * number of newly acknowledged packets that were originally sent with an ECT(0) marking": every marked packet reported as CE
      * (ECT(0) unchanged) is valid.
      */
-    @Test fun negative_ceOnlyGrowthIsValidEcn() {
+    @Test fun ceOnlyGrowthIsValidEcn() {
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         for (pn in 0L..1L) send(ld, SpaceId.Application, pn, t0, marked = true)
@@ -791,7 +791,7 @@ class LossDetectionTest {
     }
 
     /** RFC 9002 section 6.1: a packet declared lost and acknowledged later is a spurious loss, also when it is the top of a range. */
-    @Test fun negative_spuriousLossAtTheTopOfAnAckRangeIsFound() {
+    @Test fun spuriousLossAtTheTopOfAnAckRangeIsFound() {
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         ld.peerAddressValidated = true
@@ -817,7 +817,7 @@ class LossDetectionTest {
     }
 
     /** Every ACK frame opens with [LossListener.onAckFrameStart] (the controllers' "before the ACK" state) and an RTT sample is reported. */
-    @Test fun negative_eachAckFrameStartsOnceAndReportsItsRttSample() {
+    @Test fun eachAckFrameStartsOnceAndReportsItsRttSample() {
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         send(ld, SpaceId.Application, 0, t0)
@@ -863,7 +863,7 @@ class LossDetectionTest {
     }
 
     /** RFC 9002 section 5.3: a packet held for its keys is sampled at its arrival, also when it arrived the instant the packet left. */
-    @Test fun negative_sampleIsTakenAtArrivalEvenWhenItEqualsTheSendTime() {
+    @Test fun sampleIsTakenAtArrivalEvenWhenItEqualsTheSendTime() {
         val (ld, _) = ld()
         ld.handshakeConfirmed = true
         send(ld, SpaceId.Application, 0, t0)
@@ -875,7 +875,7 @@ class LossDetectionTest {
      * RFC 9000 section 13.4.2.1 per path (the counts of a frame validate every path with newly acknowledged marked packets, and the
      * path of the largest newly acknowledged packet always hears the verdict): which paths `onEcnAck` reaches, with their marked counts.
      */
-    @Test fun negative_ecnVerdictReachesExactlyThePathsWithMarkedPacketsAndTheLargestsPath() {
+    @Test fun ecnVerdictReachesExactlyThePathsWithMarkedPacketsAndTheLargestsPath() {
         fun paths(
             marked0: Boolean,
             marked1: Boolean,
@@ -960,13 +960,13 @@ class LossDetectionTest {
     }
 
     /** RFC 9002 section 6.2.2.1 (anti-deadlock): the client's PTO with nothing ack-eliciting in flight is armed a PTO after the last send. */
-    @Test fun negative_antiDeadlockPtoIsArmedInTheFuture() {
+    @Test fun antiDeadlockPtoIsArmedInTheFuture() {
         val (ld, _) = ld()
         send(ld, SpaceId.Initial, 0, t0, ackEliciting = false, inFlight = true)
         assertEquals(t0 + ld.rtt.smoothed + ld.rtt.rttVar * 4, ld.timeout())
     }
 
-    /** RFC 9002 appendix A.8 (GetPtoTimeAndSpace): a space without ack-eliciting packets in flight arms no PTO. */
+    /** RFC 9002 appendix A.8, GetPtoTimeAndSpace(): "if (no ack-eliciting packets in flight in space): continue;". */
     @Test fun negative_ptoIgnoresASpaceWithNothingAckElicitingInFlight() {
         val (ld, _) = ld()
         send(ld, SpaceId.Initial, 0, t0)
@@ -986,7 +986,7 @@ class LossDetectionTest {
     }
 
     /** Successive PTOs cycle through the outstanding packets (`takeForProbe`): a packet a probe took is not taken again. */
-    @Test fun negative_successiveProbesTakeDifferentPackets() {
+    @Test fun successiveProbesTakeDifferentPackets() {
         val (ld, _) = ld()
         for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, flags = SentFrames.HANDSHAKE_DONE)
         val first = ArrayList<SentPacket>()
@@ -1014,7 +1014,7 @@ class LossDetectionTest {
      * RFC 9002 section 7.6.2 across spaces, with the times kept as the KDoc of `keepAckedTimes` says: a discarded space's acknowledged
      * send times go with it, while the Application space's stay until both the Initial and the Handshake space are gone.
      */
-    @Test fun negative_ackedSendTimesFollowTheirSpaceOnDiscard() {
+    @Test fun ackedSendTimesFollowTheirSpaceOnDiscard() {
         fun lossByPath(discardFirst: SpaceId?): List<String> {
             val (ld, l) = ld()
             sampleByAck(ld, 0, t0 - 200.milliseconds)

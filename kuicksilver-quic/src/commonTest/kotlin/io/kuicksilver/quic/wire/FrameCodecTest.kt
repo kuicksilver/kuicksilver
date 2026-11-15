@@ -308,7 +308,7 @@ class FrameCodecTest {
     }
 
     /** RFC 9000 section 13.2.1 / 2: every frame but ACK, PADDING and CONNECTION_CLOSE is ack-eliciting, the stream reset frames too. */
-    @Test fun negative_streamResetFramesAreAckEliciting() {
+    @Test fun streamResetFramesAreAckEliciting() {
         assertTrue(decode(bytesOf(TestFrame.ResetStream(4, 1, 10))).second, "RESET_STREAM")
         assertTrue(decode(bytesOf(TestFrame.StopSending(4, 1))).second, "STOP_SENDING")
         assertTrue(decode(bytesOf(TestFrame.ResetStreamAt(4, 1, 10, 3))).second, "RESET_STREAM_AT")
@@ -318,7 +318,7 @@ class FrameCodecTest {
      * The ACK frame's size estimate the packet builder reserves room by (`AckTracker.ackOverhead`) is exactly the size
      * [FrameEncoder.ack] writes, for any ranges, delay and ECN counts: a low estimate would build a packet past its size limit.
      */
-    @Test fun negative_ackOverheadIsTheEncodedSize() =
+    @Test fun ackOverheadIsTheEncodedSize() =
         forAllSeeded(3_000, seed = 0xAC0L) { rnd, _ ->
             val count = if (rnd.nextInt(10) == 0) 64 else rnd.nextInt(1, 6) // 64: the Range Count 63 is the last one-byte varint
             val ranges = LongArray(2 * count)
@@ -383,7 +383,7 @@ class FrameCodecTest {
     }
 
     /** RFC 9000 section 2 / 13.2.1: every frame but ACK, PADDING and CONNECTION_CLOSE is ack-eliciting, whatever its type. */
-    @Test fun negative_everyOtherFrameTypeIsAckEliciting() =
+    @Test fun everyOtherFrameTypeIsAckEliciting() =
         forAllSeeded(2_000, seed = 0xE11C1L) { rnd, _ ->
             val f = Arbs.frame(rnd)
             val eliciting = f !is TestFrame.Ack && f !is TestFrame.Padding && f !is TestFrame.ConnectionClose
@@ -391,10 +391,12 @@ class FrameCodecTest {
         }
 
     /**
-     * RFC 9000 section 19.6: "The largest offset delivered on a stream -- the sum of the offset and data length -- cannot exceed
-     * 2^62-1, as it is not possible to provide flow control credit for that data. Receipt of a frame that exceeds this limit MUST
-     * be treated as a connection error of type FRAME_ENCODING_ERROR or CRYPTO_BUFFER_EXCEEDED." Section 19.8 says the same of
-     * STREAM frames. Exactly 2^62-1 is allowed.
+     * RFC 9000 section 19.6 (CRYPTO): "The largest offset delivered on a stream -- the sum of the offset and data length -- cannot
+     * exceed 2^62-1. Receipt of a frame that exceeds this limit MUST be treated as a connection error of type FRAME_ENCODING_ERROR
+     * or CRYPTO_BUFFER_EXCEEDED." Section 19.8 (STREAM): "The largest offset delivered on a stream -- the sum of the offset and
+     * data length -- cannot exceed 2^62-1, as it is not possible to provide flow control credit for that data. Receipt of a frame
+     * that exceeds this limit MUST be treated as a connection error of type FRAME_ENCODING_ERROR or FLOW_CONTROL_ERROR." Exactly
+     * 2^62-1 is allowed.
      */
     @Test fun negative_cryptoAndStreamEndAtMostTwoPow62Minus1() {
         expectCode(0x07, hex("06 ff ff ff ff ff ff ff ff 01 61"), PacketType.Initial)
@@ -404,7 +406,7 @@ class FrameCodecTest {
     }
 
     /** RFC 9000 section 19.11: Maximum Streams "cannot exceed 2^60"; 2^60 itself is a valid MAX_STREAMS value. */
-    @Test fun negative_maxStreamsOfExactlyTwoPow60IsValid() {
+    @Test fun maxStreamsOfExactlyTwoPow60IsValid() {
         assertEquals(1, decode(hex("12 d0 00 00 00 00 00 00 00")).first.size)
         expectCode(0x07, hex("12 d0 00 00 00 00 00 00 01"))
     }
