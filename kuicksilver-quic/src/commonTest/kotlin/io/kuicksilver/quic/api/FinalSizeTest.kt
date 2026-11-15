@@ -15,6 +15,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
@@ -165,27 +166,35 @@ class FinalSizeTest {
         }
 
     /**
-     * Nothing observed a stream while it ran (its Deferreds and flows are made by the first reader): read only after the
-     * connections ended, it still tells what was fixed before the end, not the loss that came after.
+     * Nothing observed a stream while it ran (its Deferreds and flows are made by the first reader), and the connections
+     * ended while its other half was still open, so the loss reached it: read only after the end, a half whose final size
+     * was fixed before still tells that size, not the loss that came after; the half still open tells the loss.
      */
     @Test fun aFirstReadAfterTheEndStillTellsWhatWasFixedBefore() =
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
-                    val st = c.openUni()
+                    val st = c.openBidi()
                     st.output.writeFully(ByteArray(1234), 0, 1234)
                     st.output.flushAndClose()
                     val ss = s.acceptStream()
                     val read = ss.input.readBuffer()
                     assertEquals(1234, read.readByteArray().size)
+                    // the server's sending half stays open: neither side's stream is finished when the connections end
                     c.close()
                     s.close()
+                    // the loss reaches the wrappers before anything reads them: `closed` completes inside the loop's turn
+                    // that then fails the streams, so a hop onto each loop after it waits for that turn to end
+                    c.closed.await()
+                    s.closed.await()
+                    withContext((st as io.kuicksilver.quic.runtime.StreamRuntime).loop.dispatcher) {}
+                    withContext((ss as io.kuicksilver.quic.runtime.StreamRuntime).loop.dispatcher) {}
                     assertEquals(1234L, assertNotNull(st.sentFinalSize).await())
                     assertEquals(1234L, assertNotNull(ss.receivedFinalSize).await())
                     assertEquals(1234L, assertNotNull(ss.receivedOffset).value)
-                    assertFailsWith<IllegalStateException> { assertNotNull(st.receivedFinalSize).await() }
-                    assertFailsWith<IllegalStateException> { assertNotNull(ss.sentFinalSize).await() }
+                    assertFailsWith<QuicException.ConnectionLost> { assertNotNull(st.receivedFinalSize).await() }
+                    assertFailsWith<QuicException.ConnectionLost> { assertNotNull(ss.sentFinalSize).await() }
                     Unit
                 }
             }

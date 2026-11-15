@@ -83,7 +83,8 @@ internal class StreamRuntime(
 
     /**
      * The observers' objects, made on the first call. The loop writes a field before it reads [watchRef], a reader publishes
-     * [watchRef] before it reads the fields ([sync]): one of the two sees the other, so no value is lost.
+     * [watchRef] before it reads the fields ([sync]): with sequentially consistent volatile accesses one of the two sees the
+     * other. The maker also syncs once more on the loop ([confirmOnLoop]), which needs no more than happens-before.
      */
     @OptIn(ExperimentalAtomicApi::class)
     private fun watch(): Watch {
@@ -99,9 +100,22 @@ internal class StreamRuntime(
                 kotlinx.coroutines.flow.MutableStateFlow(0L),
                 kotlinx.coroutines.flow.MutableStateFlow(0L),
             )
-        val w = if (watchRef.compareAndSet(null, made)) made else watchRef.load()!!
-        sync(w)
-        return w
+        if (!watchRef.compareAndSet(null, made)) return watchRef.load()!!.also(::sync)
+        sync(made)
+        confirmOnLoop { sync(made) }
+        return made
+    }
+
+    /**
+     * Runs [check] on the loop after a reader published an object the loop completes (a [Watch], a waiter) and read the
+     * loop's state itself. That read relies on volatile accesses being sequentially consistent: the JVM guarantees it (JLS
+     * 17.4.4, a total synchronization order), Kotlin/Native compiles them as sequentially consistent atomics without
+     * documenting more than happens-before. This needs only happens-before: a write the loop made before [check] runs,
+     * [check] sees in program order; a write after it follows the publication through the dispatch, so the loop sees the
+     * published object and completes it itself. Nothing runs once the loop's scope ended.
+     */
+    private fun confirmOnLoop(check: () -> Unit) {
+        loop.scope.launch { check() }
     }
 
     /** Brings [w] up to the fields; any thread, any number of times: Deferreds complete once, flows only grow. */
@@ -262,10 +276,12 @@ internal class StreamRuntime(
     internal suspend fun awaitReceivedAllForTest() {
         // one deferred for every waiter: two that race publish the first one made, so the loop's completion reaches both
         val made = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val waiter = if (receivedAllWaiter.compareAndSet(null, made)) made else receivedAllWaiter.load()!!
+        val first = receivedAllWaiter.compareAndSet(null, made)
+        val waiter = if (first) made else receivedAllWaiter.load()!!
         // the loop sets the flag before it reads the waiter, and this reads the flag after the waiter was published: one of
-        // the two sees the other
+        // the two sees the other ([confirmOnLoop])
         if (receivedAll) return
+        if (first) confirmOnLoop { if (receivedAll) made.complete(Unit) }
         waiter.await()
     }
 
@@ -336,10 +352,14 @@ internal class StreamRuntime(
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal suspend fun awaitSendStopped(): Long? {
         // one deferred for every waiter; the loop sets the state before it reads the waiter, and this reads the state after
-        // the waiter was published: one of the two sees the other
+        // the waiter was published: one of the two sees the other ([confirmOnLoop])
         val made = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val waiter = if (stopWaiter.compareAndSet(null, made)) made else stopWaiter.load()!!
-        if (stopState == null) waiter.await()
+        val first = stopWaiter.compareAndSet(null, made)
+        val waiter = if (first) made else stopWaiter.load()!!
+        if (stopState == null) {
+            if (first) confirmOnLoop { if (stopState != null) made.complete(Unit) }
+            waiter.await()
+        }
         return when (val s = stopState) {
             is Long -> s
             is Throwable -> throw s
