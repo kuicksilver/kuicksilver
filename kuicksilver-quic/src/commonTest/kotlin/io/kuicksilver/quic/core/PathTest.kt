@@ -257,6 +257,26 @@ class PathTest {
         }
     }
 
+    /** The same for a connection a Stateless Reset ends (RFC 9000 section 10.3.1: it drains and "MUST NOT send any further packets"). */
+    @Test fun negative_owedPathResponsesGoWithAStatelessReset() {
+        val (p, c) = connected()
+        try {
+            repeat(17) { assertTrue(c.paths.queueResponse(it.toLong(), c.paths.active)) }
+            val token = assertNotNull(c.peerResetTokenForTest(0), "the server's reset token")
+            val reset = ByteArray(40) { 0x41 }
+            token.copyInto(reset, reset.size - token.size)
+            val b = PacketBuffer.of(reset)
+            try {
+                assertTrue(c.checkStatelessReset(b, reset.size, p.now), "a Stateless Reset with the server's token")
+            } finally {
+                b.close()
+            }
+            assertEquals(0, c.paths.responses)
+        } finally {
+            p.close()
+        }
+    }
+
     /**
      * RFC 9000 section 8.2.2: a PATH_RESPONSE "MUST be sent on the network path where the PATH_CHALLENGE was received". A challenge from
      * the client's address that reached another address of a wildcard server was answered from the path's own address (0.3.0
