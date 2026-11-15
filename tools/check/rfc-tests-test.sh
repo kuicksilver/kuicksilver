@@ -4,7 +4,8 @@
 # Negative controls of tools/check/rfc-tests.py on a scratch repository: ✅ sections naming existing tests pass (Class.test,
 # pkg.Class.test, `.test` after its class, Class.*, an inherited test, `...Suffix`, a C test, a bare test name); a test
 # that does not exist, a `.test` that belongs to another class than the one named before it, an unknown *Test class and an
-# unknown negative_ name fail; a ✅ section that names no test fails unless locked, the first --update locks it, a
+# unknown negative_ name fail, as do a misspelt bare name in a list after its class, a misspelt class without the Test
+# suffix and `Class#member` naming no test (a code name in the list and a peer's name after prose are no tests); a ✅ section that names no test fails unless locked, the first --update locks it, a
 # locked section that names a test now is stale, --update never adds a section to the lock, a 🔶 section is not checked,
 # and a ✅ summary row whose details section is not ✅ fails. Usage: rfc-tests-test.sh
 # shellcheck disable=SC2016   # the Markdown written below has backticks, not command substitutions
@@ -59,6 +60,16 @@ doc '- `negative_gone`'
 expect 1 "negative: an unknown negative test" "no test negative_gone"
 doc '- `ATest.alpha`, `...OnTheServer`'
 expect 1 "negative: an elided name that matches nothing" "no test ending in OnTheServer in ATest"
+doc '- `ATest.alpha`, `alhpa`'
+expect 1 "negative: a bare misspelt name in a list after its class" "alhpa (after ATest) is no test of it"
+doc '- `ATest.alpha`, `helper` (a helper of the class), as quic-go does with `lastBlockedAt`'
+expect 0 "a code name in the list, and a peer's name after prose, are not tests" "2 ✅ sections, 0 without a test, 0 finding(s)"
+doc '- `ATets.alpha`'
+expect 1 "negative: a misspelt test class without the Test suffix" "ATets.alpha: no class ATets in the sources; a misspelt ATest?"
+doc '- `ATest#alpha`'
+expect 0 "the Class#member form names a test" "2 ✅ sections, 0 without a test, 0 finding(s)"
+doc '- `ATest#alphaa`'
+expect 1 "negative: the Class#member form with a test that does not exist" "ATest has no test alphaa"
 doc '- the interop runner'
 expect 1 "negative: a ✅ section without a test" "docs/spec/rfc/1.md:3 | untested | the ✅ section #one names no existing test"
 python3 -I "$here/rfc-tests.py" --update "$r" >/dev/null 2>&1

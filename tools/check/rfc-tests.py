@@ -13,8 +13,11 @@ test sources (by name: the Kotlin @Test and @FuzzTest functions and their classe
   `negative_x`, `test_x`           a Kotlin negative test or a C test of that name (C tests: the test_* functions of
                                    kuicksilver-native/src/c/test/, their SECTION("name")s, the "negative_x" names of their checks, and a case
                                    named at the head of its comment or message, `/* name: ...`);
-and a span whose class part ends in Test (or Tests, Suite) must be a test class. A bare name is a test reference when a test
-of that name exists, otherwise it is taken for code and not checked.
+`Class#member` is read as `Class.member`. A span whose class part ends in Test (or Tests, Suite) must be a test class, and
+one whose class is in no source but close to a test class's name is taken for a misspelling of it. A bare name is a test
+reference when a test of that name exists; in a list of tests (spans separated only by commas, `and`, parentheses,
+right after a test or test class), a bare name of four characters or more that is neither a test nor any name of the
+sources is a finding; elsewhere it is taken for code (or a peer's name) and not checked.
   missing   a span names a test or a test class that does not exist;
   untested  a ✅ section names no existing test at all; the sections that had none when this check came are listed in
             tools/check/rfc-tests.lock, which may only shrink (--update drops lines, and adds some only when there is no
@@ -23,6 +26,7 @@ of that name exists, otherwise it is taken for code and not checked.
   status    a ✅ row of the summary whose details section is not ✅ (its tests would go unchecked).
 Usage: rfc-tests.py [--check | --update] [root]   (--check, the default, exits 1 on any finding)
 """
+import difflib
 import os
 import re
 import sys
@@ -38,6 +42,9 @@ RFC_DIR = "docs/spec/rfc/"
 C_TESTS = "kuicksilver-native/src/c/test/"
 SPAN = re.compile(r"(`+)((?:(?!\1).)+?)\1")
 TESTISH = re.compile(r"(?:Test|Tests|Suite)$")
+SOURCE_EXT = (".kt", ".kts", ".c", ".h", ".java", ".swift", ".m", ".py", ".sh", ".toml", ".json", ".properties", ".yml")
+LIST_GAP = re.compile(r"[\s,;()]*(?:(?:and|or)\s+)?")  # between two spans of one list of tests
+LOWER_CAMEL = re.compile(r"[a-z][A-Za-z0-9_]{3,}")  # a function-like name: lower case first, four characters or more
 
 
 class Index:
@@ -46,7 +53,10 @@ class Index:
         self.supers = {}  # class -> set of supertypes
         self.names = set()  # every test name
         self.c_tests = set()
+        self.words = set()  # every identifier of the tracked sources: a name in a span that is one of them is code
         for f in files:
+            if f.endswith(SOURCE_EXT) and "/corpus/" not in f and "/testdata/" not in f:
+                self.words.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", ks.read(root, f)))
             if f.startswith(C_TESTS) and f.endswith(".c"):
                 text = ks.read(root, f)  # the test functions, their SECTION("name")s and the names their checks report
                 self.c_tests.update(re.findall(r"^\s*(?:static\s+)?(?:void|int)\s+(test_\w+)\s*\(", text, re.M))
@@ -57,13 +67,14 @@ class Index:
                 continue
             if not ks.test_set(f):
                 continue
-            code = ks.blank(ks.read(root, f))
+            text = ks.read(root, f)
+            code = ks.blank(text)
             for m in re.finditer(r"\b(?:class|object)\s+(\w+)\s*(?:<[^>{]*>)?\s*(?:\([^{]*?\))?\s*(?::\s*([^{]*))?\{", code):
                 self.tests.setdefault(m.group(1), set())
                 if m.group(2):
                     sup = re.findall(r"(?:^|,)\s*(?:[\w.]+\.)?(\w+)\s*(?:<[^>]*>)?\s*\(", m.group(2))
                     self.supers.setdefault(m.group(1), set()).update(sup)
-            for t in ks.tests_in(code):
+            for t in ks.tests_in(code, text):
                 if not t["fun"]:
                     continue
                 cls = next((fr.name for fr in reversed(t["stack"]) if fr.kind == "class"), None)
@@ -119,6 +130,7 @@ def check_section(idx, body):
     named, problems = 0, []
     last_cls = None
     fence = False
+    listing = False  # the previous span named a test or a test class, and only list punctuation followed it
     for n, line in body:
         if line.lstrip().startswith("```"):
             fence = not fence
@@ -127,18 +139,27 @@ def check_section(idx, body):
             continue
         if not line.strip() or re.match(r"\s*(?:[-*]|\d+\.)\s", line):
             last_cls = None
+            listing = False
+        prev_end = 0
         for m in SPAN.finditer(line):
+            gap = line[prev_end:m.start()]
+            prev_end = m.end()
+            in_list = listing and LIST_GAP.fullmatch(gap) is not None
+            listing = False
             for tok in re.split(r"[\s,/;]+", m.group(2).strip()):
                 tok = tok.strip().rstrip(":").removesuffix("()").lstrip("@")
                 if not tok:
                     continue
-                ok, cls, problem = resolve(idx, tok, last_cls)
+                ok, cls, problem = resolve(idx, tok, last_cls if in_list or "." in tok or tok.startswith("…") else None)
                 if cls:
                     last_cls = cls
                 if problem:
                     problems.append((n, problem))
-                elif ok:
-                    named += 1
+                elif ok or cls:
+                    listing = True
+                    named += 1 if ok else 0
+        if not re.search(r"`[,;]?\s*$", line):
+            listing = False  # a list of tests runs on to the next line only when this one ends with a span
     return named, problems
 
 
@@ -159,6 +180,7 @@ def resolve(idx, tok, last_cls):
                 return False, None, f"no test {member}"
             return False, None, None
         return member_ok(idx, last_cls, member)
+    tok = tok.replace("#", ".")  # Class#member, the JUnit and Javadoc form
     if not re.fullmatch(r"[\w.]+\*?|[\w.]+\.\*", tok) or re.search(r"\.(?:kt|kts|c|h|sh|py|md|swift)$", tok):
         return False, None, None  # not a name, or a file (tools/check/doc-refs.sh checks those)
     parts = tok.split(".")
@@ -179,6 +201,8 @@ def resolve(idx, tok, last_cls):
             return (True, None, None) if name in idx.c_tests else (False, None, f"no C test {name}")
         if name[:1].isupper() and TESTISH.search(name) and name not in idx.tests:
             return False, None, f"no test class {name}"
+        if last_cls and LOWER_CAMEL.fullmatch(name) and name not in idx.words:
+            return False, None, f"{name} (after {last_cls}) is no test of it, no test at all and no name in the sources"
         return False, None, None
     cls, member = parts[-2], parts[-1]
     if len(parts) > 2 and not cls[:1].isupper():
@@ -188,6 +212,9 @@ def resolve(idx, tok, last_cls):
     if not idx.is_test_class(cls):
         if TESTISH.search(cls):
             return False, None, f"no test class {cls}" + (" (a class without tests)" if cls in idx.tests else "")
+        near = difflib.get_close_matches(cls, [c for c in idx.tests if idx.tests_of(c)], n=1, cutoff=0.8)
+        if cls not in idx.words and near:
+            return False, None, f"{cls}.{member}: no class {cls} in the sources; a misspelt {near[0]}?"
         return False, None, None
     return member_ok(idx, cls, member)
 
