@@ -1059,6 +1059,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- A step done as its deadline fired was reported as not done: `withTimeoutOrNull` drops a block's result when the timeout,
+  which fires on another thread, lands after the block returned and before the timeout's scope completed. Each site whose
+  block has an effect now keeps the result once the block returned: a WebTransport close capsule and FIN were followed by
+  a RESET_STREAM that could discard the capsule, and a WT_DRAIN_SESSION that went out failed `drain()`; a WebTransport
+  CONNECT answered then was reported as timed out and its session left open; an address-validation token taken from the
+  `QuicTokenStore` was lost (the next connection needed a Retry); a request body read to its end for an HTTP/1.0 server
+  failed the request; an HTTP/3 WebSocket whose CONNECT was answered threw `ConnectTimeoutException` and left the stream
+  open; the HTTP/1.1 server answered a request head parsed at its deadline with 408, and dropped a response its writer
+  took off the queue at the idle timeout.
+- QUIC: native memory was not freed on some error paths: the 1-RTT write key that arrived with a peer's missing
+  transport parameters (RFC 9001 section 8.2), the TLS session of a connection whose construction failed (client and
+  server), the first derived key of a key phase whose second derivation failed, and the TLS session of a server whose
+  OCSP staple could not be set.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
