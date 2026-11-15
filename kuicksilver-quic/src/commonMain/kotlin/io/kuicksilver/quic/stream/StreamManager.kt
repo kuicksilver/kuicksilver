@@ -296,6 +296,14 @@ internal class StreamManager(
 
     internal val connWindowForTest: Long get() = connFlow.window
 
+    /** Sets the floor of the connection's receive window ([RecvFlowController.setFloor]); a MAX_DATA goes out when it grew. */
+    fun setConnectionWindowFloor(bytes: Long) {
+        if (connFlow.setFloor(bytes)) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
+    }
+
+    /** The connection-level limit we advertised (our last MAX_DATA). */
+    val connectionLimit: Long get() = connFlow.limit
+
     fun takeControlFrame(): ControlFrame? = control.removeFirstOrNull()
 
     fun pushBackControlFrame(c: ControlFrame) {

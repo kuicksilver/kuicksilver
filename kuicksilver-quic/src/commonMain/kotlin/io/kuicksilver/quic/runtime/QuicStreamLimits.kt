@@ -26,4 +26,22 @@ public object QuicStreamLimits {
     @OptIn(ExperimentalKuicksilverApi::class)
     public fun localBidiStreamsAllowed(connection: QuicConnection): Long? =
         (connection as? ConnectionRuntime)?.core?.streams?.localMaxStreamsAllowed(bidi = true)
+
+    /**
+     * Keeps the connection's receive window (its MAX_DATA credit) at least [bytes], up to `QuicConfig.maxConnectionWindow`,
+     * apart from its auto-tuning; a lower value lets it shrink back for the limits advertised from then on. The HTTP/3 layer
+     * sets it to what its WebTransport sessions may have in flight together, so a session nobody reads cannot hold the
+     * connection's credit while the others wait. Does nothing on a connection of another kind or one that ended.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    public suspend fun setReceiveWindowFloor(
+        connection: QuicConnection,
+        bytes: Long,
+    ) {
+        (connection as? ConnectionRuntime)?.setReceiveWindowFloor(bytes)
+    }
+
+    /** The connection-level limit we last advertised (MAX_DATA), or null for a connection of another kind (a test hook). */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    public suspend fun receiveLimit(connection: QuicConnection): Long? = (connection as? ConnectionRuntime)?.receiveLimit()
 }

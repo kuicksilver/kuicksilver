@@ -781,6 +781,18 @@ internal class ConnectionRuntime(
         t.close()
     }
 
+    /** [QuicStreamLimits.setReceiveWindowFloor] on the loop. */
+    internal suspend fun setReceiveWindowFloor(bytes: Long) {
+        withContext(loop.dispatcher) {
+            if (finished) return@withContext
+            core.streams.setConnectionWindowFloor(bytes)
+            loop.flush(core)
+        }
+    }
+
+    /** The connection-level limit we last advertised, read on the loop. */
+    internal suspend fun receiveLimit(): Long = withContext(loop.dispatcher) { core.streams.connectionLimit }
+
     /** Test hook: runs on the loop right after [open] made its stream, before it is handed to the caller. */
     internal var openedForTest: ((QuicStream) -> Unit)? = null
 

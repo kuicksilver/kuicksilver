@@ -79,6 +79,24 @@ class FlowControlTest {
         assertEquals(15_728_640L, c.window)
     }
 
+    /**
+     * A floor set from outside (the HTTP/3 layer's WebTransport sessions) raises the limit at once and keeps the window in
+     * effect at least that large; lowered, it applies to the limits advertised later, an advertised one never shrinks.
+     */
+    @Test fun floorRaisesTheWindowAndLetsItShrinkBack() {
+        val c = RecvFlowController(786_432, 15_728_640)
+        assertTrue(c.setFloor(4_000_000))
+        assertEquals(4_000_000L, c.limit)
+        assertTrue(!c.setFloor(3_000_000), "an advertised limit never shrinks")
+        assertEquals(4_000_000L, c.limit)
+        c.setFloor(100_000_000)
+        assertEquals(15_728_640L, c.limit, "capped at the ceiling")
+        c.setFloor(0)
+        // consumed past a quarter of the auto-tuned window: the next limit follows it, not the old floor
+        val l = c.onConsumed(15_200_000, TimeMark(1_000_000_000L), kotlin.time.Duration.ZERO)
+        assertEquals(15_200_000L + 786_432L, l)
+    }
+
     @Test fun dataBeyondLimitIsFlowControlError() {
         val f = stream()
         f.onData(524_288)

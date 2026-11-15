@@ -24,6 +24,12 @@ internal class RecvFlowController(
     var limit: Long = initialWindow
         private set
     private var consumed: Long = 0
+
+    /** A lower bound of the window set from outside the auto-tuning ([setFloor]); 0 by default. */
+    private var floor: Long = 0
+
+    /** The window in effect: the auto-tuned one, or the floor when that is larger. */
+    private val effective: Long get() = maxOf(window, floor)
     private var epochStart: TimeMark = TimeMark.NEVER
     private var epochStartOffset: Long = 0
 
@@ -47,7 +53,8 @@ internal class RecvFlowController(
             epochStartOffset = consumed
         }
         consumed += bytes
-        if (limit - consumed > window - window / 4) return -1
+        val w = effective
+        if (limit - consumed > w - w / 4) return -1
         val inEpoch = consumed - epochStartOffset
         if (inEpoch > window / 2) {
             // elapsed < 4 x (inEpoch / window) x sRTT, multiplied out in doubles (no division, no Long overflow)
@@ -58,8 +65,23 @@ internal class RecvFlowController(
             epochStart = now
             epochStartOffset = consumed
         }
-        limit = consumed + window
+        limit = consumed + effective
         return limit
+    }
+
+    /**
+     * Sets the floor of the window to [w] (capped at the ceiling): the window in effect is never below it, while the
+     * auto-tuning goes on beneath. A lower floor applies to the limits advertised from then on (an advertised limit never
+     * shrinks). True when the limit grew (a MAX_DATA is due).
+     */
+    fun setFloor(w: Long): Boolean {
+        floor = minOf(maxOf(w, 0L), maxWindow)
+        val l = consumed + effective
+        if (l > limit) {
+            limit = l
+            return true
+        }
+        return false
     }
 
     /** Keeps this (connection) window at least [w], capped at the ceiling: the connection window follows the stream windows. True when the limit grew (a MAX_DATA is due). */
