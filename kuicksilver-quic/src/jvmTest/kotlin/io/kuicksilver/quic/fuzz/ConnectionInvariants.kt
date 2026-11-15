@@ -90,7 +90,12 @@ internal class ConnectionInvariants(
 
     /** Per side: every reset token of the peer it ever held, by the hex of its connection ID. */
     private val seenTokens = Array(2) { LinkedHashMap<String, ByteArray>() }
+
+    /** A valid reset reached the side in the current round ([beginRound] clears it): only then may the side close for one. */
     private val validResetSeen = BooleanArray(2)
+
+    /** A reset with a token the side used, but from an address it never sent that ID to, reached it in the current datagram. */
+    private var pendingStranger = -1
     private var pendingValidReset = -1
     private var stateBefore: ConnectionState? = null
 
@@ -329,6 +334,7 @@ internal class ConnectionInvariants(
         val c = net.core(side)
         pendingValidReset = -1
         stateBefore = c?.state
+        pendingStranger = if (c != null && strangerReset(side, c, f)) side else -1
         if (c != null && validReset(side, c, f)) {
             validResetSeen[side] = true
             pendingValidReset = side
@@ -341,6 +347,15 @@ internal class ConnectionInvariants(
         side: Int,
         f: Flight,
     ) {
+        if (pendingStranger == side) {
+            pendingStranger = -1
+            val c = net.core(side)
+            if (c != null && c.state != ConnectionState.Draining &&
+                c.state != ConnectionState.Closed
+            ) {
+                QuicReach.hit("reset.strangerIgnored")
+            }
+        }
         if (pendingValidReset != side) return
         pendingValidReset = -1
         val c = net.core(side) ?: return
@@ -402,8 +417,37 @@ internal class ConnectionInvariants(
         val tail = f.bytes.copyOfRange(f.bytes.size - 16, f.bytes.size)
         for ((cid, token) in c.cids.peerTokensForTest()) {
             if (token == null || !token.contentEquals(tail)) continue
-            val key = hex(cid.toByteArray())
-            if (used[side].any { it.first == key && it.second == f.from }) return true
+            if (f.from in towards(side, hex(cid.toByteArray()))) return true
+        }
+        return false
+    }
+
+    /**
+     * The remote addresses [side] sent the peer's ID [key] to, the latest four distinct ones in the order first used: what the engine
+     * remembers for its token (RFC 9000 section 10.3.1, "recently sent"; ConnectionIdManager's SENT_TOWARDS).
+     */
+    private fun towards(
+        side: Int,
+        key: String,
+    ): List<InetSocketAddress> =
+        used[side]
+            .filter { it.first == key }
+            .map { it.second }
+            .distinct()
+            .takeLast(4)
+
+    /** The datagram ends with the token of an ID [side] used, but towards other addresses than its source. */
+    private fun strangerReset(
+        side: Int,
+        c: ConnectionCore,
+        f: Flight,
+    ): Boolean {
+        if (f.bytes.size < 21) return false
+        val tail = f.bytes.copyOfRange(f.bytes.size - 16, f.bytes.size)
+        for ((cid, token) in c.cids.peerTokensForTest()) {
+            if (token == null || !token.contentEquals(tail)) continue
+            val t = towards(side, hex(cid.toByteArray()))
+            if (t.isNotEmpty() && f.from !in t) return true
         }
         return false
     }
@@ -497,7 +541,11 @@ internal class ConnectionInvariants(
 
             is ConnectionEvent.Closed -> {
                 if (e.reason is QuicException.ConnectionLost.StatelessReset) {
-                    if (!validResetSeen[side]) fail("${name(side)} was reset without a valid Stateless Reset (RFC 9000 section 10.3.1)")
+                    if (!validResetSeen[side]) {
+                        fail(
+                            "${name(side)} was reset without a valid Stateless Reset in that round (RFC 9000 section 10.3.1)",
+                        )
+                    }
                     QuicReach.hit("reset.recognised")
                 }
                 val r = e.reason
@@ -516,6 +564,11 @@ internal class ConnectionInvariants(
 
             else -> {}
         }
+    }
+
+    /** Before every round. */
+    fun beginRound() {
+        validResetSeen.fill(false)
     }
 
     /** After every round. */

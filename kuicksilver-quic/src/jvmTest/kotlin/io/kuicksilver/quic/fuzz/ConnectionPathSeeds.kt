@@ -277,6 +277,24 @@ internal object ConnectionPathSeeds {
                 .path(1, E_RESET, one(1), num(50))
                 .run(10)
                 .build()
+        // the client migrates, so the server sends with one of the client's IDs that has a reset token; then that token arrives from a
+        // stranger, with the server's own ID as destination (routed to the connection, not by the peer's address): not a reset
+        m["reset-stranger-after-migration"] =
+            b(0)
+                .bulk()
+                .run(10)
+                .path(0, E_MIGRATE, one(0))
+                .run(15)
+                .path(0, E_MIGRATE, one(1))
+                .bulk()
+                .run(15)
+                .path(1, E_RESET, one(7), num(80))
+                .run(5)
+                .path(1, E_RESET, one(4), num(80))
+                .run(5)
+                .bulk(1)
+                .run(10)
+                .build()
         // the server forgets the connection: the client's next packets draw real Stateless Resets, which end it
         m["server-crash"] =
             b(0)
@@ -315,7 +333,14 @@ internal object ConnectionPathSeeds {
                 .build()
         // the preferred-address socket does neither DF nor ECN, the main one does both: the server's path there must do neither
         m["preferred-socket-without-df-ecn"] =
-            b(DF or ECN or LIVE, PREFERRED).path(1, E_CAPS, one(3)).path(1, E_CAPS, one(2)).bulk().run(30).bulk(1).run(30).build()
+            b(DF or ECN or LIVE, PREFERRED)
+                .path(1, E_CAPS, one(3))
+                .path(1, E_CAPS, one(2))
+                .bulk()
+                .run(30)
+                .bulk(1)
+                .run(30)
+                .build()
         m["preferred-with-rebinding"] =
             b(DF or ECN, PREFERRED)
                 .bulk()

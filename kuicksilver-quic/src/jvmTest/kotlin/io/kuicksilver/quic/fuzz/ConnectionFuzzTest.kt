@@ -1025,6 +1025,7 @@ internal class ConnectionFuzz(
                 c.testInjectFrames.removeFirst()
             }
         }
+        checks.beginRound()
         net.step()
         for (e in net.serverEvents) if (e is ConnectionEvent.StreamOpened) sides[1].streams += e.id
         for (e in net.clientEvents) if (e is ConnectionEvent.StreamOpened) sides[0].streams += e.id

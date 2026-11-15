@@ -44,6 +44,7 @@ internal object QuicReach {
             "reset.sent",
             "reset.recognised",
             "reset.invalidIgnored",
+            "reset.strangerIgnored",
             "preferred.offered",
             "preferred.probe",
             "preferred.moved",
