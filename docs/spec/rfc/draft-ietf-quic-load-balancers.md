@@ -121,7 +121,7 @@ output, round trips of lengths 4..19, `nonceCounterNeverRepeats`, `noncesArePerm
 `.quicLbPlaintextHandsOutOneCid`, `.quicLbUnroutableUpdateStopsIssuing`, `.negative_lengthMismatchWithEndpointRejected`,
 `.negative_updateLoadBalancerRefused`, `.negative_quicLbGroupCoresWithoutSharedState`,
 `.quicLbOldKeyClosedByTheCallerKeepsTheEndpointAlive`, `.quicLbAtMostOnePlaintextIdPerChange`,
-`.quicLbRetriedConnectionIssuesByItsOwnId`, `.quicLbSkewedIssuanceWastesNoNonce`,
+`.quicLbRetriedConnectionKeepsTheRetryScid`, `.quicLbSkewedIssuanceWastesNoNonce`,
 `StatelessResetTest.negative_quicLbDecryptionsAreRateLimited`, `.negative_quicLbResetsOverTheLimitAreCountedRateLimited`,
 `StatelessResetTest.quicLbResetForOwnUnknownCid`, `.negative_quicLbNoResetForOtherServerId`,
 `.negative_quicLbNoResetForUnknownConfigId`, `.negative_quicLbNoResetForUnroutableCid`,

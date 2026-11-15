@@ -72,10 +72,24 @@ jobs:
         run: |
           bash tools/check/doc-refs.sh
           python3 -I tools/check/code-refs.py   # the source lines docs/spec cites, against tools/check/code-refs.lock
-      - name: 'lint: doc-refs negative controls'
+      - name: 'lint: tests that can run and fail, sleeps, name-service calls, tests behind RFC rows'
+        # docs/process.md, "Repository checks"; the commit types are checked by local-matrix.sh over main..HEAD (this
+        # shallow checkout has no history to read them from)
         run: |
-          bash tools/check/doc-refs-test.sh
-          bash tools/check/code-refs-test.sh
+          rc=0
+          python3 -I tools/check/test-discovery.py || rc=1
+          python3 -I tools/check/test-count.py || rc=1    # the floor in tools/check/test-count.lock
+          python3 -I tools/check/test-sleeps.py || rc=1   # the ratchet in tools/check/test-sleeps.lock
+          python3 -I tools/check/env-apis.py || rc=1      # allowlist tools/check/env-apis.allow
+          python3 -I tools/check/rfc-tests.py || rc=1     # the ratchet in tools/check/rfc-tests.lock
+          exit $rc
+      - name: 'lint: doc-refs and test-check negative controls'
+        run: |
+          rc=0
+          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests commit-msg; do
+            bash "tools/check/$t-test.sh" || rc=1
+          done
+          exit $rc
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'
@@ -487,6 +501,10 @@ jobs:
         run: . tools/ci/matrix.sh && $G "${KSL_SIM_ARGS[@]}"
       - name: 'bench: allocation gate'
         run: $G :kuicksilver-bench:jvmTest
+      - name: 'jvm: every compiled test method can run'
+        # the class files of the steps above (and soak's): a test method returning a value, static or private, or in an
+        # abstract class nothing extends, is one no runner calls (tools/check/test-bytecode.py)
+        run: $G :kuicksilver-soak:compileTestKotlinJvm && python3 -I tools/check/test-bytecode.py --targets jvm
       - name: 'jvm: exports whitelist (dylib)'
         run: |
           # shellcheck disable=SC2012   # library names are fixed ASCII
@@ -591,6 +609,14 @@ jobs:
         with: { ndk: 'true', openssl-cache: android }
       - name: 'android: AAR'
         run: $G :kuicksilver-native:bundleAndroidMainAar
+      - name: 'android: every compiled host test method can run'
+        # the Android host tests run under JUnit on the host JVM; tools/check/test-bytecode.py reads their class files
+        # (the same classes for every API level: once)
+        if: ${{ matrix.api == 35 }}
+        run: |
+          # shellcheck disable=SC2046   # one Gradle task path per module
+          $G $(git ls-files 'kuicksilver-*/src/androidHostTest/*' | cut -d/ -f1 | sort -u | sed 's/.*/:&:compileAndroidHostTest/')
+          python3 -I tools/check/test-bytecode.py --targets android-host
       - name: 'android: size gate'
         run: bash tools/check/size.sh "$AAR" "$SIZE_LIMIT"
       - name: 'android: 16 KiB pages'

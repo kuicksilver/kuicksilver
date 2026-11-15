@@ -1,0 +1,14 @@
+# Uses of name-service APIs in library code that do no lookup, for tools/check/env-apis.py:
+# <path> | <api> | <count> | <reason>. The count is the number of uses in the file: one more fails until it is checked
+# and the count raised.
+# On the JVM and Android, Ktor's InetSocketAddress.hostname is java.net.InetSocketAddress.getHostName(): the stored name
+# for an unresolved address (no lookup), a reverse lookup only for a resolved one. On Kotlin/Native it is the text the
+# address was built from, never a lookup.
+kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/WebSocketConnecting.kt | hostname | 1 | peerIp reads it only when resolveAddress() gave no bytes: on the JVM an unresolved address, whose hostname is its stored text; on Native the stored literal
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/AddressLiterals.kt | hostname | 2 | ipLiteral and withLiteralHost read it only when ipBytesNoDns() is null, that is for an unresolved java.net address (stored text) or a Native name (stored text)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/AddressClass.kt | hostname | 1 | ipBytes reads it only when ipBytesNoDns() is null: an unresolved address on the JVM (stored text) or a name on Native (stored text)
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/KslDatagramIo.kt | hostname | 1 | the "not an IP address" message reads it only when ipBytesNoDns() is null: an unresolved address on the JVM (stored text) or a name on Native (stored text)
+kuicksilver-quic/src/nativeMain/kotlin/io/kuicksilver/quic/AddressLiterals.native.kt | hostname | 4 | Kotlin/Native only: the stored text, parsed as an IP literal here precisely so that resolveAddress() (getaddrinfo) is never called
+kuicksilver-quic/src/nativeMain/kotlin/io/kuicksilver/quic/KtorDatagramIo.kt | hostname | 3 | Kotlin/Native only: compares the stored texts of two datagram source addresses, and names the stored IPv6 text in the unsupported-address message; no lookup
+kuicksilver-ktor-network/src/nativeMain/kotlin/io/kuicksilver/ktor/network/TcpSockets.native.kt | hostname | 1 | Kotlin/Native only: the stored text of the connect target, handed to resolveTcp (a forward getaddrinfo of the name the caller gave), no reverse lookup
+kuicksilver-ktor-server/src/nativeMain/kotlin/io/kuicksilver/ktor/server/PeerAddress.native.kt | hostname | 1 | Kotlin/Native only: an accepted socket's peer is numeric text (inet_ntop), parsed here so the accept loop never calls getaddrinfo

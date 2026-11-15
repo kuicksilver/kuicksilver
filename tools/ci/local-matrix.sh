@@ -176,8 +176,20 @@ aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
-step "lint: documentation references"          bash -c 'bash tools/check/doc-refs.sh && python3 -I tools/check/code-refs.py'
-step "lint: doc-refs negative controls"         bash -c 'bash tools/check/doc-refs-test.sh && bash tools/check/code-refs-test.sh'
+# step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
+# never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, and
+# the conventional type of every commit of the branch (docs/process.md, "Repository checks")
+step "lint: doc refs, test gates, commit types" bash -c 'rc=0
+  bash tools/check/doc-refs.sh || rc=1; python3 -I tools/check/code-refs.py || rc=1
+  python3 -I tools/check/test-discovery.py || rc=1; python3 -I tools/check/test-count.py || rc=1
+  python3 -I tools/check/test-sleeps.py || rc=1; python3 -I tools/check/env-apis.py || rc=1
+  python3 -I tools/check/rfc-tests.py || rc=1; bash tools/check/commit-msg.sh --range main..HEAD || rc=1
+  exit $rc'
+step "lint: doc refs and test gates, negatives" bash -c 'rc=0
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests commit-msg; do
+    bash "tools/check/$t-test.sh" || rc=1
+  done
+  exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
@@ -206,7 +218,11 @@ step --pre macos "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/key
 step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
 # shellcheck disable=SC2086
-step "jvm: all module tests"                   $G $KSL_JVM_TESTS
+# the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
+# value-returning, static or private test, one in an object, an abstract class nothing extends): the JVM ones and the
+# Android host tests (JUnit on the host JVM). The three modules outside KSL_JVM_TESTS and every module with Android host
+# tests are compiled here too, so no class file of an earlier build is read
+step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm "'$(git ls-files "kuicksilver-*/src/androidHostTest/*" | cut -d/ -f1 | sort -u | sed "s/.*/:&:compileAndroidHostTest/") && python3 -I tools/check/test-bytecode.py'
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-engine-interop:jvmTest   # docs/spec/interop.md "Engine interop"; about a minute
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
