@@ -253,8 +253,6 @@ internal fun ConnectionCore.settleZeroRtt() {
     val tp = peerTp ?: return
     val accepted = handshake.session.earlyDataAccepted == true
     earlyAccepted = accepted
-    // the final sizes of streams sent in 0-RTT stand now, or go with the streams below
-    streams.settleHeldFinalSizes(accepted)
     if (accepted) {
         val lower =
             tp.activeConnectionIdLimit < old.activeConnectionIdLimit ||
@@ -269,14 +267,20 @@ internal fun ConnectionCore.settleZeroRtt() {
                 // a remembered reset_stream_at the server dropped is a lower capability too (quic-go treats it so)
                 (old.resetStreamAt && !tp.resetStreamAt)
         if (lower) {
+            // the connection fails: the streams of the 0-RTT data fail with it, their sizes never reported
+            streams.settleHeldFinalSizes(false)
             fail(TransportError.PROTOCOL_VIOLATION, 0, "server accepted 0-RTT with transport parameters below the remembered ones", null)
             return
         }
+        // the final sizes of streams sent in 0-RTT stand now
+        streams.settleHeldFinalSizes(true)
         // section 7.4.1: the new limits apply from 1-RTT on, also to the streams opened in 0-RTT
         applyPeerLimits(tp)
         streams.raiseLocalSendLimits(tp.initialMaxStreamDataBidiRemote, tp.initialMaxStreamDataUni)
         return
     }
+    // rejected: the streams sent in 0-RTT go (below, or with the connection), their sizes never stood
+    streams.settleHeldFinalSizes(false)
     val goOn = earlyMode != EarlyDataState.Required && (rememberedAlpn ?: "") == (negotiatedAlpn ?: "")
     // connection-level frames (MAX_DATA, MAX_STREAMS) go again with their current values; stream data never
     discardZeroRttPackets { p -> if (goOn) streams.onConnectionFramesLost(p.frames) }

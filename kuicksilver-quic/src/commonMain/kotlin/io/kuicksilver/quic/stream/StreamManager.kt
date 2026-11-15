@@ -161,17 +161,24 @@ internal class StreamManager(
 
     /**
      * Client: 0-RTT was attempted and the server's answer is not known yet. The final size of a sending half of ours is
-     * held until then ([settleHeldFinalSizes]): a rejection drops the stream, whose size then never stood.
+     * held until then ([settleHeldFinalSizes]), with the stream's StreamFinished after it, in order: a rejection drops the
+     * stream, whose size then never stood, and the runtime, which still holds the stream, fails it (EarlyDataRejected, or
+     * the connection's loss when it ends first).
      */
     var zeroRttPending = false
-    private val heldFinalSizes = ArrayList<ConnectionEvent.StreamFinalSize>()
+    private val heldEvents = ArrayList<ConnectionEvent>()
+    private val heldIds = HashSet<Long>()
 
-    /** The server answered our 0-RTT: the held final sizes are reported when it was [accepted], dropped otherwise. */
+    /** The server answered our 0-RTT: the held events are raised in order when it was [accepted], dropped otherwise. */
     fun settleHeldFinalSizes(accepted: Boolean) {
         zeroRttPending = false
-        if (accepted) events += heldFinalSizes
-        heldFinalSizes.clear()
+        if (accepted) events += heldEvents
+        heldEvents.clear()
+        heldIds.clear()
     }
+
+    /** A StreamFinished raised before the final size of a half the stream has (the fuzzer's invariant; must stay 0). */
+    private var finishedBeforeFinalSize = 0
 
     fun markReceivedEarly(id: Long) {
         if (streams.containsKey(id)) early += id
@@ -308,6 +315,7 @@ internal class StreamManager(
      * opened no more streams than we granted.
      */
     internal fun invariantViolationForTest(): String? {
+        if (finishedBeforeFinalSize > 0) return "$finishedBeforeFinalSize streams finished before the final size of a half was reported"
         if (connReceived > connFlow.limit) return "connection received $connReceived beyond the advertised ${connFlow.limit}"
         var streamsReceived = 0L
         for (e in streams.values) streamsReceived += e.recv?.highest ?: 0L
@@ -369,7 +377,8 @@ internal class StreamManager(
     internal fun sendStateForTest(id: Long): String? = streams[id]?.send?.state?.name
 
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
-    internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
+    internal fun sizesForTest(): IntArray =
+        intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size, heldEvents.size + heldIds.size)
 
     /** Range comparisons made by the send half of stream [id] (complexity tests). */
     internal fun sendRangeStepsForTest(id: Long): Long = streams[id]?.send?.rangeStepsForTest ?: -1
@@ -796,7 +805,12 @@ internal class StreamManager(
         if (s.reportedFinalSize >= 0) return
         s.reportedFinalSize = size
         val e = ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
-        if (zeroRttPending && StreamIds.isLocal(s.id, role)) heldFinalSizes += e else events += e
+        if (zeroRttPending && StreamIds.isLocal(s.id, role)) {
+            heldEvents += e
+            heldIds += s.id
+        } else {
+            events += e
+        }
     }
 
     /** Reports the final size of the receiving half [r] of stream [id] when a frame just fixed it ([before] was unknown). */
@@ -819,8 +833,9 @@ internal class StreamManager(
             streams.remove(id)
             sendLimit.remove(id)
             e.send?.let { scheduler.remove(it) }
-            events +=
-                ConnectionEvent.StreamFinished(id)
+            if ((e.send?.reportedFinalSize ?: 0L) < 0 || (e.recv?.finalSize ?: 0L) < 0) finishedBeforeFinalSize++
+            // after its held final size: the runtime must still hold the stream when that size stands or falls
+            if (id in heldIds) heldEvents += ConnectionEvent.StreamFinished(id) else events += ConnectionEvent.StreamFinished(id)
         }
     }
 

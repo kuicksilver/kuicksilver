@@ -21,6 +21,7 @@ internal fun ConnectionCore.sizesForTest(): Map<String, Long> {
     m["streamEvents"] = st[2].toLong()
     m["streamSendLimits"] = st[3].toLong()
     m["streamsEarly"] = st[4].toLong()
+    m["streamsHeldFor0Rtt"] = st[5].toLong()
     m["reassemblyRanges"] = streams.reassemblyRanges.toLong()
     m["sendBufferedBytes"] = streams.sendBufferedBytes
     val ci = cids.sizesForTest()

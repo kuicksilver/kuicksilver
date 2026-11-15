@@ -979,6 +979,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: `QuicStream.reset` after all of a stream's data and its FIN were acknowledged no longer sends a RESET_STREAM.
+  RFC 9000 section 3.1 lets a sender abandon a stream only from the "Ready", "Send" or "Data Sent" states; in "Data
+  Recvd" there is nothing left to abandon, as `resetAt` already treated it.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
