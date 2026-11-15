@@ -667,6 +667,37 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * Found by the connection fuzzer (`connectionTls`, a client that moved to the server's preferred address): RFC 9000 section
+     * 10.3.1, "the comparison MUST be performed when the first packet in an incoming datagram either cannot be associated with a
+     * connection or cannot be decrypted". The endpoint dropped any datagram of an unknown ID on the preferred-address socket before
+     * comparing it with the tokens of the connections there, so a client's reset never reached a connection that had moved.
+     */
+    @Test fun negative_aResetToThePreferredAddressIsRecognised() {
+        val pref = InetSocketAddress("10.0.0.3", 4433)
+        val p = EndpointPair(serverPreferred = io.kuicksilver.quic.PreferredAddress(pref, null))
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(20) { p.step() }
+            val s = p.server.connections().single()
+            assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.paths.active.socket, "the connection moved to the preferred address")
+            val token = ByteArray(16) { 0x5a }
+            c.testInjectFrames += 3 to (byteArrayOf(0x18, 9, 9, 8) + ByteArray(8) { 0x77 } + token)
+            repeat(6) { p.step() }
+            val reset = shortTo(ByteArray(8) { 0x33 }, 60).also { token.copyInto(it, it.size - 16) }
+            val b = PacketBuffer.of(reset)
+            try {
+                p.server.handleDatagram(b, reset.size, p.clientAddr, Ecn.NotEct, p.now, io.kuicksilver.quic.PREFERRED_SOCKET)
+            } finally {
+                b.close()
+            }
+            assertEquals(ConnectionState.Draining, s.state)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_wrongStatelessResetToken() {
         val p = Pair()
         try {

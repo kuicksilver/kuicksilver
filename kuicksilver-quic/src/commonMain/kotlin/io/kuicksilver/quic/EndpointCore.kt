@@ -735,8 +735,11 @@ public class EndpointCore internal constructor(
             deliver(it, data, length, from, ecn, now, socket)
             return it
         }
-        // the preferred socket serves connections only: no new connection, no stateless answer (RFC 9000 section 9.6)
+        // the preferred socket serves connections only: no new connection, no stateless answer (RFC 9000 section 9.6); but a Stateless
+        // Reset for a connection there is compared first, as anywhere ("the comparison MUST be performed when the first packet in an
+        // incoming datagram either cannot be associated with a connection or cannot be decrypted", section 10.3.1)
         if (socket == PREFERRED_SOCKET) {
+            statelessResetFor(data, length, from, now)?.let { return it }
             droppedStateless++
             return null
         }
