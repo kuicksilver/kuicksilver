@@ -26,6 +26,7 @@ import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.WireReader
 import io.kuicksilver.tls.TlsRole
 import java.util.IdentityHashMap
+import java.util.WeakHashMap
 
 /**
  * The path, ECN, address, version and Stateless Reset invariants of the connection fuzzer, checked on every datagram an
@@ -148,6 +149,7 @@ internal class ConnectionInvariants(
         socket: PathId,
     ) {
         val size = f.bytes.size
+        if (side == 0) clientDatagrams[f.bytes] = Unit
         if (c.state == ConnectionState.Draining) fail("${name(side)} sent a $size-byte datagram while draining (RFC 9000 section 10.2.2)")
         if (c.state == ConnectionState.Confirmed) confirmed[side] = true
         val path = pathFor(c, socket, f.to)
@@ -287,6 +289,12 @@ internal class ConnectionInvariants(
     /** Server: the client's IDs it sent with, by destination: the ID of ours the client last used from that address then. */
     private val serverDcidUses = HashMap<String, LinkedHashMap<InetSocketAddress, String?>>()
 
+    /**
+     * The datagrams the client sent (arrays compare by identity), as forged ones a fuzz program injects from the client's address (a
+     * Stateless Reset, say) carry IDs the client never used.
+     */
+    private val clientDatagrams = WeakHashMap<ByteArray, Unit>()
+
     /** The IDs of ours in client datagrams by (client address, server address), and the latest one. */
     private val oursFrom = HashMap<Pair<InetSocketAddress, InetSocketAddress>, HashSet<String>>()
     private val lastOursFrom = HashMap<Pair<InetSocketAddress, InetSocketAddress>, String>()
@@ -393,7 +401,7 @@ internal class ConnectionInvariants(
         if (TRACE) println("t=${net.now} ${name(side)} gets ${f.from}->${f.to} ${size}B ${f.ecn}")
         if (side == 1) {
             receivedFrom[f.from] = (receivedFrom[f.from] ?: 0L) + size
-            serverCid(f)?.let { ours ->
+            serverCid(f)?.takeIf { f.bytes in clientDatagrams }?.let { ours ->
                 oursFrom.getOrPut(f.from to f.to) { HashSet() } += ours
                 lastOursFrom[f.from to f.to] = ours
             }
