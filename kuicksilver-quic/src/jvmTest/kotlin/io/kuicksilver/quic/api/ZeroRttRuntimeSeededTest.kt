@@ -51,7 +51,8 @@ import kotlin.time.Duration.Companion.seconds
  * [QuicException.StreamError.EarlyDataRejected] on both halves and done, it has left the connection's stream map, and every
  * job on it (reads, writes, finishes, STOP_SENDING watchers) has ended; the map holds no stream a rejection dropped. Once
  * the connection ended: its handshake and `closed` are complete, every stream the application saw is done, and no job of
- * the application waits on anything of the connection any more. `KUICKSILVER_ZRTT_SEEDS` sets the seeds per outcome.
+ * the application waits on anything of the connection any more; each stream's Deferreds (every getter of [QuicStream] typed
+ * Deferred) are awaited by such jobs. `KUICKSILVER_ZRTT_SEEDS` sets the seeds per outcome.
  */
 @OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
 class ZeroRttRuntimeSeededTest {
@@ -110,7 +111,28 @@ class ZeroRttRuntimeSeededTest {
                 jobs += "open" to d
                 return null
             }
-            return (s as StreamRuntime).also { streams += it }
+            return (s as StreamRuntime).also {
+                streams += it
+                awaitDeferreds(it)
+            }
+        }
+
+        /**
+         * Every Deferred the application can get from the stream ([QuicStream]'s getters typed Deferred, found by reflection, so
+         * one added later is covered without a change here) is awaited by a job: each must settle once the stream is gone.
+         */
+        fun awaitDeferreds(s: StreamRuntime) = awaitDeferreds(QuicStream::class.java, s, " ${s.id}")
+
+        fun awaitDeferreds(
+            type: Class<*>,
+            target: Any,
+            suffix: String,
+        ) {
+            for (m in type.methods) {
+                if (m.parameterCount != 0 || !kotlinx.coroutines.Deferred::class.java.isAssignableFrom(m.returnType)) continue
+                val d = runCatching { m.invoke(target) as kotlinx.coroutines.Deferred<*>? }.getOrNull() ?: continue
+                job("${m.name}$suffix") { d.await() }
+            }
         }
 
         fun pick(): StreamRuntime? = if (streams.isEmpty()) null else streams[rnd.nextInt(streams.size)]
@@ -285,6 +307,9 @@ class ZeroRttRuntimeSeededTest {
                         clientConfig(mode, vn = o == Outcome.VersionNegotiation, lost = o == Outcome.Lost),
                     ) as ConnectionRuntime
                 val app = App(conn, rnd, scope)
+                // the connection's Deferreds too (`closed`): the reflection must find at least that one
+                app.awaitDeferreds(QuicConnection::class.java, conn, "")
+                check(app.jobs.any { it.first == "getClosed" }) { "no Deferred of QuicConnection found by reflection" }
                 repeat(1 + rnd.nextInt(8)) { app.op() }
                 check(!conn.isHandshakeComplete) { "the calls were not made in 0-RTT" }
                 if (o == Outcome.CloseEarly) conn.close(3, "early")
@@ -303,6 +328,7 @@ class ZeroRttRuntimeSeededTest {
                     val s = withTimeoutOrNull(2.seconds) { conn.openBidi() }
                     if (s != null) {
                         app.streams += s as StreamRuntime
+                        app.awaitDeferreds(s)
                         s.output.writeFully("again".encodeToByteArray())
                         s.output.flushAndClose()
                         check(s.input.readExactly(5).decodeToString() == "again")
