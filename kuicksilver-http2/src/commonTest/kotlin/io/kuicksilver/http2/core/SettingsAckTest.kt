@@ -359,6 +359,47 @@ class SettingsAckTest {
         }
     }
 
+    /**
+     * The peer's GOAWAY with DATA waiting after a shrink, in both charge states: still holding its connection window (the
+     * SETTINGS came, nothing was written yet) or having given it back (it was found waiting). A client's streams above the
+     * last stream ID are dropped and give back exactly the connection window they still hold; a stream at or below it
+     * (and a server's, which the peer opened) keeps its frame, which goes when its window comes.
+     */
+    @Test
+    fun goAwayWithWaitingData() {
+        for (role in Role.entries) {
+            for (foundWaiting in listOf(false, true)) {
+                val m = PeerMirror(role)
+                val a = m.block(endStream = false)
+                val b = m.block(endStream = false)
+                m.read()
+                assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+                assertEquals(16_384, m.p.core.sendData(b, ByteArray(16_384), 0, 16_384, endStream = false))
+                m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 0)
+                if (foundWaiting) {
+                    assertEquals(listOf("ACK"), m.read())
+                    assertTrue(m.p.core.stalls(a) && m.p.core.stalls(b))
+                }
+                m.goAway(a) // b is above it
+                m.read()
+                assertTrue(m.p.core.sendWindowConserved, "$role $foundWaiting")
+                assertTrue(m.p.core.queuedDataAccounted, "$role $foundWaiting")
+                if (role == Role.CLIENT) {
+                    assertEquals(false, m.p.core.stalls(b), "$role $foundWaiting: b dropped")
+                    assertTrue(m.p.events().any { it is H2Event.StreamReset && it.streamId == b && it.notProcessed })
+                }
+                assertEquals(65_535, m.p.core.peerViewOfConnectionWindow, "$role $foundWaiting")
+                m.windowUpdate(a, 16_384)
+                if (role == Role.SERVER) m.windowUpdate(b, 16_384)
+                m.quiesce()
+                assertEquals(a to 16_384, m.data.first { it.first == a })
+                if (role == Role.SERVER) assertEquals(b to 16_384, m.data.first { it.first == b })
+                if (role == Role.CLIENT) assertTrue(m.data.none { it.first == b })
+                assertEquals(false, m.p.core.isClosed)
+            }
+        }
+    }
+
     /** A stream reset after a shrink uncharged its queued DATA: the window comes back to the connection once, not twice. */
     @Test
     fun negative_resetAfterAShrinkGivesTheWindowBackOnce() {
@@ -480,10 +521,11 @@ class SettingsAckTest {
         val m = PeerMirror(role)
         val open = mutableListOf<Int>()
         val finished = mutableListOf<Int>()
-        repeat(60) {
-            when (r.nextInt(9)) {
+        var goneAway = false
+        for (step in 0 until 60) {
+            when (r.nextInt(10)) {
                 0 -> {
-                    val room = m.streams < 40
+                    val room = m.streams < 40 && !goneAway
                     if (room) {
                         val extra = List(r.nextInt(1, 4)) { "x-k${r.nextInt(6)}" to "v".repeat(r.nextInt(1, 30)) }
                         if (r.nextInt(5) == 0) {
@@ -494,6 +536,19 @@ class SettingsAckTest {
                             open += id
                             if (r.nextBoolean()) m.p.core.sendData(id, ByteArray(500), 0, 500, endStream = false)
                         }
+                    }
+                }
+
+                9 -> {
+                    if (!goneAway) {
+                        // the peer's GOAWAY: ours above its last stream (a client's) are dropped, waiting or not
+                        goneAway = true
+                        m.goAway(if (open.isEmpty() || r.nextBoolean()) 0 else open[r.nextInt(open.size)])
+                        open.retainAll { id ->
+                            m.p.core.streams[id]
+                                ?.let { m.p.core.canSend(it) } == true
+                        }
+                        finished.retainAll { id -> id in m.p.core.streams }
                     }
                 }
 
@@ -549,6 +604,13 @@ class SettingsAckTest {
             }
             if (m.p.core.isClosed) {
                 m.p.read()
+                // after the peer's GOAWAY a connection with no streams left ends normally (section 6.8)
+                if (goneAway && m.p.goAway() == null &&
+                    m.p.core.streams
+                        .isEmpty()
+                ) {
+                    return
+                }
                 fail("$role seed $seed: closed, ${m.p.goAway()?.debug?.decodeToString()}")
             }
             assertTrue(m.p.core.sendWindowConserved, "$role seed $seed")
@@ -673,6 +735,10 @@ internal class PeerMirror(
     ) {
         if (id == 0) connection += increment else windows[id] = window(id) + increment
         p.send(FrameEncoder.windowUpdate(id, increment))
+    }
+
+    fun goAway(lastStreamId: Int) {
+        p.send(FrameEncoder.goAway(lastStreamId, Http2ErrorCode.NO_ERROR.code, ByteArray(0)))
     }
 
     fun reset(id: Int) {
