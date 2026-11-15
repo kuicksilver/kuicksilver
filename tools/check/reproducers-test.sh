@@ -20,7 +20,8 @@ in="kuicksilver-x/src/jvmTest/resources/io/x/fuzz/XFuzzTestInputs/prog"
 mkdir -p "$r/tools/check" "$r/tools/fuzz/plants" "$r/$in" "$r/kuicksilver-x/src/commonMain/kotlin/x" \
   "$r/kuicksilver-x/src/commonTest/kotlin/x" "$r/kuicksilver-x/src/androidHostTest/kotlin/x" "$r/kuicksilver-y/src/commonTest/kotlin/y"
 git -C "$r" init -q; git -C "$r" config user.email t@t; git -C "$r" config user.name t
-printf 'fun bound(n: Int) = minOf(n, 64)\nfun check(n: Int) = require(n >= 0)\n' > "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
+printf 'fun bound(n: Int) = minOf(n, 64)\nfun check(n: Int) = require(n >= 0)\n// the count stays bounded\n' > "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
+printf '# Changes\n' > "$r/CHANGELOG.md"
 printf 'class BoundTest { fun negative_bound() {} }\n' > "$r/kuicksilver-x/src/commonTest/kotlin/x/BoundTest.kt"
 printf 'class CheckTest { fun negative_check() {} }\n' > "$r/kuicksilver-x/src/commonTest/kotlin/x/CheckTest.kt"
 printf 'class HostTest { fun h() {} }\n' > "$r/kuicksilver-x/src/androidHostTest/kotlin/x/HostTest.kt"
@@ -104,9 +105,33 @@ line 1 "negative: a fix that is no hash" "| fix | \`HEAD~1\` is no commit hash" 
 line 1 "negative: a fix that is no commit" "| fix | 0123456789 is no commit" "$L | live | 0123456789 | tools/fuzz/plants/bound.patch | - | x"
 line 1 "negative: no fix" "| fix | no fix commit named" "$L | live |  | tools/fuzz/plants/bound.patch | - | x"
 printf 'notes\n' > "$r/NOTES"; git -C "$r" add NOTES; git -C "$r" commit -qm notes; other=$(git -C "$r" rev-parse --short=9 HEAD)
-line 1 "negative: a fix commit that changed none of the plant's files" "| fix | $other touches none of the files" \
+line 1 "negative: a fix commit that changed none of the plant's files" "| fix | $other changed none of the source files" \
   "$L | live | $fix,$other | tools/fuzz/plants/bound.patch | - | x"
 git -C "$r" reset -q --hard HEAD~1
+# a commit that changed the plant's file elsewhere is not the fix the plant takes back
+printf 'fun more(n: Int) = n + 1\n' >> "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"; git -C "$r" commit -qam later
+later=$(git -C "$r" rev-parse --short=9 HEAD)
+line 1 "negative: a fix commit that only changed the plant's file elsewhere" "| fix | tools/fuzz/plants/bound.patch removes no line that $later added" \
+  "$L | live | $later | tools/fuzz/plants/bound.patch | - | x"
+git -C "$r" reset -q --hard HEAD~1
+# a fix commit and a plant that meet only in the changelog
+printf -- '- bounded\n' >> "$r/CHANGELOG.md"; git -C "$r" commit -qam notes2; doc=$(git -C "$r" rev-parse --short=9 HEAD)
+plant bound CHANGELOG.md '- bounded' '- not bounded'
+line 1 "negative: a plant and a fix that meet only in a document" "touches CHANGELOG.md: a plant puts a bug back in the code" \
+  "$L | live | $doc | tools/fuzz/plants/bound.patch | - | x"
+# the plant takes the bound back and adds a changelog hunk the documentation commit can meet it in
+python3 -c 'import sys; p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("minOf(n, 64)", "n"))' "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
+printf -- '- not bounded\n' >> "$r/CHANGELOG.md"
+git -C "$r" diff -- kuicksilver-x/src/commonMain/kotlin/x/Code.kt CHANGELOG.md > "$r/tools/fuzz/plants/bound.patch"
+git -C "$r" checkout -q -- kuicksilver-x/src/commonMain/kotlin/x/Code.kt CHANGELOG.md
+printf '# manifest\n%s\n%s\n' "$L | live | $doc | tools/fuzz/plants/bound.patch | - | x" "$in/crash-check | dead | $fix | tools/fuzz/plants/check.patch | x.CheckTest.negative_check | -" > "$m"
+expect 1 "negative: a plant with a changelog hunk, its fix a changelog commit: judged by source files only" "| fix | $doc changed none of the source files"
+git -C "$r" reset -q --hard HEAD~1; git -C "$r" clean -qfd
+# a plant that removes only a comment the fix added: no code of the fix comes back
+plant bound kuicksilver-x/src/commonMain/kotlin/x/Code.kt '// the count stays bounded
+' ''
+line 1 "negative: a plant that removes only a comment of its fix" "| fix | tools/fuzz/plants/bound.patch removes no line that $fix added" \
+  "$L | live | $fix | tools/fuzz/plants/bound.patch | - | x"
 line 1 "negative: a dead entry without a guard test" "| unguarded |" "$L | dead | $fix | tools/fuzz/plants/bound.patch | - | -"
 line 1 "negative: a guard test that does not exist" "| guard | x.BoundTest.gone is no test" "$L | live | $fix | tools/fuzz/plants/bound.patch | x.BoundTest.gone | x"
 line 1 "negative: a guard test the JVM tests do not run" "| guard | x.HostTest.h is in kuicksilver-x/src/androidHostTest" \
@@ -121,7 +146,7 @@ printf '# manifest\n%s\n%s\n' "$good" "$in/crash-bound | dead | $fix | tools/fuz
 expect 1 "negative: a duplicate entry" "| duplicate | $in/crash-bound has an entry on line 2"
 reset
 # plants
-printf 'fun bound(n: Int) = minOf(n, 128)\nfun check(n: Int) = require(n >= 0)\n' > "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
+printf 'fun bound(n: Int) = minOf(n, 128)\nfun check(n: Int) = require(n >= 0)\n// the count stays bounded\n' > "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
 expect 1 "negative: a plant that no longer applies (the fixed code moved)" "| plant | tools/fuzz/plants/bound.patch no longer applies"
 reset
 : > "$r/tools/fuzz/plants/bound.patch"

@@ -16,7 +16,9 @@ tools/fuzz/reproducers.txt. Not seen: a reproducer named otherwise (by hand, or 
   state   live (the input fails again when the fix is planted out) or dead (it passes even then: the harness or the code
           around the fix changed, so the input alone no longer guards the bug and a unit test must);
   fix     the commit(s) of the fix, comma-separated (7 to 40 hex digits; when the clone has the history, each must be a
-          commit that changed at least one of the files the plant changes);
+          commit that changed at least one source file the plant changes (documents do not count), and the plant must
+          remove at least one line one of them added (compared without comments and spacing): it takes back the code
+          of the fix as it is now, so a fix whose code was rewritten later is named with the commit of that rewrite;
   plant   tools/fuzz/plants/<name>.patch, a small patch that puts the bug back (reverts the guarded fix); it must apply to
           the tree as it is (git apply --check), touch no test resource, and not touch the guard tests' own files;
   guards  the unit tests that cover the bug, comma-separated `<package>.<Class>.<test>` as tools/check/test-count.lock
@@ -72,6 +74,41 @@ def campaign_targets(root):
     except OSError:
         pass
     return out
+
+
+def is_doc(path):
+    """A document, not code: what a plant must not touch and a fix commit's code is never judged by."""
+    return path.endswith(".md") or path.startswith("docs/") or os.path.basename(path).startswith("CHANGELOG")
+
+
+def norm(line):
+    """A line of code compared by its content: comments and spacing dropped; empty when too little is left to tell
+    lines apart (a brace, `return`, a blank line)."""
+    if line.lstrip().startswith(("//", "*", "/*", "#")):
+        return ""
+    line = re.sub(r"/\*.*?\*/", "", line.split("//")[0])
+    line = " ".join(line.split())
+    return line if len(re.sub(r"[^A-Za-z0-9]", "", line)) >= 6 else ""
+
+
+def removed_lines(patch):
+    """file -> the lines (normalized) a patch removes."""
+    out, f = {}, None
+    with open(patch, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("--- "):
+                f = line[6:].strip() if line.startswith("--- a/") else None
+            elif line.startswith("-") and f:
+                n = norm(line[1:])
+                if n:
+                    out.setdefault(f, set()).add(n)
+    return out
+
+
+def added_lines(root, commit, path):
+    """The lines (normalized) [commit] added to [path]."""
+    diff = git(root, "show", "--format=", commit, "--", path).stdout
+    return {norm(x[1:]) for x in diff.split("\n") if x.startswith("+") and not x.startswith("+++")} - {""}
 
 
 def target_of(root, path, targets):
@@ -182,18 +219,29 @@ def main(argv):
             if not touched:
                 findings.append(f"{where} | plant | {plant} changes nothing")
             for t in sorted(touched):
-                if "/src/" in t and "/resources/" in t.split("/src/", 1)[1] or t.startswith(("tools/fuzz/", "tools/check/")):
+                if "/src/" in t and "/resources/" in t.split("/src/", 1)[1] or t.startswith(("tools/fuzz/", "tools/check/")) \
+                        or is_doc(t):
                     findings.append(f"{where} | plant | {plant} touches {t}: a plant puts a bug back in the code, never in an "
-                                    "input, a guard or the tooling")
+                                    "input, a guard, a document or the tooling")
                 elif t in guard_files:
                     findings.append(f"{where} | plant | {plant} touches {t}, the file of a guard test: the guard would fail "
                                     "for the plant, not for the bug")
-            for c in commits:
-                if not shallow and HEX.match(c) and touched:
+            code = {t for t in touched if not is_doc(t)}
+            if not shallow and code and all(HEX.match(c) for c in commits):
+                removed = removed_lines(os.path.join(root, plant))
+                overlap = False
+                for c in commits:
                     changed = set(git(root, "show", "--name-only", "--format=", c).stdout.split())
-                    if not changed & touched:
-                        findings.append(f"{where} | fix | {c} touches none of the files {plant} changes: the plant does not "
-                                        "take back that fix (or the file moved since: plant it again)")
+                    if not changed & code:
+                        findings.append(f"{where} | fix | {c} changed none of the source files {plant} changes: the plant "
+                                        "does not take back that fix (or the file moved since: plant it again)")
+                        continue
+                    for f in changed & code & set(removed):
+                        if removed[f] & added_lines(root, c, f):
+                            overlap = True
+                if commits and not overlap and not any("fix |" in x and x.startswith(where) for x in findings):
+                    findings.append(f"{where} | fix | {plant} removes no line that {', '.join(commits)} added: a plant takes "
+                                    "back the code of its fix (name the commit that wrote the code as it is now)")
             check = git(root, "apply", "--check", plant)
             if check.returncode != 0:
                 findings.append(f"{where} | plant | {plant} no longer applies (the fixed code moved: plant it again): "
