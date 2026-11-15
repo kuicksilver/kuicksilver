@@ -1003,7 +1003,10 @@ internal fun sizeBound(
 
         "paths" -> 8
 
-        "pathResponses" -> 16
+        // RFC 9000 section 8.2.2: every PATH_CHALLENGE "MUST" get its PATH_RESPONSE, so every one is queued; past three
+        // waiting each costs a glitch token, and the cap closes the connection. A connection closed by the flood keeps what was
+        // queued until it is Closed (a closing endpoint sends only CONNECTION_CLOSE, section 10.2.1), within the cap
+        "pathResponses" -> io.kuicksilver.quic.core.Paths.MAX_RESPONSES.toLong()
 
         "sentInitial", "sentHandshake", "sentApplication" -> 50_000
 
