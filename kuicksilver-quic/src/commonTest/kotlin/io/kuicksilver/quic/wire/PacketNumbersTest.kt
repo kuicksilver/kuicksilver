@@ -48,4 +48,17 @@ class PacketNumbersTest {
     @Test fun decodeNeverExceeds2Pow62() {
         assertTrue(PacketNumbers.decode(VarInt.MAX - 1, (VarInt.MAX + 1) and 0xff, 8) <= VarInt.MAX)
     }
+
+    /**
+     * RFC 9000 appendix A.2: "num_unacked = full_pn + 1" without an acknowledgement, else "full_pn - largest_acked"; "min_bits =
+     * log(num_unacked, 2) + 1"; "num_bytes = ceil(min_bits / 8)". The edges of one byte: 128 unacknowledged numbers fit, 129 do not.
+     */
+    @Test fun negative_encodedLengthEdgesOfAppendixA2() {
+        assertEquals(1, PacketNumbers.encodedLength(127, -1), "128 unacknowledged")
+        assertEquals(2, PacketNumbers.encodedLength(128, -1), "129 unacknowledged")
+        assertEquals(1, PacketNumbers.encodedLength(128, 0), "largest acknowledged 0: 128 unacknowledged")
+        assertEquals(2, PacketNumbers.encodedLength(129, 0))
+        assertEquals(2, PacketNumbers.encodedLength(32768 + 5, 5), "2^15 unacknowledged")
+        assertEquals(3, PacketNumbers.encodedLength(32769 + 5, 5))
+    }
 }

@@ -283,4 +283,76 @@ class AckTrackerTest {
         a.onPacketReceived(4, ackEliciting = true, now = t0)
         assertTrue(a.ackRequired)
     }
+
+    /**
+     * A reordered packet that extends a lower range must not merge it with the range above: packets 8 and 9 were never received and
+     * must not be acknowledged (RFC 9000 section 13.1: only packets "that have been received and processed").
+     */
+    @Test fun negative_extendingALowerRangeDoesNotSwallowTheGapAbove() {
+        val a = AckTracker(64)
+        for (pn in listOf(10L, 11L, 12L, 5L, 6L, 7L)) a.onPacketReceived(pn, true, t0)
+        assertEquals(listOf(10L to 12L, 5L to 7L), ackFrame(a, t0).ranges)
+        assertFalse(a.isDuplicate(8))
+        assertFalse(a.isDuplicate(9))
+    }
+
+    /** A gap filled between two ranges merges them, and a packet below every range after that becomes its own range. */
+    @Test fun negative_packetBelowAllRangesAfterAMergeIsKept() {
+        val a = AckTracker(64)
+        for (pn in listOf(10L, 12L, 11L, 5L)) a.onPacketReceived(pn, true, t0)
+        assertEquals(listOf(10L to 12L, 5L to 5L), ackFrame(a, t0).ranges)
+        assertTrue(a.isDuplicate(5))
+    }
+
+    /**
+     * RFC 9000 section 13.2.1: an endpoint "SHOULD generate and send an ACK frame without delay when it receives an ack-eliciting
+     * packet ... when the packet has a packet number larger than the highest-numbered ack-eliciting packet that has been received
+     * and there are missing packets between that packet and this packet", also when the highest so far is packet 0.
+     */
+    @Test fun negative_gapAfterPacketZeroIsAcknowledgedAtOnce() {
+        val a = AckTracker(64)
+        a.onPacketReceived(0, false, t0)
+        a.onPacketReceived(2, true, t0)
+        assertTrue(a.ackRequired, "packet 1 is missing")
+    }
+
+    /**
+     * RFC 9000 section 12.3: "A receiver MUST discard a newly unprotected packet unless it is certain that it has not processed
+     * another packet with the same packet number". The largest packet of an ACK frame the peer acknowledged stays a duplicate after
+     * its range is no longer reported.
+     */
+    @Test fun negative_packetAtTheAcknowledgedAckFloorIsADuplicate() {
+        val a = AckTracker(64)
+        for (pn in 0L..5L) a.onPacketReceived(pn, true, t0)
+        a.onAckFrameAcknowledged(5)
+        assertTrue(a.isDuplicate(5))
+        assertTrue(a.isDuplicate(4))
+        assertFalse(a.isDuplicate(6))
+    }
+
+    /** RFC 9000 section 19.3.2: "ECT1 Count: A variable-length integer representing the total number of packets received with the ECT(1) codepoint". */
+    @Test fun negative_ect1PacketsAreCounted() {
+        val a = AckTracker(64)
+        a.onEcn(io.kuicksilver.quic.Ecn.Ect1)
+        a.onEcn(io.kuicksilver.quic.Ecn.Ect0)
+        a.onEcn(io.kuicksilver.quic.Ecn.Ect1)
+        a.onPacketReceived(0, true, t0)
+        assertEquals(listOf(1L, 2L, 0L), ackFrame(a, t0).ecn)
+    }
+
+    /** The size the builder reserves for the ACK frame ([AckTracker.ackOverhead]) is the size [AckTracker.writeAck] writes. */
+    @Test fun negative_ackOverheadMatchesTheWrittenFrame() {
+        val a = AckTracker(64)
+        assertEquals(0, a.ackOverhead(t0, 3))
+        for (pn in listOf(0L, 1L, 5L, 9L, 300L)) a.onPacketReceived(pn, true, t0)
+        val b = PacketBuffer.allocate(512)
+        try {
+            val w = WireWriter(b, 0, b.capacity)
+            val expected = a.ackOverhead(t0 + 1.milliseconds, 3)
+            a.writeAck(w, t0 + 1.milliseconds, 3)
+            assertEquals(w.pos, expected)
+        } finally {
+            b.close()
+        }
+    }
 }
