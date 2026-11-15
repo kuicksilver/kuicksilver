@@ -250,8 +250,13 @@ public class TlsConnection private constructor(
                 }
             }
         }
-        // withTimeoutOrNull: our own deadline becomes a TlsException, an outer cancellation stays a CancellationException
-        withTimeoutOrNull(timeout) { handshakeLoop() } ?: throw handshakeTimedOut(config)
+        // our own deadline becomes a TlsException, an outer cancellation stays a CancellationException; completedWithin: a
+        // handshake that completed as the deadline fired is a connection, not a timeout
+        completedWithin(timeout) {
+            handshakeLoop()
+            handshakeLoopEndedForTest?.invoke(this)
+            true
+        } ?: throw handshakeTimedOut(config)
         handshakeCompletedForTest?.invoke(this)
         afterHandshake()
         pumpsStarted = true
@@ -1006,6 +1011,9 @@ public class TlsConnection private constructor(
 
         /** Tests: runs on the handshake's coroutine after the last flight, before the negotiated parameters are read. */
         @Volatile internal var handshakeCompletedForTest: (suspend (TlsConnection) -> Unit)? = null
+
+        /** Tests: runs on the handshake's coroutine once its loop ended, still inside the handshake deadline. */
+        @Volatile internal var handshakeLoopEndedForTest: (suspend (TlsConnection) -> Unit)? = null
 
         /** Ciphertext the reader pump takes from the transport, and plaintext it gathers, per pass. */
         internal const val READ_CHUNK: Int = 64 * 1024

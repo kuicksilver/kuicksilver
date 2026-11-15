@@ -5054,6 +5054,7 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.SecretsJvmTest.negative_keylogFil
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.SecretsJvmTest.negative_keylogFileRefusesSymlink
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.SharedServerContextStressJvmTest.sessionsReloadsAndEvictionsAtOnce
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.SharedServerContextStressJvmTest.sessionsWithIdentityAndClientCaReloadsAtOnce
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.TlsHandshakeDeadlineRaceTest.negative_aHandshakeCompletedAsItsDeadlineFiresIsAConnection
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.CommittedCorpusReplayTest.everyCommittedInputPasses
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.TlsSeedCorpusTest.corpusMatchesGenerator
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTest.clientHelloScan
