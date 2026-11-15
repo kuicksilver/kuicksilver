@@ -14,9 +14,11 @@ import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.acceptWebTransport
+import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.RawPeer
+import io.kuicksilver.http3.runtime.awaitOutputStopped
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.useScoped
@@ -144,6 +146,26 @@ class WebTransportCloseTest {
                 assertIs<WebTransportException.SessionClosed>(runCatching { r.server.acceptBidi() }.exceptionOrNull())
                 assertIs<WebTransportException.SessionClosed>(runCatching { r.server.receiveDatagram() }.exceptionOrNull())
                 assertTrue(accepted.streamId == wtStream.id)
+            }
+        }
+
+    /**
+     * Section 6: "Upon learning that the session has been terminated, the endpoint MUST reset the send side and abort
+     * reading on the receive side of all unidirectional and bidirectional streams associated with the session (see Section
+     * 2.4 of [RFC9000]) using the WT_SESSION_GONE error code". Aborting reading is STOP_SENDING: the peer's sending side
+     * of a session stream sees it, for a bidirectional and a unidirectional stream alike.
+     */
+    @Test fun negative_closeStopsThePeersSendingWithSessionGone() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val r = rawSession(q)
+                val bidi = r.raw.quic.wtBidi(r.connect.id, "hi".encodeToByteArray(), fin = false)
+                withTimeout(5.seconds) { r.server.acceptBidi() }
+                val uni = r.raw.uni(StreamType.WT_UNI, VarInt.encode(r.connect.id) + "u".encodeToByteArray())
+                withTimeout(5.seconds) { r.server.acceptUni() }
+                r.server.close(5, "done")
+                assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(bidi))
+                assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(uni))
             }
         }
 
