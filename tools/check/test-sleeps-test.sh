@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Negative controls of tools/check/test-sleeps.py on a scratch repository: the first --update records the tree; the
-# counts and their lock pass; a sleep in a comment or a string, a `fun delay(` declaration and main code do not count; a
-# new delay, Thread.sleep or C nanosleep fails and --update does not record it; a new file with a sleep fails unless the
-# allowlist names it with a reason, and then --update records it; a removed sleep fails until --update lowers the lock;
+# Negative controls of tools/check/test-sleeps.py on a scratch repository. The first --update records the tree; the counts
+# and their lock pass; a sleep in a comment or a string, a declaration `fun delay(` and main code do not count. Each of
+# these is a new sleep that fails and that --update does not record: delay, Thread.sleep, a C usleep, a delay under an
+# import alias, a reference Thread::sleep, LockSupport.parkNanos, a delay inside a string template, a call of a polling
+# helper whose body sleeps (also one that only calls such a helper), and a new file with a sleep. A file renamed, or split
+# in two, inside its source set fails as moved until --update carries the count; a move to another source set is an
+# addition there. An allowlisted new file is recorded by --update; a removed sleep fails until --update lowers the lock;
 # a file gone, an allowlist entry without a reason and one for a file without sleeps fail. Usage: test-sleeps-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0
-a="kuicksilver-x/src/commonTest/kotlin/x/ATest.kt"; c="kuicksilver-native/src/c/test/test_x.c"
-mkdir -p "$r/tools/check" "$(dirname "$r/$a")" "$(dirname "$r/$c")" "$r/kuicksilver-x/src/commonMain/kotlin/x"
+d="kuicksilver-x/src/commonTest/kotlin/x"; a="$d/ATest.kt"; c="kuicksilver-native/src/c/test/test_x.c"
+mkdir -p "$r/tools/check" "$r/$d" "$(dirname "$r/$c")" "$r/kuicksilver-x/src/commonMain/kotlin/x"
 git -C "$r" init -q
 kt() { # <file> <body lines...>
   local f="$1"; shift; mkdir -p "$(dirname "$r/$f")"
-  { printf 'class T {\n    // delay(1) in a comment\n    val s = "Thread.sleep(1)"\n    suspend fun delay(ms: Long) {}\n'
+  { printf 'import kotlinx.coroutines.delay as pause\n\nclass T {\n    // delay(1) in a comment\n    val s = "Thread.sleep(1)"\n    suspend fun delay(ms: Long) {}\n'
     printf '    %s\n' "$@"; printf '}\n'; } > "$r/$f"
   git -C "$r" add -A
 }
@@ -25,32 +28,55 @@ expect() { # <0|1> <what> <pattern>
   else echo "FAIL: $2 (exit $got, want $1 and '$3')"; sed 's/^/  | /' "$tmp/out.txt"; rc=1; fi
 }
 update() { python3 -I "$here/test-sleeps.py" --update "$r" >/dev/null 2>&1; }
-kt "$a" 'fun a() { delay(10); delay(20) }'
+base='fun a() { delay(10); delay(20) }'
+kt "$a" "$base"
+printf 'fun eventually(block: () -> Boolean) { while (!block()) Thread.sleep(10) }\nfun soon(block: () -> Boolean) = eventually(block)\n' > "$r/$d/Poll.kt"
 printf 'void t(void) { struct timespec w = {0, 1}; nanosleep(&w, NULL); /* usleep(1) */ }\n' > "$r/$c"
 printf 'fun lib() = Thread.sleep(5)\n' > "$r/kuicksilver-x/src/commonMain/kotlin/x/Lib.kt"
 git -C "$r" add -A
 update
-expect 0 "the first --update records the tree; comments, strings, declarations and main code do not count" "2 files, 3 sleeps, 0 finding(s)"
-kt "$a" 'fun a() { delay(10); delay(20); Thread.sleep(5) }'
-expect 1 "negative: a new Thread.sleep" "ATest.kt | added | 3 sleeps, the lock allows 2"
-update
-expect 1 "negative: --update does not record a new sleep" "| added | 3 sleeps, the lock allows 2"
-kt "$a" 'fun a() { delay(10); delay(20) }'
+expect 0 "the first --update records the tree; comments, strings, declarations and main code do not count" "3 files, 5 sleeps ("
+new() { # <what> <body line>: one more sleep in ATest.kt fails, and --update keeps the old count
+  kt "$a" "$base" "$2"
+  expect 1 "negative: $1" "ATest.kt | added | 3 sleeps, the lock allows 2"
+  update; expect 1 "negative: --update does not record $1" "ATest.kt | added | 3 sleeps, the lock allows 2"
+}
+new "a new Thread.sleep" 'fun b() { Thread.sleep(5) }'
+new "a delay under an import alias" 'suspend fun b() { pause(5) }'
+new "a reference Thread::sleep" 'val b = Thread::sleep'
+new "LockSupport.parkNanos" 'fun b() { java.util.concurrent.locks.LockSupport.parkNanos(5) }'
+new "a delay in a string template" 'suspend fun b() = println("waited ${delay(5)}")'
+new "a call of a polling helper" 'fun b() { eventually { true } }'
+new "a call of a helper that calls a polling helper" 'fun b() = soon { true }'
+kt "$a" "$base"
 printf 'void t(void) { struct timespec w = {0, 1}; nanosleep(&w, NULL); usleep(2); }\n' > "$r/$c"; git -C "$r" add -A
 expect 1 "negative: a new usleep in a C test" "test_x.c | added | 2 sleeps, the lock allows 1"
 printf 'void t(void) { struct timespec w = {0, 1}; nanosleep(&w, NULL); }\n' > "$r/$c"; git -C "$r" add -A
+git -C "$r" mv "$a" "$d/RenamedTest.kt"
+expect 1 "a renamed file is a move" "RenamedTest.kt | moved | 2 sleeps, the lock says 0"
+update
+expect 0 "--update carries the count to the new name" "3 files, 5 sleeps ("
+kt "$d/RenamedTest.kt" 'fun a() { delay(10) }'; kt "$d/SplitTest.kt" 'fun b() { delay(20) }'
+expect 1 "a file split in two is a move" "SplitTest.kt | moved | 1 sleeps, the lock says 0"
+update
+expect 0 "--update carries the split count" "4 files, 5 sleeps ("
+git -C "$r" rm -qf "$d/SplitTest.kt"; kt "kuicksilver-x/src/jvmTest/kotlin/x/SplitTest.kt" 'fun b() { delay(20) }'
+expect 1 "negative: a move to another source set is an addition there" "jvmTest/kotlin/x/SplitTest.kt | added | 1 sleeps, the lock allows 0"
+git -C "$r" rm -qf "kuicksilver-x/src/jvmTest/kotlin/x/SplitTest.kt"; kt "$d/SplitTest.kt" 'fun b() { delay(20) }'
 kt "kuicksilver-x/src/jvmTest/kotlin/x/NewTest.kt" 'fun n() { kotlinx.coroutines.delay(5) }'
-expect 1 "negative: a new file starts at 0" "NewTest.kt | added | 1 sleeps and no line"
+expect 1 "negative: a new file starts at 0" "NewTest.kt | added | 1 sleeps, the lock allows 0"
 printf 'kuicksilver-x/src/jvmTest/kotlin/x/NewTest.kt |\n' > "$r/tools/check/test-sleeps.allow"
 expect 1 "negative: an allowlist entry without a reason" "| allow | kuicksilver-x/src/jvmTest/kotlin/x/NewTest.kt: the entry needs a reason"
 printf 'kuicksilver-x/src/jvmTest/kotlin/x/NewTest.kt | the idle timer under test runs on the real clock\n' > "$r/tools/check/test-sleeps.allow"
-expect 1 "an allowlisted new file still needs --update" "it is in tools/check/test-sleeps.allow: run test-sleeps.py --update"
+expect 1 "an allowlisted new file still needs --update" "NewTest.kt | moved | 1 sleeps, the lock says 0; it is in tools/check/test-sleeps.allow"
 update
-expect 0 "--update records an allowlisted file" "3 files, 4 sleeps, 0 finding(s)"
-kt "$a" 'fun a() { delay(10) }'
-expect 1 "negative: a removed sleep must lower the lock" "ATest.kt | lower | 1 sleeps, the lock says 2"
+expect 0 "--update records an allowlisted file" "5 files, 6 sleeps ("
+kt "$d/SplitTest.kt" 'fun b() { }'
+expect 1 "negative: a removed sleep must lower the lock" "SplitTest.kt | stale | no sleeps"
+kt "$d/RenamedTest.kt" 'fun a() { }'
+expect 1 "negative: fewer sleeps must lower the lock" "RenamedTest.kt | stale |"
 update
-expect 0 "--update lowers the lock" "3 files, 3 sleeps, 0 finding(s)"
+expect 0 "--update lowers the lock" "3 files, 4 sleeps ("
 git -C "$r" rm -qf "$c"
 expect 1 "negative: a file gone is stale" "test_x.c | stale |"
 update
