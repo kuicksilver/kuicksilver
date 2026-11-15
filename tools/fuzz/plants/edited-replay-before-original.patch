@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/ZeroRttHelloFuzzTest.kt b/kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/ZeroRttHelloFuzzTest.kt
+index f62d513e3..a2316d8be 100644
+--- a/kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/ZeroRttHelloFuzzTest.kt
++++ b/kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/fuzz/ZeroRttHelloFuzzTest.kt
+@@ -149,7 +149,7 @@ class ZeroRttHelloFuzzTest {
+         fun holds(
+             id: ByteArray,
+             who: Any,
+-        ) = held.any { it.id.contentEquals(id) && it.owner === who }
++        ) = held.any { it.id.contentEquals(id) }
+     }
+ 
+     private class Server(

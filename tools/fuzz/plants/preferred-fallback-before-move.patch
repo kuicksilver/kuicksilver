@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
+index f915e7146..0d94853dc 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
+@@ -785,7 +785,7 @@ internal fun ConnectionCore.onPathFailed(
+     // address fails": the most recently validated path we can send on with an ID never used from another local address (section
+     // 9.5: "An endpoint MUST NOT reuse a connection ID when sending from more than one local address"). The choice reserves nothing;
+     // only the chosen path takes the spare ID it may need
+-    val back = paths.fallback(p) { mayBeActive(it) && canSendOnAfter(it, p) }
++    val back = paths.fallback(p) { canSendOnAfter(it, p) }
+     if (back != null) {
+         dcidFor(back)
+         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)

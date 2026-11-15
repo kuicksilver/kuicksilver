@@ -1,0 +1,12 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt
+index 8db02f37a..88aceb7f7 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt
+@@ -560,7 +560,6 @@ internal class PacketReceiver(
+         if (hv.version != c.version.version) return
+         if (!c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || hv.tokenLen == 0) return
+         // the token rides in every later Initial: one that cannot fit a 1200-byte Initial with room for CRYPTO is unusable
+-        if (hv.tokenLen > MAX_RETRY_TOKEN) return
+         if (c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)) return
+         if (!io.kuicksilver.quic.wire.RetryPacket
+                 .verify(data, headerStart(), hv.packetEnd, c.odcid, c.crypto)

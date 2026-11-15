@@ -231,6 +231,23 @@ jobs:
           fi
           echo "$TARGET: no finding"
 
+  reproducers:
+    # every fuzz reproducer still guards its bug (tools/fuzz/reproducers.txt): each plant puts its fix back, and with it
+    # the live inputs fail again, the dead ones still pass and every guard test fails (tools/fuzz/reproducers-verify.sh;
+    # the lint job checks only the manifest's form, tools/check/reproducers.py)
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
+      - name: 'fuzz: the reproducers with their fixes planted out'
+        run: bash tools/fuzz/reproducers-verify.sh
+
   summary:
     needs: [prepare, fuzz]
     if: always() && needs.prepare.result == 'success'

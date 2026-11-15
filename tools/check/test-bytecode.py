@@ -2,23 +2,37 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 """The compiled side of tools/check/test-discovery.py: reads the test classes the build wrote for the JVM
-(<module>/build/classes/kotlin/jvm/test/) and for the Android host tests (<module>/build/classes/kotlin/android/hostTest/,
-run by JUnit on the host JVM), or the directories given, and reports every test method a runner skips or
-refuses. A test method is one carrying org.junit.Test, org.junit.jupiter.api.Test or Jazzer's FuzzTest (kotlin.test.Test
-is one of the first two on the JVM, whatever alias imported it):
-  returns     its descriptor does not end in )V: JUnit 5 skips a test that returns a value without a word (a test written
-              `= runBlocking { ... }` whose last expression has a value, `= assertFailsWith<...> { }`), JUnit 4 refuses it;
-  static      a static method (a test in an object or companion, or a top-level one): neither JUnit runs it;
-  private     a private method (JUnit 5 skips it, JUnit 4 refuses it);
-  constructor its class has no non-private constructor without parameters: an object or a companion object (private
-              constructor), an inner class (it takes the outer instance), a class whose constructor needs arguments;
-  abstract    its class is abstract (or an interface) and no class of the same directory extends it.
-It reads the class files themselves (the constant pool, the method table and RuntimeVisibleAnnotations), so it sees what
-the compiler made of any source form. Needs the test classes compiled first: the local gate runs it in the JVM test step,
-which also compiles the Android host tests. Without directories it reads every module's, and a module with JVM or
-Android host test sources whose class directory is missing is a finding (missing): an uncompiled module is never a pass.
---targets jvm or --targets android-host limits that to one kind.
-Usage: test-bytecode.py [--root <repo>] [--targets jvm,android-host] [classes-dir...]   (exit 1 on any finding, 2 when no class file was found)
+(<module>/build/classes/kotlin/jvm/test/), for the Android host tests (<module>/build/classes/kotlin/android/hostTest/, run
+by JUnit on the host JVM), for the Android device tests (<module>/build/classes/kotlin/android/deviceTest/, the common tests
+too, run by JUnit 4 on an emulator) and for the samples (--targets samples), or the directories given, and reports every
+test method a runner skips or refuses. A test method is one carrying org.junit.Test, org.junit.jupiter.api.Test or
+Jazzer's FuzzTest (kotlin.test.Test is one of the first two on the JVM, whatever alias imported it):
+  returns          its descriptor does not end in )V: JUnit 5 skips a test that returns a value without a word (a test
+                   written `= runBlocking { ... }` whose last expression has a value, `= assertFailsWith<...> { }`), JUnit 4
+                   refuses it;
+  static           a static method (a test in an object or companion, or a top-level one): neither JUnit runs it;
+  private          a private method (JUnit 5 skips it, JUnit 4 refuses it);
+  not public       a JUnit 4 test method that is not public (Kotlin's protected): JUnit 4 refuses it;
+  parameters       a test (not a FuzzTest) with parameters: JUnit 4 refuses any, JUnit 5 resolves only TestInfo,
+                   TestReporter and RepetitionInfo (no resolver extension is registered here);
+  abstract method  an abstract method carrying the annotation: the override that runs does not inherit it;
+  overridden       a method overriding a test of a compiled super class without the annotation: neither runs in the class;
+  local            its class is local or anonymous (declared in a function, an object expression): JUnit 5 skips it;
+  private class    its class is a private nested class: JUnit 5 skips it, JUnit 4 refuses it;
+  class not public a JUnit 4 test in a class that is not public (Kotlin's private top-level class): JUnit 4 refuses it;
+  constructor      its class has no non-private constructor without parameters: an object or a companion object (private
+                   constructor), an inner class (it takes the outer instance), a class whose constructor needs arguments;
+  abstract         its class is abstract (or an interface) and no class of the same directory extends it.
+It reads the class files themselves (the constant pool, the method table, RuntimeVisibleAnnotations, InnerClasses and
+EnclosingMethod), so it sees what the compiler made of any source form. Needs the test classes compiled first: the local
+gate runs it in the JVM test step, which also compiles the Android host and device tests, and for the samples after their
+builds. Without directories it reads every module's JVM, Android host and Android device classes, and a module with such
+test sources whose class directory is missing is a finding (missing): an uncompiled module is never a pass. --targets
+takes jvm, android-host, android-device and samples (comma-separated).
+Not seen: a super class in another directory (a test inherited from a main source set), the Apple, Linux and Windows test
+compilations (no class files), and a runner other than JUnit 4 and 5 (none is used here).
+Usage: test-bytecode.py [--root <repo>] [--targets jvm,android-host,android-device,samples] [classes-dir...]
+       (exit 1 on any finding, 2 when no class file was found)
 """
 import glob
 import os
@@ -98,7 +112,30 @@ def parse(data):
                     anns.add(utf(struct.unpack_from(">H", data, j)[0]))
                     j = skip_annotation(data, j)
         methods.append((utf(mname).decode(), utf(mdesc).decode(), macc, anns))
-    return cls(this).decode(), (cls(sup) or b"").decode(), access, methods
+    i, attrs = skip_attrs(i)
+    name = cls(this)
+    nested = None  # (inner access flags, has an outer class) of this class when the InnerClasses table names it
+    local = False
+    for aname, at, _ in attrs:
+        if aname == b"EnclosingMethod":
+            local = True  # a local or anonymous class (an object expression, a class declared in a function)
+        elif aname == b"InnerClasses":
+            for e in range(struct.unpack_from(">H", data, at)[0]):
+                inner, outer, _, iacc = struct.unpack_from(">HHHH", data, at + 2 + 8 * e)
+                if inner and cls(inner) == name:
+                    nested = (iacc, outer != 0)
+                    local = local or outer == 0
+    return Klass(name.decode(), (cls(sup) or b"").decode(), access, methods, nested, local)
+
+
+class Klass:
+    """A parsed class file: its name, super class, access flags, methods, InnerClasses entry and whether it is local."""
+
+    def __init__(self, name, sup, access, methods, nested, local):
+        self.name, self.sup, self.access, self.methods, self.nested, self.local = name, sup, access, methods, nested, local
+
+    def __lt__(self, other):
+        return self.name < other.name
 
 
 def skip_annotation(data, j):
@@ -126,38 +163,135 @@ def skip_value(data, j):
     raise ValueError(f"annotation value tag {tag}")
 
 
-# the class directory of a kind of test compilation, and the source sets whose tests land in it
+def params(desc):
+    """The parameter type descriptors of a method descriptor."""
+    out, i, body = [], 0, desc[1:desc.index(")")]
+    while i < len(body):
+        j = i
+        while body[j] == "[":
+            j += 1
+        j = body.index(";", j) + 1 if body[j] == "L" else j + 1
+        out.append(body[i:j])
+        i = j
+    return out
+
+
+JUNIT4, JUPITER, FUZZ = b"Lorg/junit/Test;", b"Lorg/junit/jupiter/api/Test;", b"Lcom/code_intelligence/jazzer/junit/FuzzTest;"
+# the parameters JUnit 5 resolves without an extension (the repository registers none)
+JUPITER_PARAMS = {"Lorg/junit/jupiter/api/TestInfo;", "Lorg/junit/jupiter/api/TestReporter;", "Lorg/junit/jupiter/api/RepetitionInfo;"}
+
+
+def check_class(k, info, supers):
+    """Yields None for every test method of class [k] and a finding text for every reason a runner skips or refuses it."""
+    name = k.name.replace("/", ".")
+    ctor = any(m == "<init>" and d == "()V" and not ma & ACC_PRIVATE for m, d, ma, _ in k.methods)
+    abstract = k.access & (ACC_ABSTRACT | ACC_INTERFACE)
+    # the test methods this class inherits from compiled super classes: overriding one without the annotation hides it
+    inherited, sup = {}, info.get(k.sup)
+    while sup is not None:
+        for mname, desc, macc, anns in sup.methods:
+            if anns & TEST_ANNOTATIONS and not macc & (ACC_PRIVATE | ACC_STATIC):
+                inherited.setdefault((mname, desc), sup.name.replace("/", "."))
+        sup = info.get(sup.sup)
+    for mname, desc, macc, anns in k.methods:
+        if not anns & TEST_ANNOTATIONS:
+            if (mname, desc) in inherited and not macc & ACC_STATIC:
+                yield (f"{name}.{mname} | overridden | overrides the test {inherited[(mname, desc)]}.{mname} without a test "
+                       "annotation, so neither runs in this class; annotate the override")
+            continue
+        yield None
+        where = f"{name}.{mname}"
+        junit4 = JUNIT4 in anns
+        if not desc.endswith(")V"):
+            yield (f"{where} | returns | descriptor {desc}: the test returns a value, so JUnit 5 skips it; "
+                   "give it a block body or runBlocking<Unit>")
+        if macc & ACC_STATIC:
+            yield f"{where} | static | a static test method: no runner calls it; make it a class member"
+        if macc & ACC_PRIVATE:
+            yield f"{where} | private | a private test method: no runner calls it"
+        elif junit4 and not macc & ACC_PUBLIC:
+            yield f"{where} | not public | JUnit 4 (org.junit.Test: the Android tests) refuses a test method that is not public"
+        if macc & ACC_ABSTRACT:
+            yield (f"{where} | abstract method | an abstract test method: the override that runs carries no test annotation "
+                   "unless it repeats it")
+        ps = params(desc)
+        if FUZZ not in anns and ps and (junit4 or not set(ps) <= JUPITER_PARAMS):
+            yield (f"{where} | parameters | takes {', '.join(ps)}: JUnit 4 refuses any parameter and JUnit 5 resolves only "
+                   "TestInfo, TestReporter and RepetitionInfo")
+        if k.local:
+            yield (f"{where} | local | {name} is a local or anonymous class (declared in a function, an object expression): "
+                   "JUnit 5 skips it and JUnit 4 cannot create it")
+        elif k.nested is not None and k.nested[0] & ACC_PRIVATE:
+            yield f"{where} | private class | {name} is a private nested class: JUnit 5 skips it, JUnit 4 refuses it"
+        elif junit4 and not (k.nested[0] if k.nested is not None else k.access) & ACC_PUBLIC:
+            yield f"{where} | class not public | JUnit 4 (org.junit.Test) refuses a test class that is not public"
+        if not abstract and not macc & ACC_STATIC and not ctor and not k.local:
+            yield (f"{where} | constructor | {name} has no constructor without parameters that the runner may call (an "
+                   "object or companion object, an inner class, a class whose constructor needs arguments)")
+        if abstract and k.name not in supers:
+            yield f"{where} | abstract | {name} is abstract and no compiled class extends it"
+
+
+# the class directory of a kind of test compilation of a kuicksilver-* module, and the source sets whose tests land in it.
+# The Android device tests (instrumented, run on an emulator under JUnit 4) compile the common tests too.
 KINDS = {"jvm": ("jvm/test", ("commonTest", "jvmTest", "jvmCommonTest")),
-         "android-host": ("android/hostTest", ("androidHostTest",))}
+         "android-host": ("android/hostTest", ("androidHostTest",)),
+         "android-device": ("android/deviceTest", ("commonTest", "jvmCommonTest", "androidDeviceTest")),
+         "samples": (None, ())}
+# the samples are builds of their own: (class directory, source sets compiled into it)
+SAMPLES = [("samples/realtime-telemetry/build/classes/kotlin/jvm/test", ("samples/realtime-telemetry/src/commonTest/",
+                                                                         "samples/realtime-telemetry/src/jvmTest/")),
+           ("samples/compose-demo/composeApp/build/classes/kotlin/android/hostTest",
+            ("samples/compose-demo/composeApp/src/commonTest/", "samples/compose-demo/composeApp/src/androidHostTest/")),
+           ("samples/compose-demo/server/build/classes/kotlin/test", ("samples/compose-demo/server/src/test/",)),
+           ("samples/compose-demo/androidApp/build/intermediates/built_in_kotlinc/debugAndroidTest/compileDebugAndroidTestKotlin/classes",
+            ("samples/compose-demo/androidApp/src/androidTest/",))]
+COMPILE = {"jvm": "compileTestKotlinJvm", "android-host": "compileAndroidHostTest",
+           "android-device": "compileAndroidDeviceTest", "samples": "the sample's own test compilation"}
 
 
 def expected(root, kinds):
-    """(class directory, why) of every kuicksilver-* module whose tracked test sources a kind compiles: JVM classes only
-    for a module whose build script declares a JVM target, Android host classes for a module with androidHostTest."""
+    """(class directory, why) of every compilation whose tracked test sources a kind compiles: JVM classes only for a
+    kuicksilver-* module whose build script declares a JVM target, Android host classes for a module with androidHostTest,
+    Android device classes for a module of the kuicksilver.kmp convention (it declares the Android target and its device
+    tests), and the samples' test classes."""
     import subprocess
-    out = subprocess.run(["git", "-C", root, "ls-files", "kuicksilver-*/src/*Test/*.kt"], capture_output=True, text=True).stdout
-    want, jvm = {}, {}
+    out = subprocess.run(["git", "-C", root, "ls-files", "kuicksilver-*/src/*Test/*.kt", "samples/*.kt"],
+                         capture_output=True, text=True).stdout
+    want, builds = {}, {}
     for f in out.splitlines():
+        if f.startswith("samples/"):
+            if "samples" in kinds:
+                for d, sets in SAMPLES:
+                    if f.startswith(sets):
+                        want.setdefault(os.path.join(root, d), os.path.dirname(f))
+            continue
         module, _, sset = f.split("/")[:3]
-        if module not in jvm:  # a JVM target: the kuicksilver.kmp convention (it declares jvm), jvm() or kotlin("jvm")
+        if module not in builds:
             try:
                 with open(os.path.join(root, module, "build.gradle.kts"), encoding="utf-8") as fh:
-                    build = fh.read()
+                    builds[module] = fh.read()
             except OSError:
-                build = ""
-            jvm[module] = re.search(r'id\("kuicksilver\.kmp"\)|\bjvm\s*[({]|kotlin\("jvm"\)', build) is not None
+                builds[module] = ""
+        build = builds[module]
+        kmp = re.search(r'id\("kuicksilver\.kmp"\)', build) is not None
+        # a JVM target: the kuicksilver.kmp convention (it declares jvm), jvm() or kotlin("jvm")
+        jvm = kmp or re.search(r'\bjvm\s*[({]|kotlin\("jvm"\)', build) is not None
         for kind in kinds:
             sub, sets = KINDS[kind]
-            if kind == "jvm" and sset == "commonTest" and not jvm[module]:
+            if sub is None or sset not in sets:
+                continue
+            if kind == "jvm" and sset == "commonTest" and not jvm:
                 continue  # common tests of a module without a JVM target compile elsewhere (jvmTest implies one)
-            if sset in sets and (kind != "android-host" or sset == "androidHostTest"):
-                want.setdefault(os.path.join(root, module, "build", "classes", "kotlin", *sub.split("/")), f"{module}/src/{sset}")
+            if kind == "android-device" and not kmp:
+                continue
+            want.setdefault(os.path.join(root, module, "build", "classes", "kotlin", *sub.split("/")), f"{module}/src/{sset}")
     return want
 
 
 def main(argv):
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    kinds = list(KINDS)
+    kinds = ["jvm", "android-host", "android-device"]  # the samples are their own builds: --targets samples
     if argv[:1] == ["--root"]:
         root, argv = os.path.abspath(argv[1]), argv[2:]
     if argv[:1] == ["--targets"]:
@@ -174,35 +308,21 @@ def main(argv):
         dirs = sorted(d for d in want if os.path.isdir(d))
         for d in sorted(set(want) - set(dirs)):
             findings.append(f"{os.path.relpath(d, root)} | missing | {want[d]} has tests but no class directory: compile them "
-                            "first (compileTestKotlinJvm, compileAndroidHostTest)")
+                            "first (" + ", ".join(COMPILE[k] for k in kinds) + ")")
     for d in dirs:
         info = {}
         for f in glob.glob(os.path.join(d, "**", "*.class"), recursive=True):
             with open(f, "rb") as fh:
-                info[f] = parse(fh.read())
+                k = parse(fh.read())
+            info[k.name] = k
         classes += len(info)
-        supers = {sup for _, sup, _, _ in info.values()}
+        supers = {k.sup for k in info.values()}
         rel = os.path.relpath(d, root)
-        for name, sup, acc, methods in sorted(info.values()):
-            ctor = any(m == "<init>" and d == "()V" and not ma & ACC_PRIVATE for m, d, ma, _ in methods)
-            for mname, desc, macc, anns in methods:
-                if not anns & TEST_ANNOTATIONS:
-                    continue
-                tests += 1
-                where = f"{rel} | {name.replace('/', '.')}.{mname}"
-                if not desc.endswith(")V"):
-                    findings.append(f"{where} | returns | descriptor {desc}: the test returns a value, so JUnit 5 skips it; "
-                                    "give it a block body or runBlocking<Unit>")
-                if macc & ACC_STATIC:
-                    findings.append(f"{where} | static | a static test method: no runner calls it; make it a class member")
-                if macc & ACC_PRIVATE:
-                    findings.append(f"{where} | private | a private test method: no runner calls it")
-                if not acc & (ACC_ABSTRACT | ACC_INTERFACE) and not macc & ACC_STATIC and not ctor:
-                    findings.append(f"{where} | constructor | {name.replace('/', '.')} has no constructor without parameters "
-                                    "that the runner may call (an object or companion object, an inner class, a class "
-                                    "whose constructor needs arguments)")
-                if acc & (ACC_ABSTRACT | ACC_INTERFACE) and name not in supers:
-                    findings.append(f"{where} | abstract | {name.replace('/', '.')} is abstract and no compiled class extends it")
+        for k in sorted(info.values()):
+            for x in check_class(k, info, supers):
+                tests += x is None
+                if x:
+                    findings.append(f"{rel} | {x}")
     if not classes and not findings:
         print("test-bytecode: no class file under " + ", ".join(dirs or ["*/build/classes/kotlin/jvm/test"]) +
               ": compile the JVM tests first", file=sys.stderr)

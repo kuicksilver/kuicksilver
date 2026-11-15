@@ -1,0 +1,15 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt
+index 1ac5925f5..cf0155789 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt
+@@ -502,10 +502,6 @@ internal class ConnectionIdManager(
+         l: Local,
+         until: TimeMark,
+     ) {
+-        if (retiredLocal.size >= retiredCap) {
+-            registrar.remove(retiredLocal.removeAt(0).cid)
+-            retiredUntil.removeAt(0)
+-        }
+         retiredLocal += l
+         retiredUntil += until
+     }

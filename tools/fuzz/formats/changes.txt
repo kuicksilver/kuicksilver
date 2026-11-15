@@ -1,0 +1,5 @@
+# Why recorded decodings of committed fuzz inputs changed (tools/check/fuzz-formats.py): one line per change,
+# <YYYY-MM-DD> | <targets, comma-separated> | <reason>. A line added on a branch lets the inputs of the targets it names
+# decode otherwise than on the merge base with main; lines already on main count for nothing.
+2026-11-16 | quic.connectionNull, quic.connectionTls | rewritten to keep their recorded meaning after PATH ops (kind 7 with an argument from 1 to 14 is a PATH operation now, tools/fuzz/rewrite-conn-path-ops.sh made those a round); and the programs run over EndpointNet now, whose server connection exists only once the client's first Initial arrived, so a server APP operation before that reads no arguments (120 inputs decode otherwise from that operation on)
+2026-11-16 | http2.connectionServer, http2.connectionClient | the stateful targets read a mode byte, the server after its split byte and the client after its streams byte: the regression inputs were rewritten into that format and decode to the new drive

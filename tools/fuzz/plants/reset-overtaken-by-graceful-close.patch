@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-http3/src/jvmTest/kotlin/io/kuicksilver/http3/fuzz/MemQuic.kt b/kuicksilver-http3/src/jvmTest/kotlin/io/kuicksilver/http3/fuzz/MemQuic.kt
+index 1284f42b4..fd3eeea92 100644
+--- a/kuicksilver-http3/src/jvmTest/kotlin/io/kuicksilver/http3/fuzz/MemQuic.kt
++++ b/kuicksilver-http3/src/jvmTest/kotlin/io/kuicksilver/http3/fuzz/MemQuic.kt
+@@ -505,7 +505,7 @@ internal class MemStream(
+             retired = true
+             conn.finished(this)
+         }
+-        if (recvDone && sendDone) done.complete(Unit)
++        if (recvDone && (sendDone || resetSent)) done.complete(Unit)
+     }
+ 
+     override fun releaseStreamCreditHook() {

@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/DatagramFrames.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/DatagramFrames.kt
+index bb1d8e066..40f8c0548 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/DatagramFrames.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/DatagramFrames.kt
+@@ -111,8 +111,6 @@ internal class DatagramWriter : DatagramPacketWriter {
+         val w = w ?: return false
+         val f = frames ?: return false
+         if (length < 0 || length > remaining) return false
+-        // remaining is 0 both when an empty payload fits and when no frame does: an empty DATAGRAM still takes 2 bytes
+-        if (1 + VarInt.size(length.toLong()) + length > w.remaining) return false
+         FrameEncoder.datagram(w, data, offset, length)
+         f.addDatagram(id)
+         wrote = true

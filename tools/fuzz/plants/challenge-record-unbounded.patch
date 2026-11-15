@@ -1,0 +1,11 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/ConnectionCore.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/ConnectionCore.kt
+index 689eb80e1..5f91b6c3f 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/ConnectionCore.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/ConnectionCore.kt
+@@ -1291,6 +1291,5 @@ public fun ConnectionCore.Companion.server(
+ 
+ /** Appends to a test-only record of a connection, dropping the oldest entry beyond [ConnectionCore.TEST_RECORD_LIMIT]. */
+ internal fun <T> MutableList<T>.recordForTest(value: T) {
+-    if (size >= ConnectionCore.TEST_RECORD_LIMIT) removeAt(0)
+     add(value)
+ }

@@ -26,6 +26,7 @@ class H2FrameFuzzTest {
     fun frames(data: ByteArray) {
         if (data.isEmpty()) return
         val piece = 1 + (data[0].toInt() and 0xff)
+        fuzzOp { "frames fed in pieces of $piece from offset 1" }
         val d = FrameDecoder(16_384)
         var p = 1
         try {
@@ -84,6 +85,7 @@ class HpackDecodeFuzzTest {
         val limit = intArrayOf(64, 1_024, 16_384, 65_536)[(data[0].toInt() shr 2) and 3]
         val d = HpackDecoder(maxTableSize = table, maxHeaderListSize = limit)
         val split = minOf(((data[1].toInt() and 0xff) shl 8) or (data[2].toInt() and 0xff), data.size - 3)
+        fuzzOp { "table=$table limit=$limit blocks [3, ${3 + split}) [${3 + split}, ${data.size})" }
         try {
             for ((off, len) in listOf(3 to split, 3 + split to data.size - 3 - split)) {
                 var listSize = 0L
@@ -122,14 +124,17 @@ class HpackRoundTripFuzzTest {
         }
         val names = listOf(":path", "authorization", "cookie", "set-cookie", "x-a", "content-type", "date")
         while (p < data.size) {
+            val at = p
             val op = next()
             if (op == 0xff) {
                 val size = (next().coerceAtLeast(0) shl 4).coerceAtMost(4_096)
+                fuzzOp { "@$at table size $size" }
                 enc.setPeerMaxTableSize(size.toLong()) // the peer lowered or raised SETTINGS_HEADER_TABLE_SIZE...
                 dec.setMaxTableSize(size) // ...and our acknowledgement went out before the next block
                 continue
             }
             val fields = List(op % 8) { (if (next() and 1 == 0) names[next().coerceAtLeast(0) % names.size] else string()) to string() }
+            fuzzOp { "@$at fields $fields" }
             val block = enc.encode(fields)
             val got = mutableListOf<Pair<String, String>>()
             dec.decode(block) { n, v -> got += n to v }

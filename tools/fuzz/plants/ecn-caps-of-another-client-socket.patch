@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/EndpointNet.kt b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/EndpointNet.kt
+index c9338b6a3..b17173eab 100644
+--- a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/EndpointNet.kt
++++ b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/EndpointNet.kt
+@@ -230,7 +230,7 @@ internal class EndpointNet(
+     ): IoCapabilities =
+         when {
+             side == 1 && socket == PREFERRED_SOCKET -> preferredCaps
+-            side == 0 -> clientSocketCaps[socket] ?: caps[0]
++            side == 0 -> caps[0]
+             else -> caps[side]
+         }
+ 

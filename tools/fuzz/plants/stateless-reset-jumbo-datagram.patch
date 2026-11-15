@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/endpoint/StatelessReset.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/endpoint/StatelessReset.kt
+index 2cd196a28..6a3845db2 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/endpoint/StatelessReset.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/endpoint/StatelessReset.kt
+@@ -55,7 +55,7 @@ internal object StatelessReset {
+         random: Random,
+     ): Int {
+         if (incomingLength <= MIN_SIZE) return 0
+-        val limit = minOf(incomingLength, out.capacity + 1)
++        val limit = incomingLength
+         if (limit <= MIN_SIZE) return 0
+         val length =
+             if (limit <= SHORT_TRIGGER) {

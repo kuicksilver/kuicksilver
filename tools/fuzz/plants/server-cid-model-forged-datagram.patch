@@ -1,0 +1,13 @@
+diff --git a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ConnectionInvariants.kt b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ConnectionInvariants.kt
+index b1effd273..8beac001e 100644
+--- a/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ConnectionInvariants.kt
++++ b/kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ConnectionInvariants.kt
+@@ -402,7 +402,7 @@ internal class ConnectionInvariants(
+         if (TRACE) println("t=${net.now} ${name(side)} gets ${f.from}->${f.to} ${size}B ${f.ecn}")
+         if (side == 1) {
+             receivedFrom[f.from] = (receivedFrom[f.from] ?: 0L) + size
+-            serverCid(f)?.takeIf { f.bytes in clientDatagrams }?.let { ours ->
++            serverCid(f)?.let { ours ->
+                 oursFrom.getOrPut(f.from to f.to) { HashSet() } += ours
+                 lastOursFrom[f.from to f.to] = ours
+             }

@@ -131,14 +131,45 @@ internal object ConnProgram {
     const val MAX_FRAME = 1000
     const val MAX_OPS = 400
 
+    /** Flag: operations start with the first datagram. */
     const val LIVE = 1
+
+    /** Flag: small limits. */
     const val SMALL = 2
+
+    /** Flag: PMTUD off. */
     const val NO_PMTUD = 4
+
+    /** Flag: the sockets set DF. */
     const val DF = 8
+
+    /** Flag: the sockets mark and read ECN. */
     const val ECN = 16
+
+    /** Flag: the server sends a Retry. */
     const val RETRY = 32
+
+    /** Flag: version negotiation (the server prefers v2). */
     const val VN = 64
+
+    /** Flag: a setup byte follows the flags ([SETUP_NAMES]). */
     const val SETUP = 128
+
+    /**
+     * Every flag by the name its trace gives it ([FuzzTrace]); a flag the decoder reads is listed here (FuzzTraceTest). The
+     * trace names only the flags set, so an input without the flags added later keeps its fingerprint.
+     */
+    val FLAG_NAMES =
+        mapOf(
+            LIVE to "live",
+            SMALL to "small",
+            NO_PMTUD to "noPmtud",
+            DF to "df",
+            ECN to "ecn",
+            RETRY to "retry",
+            VN to "vn",
+            SETUP to "setup",
+        )
 
     const val PREFERRED = 1
     const val COMPATIBLE = 2
@@ -148,6 +179,19 @@ internal object ConnProgram {
     const val SERVER_NO_DF = 32
     const val NO_ICMP_HINTS = 64
     const val BBR = 128
+
+    /** Every bit of the setup byte by the name its trace gives it ([FuzzTrace]; FuzzTraceTest). */
+    val SETUP_NAMES =
+        mapOf(
+            PREFERRED to "preferred",
+            COMPATIBLE to "compatible",
+            CLIENT_NO_ECN_READ to "clientNoEcnRead",
+            SERVER_NO_ECN_READ to "serverNoEcnRead",
+            CLIENT_NO_DF to "clientNoDf",
+            SERVER_NO_DF to "serverNoDf",
+            NO_ICMP_HINTS to "noIcmpHints",
+            BBR to "bbr",
+        )
 
     const val E_MTU = 1
     const val E_ICMP = 2
@@ -316,7 +360,26 @@ internal class ConnectionFuzz(
     private val tamper: ((EndpointNet) -> Unit)? = null,
     /** Told the offset of every PATH operation (kind 7, argument neither 0 nor 15) as it runs ([ConnectionProgramRewriter]). */
     private val pathOpSeen: ((offset: Int) -> Unit)? = null,
+    /**
+     * Called with the network and a digest of everything on the wire and given to the applications (every datagram either side
+     * sent, every stream byte and datagram an application read) once the program and its closing rounds ran: FuzzTraceTest
+     * compares runs by what it sees.
+     */
+    private val observe: ((EndpointNet, String) -> Unit)? = null,
 ) {
+    private val seen = if (observe != null) java.security.MessageDigest.getInstance("SHA-256") else null
+
+    private fun see(
+        tag: Int,
+        b: ByteArray,
+        n: Int = b.size,
+    ) {
+        val d = seen ?: return
+        d.update(tag.toByte())
+        d.update(n.toString().toByteArray())
+        d.update(b, 0, maxOf(0, minOf(n, b.size)))
+    }
+
     private var p = 0
     private val flags = if (data.isEmpty()) 0 else data[0].toInt() and 0xff
     private var setup = 0
@@ -358,11 +421,15 @@ internal class ConnectionFuzz(
 
     private fun pattern(n: Int): ByteArray = ByteArray(n) { (it * 7 + 3).toByte() }
 
+    /** The kind of the frame [frame] built last, for the trace. */
+    private var frameKind = ""
+
     /** A well-formed frame of the selected kind with fuzzed fields. */
     private fun frame(): ByteArray {
         val o = ByteArrayOutputStream()
         val kinds = ConnProgram.FRAME_KINDS
         val kind = kinds[u8() % kinds.size]
+        frameKind = kind
         when (kind) {
             "PADDING" -> {
                 repeat(minOf(num(), 64L).toInt() + 1) { o.write(0) }
@@ -603,7 +670,11 @@ internal class ConnectionFuzz(
         if (data.isEmpty()) return
         KslLoader.ensureLoaded()
         p = 1
-        if (flags and ConnProgram.SETUP != 0) setup = u8()
+        fuzzOp { "flags ${ConnProgram.FLAG_NAMES.filterKeys { flags and it != 0 }.values}" }
+        if (flags and ConnProgram.SETUP != 0) {
+            setup = u8()
+            fuzzOp { "setup ${ConnProgram.SETUP_NAMES.filterKeys { setup and it != 0 }.values}" }
+        }
         val ecnRead =
             BooleanArray(2) { side ->
                 flags and ConnProgram.ECN != 0 &&
@@ -628,16 +699,30 @@ internal class ConnectionFuzz(
         try {
             net.client.datagramSender = sides[0]
             net.onServerCreated = { it.datagramSender = sides[1] }
-            net.filterToServer = { !blocked[0] }
-            net.filterToClient = { !blocked[1] }
+            net.filterToServer = { f ->
+                see(0, f.bytes)
+                !blocked[0]
+            }
+            net.filterToClient = { f ->
+                see(1, f.bytes)
+                !blocked[1]
+            }
             if (flags and ConnProgram.LIVE == 0) handshake()
             var ops = 0
-            while (p < data.size && ops++ < ConnProgram.MAX_OPS) operation(u8())
+            while (p < data.size && ops++ < ConnProgram.MAX_OPS) {
+                val at = p
+                val o = u8()
+                // an operation whose branch traces nothing is named by its byte, never by the text of the one before
+                if (FuzzTrace.on) op = "untraced operation $o"
+                operation(o)
+                fuzzOp { "@$at $op ->@$p" }
+            }
             repeat(8) {
                 net.advance(10.milliseconds)
                 step()
             }
             checks.finish()
+            observe?.invoke(net, seen?.digest()?.joinToString("") { "%02x".format(it) }.orEmpty())
         } finally {
             QuicReach.end()
             net.close()
@@ -655,6 +740,13 @@ internal class ConnectionFuzz(
 
     private fun core(side: Int): ConnectionCore? = net.core(side)
 
+    /** What the operation being run was decoded to, for its trace ([fuzzOp]): set by each kind. */
+    private var op = ""
+
+    private inline fun traced(text: () -> String) {
+        if (FuzzTrace.on) op = text()
+    }
+
     private fun operation(o: Int) {
         val kind = o and 7
         val side = (o ushr 3) and 1
@@ -664,19 +756,24 @@ internal class ConnectionFuzz(
                 val n = minOf((u8() shl 8) or u8(), ConnProgram.MAX_FRAME, data.size - p)
                 val bytes = data.copyOfRange(p, p + n)
                 p += n
+                traced { "RAW ${name(side)} level=${arg and 3} bytes=${bytes.size}:${bytes.contentHashCode()}" }
                 inject(side, arg and 3, bytes)
                 checks.fakeFrames[side] = true // raw bytes may hold any frame, an ACK of what never arrived among them
             }
 
             1 -> {
                 val f = frame()
+                traced { "FRAME ${name(side)} level=${arg and 3} $frameKind bytes=${f.size}:${f.contentHashCode()}" }
                 inject(side, arg and 3, f)
                 if (f.isNotEmpty() && (f[0].toInt() == 0x02 || f[0].toInt() == 0x03)) checks.fakeFrames[side] = true
             }
 
             2 -> {
-                net.advance((arg * 5).milliseconds)
-                if (arg and 8 != 0) readDatagrams()
+                val ms = arg * 5
+                val read = arg and 8 != 0
+                traced { "STEP ${ms}ms readDatagrams=$read" }
+                net.advance(ms.milliseconds)
+                if (read) readDatagrams()
                 step()
             }
 
@@ -689,16 +786,20 @@ internal class ConnectionFuzz(
             }
 
             5 -> {
-                net.advance(if (arg == 15) 3_000.milliseconds else (arg * 100).milliseconds)
+                val ms = if (arg == 15) 3_000 else arg * 100
+                traced { "TICK ${ms}ms" }
+                net.advance(ms.milliseconds)
                 step()
             }
 
             6 -> {
+                traced { if (arg and 1 != 0) "BLOCK ${name(side)} toggle" else "BLOCK round" }
                 if (arg and 1 != 0) blocked[side] = !blocked[side] else step()
             }
 
             else -> {
                 if (arg == 0 || arg == 15) {
+                    traced { "ROUND" }
                     step()
                 } else {
                     pathOpSeen?.invoke(p - 1)
@@ -718,9 +819,13 @@ internal class ConnectionFuzz(
         c.testInjectFrames += level to bytes
     }
 
+    /** The stream index byte the application call read last, for the trace (which stream it names depends on the run). */
+    private var index = -1
+
     private fun stream(side: Int): Long? {
         val s = sides[side].streams
         val i = u8()
+        index = i
         return if (s.isEmpty()) null else s[i % s.size]
     }
 
@@ -737,11 +842,16 @@ internal class ConnectionFuzz(
         side: Int,
         arg: Int,
     ) {
-        val c = core(side) ?: return
+        val c = core(side)
+        if (c == null) {
+            traced { "APP ${name(side)} none (no connection: reads nothing)" }
+            return
+        }
         when (arg and 7) {
             0 -> {
                 val n = minOf(num(), 20_000L).toInt()
                 val fin = u8() and 1 != 0
+                traced { "APP ${name(side)} open ${if (arg and 8 == 0) "bidi" else "uni"} write=$n fin=$fin" }
                 api {
                     val id = c.openStream(bidi = arg and 8 == 0)
                     sides[side].streams += id
@@ -752,38 +862,50 @@ internal class ConnectionFuzz(
             1 -> {
                 val id = stream(side)
                 val n = minOf(num(), 20_000L).toInt()
+                traced { "APP ${name(side)} write stream#$index $n" }
                 if (id != null) api { c.writeStream(id, ByteArray(n) { (it * 3).toByte() }, 0, n, false) }
             }
 
             2 -> {
                 val id = stream(side)
                 val n = minOf(num(), 65_536L).toInt()
-                if (id != null) api { c.readStream(id, ByteArray(maxOf(n, 1)), 0, n) }
+                traced { "APP ${name(side)} read stream#$index $n" }
+                if (id != null) {
+                    api {
+                        val into = ByteArray(maxOf(n, 1))
+                        see(2 + side, into, c.readStream(id, into, 0, n))
+                    }
+                }
             }
 
             3 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} reset stream#$index code=$code" }
                 if (id != null) api { c.resetStream(id, code) }
             }
 
             4 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} stopSending stream#$index code=$code" }
                 if (id != null) api { c.stopSending(id, code) }
             }
 
             5 -> {
+                traced { "APP ${name(side)} keyUpdate" }
                 c.initiateKeyUpdate(net.now)
             }
 
             6 -> {
                 val n = minOf(num(), 1500L).toInt()
+                traced { "APP ${name(side)} datagram $n" }
                 if (sides[side].datagrams.size < 16) sides[side].datagrams += ByteArray(n) { 0x5a }
             }
 
             else -> {
                 val code = num()
+                traced { "APP ${name(side)} close code=$code" }
                 api { c.close(code, "fuzz", net.now) }
             }
         }
@@ -794,6 +916,10 @@ internal class ConnectionFuzz(
         arg: Int,
     ) {
         val q = if (side == 0) net.toServer else net.toClient
+        traced {
+            val what = listOf("dropFirst", "duplicateFirst", "reverse", if (arg and 4 != 0) "markCe" else "markEct0")[arg and 3]
+            "NET towards ${name(1 - side)} $what rebind=${arg and 8 != 0 && side == 0}"
+        }
         when (arg and 3) {
             0 -> {
                 q.removeFirstOrNull()
@@ -829,10 +955,13 @@ internal class ConnectionFuzz(
         when (e) {
             ConnProgram.E_MTU -> {
                 val m = u8()
-                net.linkMtu[side] = if (m == 255) 65_527 else 1180 + 4 * m
+                val mtu = if (m == 255) 65_527 else 1180 + 4 * m
+                traced { "PATH ${name(side)} linkMtu $mtu" }
+                net.linkMtu[side] = mtu
             }
 
             ConnProgram.E_ICMP -> {
+                traced { "PATH ${name(side)} icmp toggle" }
                 net.icmp[side] = !net.icmp[side]
             }
 
@@ -841,7 +970,9 @@ internal class ConnectionFuzz(
             }
 
             ConnProgram.E_ECN_PATH -> {
-                net.ecnPath[side] = EcnPath.entries[u8() % EcnPath.entries.size]
+                val e = EcnPath.entries[u8() % EcnPath.entries.size]
+                traced { "PATH ${name(side)} ecnPath $e" }
+                net.ecnPath[side] = e
             }
 
             ConnProgram.E_RESET -> {
@@ -849,6 +980,7 @@ internal class ConnectionFuzz(
             }
 
             ConnProgram.E_CRASH -> {
+                traced { "PATH ${name(side)} serverLosesState" }
                 net.loseServerState()
             }
 
@@ -857,10 +989,12 @@ internal class ConnectionFuzz(
             }
 
             ConnProgram.E_STRANGER -> {
+                traced { "PATH ${name(side)} stranger repeats the server's last datagram" }
                 net.lastSent[1]?.let { f -> if (net.toClient.size < 64) net.toClient += Flight(f.bytes, EndpointNet.STRANGER, f.to, f.ecn) }
             }
 
             ConnProgram.E_PREFERRED_LOSS -> {
+                traced { "PATH ${name(side)} preferredUnreachable toggle" }
                 net.preferredUnreachable = !net.preferredUnreachable
             }
 
@@ -871,6 +1005,11 @@ internal class ConnectionFuzz(
                     return
                 }
                 val preferred = side == 1 && v and 2 != 0
+                traced {
+                    "PATH ${name(
+                        side,
+                    )} caps ${if (preferred) "preferred socket" else "socket"} ${if (v and 1 != 0) "noEcn" else "noDf"}"
+                }
                 val had = if (preferred) net.preferredCaps else net.caps[side]
                 val caps =
                     if (v and 1 != 0) {
@@ -894,15 +1033,18 @@ internal class ConnectionFuzz(
 
             ConnProgram.E_PTB_INFLIGHT -> {
                 val m = u8()
+                traced { "PATH ${name(side)} ptbInFlight mtu=${1228 + 2 * m}" }
                 val q = if (side == 0) net.toServer else net.toClient
                 q.firstOrNull()?.let { f -> net.packetTooBig(side, f, 1228 + 2 * m, net.socketOf(side, f)) }
             }
 
             ConnProgram.E_PREFERRED_DOWN -> {
+                traced { "PATH ${name(side)} preferredDown" }
                 net.preferredDown()
             }
 
             else -> {
+                traced { "PATH ${name(side)} round (code $e)" }
                 step()
             }
         }
@@ -913,6 +1055,7 @@ internal class ConnectionFuzz(
         val v = u8() % 4
         val mtu = minOf(num(), 70_000L).toInt()
         val len = u8()
+        traced { "PATH ${name(side)} forgedPtb variant=$v mtu=$mtu len=$len" }
         val f = net.lastSent[side] ?: return
         when (v) {
             0 -> {
@@ -942,6 +1085,7 @@ internal class ConnectionFuzz(
     private fun forgedReset(side: Int) {
         val v = u8() % 8
         val size = (num() % 1300).toInt()
+        traced { "PATH ${name(side)} forgedReset variant=$v size=$size" }
         val c = core(side) ?: return
         val (token, from, to) = checks.resetToken(side, c, v) ?: return
         val n =
@@ -968,6 +1112,7 @@ internal class ConnectionFuzz(
      */
     private fun clientSocketCaps() {
         val b = u8()
+        traced { "PATH client caps clientSocket#${b shr 1} ${if (b and 1 != 0) "noEcn" else "noDf"}" }
         val sockets = net.clientSocketIds()
         val socket = sockets[(b shr 1) % sockets.size]
         val had = net.capsOf(0, socket)
@@ -990,6 +1135,15 @@ internal class ConnectionFuzz(
     private fun migrate() {
         val c = net.client
         val v = u8()
+        traced {
+            val what =
+                when (v) {
+                    ConnProgram.MIGRATE_REDIRECT -> "redirect"
+                    ConnProgram.MIGRATE_DROP_TO_NEW_SOCKET -> "dropToNewSocket toggle"
+                    else -> listOf("addPath", "switchPath", "closePath")[v % 3]
+                }
+            "PATH migrate $what"
+        }
         if (v == ConnProgram.MIGRATE_REDIRECT) {
             redirect()
             return
@@ -1035,6 +1189,7 @@ internal class ConnectionFuzz(
 
     private fun forgedRetry() {
         val v = u8() % 5
+        traced { "PATH forgedRetry variant=$v" }
         val c = net.client
         val bytes =
             if (v == 0) {
@@ -1056,6 +1211,7 @@ internal class ConnectionFuzz(
 
     private fun forgedVn() {
         val v = u8() % 3
+        traced { "PATH forgedVn variant=$v" }
         val c = net.client
         val bytes =
             if (v == 0) {
@@ -1087,7 +1243,11 @@ internal class ConnectionFuzz(
         for (side in 0..1) {
             val c = core(side) ?: continue
             var n = 0
-            while (n++ < 64 && c.readDatagram(buf, 0) >= 0) { /* the application consumes them */ }
+            while (n++ < 64) {
+                val k = c.readDatagram(buf, 0)
+                if (k < 0) break
+                see(4 + side, buf, k) // the application consumes them
+            }
         }
     }
 

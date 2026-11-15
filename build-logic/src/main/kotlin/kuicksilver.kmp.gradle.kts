@@ -196,6 +196,27 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
         javaLauncher.set(project.extensions.getByType<org.gradle.jvm.toolchain.JavaToolchainService>().launcherFor { languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(v)) })
     }
     providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
+    // a module with fuzz targets replays the committed corpora of its own targets (the jvm rows of tools/fuzz/campaign.sh
+    // naming it) and checks the recorded decoding of every committed input (CommittedCorpusReplayTest in its FuzzCase.kt):
+    // those corpora and locks are inputs of its JVM tests, so a change to them, and only to them, runs its tests again
+    val campaign = rootProject.file("tools/fuzz/campaign.sh")
+    val targets =
+        if (!campaign.isFile) {
+            emptyList()
+        } else {
+            campaign.readLines().dropWhile { !it.startsWith("targets_table()") }.dropWhile { !it.contains("<<'EOF'") }.drop(1)
+                .takeWhile { it != "EOF" }.map { it.trim().split(Regex("\\s+")) }
+                .filter { it.size == 5 && it[1] == "jvm" && it[2] == project.name }.map { it[0] }
+        }
+    if (targets.isNotEmpty()) {
+        inputs.files(targets.map { rootProject.file("tools/fuzz/corpus/$it") }).withPathSensitivity(PathSensitivity.RELATIVE)
+            .withPropertyName("fuzzCorpus")
+        inputs.files(targets.map { rootProject.file("tools/fuzz/formats/$it.lock") }).withPathSensitivity(PathSensitivity.RELATIVE)
+            .withPropertyName("fuzzFormats")
+        inputs.files(campaign, rootProject.file("tools/fuzz/no-corpus.txt")).withPathSensitivity(PathSensitivity.RELATIVE)
+            .withPropertyName("fuzzTargets")
+        inputs.property("fuzzFormatsMode", providers.environmentVariable("KUICKSILVER_FUZZ_FORMATS").orElse(""))
+    }
 }
 // Flake hunting (tools/ci/flake-hunt.sh): -Pkuicksilver.test.repeat=<N> runs the JVM suite N times in one build, jvmTest
 // then jvmTestRepeat2..N, each with its own results directory and jvmTest's filter (--tests included);

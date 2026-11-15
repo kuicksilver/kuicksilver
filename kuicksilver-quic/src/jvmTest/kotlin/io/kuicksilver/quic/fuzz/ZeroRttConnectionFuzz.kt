@@ -102,6 +102,21 @@ internal object ZeroRttProgram {
 
     const val MAX_OPS = 300
 
+    /** Every outcome by the name its trace gives it ([FuzzTrace]), in the order of their values (FuzzTraceTest). */
+    val OUTCOME_NAMES = listOf("accept", "rejectApplication", "rejectLimits", "rejectRequired", "rejectAlpn", "noServerEarlyData", "lost")
+
+    /** Every flag by the name its trace gives it; a flag the decoder reads is listed here (FuzzTraceTest). */
+    val FLAG_NAMES =
+        mapOf(
+            RETRY to "retry",
+            VERSION_NEGOTIATION to "versionNegotiation",
+            SMALL to "small",
+            NO_RESET_AT to "noResetAt",
+            LOWERED to "lowered",
+            OVERRUN to "overrun",
+            HIGHER to "higher",
+        )
+
     /** Builds programs for the seed corpus and the seeded test. */
     class Builder(
         outcome: Int,
@@ -303,7 +318,15 @@ internal class ZeroRttConnectionFuzz(
     private val expect: Expect? = null,
     /** Called after every round, before the checks (the negative controls corrupt the state there); [answeredNow]: the client learnt the answer in it. */
     private val tamper: ((pair: CorePair, answeredNow: Boolean) -> Unit)? = null,
+    /** Called with the pair once the program and its closing rounds ran (FuzzTraceTest compares runs by what it sees). */
+    private val observe: ((CorePair, String) -> Unit)? = null,
 ) {
+    /**
+     * What went over the wire, for [observe]: the length of every datagram either side sent (their bytes differ from run to
+     * run under real TLS) and the kind and stream of every event either side reported.
+     */
+    private val seen = if (observe != null) StringBuilder() else null
+
     enum class Expect {
         Accepted,
         RejectedGoesOn,
@@ -381,11 +404,30 @@ internal class ZeroRttConnectionFuzz(
             ZeroRttCoverage.hit("runs")
             pair.client.datagramSender = datagrams[0]
             pair.onServerCreated = { it.datagramSender = datagrams[1] }
-            pair.filterToServer = { _, b -> toServer(b) }
-            pair.filterToClient = { _, _ -> !blocked[1] && outcome != ZeroRttProgram.LOST }
+            pair.filterToServer = { _, b ->
+                seen?.append(">")?.append(b.size)
+                toServer(b)
+            }
+            pair.filterToClient = { _, b ->
+                seen?.append("<")?.append(b.size)
+                !blocked[1] && outcome != ZeroRttProgram.LOST
+            }
+            fuzzOp {
+                "outcome=${ZeroRttProgram.OUTCOME_NAMES[outcome]} flags=${ZeroRttProgram.FLAG_NAMES.filterKeys {
+                    flags and it != 0
+                }.values}"
+            }
             var ops = 0
-            while (p < data.size && ops++ < ZeroRttProgram.MAX_OPS) operation(u8())
+            while (p < data.size && ops++ < ZeroRttProgram.MAX_OPS) {
+                val at = p
+                val o = u8()
+                // an operation whose branch traces nothing is named by its byte, never by the text of the one before
+                if (FuzzTrace.on) op = "untraced operation $o"
+                operation(o)
+                fuzzOp { "@$at $op ->@$p" }
+            }
             finish()
+            observe?.invoke(pair, seen?.toString().orEmpty())
         } finally {
             pair.close()
         }
@@ -518,6 +560,13 @@ internal class ZeroRttConnectionFuzz(
 
     private fun core(side: Int): ConnectionCore? = if (side == 0) pair.client else pair.server
 
+    /** What the operation being run was decoded to, for its trace ([fuzzOp]): set by each kind. */
+    private var op = ""
+
+    private inline fun traced(text: () -> String) {
+        if (FuzzTrace.on) op = text()
+    }
+
     private fun operation(o: Int) {
         val kind = o and 7
         val side = (o ushr 3) and 1
@@ -528,20 +577,26 @@ internal class ZeroRttConnectionFuzz(
             }
 
             1 -> {
-                pair.advance((arg * 5).milliseconds)
+                val ms = arg * 5
+                traced { "STEP ${ms}ms" }
+                pair.advance(ms.milliseconds)
                 step()
             }
 
             2 -> {
-                pair.advance(if (arg == 15) 3.seconds else (arg * 100).milliseconds)
+                val ms = if (arg == 15) 3_000 else arg * 100
+                traced { "TICK ${ms}ms" }
+                pair.advance(ms.milliseconds)
                 step()
             }
 
             3 -> {
+                traced { "BLOCK ${name(side)}" }
                 blocked[side] = !blocked[side]
             }
 
             4 -> {
+                traced { "NET from ${name(side)} ${listOf("dropFirst", "duplicateFirst", "reverse", "dropAll")[arg and 3]}" }
                 val q = if (side == 0) pair.toServer else pair.toClient
                 when (arg and 3) {
                     0 -> q.removeFirstOrNull()
@@ -552,6 +607,7 @@ internal class ZeroRttConnectionFuzz(
             }
 
             5 -> {
+                traced { "SETTLE" }
                 var n = 0
                 while (n++ < 64 && !answeredOrClosed()) {
                     pair.advance(10.milliseconds)
@@ -560,11 +616,13 @@ internal class ZeroRttConnectionFuzz(
             }
 
             6 -> {
+                traced { "DATAGRAM ${name(side)} ${arg * 64}" }
                 if (side == 0 && pair.client.earlyAccepted == null && !isClosing(pair.client)) ZeroRttCoverage.hit("early.datagram")
                 datagrams[side].offer(arg * 64)
             }
 
             else -> {
+                traced { "ROUND" }
                 step()
             }
         }
@@ -600,9 +658,13 @@ internal class ZeroRttConnectionFuzz(
     private fun isClosing(c: ConnectionCore) =
         c.state == ConnectionState.Closing || c.state == ConnectionState.Draining || c.state == ConnectionState.Closed
 
+    /** The stream index byte the application call read last, for the trace (which stream it names depends on the run). */
+    private var index = -1
+
     private fun stream(side: Int): Long? {
         val s = streams[side]
         val i = u8()
+        index = i
         return if (s.isEmpty()) null else s[i % s.size]
     }
 
@@ -628,6 +690,7 @@ internal class ZeroRttConnectionFuzz(
             0 -> {
                 val n = minOf(num(), 20_000L).toInt()
                 val fin = u8() and 1 != 0
+                traced { "APP ${name(side)} open ${if (arg and 8 == 0) "bidi" else "uni"} write=$n fin=$fin" }
                 if (c == null) return
                 api {
                     val id = c.openStream(bidi = arg and 8 == 0)
@@ -644,17 +707,20 @@ internal class ZeroRttConnectionFuzz(
             1 -> {
                 val id = stream(side)
                 val n = minOf(num(), 20_000L).toInt()
+                traced { "APP ${name(side)} write stream#$index $n" }
                 call(c, id, early, action) { c!!.writeStream(it, ByteArray(n) { b -> (b * 3).toByte() }, 0, n, false) }
             }
 
             2 -> {
                 val id = stream(side)
+                traced { "APP ${name(side)} finish stream#$index" }
                 call(c, id, early, action) { c!!.writeStream(it, ByteArray(0), 0, 0, true) }
             }
 
             3 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} reset stream#$index code=$code" }
                 call(c, id, early, action) { c!!.resetStream(it, code) }
             }
 
@@ -662,23 +728,27 @@ internal class ZeroRttConnectionFuzz(
                 val id = stream(side)
                 val code = num()
                 val reliable = num()
+                traced { "APP ${name(side)} resetAt stream#$index code=$code reliable=$reliable" }
                 call(c, id, early, action) { c!!.resetStreamAt(it, code, reliable) }
             }
 
             5 -> {
                 val id = stream(side)
                 val code = num()
+                traced { "APP ${name(side)} stopSending stream#$index code=$code" }
                 call(c, id, early, action) { c!!.stopSending(it, code) }
             }
 
             6 -> {
                 val id = stream(side)
                 val n = minOf(num(), 65_536L).toInt()
+                traced { "APP ${name(side)} read stream#$index $n" }
                 call(c, id, early, action) { c!!.readStream(it, ByteArray(maxOf(n, 1)), 0, n) }
             }
 
             else -> {
                 val code = num()
+                traced { "APP ${name(side)} close code=$code" }
                 if (c == null) return
                 made(early, action)
                 api { c.close(code, "fuzz", pair.now) }
@@ -710,6 +780,18 @@ internal class ZeroRttConnectionFuzz(
         pair.step()
         if (pair.server?.earlyDataAccepted == true) serverAcceptedEarly = true
         tamper?.invoke(pair, !wasAnswered && pair.client.earlyAccepted != null)
+        seen?.let { s ->
+            for ((side, events) in listOf(
+                0 to pair.clientEvents,
+                1 to pair.serverEvents,
+            )) {
+                for (e in events) {
+                    s.append(
+                        " $side:${e::class.simpleName}${io.kuicksilver.quic.core.streamEventIdForTest(e)?.let { "#$it" }.orEmpty()}",
+                    )
+                }
+            }
+        }
         observe(0, pair.clientEvents)
         observe(1, pair.serverEvents)
         pair.clientEvents.clear()

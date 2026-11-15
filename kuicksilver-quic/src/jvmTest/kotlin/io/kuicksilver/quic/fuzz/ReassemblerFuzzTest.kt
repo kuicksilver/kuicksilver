@@ -39,12 +39,15 @@ class ReassemblerFuzzTest {
 
             fun u16(): Int = (u8() shl 8) or u8()
             while (p < data.size) {
+                val at = p
                 val op = u8() and 3
                 when (op) {
                     0, 1 -> {
-                        val offset = maxOf(0L, r.readOffset - 256 + u16())
+                        val back = u16()
+                        val offset = maxOf(0L, r.readOffset - 256 + back)
                         val len = u16() % 2048
                         val pad = u8() % 256 // the slice starts at an arbitrary position of the packet buffer
+                        fuzzOp { "@$at insert readOffset-256+$back len=$len pad=$pad" }
                         for (i in 0 until len) src[pad + i] = valueAt(offset + i)
                         val before = r.rangeCount
                         try {
@@ -65,6 +68,7 @@ class ReassemblerFuzzTest {
 
                     2 -> {
                         val max = u8() * 16
+                        fuzzOp { "@$at read $max" }
                         val expected = have.nextClearBit(0).let { if (have.get(0)) it else 0 }
                         check(r.readable == expected) { "readable ${r.readable}, model $expected" }
                         val base = r.readOffset
@@ -75,7 +79,9 @@ class ReassemblerFuzzTest {
                     }
 
                     3 -> {
-                        if (u8() == 0) {
+                        val clear = u8() == 0
+                        fuzzOp { "@$at ${if (clear) "clear" else "none"}" }
+                        if (clear) {
                             r.clear()
                             have.clear()
                         }

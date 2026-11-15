@@ -285,7 +285,15 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the `ksl` parsing code. Their committed inputs run as regression tests in `jvmTest`: the seeds and reproducers in the
   resources through Jazzer, and the campaigns' minimized corpora in `tools/fuzz/corpus/<target>/` through
   `CommittedCorpusReplayTest` (in each module's `FuzzCase.kt`, for the module's rows of the campaign.sh table; a target
-  without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test fails for one that is in neither);
+  without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test fails for one that is in neither).
+  The same test replays the regression inputs too and checks that each committed input of a target whose program traces
+  its operations (`fuzzOp`, one call per decoded operation stating what it does) still decodes as
+  `tools/fuzz/formats/<target>.lock` records: a change to a program's decoder (`ConnProgram`, `ZeroRttProgram`, the
+  pieces of the HTTP/2 and HTTP/3 targets) that makes a committed input do something else fails there. Rewrite the old
+  inputs so that they keep their meaning (their fingerprints then stay as they were), or record them again with
+  `KUICKSILVER_FUZZ_FORMATS=record` (`dump:<dir>` writes each input's trace, to compare) and give the reason in
+  `tools/fuzz/formats/changes.txt`; new inputs (a `minimize`, a new reproducer) are recorded the same way. A new target
+  traces its program or is listed with its reason in `tools/fuzz/formats/untraced.txt` (`tools/check/fuzz-formats.py`);
   `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan. `tools/fuzz/gen-seeds.sh` regenerates the
   QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
   write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
@@ -311,7 +319,13 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   it is fixed ([SECURITY.md](SECURITY.md)). That a target found something is visible in the public run; what it found
   is not. Reproduce it locally with `tools/fuzz/campaign.sh run --targets <target>`. Only `stats.tsv` is uploaded (`fuzz-stats-<target>`);
   the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
-  reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
+  reproduces it, a fix, and an entry of `tools/fuzz/reproducers.txt`: the fix commit, a plant
+  (`tools/fuzz/plants/<name>.patch`, the smallest patch that puts the bug back), the unit test and the piece of the failure
+  the input gives with the plant (`tools/check/reproducers.py` checks the entry's form with the repository checks;
+  `tools/fuzz/reproducers-verify.sh` applies every plant in a copy of the tree and checks that each live input fails
+  again, each dead one still passes and each guard test fails, a few minutes per plant: run it after changing a
+  reproducer, a plant, the guarded code or a harness); delete `build/fuzz-campaign/crashed-<target>` so the campaign
+  takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
   in `build/fuzz-campaign/load-timeouts/` and is not a finding. The hosted fuzzing is `fuzz.yml` alone, which keeps
   findings private. ClusterFuzzLite is not enabled in this repository: on a finding it uploads the input as a workflow

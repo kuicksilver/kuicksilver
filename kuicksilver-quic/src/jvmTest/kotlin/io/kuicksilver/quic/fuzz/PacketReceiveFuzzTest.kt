@@ -54,6 +54,7 @@ class PacketReceiveFuzzTest {
         CoreDriver().use { d ->
             val ep = d.serverEndpoint()
             for (dg in Framing.split(data)) {
+                fuzzOp { "datagram ${dg.size}:${dg.contentHashCode()}" }
                 d.deliver(ep, dg, fuzzClientAddr)
                 d.service(ep)
                 d.tick(5)
@@ -78,6 +79,9 @@ class PacketReceiveFuzzTest {
             check(p.handshake()) { "Null-crypto handshake did not complete" }
             val flags = data[0].toInt()
             val toServer = flags and 1 == 0
+            fuzzOp {
+                "to ${if (toServer) "server" else "client"} keyUpdate=${flags and 2 != 0} challenges=${flags and 4 != 0} datagrams=${flags and 8 != 0}"
+            }
             if (flags and 2 != 0) {
                 p.runUntil(limit = 200.milliseconds) { p.client.initiateKeyUpdate(p.now) }
             }
@@ -99,6 +103,7 @@ class PacketReceiveFuzzTest {
                     }
             }
             for (dg in Framing.split(data, 1)) {
+                fuzzOp { "datagram ${dg.size}:${dg.contentHashCode()}" }
                 if (toServer) p.toServer += Dgram(dg, fuzzClientAddr) else p.toClient += Dgram(dg, fuzzServerAddr)
                 p.step()
                 p.advance(5.milliseconds)

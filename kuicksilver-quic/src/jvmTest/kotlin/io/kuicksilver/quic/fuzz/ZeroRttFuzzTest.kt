@@ -36,6 +36,7 @@ class ZeroRttFuzzTest {
     fun replayRegister(data: ByteArray) {
         if (data.isEmpty()) return
         val (stripes, slots) = LAYOUTS[(data[0].toInt() and 0xff) % LAYOUTS.size]
+        fuzzOp { "layout stripes=$stripes slots=$slots" }
         val reg = ZeroRttReplayRegister(Random(7), stripes, slots)
         var mono = 1_000_000_000_000L // ns
         var wallOffset = 1_700_000_000_000L // wall ms - mono ms
@@ -70,31 +71,44 @@ class ZeroRttFuzzTest {
         fun pool(k: Int) = ByteArray(32) { (k * 31 + it).toByte() }
         var ops = 0
         while (p < data.size && ops++ < 2000) {
+            val at = p
             when (u8() % 6) {
                 0 -> {
-                    admit(pool(u8() % 64))
+                    val k = u8() % 64
+                    fuzzOp { "@$at admit pool#$k" }
+                    admit(pool(k))
                 }
 
                 1 -> {
-                    val id = pool(u8() % 64)
+                    val k = u8() % 64
+                    fuzzOp { "@$at release pool#$k" }
+                    val id = pool(k)
                     reg.release(id)
                     held.remove(id.toList())
                 }
 
                 2 -> {
-                    mono += u16().toLong() * 1_000_000
+                    val ms = u16()
+                    fuzzOp { "@$at monotonic +${ms}ms" }
+                    mono += ms.toLong() * 1_000_000
                 }
 
                 3 -> {
-                    wallOffset += u16().toShort().toLong() * 10
+                    val step = u16().toShort().toLong() * 10
+                    fuzzOp { "@$at wall ${step}ms" }
+                    wallOffset += step
                 }
 
                 4 -> {
-                    repeat(u16() % 4096) { admit(ByteArray(32).also { b -> Random(fresh++).nextBytes(b) }) }
+                    val n = u16() % 4096
+                    fuzzOp { "@$at admit $n fresh" }
+                    repeat(n) { admit(ByteArray(32).also { b -> Random(fresh++).nextBytes(b) }) }
                 }
 
                 else -> {
-                    admit(ByteArray(32) { u8().toByte() })
+                    val id = ByteArray(32) { u8().toByte() }
+                    fuzzOp { "@$at admit ${id.contentHashCode()}" }
+                    admit(id)
                 }
             }
         }

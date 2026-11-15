@@ -1,0 +1,15 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
+index f915e7146..5e5d1244c 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionCore.paths.kt
+@@ -174,10 +174,6 @@ private fun ConnectionCore.moveToPreferredAddress(p: Path) {
+         adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+         return
+     }
+-    if (dcidFor(p) == null) {
+-        preferredMoveWaiting = p
+-        return
+-    }
+     val old = paths.active
+     switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
+     movedToPreferred = true

@@ -32,7 +32,8 @@ import kotlin.time.Duration.Companion.seconds
 internal class Mode(
     m: Int,
 ) {
-    val settings: Http2Settings = settings(m and 3)
+    val preset = m and 3
+    val settings: Http2Settings = settings(preset)
     val connect = m and 4 != 0
     val drain = Drain.entries[(m shr 3) and 3]
     val tick = if (m and 0x20 != 0) 1_000_000_000L else 1_000_000L
@@ -98,6 +99,33 @@ internal class Mode(
                     Http2Settings(maxFrameSize = 65_536, headerTableSize = 65_536)
                 }
             }
+    }
+}
+
+/** Adds the mode's meaning to the program's trace ([FuzzTrace]). */
+private fun Mode.trace() {
+    fuzzOp {
+        "mode settings=$preset connect=$connect drain=$drain tick=$tick actions=$actions serverFirst=$serverFirst"
+    }
+}
+
+/**
+ * Adds every piece [data] defines from [from] on, [piece] bytes each, to the trace ([FuzzTrace]), with what its last byte
+ * means ([lastMeans]); all of them, whether or not the core closes before.
+ */
+private inline fun tracePieces(
+    data: ByteArray,
+    from: Int,
+    piece: Int,
+    crossinline lastMeans: (Int) -> String,
+) {
+    if (!FuzzTrace.on) return
+    var q = from
+    while (q < data.size) {
+        val n = minOf(piece, data.size - q)
+        val last = data[q + n - 1].toInt() and 0xff
+        fuzzOp { "@$q piece $n ${lastMeans(last)}".trimEnd() }
+        q += n
     }
 }
 
@@ -173,6 +201,10 @@ class H2ConnectionFuzzTest {
         val mirror = WireMirror(client = false, settings)
         val d = ServerDriver(core, mirror, mode)
         val piece = 1 + (data[0].toInt() and 0xff)
+        mode.trace()
+        // the pieces as the input defines them, all of them: the loop below stops early when the core closes, which the
+        // library decides, not the decoder
+        tracePieces(data, 2, piece) { last -> "body window ${1 + last * 64}" + (if (mode.actions) ", action ${last and 7}" else "") }
         var now = 0L
         core.receive(H2.PREFACE, 0, 24, now)
         var p = 2
@@ -421,6 +453,9 @@ class H2ClientConnectionFuzzTest {
         core.receive(preface, 0, preface.size, now)
         val d = ClientDriver(core, mirror, mode)
         val streams = 1 + (data[1].toInt() and 0xff) % 8
+        mode.trace()
+        fuzzOp { "streams=$streams" }
+        tracePieces(data, 3, 1 + (data[0].toInt() and 0xff)) { last -> if (mode.actions) "action ${last and 7}" else "" }
         repeat(streams) { d.open(post = it % 3 == 2) }
         // a server answers what it read: our first flight (preface, SETTINGS, requests) goes first, unless the mode sends
         // the server's frames ahead of it, onto requests it has not seen (section 5.1: idle streams, a connection error)

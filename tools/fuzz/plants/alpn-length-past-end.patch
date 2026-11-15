@@ -1,0 +1,12 @@
+diff --git a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt
+index d86d93573..3227a1d53 100644
+--- a/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt
++++ b/kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt
+@@ -143,7 +143,6 @@ internal fun rememberedApplication(blob: ByteArray): ByteArray? {
+  * hold them.
+  */
+ internal fun rememberedParameters(blob: ByteArray): Triple<Int, String, TransportParameters>? {
+-    tpBounds(blob) ?: return null // the application can set the blob
+     val tp =
+         try {
+             TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
