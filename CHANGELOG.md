@@ -21,6 +21,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: `QuicStream.receivedOffset` (experimental), the highest offset of the peer's half received so far, read or not
   and in order or not, then its final size: what flow control counts (RFC 9000 section 4.1). `StreamReadable` is now
   also raised when data beyond a gap raises it.
+- WebTransport flow control and session pooling (draft-ietf-webtrans-http3-16 sections 5 and 8), experimental. Both
+  sides send `SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI`/`_UNI` and `SETTINGS_WT_INITIAL_MAX_DATA` from the new
+  `Http3Settings.webTransportInitialMaxStreamsBidi` / `Uni` / `MaxData` (24, 24, 3 932 160 bytes per session) and keep
+  to the peer's limits (WT_MAX_STREAMS, WT_MAX_DATA, the blocked capsules), and a peer that breaks them gets its
+  session closed with WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). With flow control on both sides a
+  connection carries up to `Http3Settings.webTransportMaxSessions` (4) sessions: a server refuses one more, or one
+  above its rate (a burst of 32 a connection, then 8 a second; section 5.2), with H3_REQUEST_REJECTED before the
+  application, and draft-14 clients are told the limit by `SETTINGS_WT_MAX_SESSIONS`. Sessions sharing a connection
+  take weighted turns for its stream credit and send buffer (section 8; urgency weighs, never starves) and each holds at
+  most its part of the send buffer. The Ktor client's `HttpClient.webTransport` now opens sessions on the engine's
+  pooled HTTP/3 connection of the URL's origin, shared with its requests (RFC 9114 section 3.3), and on further
+  connections only when the server cannot take another session; a client keeps to one session per connection without
+  flow control (`WebTransportException.ConnectionFull`, which `Http3Connection.webTransport` now throws for a session
+  the connection cannot take, before anything is sent, where it threw IllegalStateException for a second session; the
+  internal `webTransportOwningConnection` the engine used for its dedicated connections is gone). Requests and sessions
+  on a shared connection are not taken in turns against each other. `Http3Endpoint` refuses settings whose sessions do not fit the
+  QUIC connection's limits. All three initial limits at 0 turn flow control (and pooling) off. A draft-14 peer that
+  leaves a session without credit is reported by the internal `WebTransportDiagnostics.creditStall`, which the Ktor
+  server logs. Docs: `docs/guide/http3.md`, `docs/guide/ktor.md`.
 - QUIC: `QuicStream.sendReleased` (experimental), the bytes of a sending half the connection's shared send buffer
   (`maxSendBuffer`) released so far, acknowledged or dropped by a reset, so a protocol multiplexing independent users
   over one connection can give each a share of it; `ConnectionCore.maxSendBuffer` tells the buffer's size. A stream
@@ -233,7 +252,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection IDs, and onto a path that does not validate. New `KuicksilverEventListener.connectionMigrated(origin,
   event)` reports each step (a failed move is also logged at `Info`, a server that does not allow migration at
   `Debug`). Off by default, so 0.2's behaviour is unchanged; `networkId` stays separate. HTTP/1.1, HTTP/2 and the
-  connections of WebTransport sessions do not migrate.
+  extra connections a server's WebTransport session limit makes do not migrate.
   A WebSocket over HTTP/3 (RFC 9220) moves with its connection: with the option and a server that allows active
   migration, the session carries on across the switch with no reconnect, every message both ways arriving once and in
   order (`ClientMigrationTest.webSocketSurvivesNetworkSwitch`; the network switch is simulated over loopback, the old
@@ -484,8 +503,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a bounded buffer (16 per connection, 5 s each); `Http3Connection.webTransport` opens a session (the `:protocol`
   token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation, ten-second deadlines for the
   server's SETTINGS and for the answer) and
-  `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
-  connection, no WebTransport flow control. A `WebTransportSession` opens and accepts bidirectional and
+  `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. Flow control and
+  several sessions per connection: see the entry below. A `WebTransportSession` opens and accepts bidirectional and
   unidirectional streams, sends and receives datagrams, closes with an application code and reason
   (WT_CLOSE_SESSION, then FIN) and drains; application error codes are mapped into the HTTP/3 space;
   `Http3ErrorCode` has the WebTransport codes.
@@ -499,9 +518,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
   `QuicConnection.resetStreamAtEnabled` tells whether both sides advertised it.
-- Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
-  dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
-  (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
+- Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on the
+  Kuicksilver engine's pooled HTTP/3 connection of the URL's origin (see the session pooling entry below;
+  `docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
   `http3 { webTransportIgnoresProxy = true }`; at most `http3 { maxWebTransportSessions }` (64) at once.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and

@@ -372,10 +372,34 @@ protocols in `WT-Available-Protocols` and the server picks one of `availableProt
 offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
 String is ignored).
 
-There is no WebTransport flow control, so a connection carries one session: a client refuses a second one with
-`IllegalStateException`, a server resets a second CONNECT with `H3_REQUEST_REJECTED` before the application sees it.
+WebTransport flow control (draft-ietf-webtrans-http3-16 section 5) is on when both sides declare it in their SETTINGS,
+which `webTransport` does by default with `webTransportInitialMaxStreamsBidi`, `webTransportInitialMaxStreamsUni` and
+`webTransportInitialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
+limits; the receiver raises its own as the peer's streams end and as the application reads (WT_MAX_STREAMS,
+WT_MAX_DATA), a blocked sender says so once per limit, and a peer that breaks a limit gets its session closed with
+WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). Several sessions then share a connection: a server takes up
+to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
+(the client gets `Http3Exception.RequestNotProcessed` and can open it on another connection), and a client puts at most
+as many on one connection (`WebTransportException.ConnectionFull` beyond). A server also takes new sessions on a
+connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way. Sessions
+sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which
+a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
+but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
+of the connection's send buffer (`maxSendBuffer`): a reserve stays free for a session that joins, and the rest is split
+between the open sessions, so a session alone gets nearly all of it while one whose peer never reads a stream cannot
+stall the others. Datagrams are outside these turns: one session's burst can push other sessions' datagrams out of the
+connection's datagram queue (which drops the oldest), never stall their streams. The connection's receive window is
+kept at what the open sessions may have in flight together. `Http3Endpoint` refuses settings whose sessions do not fit
+the QUIC limits (`maxBidiStreams`, `maxUniStreams`, `maxConnectionWindow`). All three initial limits at 0 turn flow
+control off: a connection then carries one session (section 5.1), and a second CONNECT is refused the same way.
+
+A draft-14 client (Safari) that declares flow control only with `SETTINGS_WT_MAX_SESSIONS` above 1 starts every
+limit it gives at 0 (draft-14 section 5.5): our streams and data to it wait for its WT_MAX_STREAMS and WT_MAX_DATA, and
+the Ktor server logs a warning once a session waited ten seconds. Turning flow control off (the three limits at 0) is
+the way out for such a peer.
+
 WebTransport streams that arrive before their session was accepted wait, 16 per connection for up to 5 s each; the
-others are rejected with `WT_BUFFERED_STREAM_REJECTED`.
+others are rejected with `WT_BUFFERED_STREAM_REJECTED`, and still count against the session's limits once it exists.
 
 ```kotlin
 // guide:http3:webtransport (server)
@@ -402,9 +426,9 @@ with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` a
 `drainRequested` turns true on the peer's request, an HTTP/3 GOAWAY, or this side's own `drain()` (the side that asks
 winds down too, draft-ietf-webtrans-http3 section 4.7). Writing the close waits at most five seconds
 for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
-it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
-are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a
-session. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
+it with `withTimeout`. With flow control the session's own limits bound it, besides the QUIC limits (`maxBidiStreams`,
+`maxUniStreams`, the stream and connection windows); without it the flow-control capsules are ignored and the QUIC
+limits alone do. A stream we opened is reset with RESET_STREAM_AT, which keeps its header so the peer can still tell its
 session (section 4.4); a session of draft-14 or later exists only with `reset_stream_at` on both sides, which
 `Http3Endpoint` and the Ktor engines turn on with `webTransport` (a draft-02 browser without it gets a plain
 RESET_STREAM, as its draft has it). A session's streams are sent at the priority of its CONNECT stream (the request's

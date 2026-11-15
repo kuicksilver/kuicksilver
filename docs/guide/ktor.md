@@ -578,7 +578,10 @@ was accepted. The route checks the
 origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
 runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
-an empty reason. One session per connection, without WebTransport flow control (a mode the draft allows, section 5.1).
+an empty reason. With WebTransport flow control (on by default, see the [HTTP/3 guide](http3.md#webtransport-experimental))
+a connection carries up to `http3Settings.webTransportMaxSessions` (4) sessions; one more, or one beyond the rate a
+connection takes new sessions at (a burst of 32, then 8 a second), is refused before any route runs. A draft-14 client that leaves a session without flow-control credit for ten seconds is logged once, as a warning,
+through the application's log.
 
 ```kotlin
 // guide:ktor:webtransport-server
@@ -1447,8 +1450,8 @@ or on a connection to its origin that is open already and whose server allows Ex
 client](#http3-on-the-client)); otherwise it opens over HTTP/1.1 or HTTP/2.
 
 What does not survive a network change: HTTP/1.1 and HTTP/2 run over TCP, which cannot move, and so do WebSockets over
-HTTP/1.1 and HTTP/2; a call on such a connection fails and the application repeats it. The dedicated connections of
-WebTransport sessions do not follow the network either.
+HTTP/1.1 and HTTP/2; a call on such a connection fails and the application repeats it. The extra connections a
+server's WebTransport session limit makes (beyond the pooled one) do not follow the network either.
 
 The Compose Multiplatform demo, [samples/compose-demo](../../samples/compose-demo/README.md) (Android and iOS, not
 published), shows both sides: a download over HTTP/3 with `followDefaultNetwork` and the same download over OkHttp
@@ -1563,17 +1566,28 @@ val perHost = HttpClient(Kuicksilver) {
 
 `HttpClient.webTransport(url)` opens a WebTransport session (draft-ietf-webtrans-http3-16) to an `https` URL and
 returns the `WebTransportSession` of `kuicksilver-http3` (streams, datagrams, close; see the
-[HTTP/3 guide](http3.md#webtransport-experimental)). Like a browser, each session gets a QUIC connection of its own,
-outside the pool: without WebTransport flow control a connection carries one session, and the connection closes once
-the session ended in both directions (after its close reached the server). The engine's trust, identity and QUIC
-settings apply, with WebTransport, Extended CONNECT and `reset_stream_at` turned on for that connection;
+[HTTP/3 guide](http3.md#webtransport-experimental)). Sessions share the engine's pooled HTTP/3 connection to the URL's
+host and port with each other and with requests (RFC 9114 section 3.3: one connection per address and port): a pooled
+connection set up for requests alone is replaced by a WebTransport-capable one, which carries the origin's requests from
+then on (the old one finishes its requests and closes). With WebTransport flow control on both sides a connection
+carries up to `http3 { settings.webTransportMaxSessions }` (4) sessions, and as many as the server accepts: a session it
+refuses (`H3_REQUEST_REJECTED`, its limit) opens on another connection to the same server, which the next sessions share
+too and which closes with its last session; without flow control each further session gets a connection of its own.
+The pooled connection stays in use while a session or a request uses it, then idles like any other. Requests and
+sessions on it are not taken in turns against each other (the sessions' fair turns are among sessions): both are the
+same application's traffic to one origin, requests keep their own priorities (RFC 9218) and QUIC flow control, and an
+application that wants its bulk requests not to slow a session sends them at a lower urgency. A session to a server
+that refuses it while none of this client's sessions is on the connection (its rate, not its session limit) fails with
+`Http3Exception.RequestNotProcessed` rather than opening another connection. When it is lost,
+every session on it ends with its reason. The engine's trust, identity and QUIC settings apply, with WebTransport,
+Extended CONNECT and `reset_stream_at` turned on for a WebTransport-capable connection;
 `connectTimeout` bounds the setup, then the server's SETTINGS and its answer to the CONNECT get ten seconds each.
 There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`. Refused with
 `UnsupportedOperationException`: `discovery = H1Only` (HTTP/3 is off), and a proxy that applies to the URL —
 WebTransport runs over UDP, which an HTTP proxy does not carry — unless the host is exempt from the proxy or
 `http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }` (64)
-sessions are open at once; one more fails at once with `IllegalStateException`, nothing waits. The connection goes
-straight to the URL's host and port: Alt-Svc is not consulted and 0-RTT is never used; the resolved addresses are tried
+sessions are open at once on the client; one more fails at once with `IllegalStateException`, nothing waits. The
+session goes straight to the URL's host and port: Alt-Svc is not consulted and the CONNECT never goes in 0-RTT; the resolved addresses are tried
 in order within `connectTimeout`, so one whose handshake fails or stalls gives way to the next. Closing the client ends
 the sessions still open with their connections, without a close capsule, and a call after `close()` fails with
 `IllegalStateException`. Only the Kuicksilver engine supports it.
