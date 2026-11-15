@@ -231,26 +231,50 @@ internal class WebSocketLifetime(
         cause: Throwable?,
         completeHold: Boolean,
     ) {
-        // at once on the completing thread up to a handler's first suspension; ATOMIC: the hold is released whatever happens
+        // at once on the completing thread up to a handler's first suspension; ATOMIC: the hold is released whatever happens.
+        // Every handler runs, whatever an earlier one did (a cancellation included: the HTTP/3 pool entry is released
+        // after the stream's end); all of them within one close wait, so none can keep the engine's cleanup waiting
         GlobalScope.launch(Dispatchers.Unconfined + CoroutineName("kuicksilver-websocket-end"), start = CoroutineStart.ATOMIC) {
             try {
-                for (h in handlers) {
-                    try {
-                        h(cause)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        runCatching {
-                            val ev = events
-                            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) {
-                                ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed", e)
-                            }
+                var left = handlers
+                withTimeoutOrNull(closeWaitMillis) {
+                    while (left.isNotEmpty()) {
+                        val h = left.first()
+                        left = left.drop(1)
+                        try {
+                            h(cause)
+                        } catch (e: Throwable) {
+                            reportEndFailure(e)
                         }
                     }
+                }
+                // the handlers the bound cut off still run up to their first suspension (a release, a reset), then are
+                // cancelled there (their finally blocks run)
+                for (h in left) {
+                    GlobalScope
+                        .launch(
+                            Dispatchers.Unconfined +
+                                CoroutineExceptionHandler {
+                                    _,
+                                    e,
+                                    ->
+                                    reportEndFailure(e)
+                                },
+                            start = CoroutineStart.UNDISPATCHED,
+                        ) {
+                            h(cause)
+                        }.cancel()
                 }
             } finally {
                 if (completeHold) hold?.complete()
             }
+        }
+    }
+
+    private fun reportEndFailure(e: Throwable) {
+        runCatching {
+            val ev = events
+            if (ev != null && ev.logger.isEnabled(LogLevel.Warn)) ev.logger.log(LogLevel.Warn, "a WebSocket session's end failed", e)
         }
     }
 }

@@ -267,4 +267,48 @@ class WebSocketLifetimeTest {
                 s.call.join()
             }
         }
+
+    /** A handler that fails, a cancellation included, does not keep the later ones (the HTTP/3 pool's release) from running. */
+    @Test fun negative_aFailingEndHandlerDoesNotStopTheNextOnes(): Unit =
+        runBlocking {
+            withTimeout(10.seconds) {
+                val s = Setup()
+                val last = CompletableDeferred<Unit>()
+                s.lifetime.invokeOnEnd { throw CancellationException("a handler's own cancellation") }
+                s.lifetime.invokeOnEnd { throw IllegalStateException("a handler's failure") }
+                s.lifetime.invokeOnEnd { last.complete(Unit) }
+                s.release.complete(Unit)
+                s.call.complete()
+                s.inFlight.complete()
+                last.await()
+                s.inFlight.join()
+            }
+        }
+
+    /**
+     * The end handlers run within one close wait (200 ms here): one that never returns is cancelled there, the ones after
+     * it still run, and the engine's in-flight job completes, so `client.close()` is not held for good.
+     */
+    @Test fun negative_anEndHandlerThatNeverReturnsIsBounded(): Unit =
+        runBlocking {
+            withTimeout(10.seconds) {
+                val s = Setup(closeWait = 200)
+                val cancelled = CompletableDeferred<Unit>()
+                val after = CompletableDeferred<Unit>()
+                s.lifetime.invokeOnEnd {
+                    try {
+                        kotlinx.coroutines.awaitCancellation()
+                    } finally {
+                        cancelled.complete(Unit)
+                    }
+                }
+                s.lifetime.invokeOnEnd { after.complete(Unit) }
+                s.release.complete(Unit)
+                s.call.complete()
+                s.inFlight.complete()
+                s.inFlight.join()
+                cancelled.await()
+                after.await()
+            }
+        }
 }

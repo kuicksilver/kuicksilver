@@ -19,6 +19,7 @@ case $what in
   ok) echo "BUILD SUCCESSFUL"; exit 0 ;;
   stall) echo "com.android.ddmlib.ShellCommandUnresponsiveException"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
   halfstall) echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
+  stallandtests) echo "There were failing tests"; echo "com.android.ddmlib.ShellCommandUnresponsiveException"; echo "com.android.ddmlib.InstallException: Failed to install-write all apks"; exit 1 ;;
   *) echo "There were failing tests"; exit 1 ;;
 esac
 G
@@ -41,4 +42,5 @@ case_run "negative_a stalled install twice fails" 1 2 stall stall
 case_run "negative_failing tests are never repeated" 1 1 test ok
 case_run "negative_the install message alone is not a stall" 1 1 halfstall ok
 case_run "negative_a retry that fails its tests fails" 1 2 stall test
+case_run "negative_failing tests next to a stalled install are not repeated" 1 1 stallandtests ok
 [ "$fails" -eq 0 ]

@@ -571,9 +571,10 @@ class ClientH2WebSocketTest {
 
     /**
      * One deadline for the whole close, counted from the client's own Close: a server that answers with its Close late
-     * (800 ms) and never ends the stream has it reset with CANCEL about one close wait (1 s) after the client's Close,
+     * (1.6 s) and never ends the stream has it reset with CANCEL about one close wait (2 s) after the client's Close,
      * not a second close wait after its own Close arrived. Before, the wait for END_STREAM started anew when the session
-     * ended, so the reset came after about 1.8 s.
+     * ended, so the reset came after about 3.6 s. The server's 1.6 s is the late answer under test, not a
+     * synchronisation; the 1 s margin on either side keeps a loaded machine from deciding the result.
      */
     @Test fun negative_theCloseWaitIsOneDeadlineFromTheOwnClose() =
         clientTest {
@@ -599,7 +600,7 @@ class ClientH2WebSocketTest {
                                 kotlin.time.TimeSource.Monotonic
                                     .markNow(),
                             )
-                            delay(800) // a slow server: its Close comes late, and it never ends the stream
+                            delay(1_600) // a slow server: its Close comes late, and it never ends the stream
                             ws.outgoing.send(Frame.Close())
                             kotlinx.coroutines.awaitCancellation()
                         }
@@ -607,7 +608,7 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 client().use { c ->
-                    engine(c).h1.webSocketCloseWaitMillis = 1_000
+                    engine(c).h1.webSocketCloseWaitMillis = 2_000
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(10.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -617,7 +618,7 @@ class ClientH2WebSocketTest {
                     val closedAt = withTimeout(10.seconds) { sawClose.await() }
                     val resetAt = withTimeout(10.seconds) { reset.await() }
                     val took = resetAt - closedAt
-                    assertTrue(took < 1_500.milliseconds, "the stream was reset $took after the client's Close")
+                    assertTrue(took < 3_000.milliseconds, "the stream was reset $took after the client's Close")
                 }
             }
         }

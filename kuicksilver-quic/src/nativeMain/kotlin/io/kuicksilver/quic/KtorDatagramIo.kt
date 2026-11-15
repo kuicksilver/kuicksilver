@@ -17,9 +17,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use: an empty incoming
@@ -142,6 +144,9 @@ internal class KtorDatagramIo private constructor(
             return null
         }
 
+        /** How long a refused bind waits for its selector's loop to end (and close its wakeup pipe). */
+        private val SELECTOR_CLOSE_WAIT = 5.seconds
+
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val ip = local.ipBytes()
             if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(unsupportedIpv6(local))
@@ -156,7 +161,9 @@ internal class KtorDatagramIo private constructor(
                     // a refused bind (port taken) must not keep its selection thread and pipe
                     selector.close()
                     selectorJob.complete()
-                    withContext(NonCancellable) { selectorJob.join() }
+                    // bounded: a starved Dispatchers.IO must not hold a refused bind for good; past it the loop still
+                    // closes the pipe once it runs, as before
+                    withContext(NonCancellable) { withTimeoutOrNull(SELECTOR_CLOSE_WAIT) { selectorJob.join() } }
                     throw e
                 }
             return KtorDatagramIo(selector, s)
