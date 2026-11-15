@@ -28,7 +28,15 @@ class ConnectionProgramRewriterTest {
     /** 0x37 (E_PTB) read 0xc7 as an argument; once it is a round, 0xc7 (E_VN) is an operation of its own and goes too. */
     @Test fun theRunGoesOnFromTheStart() = check("0037c705", "00070705")
 
-    @Test fun theSetupByteIsNoOperation() = check("8017", "8017")
+    /** Bits 3 to 7 of the flags byte came after these inputs: cleared, so SETUP no longer takes the next byte (0x17, now an operation). */
+    @Test fun theNewFlagBitsAreClearedAndTheSetupByteWithThem() = check("fb1712", "030712")
+
+    @Test fun theOldFlagBitsStay() = check("071212", "071212")
+
+    @Test fun aRewrittenInputStaysAsItIs() {
+        val once = ConnectionProgramRewriter.rewrite(hex("ff37c705171f12"), NullCryptoProvider)
+        assertContentEquals(once, ConnectionProgramRewriter.rewrite(once, NullCryptoProvider), "idempotent")
+    }
 
     /** Live handshake: the server's connection does not exist yet, so its application call reads no argument, and 0x17 after it is a PATH operation. */
     @Test fun anApplicationCallThatReadsNothingIsFollowed() = check("014b17", "014b07")
