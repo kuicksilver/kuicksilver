@@ -103,7 +103,8 @@ internal class WtSessionImpl(
 
     /**
      * A draft-14 peer that declared flow control only by `SETTINGS_WT_MAX_SESSIONS` (no initial limits) left us blocked at
-     * a zero limit (session dispatcher): once that lasted [STALL_AFTER], [creditStall] says so, once.
+     * a zero limit (session dispatcher): once that lasted [STALL_AFTER], [creditStall] says so, once. It checks that the
+     * limit is still 0, not that a writer still waits (one that gave up meanwhile is reported too).
      */
     private fun blockedAtZero() {
         if (version != WtVersion.Draft14 || WtFlow.declaresInitialLimits(h3.wtPeerSettings) || stallWatch) return
@@ -121,6 +122,9 @@ internal class WtSessionImpl(
     }
 
     private var stallWatch = false
+
+    /** This session counts among the connection's flow-controlled ones ([H3Session.wtFlowSession]); dispatcher only. */
+    private var flowCounted = false
 
     /** A peer's stream, with the count of its bytes against the session's limit when flow control is on. */
     private class Incoming(
@@ -149,7 +153,10 @@ internal class WtSessionImpl(
 
     /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
     fun start() {
-        if (flow != null) h3.wtFlowSession(up = true)
+        if (flow != null) {
+            h3.wtFlowSession(up = true)
+            flowCounted = true
+        }
         // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
         // CONNECTION_CLOSE (Firefox) still ends the session with its code
         watchers += h3.drains(h3.scope.launch { readCapsules() })
@@ -304,8 +311,10 @@ internal class WtSessionImpl(
                         goneRaw(q.stream, ch.second)
                     }
                 }
-                flow?.let {
-                    it.end(sessionClosed())
+                flow?.end(sessionClosed())
+                // only a session that started counted: one ended before (its exchange over during the accept) did not
+                if (flowCounted) {
+                    flowCounted = false
                     h3.wtFlowSession(up = false)
                 }
                 capsulesOut.close()

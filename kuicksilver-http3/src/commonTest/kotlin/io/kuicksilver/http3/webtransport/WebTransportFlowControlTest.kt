@@ -37,6 +37,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -784,6 +785,65 @@ class WebTransportFlowControlTest {
                 }
                 withTimeout(5.seconds) {
                     while (limits.receiveLimit(p.client.quic)!! < wtOn.webTransportInitialMaxData) kotlinx.coroutines.yield()
+                }
+            }
+        }
+
+    /**
+     * A read cancelled while it waits (a timeout around it, a select that picks another branch) loses nothing: 400 KB of
+     * numbered bytes arrive whole and in order whatever the reader gives up on the way.
+     */
+    @Test fun negative_cancelledReadsLoseNoBytes() =
+        h3Test {
+            for (style in 0 until 2) {
+                H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                    val serverSide = CompletableDeferred<WebTransportSession>()
+                    launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                    val session = p.client.webTransport(wtReq())
+                    val s = withTimeout(5.seconds) { serverSide.await() }
+                    val total = 400_000
+                    val st = session.openUni()
+                    launch {
+                        st.output.writeFully(ByteArray(total) { (it % 251).toByte() })
+                        st.output.flushAndClose()
+                    }
+                    val r = s.acceptUni().input
+                    val b = ByteArray(1500)
+                    var got = 0
+                    var gaveUp = 0
+                    withTimeout(20.seconds) {
+                        while (true) {
+                            val n =
+                                if (style == 0) {
+                                    kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("50us")) {
+                                        r.readAvailable(b, 0, b.size)
+                                    }
+                                } else {
+                                    // a select with a timeout, the read cancelled and retried when the timeout wins
+                                    val read = async { r.readAvailable(b, 0, b.size) }
+                                    val n =
+                                        kotlinx.coroutines.selects.select<Int?> {
+                                            read.onAwait { it }
+                                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                                            onTimeout(1) { null }
+                                        }
+                                    n ?: run {
+                                        read.cancel()
+                                        read.join()
+                                        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                                        if (read.isCancelled) null else read.getCompleted()
+                                    }
+                                }
+                            if (n == null) {
+                                gaveUp++
+                                continue
+                            }
+                            if (n < 0) break
+                            for (i in 0 until n) assertEquals(((got + i) % 251).toByte(), b[i], "byte ${got + i}")
+                            got += n
+                        }
+                    }
+                    assertEquals(total, got)
                 }
             }
         }

@@ -492,12 +492,23 @@ internal class H3Session(
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     fun wtFlowSession(up: Boolean) {
         wtFlowSessions += if (up) 1 else -1
-        val floor = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
-        scope.launch {
-            io.kuicksilver.quic.runtime.QuicStreamLimits
-                .setReceiveWindowFloor(quic, floor)
+        check(wtFlowSessions >= 0) { "WebTransport session count below 0" }
+        wtFloor.value = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
+        // one sender of the latest value: a stale floor never overtakes a newer one
+        if (wtFloorSender == null) {
+            wtFloorSender =
+                scope.launch {
+                    wtFloor.collect {
+                        io.kuicksilver.quic.runtime.QuicStreamLimits
+                            .setReceiveWindowFloor(quic, it)
+                    }
+                }
         }
     }
+
+    /** The floor [wtFlowSession] wants for the connection's receive window. */
+    private val wtFloor = MutableStateFlow(0L)
+    private var wtFloorSender: Job? = null
 
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
     internal var wtPeerSettings: Map<Long, Long> = emptyMap()
