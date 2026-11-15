@@ -908,6 +908,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtErrorCodesT
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtErrorCodesTest.negative_closeCapsuleMalformed
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtErrorCodesTest.outsideTheRangeIsNull
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtErrorCodesTest.roundTripAndNoGrease
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtInputTest.negative_readerCancelledAsItsChunkArrivesLosesNothing
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtInputTest.negative_readersCancelledAtEveryStepLoseNothing
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsTest.emptyListIsEmpty
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsTest.listRoundTrip
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsTest.negative_malformedListsAreRefused

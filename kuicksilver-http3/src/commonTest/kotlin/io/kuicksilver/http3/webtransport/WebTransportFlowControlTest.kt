@@ -841,8 +841,16 @@ class WebTransportFlowControlTest {
     /**
      * A read cancelled while it waits (a timeout around it, a select that picks another branch) loses nothing: 400 KB of
      * numbered bytes arrive whole and in order whatever the reader gives up on the way.
+     *
+     * A read that returned is kept from inside the cancelled block ([done]), not from the block's result: the timeout is
+     * asynchronous to the block (it fires on another thread), and when it fires after `readAvailable` returned but before
+     * the block completed, `withTimeoutOrNull` returns null and drops the count of bytes the read already copied out.
+     * That loss is the caller's, whatever the channel; a test that took the null as "nothing read" saw 1500 bytes (one
+     * buffer) missing on a loaded host ("byte 155648 ==> expected: <28> but was: <22>": 22 is the byte at 155648 + 1500).
      */
-    @Test fun negative_cancelledReadsLoseNoBytes() =
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_cancelledReadsLoseNoBytes() =
         h3Test {
             for (style in 0 until 2) {
                 H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
@@ -862,27 +870,24 @@ class WebTransportFlowControlTest {
                     var gaveUp = 0
                     withTimeout(20.seconds) {
                         while (true) {
-                            val n =
-                                if (style == 0) {
-                                    kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("50us")) {
-                                        r.readAvailable(b, 0, b.size)
-                                    }
-                                } else {
-                                    // a select with a timeout, the read cancelled and retried when the timeout wins
-                                    val read = async { r.readAvailable(b, 0, b.size) }
-                                    val n =
-                                        kotlinx.coroutines.selects.select<Int?> {
-                                            read.onAwait { it }
-                                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                                            onTimeout(1) { null }
-                                        }
-                                    n ?: run {
-                                        read.cancel()
-                                        read.join()
-                                        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                                        if (read.isCancelled) null else read.getCompleted()
-                                    }
+                            // set as the read returns, inside the block the timeout cancels
+                            val done = kotlin.concurrent.atomics.AtomicInt(-2)
+                            if (style == 0) {
+                                kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("50us")) {
+                                    done.store(r.readAvailable(b, 0, b.size))
                                 }
+                            } else {
+                                // a select with a timeout, the read cancelled and retried when the timeout wins
+                                val read = async { done.store(r.readAvailable(b, 0, b.size)) }
+                                kotlinx.coroutines.selects.select<Unit> {
+                                    read.onAwait {}
+                                    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                                    onTimeout(1) {}
+                                }
+                                read.cancel()
+                                read.join()
+                            }
+                            val n = done.load().takeIf { it != -2 }
                             if (n == null) {
                                 gaveUp++
                                 continue
