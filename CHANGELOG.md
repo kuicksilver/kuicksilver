@@ -1071,17 +1071,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport: a session's data credit is shared between its streams by the session's RFC 9218 priority
   (draft-ietf-webtrans-http3-16 section 3.4; section 5 sets no order), read again at every grant. A non-incremental
   session (`i=?0`) serves its streams in the order they were opened: while a stream waits for credit, or writes what it
-  was just given, no stream opened after it gets any; a stream that asks more than there is gets what there is and
-  keeps its place. Streams the application writes one after another then reach a peer that reads them one after
-  another without a stall; the cost is that a stream that keeps writing holds the later ones. An incremental session
-  (`i`, the default of an unsignalled CONNECT) splits the credit between the streams that ask, each grant starting one
-  stream further, so none starves behind a busy one. In both, a stream with nothing to send, or cancelled or reset while
-  it waits, keeps no credit and loses none, and opens waiting for the peer's stream limit are served in the order they
-  asked. Before, waiting streams were served in no particular order, so a peer that read a session's streams strictly
-  one after another under a tight limit could stall. Both roles, every session on its own; the weighted turns between
-  sessions are unchanged. Credit for an open stream still comes back as the application takes its bytes (for a stream
-  that ended cleanly, once all of it was handed to its input; for a reset or stopped one, by its final size); the
-  guide, the configuration table and `Http3Settings` say when to read a peer's streams concurrently.
+  was just given, no stream opened after it gets any; a stream that asks more than there is gets what there is and keeps
+  its place. Streams the application writes one after another then reach a peer that reads them one after another
+  without a stall; the cost is that a stream that keeps writing holds the later ones. An incremental session (`i`; for a
+  CONNECT without a priority signal this library's tunnel default, after RFC 9218 section 10.1's "servers SHOULD
+  allocate some amount of bandwidths to streams acting as tunnels", while the RFC's own default is non-incremental,
+  section 4.2; each side chooses for its own sending) lets each grant start one stream further along the streams that
+  ask, so none starves behind a busy one. In both, a stream with nothing to send, or cancelled
+  or reset while it waits, keeps no credit and loses none, and opens waiting for the peer's stream limit are served in
+  the order they asked. Before, waiting streams were served in no particular order, so a peer that read a session's
+  streams strictly one after another under a tight limit could stall. Both roles, every session on its own; the weighted
+  turns between sessions are unchanged. Credit for an open stream still comes back as the application takes its bytes
+  (for a stream that ended cleanly, once all of it was handed to its input; for a reset or stopped one, by its final
+  size); the guide, the configuration table and `Http3Settings` say when to read a peer's streams concurrently.
   `Http3Settings`'s KDoc no longer says the credit follows bytes taken from the transport.
 - Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket
   after the close wait (a server that does not read), cut inside a frame, or with a failed writer, now has its connection

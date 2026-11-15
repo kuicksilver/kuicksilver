@@ -96,6 +96,9 @@ internal class WtStreamImpl(
             ) {
                 outCh.cancel(IOException("the WebTransport stream $streamId stopped writing", e))
             }
+            // the stream's place in the session's credit goes when the writer ends, ran or not (one cancelled before it
+            // first ran never reaches its own finally); on the session's dispatcher, and a second close changes nothing
+            if (credit != null) scope.launch { credit.close() }
         }
         if (flow != null && writable) {
             // section 5.4: a reset stream counts its final size, so both sides agree on the credit it used. Once the size

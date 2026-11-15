@@ -274,25 +274,28 @@ class WtCreditQueueTest {
         }
 
     /**
-     * Incremental (RFC 9218 section 10): a stream that keeps writing shares every raise of the limit with one that waits,
-     * however small the raise; with one byte at a time they take turns.
+     * Incremental (RFC 9218 section 10): a stream that keeps writing and one that waits lead the grants in turn, however
+     * small the raise: the waiting one gets credit within two raises.
      */
-    @Test fun negative_incrementalSessionSharesEveryGrantWithABusyStream() =
+    @Test fun negative_incrementalSessionSharesTheGrantsWithABusyStream() =
         bounded {
             val f = flow(100, incremental = { true })
             val a = f.sender()
             val b = f.sender()
             assertEquals(100, a.take(16_384)) // a writes, and keeps asking
             val waiting = now { b.take(10) }
-            f.onCapsule(WtFlow.MAX_DATA, 101) // one byte: the grant starts after a's last, at b
+            f.onCapsule(WtFlow.MAX_DATA, 101) // one byte: the grant starts after a's, at b
             assertEquals(1, waiting.await())
             b.idle()
             val again = now { b.take(10) }
-            f.onCapsule(WtFlow.MAX_DATA, 121)
-            assertEquals(10, again.await(), "half of 20 for each")
+            f.onCapsule(WtFlow.MAX_DATA, 121) // a leads: all 20 kept for it
+            settle()
+            assertFalse(again.isCompleted)
+            f.onCapsule(WtFlow.MAX_DATA, 141) // b leads
+            assertEquals(10, again.await())
         }
 
-    /** The session's priority is read at every grant: a PRIORITY_UPDATE to incremental lets a waiting stream share at once. */
+    /** The session's priority is read at every grant: after a PRIORITY_UPDATE to incremental the grants rotate at once. */
     @Test fun priorityChangeTakesEffectAtTheNextGrant() =
         bounded {
             var incremental = false
@@ -305,7 +308,40 @@ class WtCreditQueueTest {
             settle()
             assertFalse(waiting.isCompleted)
             incremental = true
-            f.onCapsule(WtFlow.MAX_DATA, 220)
+            f.onCapsule(WtFlow.MAX_DATA, 220) // the first shared grant starts at a
+            f.onCapsule(WtFlow.MAX_DATA, 240) // the next at b; in order, a would still take it all
             assertEquals(10, waiting.await())
+        }
+
+    /**
+     * Incremental: a grant is never split so finely that no stream can end. Twelve streams each wait to send 1000 bytes
+     * under a raise to 4000, and the peer gives credit back only for streams that ended (it reads none): the stream the
+     * grant starts with gets all it asks. Split evenly (333 each), none could end and the session stalled
+     * (`negative_cleanlyEndedStreamsGiveCreditBackUnread`, about half its runs).
+     */
+    @Test fun negative_incrementalGrantLetsTheLeadingStreamEnd() =
+        bounded {
+            val f = flow(0, incremental = { true })
+            val senders = List(12) { f.sender() }
+            val takes = senders.map { s -> now { s.take(1000) } }
+            f.onCapsule(WtFlow.MAX_DATA, 4000)
+            settle()
+            val got = takes.filter { it.isCompleted }.map { it.await() }
+            assertTrue(1000 in got, "no stream got all it asked for: $got")
+            for (t in takes) t.cancel()
+        }
+
+    /** A stream closed without ever taking (its writer cancelled before it ran) leaves the order, and keeps nothing. */
+    @Test fun negative_streamClosedBeforeItTookLeavesNothing() =
+        bounded {
+            val f = flow(0)
+            val a = f.sender()
+            val b = f.sender()
+            a.close()
+            val waiting = now { b.take(10) }
+            f.onCapsule(WtFlow.MAX_DATA, 10)
+            assertEquals(10, waiting.await())
+            b.close()
+            assertTrue(f.creditIdleForTest)
         }
 }

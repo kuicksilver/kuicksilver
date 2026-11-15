@@ -312,9 +312,11 @@ internal class WtSessionFlow(
      * stream, read at every grant (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data):
      * - non-incremental: in [senders] order (RFC 9218 section 10: "serving one response at a time" in order): each
      *   stream gets what it asks before any stream after it gets anything;
-     * - incremental: shared ("interleaved", the same section): the credit is split evenly between the streams that ask,
-     *   and the grant starts one stream further along each time, so with any credit at all each of n streams that keep
-     *   asking gets some within n grants, and a busy stream never holds the others.
+     * - incremental: shared ("interleaved", the same section): each grant starts one stream further along the ring of
+     *   the streams that ask and goes on in order from there, so with any credit at all each of n streams that keep
+     *   asking leads, and gets some, within n grants, and a busy stream never holds the others. A grant is not split
+     *   evenly: the stream it starts with gets what it asks first, so a stream nobody reads still gets all its bytes out
+     *   and ends, and a receiver that gives credit back only for ended streams (draft-16 section 5.6) moves.
      */
     private fun distribute() {
         if (free() <= 0 || over != null) return
@@ -352,22 +354,15 @@ internal class WtSessionFlow(
     private fun share() {
         val asking = senders.filter { ask(it) > 0 }
         if (asking.isEmpty()) return
-        // the first stream after the one the last grant started with, round the ring
+        // the first stream after the one the last grant started with, round the ring, then on in order from there
         val start = asking.indexOfFirst { it.order > shareFrom }.let { if (it < 0) 0 else it }
         shareFrom = asking[start].order
-        val ring = asking.drop(start) + asking.take(start)
         var free = free()
-        while (free > 0) {
-            val open = ring.filter { ask(it) > 0 }
-            if (open.isEmpty()) break
-            val part = maxOf(1L, free / open.size)
-            for (s in open) {
-                val g = minOf(ask(s), part, free)
-                if (g <= 0) continue
-                give(s, g)
-                free -= g
-                if (free == 0L) break
-            }
+        for (s in asking.drop(start) + asking.take(start)) {
+            val g = minOf(ask(s), free)
+            give(s, g)
+            free -= g
+            if (free == 0L) break
         }
     }
 

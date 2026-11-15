@@ -391,8 +391,17 @@ How this library's sender shares a session's data credit between the session's s
 priority (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data), the `incremental`
 parameter of its CONNECT stream, read again at every grant, so a PRIORITY_UPDATE takes effect at the next one:
 
-- Non-incremental (`i=?0`; ask for it with `Http3Request.priority = StreamPriority(u, incremental = false)` on the
-  client, or a `priority: i=?0` field in the server's `acceptWebTransport` answer): in order. The streams are served in
+The mode is chosen per direction: each side shares the credit for its own sending by its own view of the CONNECT
+stream's priority.
+
+- The client's sending follows the session request's priority: `Http3Request.priority`, else a `priority` field among
+  its headers, else the tunnel default below. The server's sending follows the client's signal, the `priority` field
+  of the CONNECT request and later PRIORITY_UPDATEs, unless the server overrides it with a `priority` field in its
+  `acceptWebTransport` answer; that field changes only the server's sending. The client sends its priority as a
+  `priority` field only when it differs from RFC 9218's defaults (u=3, i=?0): `StreamPriority(3, incremental = false)`
+  writes no field, and the server then takes the CONNECT as unsignalled (the tunnel default). For in-order sending
+  on both sides at u=3, put `priority: i=?0` among the request's headers instead (or have the server answer with it).
+- Non-incremental (`i=?0`): in order. The streams are served in
   the order the session handed them to the application (`openUni` or `openBidi` returned; for the peer's bidirectional
   streams, `acceptBidi`): while a stream waits for credit, or writes what it was just given, no stream opened after it
   gets any. A stream that asks for more than there is gets what there is at once (one frame's worth, never a wait for
@@ -402,10 +411,16 @@ parameter of its CONNECT stream, read again at every grant, so a PRIORITY_UPDATE
   never waits on a stream that got no credit while credit sits in a later one. The cost: a stream that keeps writing
   holds every later stream of the session for as long as it writes, and when the peer raises the limit in small steps
   the later streams wait; mark the session incremental to share.
-- Incremental (`i`; the default of an unsignalled CONNECT, which is a tunnel, RFC 9218 sections 10.1 and 11): shared.
-  The credit is split evenly between the streams that wait for it or are writing, and each grant starts one stream
-  further along, so of n streams that keep asking each gets credit within n grants, and a busy stream never holds the
-  others; the order between streams is not kept.
+- Incremental (`i`): shared. This is the default of a CONNECT without a priority signal, on both sides, and it is this
+  library's choice, modelled on h2o, not RFC 9218's: the RFC's default is non-incremental (section 4.2, "The default
+  value of the incremental parameter is false (0)"), but a CONNECT stream is a tunnel, and section 10.1 says "servers
+  SHOULD allocate some amount of bandwidths to streams acting as tunnels" (section 11: "A client that issues multiple
+  CONNECT requests can set the incremental parameter to true"), so every tunnel, a WebTransport session among them,
+  is scheduled incremental unless a signal says otherwise. Each grant starts one stream further along the ring of the
+  streams that wait for credit or are writing, and serves them in order from there, so of n streams that keep asking
+  each leads, and gets credit, within n grants, and a busy stream never holds the others; the order between streams is
+  not kept. A grant is not split evenly: the stream it starts with gets what it asks first, so a stream the peer does
+  not read still gets all its bytes out and ends (its end gives the credit back).
 
 Opens waiting for the peer's stream limit are served in the order they asked, in both modes. The order holds within a
 session: the sessions of a connection still take their weighted turns (below), and one session waiting for its credit
