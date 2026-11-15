@@ -3370,4 +3370,91 @@ class PathTest {
             p.close()
         }
     }
+
+    /** Spare peer IDs of [c] (neither used, held by a path nor current). */
+    private fun spares(c: ConnectionCore): Int = c.cids.peerStateForTest().count { it.substringAfterLast(':').isEmpty() }
+
+    /** Retires spare peer IDs of [c] until [keep] are left. */
+    private fun leaveSpares(
+        c: ConnectionCore,
+        keep: Int,
+    ) {
+        while (spares(c) > keep) c.cids.releasePathPeer(c.cids.takePathPeer()!!)
+    }
+
+    /**
+     * 0.3.0 review: the fallback after a failed validation (RFC 9000 section 9.3.2) evaluated its candidates with [dcidFor], which
+     * reserves a spare peer ID for each one it looks at: an older validated path took the last spare and became the fallback in place
+     * of the most recently validated one, which then had no ID. The choice must reserve nothing; only the chosen path takes the spare.
+     */
+    @Test fun negative_theFallbackChoiceReservesNoIdForThePathsItPasses() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val ids = ArrayList<PathId>()
+            for (k in 0 until 2) {
+                val pid = c.addPath(p.serverAddr, p.now)
+                val a = InetSocketAddress("10.0.0.${7 + k}", 40000)
+                p.clientSocketSources[pid] = a
+                p.clientListens += a
+                c.probePath(pid, p.now)
+                assertTrue(p.runUntil(5.seconds) { c.pathState(pid) == PathState.Validated })
+                repeat(3) { p.step() }
+                ids += pid
+            }
+            val older = c.paths.byId(ids[0])!!
+            val newer = c.paths.byId(ids[1])!!
+            assertTrue(newer.validatedAt > older.validatedAt)
+            // both gave their IDs back (as before 0.3.0 a client's validated path did), one spare is left
+            c.releasePathCid(older)
+            c.releasePathCid(newer)
+            leaveSpares(c, 1)
+            c.onPathFailed(c.paths.active)
+            assertSame(newer, c.paths.active, "the most recently validated path is the fallback")
+            assertNull(older.peerCid, "the path passed over reserves no ID")
+            assertEquals(0, spares(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 review, RFC 9000 section 9.3.2: "an endpoint MUST revert to using the last validated peer address when validation of a new
+     * peer address fails". With the only validated path on another local address of the server and no spare peer ID, switching there
+     * would reuse an ID across local addresses (section 9.5 MUST NOT), and closing would break the first MUST: the server goes back to
+     * that peer address from the failed path's own local address, with the ID it already uses there.
+     */
+    @Test fun negative_aFailedValidationRevertsToTheLastValidatedPeerAddressFromItsOwnLocalAddress() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val validated = InetSocketAddress("10.0.0.8", 40008)
+            val q =
+                s.paths.add(
+                    io.kuicksilver.quic.PREFERRED_SOCKET,
+                    validated,
+                    s.config.congestionController(),
+                    s.config.newPathInitialRtt,
+                    evict = false,
+                )!!
+            q.state = PathState.Validated
+            q.validatedAt = p.now
+            s.paths.lastValidated = q
+            leaveSpares(s, 0)
+            val id = s.remoteCid
+            s.onPathFailed(failed)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state, "the connection goes on")
+            assertEquals(PathId.Initial, s.paths.active.socket, "from the failed path's local address")
+            assertTrue(s.paths.active.isRemote(validated), "to the last validated peer address")
+            assertEquals(id, s.remoteCid, "with the ID already used from that local address")
+        } finally {
+            p.close()
+        }
+    }
 }

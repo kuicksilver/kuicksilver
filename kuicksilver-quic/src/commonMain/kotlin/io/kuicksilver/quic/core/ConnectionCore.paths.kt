@@ -689,15 +689,50 @@ internal fun ConnectionCore.onPathFailed(
         if (p.preferred) paths.remove(p)
         return
     }
-    // a path we can send on with an ID never used from another local address (RFC 9000 section 9.5: "An endpoint MUST NOT reuse a
-    // connection ID when sending from more than one local address"); one whose ID went back after its validation needs a spare one
-    val back = paths.fallback(p) { dcidFor(it) != null }
+    // RFC 9000 section 9.3.2: "an endpoint MUST revert to using the last validated peer address when validation of a new peer
+    // address fails": the most recently validated path we can send on with an ID never used from another local address (section
+    // 9.5: "An endpoint MUST NOT reuse a connection ID when sending from more than one local address"). The choice reserves nothing;
+    // only the chosen path takes the spare ID it may need
+    val back = paths.fallback(p) { canSendOnAfter(it, p) }
     if (back != null) {
-        // RFC 9000 section 9.3.2: the most recently validated path
+        dcidFor(back)
         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)
-    } else {
-        silentClose(QuicException.ConnectionLost.NoViablePath())
+        return
     }
+    // no such path (the validated ones are on another local address, with no spare ID for them): a server goes back to the last
+    // validated peer address from the failed path's own local address, with the ID it already uses there, which meets both MUSTs;
+    // only without any validated peer address (or a free path slot) does the connection close, silently (section 9.3.2: "If an
+    // endpoint has no state about the last validated peer address, it MUST close the connection silently")
+    val last = paths.fallback(p) ?: paths.lastValidated.takeIf { it !== p && it.state == PathState.Validated }
+    if (role == TlsRole.Server && last != null && !p.isRemote(last.remote)) {
+        val k = paths.add(p.socket, last.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now)
+        if (k != null) {
+            k.local = p.local
+            k.state = PathState.Validated
+            k.validatedAt = now
+            k.amplification.validated = true
+            initPathOnSocket(k, p)
+            paths.lastValidated = k
+            switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
+            return
+        }
+    }
+    silentClose(QuicException.ConnectionLost.NoViablePath())
+}
+
+/**
+ * Whether [q] can become the active path in place of [failed] without an ID used from another local address, and without reserving
+ * one (RFC 9000 section 9.5; [dcidFor] takes it once [q] is chosen): it holds an ID of its own, a spare one is left, or, on a server,
+ * it shares [failed]'s local address and the client did not change its ID there (a NAT rebinding: the current one may go there).
+ */
+private fun ConnectionCore.canSendOnAfter(
+    q: Path,
+    failed: Path,
+): Boolean {
+    if (remoteCid.length == 0) return true
+    q.peerCid?.let { if (cids.isActive(it)) return true }
+    if (cids.hasSparePeer()) return true
+    return role == TlsRole.Server && q.socket == failed.socket && sameLocal(q.local, failed.local) && !q.peerChangedDcid
 }
 
 /**
