@@ -155,6 +155,18 @@ internal fun ConnectionCore.onNewConnectionId(
 
 /** Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5). */
 private fun ConnectionCore.resumeCidWaiters() {
+    val a = paths.active
+    if (a.waitsForPeerCid) {
+        // the reverted active path takes the first ID the client gives; the one it kept from elsewhere is retired
+        val fresh = cids.takePathPeer()
+        if (fresh != null) {
+            val old = cids.currentPeer
+            cids.makeCurrent(fresh)
+            remoteCid = fresh.cid
+            a.waitsForPeerCid = false
+            if (old != null && old !== fresh) cids.releasePathPeer(old)
+        }
+    }
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
         if (p.awaitingCid && p.state == PathState.Validating && p !== paths.active && dcidFor(p) != null) startValidation(p)
@@ -484,7 +496,10 @@ private fun ConnectionCore.adoptPreferred(
 
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
 private fun ConnectionCore.notePeerDcid(p: Path) {
-    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) {
+        p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+        p.peerDcidKnown = true
+    }
 }
 
 /**
@@ -592,6 +607,7 @@ internal fun ConnectionCore.switchPath(
     val oldPeer = cids.currentPeer
     paths.active = p
     p.peerChangedDcid = false // relative to the active path, which this one is now
+    old.waitsForPeerCid = false // a path that is not the active one sends with an ID of its own (dcidFor), or not at all
     p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
@@ -744,6 +760,15 @@ private fun ConnectionCore.revertTo(
         initPathOnSocket(k, p)
         k.validatedAt = last.validatedAt
         k.lastReceivedAt = last.lastReceivedAt
+    }
+    // section 9.5: the ID it may send with from [p]'s local address to that peer address. One it holds; the current one when the
+    // client's packets from there reached this local address with the ID of ours it uses on the active path (a NAT rebinding, "it MAY
+    // continue to use the current connection ID"); otherwise a spare one; with none, nothing goes out until the client gives one
+    val held = k.peerCid?.takeIf { cids.isActive(it) }
+    val keepCurrent = held == null && k.peerDcidKnown && !k.peerChangedDcid
+    if (held == null && !keepCurrent) {
+        val spare = cids.takePathPeer()
+        if (spare != null) k.peerCid = spare else k.waitsForPeerCid = true
     }
     k.state = PathState.Validated
     k.amplification.validated = true

@@ -957,6 +957,8 @@ public class ConnectionCore internal constructor(
     ): Int {
         if (state == ConnectionState.Closed || state == ConnectionState.Draining) return 0
         this.now = now
+        // a reverted path with no connection ID of the peer it may use: nothing can go out (RFC 9000 sections 9.3, 9.5)
+        if (paths.active.waitsForPeerCid) return 0
         if (tlsDirty) {
             tlsDirty = false
             driveTls(now)

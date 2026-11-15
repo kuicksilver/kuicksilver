@@ -3422,9 +3422,11 @@ class PathTest {
 
     /**
      * 0.3.0 review, RFC 9000 section 9.3.2: "an endpoint MUST revert to using the last validated peer address when validation of a new
-     * peer address fails". With the only validated path on another local address of the server and no spare peer ID, switching there
-     * would reuse an ID across local addresses (section 9.5 MUST NOT), and closing would break the first MUST: the server goes back to
-     * that peer address from the failed path's own local address, with the ID it already uses there.
+     * peer address fails". With the only validated path on another local address of the server, switching there would reuse an ID
+     * across local addresses (section 9.5 MUST NOT), and closing would break the first MUST: the server goes back to that peer address
+     * from the failed path's own local address. Re-review, section 9.5: the current ID may go to a new peer address only when the
+     * client's packets from there carried the same ID of ours ("MAY continue to use the current connection ID"), which nothing showed
+     * here: with no spare ID nothing goes out until the client gives one, then that one is used and the kept one retired.
      */
     @Test fun negative_aFailedValidationRevertsToTheLastValidatedPeerAddressFromItsOwnLocalAddress() {
         val p = EndpointPair()
@@ -3435,24 +3437,80 @@ class PathTest {
             val s = p.server.connections().single()
             val failed = s.paths.active
             val validated = InetSocketAddress("10.0.0.8", 40008)
-            val q =
-                s.paths.add(
-                    io.kuicksilver.quic.PREFERRED_SOCKET,
-                    validated,
-                    s.config.congestionController(),
-                    s.config.newPathInitialRtt,
-                    evict = false,
-                )!!
-            q.state = PathState.Validated
-            q.validatedAt = p.now
-            s.paths.lastValidated = q
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, validated)
             leaveSpares(s, 0)
             val id = s.remoteCid
             s.onPathFailed(failed)
             assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state, "the connection goes on")
             assertEquals(PathId.Initial, s.paths.active.socket, "from the failed path's local address")
             assertTrue(s.paths.active.isRemote(validated), "to the last validated peer address")
-            assertEquals(id, s.remoteCid, "with the ID already used from that local address")
+            assertTrue(s.paths.active.waitsForPeerCid, "no ID it may use there yet")
+            p.batch.clear()
+            assertEquals(0, s.poll(p.batch, p.now), "nothing goes out with the ID used toward another address")
+            // the client's next NEW_CONNECTION_ID
+            val frame = PacketBuffer.of(ByteArray(8) { 0x66 } + ByteArray(16) { 0x44 })
+            try {
+                s.onNewConnectionId(40, 0, frame, 0, 8, 8)
+            } finally {
+                frame.close()
+            }
+            assertFalse(s.paths.active.waitsForPeerCid)
+            assertNotEquals(id, s.remoteCid)
+            assertEquals(
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(8) { 0x66 }),
+                s.remoteCid,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Re-review: the same revert with a spare ID left takes it at once. */
+    @Test fun aRevertWithASpareIdUsesIt() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, InetSocketAddress("10.0.0.8", 40008))
+            leaveSpares(s, 1)
+            val id = s.remoteCid
+            s.onPathFailed(failed)
+            assertFalse(s.paths.active.waitsForPeerCid)
+            assertNotEquals(id, s.remoteCid, "a spare ID, never the one used toward another address")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Re-review, section 9.5 MAY: the client's packets from the last validated peer address also reached the failed path's local address
+     * (a path there, not validated) with the ID of ours it uses on the active path: the revert goes back to that path and keeps the
+     * current ID.
+     */
+    @Test fun aRevertToAPeerAddressThatUsedTheCurrentIdHereKeepsIt() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            val a = InetSocketAddress("10.0.0.8", 40008)
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, a)
+            val k = s.paths.add(failed.socket, a, s.config.congestionController(), s.config.newPathInitialRtt, evict = false)!!
+            k.local = failed.local
+            k.state = PathState.Failed
+            k.peerDcidKnown = true
+            leaveSpares(s, 0)
+            val id = s.remoteCid
+            s.onPathFailed(failed)
+            assertSame(k, s.paths.active, "the path already there")
+            assertEquals(id, s.remoteCid)
+            assertFalse(k.waitsForPeerCid)
         } finally {
             p.close()
         }
@@ -3551,6 +3609,48 @@ class PathTest {
             s.onPathFailed(failed)
             assertTrue(s.paths.active.isRemote(a))
             assertEquals(PathState.Validating, s.paths.active.state, "validated again")
+        } finally {
+            p.close()
+        }
+    }
+    /**
+     * Self-attack on the revert without a usable ID: data, a key update and a PATH_CHALLENGE owed must all wait (any datagram would carry
+     * the ID used toward another address); the next NEW_CONNECTION_ID lets them out, with the new ID, and the connection never closed.
+     */
+    @Test fun negative_aRevertedPathWaitingForAnIdSendsNothingUntilOneArrives() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val s = p.server.connections().single()
+            val failed = s.paths.active
+            addValidated(s, io.kuicksilver.quic.PREFERRED_SOCKET, InetSocketAddress("10.0.0.8", 40008))
+            leaveSpares(s, 0)
+            s.onPathFailed(failed)
+            assertTrue(s.paths.active.waitsForPeerCid)
+            val id = s.openStream(true)
+            s.writeStream(id, ByteArray(3000), 0, 3000, false)
+            s.initiateKeyUpdate(p.now)
+            s.paths.queueResponse(7, s.paths.active)
+            p.now += 3.seconds
+            s.onTimeout(p.now)
+            p.batch.clear()
+            assertEquals(0, s.poll(p.batch, p.now), "nothing at all leaves while no ID may be used")
+            val frame = PacketBuffer.of(ByteArray(8) { 0x66 } + ByteArray(16) { 0x44 })
+            try {
+                s.onNewConnectionId(40, 0, frame, 0, 8, 8)
+            } finally {
+                frame.close()
+            }
+            p.batch.clear()
+            val n = s.poll(p.batch, p.now)
+            assertTrue(n > 0, "the new ID lets them out")
+            for (i in 0 until n) {
+                val b = p.batch.buffer(i)
+                assertTrue((0 until 8).all { b[1 + it] == 0x66.toByte() }, "with the new ID")
+            }
+            assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Confirmed)
         } finally {
             p.close()
         }

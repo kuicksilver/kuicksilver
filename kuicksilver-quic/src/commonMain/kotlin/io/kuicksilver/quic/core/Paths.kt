@@ -192,6 +192,16 @@ internal class Path(
      */
     var peerChangedDcid: Boolean = false
 
+    /** Server: a 1-RTT packet of the client arrived on this path while another was active, so [peerChangedDcid] is known, not a default. */
+    var peerDcidKnown: Boolean = false
+
+    /**
+     * Server: the active path after a revert (RFC 9000 section 9.3.2) with no peer connection ID it may use there (section 9.5): nothing
+     * is sent until the client provides one (section 9.3: "it will not be able to send anything on the new path until the peer
+     * provides one").
+     */
+    var waitsForPeerCid: Boolean = false
+
     /** Server: the client probed this path (a PATH_CHALLENGE from it while another path was active), typically to migrate there. */
     var peerProbed: Boolean = false
 
