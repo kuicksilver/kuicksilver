@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
 import kotlin.test.Test
@@ -59,6 +60,30 @@ class StoredSettingsTest {
                     SettingsId.H3_DATAGRAM to 1L,
                 ),
             ),
+        )
+    }
+
+    /**
+     * RFC 9204 section 3.2.3 is the more specific rule for SETTINGS_QPACK_MAX_TABLE_CAPACITY: any other value than the
+     * remembered non-zero one, larger included, or its omission is QPACK_DECODER_STREAM_ERROR; the other settings stay
+     * H3_SETTINGS_ERROR (RFC 9114 section 7.2.4.2).
+     */
+    @Test fun negative_qpackCapacityChangeIsDecoderStreamErrorOthersSettingsError() {
+        for (now in listOf(
+            stored + (SettingsId.QPACK_MAX_TABLE_CAPACITY to 8192L),
+            stored + (SettingsId.QPACK_MAX_TABLE_CAPACITY to 1024L),
+            stored + (SettingsId.QPACK_MAX_TABLE_CAPACITY to 0L),
+            stored - SettingsId.QPACK_MAX_TABLE_CAPACITY,
+        )) {
+            assertEquals(Http3ErrorCode.QPACK_DECODER_STREAM_ERROR, StoredSettings.incompatibility(stored, now)?.code, "$now")
+        }
+        assertEquals(
+            Http3ErrorCode.SETTINGS_ERROR,
+            StoredSettings.incompatibility(stored, stored + (SettingsId.QPACK_BLOCKED_STREAMS to 1L))?.code,
+        )
+        assertEquals(
+            Http3ErrorCode.SETTINGS_ERROR,
+            StoredSettings.incompatibility(stored, stored - SettingsId.MAX_FIELD_SECTION_SIZE)?.code,
         )
     }
 

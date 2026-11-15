@@ -441,18 +441,22 @@ class RequestTest {
             }
         }
 
-    /** Reserved frame types (0x1f * N + 0x21, RFC 9114 section 7.2.8) are GREASE a peer is meant to send: they cost no glitch token. */
-    @Test fun greaseFramesOnRequestStreamsAreFree() =
+    /**
+     * Reserved frame types (0x1f * N + 0x21, RFC 9114 section 7.2.8) are GREASE a peer is meant to send: the first
+     * [RequestFrames.FREE_USELESS_FRAMES] of a stream cost no glitch token, and the bucket takes 1000 more (a flood of them
+     * is `HeaderLimitsTest.negative_greaseFloodOnARequestStreamIsExcessiveLoad`).
+     */
+    @Test fun aFewGreaseFramesOnRequestStreamsAreFree() =
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
+                server.session.glitchClock = { 0L } // no refill: exactly 1000 tokens
                 val raw = RawPeer(c)
                 raw.openControl()
                 val st = c.openBidi()
-                // twice the bucket, in one write: the flood test's 1001 unknown frames close the connection
                 val flood =
-                    (0 until 2002)
+                    (0 until RequestFrames.FREE_USELESS_FRAMES + 1000)
                         .map {
                             raw.frame(
                                 io.kuicksilver.http3.frame.FrameType

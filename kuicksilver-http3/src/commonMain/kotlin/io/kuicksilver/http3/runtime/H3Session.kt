@@ -29,6 +29,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.holdPeerStreamCredit
+import io.kuicksilver.quic.receiveAborted
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.rememberedApplicationData
 import io.kuicksilver.quic.runtime.QuicStreamLimits
@@ -49,12 +50,14 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -105,10 +108,36 @@ internal class H3Session(
      * The peer's QPACK encoder stream is being read. Once the connection is gone and this reader too, no insert can arrive
      * any more: a field section still waiting for one never decodes ([noMoreInserts]). Session dispatcher only.
      */
-    internal var peerEncoderReading = false
+    internal var peerEncoderReading: Boolean
+        get() = peerEncoderReadingFlow.value
+        set(v) {
+            peerEncoderReadingFlow.value = v
+        }
+    private val peerEncoderReadingFlow = MutableStateFlow(false)
 
     /** No dynamic-table insert can arrive any more: the connection is gone, and with it the reader of the peer's encoder stream. */
     fun noMoreInserts(): Boolean = closed.isCompleted && !peerEncoderReading
+
+    /** Completes once [noMoreInserts] holds, so a section waiting for inserts wakes for it (made on first use). */
+    private val noMoreInsertsEvent: Job by lazy {
+        afterEnd.launch {
+            closed.join()
+            peerEncoderReadingFlow.first { !it }
+        }
+    }
+
+    /**
+     * What a reader waiting for the [headerBudget] wakes for: the peer aborting [st]'s half (it gives up with that reset),
+     * or the connection ending (it gives up with the connection's reason). A FIN keeps it waiting: its bytes are all there.
+     */
+    fun budgetWatch(st: QuicStream): EndWatch = EndWatch(st.receiveAborted, closed) { cause -> cause ?: connectionError() }
+
+    /**
+     * What a field section waiting for QPACK inserts wakes for: the peer aborting [st]'s half, or no insert being able to
+     * come any more ([noMoreInserts]); either gives it up ([StreamAbandoned]). A stream lost with its connection still
+     * decodes when the encoder stream's bytes that arrived bring its inserts.
+     */
+    fun insertsWatch(st: QuicStream): EndWatch = EndWatch(st.receiveAborted, noMoreInsertsEvent) { StreamAbandoned() }
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
 
@@ -414,6 +443,28 @@ internal class H3Session(
     /** Server: request streams still reading their HEADERS, with the coroutine reading them. */
     val pendingHeaders = HashMap<Long, Pair<QuicStream, Job>>()
 
+    /** Server: request streams rejected because their head missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
+    internal var headDeadlinesPassedForTest = 0
+
+    /** The peer's unidirectional streams stopped because their header missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
+    internal var uniDeadlinesPassedForTest = 0
+
+    /** The peer's unidirectional streams whose type is still being read, oldest first. Session dispatcher only. */
+    internal val uniTypesPending = LinkedHashMap<Long, UniHeader>()
+
+    /** Bumped on every change a spared stalled type is decided on: a type byte, a stream identified, added or gone. */
+    internal val uniTypeProgress = MutableStateFlow(0L)
+
+    internal fun uniProgress() {
+        uniTypeProgress.value++
+    }
+
+    /** Unidirectional-stream header deadlines still armed (none may outlive its stream's header). */
+    internal val uniDeadlinesArmed = AtomicInt(0)
+
+    /** Server: request-head deadlines still armed (a test hook: none may outlive its stream's head). */
+    internal val headDeadlinesArmedForTest = AtomicInt(0)
+
     /** Server: the header deadline after GOAWAY passed; a request stream that still has no HEADERS is rejected. */
     var headerDeadlinePassed = false
         internal set
@@ -448,6 +499,12 @@ internal class H3Session(
 
     /** Bytes of HEADERS payloads being read on request streams right now (a test hook; session dispatcher only). */
     var bufferedHeaderBytes = 0L
+
+    /**
+     * HEADERS payloads read on this connection's request streams at once, at most [HEADER_BUDGET_FRAMES] largest frames
+     * ([maxHeadersFrame]): RFC 9114 section 10.5, "memory commitments ... strictly bounded". Session dispatcher only.
+     */
+    val headerBudget = HeaderBudget(HEADER_BUDGET_FRAMES * maxHeadersFrame)
 
     /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out; a new one after a rejected 0-RTT. */
     internal var criticalStreams = CompletableDeferred<Unit>()
@@ -924,6 +981,9 @@ internal class H3Session(
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
+
+        /** [headerBudget] in largest HEADERS frames: 512 KiB at the default `maxFieldSectionSize`. */
+        const val HEADER_BUDGET_FRAMES: Long = 4
         val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
 
         /**

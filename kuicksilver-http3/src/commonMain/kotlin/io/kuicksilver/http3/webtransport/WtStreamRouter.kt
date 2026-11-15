@@ -90,24 +90,30 @@ internal class WtStreamRouter(
     /** Streams waiting for their session (a test hook). */
     val bufferedCount = MutableStateFlow(0)
 
-    /** A peer's unidirectional stream whose type `0x54` was read, in [typeLength] bytes. */
+    /** A peer's unidirectional stream whose type `0x54` was read, in [typeLength] bytes; [headerRead] as in [onBidi]. */
     suspend fun onUni(
         st: QuicStream,
         typeLength: Int,
-    ) = route(st, bidi = false, typeLength)
+        headerRead: () -> Unit = {},
+    ) = route(st, bidi = false, typeLength, headerRead)
 
-    /** A bidirectional stream whose `WT_STREAM` signal `0x41` was read, in [typeLength] bytes. */
+    /**
+     * A bidirectional stream whose `WT_STREAM` signal `0x41` was read, in [typeLength] bytes; [headerRead] runs once its
+     * Session ID was read, or its stream ended or failed before it.
+     */
     suspend fun onBidi(
         st: QuicStream,
         typeLength: Int,
-    ) = route(st, bidi = true, typeLength)
+        headerRead: () -> Unit = {},
+    ) = route(st, bidi = true, typeLength, headerRead)
 
     private suspend fun route(
         st: QuicStream,
         bidi: Boolean,
         typeLength: Int,
+        headerRead: () -> Unit = {},
     ) {
-        val (sessionId, idLength) =
+        val read =
             try {
                 st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
@@ -117,7 +123,10 @@ internal class WtStreamRouter(
             } catch (e: Throwable) {
                 if (H3Session.transportCause(e) !is QuicException.StreamError) throw e
                 null
-            } ?: run {
+            }
+        headerRead()
+        val (sessionId, idLength) =
+            read ?: run {
                 // ended or reset before its Session ID: nothing to route, but a peer doing only this spends glitch tokens
                 session.glitch("WebTransport stream ended before its Session ID")
                 return

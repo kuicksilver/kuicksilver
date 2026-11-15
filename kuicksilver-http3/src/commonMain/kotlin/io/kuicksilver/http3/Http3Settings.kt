@@ -6,6 +6,8 @@ package io.kuicksilver.http3
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** Local HTTP/3 settings: what we advertise in SETTINGS (RFC 9114 section 7.2.4) and our own resource limits; build with [http3Settings]. */
 public class Http3Settings private constructor(
@@ -36,6 +38,11 @@ public class Http3Settings private constructor(
     public val maxEarlyPriorityUpdates: Int,
     /** Close a connection whose peer floods useless frames (glitch limiter: 1000 tokens, 33/s). */
     public val glitchProtection: Boolean,
+    /**
+     * How long one field section (a HEADERS frame) may take to arrive, as `Http2Settings.maxHeaderBlockTime`; a server
+     * also counts a request's head from its stream's first byte. Positive; 10 s by default ([Builder.maxHeaderBlockTime]).
+     */
+    public val maxHeaderBlockTime: Duration,
     /** Server: what happens to requests received in 0-RTT before the handshake completed (only with `QuicServerConfig.earlyData`). */
     @property:ExperimentalKuicksilverApi
     public val earlyData: Http3EarlyDataPolicy,
@@ -108,6 +115,16 @@ public class Http3Settings private constructor(
 
         /** Close with H3_EXCESSIVE_LOAD a connection whose peer floods useless frames (1000 tokens, 33/s); true by default. */
         public var glitchProtection: Boolean = true
+
+        /**
+         * How long one field section (a HEADERS frame: request or response head, interim response, trailers) may take to
+         * arrive, from its frame header to its last byte; positive, 10 s by default (as `Http2Settings.maxHeaderBlockTime`).
+         * A server also counts a request's head from the first byte of its stream (frames before the HEADERS and a stream
+         * that sends nothing included) to its decoded HEADERS. A request head that misses it is rejected with
+         * H3_REQUEST_REJECTED before the application sees it (RFC 9114 section 4.1.1), so the client may send it again;
+         * other field sections cancel their request with H3_REQUEST_CANCELLED. The connection lives on either way.
+         */
+        public var maxHeaderBlockTime: Duration = 10.seconds
 
         /** Server: early requests that are not replayable wait for the handshake; [Http3EarlyDataPolicy.WaitForHandshake] by default. */
         @ExperimentalKuicksilverApi
@@ -183,6 +200,7 @@ public class Http3Settings private constructor(
             require(maxFieldSectionSize in 1..(1L shl 30)) { "maxFieldSectionSize must be 1..2^30" }
             require(maxInformationalResponses >= 0) { "maxInformationalResponses must not be negative" }
             require(maxEarlyPriorityUpdates >= 0) { "maxEarlyPriorityUpdates must not be negative" }
+            require(maxHeaderBlockTime.isPositive()) { "maxHeaderBlockTime must be positive" }
             require(!webTransport || (enableConnectProtocol && h3Datagram)) {
                 "webTransport needs enableConnectProtocol and h3Datagram"
             }
@@ -201,6 +219,7 @@ public class Http3Settings private constructor(
                 maxInformationalResponses,
                 maxEarlyPriorityUpdates,
                 glitchProtection,
+                maxHeaderBlockTime,
                 earlyData,
                 webTransport,
                 webTransportMaxSessions,
@@ -228,6 +247,7 @@ public class Http3Settings private constructor(
             it.maxEarlyPriorityUpdates = maxEarlyPriorityUpdates
             it.glitchProtection =
                 glitchProtection
+            it.maxHeaderBlockTime = maxHeaderBlockTime
             it.earlyData = earlyData
             it.webTransport = webTransport
             it.webTransportMaxSessions = webTransportMaxSessions

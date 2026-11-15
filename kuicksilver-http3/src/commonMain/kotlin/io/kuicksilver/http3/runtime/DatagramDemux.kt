@@ -183,12 +183,23 @@ internal class DatagramDemux(
     /** Streams with a registered datagram channel (test hook; session dispatcher only). */
     val registeredCount: Int get() = streams.size
 
-    /** Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1 (section 2.1.1). */
+    /**
+     * Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1 (section 2.1.1), and toward a peer whose transport takes no
+     * QUIC DATAGRAM frames (RFC 9221 section 3: none "MUST" be sent to it), whatever its SETTINGS say.
+     */
     fun unsupported(): DatagramSendResult.Unsupported? =
         when {
-            !session.settings.h3Datagram -> DatagramSendResult.Unsupported(DatagramUnsupportedReason.Disabled)
-            session.peerSettings.value?.h3Datagram != true -> DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
-            else -> null
+            !session.settings.h3Datagram -> {
+                DatagramSendResult.Unsupported(DatagramUnsupportedReason.Disabled)
+            }
+
+            session.peerSettings.value?.h3Datagram != true || !session.quic.peerSupportsDatagrams -> {
+                DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
+            }
+
+            else -> {
+                null
+            }
         }
 
     /**

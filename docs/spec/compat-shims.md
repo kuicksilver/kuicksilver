@@ -54,7 +54,7 @@ the codepoints are those of the older drafts.
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13` (the versions,
 `offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236` (the 0-or-1 check),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:385` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:733` (the client's draft-02
 request field).
 
@@ -94,7 +94,7 @@ section); only the two older codepoints, 0x2b603742 and 0x14e9cd29, go with this
 **Standard text.** None: draft-16 has no such field. RFC 9110 §5.1 lets a recipient ignore an unknown field, so the field
 costs other clients nothing.
 
-**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:632`; the name and
+**Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/ServerRequestStream.kt:696`; the name and
 value at `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:184`.
 
 **On by default.** No, as shim 1; then always for a request with the draft-02 field.

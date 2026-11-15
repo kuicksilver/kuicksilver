@@ -49,12 +49,14 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
@@ -81,15 +83,65 @@ private suspend fun readRequestStream(
 ) = with(session) {
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
-    // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
-    if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
+    // nothing of the request head is taken from the stream's flow-control window before the connection's header budget
+    // granted it (RFC 9114 section 10.5); RFC 9204 section 2.2.1: with blocked sections possible, nor before it may decode
+    st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
+    // the stream's head (a request's HEADERS, decoded; a WebTransport stream's signal and Session ID) must be read within
+    // maxHeaderBlockTime of its first byte, or the stream is rejected: a stream that never completes it would otherwise hold
+    // its reader, its budget and its stream slot as long as the client keeps the connection alive (RFC 9000 section 21.6,
+    // Slowloris; RFC 9114 section 10.5). Armed before the first read, which with WebTransport is the frame type itself.
+    val reader = currentCoroutineContext()[Job]!!
+    val head = HeadState()
+    val headDeadline =
+        scope.launch {
+            delay(settings.maxHeaderBlockTime)
+            if (!head.settled) {
+                head.settled = true
+                headDeadlinesPassedForTest++
+                rejectUnfinishedHead(st, reader, head.rejectCode)
+            }
+        }
+    headDeadlinesArmedForTest.incrementAndFetch()
+    headDeadline.invokeOnCompletion { headDeadlinesArmedForTest.decrementAndFetch() }
+
+    /** The head was read in time: the deadline stands down (on the dispatcher, so it cannot fire in between). */
+    fun headSettled() {
+        head.settled = true
+        headDeadline.cancel()
+    }
+    try {
+        handleArmedRequestStream(st, reader, head, ::headSettled, onDelivered)
+    } finally {
+        headDeadline.cancel()
+    }
+}
+
+/** Whether a server stream's head was read (or given up), and the code its deadline rejects it with. */
+private class HeadState {
+    var settled = false
+
+    /**
+     * H3_REQUEST_REJECTED while the stream may be a request (RFC 9114 section 4.1.1); once it is a WebTransport stream,
+     * WT_BUFFERED_STREAM_REJECTED: it reached no session (draft-ietf-webtrans-http3-16 section 4.6).
+     */
+    var rejectCode = Http3ErrorCode.REQUEST_REJECTED
+}
+
+private suspend fun H3Session.handleArmedRequestStream(
+    st: QuicStream,
+    reader: Job,
+    head: HeadState,
+    headSettled: () -> Unit,
+    onDelivered: () -> Unit,
+) {
     val firstSized =
         if (settings.webTransport) {
             try {
                 st.input.readVarIntSizedOrNull()
             } catch (_: IncompleteFrame) {
+                headSettled()
                 truncated(st, null, null)
-                return@with
+                return
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -101,22 +153,24 @@ private suspend fun readRequestStream(
     val firstType = firstSized?.first
     if (firstType == FrameType.WT_STREAM) {
         bidiSettled(st.id) // a WebTransport stream, not a request: never a session
+        head.rejectCode = Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED
         st.readAhead = Long.MAX_VALUE // its data carries no field section: read ahead as any stream
-        wt.onBidi(st, firstSized.second)
-        return@with
+        wt.onBidi(st, firstSized.second, headSettled)
+        return
     }
     if (st.id > maxRequestId) maxRequestId = st.id
     goAwaySentId?.let {
         if (st.id >= it || headerDeadlinePassed) {
+            headSettled()
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
-            return@with
+            return
         }
     }
     // in flight from its first frame type (its first byte; with WebTransport, once that type was read above), not from
     // the parsed HEADERS: a request below the GOAWAY id whose HEADERS are still arriving must keep the idle close away
     // (RFC 9114 section 5.2), until the header deadline after GOAWAY
     requestStarted()
-    pendingHeaders[st.id] = st to currentCoroutineContext()[Job]!!
+    pendingHeaders[st.id] = st to reader
     var handedOff = false
     try {
         val frames =
@@ -124,13 +178,16 @@ private suspend fun readRequestStream(
                 st.input,
                 isServerSide = true,
                 maxHeadersFrame = maxHeadersFrame,
-                onSkipped = { glitch("unknown frame on a request stream") },
+                onUseless = { glitch(it) },
                 onBuffered = { bufferedHeaderBytes += it },
                 firstType = firstType,
                 webTransport = settings.webTransport,
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
-                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
-                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { insertsWatch(st) } },
+                limitReadAhead = { st.readAhead = it },
+                budget = headerBudget,
+                budgetWatch = { budgetWatch(st) },
+                streamId = st.id,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =
@@ -140,7 +197,7 @@ private suspend fun readRequestStream(
                 e: IncompleteFrame,
             ) {
                 truncated(st, null, null)
-                return@with
+                return
             } catch (e: QuicException.StreamError) {
                 // reset before its HEADERS were read: no request, but the peer's encoder may count a section that was lost
                 // or dropped with the reset (RFC 9204 section 4.4.2)
@@ -149,17 +206,18 @@ private suspend fun readRequestStream(
                 // until the connection ends when the client did not stop it (RFC 9114 section 4.1.1)
                 runCatching { st.reset(Http3ErrorCode.REQUEST_REJECTED) }
                 countClientReset(e)
-                return@with
+                return
             } catch (e: StreamAbandoned) {
                 runCatching { st.reset(Http3ErrorCode.REQUEST_REJECTED) }
                 countClientReset(st.input.closedCause)
-                return@with // reset while its HEADERS waited for inserts: the Stream Cancellation went out
+                return // reset while its HEADERS waited for inserts: the Stream Cancellation went out
             }
         val block =
             when (first) {
                 RequestFrame.End -> {
+                    headSettled() // answered: the deadline must not reset the stream with another code meanwhile
                     abort(st, Http3ErrorCode.REQUEST_INCOMPLETE)
-                    return@with
+                    return
                 }
 
                 is RequestFrame.Data -> {
@@ -167,8 +225,9 @@ private suspend fun readRequestStream(
                 }
 
                 is RequestFrame.HeadersTooLarge -> {
+                    headSettled()
                     reject431(st)
-                    return@with
+                    return
                 }
 
                 is RequestFrame.Headers -> {
@@ -181,10 +240,11 @@ private suspend fun readRequestStream(
             } catch (
                 e: StreamFailure,
             ) {
+                headSettled()
                 reject431(st, e.code)
-                return@with
+                return
             } catch (e: StreamAbandoned) {
-                return@with
+                return
             }
         val parsed =
             try {
@@ -194,16 +254,20 @@ private suspend fun readRequestStream(
             } catch (
                 e: MalformedMessage,
             ) {
+                headSettled()
                 abort(st, Http3ErrorCode.MESSAGE_ERROR)
-                return@with
+                return
             }
         pendingHeaders.remove(st.id)
+        headSettled()
+        // the head is read: trailers each have the deadline of a field section
+        frames.sectionDeadline = settings.maxHeaderBlockTime
         bidiSettled(st.id)
         // datagrams kept while the HEADERS were on the way belong to a request without datagram semantics: RFC 9297 section
         // 2 has it aborted with H3_DATAGRAM_ERROR (an Extended CONNECT with them takes them when its channel registers)
         if (!hasDatagramSemantics(parsed.method, parsed.protocol) && datagrams.dropPending(st.id)) {
             abort(st, Http3ErrorCode.DATAGRAM_ERROR)
-            return@with
+            return
         }
         if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
             val draft02 =
@@ -216,12 +280,12 @@ private suspend fun readRequestStream(
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)
                 glitch("WebTransport sessions above the rate")
-                return@with
+                return
             }
             if (!wtAdmits(draft02)) {
                 abort(st, Http3ErrorCode.REQUEST_REJECTED)
                 wt.unregister(st.id)
-                return@with
+                return
             }
             wtSessionAdmitted(st.id, draft02)
         }
@@ -235,7 +299,7 @@ private suspend fun readRequestStream(
                 reject425(st)
                 handedOff = true
                 req.done() // the request registered itself (its datagrams too): never handed over, it ends here
-                return@with
+                return
             } else {
                 earlyHeldForHandshake.incrementAndFetch()
                 try {
@@ -246,7 +310,7 @@ private suspend fun readRequestStream(
                     // the handshake failed: a replayed request never runs
                     handedOff = true
                     req.done()
-                    return@with
+                    return
                 }
             }
         }
@@ -254,7 +318,7 @@ private suspend fun readRequestStream(
         if (!requests.offer(req)) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
             req.done()
-            return@with
+            return
         }
         onDelivered() // the application holds it now: it gives the stream's credit back
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not

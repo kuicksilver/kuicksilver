@@ -56,7 +56,7 @@ internal suspend fun H3Session.decodeSection(
     when (
         val r =
             // the peer reset the stream, or the connection is gone with the inserts the section waits for
-            qpack.decode(st.id, block) { st.input.closedCause != null || noMoreInserts() }
+            qpack.decode(st.id, block) { insertsWatch(st) }
     ) {
         is DecodeResult.Decoded -> if (r.neverIndexed.isEmpty()) r.fields else DecodedFields(r.fields, r.neverIndexed)
 

@@ -14,6 +14,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.receiveAborted
 import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.tls.EarlyDataState
@@ -341,11 +342,16 @@ class ZeroRttApiTest {
                         p.net.hold(p.clientIo.localAddress)
                         val second = p.client.connectEarly(server.localAddress, clientConfig())
                         val early = second.openBidi()
+
+                        // asked for before the rejection: the drop completes it (ReceiveAbortedTest has the reset and the FIN)
+                        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                        val aborted = early.receiveAborted!!
                         early.output.writeFully("two".encodeToByteArray())
                         early.output.flushAndClose()
                         assertEquals(false, second.isHandshakeComplete)
                         p.net.release(p.clientIo.localAddress)
                         val e = assertFailsWith<QuicException.StreamError.EarlyDataRejected> { early.input.readAll() }
+                        assertEquals(early.id, assertIs<QuicException.StreamError.EarlyDataRejected>(aborted.await()).streamId)
                         assertEquals(early.id, e.streamId)
                         // negative: the FIN left in 0-RTT, but the rejection dropped the stream, so its size never stood
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)

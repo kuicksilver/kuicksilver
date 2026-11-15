@@ -215,6 +215,21 @@ writing; refused trailers also reset the stream with `H3_REQUEST_CANCELLED`, sin
 trailers reset the stream with `H3_REQUEST_CANCELLED`, and `request` (or, once the response began, its body and
 `trailers`) fails with `FieldSectionTooLarge`. `request.remoteAddress` follows the client's path when it migrates.
 
+Slow and oversized heads (RFC 9114 section 10.5, RFC 9000 section 21.6): a request head must be complete within
+`Http3Settings.maxHeaderBlockTime` (10 s) of its stream's first byte, or the stream is reset with `H3_REQUEST_REJECTED`
+before the application sees it (the client may send it again); any other field section (trailers, and on a client each
+response head) must arrive within the same time of its frame header, or the request is cancelled with
+`H3_REQUEST_CANCELLED` and fails with `Http3Exception.Protocol`. The time before a response starts is not limited, so
+long polls are unaffected. A connection reads at most 8 × `maxFieldSectionSize` (512 KiB by default) of HEADERS frames
+at once: each frame's length is reserved before its first byte is taken, and frames that do not fit wait in order with
+their bytes left in the stream's flow-control window, so a peer cannot make the connection hold more by keeping heads
+unfinished. Those bytes still count against the connection's flow-control window; if waiting heads fill it, the others
+wait for it too, at most until `maxHeaderBlockTime` ends the waiting streams. With WebTransport on, a server's
+WebTransport streams must send their signal and Session ID within the same time, or are reset with
+`WT_BUFFERED_STREAM_REJECTED`. A peer's unidirectional stream must send its type within it too, or is stopped with
+`H3_STREAM_CREATION_ERROR`; one stalled stream per control or QPACK stream the peer has not opened yet is spared while
+its bytes so far could still be that stream's type. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+
 ## Shutdown and GOAWAY
 
 `connection.goAway()` shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
@@ -237,7 +252,8 @@ again on a new connection (the Ktor engine does that by itself). Once the reques
 `Http3Endpoint.close()` ends every connection at once, without GOAWAY, with `H3_NO_ERROR` (a QUIC endpoint's `close()`
 sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown(grace)` is the graceful way.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types are free on both —
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream; reserved
+GREASE frames and empty DATA frames beyond the first 8 of a stream, the control stream included;
 unidirectional streams that end or are reset before their type, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 
@@ -289,7 +305,8 @@ stream.datagrams.collect { println(it.size) }
 ```
 
 `SETTINGS_H3_DATAGRAM` is always sent (its absence would be a fingerprint); it is 1 only when the QUIC connection has
-datagrams on. A peer that announces it without QUIC datagram support is a connection error `H3_SETTINGS_ERROR`.
+datagrams on. A peer that announces it without QUIC datagram support keeps its connection (RFC 9297 section 2.1.1 makes
+only a value other than 0 or 1 an error), but no datagram is sent to it: `trySendDatagram` answers `Unsupported`.
 Datagrams for streams nobody registered are dropped silently; a datagram whose quarter stream ID cannot be parsed
 closes the connection with `H3_DATAGRAM_ERROR`. Each stream keeps the newest 32 datagrams nobody has collected.
 

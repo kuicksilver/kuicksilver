@@ -4,9 +4,10 @@
 # tools/check/test-sleeps.allow.
 kuicksilver-http2/src/jvmTest/kotlin/io/kuicksilver/http2/runtime/PriorityConcurrencyTest.kt	1
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/H3Pair.kt	1
-kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/ConnectionTest.kt	6
+kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/ConnectionTest.kt	1
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/ExtendedConnectTest.kt	7
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/GoAwayTest.kt	3
+kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/HeaderLimitsTest.kt	3
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/LimitsTest.kt	2
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/PriorityTest.kt	3
 kuicksilver-http3/src/commonTest/kotlin/io/kuicksilver/http3/runtime/QpackDynamicTest.kt	12

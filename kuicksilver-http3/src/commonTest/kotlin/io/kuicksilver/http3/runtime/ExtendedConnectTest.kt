@@ -778,13 +778,22 @@ class H3DatagramTest {
             }
         }
 
-    @Test fun h3DatagramWithoutTransportIsSettingsError() =
+    /**
+     * H3_DATAGRAM=1 from a peer without QUIC datagram support is no connection error: RFC 9297 section 2.1.1 makes only a
+     * value other than 0 or 1 an H3_SETTINGS_ERROR. HTTP/3 Datagrams are QUIC DATAGRAM frames, which RFC 9221 section 3
+     * forbids sending to that peer, so none is: sending is unsupported (before 0.3.0 the connection closed).
+     */
+    @Test fun negative_h3DatagramWithoutTransportIsNoErrorAndNothingIsSent() =
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect(clientQuic = quicConfig { maxDatagramFrameSize = 0 })
-                Http3Connection.server(s)
+                val h = Http3Connection.server(s)
                 RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
-                assertEquals(Http3ErrorCode.SETTINGS_ERROR, peerSawClose(c))
+                val seen = withTimeoutOrNull(10.seconds) { h.peerSettings.filterNotNull().first() }
+                assertEquals(true, seen?.h3Datagram, "the server took the client's SETTINGS (closed: ${c.closed.isCompleted})")
+                assertEquals(false, c.closed.isCompleted)
+                val r = withContext(h.session.dispatcher) { h.session.datagrams.unsupported() }
+                assertEquals(DatagramUnsupportedReason.PeerDoesNotSupport, r?.reason)
             }
         }
 

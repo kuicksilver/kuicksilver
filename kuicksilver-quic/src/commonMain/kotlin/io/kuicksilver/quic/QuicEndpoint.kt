@@ -260,6 +260,15 @@ public var QuicStream.readAhead: Long
         (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.readAhead = v
     }
 
+/**
+ * Completes with the cause once the peer aborted its half of this stream: its RESET_STREAM or RESET_STREAM_AT, or a
+ * rejected 0-RTT that dropped the stream. A FIN never completes it, nor does the connection's end (watch
+ * [QuicConnection.closed] for that). Null for streams of other implementations and for our own unidirectional streams.
+ */
+@InternalKuicksilverApi
+public val QuicStream.receiveAborted: kotlinx.coroutines.Deferred<Throwable>?
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.takeIf { it.receives }?.receiveAborted
+
 /** Test hook: the bytes [QuicStream.input] took from the transport so far (the stream offset its buffer ends at); 0 for other implementations. */
 @InternalKuicksilverApi
 public val QuicStream.inputTakenForTest: Long

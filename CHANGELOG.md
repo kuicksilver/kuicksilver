@@ -716,6 +716,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3: a field section waiting for QPACK dynamic-table inserts no longer looks every 50 ms whether its stream or
+  connection ended; it wakes on the end itself.
+- HTTP/3: `SETTINGS_H3_DATAGRAM=1` from a peer whose transport has no `max_datagram_frame_size` no longer closes the
+  connection with `H3_SETTINGS_ERROR`: RFC 9297 section 2.1.1 makes only a value other than 0 or 1 an error. No HTTP/3
+  datagram is sent to such a peer (RFC 9221 section 3); `trySendDatagram` answers `Unsupported(PeerDoesNotSupport)`.
+- HTTP/3 client: after an accepted 0-RTT, a server whose SETTINGS change or omit the remembered non-zero
+  `SETTINGS_QPACK_MAX_TABLE_CAPACITY` ends the connection with `QPACK_DECODER_STREAM_ERROR` (RFC 9204 section 3.2.3,
+  the text for this setting) instead of `H3_SETTINGS_ERROR` (RFC 9114 section 7.2.4.2, for settings in general).
 - Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
   (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
   was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
@@ -2208,6 +2216,25 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   that reports `STREAMS_BLOCKED` at the limit we granted is told at once about streams that closed since our last
   `MAX_STREAMS`, or about the next one to close when none has, not only at the next half window.
 
+- HTTP/3 (RFC 9114 section 10.5, RFC 9000 section 21.6): request heads that never completed were held without limit.
+  Each request stream could park a HEADERS frame of up to 2 × `maxFieldSectionSize` read off the transport (its
+  flow-control credit returned), with no cap per connection and no deadline before our own GOAWAY, so one client kept
+  about 12.5 MiB and 100 readers for as long as it kept the connection alive. Now `Http3Settings.maxHeaderBlockTime`
+  (new, 10 s, as `Http2Settings.maxHeaderBlockTime`) bounds every field section: a request head must be decoded within
+  it of its stream's first byte or the stream is reset with `H3_REQUEST_REJECTED`, trailers and (on a client) response
+  heads within it of their frame header or the request is cancelled with `H3_REQUEST_CANCELLED`; the connection lives
+  on. A connection reads at most 8 × `maxFieldSectionSize` (512 KiB) of HEADERS frames at once: a frame's length is
+  reserved before any of it is taken from the transport, and frames that do not fit wait with their bytes left in the
+  stream's flow-control window. The client applies both to response heads. With WebTransport on, a server's
+  WebTransport streams must send their signal and Session ID within the deadline too (else
+  `WT_BUFFERED_STREAM_REJECTED`), and every peer's unidirectional stream its type (else `STOP_SENDING
+  H3_STREAM_CREATION_ERROR`; spared only while its bytes so far can still be the type of a control or QPACK stream
+  not seen yet, one such stream per missing type) and, for
+  WebTransport, its Session ID. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+- HTTP/3 (RFC 9114 section 10.5): reserved (GREASE) frames and empty DATA frames were free in any number, so 2 000 000
+  two-byte frames in one request never ended the connection. The first 8 of a stream (and of the control stream) stay
+  free; each further one spends a glitch token, as unknown frame types do, and a flood ends the connection with
+  `H3_EXCESSIVE_LOAD`.
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

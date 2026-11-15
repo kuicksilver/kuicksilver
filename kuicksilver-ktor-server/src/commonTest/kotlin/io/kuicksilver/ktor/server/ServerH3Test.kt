@@ -26,6 +26,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -383,6 +384,42 @@ class ServerH3Test {
                             },
                         )
                     assertEquals(417, other.status)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A request head over HTTP/3 that never completes is rejected (H3_REQUEST_REJECTED) at the engine's
+     * `requestHeaderTimeoutSeconds`, which bounds `Http3Settings.maxHeaderBlockTime` (10 s here, cut to 1 s), and the
+     * connection still serves requests (RFC 9000 section 21.6, Slowloris).
+     */
+    @Test fun negative_unfinishedRequestHeadIsRejectedAtTheRequestHeadDeadline() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer(configure = {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    requestHeaderTimeoutSeconds = 1
+                }) {
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            try {
+                h3(port) { c ->
+                    val st = c.quic.openBidi()
+                    st.output.writeFully(byteArrayOf(0x01, 0x40, 0x64, 0x00, 0x00)) // HEADERS of 100 bytes, 2 of them sent
+                    st.output.flush()
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    val code = kotlinx.coroutines.withTimeout(10.seconds) { st.awaitSendStopped() }
+                    assertEquals(io.kuicksilver.http3.Http3ErrorCode.REQUEST_REJECTED, code)
+                    assertEquals(
+                        "ok",
+                        c
+                            .request(get())
+                            .body
+                            .readFullBody()
+                            .decodeToString(),
+                    )
                 }
             } finally {
                 server.stop(100, 500)

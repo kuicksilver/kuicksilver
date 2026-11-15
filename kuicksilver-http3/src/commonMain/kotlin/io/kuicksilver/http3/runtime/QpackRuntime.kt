@@ -6,13 +6,13 @@ import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.qpack.DecodeResult
 import io.kuicksilver.http3.qpack.QpackDecoder
 import io.kuicksilver.http3.qpack.QpackEncoder
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration.Companion.milliseconds
 
 /** The stream of a blocked field section was reset by the peer while it waited. */
 internal class StreamAbandoned : Exception("stream abandoned while blocked")
@@ -72,24 +72,19 @@ internal class QpackRuntime(
 
     /**
      * Decoded or TooLarge; a blocked section waits for the encoder stream (QpackError when the blocked-stream budget is
-     * exceeded). While it waits, [abandoned] is polled: a stream the peer reset is cancelled (RFC 9204 section 4.4.2) and
-     * [StreamAbandoned] is thrown.
+     * exceeded). While it waits it also wakes for [watch]: a stream the peer reset, or one no insert can reach any more, is
+     * cancelled (RFC 9204 section 4.4.2) and [StreamAbandoned] is thrown.
      */
     suspend fun decode(
         streamId: Long,
         block: ByteArray,
-        abandoned: () -> Boolean = { false },
+        watch: (() -> EndWatch)? = null,
     ): DecodeResult {
         while (true) {
             when (val r = decoder.decode(streamId, block)) {
                 is DecodeResult.Blocked -> {
                     decoder.markBlocked(streamId)
-                    while (withTimeoutOrNull(BLOCKED_POLL) { inserts.first { it >= r.requiredInsertCount } } == null) {
-                        if (abandoned()) {
-                            cancelStream(streamId)
-                            throw StreamAbandoned()
-                        }
-                    }
+                    awaitInsertCount(streamId, r.requiredInsertCount, watch)
                 }
 
                 else -> {
@@ -104,21 +99,33 @@ internal class QpackRuntime(
      * Before a field section's bytes are read: RFC 9204 section 2.2.1, "While blocked, encoded field section data SHOULD
      * remain in the blocked stream's flow-control window". A section whose prefix (the [encodedRic] its first bytes give)
      * references inserts not yet received counts as blocked and waits for them here, so the rest of it stays unread in the
-     * transport and the peer gets no credit back for it; [abandoned] is polled as in [decode].
+     * transport and the peer gets no credit back for it; [watch] as in [decode].
      */
     suspend fun awaitInserts(
         streamId: Long,
         encodedRic: Long,
-        abandoned: () -> Boolean = { false },
+        watch: (() -> EndWatch)? = null,
     ) {
         val ric = decoder.requiredInsertCount(encodedRic)
         if (ric <= decoder.insertCount) return
         decoder.markBlocked(streamId)
-        while (withTimeoutOrNull(BLOCKED_POLL) { inserts.first { it >= ric } } == null) {
-            if (abandoned()) {
-                cancelStream(streamId)
-                throw StreamAbandoned()
-            }
+        awaitInsertCount(streamId, ric, watch)
+    }
+
+    /** Waits until [count] inserts arrived, or gives [streamId] up (Stream Cancellation, [StreamAbandoned]) by [watch]. */
+    private suspend fun awaitInsertCount(
+        streamId: Long,
+        count: Long,
+        watch: (() -> EndWatch)?,
+    ) = coroutineScope {
+        val arrived = launch { inserts.first { it >= count } }
+        try {
+            if (watch == null) arrived.join() else watch().await(arrived)
+        } catch (e: StreamAbandoned) {
+            cancelStream(streamId)
+            throw e
+        } finally {
+            arrived.cancel()
         }
     }
 
@@ -161,10 +168,6 @@ internal class QpackRuntime(
     suspend fun cancelStream(streamId: Long) {
         decoder.cancelStream(streamId)
         flushDecoder()
-    }
-
-    private companion object {
-        val BLOCKED_POLL = 50.milliseconds
     }
 
     /**

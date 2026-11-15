@@ -387,6 +387,7 @@ public final class io/kuicksilver/http3/Http3Settings {
 	public final fun getH3Datagram ()Z
 	public final fun getMaxEarlyPriorityUpdates ()I
 	public final fun getMaxFieldSectionSize ()J
+	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
 	public final fun getMaxInformationalResponses ()I
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
@@ -410,6 +411,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun getH3Datagram ()Z
 	public final fun getMaxEarlyPriorityUpdates ()I
 	public final fun getMaxFieldSectionSize ()J
+	public final fun getMaxHeaderBlockTime-UwyO8pc ()J
 	public final fun getMaxInformationalResponses ()I
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
@@ -426,6 +428,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun setH3Datagram (Z)V
 	public final fun setMaxEarlyPriorityUpdates (I)V
 	public final fun setMaxFieldSectionSize (J)V
+	public final fun setMaxHeaderBlockTime-LRDsOJo (J)V
 	public final fun setMaxInformationalResponses (I)V
 	public final fun setQpackBlockedStreams (J)V
 	public final fun setQpackMaxTableCapacity (J)V

@@ -232,7 +232,9 @@ server.start(wait = true)
   complete request head, counted from the accepted TCP connection for the first request (the TLS handshake included)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
-  finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
+  finished the TLS handshake) is closed without a response. Over HTTP/2 and HTTP/3 the same deadline bounds each
+  request head (`maxHeaderBlockTime` of `http2Settings` and `http3Settings`, 10 s by default): an HTTP/3 head that misses
+  it is reset with `H3_REQUEST_REJECTED`. `connectionIdleTimeoutSeconds` (45 s) closes a connection
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
   upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). `Expect:
