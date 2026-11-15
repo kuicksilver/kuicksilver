@@ -103,4 +103,46 @@ class ResetAckTest {
         assertFalse(m.finished(id))
         assertEquals(0, m.events.count { it is ConnectionEvent.StreamFinished })
     }
+
+    /**
+     * A peer that STOP_SENDINGs its streams and leaves our answering RESET_STREAMs unacknowledged gets no stream credit
+     * for them: a peer stream that ended with our reset counts as closed at the acknowledgment, so such streams never
+     * outnumber the limit (and the runtime's state for them with it).
+     */
+    @Test fun negative_peerWithholdingResetAcksStaysWithinTheStreamLimit() {
+        val m =
+            StreamManager(
+                TlsRole.Server,
+                QuicConfig.Default,
+                RecvFlowController(786_432, 15_728_640),
+                SendFlowController(1L shl 40),
+                StreamLimits(TlsRole.Server, 2, 2),
+            ).also { it.applyPeerParameters(1L shl 30, 1L shl 30, 1L shl 30, 100, 100) }
+        for (id in listOf(0L, 4L)) {
+            m.onStopSending(id, 0x10c) // we answer with RESET_STREAM
+            m.onResetStream(id, 0x10c, 0)
+            m.read(id, ByteArray(1), 0, 1)
+        }
+        assertEquals(listOf(0L, 4L), m.takeRetiredAwaitingAck(), "retired, the report waiting")
+        assertTrue(generateSequence { m.takeControlFrame() }.none { it.kind == ControlKind.MaxStreamsBidi }, "no credit back yet")
+        kotlin.test.assertFailsWith<io.kuicksilver.quic.wire.QuicWireException> { m.onResetStream(8, 0, 0) } // beyond the limit
+        m.onFramesAcked(ack(0))
+        assertTrue(m.finished(0))
+        assertEquals(
+            listOf(3L),
+            generateSequence { m.takeControlFrame() }.filter { it.kind == ControlKind.MaxStreamsBidi }.map { it.a }.toList(),
+        )
+    }
+
+    /** RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset) is waited for like RESET_STREAM. */
+    @Test fun resetStreamAtIsFinishedOnlyOnceAcknowledged() {
+        val m = manager(TlsRole.Client)
+        m.forceResetStreamAtForTest = true
+        val id = m.open(bidi = false, StreamPriority.Default)
+        m.resetAt(id, 0x10c, 0)
+        assertFalse(m.isOpen(id), "retired: nothing reliable was left to send")
+        assertFalse(m.finished(id))
+        m.onFramesAcked(SentFrames().also { it.addId(SentFrames.ID_RESET_STREAM_AT, id, 0x10c, 0, 0) })
+        assertTrue(m.finished(id))
+    }
 }

@@ -977,8 +977,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - QUIC: a stream that ended with our RESET_STREAM is reported finished (`ConnectionEvent.StreamFinished`, and the HTTP/3
   graceful close that waits for it) once the RESET_STREAM is acknowledged, RFC 9000 section 3.1 "Reset Recvd", not when
-  it is sent; the stream is retired and its credit counted at once as before. A server's graceful close no longer
-  overtakes the reset of a request its application abandoned.
+  it is sent (also for RESET_STREAM_AT). The stream is retired at once as before, and the runtime lets go of its channels
+  then; a peer stream's credit returns at the acknowledgment, so a peer that leaves our resets unacknowledged cannot open
+  more such streams than its limit. A server's graceful close no longer overtakes the reset of a request its application
+  abandoned.
 
 - HTTP/3 client: a request waiting for stream credit when the server's GOAWAY arrived was sent on the stream it got
   next, against RFC 9114 section 5.2 ("Endpoints MUST NOT initiate new requests ... after receipt of a GOAWAY frame"),

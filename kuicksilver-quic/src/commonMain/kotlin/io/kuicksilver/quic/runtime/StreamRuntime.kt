@@ -125,9 +125,14 @@ internal class StreamRuntime(
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     internal fun finished() {
+        retired()
+        done.complete(Unit)
+    }
+
+    /** The core retired the stream; its StreamFinished (and [done]) may still wait for our reset's acknowledgment. */
+    internal fun retired() {
         readable.trySend(Unit)
         conn.removeTicker(ticker)
-        done.complete(Unit)
     }
 
     /**

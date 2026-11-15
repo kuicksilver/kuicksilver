@@ -35,8 +35,18 @@ class StreamCreditHoldTest {
     /** The client's reset of bidirectional stream [id] in both directions (RESET_STREAM and STOP_SENDING), read by us. */
     private fun StreamManager.peerResets(id: Long) {
         onStopSending(id, 0x10c)
+        ackOurReset(id)
         onResetStream(id, 0x10c, 0)
         read(id, ByteArray(1), 0, 1) // the reset surfaced: ResetRead
+    }
+
+    /** The peer acknowledges the RESET_STREAM we answered its STOP_SENDING with: the stream counts as closed from then on. */
+    private fun StreamManager.ackOurReset(id: Long) {
+        onFramesAcked(
+            io.kuicksilver.quic.recovery.SentFrames().also {
+                it.addId(io.kuicksilver.quic.recovery.SentFrames.ID_RESET_STREAM, id, 0x10c, 0)
+            },
+        )
     }
 
     private fun StreamManager.maxStreamsBidi(): List<Long> =
@@ -72,8 +82,10 @@ class StreamCreditHoldTest {
         m.releasePeerCredit(4)
         assertEquals(emptyList(), m.maxStreamsBidi(), "released, but our sending halves are still open")
         m.onStopSending(0, 0x10c)
+        m.ackOurReset(0)
         m.read(0, ByteArray(1), 0, 1)
         m.onStopSending(4, 0x10c)
+        m.ackOurReset(4)
         m.read(4, ByteArray(1), 0, 1)
         assertEquals(listOf(6L), m.maxStreamsBidi())
     }
@@ -98,6 +110,7 @@ class StreamCreditHoldTest {
         val own = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
         assertEquals(1L, own, "our first bidirectional stream")
         m.onStopSending(4, 0x10c)
+        m.ackOurReset(4)
         m.read(4, ByteArray(1), 0, 1)
         assertContentEquals(intArrayOf(1, 1), m.heldCreditForTest(), "stream 4 held, stream 0 and our own stream not")
         m.releasePeerCredit(4)
@@ -155,6 +168,7 @@ class StreamCreditHoldTest {
                     1 -> {
                         open.randomOrNull(rnd)?.let { i ->
                             m.onStopSending(4 * i, 0x10c)
+                            m.ackOurReset(4 * i)
                             m.read(4 * i, ByteArray(1), 0, 1)
                             open -= i
                             finished += i
@@ -176,6 +190,7 @@ class StreamCreditHoldTest {
             for (i in 0 until next) {
                 if (i !in finished) {
                     m.onStopSending(4 * i, 0x10c)
+                    m.ackOurReset(4 * i)
                     m.read(4 * i, ByteArray(1), 0, 1)
                 }
                 m.releasePeerCredit(4 * i)
