@@ -3551,6 +3551,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.LossBurstTest.alternati
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheClient
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.closedByTheServer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_clientConstructionFailsAfterTheSession
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_clientConstructionFailsInTheResetToken
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_compatibleUpgradeLostDuringTheHandshake
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_compatibleVersionUpgrade
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_endedRightAfterAKeyUpdate

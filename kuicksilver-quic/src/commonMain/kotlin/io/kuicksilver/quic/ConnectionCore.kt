@@ -783,10 +783,11 @@ public class ConnectionCore internal constructor(
             loss.amplificationBlocked = { amplificationLeavesNoProbe() }
         }
         cids.core = this
-        cids.adoptInitialLocalCid(localCid)
-        // before the transport parameters: the server's stateless_reset_token is the token of its handshake ID
-        if (role == TlsRole.Server) cids.adoptInitialPeerCid(remoteCid)
         try {
+            // the reset tokens are computed with the endpoint's native key: a failure there is a constructor's failure too
+            cids.adoptInitialLocalCid(localCid)
+            // before the transport parameters: the server's stateless_reset_token is the token of its handshake ID
+            if (role == TlsRole.Server) cids.adoptInitialPeerCid(remoteCid)
             val tp = buildLocalTp()
             handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
             handshake.session.setQuicVersion(startVersion.version)

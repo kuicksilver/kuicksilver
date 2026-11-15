@@ -400,6 +400,40 @@ class NativeLeakTest {
         assertEquals(before, nativeConnectionObjects())
     }
 
+    /** The reset token of the client's first connection ID, computed with the endpoint's key, fails. */
+    @Test fun negative_clientConstructionFailsInTheResetToken() {
+        val before = nativeConnectionObjects()
+        val crypto = LeakTrackingCrypto(ksl)
+        val key = ksl.newResetKey()
+        val failing =
+            object : io.kuicksilver.tls.ResetKey by key {
+                override fun token(
+                    cid: PacketBuffer,
+                    offset: Int,
+                    length: Int,
+                    out: ByteArray,
+                    outOffset: Int,
+                ): Unit = throw IllegalStateException("reset token refused (test)")
+            }
+        try {
+            assertFailsWith<IllegalStateException> {
+                ConnectionCore.client(
+                    QuicConfig.Default,
+                    CoreFixtures.client(),
+                    crypto,
+                    CoreFixtures.serverAddr,
+                    Random(1),
+                    io.kuicksilver.quic.TimeMark(1),
+                    failing,
+                )
+            }
+            assertEquals(emptyList(), crypto.live)
+        } finally {
+            key.close()
+        }
+        assertEquals(before, nativeConnectionObjects())
+    }
+
     @Test fun negative_serverConstructionFailsAfterTheSession() {
         for (failing in listOf("transport parameters", "initial keys")) {
             val before = nativeConnectionObjects()
