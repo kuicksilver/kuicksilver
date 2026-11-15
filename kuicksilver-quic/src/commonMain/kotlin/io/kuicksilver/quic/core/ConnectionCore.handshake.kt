@@ -417,6 +417,9 @@ internal class ConnectionHandshakeSink(
         ) {
             core.readKeys[level]?.close()
             core.readKeys[level] = protector
+            // the last moment the client runs on the remembered parameters alone: the server's transport parameters (in its
+            // EncryptedExtensions) are in, and no frame of a 1-RTT packet was read yet
+            if (level == 3 && core.role == TlsRole.Client) core.recordLimitsAtOneRtt()
             // RFC 9001 section 4.1.3: TLS reads Handshake after Initial and never Initial again
             if (level == 2) core.cryptoStreams.seal(0)
         } else {
@@ -533,7 +536,7 @@ internal class ConnectionHandshakeSink(
         tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits (and reset_stream_at) apply; settleZeroRtt
         // applies these with 1-RTT
-        if (core.remembered == null) core.applyPeerLimits(tp)
+        if (core.remembered == null || core.testApplyPeerLimitsOnReceipt) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit

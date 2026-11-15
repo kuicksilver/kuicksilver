@@ -870,6 +870,7 @@ internal class ZeroRttConnectionFuzz(
                     )?.let { throw IllegalStateException("client, before the answer: $it") }
             }
         }
+        c.limitAboveRememberedAtOneRtt?.let { throw IllegalStateException("client, as 1-RTT began: $it") }
         if (c.zeroRttSealedAtOneRttKey >= 0) {
             check(c.zeroRttPacketsSealed == c.zeroRttSealedAtOneRttKey) {
                 "client: ${c.zeroRttPacketsSealed - c.zeroRttSealedAtOneRttKey} 0-RTT packets sealed after the 1-RTT key arrived"
@@ -970,7 +971,6 @@ internal class ZeroRttConnectionFuzz(
                 acceptedEvents > 0 -> Expect.Accepted
                 rejectedEvents > 0 -> Expect.RejectedGoesOn
                 closedReason is QuicException.ConnectionLost.ZeroRttRejected -> Expect.RejectedCloses
-                closedForLimits() -> Expect.ClosedForLimits
                 else -> null
             }
         check(got == e) {

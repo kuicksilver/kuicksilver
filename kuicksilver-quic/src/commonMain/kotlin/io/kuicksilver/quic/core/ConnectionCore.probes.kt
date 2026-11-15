@@ -7,8 +7,9 @@ import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.recovery.SpaceId
 
-// Invariant probes of the fuzz targets and randomized tests (never called in production): what a connection holds must agree
-// with what it reports, whatever sequence of input and application calls led there.
+// Invariant probes of the fuzz targets and randomized tests: what a connection holds must agree with what it reports,
+// whatever sequence of input and application calls led there. Production calls only recordLimitsAtOneRtt, once per 0-RTT
+// connection, to keep what one probe reads at a moment no later round can see.
 
 /** The stream a per-stream event is about, or null for an event of the connection. */
 internal fun streamEventIdForTest(e: ConnectionEvent): Long? =
@@ -27,6 +28,25 @@ internal fun streamEventIdForTest(e: ConnectionEvent): Long? =
  * 0 once the answer is known or the connection ended.
  */
 internal fun ConnectionCore.zeroRttHeldForTest(): Int = streams.heldUntilZeroRttAnswerForTest()
+
+/**
+ * Client, as the 1-RTT read key arrives while 0-RTT is in use: the first limit held above the remembered transport
+ * parameters, kept for the fuzz probe ([ConnectionCore.limitAboveRememberedAtOneRtt]). RFC 9000 section 7.4.1: in 0-RTT "a
+ * client MUST only use remembered transport parameters ... MUST NOT use updated values that it learns from the server's
+ * updated transport parameters"; until here no 1-RTT frame (a MAX_DATA or MAX_STREAM_DATA, which legitimately raise the
+ * limits used from 1-RTT on) can have been read.
+ */
+internal fun ConnectionCore.recordLimitsAtOneRtt() {
+    val old = remembered ?: return
+    limitAboveRememberedAtOneRtt =
+        streams.rememberedLimitViolationForTest(
+            old.initialMaxData,
+            old.initialMaxStreamDataBidiRemote,
+            old.initialMaxStreamDataUni,
+            old.initialMaxStreamsBidi,
+            old.initialMaxStreamsUni,
+        )
+}
 
 /** 0-RTT packets still in the sent history (in flight or waiting for an acknowledgment). */
 internal fun ConnectionCore.zeroRttPacketsSentForTest(): Int {

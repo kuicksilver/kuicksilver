@@ -9,6 +9,7 @@ import io.kuicksilver.quic.fuzz.ZeroRttProgram.REJECT_APPLICATION
 import io.kuicksilver.quic.recovery.SpaceId
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -128,17 +129,24 @@ class ZeroRttInvariantControlsTest {
         caught(accepted, "zeroRttHeld") { p, now -> if (now) p.client.streams.heldUntilAnswer += ConnectionEvent.StreamWritable(0) }
     }
 
-    /** The queue the invariant counts is the one the answer settles: held before it, released at an acceptance, dropped at a rejection or close. */
+    /**
+     * The queue the invariant counts is the one the answer settles: held before it, delivered at an acceptance, dropped at a
+     * rejection or close. The held event is one no rejection purges for its own reasons (not a stream's), so a rejection
+     * that delivered it instead of dropping it would show.
+     */
     @Test fun heldEventsAreSettledByTheAnswerOrTheEnd() {
-        for (program in listOf(accepted, rejected, closedEarly)) {
+        for ((program, delivered) in listOf(accepted to true, rejected to false, closedEarly to false)) {
             var held = false
+            var seen = 0
             ZeroRttConnectionFuzz(program, tamper = { p, _ ->
+                seen += p.clientEvents.count { it === ConnectionEvent.DatagramsReadable }
                 if (!held && p.client.earlyAccepted == null && p.client.isStreamOpenForTest(0)) {
                     held = true
-                    p.client.streams.heldUntilAnswer += ConnectionEvent.StreamWritable(0)
+                    p.client.streams.heldUntilAnswer += ConnectionEvent.DatagramsReadable
                 }
             }).run()
             assertTrue(held, "an event was held before the answer")
+            assertEquals(if (delivered) 1 else 0, seen, "the held event ${if (delivered) "delivered once" else "dropped"}")
         }
     }
 
@@ -156,6 +164,17 @@ class ZeroRttInvariantControlsTest {
             val r = p.client.remembered
             if (r != null && p.client.earlyAccepted == null) p.client.connSend.onMaxUpdate(r.initialMaxData + 1)
         }
+    }
+
+    /** The server's higher limits taken when its parameters arrive, in the round that also settles the answer. */
+    @Test fun negative_limitsAppliedOnReceiptAreCaught() {
+        val higher =
+            ZeroRttProgram
+                .Builder(ACCEPT, ZeroRttProgram.HIGHER)
+                .open(0, 300, fin = true)
+                .settle()
+                .build()
+        caught(higher, "as 1-RTT began") { p, _ -> p.client.testApplyPeerLimitsOnReceipt = true }
     }
 
     @Test fun negative_zeroRttAfterTheOneRttKeyIsCaught() {
