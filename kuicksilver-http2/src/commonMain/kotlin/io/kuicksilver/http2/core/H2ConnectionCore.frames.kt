@@ -496,6 +496,7 @@ internal fun H2ConnectionCore.onWindowUpdate(
             throw H2ConnectionError(Http2ErrorCode.FLOW_CONTROL_ERROR, "connection window above 2^31 - 1")
         }
         for (s in blockedOnConnection.toList()) tryWake(s)
+        unstall()
         return
     }
     val s = streams[id]

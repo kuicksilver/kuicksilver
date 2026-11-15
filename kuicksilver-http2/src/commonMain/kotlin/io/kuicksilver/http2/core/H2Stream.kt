@@ -26,6 +26,16 @@ internal sealed interface OutItem {
          * frame cannot alter the connection flow-control window."
          */
         var streamCharged = true
+
+        /**
+         * Taken from the connection's send window. A frame holds connection window only while it can be written: one that
+         * waits for its stream window ([H2ConnectionCore.stalled]) gives it back, so the window it cannot use goes to the
+         * other streams, and takes it again when it is written.
+         */
+        var connCharged = true
+
+        /** Both windows are taken: the frame can be written as it is. */
+        val charged: Boolean get() = streamCharged && connCharged
     }
 }
 

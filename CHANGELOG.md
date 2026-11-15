@@ -1086,9 +1086,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   order: it waited as long as more urgent streams, or an earlier non-incremental stream of the same urgency, kept
   sending (with several busy streams it was never sent, and a peer with a SETTINGS timeout ended the connection), and
   later SETTINGS waited behind it. Every acknowledgement now goes at once; DATA queued but not written gives its stream
-  window back (its connection charge stays: a SETTINGS cannot alter the connection window) and is charged again
-  against the new window when it goes (RFC 9113 section 6.9.2), in parts when less is available, waiting while the
-  window is not positive. A WINDOW_UPDATE that takes a window above 2^31 - 1 counting DATA charged but not written is
+  window back (a SETTINGS does not touch the connection window) and is charged again against the new window when it
+  goes (RFC 9113 section 6.9.2), in parts when less is available. While it waits for a window it holds no connection
+  window, which the other streams use meanwhile. A WINDOW_UPDATE that takes a window above 2^31 - 1 counting DATA charged but not written is
   now a FLOW_CONTROL_ERROR too, as is such a SETTINGS_INITIAL_WINDOW_SIZE.
 - HTTP/2 (RFC 9113 section 6.9.2): a stream we had finished sending on (half-closed (local)) was reset with
   FLOW_CONTROL_ERROR when the peer, after lowering SETTINGS_INITIAL_WINDOW_SIZE, credited it up to 2^31 - 1 by its own

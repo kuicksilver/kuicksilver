@@ -240,6 +240,125 @@ class SettingsAckTest {
         }
     }
 
+    /**
+     * DATA that waits for its stream window holds no connection window: four streams took all of it, the peer set
+     * SETTINGS_INITIAL_WINDOW_SIZE to 0, and a new stream credited by the peer can still send, since the peer counts the
+     * connection window from the DATA it received (none of the four frames) and will not credit the connection for them.
+     */
+    @Test
+    fun negative_waitingDataHoldsNoConnectionWindow() {
+        for (role in Role.entries) {
+            val m = PeerMirror(role)
+            val streams = List(4) { m.block(endStream = false) }
+            val writer = m.block(endStream = false)
+            m.read()
+            for (id in streams) m.p.core.sendData(id, ByteArray(16_384), 0, 16_384, endStream = false)
+            assertEquals(0L, m.p.core.connSendWindow) // 4 x 16 KiB: the whole connection window
+            assertEquals(0, m.p.core.sendData(writer, ByteArray(100), 0, 100, endStream = false)) // waits for the connection
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 0)
+            m.windowUpdate(writer, 1_000) // its own window again; the connection's still taken
+            m.p.events()
+            assertEquals(listOf("ACK"), m.read(), "$role")
+            // the four gave the connection window back: the waiting writer is told
+            assertTrue(m.p.events().any { it is H2Event.WindowAvailable && it.streamId == writer }, "$role")
+            assertTrue(streams.all { m.p.core.stalls(it) }, "$role")
+            assertTrue(m.p.core.noIdleConnectionCharge, "$role")
+            val e = m.block(endStream = false)
+            assertEquals(listOf("H$e"), m.read(), "$role")
+            m.windowUpdate(e, 1_000)
+            assertEquals(1_000, m.p.core.sendData(e, ByteArray(1_000), 0, 1_000, endStream = false), "$role")
+            m.p.now += 10_000_000 // past the woken writer's refill grace
+            assertEquals(listOf("D$e"), m.read(), "$role")
+            assertTrue(m.p.core.noIdleConnectionCharge, "$role")
+            // the four go as their streams are credited, each taking connection window again
+            for (id in streams) m.windowUpdate(id, 16_384)
+            m.quiesce()
+            assertEquals(65_535 - 1_000, m.data.filter { it.first in streams }.sumOf { it.second }, "$role")
+        }
+    }
+
+    /**
+     * DATA that gave its connection window back while it waited for its stream window, and then waits for the connection
+     * window: it goes when that window comes back, by a connection WINDOW_UPDATE or by DATA of a reset stream.
+     */
+    @Test
+    fun waitingDataTakesTheConnectionWindowWhenItComesBack() {
+        for (role in Role.entries) {
+            for (byReset in listOf(false, true)) {
+                val m = PeerMirror(role)
+                val a = m.block(endStream = false)
+                val b = m.block(endStream = false)
+                val c = m.block(endStream = false)
+                m.read()
+                assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+                m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 0)
+                assertEquals(listOf("ACK"), m.read(), "$role")
+                assertTrue(m.p.core.stalls(a))
+                m.windowUpdate(b, 65_535)
+                m.windowUpdate(c, 16_384)
+                var left = 65_535 - (if (byReset) 16_384 else 0) // with a reset: c's frame takes the rest
+                while (left > 0) {
+                    val n = minOf(16_384, left)
+                    assertEquals(n, m.p.core.sendData(b, ByteArray(n), 0, n, endStream = false))
+                    m.read()
+                    left -= n
+                }
+                if (byReset) assertEquals(16_384, m.p.core.sendData(c, ByteArray(16_384), 0, 16_384, endStream = false))
+                assertEquals(0L, m.p.core.connSendWindow)
+                m.windowUpdate(a, 16_384) // a's stream window is back; the connection's is not
+                assertTrue(m.p.core.stalls(a), "$role")
+                if (byReset) {
+                    m.reset(c) // c's 16 KiB back to the connection
+                } else {
+                    m.windowUpdate(0, 16_384)
+                }
+                m.p.now += 10_000_000
+                assertEquals(listOf("D$a"), m.read(), "$role byReset=$byReset")
+                assertEquals(a to 16_384, m.data.last())
+                m.quiesce()
+            }
+        }
+    }
+
+    /**
+     * Connection window given back by DATA that starts to wait goes, in the same write, to DATA that waited for it. d's
+     * frame holds the connection's last 1 000 bytes; a waits for the connection; a SETTINGS takes d's stream window, so d
+     * gives its connection window back as it starts to wait, and a takes it.
+     */
+    @Test
+    fun negative_connectionWindowGivenBackGoesToWaitingData() {
+        for (role in Role.entries) {
+            val m = PeerMirror(role)
+            val a = m.block(endStream = false)
+            val d = m.block(endStream = false)
+            val b = m.block(endStream = false)
+            m.read()
+            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.read()
+            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 1_000) // a: 49 151 - 64 535 < 0
+            assertEquals(listOf("ACK"), m.read(), "$role")
+            assertTrue(m.p.core.stalls(a))
+            m.windowUpdate(b, 48_151)
+            var left = 48_151
+            while (left > 0) {
+                val n = minOf(16_384, left)
+                assertEquals(n, m.p.core.sendData(b, ByteArray(n), 0, n, endStream = false))
+                m.read()
+                left -= n
+            }
+            assertEquals(1_000, m.p.core.sendData(d, ByteArray(1_000), 0, 1_000, endStream = false)) // the connection's last
+            assertEquals(0L, m.p.core.connSendWindow)
+            m.windowUpdate(a, 16_385) // a: 1 001, still waiting for the connection
+            assertTrue(m.p.core.stalls(a))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 0) // d: 0 (its 1 000 given back to it, then -1 000); a: 1
+            assertEquals(listOf("ACK", "D$a"), m.read(), "$role")
+            assertEquals(a to 1, m.data.last())
+            assertTrue(m.p.core.stalls(d))
+            m.quiesce()
+        }
+    }
+
     /** A stream reset after a shrink uncharged its queued DATA: the window comes back to the connection once, not twice. */
     @Test
     fun negative_resetAfterAShrinkGivesTheWindowBackOnce() {
@@ -400,6 +519,7 @@ class SettingsAckTest {
                 3 -> {
                     m.read()
                     m.checkWindows()
+                    if (r.nextBoolean()) m.quiesce()
                 }
 
                 4 -> {
@@ -422,7 +542,7 @@ class SettingsAckTest {
 
                 else -> {
                     // a shrinking or growing window with DATA queued, and several table sizes
-                    val kv = mutableListOf(SettingId.INITIAL_WINDOW_SIZE to listOf(0L, 1_000L, 10_000L, 65_535L)[r.nextInt(4)])
+                    val kv = mutableListOf(SettingId.INITIAL_WINDOW_SIZE to listOf(0L, 0L, 1_000L, 10_000L, 65_535L)[r.nextInt(5)])
                     repeat(r.nextInt(1, 4)) { kv += SettingId.HEADER_TABLE_SIZE to listOf(0L, 50L, 100L, 4096L)[r.nextInt(4)] }
                     m.sendSettings(*kv.toTypedArray())
                 }
@@ -445,10 +565,7 @@ class SettingsAckTest {
             if (room > 0) m.windowUpdate(id, room.toInt())
         }
         // past every writer's refill grace (the scheduler waits a moment for a woken writer's next frame), until all is out
-        do {
-            m.p.now += 10_000_000
-        } while (m.read().isNotEmpty())
-        m.checkWindows()
+        m.quiesce()
         assertEquals(0, m.p.core.controlQueued, "$role seed $seed")
         assertTrue(
             open.all { id ->
@@ -540,12 +657,13 @@ internal class PeerMirror(
         if (pending.isEmpty()) partOnTheWire = p.core.writingFrame
         pending.addLast(kv.toList())
         val connectionBefore = p.core.peerViewOfConnectionWindow
-        val oursBefore = p.core.connectionSendWindowAccounted
+        val availableBefore = p.core.connSendWindow
         p.send(settings(*kv))
-        // section 6.9.2: "A SETTINGS frame cannot alter the connection flow-control window", as either side sees it
+        // section 6.9.2: "A SETTINGS frame cannot alter the connection flow-control window": not as the peer sees it, and
+        // not what we may still take of it
         if (!p.core.isClosed) {
             assertEquals(connectionBefore, p.core.peerViewOfConnectionWindow, "a SETTINGS changed the connection window")
-            assertEquals(oursBefore, p.core.connectionSendWindowAccounted)
+            assertEquals(availableBefore, p.core.connSendWindow, "a SETTINGS changed the connection window we may take")
         }
     }
 
@@ -635,6 +753,25 @@ internal class PeerMirror(
             }
         }
         return out
+    }
+
+    /**
+     * Reads until the core writes nothing more, past every writer's refill grace (the scheduler waits a moment for a woken
+     * writer's next frame), then checks [checkWindows] and that nothing waits for a self-imposed reason: no queued DATA
+     * frame holds connection window while it cannot be written, and none could be written by the peer's count of both
+     * windows yet was not.
+     */
+    fun quiesce() {
+        do {
+            p.now += 10_000_000
+        } while (read().isNotEmpty())
+        checkWindows()
+        if (p.core.writingFrame || p.core.isClosed) return
+        assertTrue(p.core.noIdleConnectionCharge, "a waiting DATA frame holds connection window")
+        for (s in p.core.streams.values) {
+            if (s.out.firstOrNull() !is OutItem.Data || s.id in resetByUs) continue
+            assertTrue(window(s.id) <= 0 || connection <= 0, "stream ${s.id}: DATA not written with windows ${window(s.id)} / $connection")
+        }
     }
 
     /** After a full read: our view of every window equals the peer's, and none is above 2^31 - 1. */
