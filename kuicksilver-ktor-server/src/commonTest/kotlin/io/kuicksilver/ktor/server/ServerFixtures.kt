@@ -48,12 +48,14 @@ internal object ServerFixtures {
         alpn: List<String> = listOf("http/1.1"),
         trust: TrustConfig = TrustConfig.AnchoredCa(listOf(testCa)),
         identity: TlsIdentity? = null,
+        handshakeTimeout: kotlin.time.Duration? = null,
     ): TlsConfig =
         tlsConfig(TlsRole.Client) {
             this.alpn = alpn
             serverName = "server.test"
             this.trust = trust
             this.identity = identity
+            handshakeTimeout?.let { this.handshakeTimeout = it }
         }
 }
 

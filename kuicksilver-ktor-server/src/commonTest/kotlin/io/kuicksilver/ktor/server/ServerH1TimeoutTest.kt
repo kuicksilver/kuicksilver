@@ -303,7 +303,11 @@ class ServerH1TimeoutTest {
                         // the engines' own socket: the aborts reset these connections, and a write to one (the TLS
                         // close_notify) must fail, not raise SIGPIPE as ktor-network's Kotlin/Native socket lets it
                         val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
-                        val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
+                        // the client waits for its handshake as long as the server allows one (the request-head deadline):
+                        // with the client's own 10 s, a loaded host (a Windows VM, the earlier connections' responses being
+                        // written meanwhile) failed the test with "TLS handshake timed out after 10s" before any abort
+                        val handshake = server.engine.configuration.requestHeaderTimeoutSeconds.seconds
+                        val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls(handshakeTimeout = handshake)) else tcp
                         sockets += socket
                         val w = socket.openWriteChannel(autoFlush = true)
                         w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: server.test\r\n\r\n")
