@@ -177,6 +177,8 @@ internal class H3Entry(
     val createdAt: Long,
     /** Set up WebTransport-capable (its SETTINGS, Extended CONNECT, `reset_stream_at`): sessions may join it, requests use it. */
     val webTransport: Boolean = false,
+    /** Called after every [release] (the pool's [H3Pool.releasesForTest]). */
+    private val released: () -> Unit = {},
 ) {
     /** Requests and WebTransport sessions using the connection. */
     val active = kotlin.concurrent.atomics.AtomicInt(0)
@@ -208,6 +210,7 @@ internal class H3Entry(
             idleSince.store(now)
             if (retiredFlag.load() != 0) closeConnection()
         }
+        released()
     }
 
     /** Past its lifetime: no new requests; closed as soon as it has none (now, or at the last [release]). */
@@ -382,6 +385,21 @@ internal class H3Pool(
         lock.withLock {
             connections.values.distinct().mapNotNull { it.deferred.getCompletedOrNull() }
         }
+
+    /**
+     * Test hook: the use of each pooled connection (retired ones and extra WebTransport connections aside), as (set up
+     * WebTransport-capable, requests and sessions using it). Uses rise before the request or session is handed out, so they
+     * read at once; they fall at a release, which [releasesForTest] counts, so a test waits for a fall without polling.
+     */
+    internal suspend fun activeForTest(): List<Pair<Boolean, Int>> =
+        lock.withLock { connections.values.distinct().map { it.webTransport to it.active.load() } }
+
+    /** Test hook: the releases of every connection's use so far (see [activeForTest]). */
+    internal val releasesForTest = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    private fun noteReleased() {
+        releasesForTest.update { it + 1 }
+    }
 
     /** Entries of the connection map, retired ones included, open or not (the resource probe). */
     internal suspend fun connectionsForProbe(): Int =
@@ -565,7 +583,7 @@ internal class H3Pool(
                     found.active.addAndFetch(1)
                     found to false
                 } else {
-                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true)
+                    val e = H3Entry(CompletableDeferred(), clock(), webTransport = true, released = ::noteReleased)
                     e.active.addAndFetch(1)
                     e.retire() // kept for the sessions of [t] and closed with its last one
                     wtExtras.getOrPut(t.key) { ArrayList() } += e
@@ -1012,7 +1030,8 @@ internal class H3Pool(
                     if (existing != null && ((done != null && done.usable()) || !existing.deferred.isCompleted)) {
                         retireUnderEveryKey(existing)
                     }
-                    H3Entry(CompletableDeferred(), clock(), webTransport = wt).also { connections[t.key] = it } to true
+                    H3Entry(CompletableDeferred(), clock(), webTransport = wt, released = ::noteReleased)
+                        .also { connections[t.key] = it } to true
                 }
             }
         val d = e.deferred
