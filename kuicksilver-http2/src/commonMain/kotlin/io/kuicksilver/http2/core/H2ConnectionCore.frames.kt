@@ -334,12 +334,16 @@ internal fun H2ConnectionCore.onSettings(
     }
     glitch(now, "SETTINGS")
     var windowShrank = false
-    var tableSize = -1L
+    // SETTINGS_HEADER_TABLE_SIZE: the smallest and the last value of this frame (RFC 7541 section 4.2: both are signalled),
+    // applied to the encoder by queueSettingsAck
+    var tableMin = -1L
+    var tableLast = -1L
     for (i in f.ids.indices) {
         val v = f.values[i]
         when (f.ids[i]) {
             SettingId.HEADER_TABLE_SIZE -> {
-                tableSize = v // applied to the encoder with our acknowledgement (see queueSettingsAck)
+                tableMin = if (tableMin < 0) v else minOf(tableMin, v)
+                tableLast = v
             }
 
             SettingId.ENABLE_PUSH -> {
@@ -414,7 +418,7 @@ internal fun H2ConnectionCore.onSettings(
         }
     }
     peerNoRfc7540PrioritiesFixed = true
-    queueSettingsAck(windowShrank, tableSize) // section 6.5.3: immediately, behind DATA already taken from a larger window
+    queueSettingsAck(windowShrank, tableMin, tableLast) // section 6.5.3: immediately, behind DATA already taken from a larger window
     emit(H2Event.SettingsChanged)
 }
 

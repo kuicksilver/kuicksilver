@@ -1083,10 +1083,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   only to peers that did not send the setting, in all three places.
 - HTTP/2 (RFC 7541 section 6.3, RFC 9113 section 4.3.1): a larger SETTINGS_HEADER_TABLE_SIZE from the peer was used
   by our HPACK encoder before our acknowledgement of it was written, when that acknowledgement waited behind DATA
-  (SETTINGS that also shrank SETTINGS_INITIAL_WINDOW_SIZE). A field block sent in between could start with a table
-  size update above the peer's acknowledged limit, which the peer treats as a COMPRESSION_ERROR. A larger value now
-  applies once the acknowledgement is queued ahead of later field blocks; a smaller one still applies at once. Client
-  and server alike.
+  (SETTINGS that shrank SETTINGS_INITIAL_WINDOW_SIZE, and any SETTINGS that arrived while such an acknowledgement
+  waited). A field block sent in between could start with a table size update above the peer's acknowledged limit,
+  which the peer treats as a COMPRESSION_ERROR. A larger value now applies once the acknowledgement is queued ahead of
+  later field blocks; a smaller one still applies at once. A SETTINGS frame carrying several values is signalled with
+  its smallest and then its last value (RFC 7541 section 4.2), as nghttp2 requires. Client and server alike.
+- HTTP/2 (RFC 9113 section 6.5.3, "MUST immediately emit"): a SETTINGS acknowledgement held behind DATA already taken
+  from a larger window waited for that DATA in priority order, so a stream of lower urgency could hold it back for as
+  long as more urgent streams kept sending. The frames of the streams it waits for now go first, so it follows within
+  one DATA frame per such stream.
 - HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
   out while the explicit priority scheduled the stream, so the server and the client used different priorities.
 - HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence

@@ -101,17 +101,11 @@ internal class H2ConnectionCore(
     ) {
         var followers = 0
 
-        /** The last SETTINGS_HEADER_TABLE_SIZE among this acknowledgement and its followers, -1 for none. */
+        /**
+         * The last SETTINGS_HEADER_TABLE_SIZE among this acknowledgement and its followers, -1 for none: the encoder's limit
+         * once they are written (their smallest values were applied when they arrived, see [queueSettingsAck]).
+         */
         var tableSize = -1L
-
-        /** The smallest SETTINGS_HEADER_TABLE_SIZE among them, -1 for none. */
-        var minTableSize = -1L
-
-        fun carry(v: Long) {
-            if (v < 0) return
-            tableSize = v
-            minTableSize = if (minTableSize < 0) v else minOf(minTableSize, v)
-        }
     }
 
     internal var wroteSincePing = true
@@ -629,6 +623,7 @@ internal class H2ConnectionCore(
         get() =
             partial != null || initial.isNotEmpty() || pingAnswers.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() ||
                 headerReady.isNotEmpty() ||
+                heldSettingsAcks.firstOrNull()?.behind?.any { it.out.isNotEmpty() } == true ||
                 nextData(lastNow) != null
 
     /**
@@ -832,6 +827,11 @@ internal class H2ConnectionCore(
         }
         var s: H2Stream
         while (true) {
+            val held = heldAckStream()
+            if (held != null) {
+                s = held
+                break
+            }
             val h = headerReady.removeFirstOrNull()
             if (h == null) {
                 s = nextData(now) ?: return null
@@ -923,24 +923,32 @@ internal class H2ConnectionCore(
      * acknowledgements count toward `maxControlFramesQueued` (CVE-2019-9515), so a peer that stops reading cannot pile
      * them up.
      *
-     * [tableSize] is the SETTINGS_HEADER_TABLE_SIZE the SETTINGS carried (-1 for none). The encoder's limit is "the last
-     * value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received from the decoder and acknowledged by the encoder" (RFC
-     * 7541 section 6.3), and a change "takes effect when the endpoint acknowledges settings" (section 4.3.1): a larger
-     * value is applied once the acknowledgement is in the control queue, which [poll] writes ahead of every field block
-     * encoded later. A smaller one is applied at once, as a table smaller than the peer's limit is always allowed.
+     * While acknowledgements are held, [poll] writes the queued frames of the streams the oldest one waits for ahead of
+     * every other field block and DATA frame, whatever their priority, so it follows within one DATA frame (and the field
+     * blocks queued before it) per such stream.
+     *
+     * [tableMin] and [tableLast] are the smallest and the last SETTINGS_HEADER_TABLE_SIZE the SETTINGS carried (-1 for
+     * none). The encoder's limit is "the last value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received from the
+     * decoder and acknowledged by the encoder" (RFC 7541 section 6.3), and a change "takes effect when the endpoint
+     * acknowledges settings" (RFC 9113 section 4.3.1). The smallest value, when below the table, is applied at once (a
+     * table smaller than the peer's limit is always allowed, and RFC 7541 section 4.2 has the smallest value of an interval
+     * signalled, as nghttp2 expects of a frame carrying several); the last one once the acknowledgement is in the control
+     * queue, which [poll] writes ahead of every field block encoded later.
      */
     internal fun queueSettingsAck(
         windowShrank: Boolean,
-        tableSize: Long = -1,
+        tableMin: Long = -1,
+        tableLast: Long = -1,
     ) {
         if (closed) return
         val behind = LinkedHashSet<H2Stream>()
         if (windowShrank) {
             for (s in streams.values) if (s.out.any { it is OutItem.Data && it.length > 0 }) behind += s
         }
+        if (tableMin >= 0) hpackOut.setPeerMaxTableSize(minOf(tableMin, hpackOut.tableCapacity.toLong()))
         if (behind.isEmpty() && heldSettingsAcks.isEmpty()) {
             queueControl(FrameEncoder.settingsAck())
-            if (tableSize >= 0) hpackOut.setPeerMaxTableSize(tableSize)
+            if (tableLast >= 0) hpackOut.setPeerMaxTableSize(tableLast)
             return
         }
         if (controlQueued >= settings.maxControlFramesQueued) {
@@ -953,8 +961,7 @@ internal class H2ConnectionCore(
             } else {
                 HeldAck(behind).also { heldSettingsAcks.addLast(it) }
             }
-        held.carry(tableSize)
-        if (tableSize >= 0) hpackOut.setPeerMaxTableSize(minOf(tableSize, hpackOut.tableCapacity.toLong()))
+        if (tableLast >= 0) held.tableSize = tableLast
     }
 
     /** The connection ended with an error: only its GOAWAY goes out, no acknowledgement. */
@@ -976,10 +983,25 @@ internal class H2ConnectionCore(
             }
             if (h.tableSize >= 0) tableSize = h.tableSize
         }
-        if (tableSize < 0) return
-        // acknowledged now (see queueSettingsAck); a smaller value still held stays in force until its own acknowledgement
-        for (h in heldSettingsAcks) if (h.minTableSize >= 0) tableSize = minOf(tableSize, h.minTableSize)
-        hpackOut.setPeerMaxTableSize(tableSize)
+        // the last value acknowledged now (see queueSettingsAck); a smaller one still held is legal too, but this one is
+        // the peer's limit from here on, and the held one is applied again with its own acknowledgement
+        if (tableSize >= 0) hpackOut.setPeerMaxTableSize(tableSize)
+    }
+
+    /**
+     * The stream whose queued frames go first while an acknowledgement is held (see [queueSettingsAck]): one the oldest
+     * held acknowledgement waits for, taken out of the field block and DATA queues; null when none is held.
+     */
+    private fun heldAckStream(): H2Stream? {
+        val s = heldSettingsAcks.firstOrNull()?.behind?.firstOrNull { it.out.isNotEmpty() } ?: return null
+        if (s.out.first() is OutItem.Fields) {
+            headerReady.remove(s)
+            s.scheduled = false
+        } else {
+            dataReady.remove(s)
+            dataReady.onServed(s)
+        }
+        return s
     }
 
     /** Credit [n] bytes of [s] back to the peer: the connection at once when due, the stream as one coalesced WINDOW_UPDATE. */

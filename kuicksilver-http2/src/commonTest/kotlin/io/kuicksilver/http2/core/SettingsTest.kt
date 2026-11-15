@@ -8,10 +8,10 @@ import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.SettingId
 import io.kuicksilver.http2.hpack.HpackDecoder
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SettingsTest {
@@ -183,74 +183,187 @@ class SettingsTest {
      * RFC 7541 section 6.3: the encoder's limit is "the last value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received
      * from the decoder and acknowledged by the encoder"; RFC 9113 section 4.3.1: a change "takes effect when the endpoint
      * acknowledges settings". The peer lowered the size to 0 (acknowledged), then raises it to 4096 in a SETTINGS that also
-     * shrinks SETTINGS_INITIAL_WINDOW_SIZE while DATA is queued: our ACK waits behind that DATA, and a field block written
-     * before it must not raise the table. A later held SETTINGS lowering the size to 100 applies at once. The peer's decoder
-     * here follows its limit as our ACKs arrive, so a size update above it fails the decode, as it does in nghttp2.
+     * shrinks SETTINGS_INITIAL_WINDOW_SIZE while a stream has HEADERS and DATA queued: our ACK waits behind that DATA (and
+     * only that stream's frames go before it), and the HEADERS written before it must not raise the table. A reduction
+     * held the same way applies at once: the HEADERS written before the ACK already shrink the table.
      */
     @Test
     fun raisedPeerHeaderTableSizeWaitsForOurAck() {
         for (role in Role.entries) {
-            val p = RawH2Peer(role)
-            p.handshake(settings(SettingId.HEADER_TABLE_SIZE to 0))
-            val peerDecoder = HpackDecoder(4096, 1 shl 20).also { it.setMaxTableSize(0) } // 0 acknowledged by our handshake ACK
-            val limits = ArrayDeque<Int>()
-            val blocks = mutableListOf<ByteArray>()
+            val m = TableMirror(role, SettingId.HEADER_TABLE_SIZE to 0)
+            val other = m.block(endStream = true) // queued first, but the ACK does not wait for it
+            val a = m.block(endStream = false)
+            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 1_000, SettingId.HEADER_TABLE_SIZE to 4096) // ACK held
+            assertEquals(0, m.p.core.hpackOut.tableCapacity, "$role: the raise waits for the ACK")
+            assertEquals(listOf("H$a", "D$a", "ACK", "H$other"), m.read(), "$role")
+            assertEquals(listOf(0), m.updates[a], "$role: only the acknowledged 0 ahead of the ACK")
+            assertEquals(listOf(4096), m.updates[other], "$role: the raise after the ACK")
+            assertEquals(4096, m.p.core.hpackOut.tableCapacity)
+            val b = m.block(endStream = false)
+            assertEquals(listOf("H$b"), m.read(), "$role")
+            // a reduction held behind DATA
+            assertEquals(100, m.p.core.sendData(b, ByteArray(100), 0, 100, endStream = false))
+            val c = m.block(endStream = false)
+            assertEquals(100, m.p.core.sendData(c, ByteArray(100), 0, 100, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 500, SettingId.HEADER_TABLE_SIZE to 100)
+            assertEquals(100, m.p.core.hpackOut.tableCapacity, "$role: a reduction applies at once")
+            val out = m.read()
+            assertEquals(listOf("D$b", "H$c", "D$c", "ACK"), out, "$role")
+            assertEquals(listOf(100), m.updates[c], "$role: the reduction is signalled before the ACK")
+            assertEquals(false, m.p.core.isClosed)
+        }
+    }
 
-            fun readInOrder(): List<Frame> {
-                val out = p.read()
-                for (f in out) {
-                    when {
-                        f is Frame.Settings && f.ack -> {
-                            limits.removeFirstOrNull()?.let { peerDecoder.setMaxTableSize(it) }
+    /**
+     * One SETTINGS frame carrying SETTINGS_HEADER_TABLE_SIZE 0 and then 4096: RFC 7541 section 4.2, "the smallest maximum
+     * table size that occurs in that interval MUST be signaled in a dynamic table size update. The final maximum size is
+     * always signaled". nghttp2 requires an update to at most 0 at the start of the next block (it applies both values).
+     * The 0 applies at once, the 4096 with the ACK: when the ACK goes at once both updates start the next block; when it
+     * is held behind DATA, a block written before it carries the 0 and the first block after it the 4096.
+     */
+    @Test
+    fun severalHeaderTableSizesInOneSettingsSignalTheSmallestThenTheLast() {
+        for (role in Role.entries) {
+            val m = TableMirror(role)
+            m.sendSettings(SettingId.HEADER_TABLE_SIZE to 0, SettingId.HEADER_TABLE_SIZE to 4096)
+            assertEquals(listOf("ACK"), m.read(), "$role")
+            val a = m.block(endStream = false)
+            assertEquals(listOf("H$a"), m.read(), "$role")
+            assertEquals(listOf(0, 4096), m.updates[a], "$role: not held")
+            val b = m.block(endStream = false)
+            assertEquals(1_000, m.p.core.sendData(b, ByteArray(1_000), 0, 1_000, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 1_000, SettingId.HEADER_TABLE_SIZE to 0, SettingId.HEADER_TABLE_SIZE to 4096)
+            assertEquals(listOf("H$b", "D$b", "ACK"), m.read(), "$role")
+            assertEquals(listOf(0), m.updates[b], "$role: held, the smallest at once")
+            val c = m.block(endStream = true)
+            assertEquals(listOf("H$c"), m.read(), "$role")
+            assertEquals(listOf(4096), m.updates[c], "$role: held, the last after the ACK")
+        }
+    }
+
+    /**
+     * RFC 9113 section 6.5.3: "the recipient MUST immediately emit a SETTINGS frame with the ACK flag set". An ACK held
+     * behind the DATA of an urgency-7 stream is not starved by an urgency-0 stream whose writer keeps handing over frames:
+     * the held stream's DATA goes first, then the ACK.
+     */
+    @Test
+    fun heldSettingsAckIsNotStarvedByMoreUrgentStreams() {
+        for (role in Role.entries) {
+            val m = TableMirror(role)
+            val a = m.block(endStream = false)
+            m.p.core.setPriority(a, 7, incremental = false)
+            assertEquals(listOf("H$a"), m.read())
+            assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 30_000) // held behind a's DATA
+            val b = m.block(endStream = false)
+            m.p.core.setPriority(b, 0, incremental = false)
+            assertEquals(16_384, m.p.core.sendData(b, ByteArray(100_000), 0, 100_000, endStream = false)) // more to come
+            assertEquals(listOf("D$a", "ACK", "H$b", "D$b"), m.read(), "$role")
+            // b's writer is about to hand over its next frame, which DATA of other streams waits for: a held ACK does not
+            assertEquals(13_616, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 20_000)
+            assertTrue(m.p.core.wantsWrite, "$role")
+            assertEquals(listOf("D$a", "ACK"), m.read(), "$role")
+        }
+    }
+
+    /**
+     * Two held acknowledgements released by one DATA frame (the other stream the second waits for was reset): the encoder
+     * takes the last value acknowledged, whether it lowers or raises the first.
+     */
+    @Test
+    fun twoHeldAcksReleasedTogetherApplyTheLastTableSize() {
+        for (role in Role.entries) {
+            for ((first, second) in listOf(4096L to 100L, 100L to 4096L)) {
+                val m = TableMirror(role, SettingId.HEADER_TABLE_SIZE to (if (first > second) 0L else 4096L))
+                val a = m.block(endStream = false)
+                val b = m.block(endStream = false)
+                m.read()
+                assertEquals(1_000, m.p.core.sendData(a, ByteArray(1_000), 0, 1_000, endStream = false))
+                m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 30_000, SettingId.HEADER_TABLE_SIZE to first) // behind a
+                assertEquals(1_000, m.p.core.sendData(b, ByteArray(1_000), 0, 1_000, endStream = false))
+                m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 20_000, SettingId.HEADER_TABLE_SIZE to second) // behind a and b
+                assertEquals(if (first > second) 0 else 100, m.p.core.hpackOut.tableCapacity, "$role $first $second")
+                m.p.send(FrameEncoder.rstStream(b, Http2ErrorCode.CANCEL.code))
+                assertEquals(listOf("D$a", "ACK", "ACK"), m.read(), "$role $first $second")
+                assertEquals(second.toInt(), m.p.core.hpackOut.tableCapacity, "$role $first $second")
+                val c = m.block(endStream = true)
+                m.read()
+                // section 4.2: the smallest size since the last block, then the final one
+                assertEquals(listOf(100, second.toInt()).distinct(), m.updates[c], "$role $first $second")
+            }
+        }
+    }
+
+    /**
+     * Random interleavings of streams, DATA, window updates, resets and SETTINGS (window and table sizes, several table
+     * sizes in one frame): every field block decodes with the peer's decoder, which takes each limit with our ACK, the
+     * connection stays open, and each ACK follows within one DATA frame per stream it waits for.
+     */
+    @Test
+    fun randomSettingsKeepTheEncoderWithinTheAcknowledgedLimit() {
+        for (role in Role.entries) {
+            for (seed in 0 until 300) {
+                val r = Random(seed)
+                val m = TableMirror(role)
+                val open = mutableListOf<Int>()
+                repeat(60) {
+                    when (r.nextInt(7)) {
+                        0 -> {
+                            if (m.streams <
+                                40
+                            ) {
+                                open +=
+                                    m.block(
+                                        endStream = false,
+                                        extra =
+                                            List(r.nextInt(1, 4)) {
+                                                "x-k${r.nextInt(6)}" to
+                                                    "v".repeat(r.nextInt(1, 30))
+                                            },
+                                    )
+                            }
                         }
 
-                        f is Frame.Headers -> {
-                            blocks += f.fragment
-                            peerDecoder.decode(f.fragment) { _, _ -> }
+                        1 -> {
+                            if (open.isNotEmpty()) {
+                                val n = r.nextInt(1, 20_000)
+                                m.p.core.sendData(open[r.nextInt(open.size)], ByteArray(n), 0, n, endStream = false)
+                            }
+                        }
+
+                        2, 5 -> {
+                            val kv = mutableListOf<Pair<Int, Long>>()
+                            repeat(r.nextInt(1, 3)) {
+                                if (r.nextBoolean()) kv += SettingId.INITIAL_WINDOW_SIZE to listOf(1_000L, 20_000L, 65_535L)[r.nextInt(3)]
+                                if (r.nextBoolean()) kv += SettingId.HEADER_TABLE_SIZE to listOf(0L, 50L, 100L, 4096L)[r.nextInt(4)]
+                            }
+                            m.sendSettings(*kv.toTypedArray())
+                        }
+
+                        3 -> {
+                            m.read()
+                        }
+
+                        4 -> {
+                            m.p.send(*(listOf(0) + open).map { FrameEncoder.windowUpdate(it, 1 shl 20) }.toTypedArray())
+                        }
+
+                        6 -> {
+                            if (open.isNotEmpty()) {
+                                m.p.send(
+                                    FrameEncoder.rstStream(open.removeAt(r.nextInt(open.size)), Http2ErrorCode.CANCEL.code),
+                                )
+                            }
                         }
                     }
+                    assertEquals(false, m.p.core.isClosed, "$role seed $seed")
                 }
-                return out
+                m.read()
+                assertEquals(0, m.p.core.controlQueued, "$role seed $seed: every ACK written")
+                assertEquals(false, m.p.core.isClosed, "$role seed $seed")
             }
-            val first: Int
-            val second: Int
-            if (role == Role.CLIENT) {
-                first = p.core.openStream(GET, endStream = false)
-            } else {
-                p.send(p.headers(1, endStream = true), p.headers(3, endStream = true))
-                p.events()
-                first = 1
-                p.core.sendHeaders(first, OK, endStream = false)
-            }
-            readInOrder()
-            assertEquals(16_384, p.core.sendData(first, ByteArray(16_384), 0, 16_384, endStream = false))
-            limits.addLast(4096)
-            p.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000, SettingId.HEADER_TABLE_SIZE to 4096)) // ACK held
-            limits.addLast(100)
-            p.send(settings(SettingId.HEADER_TABLE_SIZE to 100)) // its ACK waits behind the first
-            assertEquals(0, p.core.hpackOut.tableCapacity, "$role: the raise waits for the ACK")
-            if (role == Role.CLIENT) {
-                second = p.core.openStream(GET + ("x-a" to "1"), endStream = true)
-            } else {
-                second = 3
-                p.core.sendHeaders(second, OK + ("x-a" to "1"), endStream = true)
-            }
-            val out = readInOrder().filter { it is Frame.Headers || it is Frame.Data || it is Frame.Settings }
-            assertEquals(4, out.size, "$role wrote ${out.map { it::class.simpleName }}")
-            assertEquals(second, assertIs<Frame.Headers>(out[0]).streamId, "$role: the field block goes ahead of the DATA")
-            assertIs<Frame.Data>(out[1])
-            assertTrue(assertIs<Frame.Settings>(out[2]).ack && assertIs<Frame.Settings>(out[3]).ack)
-            assertTrue(blocks.last()[0].toInt() and 0xe0 != 0x20, "$role: no size update ahead of the ACK")
-            // both acknowledged: the last value, 100, holds and is signalled at the start of the next block
-            assertEquals(100, p.core.hpackOut.tableCapacity)
-            if (role == Role.CLIENT) {
-                p.core.openStream(GET, endStream = true)
-            } else {
-                p.core.sendHeaders(first, listOf("x-t" to "1"), endStream = true)
-            }
-            readInOrder()
-            assertEquals(listOf(0x20 or 31, 100 - 31), blocks.last().take(2).map { it.toInt() and 0xff }, "$role")
-            assertEquals(false, p.core.isClosed)
         }
     }
 
@@ -276,5 +389,133 @@ class SettingsTest {
         s.send(FrameEncoder.settingsAck()) // now 1000 holds: 5 000 already sent puts the stream 4 000 over
         s.send(s.data(1, 1))
         s.assertStreamError(1, Http2ErrorCode.FLOW_CONTROL_ERROR)
+    }
+}
+
+/**
+ * The connection under test ([role]) and its peer's HPACK decoder, which takes each SETTINGS_HEADER_TABLE_SIZE the peer
+ * sent when our ACK of that SETTINGS arrives: the smallest value of the frame, then the last (as nghttp2 does,
+ * nghttp2_session.c `nghttp2_session_update_local_settings`). A size update above the limit fails the decode. The peer's
+ * [handshake] SETTINGS are acknowledged at once.
+ */
+private class TableMirror(
+    role: Role,
+    vararg handshake: Pair<Int, Long>,
+) {
+    val p = RawH2Peer(role)
+    private val client = role == Role.CLIENT
+    private val decoder = HpackDecoder(4096, 1 shl 20)
+    private val pending = ArrayDeque<List<Long>>()
+
+    /** The field lists each stream sent, and the table size updates that started its last field block. */
+    private val sent = HashMap<Int, List<Pair<String, String>>>()
+    val updates = HashMap<Int, List<Int>>()
+    private var nextPeerStream = 1
+
+    /** SETTINGS frames received since the oldest unacknowledged one, with the DATA frames we wrote meanwhile. */
+    private val dataSince = ArrayDeque<MutableSet<Int>>()
+    private val queuedAt = ArrayDeque<Set<Int>>()
+
+    val streams: Int get() = sent.size
+
+    init {
+        p.handshake(settings(*handshake))
+        apply(handshake.toList())
+        if (!client) p.events()
+    }
+
+    private fun apply(kv: List<Pair<Int, Long>>) {
+        val v = kv.filter { it.first == SettingId.HEADER_TABLE_SIZE }.map { it.second.toInt() }
+        if (v.isEmpty()) return
+        if (v.min() < v.last()) decoder.setMaxTableSize(v.min())
+        decoder.setMaxTableSize(v.last())
+    }
+
+    fun sendSettings(vararg kv: Pair<Int, Long>) {
+        pending.addLast(kv.filter { it.first == SettingId.HEADER_TABLE_SIZE }.map { it.second })
+        // the streams with DATA queued now: at most one DATA frame of each may precede the ACK
+        queuedAt.addLast(
+            p.core.streams.values
+                .filter { s -> s.out.any { it is OutItem.Data } }
+                .mapTo(HashSet()) { it.id },
+        )
+        dataSince.addLast(HashSet())
+        p.send(settings(*kv))
+    }
+
+    /** Queues a field block on a new stream: a request (client) or the response to a request the peer sends (server). */
+    fun block(
+        endStream: Boolean,
+        extra: List<Pair<String, String>> = emptyList(),
+    ): Int {
+        val id: Int
+        val fields: List<Pair<String, String>>
+        if (client) {
+            fields = GET + extra
+            id = p.core.openStream(fields, endStream)
+        } else {
+            id = nextPeerStream
+            nextPeerStream += 2
+            p.send(p.headers(id, endStream = true))
+            p.events()
+            fields = OK + extra
+            p.core.sendHeaders(id, fields, endStream)
+        }
+        sent[id] = fields
+        return id
+    }
+
+    /** Writes what the core has and decodes it in wire order: "H<id>", "D<id>" and "ACK" for each HEADERS, DATA and ACK. */
+    fun read(): List<String> {
+        val out = mutableListOf<String>()
+        for (f in p.read()) {
+            when {
+                f is Frame.Settings && f.ack -> {
+                    if (pending.isEmpty()) continue // the ACK of the handshake SETTINGS
+                    apply(pending.removeFirst().map { SettingId.HEADER_TABLE_SIZE to it })
+                    val wrote = dataSince.removeFirst()
+                    val allowed = queuedAt.removeFirst()
+                    assertTrue(wrote.all { it in allowed }, "DATA of $wrote ahead of an ACK held for $allowed")
+                    out += "ACK"
+                }
+
+                f is Frame.Headers -> {
+                    updates[f.streamId] = leadingUpdates(f.fragment)
+                    val got = mutableListOf<Pair<String, String>>()
+                    decoder.decode(f.fragment) { n, v -> got += n to v }
+                    assertEquals(sent[f.streamId], got)
+                    out += "H${f.streamId}"
+                }
+
+                f is Frame.Data -> {
+                    for (d in dataSince) assertTrue(d.add(f.streamId), "a second DATA frame of ${f.streamId} ahead of an ACK")
+                    out += "D${f.streamId}"
+                }
+            }
+        }
+        return out
+    }
+
+    private fun leadingUpdates(b: ByteArray): List<Int> {
+        val out = mutableListOf<Int>()
+        var i = 0
+        while (i < b.size && b[i].toInt() and 0xe0 == 0x20) {
+            var v = b[i++].toInt() and 0x1f
+            if (v == 0x1f) {
+                var shift = 0
+                do {
+                    val c = b[i++].toInt() and 0xff
+                    v += (c and 0x7f) shl shift
+                    shift += 7
+                } while (c and 0x80 != 0)
+            }
+            out += v
+        }
+        return out
+    }
+
+    private companion object {
+        fun settings(vararg kv: Pair<Int, Long>) =
+            FrameEncoder.settings(kv.map { it.first }.toIntArray(), kv.map { it.second }.toLongArray())
     }
 }
