@@ -194,6 +194,24 @@ class EarlyDataTest {
             }
         }
 
+    /**
+     * Control frames written in 0-RTT are kept to be sent again if the server rejects it (RFC 9001 section 4.6.2 drops the
+     * early control stream). Once the handshake accepted the 0-RTT that copy has no use: it is released, so the
+     * PRIORITY_UPDATE and GOAWAY frames of a long connection are not kept for its whole life.
+     */
+    @Test fun negative_acceptedZeroRttReleasesTheEarlyControlCopy(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val accepted =
+                    earlyAcceptedAfterResuming(issuer = http3Settings {}, resumer = http3Settings {}) { c, _ ->
+                        awaitCondition("the early control copy released") {
+                            withContext(c.session.dispatcher) { c.session.earlyControl == null }
+                        }
+                    }
+                assertEquals(true, accepted)
+            }
+        }
+
     /** A client gets a ticket from a server with [issuer] settings, then resumes with 0-RTT at another with [resumer] and the same ticket keys. */
     private suspend fun earlyAcceptedAfterResuming(
         issuer: Http3Settings,

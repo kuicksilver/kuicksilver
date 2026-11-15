@@ -141,19 +141,8 @@ internal class PriorityDictionary private constructor(
         return true
     }
 
-    /** RFC 8941 section 4.2.3.3. */
-    private fun key(): Boolean {
-        if (pos >= s.length) return false
-        val c = s[pos]
-        if (c !in 'a'..'z' && c != '*') return false
-        pos++
-        while (pos < s.length) {
-            val k = s[pos]
-            if (k !in 'a'..'z' && k !in '0'..'9' && k != '_' && k != '-' && k != '.' && k != '*') break
-            pos++
-        }
-        return true
-    }
+    /** RFC 8941 section 4.2.3.3 ([sfKeyEnd]). */
+    private fun key(): Boolean = advanceTo(sfKeyEnd(s, pos))
 
     /** RFC 8941 section 4.2.4: at most 15 integer digits, or a Decimal of at most 12 integer and 1 to 3 fraction digits. */
     private fun number(): Boolean {
@@ -194,76 +183,20 @@ internal class PriorityDictionary private constructor(
         return true
     }
 
-    /** RFC 8941 section 4.2.5: printable ASCII, with `\` escaping only `"` and `\`. */
-    private fun string(): Boolean {
-        pos++
-        while (pos < s.length) {
-            val c = s[pos++]
-            when {
-                c == '\\' -> {
-                    if (pos >= s.length) return false
-                    val e = s[pos++]
-                    if (e != '"' && e != '\\') return false
-                }
+    /** RFC 8941 section 4.2.5 ([sfStringEnd]). */
+    private fun string(): Boolean = advanceTo(sfStringEnd(s, pos)).also { kind = KIND_OTHER }
 
-                c == '"' -> {
-                    kind = KIND_OTHER
-                    return true
-                }
+    /** RFC 8941 section 4.2.6 ([sfTokenEnd]). */
+    private fun token(): Boolean = advanceTo(sfTokenEnd(s, pos)).also { kind = KIND_OTHER }
 
-                c < ' ' || c > '~' -> {
-                    return false
-                }
-            }
-        }
-        return false
-    }
+    /** RFC 8941 section 4.2.7 ([sfByteSequenceEnd]). */
+    private fun byteSequence(): Boolean = advanceTo(sfByteSequenceEnd(s, pos)).also { kind = KIND_OTHER }
 
-    /** RFC 8941 section 4.2.6: ALPHA or `*`, then tchar, `:` or `/` ([bareItem] checked the first character). */
-    private fun token(): Boolean {
-        pos++
-        while (pos < s.length) {
-            val c = s[pos]
-            if (c !in 'a'..'z' && c !in 'A'..'Z' && c !in '0'..'9' && c !in TOKEN_SYMBOLS) break
-            pos++
-        }
-        kind = KIND_OTHER
+    /** Moves past what a shared Structured Field helper parsed; false when it failed (-1). */
+    private fun advanceTo(end: Int): Boolean {
+        if (end < 0) return false
+        pos = end
         return true
-    }
-
-    /**
-     * RFC 8941 section 4.2.7: base64 between colons. Its decoding fails on `=` before the data ends, more than two `=`,
-     * a length of 1 modulo 4, or `=` padding that does not complete a quantum; missing padding is accepted, as the
-     * section asks.
-     */
-    private fun byteSequence(): Boolean {
-        pos++
-        var data = 0
-        var padding = 0
-        while (pos < s.length) {
-            val c = s[pos++]
-            when {
-                c == ':' -> {
-                    if (data % 4 == 1 || (padding > 0 && (data + padding) % 4 != 0)) return false
-                    kind = KIND_OTHER
-                    return true
-                }
-
-                c == '=' -> {
-                    if (++padding > 2) return false
-                }
-
-                c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/' -> {
-                    if (padding > 0) return false
-                    data++
-                }
-
-                else -> {
-                    return false
-                }
-            }
-        }
-        return false
     }
 
     /** RFC 8941 section 4.2.8: `?0` or `?1`. */
@@ -294,9 +227,6 @@ internal class PriorityDictionary private constructor(
         private const val KIND_INTEGER = 1
         private const val KIND_BOOLEAN = 2
         private const val KIND_INNER_LIST = 3
-
-        /** tchar (RFC 9110 section 5.6.2) symbols plus `:` and `/`. */
-        private const val TOKEN_SYMBOLS = "!#$%&'*+-.^_`|~:/"
 
         /** The dictionary in [value], or null when it is not a valid one (RFC 8941 section 4.2: the field is then ignored). */
         fun parse(value: String): PriorityDictionary? {

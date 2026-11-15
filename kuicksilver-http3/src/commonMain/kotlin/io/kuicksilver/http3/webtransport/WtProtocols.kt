@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.webtransport
 
+import io.kuicksilver.http3.message.sfParametersEnd
+
 /**
  * The application protocol fields of a WebTransport session (draft-ietf-webtrans-http3-16 section 3.3):
  * `WT-Available-Protocols`, a Structured Field List of Strings the client offers, and `WT-Protocol`, the String the
@@ -87,28 +89,9 @@ internal object WtProtocols {
         return null
     }
 
-    /** `;key` or `;key=value` parameters after an item; values are tokens, numbers, booleans or Strings. */
+    /** Parameters after an item (RFC 8941 section 4.2.3.2, [sfParametersEnd]); null when one is malformed. */
     private fun skipParameters(
         v: String,
         from: Int,
-    ): Int? {
-        var i = from
-        while (i < v.length && v[i] == ';') {
-            i = skipSpaces(v, i + 1)
-            val keyStart = i
-            while (i < v.length && (v[i].isLowerCase() || v[i].isDigit() || v[i] in "_-.*")) i++
-            if (i == keyStart) return null
-            if (i < v.length && v[i] == '=') {
-                i++
-                if (i < v.length && v[i] == '"') {
-                    i = parseString(v, i)?.second ?: return null
-                } else {
-                    val valueStart = i
-                    while (i < v.length && v[i] != ';' && v[i] != ',' && v[i] != ' ' && v[i] != '\t') i++
-                    if (i == valueStart) return null
-                }
-            }
-        }
-        return i
-    }
+    ): Int? = sfParametersEnd(v, from).takeIf { it >= 0 }
 }

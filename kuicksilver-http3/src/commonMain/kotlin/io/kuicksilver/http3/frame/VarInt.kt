@@ -6,6 +6,9 @@ package io.kuicksilver.http3.frame
 internal object VarInt {
     const val MAX: Long = (1L shl 62) - 1
 
+    /** The longest encoding: 8 bytes (RFC 9000 section 16). */
+    const val MAX_SIZE: Long = 8
+
     fun size(v: Long): Int {
         require(v in 0..MAX) { "varint out of range: $v" }
         return when {

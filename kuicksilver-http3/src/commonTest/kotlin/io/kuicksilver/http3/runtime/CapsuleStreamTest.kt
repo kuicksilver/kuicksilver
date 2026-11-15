@@ -182,6 +182,41 @@ class CapsuleStreamTest {
             }
         }
 
+    /**
+     * RFC 9297 section 3.3: a capsule error is handled as a malformed message, which RFC 9114 section 4.1.2 makes "a stream
+     * error of type H3_MESSAGE_ERROR"; section 8 describes a stream error as terminating the stream abruptly (RFC 9000
+     * section 2.4), so the reading side is aborted too: a peer still sending into the stream is stopped with
+     * H3_MESSAGE_ERROR instead of filling a window nobody reads.
+     */
+    @Test fun negative_malformedCapsuleStopsThePeersSending() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val server =
+                    async {
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect()
+                            .useCapsuleProtocol(known)
+                    }
+                val c = p.client.connect(connectReq(), "test-capsules")
+                c.output.writeFully(VarInt.encode(WT_TYPE) + VarInt.encode(65_537)) // a known capsule above the limit, no FIN
+                c.output.flush()
+                val s = withTimeout(5.seconds) { server.await() }
+                assertFailsWith<Http3Exception.MessageError> { withTimeout(5.seconds) { s.capsules.toList() } }
+                val chunk = ByteArray(16_384)
+                val e =
+                    assertFailsWith<Throwable>("the peer's sending was never stopped") {
+                        withTimeout(10.seconds) {
+                            while (true) {
+                                c.output.writeFully(chunk)
+                                c.output.flush()
+                            }
+                        }
+                    }
+                assertEquals(Http3ErrorCode.MESSAGE_ERROR, h3Code(e), "stopped with H3_MESSAGE_ERROR: $e")
+            }
+        }
+
     /** RFC 9297 section 3.5: without QUIC DATAGRAM (the peer's SETTINGS_H3_DATAGRAM=0) a datagram goes out as a DATAGRAM capsule. */
     @Test fun datagramCapsuleFallback() =
         h3Test {

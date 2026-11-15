@@ -1120,6 +1120,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   parameters was ignored (RFC 9000 section 10.3.1: the tokens "associated with the connection IDs and remote addresses
   for datagrams it has recently sent"). A reset that arrives before a 0-RTT answer now ends the connection and drops
   what was held for the answer.
+- HTTP/3: a GOAWAY or MAX_PUSH_ID frame whose Length is above 8 bytes (more than its one variable-length integer) closes
+  the connection with H3_FRAME_ERROR from its header, as RFC 9114 section 7.1 requires; above 4096 bytes it was
+  H3_EXCESSIVE_LOAD, and below that the reader waited for a payload that could only be malformed.
+- HTTP/3: a `Capsule-Protocol` field whose parameters hold a Byte Sequence that is not valid base64 (`:Y:`, `:=YQ:`) is
+  no longer read as `?1`: the byte sequence is checked as RFC 8941 section 4.2.7 says, with the same code as the
+  `priority` field.
+- WebTransport: a `WT-Available-Protocols` or `WT-Protocol` field whose parameters do not parse as RFC 8941 (a value
+  such as `@@` or `:Y:`, a key with an uppercase or non-ASCII letter or starting with a digit) is ignored as a whole, as
+  draft-ietf-webtrans-http3-16 section 3.3 asks; such parameters were skipped and the protocols read.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

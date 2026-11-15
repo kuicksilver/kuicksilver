@@ -131,11 +131,21 @@ internal object FrameRules {
             }
         }
 
-    /** Payload ceiling of the control frames we buffer (SETTINGS, GOAWAY, PRIORITY_UPDATE, ...): checked before any allocation. */
+    /**
+     * The Length of a control frame we read into memory, checked from its header before any allocation. GOAWAY and
+     * MAX_PUSH_ID carry exactly one variable-length integer (RFC 9114 sections 7.2.6, 7.2.7), at most 8 bytes: a longer
+     * Length can only be "a frame payload that contains additional bytes after the identified fields", which section 7.1
+     * says "MUST be treated as a connection error of type H3_FRAME_ERROR", whatever its size. Frames whose payload is a
+     * list or a string (SETTINGS, PRIORITY_UPDATE) are capped at [MAX_CONTROL_PAYLOAD] instead, H3_EXCESSIVE_LOAD (section
+     * 10.5: "Implementations SHOULD track the use of these features and set limits on their use").
+     */
     fun checkControlLength(
         type: Long,
         length: Long,
     ) {
+        if ((type == FrameType.GOAWAY || type == FrameType.MAX_PUSH_ID) && length > VarInt.MAX_SIZE) {
+            throw H3ProtocolError(Http3ErrorCode.FRAME_ERROR, "frame 0x${type.toString(16)} of $length bytes holds one integer")
+        }
         if (length >
             MAX_CONTROL_PAYLOAD
         ) {
