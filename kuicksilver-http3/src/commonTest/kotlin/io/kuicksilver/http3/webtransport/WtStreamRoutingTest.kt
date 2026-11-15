@@ -66,9 +66,12 @@ internal class QueueSink : WtSessionSink {
     suspend fun next(): Pair<QuicStream, Boolean> = withTimeout(5.seconds) { streams.receive() }
 }
 
-/** The code of the RESET_STREAM the peer sent on [st], read from its input. */
+/**
+ * The code of the RESET_STREAM the peer sent on [st], read from its input. The bound only stops a hang: milliseconds on a
+ * laptop (2000 runs beside four busy threads: at most 262 ms), but a loaded Windows VM once took more than 5 s.
+ */
 internal suspend fun resetCode(st: QuicStream): Long {
-    val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { st.input.readAllBytes() } }
+    val e = assertFailsWith<Throwable> { withTimeout(20.seconds) { st.input.readAllBytes() } }
     val reset = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull()
     return reset?.code ?: throw AssertionError("no RESET_STREAM but $e", e)
 }

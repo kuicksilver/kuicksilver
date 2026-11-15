@@ -129,7 +129,7 @@ private suspend fun assertFlowControlClose(
     session: WebTransportSession,
 ) {
     assertEquals(Http3ErrorCode.WT_FLOW_CONTROL_ERROR, resetCode(connect))
-    assertIs<WebTransportException.FlowControl>(withTimeout(5.seconds) { session.closed.await() }.cause)
+    assertIs<WebTransportException.FlowControl>(withTimeout(20.seconds) { session.closed.await() }.cause)
 }
 
 class WebTransportFlowControlTest {
