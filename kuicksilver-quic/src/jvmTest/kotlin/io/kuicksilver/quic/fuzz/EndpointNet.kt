@@ -204,11 +204,22 @@ internal class EndpointNet(
     /** What the server's preferred-address socket can do: the main socket's at the start, narrowed by the program. */
     var preferredCaps: IoCapabilities = caps[1]
 
+    /**
+     * What the client's extra sockets ([addClientSocket]) can do: what its first socket could when each was opened. A program that
+     * narrows the first socket's capabilities ([caps]) leaves them as they are, as the runtime follows each socket on its own.
+     */
+    private val clientSocketCaps = HashMap<PathId, IoCapabilities>()
+
     /** What [side]'s socket [socket] can do. */
     fun capsOf(
         side: Int,
         socket: PathId,
-    ): IoCapabilities = if (side == 1 && socket == PREFERRED_SOCKET) preferredCaps else caps[side]
+    ): IoCapabilities =
+        when {
+            side == 1 && socket == PREFERRED_SOCKET -> preferredCaps
+            side == 0 -> clientSocketCaps[socket] ?: caps[0]
+            else -> caps[side]
+        }
 
     fun endpoint(side: Int): EndpointCore = if (side == 0) clientEp else server
 
@@ -238,6 +249,7 @@ internal class EndpointNet(
         clientSockets[a] = socket
         clientSocketAddr[socket] = a
         newestClientSocketAddress = a
+        clientSocketCaps[socket] = caps[0]
     }
 
     /** The address of the client's latest extra socket ([addClientSocket]), if any. */
