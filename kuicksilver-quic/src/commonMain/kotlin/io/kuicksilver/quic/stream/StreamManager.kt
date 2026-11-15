@@ -277,15 +277,15 @@ internal class StreamManager(
             e.recv?.discardBuffered()
             sendLimit.remove(e.id)
             early -= e.id
-            resetsUnacked -= e.id
+            resetsUnacked?.remove(e.id)
             it.remove()
             dropped++
         }
         connBlocked.clear()
         // a RESET_STREAM of a dropped stream is dropped with it (below), and nothing of it is reported finished any more
-        resetsUnacked.removeAll { StreamIds.isLocal(it, role) }
-        finishedAwaitingResetAck.removeAll { StreamIds.isLocal(it, role) }
-        retiredAwaitingAck.removeAll { StreamIds.isLocal(it, role) }
+        resetsUnacked?.removeAll { StreamIds.isLocal(it, role) }
+        finishedAwaitingResetAck?.removeAll { StreamIds.isLocal(it, role) }
+        retiredAwaitingAck?.removeAll { StreamIds.isLocal(it, role) }
         writeRefused.removeAll { !streams.containsKey(it.id) }
         for (i in control.indices.reversed()) {
             val c = control[i]
@@ -526,7 +526,8 @@ internal class StreamManager(
         if (sendBufferedBytes != 0L) return "$sendBufferedBytes bytes of the dropped streams still buffered"
         if (connBlocked.isNotEmpty() || writeRefused.isNotEmpty()) return "a dropped stream is still on a blocked list"
         scheduler.next()?.let { return "the scheduler still holds dropped stream ${it.id}" }
-        (resetsUnacked + finishedAwaitingResetAck + retiredAwaitingAck).firstOrNull { StreamIds.isLocal(it, role) }?.let {
+        val awaitingAck = resetsUnacked.orEmpty() + finishedAwaitingResetAck.orEmpty() + retiredAwaitingAck.orEmpty()
+        awaitingAck.firstOrNull { StreamIds.isLocal(it, role) }?.let {
             return "dropped stream $it still waits for its reset's acknowledgment"
         }
         if (held != null || heldIds != null) return "events still held for the answer to the rejected 0-RTT"
@@ -556,11 +557,28 @@ internal class StreamManager(
      */
     private var holdPeerBidi = false
 
-    /** Peer bidirectional streams whose credit is held: live ones and finished ones not yet released (never more than we granted). */
-    private val creditHeld = HashSet<Long>()
+    /**
+     * Peer bidirectional streams whose credit is held: live ones and finished ones not yet released (never more than we
+     * granted). Made by [holdPeerBidiCredit]: a connection that never holds credit has neither set.
+     */
+    private var creditHeld: HashSet<Long>? = null
 
-    /** [creditHeld] streams that finished: their credit returns when they are released. */
-    private val creditDue = HashSet<Long>()
+    /** [creditHeld] streams that finished: their credit returns when they are released. Made by the first one. */
+    private var creditDue: HashSet<Long>? = null
+
+    /** [id]'s credit is held from now on. */
+    private fun holdCredit(id: Long) {
+        (creditHeld ?: HashSet<Long>().also { creditHeld = it }) += id
+    }
+
+    /** Held stream [id] finished: its credit returns at its release, unless that came first ([returnCredit] then). */
+    private fun creditDueOrReturn(id: Long) {
+        if (creditHeld?.contains(id) == true) {
+            (creditDue ?: HashSet<Long>().also { creditDue = it }) += id
+            return
+        }
+        returnCredit(id)
+    }
 
     /**
      * From now on, a bidirectional stream the peer opens counts toward the limit we grant it (MAX_STREAMS, RFC 9000 section
@@ -571,23 +589,23 @@ internal class StreamManager(
     fun holdPeerBidiCredit() {
         if (holdPeerBidi) return
         holdPeerBidi = true
-        for (e in streams.values) if (!StreamIds.isLocal(e.id, role) && StreamIds.isBidi(e.id) && !e.countedClosed) creditHeld += e.id
+        for (e in streams.values) if (!StreamIds.isLocal(e.id, role) && StreamIds.isBidi(e.id) && !e.countedClosed) holdCredit(e.id)
     }
 
     /** The application is done with peer stream [id]: once the stream finished (now or later) its credit returns. Idempotent. */
     fun releasePeerCredit(id: Long) {
-        if (!creditHeld.remove(id)) return
-        if (creditDue.remove(id)) returnCredit(id)
+        if (creditHeld?.remove(id) != true) return
+        if (creditDue?.remove(id) == true) returnCredit(id)
     }
 
     /** Streams whose credit is held now, and how many of those already finished (test and fuzzing probe). */
-    internal fun heldCreditForTest(): IntArray = intArrayOf(creditHeld.size, creditDue.size)
+    internal fun heldCreditForTest(): IntArray = intArrayOf(creditHeld?.size ?: 0, creditDue?.size ?: 0)
 
     private fun newEntry(id: Long): Entry {
         val local = StreamIds.isLocal(id, role)
         val bidi = StreamIds.isBidi(id)
         val e = Entry(id)
-        if (holdPeerBidi && !local && bidi) creditHeld += id
+        if (holdPeerBidi && !local && bidi) holdCredit(id)
         if (local ||
             bidi
         ) {
@@ -802,7 +820,7 @@ internal class StreamManager(
         abandonSend(id, s)
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         reportSentFinal(s, finalSize)
-        resetsUnacked += id
+        resetUnacked(id)
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
     }
@@ -1000,11 +1018,7 @@ internal class StreamManager(
         if (e.countedClosed || StreamIds.isLocal(e.id, role)) return
         e.countedClosed = true
         // a held stream's credit waits for its release
-        if (e.id in creditHeld) {
-            creditDue += e.id
-            return
-        }
-        returnCredit(e.id)
+        creditDueOrReturn(e.id)
     }
 
     private fun returnCredit(id: Long) {
@@ -1062,7 +1076,7 @@ internal class StreamManager(
         ) {
             // a peer stream that ended with our unacknowledged reset counts as closed at the acknowledgment
             // ([onResetAcked]): a peer that leaves our resets unacknowledged cannot have more of them than it may open
-            if (id !in resetsUnacked) countClosed(e)
+            if (resetsUnacked?.contains(id) != true) countClosed(e)
             streams.remove(id)
             sendLimit.remove(id)
             e.send?.let { scheduler.remove(it) }
@@ -1085,7 +1099,7 @@ internal class StreamManager(
         abandonSend(id, s)
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         reportSentFinal(s, finalSize)
-        resetsUnacked += id
+        resetUnacked(id)
         maybeClose(id)
     }
 
@@ -1146,7 +1160,7 @@ internal class StreamManager(
         val finalSize = s.announceResetAt()
         queueControl(ControlKind.ResetStreamAt, s.id, s.resetAtCode, finalSize, s.reliableSize)
         reportSentFinal(s, finalSize)
-        resetsUnacked += s.id
+        resetUnacked(s.id)
         if (s.releasedUpTo >= s.reliableSize) {
             s.onAcked(0, 0) // nothing more to acknowledge: the stream is ResetSent now
             maybeClose(s.id)
@@ -1312,26 +1326,35 @@ internal class StreamManager(
     /** Streams whose [write] took fewer bytes than offered; each gets StreamWritable once acknowledgements free buffer room. */
     private val writeRefused = ArrayList<SendStream>()
 
-    /** Streams whose RESET_STREAM or RESET_STREAM_AT we sent and the peer has not acknowledged yet. */
-    private val resetsUnacked = HashSet<Long>()
+    /**
+     * Streams whose RESET_STREAM or RESET_STREAM_AT we sent and the peer has not acknowledged yet. This and the two below
+     * are made by their first entry: a connection that never resets a stream holds none of them.
+     */
+    private var resetsUnacked: HashSet<Long>? = null
 
     /** Retired streams whose StreamFinished waits for the acknowledgment of their reset. */
-    private val finishedAwaitingResetAck = HashSet<Long>()
+    private var finishedAwaitingResetAck: HashSet<Long>? = null
 
     /** Streams retired since the last [takeRetiredAwaitingAck] whose StreamFinished waits for a reset's acknowledgment. */
-    private val retiredAwaitingAck = ArrayList<Long>()
+    private var retiredAwaitingAck: ArrayList<Long>? = null
+
+    /** We sent a RESET_STREAM or RESET_STREAM_AT for [id]: it waits for the peer's acknowledgment. */
+    private fun resetUnacked(id: Long) {
+        (resetsUnacked ?: HashSet<Long>().also { resetsUnacked = it }) += id
+    }
 
     /**
      * Streams retired with a StreamFinished still to come (their reset unacknowledged): the runtime lets go of their
      * channels and ticker now and keeps only the completion of `done` for the StreamFinished. Null when there are none.
      */
     fun takeRetiredAwaitingAck(): List<Long>? {
-        if (retiredAwaitingAck.isEmpty()) return null
-        return retiredAwaitingAck.toList().also { retiredAwaitingAck.clear() }
+        val r = retiredAwaitingAck
+        if (r.isNullOrEmpty()) return null
+        return r.toList().also { r.clear() }
     }
 
     /** (streams with an unacknowledged reset, retired ones among them waiting to be reported finished), a probe. */
-    internal fun resetAcksPendingForTest(): IntArray = intArrayOf(resetsUnacked.size, finishedAwaitingResetAck.size)
+    internal fun resetAcksPendingForTest(): IntArray = intArrayOf(resetsUnacked?.size ?: 0, finishedAwaitingResetAck?.size ?: 0)
 
     /**
      * The one place StreamFinished is raised, from retirement ([maybeClose]) and from a reset's acknowledgment
@@ -1341,8 +1364,10 @@ internal class StreamManager(
      * stream when the size stands or falls; (3) the event.
      */
     private fun reportFinished(id: Long) {
-        if (id in resetsUnacked) {
-            if (finishedAwaitingResetAck.add(id)) retiredAwaitingAck += id
+        if (resetsUnacked?.contains(id) == true) {
+            if ((finishedAwaitingResetAck ?: HashSet<Long>().also { finishedAwaitingResetAck = it }).add(id)) {
+                (retiredAwaitingAck ?: ArrayList<Long>().also { retiredAwaitingAck = it }) += id
+            }
             return
         }
         val e = ConnectionEvent.StreamFinished(id)
@@ -1351,8 +1376,8 @@ internal class StreamManager(
 
     /** Our RESET_STREAM or RESET_STREAM_AT of [id] was acknowledged: a stream retired meanwhile counts as closed and is reported. */
     private fun onResetAcked(id: Long) {
-        if (!resetsUnacked.remove(id)) return
-        if (!finishedAwaitingResetAck.remove(id)) return
+        if (resetsUnacked?.remove(id) != true) return
+        if (finishedAwaitingResetAck?.remove(id) != true) return
         countClosedRetired(id)
         reportFinished(id)
     }
@@ -1360,11 +1385,7 @@ internal class StreamManager(
     /** [countClosed] for a peer stream already retired (its entry is gone); called once, from [onResetAcked]. */
     private fun countClosedRetired(id: Long) {
         if (StreamIds.isLocal(id, role)) return
-        if (id in creditHeld) {
-            creditDue += id
-            return
-        }
-        returnCredit(id)
+        creditDueOrReturn(id)
     }
 
     fun onFramesAcked(f: SentFrames) {

@@ -90,20 +90,35 @@ internal class ConnectionIdManager(
         /**
          * The remote addresses (IP and port) our packets carrying this ID went to, the latest [SENT_TOWARDS] of them: its reset token
          * counts only for a datagram from one of them (RFC 9000 section 10.3.1, "associated with the remote address on which the
-         * datagram was received").
+         * datagram was received"). The first address is kept in [firstIp] and [firstPort]; the [ring] is made only when a
+         * second one comes (a migration), so an ID that only ever went to one address holds no arrays.
          */
-        private val towardsIp = arrayOfNulls<AddressClass.IpKey>(SENT_TOWARDS)
-        private val towardsPort = IntArray(SENT_TOWARDS)
-        private var towardsNext = 0
+        private var firstIp: AddressClass.IpKey? = null
+        private var firstPort = 0
+        private var ring: TowardsRing? = null
 
         fun noteSentTowards(
             ip: AddressClass.IpKey,
             port: Int,
         ) {
-            for (i in 0 until SENT_TOWARDS) if (towardsPort[i] == port && towardsIp[i] == ip) return
-            towardsIp[towardsNext] = ip
-            towardsPort[towardsNext] = port
-            towardsNext = (towardsNext + 1) % SENT_TOWARDS
+            val r = ring
+            if (r != null) {
+                r.note(ip, port)
+                return
+            }
+            val first = firstIp
+            if (first == null) {
+                firstIp = ip
+                firstPort = port
+                return
+            }
+            if (firstPort == port && first == ip) return
+            ring =
+                TowardsRing().also {
+                    it.note(first, firstPort)
+                    it.note(ip, port)
+                }
+            firstIp = null
         }
 
         /** No packet of ours carried this ID to an address other than [ip] and [port]. */
@@ -111,15 +126,48 @@ internal class ConnectionIdManager(
             ip: AddressClass.IpKey,
             port: Int,
         ): Boolean {
-            for (i in 0 until SENT_TOWARDS) if (towardsIp[i] != null && (towardsPort[i] != port || towardsIp[i] != ip)) return false
-            return true
+            ring?.let { return it.only(ip, port) }
+            return firstIp.let { it == null || (firstPort == port && it == ip) }
         }
 
         fun sentTowards(
             ip: AddressClass.IpKey,
             port: Int,
         ): Boolean {
-            for (i in 0 until SENT_TOWARDS) if (towardsPort[i] == port && towardsIp[i] == ip) return true
+            ring?.let { return it.has(ip, port) }
+            return firstIp.let { it != null && firstPort == port && it == ip }
+        }
+    }
+
+    /** The latest [SENT_TOWARDS] remote addresses a peer connection ID went to, once it went to more than one. */
+    private class TowardsRing {
+        private val ips = arrayOfNulls<AddressClass.IpKey>(SENT_TOWARDS)
+        private val ports = IntArray(SENT_TOWARDS)
+        private var next = 0
+
+        fun note(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ) {
+            if (has(ip, port)) return
+            ips[next] = ip
+            ports[next] = port
+            next = (next + 1) % SENT_TOWARDS
+        }
+
+        fun only(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ): Boolean {
+            for (i in 0 until SENT_TOWARDS) if (ips[i] != null && (ports[i] != port || ips[i] != ip)) return false
+            return true
+        }
+
+        fun has(
+            ip: AddressClass.IpKey,
+            port: Int,
+        ): Boolean {
+            for (i in 0 until SENT_TOWARDS) if (ports[i] == port && ips[i] == ip) return true
             return false
         }
     }

@@ -61,7 +61,9 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
     val header = UniHeader()
     uniTypesPending[st.id] = header
     uniProgress()
-    val deadline =
+    // a var the reader drops once the header is read: a critical stream's reader runs as long as the connection, and its
+    // frame must not keep the cancelled deadline (its job and cancellation cause) for all that time
+    var deadline: Job? =
         scope.launch {
             delay(settings.maxHeaderBlockTime)
             while (true) {
@@ -80,16 +82,17 @@ internal suspend fun H3Session.readUni(st: QuicStream) {
             }
         }
     uniDeadlinesArmed.incrementAndFetch()
-    deadline.invokeOnCompletion { uniDeadlinesArmed.decrementAndFetch() }
+    deadline?.invokeOnCompletion { uniDeadlinesArmed.decrementAndFetch() }
 
     fun headerRead() {
         header.settled = true
-        deadline.cancel()
+        deadline?.cancel()
+        deadline = null
     }
     try {
         readUniArmed(st, header, ::headerRead)
     } finally {
-        deadline.cancel()
+        deadline?.cancel()
         uniTypesPending.remove(st.id)
         uniProgress()
     }

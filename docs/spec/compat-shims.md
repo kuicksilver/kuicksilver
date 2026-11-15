@@ -54,7 +54,7 @@ the codepoints are those of the older drafts.
 **Where.** `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVersion.kt:13` (the versions,
 `offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:385` (the 0-or-1 check),
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:388` (the 0-or-1 check),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:733` (the client's draft-02
 request field).
 
@@ -194,7 +194,7 @@ It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:397` (the decision, with
-`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:284`
+`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:332`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.

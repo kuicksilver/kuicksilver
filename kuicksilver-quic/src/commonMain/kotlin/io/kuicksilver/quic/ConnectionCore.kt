@@ -225,7 +225,9 @@ public class ConnectionCore internal constructor(
     internal var pathRevertsForTest = 0
 
     /** Times a reverted path waiting for a peer connection ID could send again. */
-    internal val pathWaitReleasesForTest = IntArray(3) // by io.kuicksilver.quic.core.WaitRelease
+    internal val pathWaitReleasesForTest: IntArray // by io.kuicksilver.quic.core.WaitRelease; made by the first count
+        get() = waitReleases ?: IntArray(3).also { waitReleases = it }
+    private var waitReleases: IntArray? = null
 
     /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
     internal var testBeforeSwitch: ((PathId) -> Unit)? = null
@@ -265,7 +267,7 @@ public class ConnectionCore internal constructor(
     ) {
         val p =
             paths.byId(path) ?: return
-        socketCaps[socketKey(p.socket, p.remote)] = caps
+        socketCapsToWrite()[socketKey(p.socket, p.remote)] = caps
         applyCapabilities(p, caps)
         for (i in 0 until paths.all.size) {
             val q = paths.all[i]
@@ -311,7 +313,8 @@ public class ConnectionCore internal constructor(
             }
             p.caps = narrowedCaps(had, caps)
         }
-        for (k in socketKeys(socket, v6)) socketCaps[k]?.let { socketCaps[k] = narrowedCaps(it, caps) }
+        val map = socketCapsMap ?: return
+        for (k in socketKeys(socket, v6)) map[k]?.let { map[k] = narrowedCaps(it, caps) }
     }
 
     private fun isV6(a: InetSocketAddress): Boolean =
@@ -344,8 +347,14 @@ public class ConnectionCore internal constructor(
      * What each socket of this connection can do (the endpoint's is [PathId.Initial], the server's preferred-address sockets
      * [PREFERRED_SOCKET] (one per address family), a client's extra socket its path id), by [socketKey]: a path made later on a socket
      * takes that socket's capabilities, not those of the path it came from. A client's entry goes when its socket's last path does.
+     * The map is made by the first socket described: a connection whose sockets nobody describes holds none.
      */
-    internal val socketCaps = HashMap<Long, IoCapabilities>(2)
+    internal val socketCaps: Map<Long, IoCapabilities> get() = socketCapsMap ?: emptyMap()
+
+    private var socketCapsMap: HashMap<Long, IoCapabilities>? = null
+
+    private fun socketCapsToWrite(): HashMap<Long, IoCapabilities> =
+        socketCapsMap ?: HashMap<Long, IoCapabilities>(2).also { socketCapsMap = it }
 
     /** The socket [socket] can do [caps] (the runtime's preferred-address sockets, of the family [v6] names or both, before any path is on them). */
     internal fun setSocketCapabilities(
@@ -353,13 +362,14 @@ public class ConnectionCore internal constructor(
         caps: IoCapabilities,
         v6: Boolean? = null,
     ) {
-        for (k in socketKeys(socket, v6)) socketCaps[k] = caps
+        val map = socketCapsToWrite()
+        for (k in socketKeys(socket, v6)) map[k] = caps
     }
 
     /** A client's socket [socket] has no path left: what it could do is forgotten (each migration brings a new socket). */
     internal fun forgetSocketIfUnused(socket: PathId) {
         if (socket == PathId.Initial || socket == PREFERRED_SOCKET) return
-        if (paths.all.none { it.socket == socket }) for (k in socketKeys(socket, null)) socketCaps.remove(k)
+        if (paths.all.none { it.socket == socket }) for (k in socketKeys(socket, null)) socketCapsMap?.remove(k)
     }
 
     /**

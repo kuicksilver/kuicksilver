@@ -87,21 +87,21 @@ internal class StreamLimits(
     /**
      * [0] bidi, [1] uni: the peer reported STREAMS_BLOCKED at the limit we granted when nothing had closed since: the next
      * stream that closes is announced at once, not at the half window (a peer reports each limit once). Cleared with each
-     * MAX_STREAMS.
+     * MAX_STREAMS. Bit [i] set: that kind (no array per connection).
      */
-    private val peerBlockedAtGranted = BooleanArray(2)
+    private var peerBlockedAtGranted = 0
 
     /** A peer-initiated stream closed; returns the new MAX_STREAMS value when it is time to send one, else -1. */
     fun onPeerStreamClosed(bidi: Boolean): Long {
         val i = idx(bidi)
         peerClosed[i]++
         val concurrency = if (bidi) localMaxBidi else localMaxUni
-        if (!peerBlockedAtGranted[i] && peerClosed[i] - closedAtUpdate[i] < (concurrency + 1) / 2) return -1
+        if ((peerBlockedAtGranted and (1 shl i)) == 0 && peerClosed[i] - closedAtUpdate[i] < (concurrency + 1) / 2) return -1
         return announce(i)
     }
 
     private fun announce(i: Int): Long {
-        peerBlockedAtGranted[i] = false
+        peerBlockedAtGranted = peerBlockedAtGranted and (1 shl i).inv()
         closedAtUpdate[i] = peerClosed[i]
         peerLimit[i] = peerClosed[i] + if (i == 0) localMaxBidi else localMaxUni
         return peerLimit[i]
@@ -115,7 +115,7 @@ internal class StreamLimits(
     fun onPeerBlockedAtGranted(bidi: Boolean): Long {
         val i = idx(bidi)
         if (peerClosed[i] == closedAtUpdate[i]) {
-            peerBlockedAtGranted[i] = true
+            peerBlockedAtGranted = peerBlockedAtGranted or (1 shl i)
             return -1
         }
         return announce(i)
