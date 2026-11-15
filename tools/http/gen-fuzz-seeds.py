@@ -5,7 +5,9 @@
 # frame type of RFC 9113 section 6 for `frames`, the RFC 7541 appendix C blocks (tools/vectors) for `hpackDecode`, client
 # conversations (a request with a body, Rapid Reset, CONTINUATION) for `connectionServer`, field lists for `hpackRoundTrip`.
 # Usage: gen-fuzz-seeds.py   (run after tools/http/gen-tables.py; the output is committed; files named finding-* are kept
-# reproducers of harness findings and are not written here)
+# reproducers of harness findings and are not written here). The connection targets take a mode byte after their header
+# bytes (H2ConnectionFuzzTest.kt, Mode); these conversations use mode 0, the drive they were written for. The structured
+# seeds (seed-*) of every target come from H2SeedCorpusTest (tools/fuzz/gen-seeds.sh).
 import json, os, struct
 root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 base = os.path.join(root, "kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz")
@@ -33,27 +35,27 @@ for group in ("C.3", "C.4", "C.5", "C.6"):
 def hdr(sid, block, flags=0x5):
     return frame(1, flags, sid, block)
 conn = {
-    "get-then-data": bytes([255]) + frame(4, 0, 0) + frame(4, 1, 0) + hdr(1, h("82848786"), 0x4) + frame(0, 1, 1, b"body")
+    "get-then-data": bytes([255, 0]) + frame(4, 0, 0) + frame(4, 1, 0) + hdr(1, h("82848786"), 0x4) + frame(0, 1, 1, b"body")
     + frame(8, 0, 1, struct.pack(">I", 100)),
-    "rapid-reset": bytes([31]) + frame(4, 0, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(20)),
-    "continuation": bytes([7]) + frame(4, 0, 0) + frame(1, 0x1, 3, h("8284")) + frame(9, 0, 3, h("87")) + frame(9, 4, 3, h("86"))
+    "rapid-reset": bytes([31, 0]) + frame(4, 0, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(20)),
+    "continuation": bytes([7, 0]) + frame(4, 0, 0) + frame(1, 0x1, 3, h("8284")) + frame(9, 0, 3, h("87")) + frame(9, 4, 3, h("86"))
     + frame(6, 0, 0, bytes(8)) + frame(7, 0, 0, struct.pack(">II", 3, 0)),
     # bursts: about ten streams per 256-byte piece, with SETTINGS_INITIAL_WINDOW_SIZE = 0 so no response can finish (and the
-    # acknowledgement of our SETTINGS, which the harness otherwise times out a piece later): the
+    # acknowledgement of our SETTINGS): the
     # handlers of reset streams pile up past the limit of 8 unless the core keeps counting them (Rapid Reset; MadeYouReset:
     # WINDOW_UPDATE of 0 makes the server reset the stream itself)
-    "rapid-reset-burst": bytes([255]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(40)),
-    "made-you-reset": bytes([255]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786"), 0x4) + frame(8, 0, 2 * i + 1, struct.pack(">I", 0)) for i in range(40)),
+    "rapid-reset-burst": bytes([255, 0]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(40)),
+    "made-you-reset": bytes([255, 0]) + frame(4, 0, 0, struct.pack(">HI", 4, 0)) + frame(4, 1, 0) + b"".join(hdr(2 * i + 1, h("82848786"), 0x4) + frame(8, 0, 2 * i + 1, struct.pack(">I", 0)) for i in range(40)),
 }
-# connectionClient: [split][streams][server bytes after its empty SETTINGS]; streams 1, 3, 5 are the client's requests
+# connectionClient: [split][streams][mode][server bytes after its empty SETTINGS]; streams 1, 3, 5 are the client's requests
 def hdr_resp(sid, block, flags=0x4):
     return frame(1, flags, sid, block)
 client = {
-    "response-with-trailers": bytes([255, 1]) + frame(4, 1, 0) + hdr_resp(1, h("88")) + frame(0, 0, 1, b"hello")
+    "response-with-trailers": bytes([255, 1, 0]) + frame(4, 1, 0) + hdr_resp(1, h("88")) + frame(0, 0, 1, b"hello")
     + hdr_resp(3, h("88"), 0x5) + frame(1, 0x5, 1, h("4003782d61017a")),
-    "interim-goaway-refused": bytes([9, 2]) + frame(4, 1, 0) + hdr_resp(1, h("08033130 30".replace(" ", ""))) + frame(3, 0, 3, struct.pack(">I", 7))
+    "interim-goaway-refused": bytes([9, 2, 0]) + frame(4, 1, 0) + hdr_resp(1, h("08033130 30".replace(" ", ""))) + frame(3, 0, 3, struct.pack(">I", 7))
     + frame(7, 0, 0, struct.pack(">II", 1, 0)) + hdr_resp(1, h("88"), 0x5),
-    "window-ping-malformed": bytes([3, 4]) + frame(4, 0, 0, struct.pack(">HI", 4, 1)) + frame(8, 0, 0, struct.pack(">I", 65535))
+    "window-ping-malformed": bytes([3, 4, 0]) + frame(4, 0, 0, struct.pack(">HI", 4, 1)) + frame(8, 0, 0, struct.pack(">I", 65535))
     + frame(6, 0, 0, bytes(8)) + hdr_resp(5, h("8f"), 0x5) + hdr_resp(1, h("885c0132"), 0x4) + frame(0, 1, 1, b"ab"),
 }
 roundtrip = {

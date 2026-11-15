@@ -214,6 +214,85 @@ class ServerH2FloodTest {
             }
         }
 
+    /**
+     * The flood classes that make the server answer, or cost it a frame's work, sent without reading anything back:
+     * SETTINGS (CVE-2019-9515), PRIORITY shuffling (CVE-2019-9513), frames of an unknown type, empty DATA on an open request
+     * (CVE-2019-9518) and requests with a zero-length field block (CVE-2019-9516's empty headers: malformed, RFC 9113
+     * section 8.1.1, each reset as the client's error, CVE-2019-9514). Each ends with ENHANCE_YOUR_CALM (the glitch
+     * budget, the empty-frame limit or the bound on queued control frames: core.FloodClassesTest measures each), no request
+     * reaches a handler beyond the one held open, and the server keeps serving.
+     */
+    @Test fun negative_floodClassesWithoutReadingEndCalm() =
+        serverTest {
+            val handlers = Handlers()
+            val (server, port) = floodServer(handlers)
+            val floods: List<Pair<String, (Int) -> ByteArray>> =
+                listOf(
+                    "SETTINGS" to { i -> RawH2Client.frame(RawFrame.SETTINGS, 0, 0, byteArrayOf(0, 4, 0, 0, 0, (1 + (i and 1)).toByte())) },
+                    "PRIORITY" to { i ->
+                        RawH2Client.frame(
+                            RawFrame.PRIORITY,
+                            0,
+                            1 + 2 * (i % 100),
+                            byteArrayOf(0, 0, 0, (1 + 2 * ((i + 1) % 100)).toByte(), 15),
+                        )
+                    },
+                    "unknown type" to { _ -> RawH2Client.frame(0xfa, 0, 0, ByteArray(0)) },
+                    "empty DATA" to
+                        { i ->
+                            if (i ==
+                                0
+                            ) {
+                                RawH2Client.frame(RawFrame.HEADERS, 0x4, 1, RawH2Client.block(RawH2Client.get("/hold")))
+                            } else {
+                                RawH2Client.frame(RawFrame.DATA, 0, 1, ByteArray(0))
+                            }
+                        },
+                    "zero-length HEADERS" to { i -> RawH2Client.frame(RawFrame.HEADERS, 0x5, 1 + 2 * i, ByteArray(0)) },
+                )
+            try {
+                for ((k, flood) in floods.withIndex()) {
+                    RawH2Client.connect(port).use { raw ->
+                        raw.preface()
+                        raw.flood(100_000, batch = 1_000, frame = flood.second)
+                        withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == k + 1L } }
+                    }
+                    withTimeout(10.seconds) { handlers.running.first { it == 0 } }
+                }
+                assertTrue(handlers.started.value <= 1, "handlers started: ${handlers.started.value}")
+                assertServes(port)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * WINDOW_UPDATE floods (RFC 9113 section 10.5: "Providing tiny increments to flow control"): 100 000 increments of one
+     * byte with no DATA of ours in between are glitches and end with ENHANCE_YOUR_CALM, a flood strike; increments of
+     * 64 KiB are bounded by the window and end with FLOW_CONTROL_ERROR above 2^31 - 1 (section 6.9.1), no strike. Neither
+     * is answered or builds state (core.FloodClassesTest).
+     */
+    @Test fun negative_windowUpdateFloodsEnd() =
+        serverTest {
+            val (server, port) = floodServer(Handlers())
+            try {
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.flood(100_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 0, 0, 1)) }
+                    withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == 1L } }
+                }
+                RawH2Client.connect(port).use { raw ->
+                    raw.preface()
+                    raw.flood(40_000, batch = 1_000) { RawH2Client.frame(RawFrame.WINDOW_UPDATE, 0, 0, byteArrayOf(0, 1, 0, 0)) }
+                    raw.goAwaySeen()?.let { assertEquals(0x3L, it.errorCode) }
+                }
+                assertServes(port)
+                assertEquals(1L, server.engine.h2FloodEnds.value)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** A server whose `/big` responses (4 MiB) count their handlers' ends in [ended]. */
     private suspend fun bigServer(
         ended: MutableStateFlow<Int>,

@@ -539,4 +539,95 @@ class StreamStateTest {
         )
         s.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
     }
+
+    /**
+     * RFC 9113 section 5.4.2: "A RST_STREAM is the last frame that an endpoint can send on a stream." A stream that ended
+     * both ways while our last frames were still queued (closed for us, its frames to flush) gets the peer's DATA after its
+     * END_STREAM, a stream error STREAM_CLOSED: the queued frames are dropped with the reset, never written after it, and
+     * their DATA gives the connection window back. Found by http2.connectionServer and http2.connectionClient.
+     */
+    @Test
+    fun negative_nothingFollowsOurResetOfAStreamWithFramesQueued() {
+        // server: the request ended, our whole response is queued (the stream is closed for us), the client sends DATA
+        val s = RawH2Peer(Role.SERVER).also { it.handshake() }
+        s.send(s.headers(1, endStream = true))
+        s.events()
+        s.core.sendHeaders(1, OK, endStream = false)
+        assertEquals(100, s.core.sendData(1, ByteArray(100), 0, 100, endStream = true))
+        s.send(s.data(1, 0, endStream = false))
+        val after = s.read().filter { it.streamId == 1 }
+        assertEquals(listOf("RstStream"), after.map { it::class.simpleName!! }, "nothing on the stream but the reset")
+        assertEquals(Http2ErrorCode.STREAM_CLOSED.code, (after.single() as Frame.RstStream).errorCode)
+        assertEquals(H2.DEFAULT_WINDOW.toLong(), s.core.connectionSendWindowAccounted, "the dropped DATA gave its window back")
+        assertTrue(s.core.sendWindowConserved)
+        // client: the request's HEADERS went, its last DATA is queued, the server's response ends the stream, then DATA
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val id = c.core.openStream(GET, endStream = false)
+        c.read()
+        assertEquals(100, c.core.sendData(id, ByteArray(100), 0, 100, endStream = true))
+        c.send(c.headers(id, OK, endStream = true), c.data(id, 0, endStream = false))
+        val frames = c.read().filter { it.streamId == id }
+        assertEquals(listOf("RstStream"), frames.map { it::class.simpleName!! })
+        assertTrue(c.core.sendWindowConserved)
+    }
+
+    /**
+     * RFC 9113 section 5.1: a stream is idle until its HEADERS are sent, and "Receiving any frame other than HEADERS or
+     * PRIORITY on a stream in this state MUST be treated as a connection error (Section 5.4.1) of type PROTOCOL_ERROR"; a
+     * server cannot open a client's stream either (section 5.1.1). A request whose HEADERS are still queued is idle to the
+     * server, so a response, DATA, WINDOW_UPDATE or RST_STREAM on it is a connection error; a PRIORITY frame is not.
+     * Found by http2.connectionClient (the response arrived before the request was written).
+     */
+    @Test
+    fun negative_framesOnARequestNotYetWrittenAreOnAnIdleStream() {
+        val frames: List<(RawH2Peer, Int) -> ByteArray> =
+            listOf(
+                { p, id -> p.headers(id, OK, endStream = true) },
+                { p, id -> p.data(id, 1) },
+                { _, id -> FrameEncoder.windowUpdate(id, 100) },
+                { _, id -> FrameEncoder.rstStream(id, Http2ErrorCode.CANCEL.code) },
+            )
+        for (frame in frames) {
+            val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+            val id = c.core.openStream(GET, endStream = true) // queued, not written
+            c.send(frame(c, id))
+            c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+        }
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val id = c.core.openStream(GET, endStream = true)
+        c.send(FrameEncoder.priority(id, 0))
+        assertEquals(false, c.core.isClosed)
+        assertEquals(listOf(id), c.read().filterIsInstance<Frame.Headers>().map { it.streamId })
+    }
+
+    /**
+     * A request dropped before its HEADERS went out (the application cancelled it) stays idle to the server as long as no
+     * later stream of ours was used (RFC 9113 section 5.1.1: only "the first use of a new stream identifier implicitly
+     * closes" the idle ones below it), so a frame on it is a connection error PROTOCOL_ERROR (section 5.1), also after the
+     * core forgot the stream; once a later request was written it is closed, and a frame on it is not.
+     */
+    @Test
+    fun negative_framesOnADroppedRequestThatNeverWentOutAreOnAnIdleStream() {
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val a = c.core.openStream(GET, endStream = true)
+        c.read()
+        val b = c.core.openStream(GET, endStream = true)
+        c.core.reset(b, Http2ErrorCode.CANCEL, c.now) // never written
+        c.events()
+        c.core.release(b)
+        c.read()
+        assertEquals(listOf(a), c.written.filterIsInstance<Frame.Headers>().map { it.streamId })
+        c.send(c.data(b, 1))
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+
+        val d = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val x = d.core.openStream(GET, endStream = true)
+        d.core.reset(x, Http2ErrorCode.CANCEL, d.now)
+        d.events()
+        d.core.release(x)
+        d.core.openStream(GET, endStream = true)
+        d.read() // the later request went out: stream x is closed now
+        d.send(FrameEncoder.windowUpdate(x, 100))
+        assertEquals(false, d.core.isClosed)
+    }
 }

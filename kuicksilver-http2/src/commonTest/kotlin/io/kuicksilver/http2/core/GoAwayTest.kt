@@ -47,6 +47,7 @@ class GoAwayTest {
         // buckets in their numeric order
         repeat(15) {
             val id = c.core.openStream(GET, endStream = true)
+            c.read() // the request goes out before its response can come (section 5.1: idle until then)
             c.send(c.headers(id, OK, endStream = true))
             c.core.release(id)
         }

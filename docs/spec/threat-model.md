@@ -534,7 +534,10 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   peer to read them; at most 100 empty DATA frames in a row; a glitch budget (10 000, 330 per second: nghttp2's numbers;
   counted events: PRIORITY, which creates no state, unknown frame types, empty DATA, SETTINGS, a PING with no DATA or
   HEADERS of ours since the previous PING, and every stream error the peer causes: WINDOW_UPDATE of 0, DATA on a closed
-  stream, MadeYouReset), one reset per stream; DATA dropped before it was written gives its window back; on a
+  stream, MadeYouReset, a malformed request or response the engine resets (RFC 9113 §8.1.1, a zero-length field block
+  included), a request refused while the peer's open and half-closed streams fill SETTINGS_MAX_CONCURRENT_STREAMS once the SETTINGS
+  carrying it are acknowledged (§5.1.2; a refusal only because our handlers still hold streams the protocol has closed is
+  free, bounded by the 4 x limit in a row)), one reset per stream; DATA dropped before it was written gives its window back; on a
   server, the client's RST_STREAM frames take from a reset budget (1000, 33 per second, as nghttp2; a client keeps none,
   since a server may legitimately end a response with RST_STREAM NO_ERROR); a stream the peer reset counts toward
   SETTINGS_MAX_CONCURRENT_STREAMS until its handler returns (`release`), and more than 4 x that limit refused in a row ends
@@ -542,6 +545,24 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   the client discards the response); receive windows grow only as the application reads, and a reset or released
   stream's unread content goes back to the connection (memory per connection stays within the connection window, 15 MiB
   at most); a sender holds at most one DATA frame per stream; per-frame work does not grow with the number of streams.
+  WINDOW_UPDATE (§10.5: "Providing tiny increments to flow control in WINDOW_UPDATE frames can cause a sender to
+  generate a large number of DATA frames"; "Implementations SHOULD track the use of these features and set limits on
+  their use"): each DATA frame we write on a window (the stream's, or the connection's) allows one increment below
+  1024 bytes to it, at most 16 held (Envoy counts DATA frames sent against WINDOW_UPDATEs received the same way); a tiny
+  increment beyond those is a glitch. Readers send tiny increments after our DATA: one that credits each frame it read
+  (Jetty's SimpleFlowControlStrategy) after a burst of frames, and Go's x/net/http2 (flow.go, inflow.add), which credits
+  what it read, however little, once the window it granted is used up; with jitter two such credits often cross the DATA
+  the first one allowed, which is why a single "DATA since the last one" flag was not enough (a model of Go's reader
+  took about 480 glitches a second with it, above the refill of 330). What a stream we have forgotten still allows is
+  remembered as long as its identifier is. Larger increments are not counted: they are bounded by the window itself (at
+  most 2^21 of them before the connection window passes 2^31 - 1 and the connection ends with FLOW_CONTROL_ERROR,
+  §6.9.1), and on a stream that has ended they change nothing, since Go's client still credits a body it reads after our
+  END_STREAM, 4 KiB at a time, and counting those would end healthy connections. None is answered or builds state. The
+  data dribble (CVE-2019-9511): a peer that opens its windows a byte at a time without reading makes us hold one byte per
+  stream and its increments end it as glitches; one that reads every 1-byte frame before its next increment gets one
+  frame of ours for each 13-byte frame of its own, no amplification and nothing held, the efficient tracking of outbound
+  frames §10.5 asks for, and is not counted (it is indistinguishable from a slow reader with a tiny window, which h2spec
+  6.9.1 requires us to serve).
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS after ALPN `h2` (no h2c), TLS 1.3,
@@ -679,7 +700,15 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `.legitimateBrowserCancellationsNotPunished`; `.repeatOffenderBackoffIsOffByDefault`, `.slowFieldBlockIsNotAFloodStrike`, `.sustainedCancellationsBelowTheRefillRateAreNotPunished`;
   `RepeatOffendersTest.negative_threeStrikesWithinAMinuteRefuseForThePenalty`, `.negative_ipv4MappedPeersCountAsTheirIpv4Address`,
   `.negative_trackedAddressesAreBounded`, `.negative_penalisedAddressesOutliveEviction`, `.ipv6CountsByItsSlash56`;
-  `core.FloodTest.negative_zeroRefillRateNeverRefills`; h2spec 2.6.0 (`tools/interop/h2spec.sh`, 146 of 146).
+  `core.FloodTest.negative_zeroRefillRateNeverRefills`; every flood class against both cores with a peer that reads
+  nothing, each with its measured bound (at most 10 000 control frames, 170 000 bytes for PING answers; one DATA frame per
+  stream for the data dribble; tiny increments end as glitches, 64 KiB ones after 32 768 frames with FLOW_CONTROL_ERROR):
+  `core.FloodClassesTest.*`; floods the engine must judge (malformed requests and refusals
+  read by the client): `runtime.H2ServerFloodTest.negative_malformedRequestFloodEndsCalm`,
+  `.negative_refusedRequestFloodEndsCalm`; end to end: `ServerH2FloodTest.negative_floodClassesWithoutReadingEndCalm`,
+  `.negative_windowUpdateFloodsEnd`, and against the client engine from a hostile server
+  `ClientH2FloodTest.negative_pingFloodFromTheServer`, `.negative_settingsFloodFromTheServer`,
+  `.negative_emptyDataFloodFromTheServer`, `.negative_priorityAndUnknownFloodFromTheServer`; h2spec 2.6.0 (`tools/interop/h2spec.sh`, 146 of 146).
 - **Fuzzing:** Jazzer targets `http2.frames` (`FrameDecoder` fed in input-chosen pieces: only its own errors escape, no
   payload above the limit, allocation within the input plus one frame) and `http2.hpackDecode` (two blocks through one
   decoder with input-chosen table size and list limit: only `HpackError` escapes, the list stays within the limit,
@@ -695,7 +724,28 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   reproducer `finding-peer-list-limit-1`). `http2.connectionClient` (0.3.0, with the client engine): a client core with
   up to eight requests, fed arbitrary server bytes after a valid SETTINGS and driven like the engine (every field section
   through the section 8 checks): nothing escapes but protocol errors, its state stays within its settings and the send
-  window is conserved; regression runs on its seeds only so far.
+  window is conserved. Since 0.3.0 (the blind-spot audit of 2026-11-15 found that the two connection targets had never
+  reached CONTINUATION, PING, most settings or any protocol error): both connection targets take a mode byte (limit
+  presets, one with every flood limit small enough for a short input; Extended CONNECT, RFC 8441; a peer that reads every
+  piece, every fourth, only at the end, or in 64-byte reads that leave frames partly written; a 1 ms or 1 s clock;
+  the driver's own PINGs, GOAWAYs, resets, priorities and trailers), the server driver runs every request through the
+  section 8 checks, timeouts fire only when due, and a `WireMirror`, the peer's view built from the bytes alone, checks
+  every frame we write: no DATA beyond the windows the peer granted (§6.9.1, with SETTINGS_INITIAL_WINDOW_SIZE applied at
+  our ACK), an ACK per SETTINGS and PING ACKs in order (§6.5.3, §6.7), nothing after a RST_STREAM either way (§5.1,
+  §5.4.2), GOAWAY last stream IDs that never grow (§6.8), field blocks that decode with the acknowledged table size to what
+  was sent (§4.3.1), and the connection ended where the CONTINUATION, field-block and empty-DATA limits say. Seeds come
+  from `H2SeedCorpusTest` (`tools/fuzz/gen-seeds.sh`: 59 server and 27 client conversations, their frames and field
+  blocks); `H2FuzzReachTest` replays seeds and `tools/fuzz/corpus/http2.*` with reach counters and fails when the seeds
+  stop reaching a listed frame type, setting, window change, error path or Extended CONNECT. First campaign
+  (2026-11-15, short slices: `frames` 5.5 min, the others 2 min each): the connection targets found within 22 s and 16 s
+  that a stream ended both ways with its last frames queued sent them after our RST_STREAM (§5.4.2), and that a client
+  accepted frames on a request whose HEADERS were still queued (§5.1, an idle stream); both fixed with `negative_*` tests
+  in `core.StreamStateTest` and kept as `finding-*` reproducers; 2 min more on each found nothing (660 000 and 191 000
+  executions). Corpora: `frames` 105, `hpackDecode` 120, `connectionServer` 663, `connectionClient` 638,
+  `hpackRoundTrip` 195 inputs. Four bugs planted in a scratch copy (queued DATA not charged again after a window shrink,
+  the CONTINUATION limit not enforced, PING answers out of order, a GOAWAY whose last stream ID grows) were each found by
+  `connectionServer` within 7 s, three of them with no seeds at all; the targets as they were before missed all four in
+  60 s each (2.2 million executions per run).
 
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 

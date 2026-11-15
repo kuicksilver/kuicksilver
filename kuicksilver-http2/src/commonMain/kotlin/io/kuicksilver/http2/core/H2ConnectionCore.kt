@@ -90,6 +90,12 @@ internal class H2ConnectionCore(
     internal val control = ArrayDeque<ByteArray>()
 
     internal var wroteSincePing = true
+
+    /** Tiny increments to the connection window the peer may still send for free ([TINY_CREDIT]), as [H2Stream.tinyAllowance]. */
+    internal var connectionTinyAllowance = 1
+
+    /** The [H2Stream.tinyAllowance] left of streams we forgot, as long as [recentlyClosed] remembers them. */
+    internal val closedTinyAllowance = LinkedHashMap<Int, Int>()
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
     internal val dataReady = DataScheduler()
@@ -155,7 +161,13 @@ internal class H2ConnectionCore(
     internal var rttNanos = 100_000_000L // until the SETTINGS acknowledgement measures it
     private var nextLocalId = if (client) 1 else 2
     internal var lastPeerStreamId = 0
+
+    /** The largest of our streams whose HEADERS were written. */
+    internal var lastLocalSent = 0
     internal var refusedInARow = 0
+
+    /** The peer acknowledged the SETTINGS carrying our SETTINGS_MAX_CONCURRENT_STREAMS. */
+    internal var concurrencyLimitAcknowledged = false
     internal var emptyDataInARow = 0
     private var lastNow = now // the latest time a caller gave, for work that a call without a time triggers
 
@@ -313,6 +325,17 @@ internal class H2ConnectionCore(
                 "frame type ${f::class.simpleName} inside the field block of stream $blockStream",
             )
         }
+        // section 5.1: our stream is idle to the peer until its HEADERS are written, and "Receiving any frame other than
+        // HEADERS or PRIORITY on a stream in this state MUST be treated as a connection error (Section 5.4.1) of type
+        // PROTOCOL_ERROR"; the peer cannot open our streams with HEADERS either (section 5.1.1)
+        // (frames of extensions are ignored where they make no sense, section 5.5: unknown types and ALTSVC, RFC 7838 section 4)
+        if (f !is Frame.Priority && f !is Frame.Unknown && f !is Frame.AltSvc && f.streamId != 0 && notYetSent(f.streamId)) {
+            throw H2ConnectionError(
+                Http2ErrorCode.PROTOCOL_ERROR,
+                "${f::class.simpleName} on stream ${f.streamId}, idle: its HEADERS were not sent",
+            )
+        }
+        frameHook?.invoke(f)
         when (f) {
             is Frame.Data -> onData(f, now)
             is Frame.Headers -> startBlock(f.streamId, 0, f.endStream, f.dependency, f.fragment, f.endHeaders, now)
@@ -332,14 +355,26 @@ internal class H2ConnectionCore(
 
     internal fun peerInitiated(id: Int): Boolean = (id and 1 == 1) == !client
 
-    /** Idle (section 5.1): never used by its initiator yet. */
-    internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id >= nextLocalId
+    /** Our stream whose HEADERS are still queued: idle to the peer (section 5.1). */
+    internal fun notYetSent(id: Int): Boolean = streams[id]?.let { it.local && !it.headersSent } == true
+
+    /**
+     * Idle (section 5.1): never used by its initiator yet. Ours are used once their HEADERS are written: one we opened and
+     * dropped before that stays idle to the peer until a later one of ours goes out ("The first use of a new stream
+     * identifier implicitly closes all streams in the 'idle' state that might have been initiated by that peer with a
+     * lower-valued stream identifier", section 5.1.1).
+     */
+    internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id > lastLocalSent
+
+    /** Glitches counted so far (a test hook). */
+    internal var glitchesTaken = 0
 
     /** Section 10.5: legal but suspicious when frequent; an empty glitch budget ends the connection (nghttp2's glitch limit). */
     internal fun glitch(
         now: Long,
         what: String,
     ) {
+        glitchesTaken++
         if (!glitches.take(
                 now,
             )
@@ -496,11 +531,14 @@ internal class H2ConnectionCore(
      * Resets [streamId] with [code] (the application cancelled it). A stream whose field section was never written is idle
      * to the peer: it is dropped without a RST_STREAM (section 6.4; a later stream closes it, section 5.1.1) and reported
      * as not processed. A stream already closed (the peer reset it, or it ended both ways) gets nothing (sections 5.1, 5.4.2).
+     * [causedByPeer]: the driver found an error of the peer's on the stream (a malformed message, section 8.1.1), which
+     * takes from the glitch budget as the core's own stream errors do (MadeYouReset, CVE-2025-8671).
      */
     fun reset(
         streamId: Int,
         code: Http2ErrorCode,
         now: Long,
+        causedByPeer: Boolean = false,
     ) {
         if (closed) return
         val s = streams[streamId]
@@ -513,7 +551,11 @@ internal class H2ConnectionCore(
         if (isIdle(streamId) && s == null) return // section 6.4: never on an idle stream
         // section 5.1: nothing but PRIORITY on a closed stream, and section 5.4.2: no RST_STREAM in answer to the peer's
         if (s?.state == StreamState.CLOSED || (s == null && streamId in recentlyClosed)) return
-        resetStream(streamId, code, now, causedByPeer = false)
+        try {
+            resetStream(streamId, code, now, causedByPeer)
+        } catch (e: H2ConnectionError) {
+            connectionError(e.code, e.message ?: "") // the peer's error emptied the glitch budget: a driver's call never throws it
+        }
     }
 
     /**
@@ -669,6 +711,9 @@ internal class H2ConnectionCore(
 
     fun nextEvent(): H2Event? = events.removeFirstOrNull()
 
+    /** Called with each frame of the peer as it reaches its handler (a test hook: the fuzz targets' reach counters). */
+    internal var frameHook: ((Frame) -> Unit)? = null
+
     /** Bytes of the field block being collected (a test hook for the CONTINUATION limits). */
     internal val blockBufferCapacity: Int get() = block.capacity
 
@@ -696,6 +741,9 @@ internal class H2ConnectionCore(
 
     /** Control frames waiting for [poll] (bounded by `maxControlFramesQueued`). */
     internal val controlQueued: Int get() = control.size + pingAnswers.size
+
+    /** Bytes of the control frames waiting for [poll] (a test hook: what a flood that does not read makes us hold). */
+    internal val controlQueuedBytes: Long get() = control.sumOf { it.size.toLong() } + pingAnswers.sumOf { it.size.toLong() }
 
     // ---------------------------------------------------------------------------------------------------------------
     // internals
@@ -868,8 +916,15 @@ internal class H2ConnectionCore(
                     }
                 }
             }
-        if (frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
+        if (frame[3].toInt() == 0x1) {
+            s.headersSent = true // HEADERS: the stream left the idle state for the peer
+            if (s.local) lastLocalSent = maxOf(lastLocalSent, s.id)
+        }
         if (frame[3].toInt() <= 0x1) wroteSincePing = true // DATA or HEADERS
+        if (frame[3].toInt() == 0x0) {
+            connectionTinyAllowance = minOf(connectionTinyAllowance + 1, TINY_CREDITS_HELD)
+            s.tinyAllowance = minOf(s.tinyAllowance + 1, TINY_CREDITS_HELD)
+        }
         if (frame[3].toInt() == 0x0 && s.out.none { it is OutItem.Data }) {
             s.dataQueued = false
             tryWake(s)
@@ -1115,6 +1170,21 @@ internal class H2ConnectionCore(
 
     internal companion object {
         private const val MAX_PINGS_OUT = 16
+
+        /**
+         * A WINDOW_UPDATE increment below this many bytes is tiny (RFC 9113 section 10.5: "Providing tiny increments to flow
+         * control in WINDOW_UPDATE frames"). Readers send them: one that credits each frame it read (Jetty's
+         * SimpleFlowControlStrategy) credits exactly that frame, and Go's x/net/http2 (flow.go, inflow.add) credits what it
+         * read, however little, once the window it granted is used up. Each follows DATA of ours, so each DATA frame we
+         * write allows one ([TINY_CREDITS_HELD]); only increments beyond those are glitches.
+         */
+        const val TINY_CREDIT = 1_024
+
+        /**
+         * At most this many tiny increments are allowed ahead on one window (Envoy counts DATA frames sent against
+         * WINDOW_UPDATEs received the same way): enough for a reader whose credits cross our DATA on the wire, no more.
+         */
+        const val TINY_CREDITS_HELD = 16
 
         /**
          * How long the other streams' DATA waits for a more urgent stream's writer that was just told to hand over its
