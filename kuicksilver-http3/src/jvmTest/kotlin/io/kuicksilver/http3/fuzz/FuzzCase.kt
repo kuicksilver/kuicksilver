@@ -7,7 +7,8 @@ import java.io.File
 import java.io.IOException
 
 // This file is the same in every fuzz package but for its package line (the modules share no test source set):
-// tools/check/fuzz-case-sync.sh fails when a copy drifts. Change them all together.
+// tools/check/fuzz-case-sync.sh fails when a copy drifts. Change them all together. It also holds the replay of the
+// committed corpora (CommittedCorpusReplayTest), so every module with fuzz targets runs its own.
 
 /**
  * Where the fuzz case running last is named: build/test-heap-dumps/fuzz-case-<pid>.txt of the module (the directory
@@ -36,5 +37,62 @@ internal fun fuzzCase(case: TestInfo) {
         file.writeText("$target ${case.displayName}\n")
     } catch (_: IOException) {
         // naming the case is a help for a crash, never a reason to fail the case
+    }
+}
+
+/**
+ * Replays every committed corpus input of this module's Jazzer targets: `tools/fuzz/corpus/<target>/` (what campaigns grew
+ * and `tools/fuzz/campaign.sh minimize` committed) is otherwise read only by later campaigns, so an invariant that went
+ * stale or a regression on one of those inputs went unnoticed (the stateful connection fuzzer's bound on owed
+ * PATH_RESPONSEs did). The targets are the `jvm` rows of campaign.sh's table for this module (the test's working directory
+ * is the module's); each input runs once, as the target runs it, and every failure is listed. Inputs whose target method
+ * no longer exists fail too.
+ */
+class CommittedCorpusReplayTest {
+    @org.junit.jupiter.api.Test
+    fun everyCommittedInputPasses() {
+        val project = File(System.getProperty("user.dir"))
+        val root = project.parentFile
+        val script = File(root, "tools/fuzz/campaign.sh")
+        if (!script.isFile) return // a module built outside the repository (a published source set) has no corpora
+        val lines = script.readLines()
+        val from = lines.indexOfFirst { it.startsWith("targets_table()") }
+        val rows =
+            lines
+                .drop(from + 1)
+                .dropWhile { !it.contains("<<'EOF'") }
+                .drop(1)
+                .takeWhile { it != "EOF" }
+                .map { it.trim().split(Regex("\\s+")) }
+                .filter { it.size == 5 && it[1] == "jvm" && it[2] == project.name }
+        val failures = ArrayList<String>()
+        var inputs = 0
+        val started = System.nanoTime()
+        for ((id, _, _, cls, method) in rows) {
+            val dir = File(root, "tools/fuzz/corpus/$id")
+            val files = dir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: continue
+            val target =
+                try {
+                    Class.forName(cls).getMethod(method, ByteArray::class.java)
+                } catch (e: ReflectiveOperationException) {
+                    failures += "$id: no target $cls.$method (${e::class.simpleName})"
+                    continue
+                }
+            val instance = target.declaringClass.getDeclaredConstructor().newInstance()
+            for (f in files) {
+                inputs++
+                try {
+                    target.invoke(instance, f.readBytes())
+                } catch (e: java.lang.reflect.InvocationTargetException) {
+                    val c = e.targetException
+                    failures += "$id/${f.name}: ${c::class.qualifiedName}: ${c.message}"
+                }
+            }
+        }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        println("committed corpora of ${project.name}: $inputs inputs of ${rows.size} targets in $ms ms")
+        if (failures.isNotEmpty()) {
+            throw AssertionError("${failures.size} committed corpus input(s) fail:\n" + failures.take(20).joinToString("\n"))
+        }
     }
 }

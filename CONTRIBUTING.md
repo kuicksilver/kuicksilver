@@ -269,7 +269,10 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the 0-RTT targets, `ZeroRttFuzzTest.zeroRttConnection` driving such a pair through every 0-RTT outcome against the 0-RTT
   invariant of `docs/architecture.md`; `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` run fixed seeds of it
   in `jvmTest`, and `KUICKSILVER_ZRTT_SEEDS=<n>` runs n seeds per case for a longer hunt); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run
-  as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh
+  as regression tests in `jvmTest`: the seeds and reproducers in the resources through Jazzer, and the campaigns'
+  minimized corpora in `tools/fuzz/corpus/<target>/` through `CommittedCorpusReplayTest` (in each module's `FuzzCase.kt`,
+  for the module's rows of the campaign.sh table); `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under
+  ASan/UBSan. `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh
   --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
