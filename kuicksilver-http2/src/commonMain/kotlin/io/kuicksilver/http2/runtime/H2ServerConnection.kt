@@ -136,8 +136,9 @@ public class H2ServerConnection private constructor(
             connectionErrorOf: (Throwable) -> Http2ErrorCode? = { null },
         ): H2ServerConnection {
             // bounded by our SETTINGS_MAX_CONCURRENT_STREAMS in the core. A request taken by a receiver cancelled while being
-            // resumed (kotlinx.coroutines' prompt cancellation: a timeout, a select) goes back to the queue for the next one;
-            // once the connection ended it cannot, and is released, so it no longer counts in openRequests
+            // resumed (kotlinx.coroutines' prompt cancellation: a timeout, a select) goes back to the queue for the next one,
+            // at its tail (requests carry no order the engine relies on); once the connection ended it cannot, and is
+            // released, so it no longer counts in openRequests
             lateinit var ch: Channel<H2ServerStream>
             ch = Channel(Channel.UNLIMITED) { s -> if (ch.trySend(s).isFailure) runCatching { s.release() } }
             val c = H2ServerConnection(ch)
@@ -152,6 +153,12 @@ public class H2ServerConnection private constructor(
                     Long.MAX_VALUE,
                     closeTransport = {
                         ch.close()
+                        // the requests nobody took before the end: released here, so openRequests reaches 0 at the stop
+                        // whether or not the engine still drains the closed channel
+                        while (true) {
+                            val left = ch.tryReceive().getOrNull() ?: break
+                            runCatching { left.release() }
+                        }
                         closeTransport()
                     },
                     onChange = {},

@@ -1633,6 +1633,22 @@ class H2RuntimeTest {
             assertEquals(0, server.openRequests.value, "the undelivered request still counts as open")
         }
 
+    /** Requests nobody received before the connection ended are released at its close: openRequests reaches 0. */
+    @Test fun negative_requestsNeverReceivedAreReleasedWhenTheConnectionEnds() =
+        runTest {
+            val (client, server, _) = pair()
+            runCurrent() // the server's SETTINGS: the client may open two streams
+            client.get("/a")
+            client.get("/b")
+            runCurrent()
+            assertEquals(2, server.openRequests.value)
+            server.abort(IOException("gone"))
+            runCurrent()
+            server.awaitClosed()
+            assertEquals(0, server.openRequests.value, "requests left in the queue still count as open")
+            assertTrue(server.requests.tryReceive().isClosed)
+        }
+
     /** A dispatcher whose tasks wait in [tasks] until the test runs them. */
     private class StepDispatcher : CoroutineDispatcher() {
         val tasks = Channel<Runnable>(Channel.UNLIMITED)
