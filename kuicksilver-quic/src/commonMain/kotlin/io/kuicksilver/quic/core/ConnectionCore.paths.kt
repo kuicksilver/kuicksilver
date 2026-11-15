@@ -877,6 +877,9 @@ private fun ConnectionCore.revertTo(
             k.revalidateOnceSending = true
         }
     } else {
+        // a first validation of this pair under way ends: the peer address is validated (on [last]), and one seen recently is not
+        // validated again below; a PATH_CHALLENGE of it must not stay pending on a validated path
+        if (k.state == PathState.Validating) clearValidation(k)
         k.state = PathState.Validated
     }
     k.amplification.validated = true
@@ -887,10 +890,24 @@ private fun ConnectionCore.revertTo(
         k.keptPeer = cids.currentPeer
         k.waitDcidSeq = leftDcidSeq
     }
-    val heard = if (k.validatedAt > k.lastReceivedAt) k.validatedAt else k.lastReceivedAt
+    val heard = lastHeard(k)
     if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
         // a PATH_CHALLENGE needs an ID too: its validation period starts once the path can send, never while nothing can leave
         if (k.waitsForPeerCid) k.revalidateOnceSending = true else startValidation(k)
+    }
+}
+
+/**
+ * When [p]'s peer address was last seen: the later of its validation and its latest packet, either of which may be unknown
+ * ([TimeMark.NEVER], which is not "later"); NEVER only when both are.
+ */
+private fun lastHeard(p: Path): TimeMark {
+    val v = p.validatedAt
+    val r = p.lastReceivedAt
+    return when {
+        v == TimeMark.NEVER -> r
+        r == TimeMark.NEVER || v > r -> v
+        else -> r
     }
 }
 
@@ -923,7 +940,7 @@ private fun ConnectionCore.releasePeerCidWait(
 private fun ConnectionCore.keepActiveOnValidatedAddress(p: Path): Boolean {
     if (role != TlsRole.Server || p !== paths.active) return false
     val other = paths.all.firstOrNull { it !== p && it.state == PathState.Validated && it.isRemote(p.remote) } ?: return false
-    val heard = if (other.validatedAt > other.lastReceivedAt) other.validatedAt else other.lastReceivedAt
+    val heard = lastHeard(other)
     if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
         // not seen recently: no validation to skip. The original path validates the address again, once; a second failure is a
         // failure (the client stopped answering there)

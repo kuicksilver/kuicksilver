@@ -1152,6 +1152,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   transport parameters (RFC 9001 section 8.2), the TLS session of a connection whose construction failed (client and
   server, including a reset token that failed for its first connection ID), the first derived key of a key phase whose
   second derivation failed, and the TLS session of a server whose OCSP staple could not be set.
+- QUIC: a server reverting to the last validated peer address after a failed path validation, or keeping a peer address
+  validated on another of its addresses, took an address validated or heard from just now for one never seen when the other
+  of the two times was unknown, and validated it again (RFC 9000 section 9.3 lets it skip that). A revert that ends a
+  validation still under way on the path it goes back to no longer leaves that validation's PATH_CHALLENGE pending.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the

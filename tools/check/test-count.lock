@@ -3816,6 +3816,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_zeroRttKeysDroppedOnTheirTimer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_zeroRttRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.zeroRttAccepted
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathSeenRecentlyTest.negative_aRevertToAnAddressHeardJustNowSkipsItsValidation
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathSeenRecentlyTest.negative_anAddressValidatedJustNowWithNoPacketSinceCountsAsSeenRecently
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.aNewClientAddressTakesTheLocalAddressItsDatagramReached
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.aNewClientAddressWithAnUnknownDestinationKeepsTheServersSource
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.aRevertToAPeerAddressThatUsedTheCurrentIdHereKeepsIt
