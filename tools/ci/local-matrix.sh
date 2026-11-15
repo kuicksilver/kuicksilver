@@ -219,9 +219,10 @@ step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
 # shellcheck disable=SC2086
 # the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
-# value-returning, static or private test, an abstract class nothing extends); the three modules outside KSL_JVM_TESTS are
-# compiled here too, so no class file of an earlier build is read
-step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm"' && python3 -I tools/check/test-bytecode.py'
+# value-returning, static or private test, one in an object, an abstract class nothing extends): the JVM ones and the
+# Android host tests (JUnit on the host JVM). The three modules outside KSL_JVM_TESTS and every module with Android host
+# tests are compiled here too, so no class file of an earlier build is read
+step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm "'$(git ls-files "kuicksilver-*/src/androidHostTest/*" | cut -d/ -f1 | sort -u | sed "s/.*/:&:compileAndroidHostTest/") && python3 -I tools/check/test-bytecode.py'
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-engine-interop:jvmTest   # docs/spec/interop.md "Engine interop"; about a minute
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'

@@ -504,7 +504,7 @@ jobs:
       - name: 'jvm: every compiled test method can run'
         # the class files of the steps above (and soak's): a test method returning a value, static or private, or in an
         # abstract class nothing extends, is one no runner calls (tools/check/test-bytecode.py)
-        run: $G :kuicksilver-soak:compileTestKotlinJvm && python3 -I tools/check/test-bytecode.py
+        run: $G :kuicksilver-soak:compileTestKotlinJvm && python3 -I tools/check/test-bytecode.py --targets jvm
       - name: 'jvm: exports whitelist (dylib)'
         run: |
           # shellcheck disable=SC2012   # library names are fixed ASCII
@@ -609,6 +609,12 @@ jobs:
         with: { ndk: 'true', openssl-cache: android }
       - name: 'android: AAR'
         run: $G :kuicksilver-native:bundleAndroidMainAar
+      - name: 'android: every compiled host test method can run'
+        # the Android host tests run under JUnit on the host JVM; tools/check/test-bytecode.py reads their class files
+        run: |
+          # shellcheck disable=SC2046   # one Gradle task path per module
+          $G $(git ls-files 'kuicksilver-*/src/androidHostTest/*' | cut -d/ -f1 | sort -u | sed 's/.*/:&:compileAndroidHostTest/')
+          python3 -I tools/check/test-bytecode.py --targets android-host
       - name: 'android: size gate'
         run: bash tools/check/size.sh "$AAR" "$SIZE_LIMIT"
       - name: 'android: 16 KiB pages'

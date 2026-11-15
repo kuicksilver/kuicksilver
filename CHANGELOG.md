@@ -582,9 +582,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Build: repository checks for bug classes that came back after review (docs/process.md, "Repository checks"), in
   steps 3 and 4 of the local gate (now `lint: doc refs, test gates, commit types` and its negative controls; the step
   count is unchanged) and in the CI `lint` job, each with negative controls: `tools/check/test-discovery.py` (a `@Test`
-  no runner runs, such as one declared inside a helper's body), `test-bytecode.py` (the same in the compiled JVM test
-  classes: a test returning a value, which JUnit 5 skips, a static or private one, one in an object; it runs after the
-  JVM tests), `test-count.py` (every test listed in `test-count.lock`, so a drop names the test),
+  no runner runs, such as one declared inside a helper's body), `test-bytecode.py` (the same in the compiled JVM and
+  Android host test classes: a test returning a value, which JUnit 5 skips, a static or private one, one in an object;
+  it runs after the JVM tests), `test-count.py` (every test listed in `test-count.lock`, so a drop names the test),
   `test-sleeps.py` (the sleeps per test file, polling helpers included, may only go down, `test-sleeps.lock`),
   `env-apis.py` (host-name lookups in library code, counted per file in `env-apis.allow`), `rfc-tests.py` (the tests a ✅ RFC section
   names exist, and it names one; `rfc-tests.lock` lists the three sections without one) and `commit-msg.sh` (a
