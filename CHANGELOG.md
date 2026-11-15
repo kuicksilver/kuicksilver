@@ -975,6 +975,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC runtime: a STOP_SENDING watcher (`awaitSendStopped`, internal API) waited forever once its stream could no longer
+  be stopped. It now ends with the connection's `ConnectionLost` when the connection ended, with
+  `StreamError.EarlyDataRejected` when a rejected 0-RTT dropped the stream (RFC 9001 section 4.6.2: the client resets
+  "application state bound to those streams"), and with `IllegalStateException` once both halves are done; HTTP/3's
+  watchers of its critical streams, which stayed suspended for the rest of a connection whose 0-RTT was rejected, end
+  quietly. Found by the 0-RTT runtime invariant test; pinned by `SendStoppedTest` and
+  `ZeroRttApiTest.negative_sendStoppedWatcherOfARejectedStreamEnds`.
 - QUIC client, 0-RTT and Version Negotiation: after a Version Negotiation answered a first flight that carried 0-RTT,
   the new attempt numbers its packets from 0 again (RFC 9368 section 2.1, "a new first flight") while the client still
   took the abandoned 0-RTT packets' numbers for its 0-RTT; the server's acknowledgment of the new attempt's first 1-RTT

@@ -12,6 +12,7 @@ import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.quic.runtime.EndpointLoop
@@ -23,11 +24,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -308,6 +311,53 @@ class ZeroRttApiTest {
                         assertEquals("three!", fresh.input.readAll(), "the early stream's reset reached the new stream")
                         serving.await()
                         assertEquals(listOf("three"), seen)
+                        second.close()
+                    } finally {
+                        server.close()
+                    }
+                }
+            }
+        }
+
+    /**
+     * Found by the 0-RTT runtime invariant test. RFC 9001 section 4.6.2: the client "MUST reset the state of all streams,
+     * including application state bound to those streams". A STOP_SENDING watcher (`awaitSendStopped`, which HTTP/3 keeps on
+     * each critical stream) on a stream the rejection dropped waited for the rest of the connection; it now ends with
+     * [QuicException.StreamError.EarlyDataRejected].
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_sendStoppedWatcherOfARejectedStreamEnds(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    val firstServer =
+                        async {
+                            val c = p.server.accept()
+                            val s = c.acceptStream()
+                            s.output.writeFully(s.input.readAll().encodeToByteArray())
+                            s.output.flushAndClose()
+                        }
+                    val first = p.client.connect(p.server.localAddress, clientConfig())
+                    assertEquals("one", first.echo("one"))
+                    val sessions = (p.client as EndpointLoop).sessions
+                    while (sessions.size() == 0) yield()
+                    first.close()
+                    firstServer.await()
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    try {
+                        p.net.hold(p.clientIo.localAddress)
+                        val second = p.client.connectEarly(server.localAddress, clientConfig())
+                        val early = second.openUni()
+                        early.output.writeFully("control".encodeToByteArray())
+                        early.output.flush()
+                        val watcher = async { runCatching { early.awaitSendStopped() }.exceptionOrNull() }
+                        p.net.release(p.clientIo.localAddress)
+                        second.awaitHandshake()
+                        assertEquals(false, second.earlyDataAccepted)
+                        val e = withTimeoutOrNull(5.seconds) { watcher.await() }
+                        assertIs<QuicException.StreamError.EarlyDataRejected>(e, "the watcher of the dropped stream ended")
+                        assertTrue(second.closed.isActive, "the connection goes on")
                         second.close()
                     } finally {
                         server.close()
