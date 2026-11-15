@@ -3331,4 +3331,43 @@ class PathTest {
             p.close()
         }
     }
+
+    /**
+     * Found by the connection fuzzer (`connectionNull`: a server falling back to a validated path on its preferred-address socket):
+     * RFC 9000 section 9.5, "An endpoint MUST NOT reuse a connection ID when sending from more than one local address". A validated
+     * path that only probed gives its peer ID back; switching to it later kept the current ID, used from the other socket, when no
+     * unused one was left. Here the client's limit of 2 leaves one spare, which the probe spends.
+     */
+    @Test fun negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect(QuicConfig.Builder().apply { activeConnectionIdLimit = 2 }.build())
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            val pid = c.addPath(p.serverAddr, p.now)
+            val other = InetSocketAddress("10.0.0.7", 40000)
+            p.clientSocketSources[pid] = other
+            p.clientListens += other
+            c.probePath(pid, p.now)
+            assertTrue(p.runUntil(5.seconds) { c.pathState(pid) == PathState.Validated }, "second path validated")
+            val old = c.remoteCid
+            val refused =
+                try {
+                    c.switchPath(pid, p.now)
+                    false
+                } catch (_: IllegalStateException) {
+                    true
+                }
+            if (!refused) assertNotEquals(old, c.remoteCid, "the new socket must not send with the ID the old one used")
+            assertTrue(refused || c.paths.active.socket == pid, "switched or refused")
+            // the server replaces the retired ID: the switch is possible then, with the new one
+            p.runUntil(2.seconds) { c.cids.hasSparePeerForTest }
+            if (refused) {
+                c.switchPath(pid, p.now)
+                assertNotEquals(old, c.remoteCid)
+            }
+        } finally {
+            p.close()
+        }
+    }
 }

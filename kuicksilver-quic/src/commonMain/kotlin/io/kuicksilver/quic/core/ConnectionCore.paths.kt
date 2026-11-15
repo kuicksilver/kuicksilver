@@ -678,7 +678,9 @@ internal fun ConnectionCore.onPathFailed(
         if (p.preferred) paths.remove(p)
         return
     }
-    val back = paths.fallback(p)
+    // a path we can send on with an ID never used from another local address (RFC 9000 section 9.5: "An endpoint MUST NOT reuse a
+    // connection ID when sending from more than one local address"); one whose ID went back after its validation needs a spare one
+    val back = paths.fallback(p) { dcidFor(it) != null }
     if (back != null) {
         // RFC 9000 section 9.3.2: the most recently validated path
         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)
@@ -767,11 +769,13 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                     handshakeMovesFrozen = true
                 }
             }
-            // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
-            // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
+            // a validated path keeps the ID it probed with while it may become the active one: a client's own path (its application
+            // probes to switch there, and closing or losing the path gives the ID back), a server's path the client probed (the client
+            // probes to migrate there next). A switch to a path whose ID went back would need a spare one, and with none left it must
+            // not take the ID used from another local address (RFC 9000 section 9.5). A server returns the ID of a path it only probed
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
             val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
-            if (p !== paths.active && !preferredMove && !toPreferred && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
+            if (p !== paths.active && !preferredMove && !toPreferred && role == TlsRole.Server && !p.peerProbed) releasePathCid(p)
             val carrier = p.carrier
             if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
                 adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of

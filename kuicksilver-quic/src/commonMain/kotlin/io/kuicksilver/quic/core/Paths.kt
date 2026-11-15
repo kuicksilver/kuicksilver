@@ -393,12 +393,16 @@ internal class Paths(
     }
 
     /** The most recently validated path other than [except], if any. */
-    fun fallback(except: Path): Path? {
+    fun fallback(
+        except: Path,
+        usable: (Path) -> Boolean = { true },
+    ): Path? {
         var best: Path? = null
         for (i in 0 until all.size) {
             val p = all[i]
             if (p !== except &&
                 p.state == PathState.Validated &&
+                usable(p) &&
                 (best == null || p.validatedAt > best.validatedAt)
             ) {
                 best = p

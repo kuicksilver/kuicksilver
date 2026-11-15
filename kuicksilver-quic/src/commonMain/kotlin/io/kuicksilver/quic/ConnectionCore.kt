@@ -30,6 +30,7 @@ import io.kuicksilver.quic.core.amplificationLeavesNoProbe
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkTlsInput
+import io.kuicksilver.quic.core.dcidFor
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.drainStreamEvents
 import io.kuicksilver.quic.core.driveTls
@@ -1174,7 +1175,11 @@ public class ConnectionCore internal constructor(
         if (p.state != PathState.Validating) startValidation(p)
     }
 
-    /** Moves the connection to the validated path [id]; the previous path stays as a fallback. */
+    /**
+     * Moves the connection to the validated path [id]; the previous path stays as a fallback. Throws IllegalStateException while no
+     * unused peer connection ID is left for it: RFC 9000 section 9.5, "An endpoint MUST NOT reuse a connection ID when sending from
+     * more than one local address" (the peer replaces a retired ID within a round trip).
+     */
     public fun switchPath(
         id: PathId,
         now: TimeMark,
@@ -1183,6 +1188,7 @@ public class ConnectionCore internal constructor(
             paths.byId(id) ?: throw IllegalStateException("unknown path $id")
         check(p.state == PathState.Validated) { "path $id is ${p.state}, not Validated" }
         this.now = now
+        check(p === paths.active || dcidFor(p) != null) { "no unused connection ID of the peer for path $id yet (RFC 9000 section 9.5)" }
         switchPath(p, PathChangeReason.ActiveMigration, challengeOld = false)
         if (p.preferred) movedToPreferred = true // it took the server's preferred address (RFC 9000 section 9.6.3)
     }
