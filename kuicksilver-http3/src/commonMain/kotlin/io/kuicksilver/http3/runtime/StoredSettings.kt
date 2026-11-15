@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.webtransport.WtSettings
@@ -25,18 +26,28 @@ internal object StoredSettings {
     /** What is stored: the server's SETTINGS without reserved (GREASE) identifiers, which carry no meaning. */
     fun kept(received: Map<Long, Long>): List<Pair<Long, Long>> = received.filterKeys { !FrameType.isGrease(it) }.toList()
 
+    /** Why SETTINGS after an accepted 0-RTT are not compatible, and the connection error [code] they are. */
+    class Incompatible(
+        val code: Long,
+        val reason: String,
+    )
+
     /**
      * Why the SETTINGS a server sent after accepting 0-RTT are not compatible with the [stored] ones, or null. Section
      * 7.2.4.2: settings "not compatible with the previously specified settings", and a SETTINGS frame "that omits a setting
      * value that the client understands (apart from reserved setting identifiers) that was previously specified to have a
      * non-default value", are a connection error of type H3_SETTINGS_ERROR. Compatible: a client that complied with the
-     * stored values complies with the new ones, so no limit is lower and no feature turned off; a non-zero
-     * SETTINGS_QPACK_MAX_TABLE_CAPACITY must be sent again unchanged (RFC 9204 section 3.2.3).
+     * stored values complies with the new ones, so no limit is lower and no feature turned off.
+     *
+     * SETTINGS_QPACK_MAX_TABLE_CAPACITY has its own, more specific rule (RFC 9204 section 3.2.3): "If the remembered value
+     * is non-zero, the server MUST send the same non-zero value in its SETTINGS frame. If it specifies any other value, or
+     * omits SETTINGS_QPACK_MAX_TABLE_CAPACITY from SETTINGS, the encoder must treat this as a connection error of type
+     * QPACK_DECODER_STREAM_ERROR": a larger value too, and with that code rather than H3_SETTINGS_ERROR.
      */
     fun incompatibility(
         stored: Map<Long, Long>,
         now: Map<Long, Long>,
-    ): String? {
+    ): Incompatible? {
         // every setting we understand, stored or not: one stored with its default (or not stored at all) binds too, so a
         // server that now sends a lower value than the default it had (an unlimited SETTINGS_MAX_FIELD_SECTION_SIZE
         // now limited) is incompatible as well
@@ -44,14 +55,22 @@ internal object StoredSettings {
             val name = "0x${id.toString(16)}"
             val was = if (id in stored) stored[id] else DEFAULTS[id] // null: unlimited (MAX_FIELD_SECTION_SIZE)
             val v = now[id]
+            val code =
+                if (id ==
+                    SettingsId.QPACK_MAX_TABLE_CAPACITY
+                ) {
+                    Http3ErrorCode.QPACK_DECODER_STREAM_ERROR
+                } else {
+                    Http3ErrorCode.SETTINGS_ERROR
+                }
             if (v == null) {
-                if (id in stored && DEFAULTS[id] != was) return "setting $name ($was in 0-RTT) omitted"
+                if (id in stored && DEFAULTS[id] != was) return Incompatible(code, "setting $name ($was in 0-RTT) omitted")
                 continue
             }
             if (id == SettingsId.QPACK_MAX_TABLE_CAPACITY) {
-                if (was != 0L && v != was) return "QPACK table capacity $v instead of $was used in 0-RTT"
+                if (was != 0L && v != was) return Incompatible(code, "QPACK table capacity $v instead of $was used in 0-RTT")
             } else if (was == null || v < was) {
-                return "setting $name lowered from ${was ?: "unlimited"} to $v after 0-RTT"
+                return Incompatible(code, "setting $name lowered from ${was ?: "unlimited"} to $v after 0-RTT")
             }
         }
         return null

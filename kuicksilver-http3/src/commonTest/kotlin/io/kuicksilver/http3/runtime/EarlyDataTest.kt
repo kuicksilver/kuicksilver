@@ -32,6 +32,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -850,6 +851,56 @@ class EarlyDataTest {
     private val maxField = io.kuicksilver.http3.frame.SettingsId.MAX_FIELD_SECTION_SIZE
 
     /**
+     * RFC 9204 section 3.2.3, the more specific text for this setting: a server that accepted 0-RTT and then sends another
+     * SETTINGS_QPACK_MAX_TABLE_CAPACITY than the remembered non-zero one (a larger one too) or omits it is a connection error
+     * of type QPACK_DECODER_STREAM_ERROR, not the H3_SETTINGS_ERROR of RFC 9114 section 7.2.4.2 (before 0.3.0).
+     */
+    @Test fun negative_qpackCapacityChangedAfter0RttIsDecoderStreamError(): Unit =
+        runBlocking {
+            val capacity = io.kuicksilver.http3.frame.SettingsId.QPACK_MAX_TABLE_CAPACITY
+            val changes =
+                listOf<(List<Pair<Long, Long>>) -> List<Pair<Long, Long>>>(
+                    { l -> l.map { if (it.first == capacity) it.first to 8192L else it } },
+                    { l -> l.filter { it.first != capacity } },
+                )
+            for (change in changes) {
+                Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { enableQpackDynamicTable() }.use { f ->
+                    withTimeout(20.seconds) {
+                        f.start()
+                        f.warmUp()
+                    }
+                    H3Session.createdForTest = { if (it.isServer) it.ourSettingsForTest = change }
+                    try {
+                        val end: Throwable =
+                            withTimeout(20.seconds) {
+                                try {
+                                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                                    if (runCatching { c.quic.awaitHandshake() }.isSuccess) {
+                                        assertEquals(true, c.quic.earlyDataAccepted, "the server did not accept 0-RTT")
+                                    }
+                                    c.closed.await()
+                                } catch (e: io.kuicksilver.http3.Http3Exception) {
+                                    e
+                                } catch (e: io.kuicksilver.quic.QuicException) {
+                                    e
+                                }
+                            }
+                        val code =
+                            when (end) {
+                                is io.kuicksilver.http3.Http3Exception.Protocol -> end.h3Code
+                                is io.kuicksilver.http3.Http3Exception.Qpack -> end.code
+                                else -> kotlin.test.fail("${end::class.simpleName}: $end")
+                            }
+                        assertEquals(io.kuicksilver.http3.Http3ErrorCode.QPACK_DECODER_STREAM_ERROR, code, "$end")
+                        assertTrue("0-RTT" in end.message.orEmpty(), "$end")
+                    } finally {
+                        H3Session.createdForTest = null
+                    }
+                }
+            }
+        }
+
+    /**
      * draft-ietf-webtrans-http3-16 section 3.2: "A client MUST close the connection with H3_SETTINGS_ERROR if the SETTINGS
      * frame received in the resumed connection reduces any flow control values from the cached previous values": a
      * server that accepted 0-RTT and then sends a lower SETTINGS_WT_INITIAL_MAX_DATA, or omits it.
@@ -916,6 +967,72 @@ class EarlyDataTest {
                     assertEquals(false, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer.toBuilder().apply(change).build()))
                 }
                 assertEquals(true, earlyAcceptedAfterResuming(issuer = issuer, resumer = issuer))
+            }
+        }
+
+    /**
+     * The field-section limits keep state per stream and connection (a [HeaderBudget] reservation per HEADERS frame being
+     * read, a section deadline, the server's request-head deadline): with 0-RTT accepted, nothing of it stays on either side
+     * once the early request was answered.
+     */
+    @Test fun negative_acceptedZeroRttLeavesNoHeaderState(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.delay = 50.milliseconds
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    assertEquals(200, c.request(f.get(early = true)).also { it.body.readAllBytes() }.status)
+                    c.quic.awaitHandshake()
+                    assertEquals(true, c.quic.earlyDataAccepted)
+                    HeaderLimitsTest.assertNoHeaderState(c.session)
+                    HeaderLimitsTest.assertNoHeaderState(f.accepted.last().session)
+                }
+            }
+        }
+
+    /** Rejected 0-RTT: the early request's stream is dropped and sent again; nothing of its head stays held on either side. */
+    @Test fun negative_rejectedZeroRttLeavesNoHeaderState(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        earlyRequest = true,
+                        after = { c, servers ->
+                            HeaderLimitsTest.assertNoHeaderState(c.session)
+                            servers().forEach { HeaderLimitsTest.assertNoHeaderState(it.session) }
+                        },
+                    )
+                assertEquals(false, accepted)
+            }
+        }
+
+    /**
+     * The connection is lost while an early request waits for its response head (the server's packets never arrive): the
+     * request fails, and neither side keeps a reservation, a waiter or an armed deadline.
+     */
+    @Test fun negative_zeroRttLostBeforeTheAnswerLeavesNoHeaderState(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    f.net.drop = { _, to, _ -> to.port == 1111 } // nothing of the server reaches the client
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    val call = async { runCatching { c.request(f.get(early = true)) } }
+                    while (f.accepted.isEmpty()) kotlinx.coroutines.yield()
+                    val server = f.accepted.last()
+                    while (f.last == null) kotlinx.coroutines.yield() // the server read the early request and answered
+                    c.quic.close()
+                    assertTrue(call.await().isFailure)
+                    assertTrue(!c.quic.isHandshakeComplete)
+                    HeaderLimitsTest.assertNoHeaderState(c.session)
+                    server.quic.close()
+                    HeaderLimitsTest.assertNoHeaderState(server.session)
+                }
             }
         }
 

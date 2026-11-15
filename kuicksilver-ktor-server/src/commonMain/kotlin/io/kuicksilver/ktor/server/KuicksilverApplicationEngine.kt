@@ -83,7 +83,8 @@ public class KuicksilverApplicationEngine(
          * accepted TCP connection for the first request (the TLS handshake included) and from the end of the previous
          * response for the next one on a keep-alive connection; bytes that trickle in do not extend it. A client that sent
          * part of a head by then gets `408 Request Timeout` and the connection closes; one that sent nothing (an idle
-         * keep-alive connection, or a connection that never spoke) is closed without a response. Positive; default 30.
+         * keep-alive connection, or a connection that never spoke) is closed without a response. It also bounds the
+         * field-block deadline `maxHeaderBlockTime` of [http2Settings] and [http3Settings]. Positive; default 30.
          *
          * @throws IllegalArgumentException when set to zero or less.
          */
@@ -348,7 +349,11 @@ public class KuicksilverApplicationEngine(
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
         public var quicLoadBalancer: io.kuicksilver.quic.QuicLbConfig? = null
 
-        /** HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. */
+        /**
+         * HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. The engine bounds
+         * `maxHeaderBlockTime` by [requestHeaderTimeoutSeconds]: a request head slower than the smaller of the two is
+         * rejected with H3_REQUEST_REJECTED.
+         */
         public var http3Settings: Http3Settings = Http3Settings.Default
 
         /**

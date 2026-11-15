@@ -47,12 +47,14 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
@@ -62,8 +64,9 @@ internal suspend fun handleRequestStream(
 ) = with(session) {
     // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
     // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
-    // RFC 9204 section 2.2.1: with blocked sections possible, nothing of the first field section is taken ahead of it
-    if (settings.qpackBlockedStreams > 0) st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
+    // nothing of the request head is taken from the stream's flow-control window before the connection's header budget
+    // granted it (RFC 9114 section 10.5); RFC 9204 section 2.2.1: with blocked sections possible, nor before it may decode
+    st.readAhead = RequestFrames.FRAME_HEADER_AHEAD
     val firstSized =
         if (settings.webTransport) {
             try {
@@ -97,7 +100,21 @@ internal suspend fun handleRequestStream(
     // the parsed HEADERS: a request below the GOAWAY id whose HEADERS are still arriving must keep the idle close away
     // (RFC 9114 section 5.2), until the header deadline after GOAWAY
     requestStarted()
-    pendingHeaders[st.id] = st to currentCoroutineContext()[Job]!!
+    val reader = currentCoroutineContext()[Job]!!
+    pendingHeaders[st.id] = st to reader
+    // the request head must be read within maxHeaderBlockTime of the stream's first byte, or the stream is rejected: a
+    // stream whose HEADERS never complete would otherwise hold its reader, its budget and its stream slot as long as the
+    // client keeps the connection alive (RFC 9000 section 21.6, Slowloris; RFC 9114 section 10.5)
+    val headDeadline =
+        scope.launch {
+            delay(settings.maxHeaderBlockTime)
+            if (pendingHeaders[st.id]?.second === reader) {
+                headDeadlinesPassedForTest++
+                rejectUnfinishedHead(st, reader)
+            }
+        }
+    headDeadlinesArmedForTest.incrementAndFetch()
+    headDeadline.invokeOnCompletion { headDeadlinesArmedForTest.decrementAndFetch() }
     var handedOff = false
     try {
         val frames =
@@ -105,13 +122,17 @@ internal suspend fun handleRequestStream(
                 st.input,
                 isServerSide = true,
                 maxHeadersFrame = maxHeadersFrame,
-                onSkipped = { glitch("unknown frame on a request stream") },
+                onUseless = { glitch(it) },
                 onBuffered = { bufferedHeaderBytes += it },
                 firstType = firstType,
                 webTransport = settings.webTransport,
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
                 beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
-                limitReadAhead = if (settings.qpackBlockedStreams > 0) ({ st.readAhead = it }) else null,
+                limitReadAhead = { st.readAhead = it },
+                limitAlways = settings.qpackBlockedStreams > 0,
+                budget = headerBudget,
+                abandoned = { st.input.closedCause ?: if (closed.isCompleted) connectionError() else null },
+                streamId = st.id,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =
@@ -173,6 +194,10 @@ internal suspend fun handleRequestStream(
                 return@with
             }
         pendingHeaders.remove(st.id)
+        headDeadline.cancel()
+        // the head is read: the body reads ahead as any stream, trailers each have the deadline of a field section
+        frames.headDone()
+        frames.sectionDeadline = settings.maxHeaderBlockTime
         bidiSettled(st.id)
         // datagrams kept while the HEADERS were on the way belong to a request without datagram semantics: RFC 9297 section
         // 2 has it aborted with H3_DATAGRAM_ERROR (an Extended CONNECT with them takes them when its channel registers)
@@ -242,6 +267,7 @@ internal suspend fun handleRequestStream(
         req.receiveEnded()
     } finally {
         pendingHeaders.remove(st.id)
+        headDeadline.cancel()
         if (!handedOff) {
             requestDone()
             if (st.id in wtSessions) wtSessionEnded(st.id, null)

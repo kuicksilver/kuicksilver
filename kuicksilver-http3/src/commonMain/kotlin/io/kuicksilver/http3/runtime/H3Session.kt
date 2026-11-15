@@ -53,6 +53,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -402,6 +403,12 @@ internal class H3Session(
     /** Server: request streams still reading their HEADERS, with the coroutine reading them. */
     val pendingHeaders = HashMap<Long, Pair<QuicStream, Job>>()
 
+    /** Server: request streams rejected because their head missed `maxHeaderBlockTime` (a test hook; dispatcher only). */
+    internal var headDeadlinesPassedForTest = 0
+
+    /** Server: request-head deadlines still armed (a test hook: none may outlive its stream's head). */
+    internal val headDeadlinesArmedForTest = AtomicInt(0)
+
     /** Server: the header deadline after GOAWAY passed; a request stream that still has no HEADERS is rejected. */
     var headerDeadlinePassed = false
         internal set
@@ -436,6 +443,12 @@ internal class H3Session(
 
     /** Bytes of HEADERS payloads being read on request streams right now (a test hook; session dispatcher only). */
     var bufferedHeaderBytes = 0L
+
+    /**
+     * HEADERS payloads read on this connection's request streams at once, at most [HEADER_BUDGET_FRAMES] largest frames
+     * ([maxHeadersFrame]): RFC 9114 section 10.5, "memory commitments ... strictly bounded". Session dispatcher only.
+     */
+    val headerBudget = HeaderBudget(HEADER_BUDGET_FRAMES * maxHeadersFrame)
 
     /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out; a new one after a rejected 0-RTT. */
     internal var criticalStreams = CompletableDeferred<Unit>()
@@ -880,6 +893,9 @@ internal class H3Session(
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
+
+        /** [headerBudget] in largest HEADERS frames: 512 KiB at the default `maxFieldSectionSize`. */
+        const val HEADER_BUDGET_FRAMES: Long = 4
         val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
 
         /**

@@ -273,7 +273,7 @@ class ConnectionTest {
                 while (!server.closed.isCompleted &&
                     withContext(server.session.dispatcher) { server.session.peerMaxPushId } < count - 1L
                 ) {
-                    delay(5)
+                    kotlinx.coroutines.yield() // until the server read the marker or closed
                 }
             }
             if (!server.closed.isCompleted) return@use true
@@ -315,7 +315,7 @@ class ConnectionTest {
             }
             withTimeout(5.seconds) {
                 while (!server.closed.isCompleted && withContext(server.session.dispatcher) { server.session.peerMaxPushId } < 7L) {
-                    delay(5)
+                    kotlinx.coroutines.yield() // until the server read the marker or closed
                 }
             }
             if (!server.closed.isCompleted) return@use true
@@ -324,12 +324,22 @@ class ConnectionTest {
         }
 
     /**
-     * RFC 9114 sections 7.2.8 and 9: reserved (GREASE) frame types on the control stream are ignored and cost nothing, as on
-     * request streams; twice the bucket of them leaves the connection open.
+     * RFC 9114 sections 7.2.8 and 9: reserved (GREASE) frame types on the control stream are ignored; the first
+     * [RequestFrames.FREE_USELESS_FRAMES] cost nothing, as on request streams, and the bucket takes 1000 more.
      */
-    @Test fun greaseFramesOnTheControlStreamAreFree() =
+    @Test fun aFewGreaseFramesOnTheControlStreamAreFree() =
         h3Test {
-            assertTrue(controlFramesLeaveTheConnectionOpen({ FrameType.grease(it.toLong()) }, 2002))
+            assertTrue(controlFramesLeaveTheConnectionOpen({ FrameType.grease(it.toLong()) }, RequestFrames.FREE_USELESS_FRAMES + 1000))
+        }
+
+    /**
+     * RFC 9114 section 10.5: "The ability to send undefined protocol elements that the peer is required to ignore can be
+     * abused ... Implementations SHOULD track the use of these features and set limits on their use": a flood of reserved
+     * frames on the control stream ends the connection with H3_EXCESSIVE_LOAD (before 0.3.0 they were free in any number).
+     */
+    @Test fun negative_greaseFloodOnTheControlStreamIsExcessiveLoad() =
+        h3Test {
+            assertFalse(controlFramesLeaveTheConnectionOpen({ FrameType.grease(it.toLong()) }, RequestFrames.FREE_USELESS_FRAMES + 1001))
         }
 
     @Test fun serverInitiatedBidiIsCreationError() =

@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.seconds
 
 /** One HTTP/3 port: its accept loop, the supervisor of its connection handlers and the connections themselves (for GOAWAY at stop). */
 internal class H3Listener(
@@ -83,7 +84,7 @@ internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnect
 
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
-    val s = configuration.http3Settings
+    val s = h3SettingsWithin(configuration.http3Settings, configuration.requestHeaderTimeoutSeconds.seconds)
     val connect = (configuration.webSocketsOverHttp3 || configuration.webTransport) && !s.enableConnectProtocol
     val wt = configuration.webTransport && !s.webTransport
     if (!connect && !wt) return s
@@ -94,6 +95,22 @@ private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
             if (wt) webTransport = true
         }.build()
 }
+
+/**
+ * [settings] with its field-section deadline bounded by the engine's request-head deadline [headerTimeout]: a request
+ * head over HTTP/3 has no more time than one over HTTP/1.1 or HTTP/2 ([h2SettingsWithin]).
+ */
+internal fun h3SettingsWithin(
+    settings: Http3Settings,
+    headerTimeout: kotlin.time.Duration,
+): Http3Settings =
+    if (settings.maxHeaderBlockTime <=
+        headerTimeout
+    ) {
+        settings
+    } else {
+        settings.toBuilder().apply { maxHeaderBlockTime = headerTimeout }.build()
+    }
 
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {

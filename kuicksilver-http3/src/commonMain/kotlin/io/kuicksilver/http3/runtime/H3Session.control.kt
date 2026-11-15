@@ -131,13 +131,19 @@ private suspend fun H3Session.readQpack(
 
 private suspend fun H3Session.readControl(st: QuicStream) {
     var first = true
+    // reserved (GREASE) types are there to be ignored (sections 7.2.8, 9): a few are free, as on request streams, and a
+    // flood of them spends glitch tokens as unknown types do (section 10.5)
+    var freeGrease = RequestFrames.FREE_USELESS_FRAMES
     while (true) {
         val type = st.input.readVarIntOrNull() ?: return
         val len = st.input.readVarInt()
         when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
             FrameAction.Skip -> {
-                // reserved (GREASE) types are there to be ignored (sections 7.2.8, 9) and cost nothing, as on request streams
-                if (!FrameType.isGrease(type)) glitch("unknown frame on the control stream")
+                when {
+                    !FrameType.isGrease(type) -> glitch("unknown frame on the control stream")
+                    freeGrease > 0 -> freeGrease--
+                    else -> glitch("reserved frames on the control stream")
+                }
                 st.input.skipExact(len)
             }
 
@@ -223,13 +229,9 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
             m.filterKeys { it !in known },
             webTransport = WtVersion.of(m) != null,
         )
-    // H3_DATAGRAM=1 needs the transport's max_datagram_frame_size (RFC 9297 section 2.1: HTTP/3 Datagrams are QUIC DATAGRAM
-    // frames), as quic-go and quiche check: any value above 0 is support (RFC 9221 section 3), however small
-    if (ps.h3Datagram &&
-        !quic.peerSupportsDatagrams
-    ) {
-        throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
-    }
+    // H3_DATAGRAM=1 without the transport's max_datagram_frame_size is no error: RFC 9297 section 2.1.1 makes only a
+    // value other than 0 or 1 one (checked by the codec). HTTP/3 Datagrams are QUIC DATAGRAM frames (section 2.1), which
+    // RFC 9221 section 3 forbids sending to such a peer, so none is sent ([DatagramDemux.unsupported])
     // draft-ietf-webtrans-http3-02 section 3.1: "an endpoint that receives a value other than "0" or "1" MUST close the
     // connection with the H3_SETTINGS_ERROR error code" (SETTINGS_WT_ENABLED is checked by the codec for every draft)
     if (settings.webTransport && (m[SettingsId.ENABLE_WEBTRANSPORT_DRAFT02] ?: 0L) > 1L) {
@@ -237,11 +239,11 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     }
     if (!isServer) {
         // RFC 9114 section 7.2.4.2: after an accepted 0-RTT, SETTINGS that lower or omit what the client relied on are
-        // H3_SETTINGS_ERROR (whether 0-RTT was accepted is known once the handshake is: SETTINGS are 1-RTT data)
+        // H3_SETTINGS_ERROR, a changed QPACK table capacity QPACK_DECODER_STREAM_ERROR (RFC 9204 section 3.2.3) (whether 0-RTT was accepted is known once the handshake is: SETTINGS are 1-RTT data)
         storedPeerSettings?.let { stored ->
             if (quic.earlyDataAccepted == null) quic.awaitHandshake()
             if (quic.earlyDataAccepted == true) {
-                StoredSettings.incompatibility(stored, m)?.let { throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, it) }
+                StoredSettings.incompatibility(stored, m)?.let { throw H3ProtocolError(it.code, it.reason) }
             }
         }
         // kept with this connection's tickets for the next 0-RTT ("Clients SHOULD store the settings")

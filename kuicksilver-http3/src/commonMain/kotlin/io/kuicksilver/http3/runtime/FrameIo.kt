@@ -7,11 +7,15 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.frame.FrameAction
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameRules
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.quic.Initiator
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 
@@ -148,14 +152,16 @@ internal sealed interface RequestFrame {
 
 /**
  * Frame reader for a request stream (RFC 9114 section 4.1): reserved and unknown frames are skipped as they stream by
- * (section 7.2.8); [onSkipped] is called for each unknown one, so a flood of them can spend glitch tokens (section 8.1).
- * Reserved types (0x1f * N + 0x21) are GREASE a peer is meant to send and cost nothing.
+ * (section 7.2.8). Frames that carry nothing a message needs cost a glitch token each through [onUseless] (section 10.5:
+ * "Implementations SHOULD track the use of these features and set limits on their use"): every unknown type, and
+ * reserved (GREASE) types and empty DATA frames beyond the first [FREE_USELESS_FRAMES] of the stream, which leaves a
+ * peer the GREASE it is meant to send.
  */
 internal class RequestFrames(
     val input: ByteReadChannel,
     private val isServerSide: Boolean,
     private val maxHeadersFrame: Long,
-    private val onSkipped: () -> Unit = {},
+    private val onUseless: (what: String) -> Unit = {},
     private val onBuffered: (Long) -> Unit = {},
     /** The first frame type, when the caller already read it to tell a request from a WebTransport stream. */
     firstType: Long? = null,
@@ -167,17 +173,56 @@ internal class RequestFrames(
      */
     private val beforeFieldSection: (suspend (encodedRic: Long) -> Unit)? = null,
     /**
-     * Sets how far the transport may read ahead of this reader (`QuicStream.readAhead`). With [beforeFieldSection], a frame
-     * header and a field section's prefix are read with none, and a frame's payload with that payload only: bytes of a
-     * section that waits for inserts are never taken from the stream's flow-control window early.
+     * Sets how far the transport may read ahead of this reader (`QuicStream.readAhead`). While it is in force a frame header
+     * is read with [FRAME_HEADER_AHEAD], a HEADERS payload only once [budget] granted it (and with [beforeFieldSection], its
+     * prefix byte by byte first), a DATA payload with that payload: bytes of a field section are never taken from the
+     * stream's flow-control window before they may be held.
      */
     private val limitReadAhead: ((Long) -> Unit)? = null,
+    /**
+     * [limitReadAhead] stays in force for the whole stream (blocked QPACK sections are possible: every field section must
+     * stay in the window until it may decode); otherwise only until [headDone].
+     */
+    private val limitAlways: Boolean = true,
+    /** The connection's [HeaderBudget]: every HEADERS payload is reserved in it before any of it is read. */
+    private val budget: HeaderBudget? = null,
+    /**
+     * How long a HEADERS frame may take from its frame header to its last byte (`Http3Settings.maxHeaderBlockTime`); null:
+     * no deadline. Beyond it the stream fails with H3_REQUEST_CANCELLED ([StreamFailure]).
+     */
+    var sectionDeadline: kotlin.time.Duration? = null,
+    /** The stream, for the deadline's error. */
+    private val streamId: Long? = null,
+    /**
+     * Why a reader waiting for [budget] gives up: the stream or the connection is gone (null while neither is). The input's
+     * own failure by default.
+     */
+    private val abandoned: () -> Throwable? = { input.closedCause },
 ) {
+    private var limiting = limitReadAhead != null
+
     private fun ahead(bytes: Long) {
-        limitReadAhead?.invoke(bytes.coerceAtLeast(1))
+        if (limiting) limitReadAhead?.invoke(bytes.coerceAtLeast(1))
+    }
+
+    /**
+     * The message's head was read: unless [limitAlways], the stream reads ahead as any other from here on (its body
+     * DATA); later HEADERS (trailers) are still reserved in the budget and bounded by the deadline.
+     */
+    fun headDone() {
+        if (!limiting || limitAlways) return
+        limiting = false
+        limitReadAhead?.invoke(Long.MAX_VALUE)
     }
 
     private var pendingType = firstType
+
+    /** GREASE and empty DATA frames this stream may still send for free. */
+    private var freeUseless = FREE_USELESS_FRAMES
+
+    private fun useless(what: String) {
+        if (freeUseless > 0) freeUseless-- else onUseless(what)
+    }
 
     /**
      * [maxHeadersFrame], at most Int.MAX_VALUE: the payload is read into one array. At the largest `maxFieldSectionSize`
@@ -194,16 +239,24 @@ internal class RequestFrames(
             val len = input.readVarInt()
             when (action) {
                 FrameAction.Skip -> {
-                    if (!FrameType.isGrease(type)) onSkipped()
+                    if (FrameType.isGrease(
+                            type,
+                        )
+                    ) {
+                        useless("reserved frames on a request stream")
+                    } else {
+                        onUseless("unknown frame on a request stream")
+                    }
                     ahead(len)
                     input.skipExact(len)
                 }
 
                 FrameAction.Process -> {
                     if (type != FrameType.HEADERS) ahead(len) // DATA: its payload, which the caller reads next
+                    if (type == FrameType.DATA && len == 0L) useless("empty DATA frames")
                     return when {
                         type == FrameType.HEADERS && len > headersLimit -> RequestFrame.HeadersTooLarge(len)
-                        type == FrameType.HEADERS -> RequestFrame.Headers(readSection(len.toInt()))
+                        type == FrameType.HEADERS -> RequestFrame.Headers(readSectionInTime(len.toInt()))
                         else -> RequestFrame.Data(len)
                     }
                 }
@@ -211,12 +264,45 @@ internal class RequestFrames(
         }
     }
 
+    private suspend fun readSectionInTime(len: Int): ByteArray {
+        val deadline = sectionDeadline ?: return readSection(len)
+        return withTimeoutOrNull(deadline) { readSection(len) }
+            ?: throw StreamFailure(
+                Http3ErrorCode.REQUEST_CANCELLED,
+                Http3Exception.Protocol(
+                    Http3ErrorCode.REQUEST_CANCELLED,
+                    Initiator.Local,
+                    streamId,
+                    "a HEADERS frame on stream $streamId did not arrive within $deadline",
+                ),
+            )
+    }
+
+    /** Runs [block] with [bytes] reserved in [budget], waiting for them first. */
+    private suspend inline fun <T> reserved(
+        bytes: Long,
+        block: () -> T,
+    ): T {
+        val b = budget ?: return block()
+        b.reserve(bytes, abandoned)
+        try {
+            return block()
+        } finally {
+            b.release(bytes)
+        }
+    }
+
     /**
      * A HEADERS payload: its Required Insert Count prefix (an 8-bit prefixed integer, RFC 9204 section 4.1.1) first, then
-     * [beforeFieldSection], then the rest. A prefix longer than any valid one is left to the decoder to refuse.
+     * [beforeFieldSection], then the rest, once [budget] granted it. A prefix longer than any valid one is left to the
+     * decoder to refuse.
      */
     private suspend fun readSection(len: Int): ByteArray {
-        val hook = beforeFieldSection ?: return readGrowing(len)
+        val hook =
+            beforeFieldSection ?: return reserved(len.toLong()) {
+                ahead(len.toLong())
+                readGrowing(len)
+            }
         ahead(1) // the prefix byte by byte: nothing of the section after it leaves the window before the hook decided
         val prefix = ByteArray(minOf(len, MAX_RIC_PREFIX))
         var n = 0
@@ -238,8 +324,10 @@ internal class RequestFrames(
         }
         val complete = (n == 1 && value < 0xff) || (n > 1 && prefix[n - 1].toInt() and 0x80 == 0)
         if (complete && value >= 0) hook(value)
-        ahead((len - n).toLong())
-        return prefix.copyOf(n) + readGrowing(len - n)
+        return reserved((len - n).toLong()) {
+            ahead((len - n).toLong())
+            prefix.copyOf(n) + readGrowing(len - n)
+        }
     }
 
     /** A HEADERS payload held only as far as it arrived, never allocated from the declared length. */
@@ -269,6 +357,12 @@ internal class RequestFrames(
 
     internal companion object {
         const val CHUNK = 4096
+
+        /**
+         * Reserved (GREASE) and empty DATA frames a request stream carries for free (RFC 9114 section 10.5: legitimate
+         * uses, such as GREASE, stay free, a flood spends glitch tokens).
+         */
+        const val FREE_USELESS_FRAMES = 8
 
         /** The longest Required Insert Count prefix read ahead: 1 byte and 9 continuation bytes hold any 62-bit value. */
         const val MAX_RIC_PREFIX = 10

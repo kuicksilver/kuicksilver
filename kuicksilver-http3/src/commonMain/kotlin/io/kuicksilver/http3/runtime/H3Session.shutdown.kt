@@ -62,12 +62,24 @@ private suspend fun H3Session.goAwayConfined() {
     scope.launch {
         delay(headerDeadlineAfterGoAway)
         headerDeadlinePassed = true
-        for ((st, reader) in pendingHeaders.values.toList()) {
-            abort(st, Http3ErrorCode.REQUEST_REJECTED)
-            reader.cancel()
-        }
+        for ((st, reader) in pendingHeaders.values.toList()) rejectUnfinishedHead(st, reader)
     }
     scope.launch { closeIfIdle() }
+}
+
+/**
+ * Server: request stream [st], whose HEADERS were not read in time, is cancelled before anything of it reached the
+ * application, so it is "rejected": RFC 9114 section 4.1.1, "The server SHOULD abort its response stream with the error
+ * code H3_REQUEST_REJECTED" (both directions: "an implementation resets the sending parts of streams and aborts reading
+ * on the receiving parts"), and [reader], the coroutine reading the HEADERS, stops. The connection lives on: a slow head
+ * is no protocol error, and the client may retry the request.
+ */
+internal suspend fun H3Session.rejectUnfinishedHead(
+    st: QuicStream,
+    reader: Job,
+) {
+    abort(st, Http3ErrorCode.REQUEST_REJECTED)
+    reader.cancel()
 }
 
 /**
