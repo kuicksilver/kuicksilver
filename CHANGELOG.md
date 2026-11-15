@@ -1463,7 +1463,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   DPLPMTUD over but kept the old address's ECN validation; it now starts over too (RFC 9000 section 13.4.2: per network
   path), and losses and acknowledgments of packets sent to the old address no longer count toward it. The one-congestion-event-per-recovery-period rule for CE reports was kept for the whole connection, so a CE
   report on a second path in the first path's recovery period was ignored; it is now per path, as each path has its
-  own controller. A CE increase in ECN counts that fail validation is no longer acted on.
+  own controller. A CE increase in ECN counts that fail validation is no longer acted on. The core no longer keeps a
+  recovery start of its own for CE reports: it set one on every report even when the controller ignored it, so after a
+  loss had started recovery, or after persistent congestion, a CE report for a packet sent later was dropped and NewReno
+  and CUBIC never reduced (RFC 9002 section 7.3.2 and appendix B.6: losses and CE share one recovery period). Every
+  valid CE report now reaches the path's controller, which decides; a custom `CongestionController` gets every report
+  and applies its own recovery period, as for `onLoss`. `ConnectionStats.ecnCeEvents` counts only the reports NewReno
+  or CUBIC took as a new congestion event (every report with other controllers).
 - QUIC client: a migration (`migrate`, `addPath`) from a new socket while the server's preferred address was still
   being validated closed that validation for good. The preferred address is now validated again from the new socket,
   concurrently with the original address (RFC 9000 section 9.6.3 SHOULD); when it succeeds the application's new path

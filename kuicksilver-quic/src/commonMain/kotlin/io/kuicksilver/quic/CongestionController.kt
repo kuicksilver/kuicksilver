@@ -42,8 +42,9 @@ public interface CongestionController {
     )
 
     /**
-     * The peer reported new ECN-CE marks for packets up to one sent at [sentTime]: a congestion event, once per recovery period (RFC 9002
-     * section 7.1).
+     * The peer reported new ECN-CE marks for packets up to one sent at [sentTime] (RFC 9002 section 7.1). Called for every such report
+     * of this path: like [onLoss], the controller reduces at most once per recovery period, which losses and CE reports share, judged
+     * by [sentTime] (appendix B.6 InCongestionRecovery).
      */
     public fun onEcnCe(
         now: TimeMark,
@@ -75,3 +76,16 @@ public interface CongestionController {
     /** Largest burst the sender hands to the socket at once: at most 65 536 bytes, or two datagrams when those are larger. */
     public val sendQuantum: Int
 }
+
+/**
+ * RFC 9002 appendix B.5 InCongestionRecovery of the controllers that keep a recovery period (NewReno, CUBIC): a congestion signal
+ * about a packet sent at [sentTime] falls in the current one and changes nothing. False for BBR, which takes every CE report, and for
+ * other controllers, whose recovery the core does not know: there the controller still decides, the core only counts the report.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal fun CongestionController.inCongestionRecovery(sentTime: TimeMark): Boolean =
+    when (this) {
+        is NewReno -> inCongestionRecovery(sentTime)
+        is Cubic -> inCongestionRecovery(sentTime)
+        else -> false
+    }

@@ -241,7 +241,6 @@ private fun ConnectionCore.resetForNewIp(
         io.kuicksilver.quic.recovery
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
-    p.ceRecoveryStart = TimeMark.NEVER
     setMtu(p, 1200)
     if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing

@@ -62,12 +62,17 @@ public class NewReno(
         }
     }
 
+    /** RFC 9002 appendix B.5 InCongestionRecovery: [sentTime] is not after the start of the current recovery period. */
+    internal fun inCongestionRecovery(sentTime: TimeMark): Boolean {
+        val rs = recoveryStart
+        return rs != null && sentTime <= rs
+    }
+
     private fun congestionEvent(
         now: TimeMark,
         sentTime: TimeMark,
     ) {
-        val rs = recoveryStart
-        if (rs != null && sentTime <= rs) return
+        if (inCongestionRecovery(sentTime)) return
         recoveryStart = now
         caAcked = 0
         cwnd = maxOf(cwnd / 2, minWindow)

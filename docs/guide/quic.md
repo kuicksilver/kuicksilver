@@ -552,7 +552,7 @@ Each path validates ECN before relying on it (RFC 9000 section 13.4): the first 
 ACK_ECN counts must appear, never shrink and cover every newly acknowledged marked packet, and the path must not lose all
 ten test packets. A path that fails never marks again; a new path validates afresh. Received marks are counted per packet
 number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
-event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
+event per recovery period, the same recovery period a loss starts. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
 Android, Apple, and Windows where `IP_ECN` is accepted, probed when the socket opens) marks and reads per datagram, and two of them validate both directions
 (`Capable`). Because the portable socket

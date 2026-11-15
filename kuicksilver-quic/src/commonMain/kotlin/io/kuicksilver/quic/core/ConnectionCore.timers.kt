@@ -9,6 +9,7 @@ import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.inCongestionRecovery
 import io.kuicksilver.quic.recovery.CongestionEvent
 import io.kuicksilver.quic.recovery.CongestionKind
 import io.kuicksilver.quic.recovery.LossListener
@@ -451,17 +452,10 @@ internal class ConnectionLossListener(
         p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
         // counts that fail validation (RFC 9000 section 13.4.2.1) are no CE report to act on: the path stops marking instead
-        val ce = ceGrew && countsValid
-        if (ce && p.cc is io.kuicksilver.quic.Bbr) {
-            core.ecnCeEvents++
-            p.cc.onEcnCe(now, largestSentTime)
-        } // BBR treats CE like loss, once per round of its own path: every report counts
-        else if (ce &&
-            (p.ceRecoveryStart == TimeMark.NEVER || largestSentTime > p.ceRecoveryStart)
-        ) {
-            p.ceRecoveryStart = now
-            core.ecnCeEvents++
-            p.cc.onEcnCe(now, largestSentTime)
-        } // one congestion event per recovery period of the path's own controller (RFC 9002 section 7.1; RFC 9000 section 9.4)
+        if (!ceGrew || !countsValid) return
+        // every report goes to the path's own controller (RFC 9000 section 9.4), which alone decides whether it is a new congestion
+        // event: its one recovery period is shared with losses and ended by persistent congestion (RFC 9002 appendix B.6-B.8)
+        if (!p.cc.inCongestionRecovery(largestSentTime)) core.ecnCeEvents++
+        p.cc.onEcnCe(now, largestSentTime)
     }
 }
