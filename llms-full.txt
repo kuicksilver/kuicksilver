@@ -1954,7 +1954,10 @@ response head) must arrive within the same time of its frame header, or the requ
 long polls are unaffected. A connection reads at most 8 × `maxFieldSectionSize` (512 KiB by default) of HEADERS frames
 at once: each frame's length is reserved before its first byte is taken, and frames that do not fit wait in order with
 their bytes left in the stream's flow-control window, so a peer cannot make the connection hold more by keeping heads
-unfinished. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+unfinished. Those bytes still count against the connection's flow-control window; if waiting heads fill it, the others
+wait for it too, at most until `maxHeaderBlockTime` ends the waiting streams. With WebTransport on, a server's
+WebTransport streams must send their signal and Session ID within the same time, or are reset with
+`WT_BUFFERED_STREAM_REJECTED`. The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
 
 ### Shutdown and GOAWAY
 

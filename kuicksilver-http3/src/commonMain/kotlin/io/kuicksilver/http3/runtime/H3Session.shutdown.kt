@@ -62,24 +62,32 @@ private suspend fun H3Session.goAwayConfined() {
     scope.launch {
         delay(headerDeadlineAfterGoAway)
         headerDeadlinePassed = true
-        for ((st, reader) in pendingHeaders.values.toList()) rejectUnfinishedHead(st, reader)
+        for ((st, reader) in pendingHeaders.values.toList()) {
+            // one rejected before may have suspended: a head read meanwhile is the application's now, never rejected
+            if (pendingHeaders[st.id]?.second === reader) rejectUnfinishedHead(st, reader, Http3ErrorCode.REQUEST_REJECTED)
+        }
     }
     scope.launch { closeIfIdle() }
 }
 
 /**
- * Server: request stream [st], whose HEADERS were not read in time, is cancelled before anything of it reached the
+ * Server: request stream [st], whose head was not read in time, is cancelled before anything of it reached the
  * application, so it is "rejected": RFC 9114 section 4.1.1, "The server SHOULD abort its response stream with the error
  * code H3_REQUEST_REJECTED" (both directions: "an implementation resets the sending parts of streams and aborts reading
- * on the receiving parts"), and [reader], the coroutine reading the HEADERS, stops. The connection lives on: a slow head
- * is no protocol error, and the client may retry the request.
+ * on the receiving parts"), [code] for a WebTransport stream. The caller decided on the session's dispatcher, without
+ * suspending since, that the head is still unread; [reader], the coroutine reading it, is cancelled and the stream leaves
+ * [H3Session.pendingHeaders] before anything here suspends, so a head that completes while the stream is aborted can never
+ * reach the application ("Servers MUST NOT use the H3_REQUEST_REJECTED error code for requests that were partially or
+ * fully processed"). The connection lives on: a slow head is no protocol error, and the client may retry the request.
  */
 internal suspend fun H3Session.rejectUnfinishedHead(
     st: QuicStream,
     reader: Job,
+    code: Long,
 ) {
-    abort(st, Http3ErrorCode.REQUEST_REJECTED)
+    pendingHeaders.remove(st.id)
     reader.cancel()
+    abort(st, code)
 }
 
 /**

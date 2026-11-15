@@ -47,6 +47,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -104,10 +105,39 @@ internal class H3Session(
      * The peer's QPACK encoder stream is being read. Once the connection is gone and this reader too, no insert can arrive
      * any more: a field section still waiting for one never decodes ([noMoreInserts]). Session dispatcher only.
      */
-    internal var peerEncoderReading = false
+    internal var peerEncoderReading: Boolean
+        get() = peerEncoderReadingFlow.value
+        set(v) {
+            peerEncoderReadingFlow.value = v
+        }
+    private val peerEncoderReadingFlow = MutableStateFlow(false)
 
     /** No dynamic-table insert can arrive any more: the connection is gone, and with it the reader of the peer's encoder stream. */
     fun noMoreInserts(): Boolean = closed.isCompleted && !peerEncoderReading
+
+    /** Completes once [noMoreInserts] holds, so a section waiting for inserts wakes for it (made on first use). */
+    private val noMoreInsertsEvent: Job by lazy {
+        afterEnd.launch {
+            closed.join()
+            peerEncoderReadingFlow.first { !it }
+        }
+    }
+
+    /** What a reader waiting for the [headerBudget] wakes for: [st]'s peer half or the connection ending. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun budgetWatch(st: QuicStream): EndWatch =
+        EndWatch(st.receivedFinalSize, closed) { st.input.closedCause ?: if (closed.isCompleted) connectionError() else null }
+
+    /**
+     * What a field section waiting for QPACK inserts wakes for: [st]'s peer half ending, or no insert being able to come.
+     * It gives up ([StreamAbandoned]) when the stream failed or no insert can come.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun insertsWatch(st: QuicStream): EndWatch =
+        // a stream lost with the connection may still decode: the encoder stream's bytes that arrived are still read
+        EndWatch(st.receivedFinalSize, noMoreInsertsEvent, streamLossFails = false) {
+            if (st.input.closedCause != null || noMoreInserts()) StreamAbandoned() else null
+        }
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
 

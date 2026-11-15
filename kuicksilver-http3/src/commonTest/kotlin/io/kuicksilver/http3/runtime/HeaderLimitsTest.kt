@@ -137,6 +137,145 @@ class HeaderLimitsTest {
             }
         }
 
+    private val webTransportFast =
+        http3Settings {
+            maxHeaderBlockTime = 300.milliseconds
+            enableConnectProtocol = true
+            h3Datagram = true
+            webTransport = true
+        }
+
+    /**
+     * With WebTransport on, a server reads a request stream's first frame type before it knows it is a request: that read
+     * is under the deadline too. Half a varint (the first byte of `WT_STREAM`'s two) is rejected with H3_REQUEST_REJECTED;
+     * a WebTransport stream whose Session ID never completes, with WT_BUFFERED_STREAM_REJECTED (it reached no session).
+     * Before, both held their stream slot and reader forever.
+     */
+    @Test fun negative_webTransportHeadsThatNeverCompleteAreRejected() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, webTransportFast)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val halfType = c.openBidi()
+                halfType.output.writeFully(byteArrayOf(0x40))
+                halfType.output.flush()
+                val halfSessionId = c.openBidi()
+                halfSessionId.output.writeFully(byteArrayOf(0x40, 0x41, 0x40)) // WT_STREAM, then one byte of a 2-byte ID
+                halfSessionId.output.flush()
+                assertEquals(Http3ErrorCode.REQUEST_REJECTED, withTimeout(5.seconds) { resetCode(halfType) })
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, withTimeout(5.seconds) { resetCode(halfSessionId) })
+                assertNothingHeld(server)
+                assertEquals(2, withContext(server.session.dispatcher) { server.session.headDeadlinesPassedForTest })
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /** Control: a WebTransport stream whose header arrives in time is never cut by the deadline later. */
+    @Test fun aWebTransportStreamWithItsHeaderInTimeOutlivesTheDeadline() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, webTransportFast)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(byteArrayOf(0x40, 0x41, 0x00)) // WT_STREAM, session 0 (not established: it waits)
+                st.output.flush()
+                awaitCondition("the deadline to stand down") { server.session.headDeadlinesArmedForTest.load() == 0 }
+                assertEquals(0, withContext(server.session.dispatcher) { server.session.headDeadlinesPassedForTest })
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.1.1: "Servers MUST NOT use the H3_REQUEST_REJECTED error code for requests that were partially or
+     * fully processed". A rejection takes the stream from the pending heads and cancels its reader before it aborts the
+     * stream, so even an abort that suspended could not let a head completed meanwhile reach the application (the abort does
+     * not suspend today: this pins the order).
+     */
+    @Test fun aRejectedHeadIsCancelledBeforeTheAbortRuns() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(headersHeader(100) + byteArrayOf(0))
+                st.output.flush()
+                val session = server.session
+                awaitCondition("the head to be pending") { withContext(session.dispatcher) { session.pendingHeaders.isNotEmpty() } }
+                withContext(session.dispatcher) {
+                    val (serverStream, reader) = session.pendingHeaders.values.single()
+                    launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        session.rejectUnfinishedHead(serverStream, reader, Http3ErrorCode.REQUEST_REJECTED)
+                    }
+                    assertTrue(reader.isCancelled, "the reader runs on while the stream is aborted")
+                    assertTrue(session.pendingHeaders.isEmpty())
+                }
+                assertEquals(Http3ErrorCode.REQUEST_REJECTED, withTimeout(5.seconds) { resetCode(st) })
+            }
+        }
+
+    /**
+     * Trailers wait for the budget like heads: with the default static-only QPACK too, a stream reads ahead by a frame header
+     * only before its trailers are granted. 12 requests whose trailers (60 000 bytes of a 128 KiB frame each, all within the
+     * connection's initial window) arrived before their readers ran: the server takes the 4 granted trailers and, of the
+     * others, their frame headers and QPACK prefixes only, never the up to 64 KiB a reader pulls ahead without a limit
+     * (before, every stream read on unlimited once its head was read).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_trailersWaitingForTheBudgetStayInTheWindow() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val session = server.session
+                val gate = CompletableDeferred<Unit>()
+                session.beforeRequestHeadersForTest = { gate.await() } // the readers wait until the bytes are there
+                val raw = RawPeer(c)
+                raw.openControl()
+                val n = 12
+                val bodies =
+                    launch {
+                        repeat(n) {
+                            val r = server.acceptRequest()
+                            launch { runCatching { r.body.readAllBytes() } }
+                        }
+                    }
+                val streams = (0 until n).map { c.openBidi() }
+                for (st in streams) {
+                    st.output.writeFully(raw.headers(st.id, POST) + raw.data(byteArrayOf(1)) + headersHeader(131_072))
+                    st.output.flush()
+                }
+                val writers =
+                    launch {
+                        for (st in streams) {
+                            launch {
+                                st.output.writeFully(ByteArray(60_000))
+                                st.output.flush()
+                            }
+                        }
+                    }
+                awaitCondition("every stream to wait at the hook") { withContext(session.dispatcher) { session.pendingHeaders.size == n } }
+                val serverStreams = withContext(session.dispatcher) { session.pendingHeaders.values.map { it.first } }
+                awaitCondition("most of the connection window to arrive", 15.seconds) {
+                    serverStreams.sumOf { it.receivedOffset!!.value } >= n * 60_000L
+                }
+                gate.complete(Unit)
+                val budget = session.headerBudget
+                awaitCondition("every trailer either granted or waiting", 15.seconds) {
+                    withContext(session.dispatcher) { budget.waiting == n - 4 }
+                }
+                val taken = withContext(session.dispatcher) { serverStreams.sumOf { it.inputTakenForTest } }
+                assertTrue(taken <= budget.capacity + n * 256L, "the server took $taken bytes for 12 heads and unfinished trailers")
+                writers.cancel()
+                bodies.cancel()
+            }
+        }
+
     /**
      * Control: a head that arrives whole, after its stream was opened earlier than the deadline, is served; the deadline
      * is the head's, never the request's (a body may take longer).
@@ -241,6 +380,37 @@ class HeaderLimitsTest {
                 val answers =
                     (0 until n).map {
                         async { p.client.request(http3Request("GET", "server.test", "/$it") { headers = big }).status }
+                    }
+                assertEquals(List(n) { 204 }, answers.awaitAll())
+                assertNothingHeld(p.server)
+                assertNothingHeld(p.client)
+            }
+        }
+
+    /**
+     * Control at a larger scale: 60 parallel requests with heads of nearly `maxFieldSectionSize` that do not compress
+     * (about 3.7 MB together, far above the budget plus the connection window) all get their answers.
+     */
+    @Test fun nearLimitHeadsInParallelAllComplete() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val n = 60
+                launch {
+                    repeat(n) {
+                        val r = p.server.acceptRequest()
+                        launch { r.respond(204).finish() }
+                    }
+                }
+                val rnd = kotlin.random.Random(1)
+                val answers =
+                    (0 until n).map {
+                        val v = String(CharArray(62_000) { "~^|`{}<>\\".random(rnd) })
+                        async {
+                            p.client
+                                .request(
+                                    http3Request("GET", "server.test", "/$it") { headers = Http3Headers.of("x-big" to v) },
+                                ).status
+                        }
                     }
                 assertEquals(List(n) { 204 }, answers.awaitAll())
                 assertNothingHeld(p.server)

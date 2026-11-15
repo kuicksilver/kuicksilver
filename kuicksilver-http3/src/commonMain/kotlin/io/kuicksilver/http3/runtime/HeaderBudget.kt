@@ -3,15 +3,14 @@
 package io.kuicksilver.http3.runtime
 
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The bytes of HEADERS payloads one connection reads ahead of their end, over all its request streams (RFC 9114 section
  * 10.5: "memory commitments ... strictly bounded"). A reader reserves a whole payload's length before it takes any of
- * it from the transport, so a field section that has its reservation always completes as its bytes arrive (no two
- * half-read sections ever wait on each other), and one without stays in its stream's flow-control window: its bytes
- * are not taken, so they return no credit to the peer. Reservations are granted in the order they were asked for, so
+ * it from the transport, so a field section that has its reservation never waits for another one's budget, and one
+ * without stays in its stream's flow-control window: its bytes are not taken, so they return no credit to the peer. Those
+ * bytes still count against the connection's window: when they fill it, a granted section's missing bytes wait for the
+ * window, at most until the field-section deadline ends the waiting streams. Reservations are granted in the order they were asked for, so
  * a large section is not overtaken forever by small ones. Confined to the session's dispatcher.
  */
 internal class HeaderBudget(
@@ -34,13 +33,12 @@ internal class HeaderBudget(
     }
 
     /**
-     * Reserves [bytes] (at most [capacity]), waiting in line while the connection holds too much already. While it waits,
-     * [abandoned] is asked every [ABANDON_POLL] whether the reader's stream or connection is gone (its bytes left unread,
-     * the transport has no event that wakes this wait), and its answer is thrown.
+     * Reserves [bytes] (at most [capacity]), waiting in line while the connection holds too much already. A reader that
+     * waits also wakes when its stream or its connection ends ([watch]) and leaves the line with that reason.
      */
     suspend fun reserve(
         bytes: Long,
-        abandoned: () -> Throwable? = { null },
+        watch: EndWatch? = null,
     ) {
         require(bytes in 0..capacity) { "reservation of $bytes outside 0..$capacity" }
         if (waiters.isEmpty() && reserved + bytes <= capacity) {
@@ -50,7 +48,7 @@ internal class HeaderBudget(
         val w = Waiter(bytes)
         waiters.addLast(w)
         try {
-            while (withTimeoutOrNull(ABANDON_POLL) { w.granted.await() } == null) abandoned()?.let { throw it }
+            if (watch == null) w.granted.await() else watch.await(w.granted)
         } catch (e: Throwable) {
             // granted just before the cancellation or the abandonment reached the waiter: the reservation is returned;
             // else the waiter leaves the line, which may let the next one in
@@ -64,10 +62,6 @@ internal class HeaderBudget(
         reserved -= bytes
         check(reserved >= 0) { "header budget released more than it reserved" }
         grant()
-    }
-
-    private companion object {
-        val ABANDON_POLL = 100.milliseconds
     }
 
     private fun grant() {

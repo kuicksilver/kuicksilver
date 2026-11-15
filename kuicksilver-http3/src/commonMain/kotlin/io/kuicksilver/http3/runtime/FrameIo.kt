@@ -173,17 +173,13 @@ internal class RequestFrames(
      */
     private val beforeFieldSection: (suspend (encodedRic: Long) -> Unit)? = null,
     /**
-     * Sets how far the transport may read ahead of this reader (`QuicStream.readAhead`). While it is in force a frame header
-     * is read with [FRAME_HEADER_AHEAD], a HEADERS payload only once [budget] granted it (and with [beforeFieldSection], its
-     * prefix byte by byte first), a DATA payload with that payload: bytes of a field section are never taken from the
-     * stream's flow-control window before they may be held.
+     * Sets how far the transport may read ahead of this reader (`QuicStream.readAhead`), for the whole stream: a frame
+     * header is read with [FRAME_HEADER_AHEAD], a HEADERS payload (head or trailers) only once [budget] granted it (and with
+     * [beforeFieldSection], its prefix byte by byte first), a DATA or skipped payload with the next frame header. So no more
+     * than a frame header of a field section is ever taken from the stream's flow-control window before it may be held
+     * (RFC 9114 section 10.5), nor before it may decode (RFC 9204 section 2.2.1).
      */
     private val limitReadAhead: ((Long) -> Unit)? = null,
-    /**
-     * [limitReadAhead] stays in force for the whole stream (blocked QPACK sections are possible: every field section must
-     * stay in the window until it may decode); otherwise only until [headDone].
-     */
-    private val limitAlways: Boolean = true,
     /** The connection's [HeaderBudget]: every HEADERS payload is reserved in it before any of it is read. */
     private val budget: HeaderBudget? = null,
     /**
@@ -193,27 +189,15 @@ internal class RequestFrames(
     var sectionDeadline: kotlin.time.Duration? = null,
     /** The stream, for the deadline's error. */
     private val streamId: Long? = null,
-    /**
-     * Why a reader waiting for [budget] gives up: the stream or the connection is gone (null while neither is). The input's
-     * own failure by default.
-     */
-    private val abandoned: () -> Throwable? = { input.closedCause },
+    /** What a reader waiting for [budget] also wakes for: its stream's or its connection's end. */
+    private val budgetWatch: EndWatch? = null,
 ) {
-    private var limiting = limitReadAhead != null
-
     private fun ahead(bytes: Long) {
-        if (limiting) limitReadAhead?.invoke(bytes.coerceAtLeast(1))
+        limitReadAhead?.invoke(bytes.coerceAtLeast(1))
     }
 
-    /**
-     * The message's head was read: unless [limitAlways], the stream reads ahead as any other from here on (its body
-     * DATA); later HEADERS (trailers) are still reserved in the budget and bounded by the deadline.
-     */
-    fun headDone() {
-        if (!limiting || limitAlways) return
-        limiting = false
-        limitReadAhead?.invoke(Long.MAX_VALUE)
-    }
+    /** A payload of [len] bytes and the next frame header, read in one pull (saturating: a 2^62 payload needs no more). */
+    private fun aheadPayload(len: Long) = ahead(if (len > Long.MAX_VALUE - FRAME_HEADER_AHEAD) len else len + FRAME_HEADER_AHEAD)
 
     private var pendingType = firstType
 
@@ -247,12 +231,12 @@ internal class RequestFrames(
                     } else {
                         onUseless("unknown frame on a request stream")
                     }
-                    ahead(len)
+                    aheadPayload(len)
                     input.skipExact(len)
                 }
 
                 FrameAction.Process -> {
-                    if (type != FrameType.HEADERS) ahead(len) // DATA: its payload, which the caller reads next
+                    if (type != FrameType.HEADERS) aheadPayload(len) // DATA: its payload, which the caller reads next
                     if (type == FrameType.DATA && len == 0L) useless("empty DATA frames")
                     return when {
                         type == FrameType.HEADERS && len > headersLimit -> RequestFrame.HeadersTooLarge(len)
@@ -284,7 +268,7 @@ internal class RequestFrames(
         block: () -> T,
     ): T {
         val b = budget ?: return block()
-        b.reserve(bytes, abandoned)
+        b.reserve(bytes, budgetWatch)
         try {
             return block()
         } finally {

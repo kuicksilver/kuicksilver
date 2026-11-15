@@ -700,6 +700,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3: a field section waiting for QPACK dynamic-table inserts no longer looks every 50 ms whether its stream or
+  connection ended; it wakes on the end itself.
 - HTTP/3: `SETTINGS_H3_DATAGRAM=1` from a peer whose transport has no `max_datagram_frame_size` no longer closes the
   connection with `H3_SETTINGS_ERROR`: RFC 9297 section 2.1.1 makes only a value other than 0 or 1 an error. No HTTP/3
   datagram is sent to such a peer (RFC 9221 section 3); `trySendDatagram` answers `Unsupported(PeerDoesNotSupport)`.
@@ -2069,8 +2071,9 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   heads within it of their frame header or the request is cancelled with `H3_REQUEST_CANCELLED`; the connection lives
   on. A connection reads at most 8 × `maxFieldSectionSize` (512 KiB) of HEADERS frames at once: a frame's length is
   reserved before any of it is taken from the transport, and frames that do not fit wait with their bytes left in the
-  stream's flow-control window. The client applies both to response heads. The Ktor server bounds
-  `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
+  stream's flow-control window. The client applies both to response heads. With WebTransport on, a server's
+  WebTransport streams must send their signal and Session ID within the deadline too (else
+  `WT_BUFFERED_STREAM_REJECTED`). The Ktor server bounds `maxHeaderBlockTime` by `requestHeaderTimeoutSeconds`.
 - HTTP/3 (RFC 9114 section 10.5): reserved (GREASE) frames and empty DATA frames were free in any number, so 2 000 000
   two-byte frames in one request never ended the connection. The first 8 of a stream (and of the control stream) stay
   free; each further one spends a glitch token, as unknown frame types do, and a flood ends the connection with

@@ -310,14 +310,13 @@ private suspend fun H3Session.exchange(
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
                 // RFC 9204 section 2.2.1: a blocked section stays unread, in the stream's flow-control window
-                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric) { st.input.closedCause != null || noMoreInserts() } },
+                beforeFieldSection = { ric -> qpack.awaitInserts(st.id, ric, insertsWatch(st)) },
                 // a response head is taken from the window only once the connection's header budget granted it (RFC 9114
                 // section 10.5), and each field section must arrive within maxHeaderBlockTime of its frame header: a
                 // server that trickles its heads holds neither memory nor the request forever
                 limitReadAhead = { st.readAhead = it },
-                limitAlways = settings.qpackBlockedStreams > 0,
                 budget = headerBudget,
-                abandoned = { st.input.closedCause ?: if (closed.isCompleted) connectionError() else null },
+                budgetWatch = budgetWatch(st),
                 sectionDeadline = settings.maxHeaderBlockTime,
                 streamId = st.id,
             )
@@ -371,7 +370,6 @@ private suspend fun H3Session.exchange(
                         continue
                     }
                     sendFailure.getFailureOrNull()?.let { throw it } // the request was abandoned before the response came
-                    frames.headDone() // the body reads ahead as any stream
                     return ResponseImpl(
                         this,
                         st,
