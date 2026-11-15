@@ -2064,6 +2064,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.get
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.largeFieldAndGzipPassThrough
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.negative_tls12RenegotiationIsAProtocolError
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.tls12ServerGetsH2
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H3WebSocketConnectRaceTest.negative_aConnectAnsweredAsTheTimeoutFiresIsUsed
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked
