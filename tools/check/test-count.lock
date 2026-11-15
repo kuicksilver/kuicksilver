@@ -966,6 +966,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtErrorCodesT
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtFlowGapTest.negative_maxDataGoesOutAtHalfTheWindow
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtInputTest.negative_readerCancelledAsItsChunkArrivesLosesNothing
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtInputTest.negative_readersCancelledAtEveryStepLoseNothing
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsGapTest.negative_malformedAvailableProtocolsAreIgnoredAsAWhole
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsGapTest.negative_malformedParametersInvalidateTheField
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsGapTest.negative_protocolListEdges
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsTest.emptyListIsEmpty
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtProtocolsTest.listRoundTrip

@@ -22,7 +22,7 @@ internal object CapsuleRules {
         if (values.size != 1) return false
         val v = values[0].trim(' ', '\t')
         if (!v.startsWith("?1")) return false
-        return parameters(v, 2) == v.length
+        return sfParametersEnd(v, 2) == v.length
     }
 
     /**
@@ -46,87 +46,4 @@ internal object CapsuleRules {
 
     private val FORBIDDEN_FIELDS = listOf("content-length", "content-type", "transfer-encoding")
     private val FORBIDDEN_STATUSES = setOf(204, 205, 206)
-
-    /** Parses `*( ";" *SP key [ "=" bare-item ] )` from [start]; returns where it stopped, or -1 on a malformed parameter. */
-    private fun parameters(
-        s: String,
-        start: Int,
-    ): Int {
-        var p = start
-        while (p < s.length && s[p] == ';') {
-            p++
-            while (p < s.length && s[p] == ' ') p++
-            if (p >= s.length || !(s[p] in 'a'..'z' || s[p] == '*')) return -1
-            p++
-            while (p < s.length && (s[p] in 'a'..'z' || s[p] in '0'..'9' || s[p] in "_-.*")) p++
-            if (p < s.length && s[p] == '=') {
-                p = bareItem(s, p + 1)
-                if (p < 0) return -1
-            }
-        }
-        return p
-    }
-
-    /** RFC 8941 section 4.2.3.1: integer, decimal, string, token, byte sequence or boolean; returns its end, or -1. */
-    private fun bareItem(
-        s: String,
-        start: Int,
-    ): Int {
-        if (start >= s.length) return -1
-        val c = s[start]
-        return when {
-            c == '-' || c in '0'..'9' -> number(s, start)
-            c == '"' -> string(s, start)
-            c == '*' || c in 'a'..'z' || c in 'A'..'Z' -> token(s, start)
-            c == ':' -> sfByteSequenceEnd(s, start)
-            c == '?' -> if (start + 1 < s.length && s[start + 1] in "01") start + 2 else -1
-            else -> -1
-        }
-    }
-
-    private fun number(
-        s: String,
-        start: Int,
-    ): Int {
-        var p = start
-        if (s[p] == '-') p++
-        val intStart = p
-        while (p < s.length && s[p] in '0'..'9') p++
-        val intDigits = p - intStart
-        if (intDigits == 0 || intDigits > 15) return -1
-        if (p < s.length && s[p] == '.') {
-            if (intDigits > 12) return -1
-            val fracStart = ++p
-            while (p < s.length && s[p] in '0'..'9') p++
-            if (p - fracStart !in 1..3) return -1
-        }
-        return p
-    }
-
-    private fun string(
-        s: String,
-        start: Int,
-    ): Int {
-        var p = start + 1
-        while (p < s.length) {
-            val c = s[p++]
-            when {
-                c == '"' -> return p
-                c == '\\' -> if (p < s.length && s[p] in "\"\\") p++ else return -1
-                c.code !in 0x20..0x7e -> return -1
-            }
-        }
-        return -1
-    }
-
-    private fun token(
-        s: String,
-        start: Int,
-    ): Int {
-        var p = start + 1
-        while (p < s.length && (isAsciiAlnum(s[p]) || s[p] in "!#$%&'*+-.^_`|~:/")) p++
-        return p
-    }
-
-    private fun isAsciiAlnum(c: Char): Boolean = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9'
 }

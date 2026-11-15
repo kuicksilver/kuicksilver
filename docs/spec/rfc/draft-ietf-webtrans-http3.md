@@ -77,7 +77,7 @@ Quoted (§3.4): "it is RECOMMENDED that clients and servers apply the scheduling
 **How it is met.**
 
 - `:protocol webtransport-h3` to a draft-15+ server, else `webtransport` with `sec-webtransport-http3-draft02: 1`
-- `WT-Available-Protocols` as a Structured Field List, a `WT-Protocol` naming another protocol resets the CONNECT with `WT_ALPN_ERROR` and throws `WebTransportException.Alpn`, one that is no valid Structured Field String is ignored (no protocol selected)
+- `WT-Available-Protocols` as a Structured Field List, a `WT-Protocol` naming another protocol resets the CONNECT with `WT_ALPN_ERROR` and throws `WebTransportException.Alpn`, one that is no valid Structured Field String is ignored (no protocol selected); parameters are ignored but parsed as RFC 8941 parameters (keys `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`, values bare items), and a malformed one makes the whole field ignored (mutation review 2026-11-15: any run up to `;`, `,` or whitespace passed as a value, and keys took Unicode letters and digits; the parsers of `Capsule-Protocol`, `priority` and these fields now share one set of Structured Field helpers — `webtransport.WtProtocolsGapTest.negative_malformedParametersInvalidateTheField`, `.negative_malformedAvailableProtocolsAreIgnoredAsAWhole`)
 - a non-2xx → `ConnectRejected`, redirects not followed
 - several sessions on one connection when flow control is on for it, up to our own `webTransportMaxSessions` (`WebTransportException.ConnectionFull` beyond, before anything is sent); without flow control one (§5.1 "If flow control is not enabled, clients MUST NOT attempt to establish more than one simultaneous WebTransport session"), ConnectionFull too
 - Server: both tokens are `isWebTransport`
