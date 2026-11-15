@@ -4,9 +4,9 @@
 # Negative controls of tools/check/reproducers.py on a scratch repository: a live and a dead reproducer with their fix,
 # plant, guard test and expected failure pass, as does a committed corpus input of a campaign target. A reproducer without
 # an entry fails, also when it is not tracked yet, named in another case or with an underscore, under any of libFuzzer's
-# artifact prefixes (timeout-, oom-, leak-, slow-unit-), in the top directory (where a fuzzing run writes it) or in a
-# corpus; so do an entry whose input was renamed or deleted (also renamed out of the crash- names), a link as an input,
-# an input no target replays, an unknown state, a fix that is no hash or no commit, a dead entry without a guard test, a
+# artifact prefixes (timeout-, oom-, leak-, slow-unit-, minimized-from-, Jazzer's Crash_<hash>.java), in the top directory (where a fuzzing run writes it) or in a
+# corpus (a reproducer of the C harness's corpus is replayable too); so do an entry whose input was renamed or deleted (also renamed out of the crash- names), a link as an input,
+# an input no target replays, an unknown state, a fix that is no hash or no commit or changed none of the plant's files, a dead entry without a guard test, a
 # guard test that does not exist, that the JVM tests do not run or that belongs to another module, a live entry without
 # its expected failure and a dead one with one, a missing plant, one outside tools/fuzz/plants, one that no longer
 # applies, changes nothing, touches an input, the tooling or the guard test's own file, a plant no entry uses, a duplicate
@@ -31,6 +31,7 @@ cat > "$r/tools/fuzz/campaign.sh" <<'EOF'
 targets_table() {
   cat <<'EOF2'
 x.prog jvm kuicksilver-x io.x.fuzz.XFuzzTest prog
+x.c c kuicksilver-x ksl_fuzz parsers
 EOF2
 }
 EOF
@@ -58,7 +59,7 @@ reset() { git -C "$r" reset -q --hard; git -C "$r" clean -qfd; }
 entry() { printf '%s\n' "$1" >> "$m"; } # appends a manifest line
 expect 0 "a live and a dead reproducer with their records pass" "2 reproducer(s), 2 entr(ies), 0 finding(s)"
 # reproducers without an entry
-for name in crash-new Crash-Upper crash_underscore timeout-1 oom-2 leak-3 slow-unit-4; do
+for name in crash-new Crash-Upper crash_underscore timeout-1 oom-2 leak-3 slow-unit-4 minimized-from-5 Crash_abc.java; do
   printf 'z' > "$r/$in/$name"
   expect 1 "negative: an untracked $name without an entry" "$in/$name | no entry |"
   reset
@@ -72,6 +73,10 @@ mkdir -p "$r/tools/fuzz/corpus/x.prog" "$r/tools/fuzz/corpus/x.gone"; printf 'z'
 expect 1 "negative: a reproducer in a committed corpus without an entry" "tools/fuzz/corpus/x.prog/crash-c | no entry |"
 entry "tools/fuzz/corpus/x.prog/crash-c | live | $fix | tools/fuzz/plants/bound.patch | - | outside"
 expect 0 "a corpus reproducer of a campaign target with its entry passes" "3 reproducer(s), 3 entr(ies), 0 finding(s)"
+mkdir -p "$r/tools/fuzz/corpus/x.c"; printf 'z' > "$r/tools/fuzz/corpus/x.c/crash-k"
+entry "tools/fuzz/corpus/x.c/crash-k | live | $fix | tools/fuzz/plants/bound.patch | - | ERROR: AddressSanitizer"
+expect 0 "a reproducer of the C harness's corpus with its entry passes (the verifier replays it through the harness)" "4 reproducer(s), 4 entr(ies), 0 finding(s)"
+rm -r "$r/tools/fuzz/corpus/x.c"; sed -i.bak '/x.c\/crash-k/d' "$m"; rm "$m.bak"
 mv "$r/tools/fuzz/corpus/x.prog/crash-c" "$r/tools/fuzz/corpus/x.gone/crash-c"; sed -i.bak 's#corpus/x.prog/#corpus/x.gone/#' "$m"; rm "$m.bak"
 expect 1 "negative: a corpus input of no campaign target" "not replayable | tools/fuzz/corpus/x.gone/crash-c"
 reset
@@ -98,6 +103,10 @@ line 1 "negative: an unknown state" "| state | \`alive\`" "$L | alive | $fix | t
 line 1 "negative: a fix that is no hash" "| fix | \`HEAD~1\` is no commit hash" "$L | live | HEAD~1 | tools/fuzz/plants/bound.patch | - | x"
 line 1 "negative: a fix that is no commit" "| fix | 0123456789 is no commit" "$L | live | 0123456789 | tools/fuzz/plants/bound.patch | - | x"
 line 1 "negative: no fix" "| fix | no fix commit named" "$L | live |  | tools/fuzz/plants/bound.patch | - | x"
+printf 'notes\n' > "$r/NOTES"; git -C "$r" add NOTES; git -C "$r" commit -qm notes; other=$(git -C "$r" rev-parse --short=9 HEAD)
+line 1 "negative: a fix commit that changed none of the plant's files" "| fix | $other touches none of the files" \
+  "$L | live | $fix,$other | tools/fuzz/plants/bound.patch | - | x"
+git -C "$r" reset -q --hard HEAD~1
 line 1 "negative: a dead entry without a guard test" "| unguarded |" "$L | dead | $fix | tools/fuzz/plants/bound.patch | - | -"
 line 1 "negative: a guard test that does not exist" "| guard | x.BoundTest.gone is no test" "$L | live | $fix | tools/fuzz/plants/bound.patch | x.BoundTest.gone | x"
 line 1 "negative: a guard test the JVM tests do not run" "| guard | x.HostTest.h is in kuicksilver-x/src/androidHostTest" \

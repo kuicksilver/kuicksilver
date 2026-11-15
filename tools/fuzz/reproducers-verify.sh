@@ -9,7 +9,9 @@
 #   a dead input still passes (when it fails again, the entry says dead wrongly: record it live);
 #   every guard test of the entry fails (a guard that passes with the bug back guards nothing).
 # Each input runs as its Jazzer target runs it in the JVM tests (regression mode): it is copied into the target's
-# regression directory under a name of its own (zz-reproducer-<n>), so a committed corpus input runs the same way. The
+# regression directory under a name of its own (zz-reproducer-<n>), so a committed corpus input runs the same way; an
+# input of the ksl harness (tools/fuzz/corpus/ksl.parsers) runs through tools/fuzz/ksl/build.sh's binary built from the
+# planted copy (-runs=0, as tools/c-test.sh replays the corpus), its output being the failure text. The
 # plant is removed again before the next one. Kotlin warnings do not fail the planted build (a plant may leave a
 # parameter unused). Takes a few minutes per plant (an incremental build of the planted module and its tests).
 # Usage: tools/fuzz/reproducers-verify.sh [plant-name...]   (only the entries of those plants; exit 1 on any mismatch)
@@ -43,10 +45,13 @@ if only:
     if missing:
         sys.exit("reproducers-verify: no entry uses the plant(s) " + ", ".join(sorted(missing)))
 for i, e in enumerate(entries):
-    module, cls, method = e["target"]
-    d = os.path.join(copy, module, "src/jvmTest/resources", *cls.split(".")[:-1], cls.split(".")[-1] + "Inputs", method)
-    os.makedirs(d, exist_ok=True)
+    module, cls, method, kind = e["target"]
     e["case"] = f"zz-reproducer-{i}"
+    if kind == "c":  # the ksl harness replays a directory: one of its own per input
+        d = os.path.join(copy, "build", "reproducers-c", e["case"])
+    else:
+        d = os.path.join(copy, module, "src/jvmTest/resources", *cls.split(".")[:-1], cls.split(".")[-1] + "Inputs", method)
+    os.makedirs(d, exist_ok=True)
     shutil.copyfile(os.path.join(copy, e["input"]), os.path.join(d, e["case"]))
 rounds = [{"plant": None, "entries": entries}]
 for p in sorted({e["plant"] for e in entries}):
@@ -65,11 +70,13 @@ import json, sys
 rnd = json.load(open(sys.argv[1]))[int(sys.argv[2])]
 tests = {}
 for e in rnd["entries"]:
-    module, cls, method = e["target"]
-    tests.setdefault(module, set()).add(f"{cls}.{method}")
+    module, cls, method, kind = e["target"]
+    tests.setdefault(module, set())
+    if kind != "c":
+        tests[module].add(f"{cls}.{method}")
     for gname in e["guards"]:
         tests[module].add(gname)  # a guard runs in the module of its input (the lint checks it is a test there)
-for module in sorted(tests):
+for module in sorted(m for m in tests if tests[m]):
     print(f":{module}:jvmTest")
     for t in sorted(tests[module]):
         print("--tests"); print(t)
@@ -79,7 +86,27 @@ PY
   if [ -n "$plant" ]; then (cd "$copy" && GIT_CEILING_DIRECTORIES="$work" git apply "$plant") || { echo "FAIL $plant: does not apply"; bad=1; continue; }; fi
   find "$copy" -path '*/build/test-results/jvmTest/*.xml' -delete 2>/dev/null || true
   # shellcheck disable=SC2086 # KSL_GRADLE_ARGS is a list of arguments
-  (cd "$copy" && "${g[@]}" ${KSL_GRADLE_ARGS:-} -Pkuicksilver.warningsAsErrors=false --continue "${args[@]}") > "$work/gradle-$r.log" 2>&1 || true
+  if [ "${#args[@]}" -gt 0 ]; then
+    (cd "$copy" && "${g[@]}" ${KSL_GRADLE_ARGS:-} -Pkuicksilver.warningsAsErrors=false --continue "${args[@]}") > "$work/gradle-$r.log" 2>&1 || true
+  fi
+  # inputs of the ksl harness (tools/fuzz/corpus/ksl.parsers): built from the planted copy, each replayed once as
+  # tools/c-test.sh replays the corpus; its exit status and output are the result
+  rm -rf "$copy/build/reproducers-c-results"; mkdir -p "$copy/build/reproducers-c-results"
+  if ls "$copy/build/reproducers-c" >/dev/null 2>&1 && python3 -I -c 'import json,sys; sys.exit(0 if any(e["target"][3] == "c" for e in json.load(open(sys.argv[1]))[int(sys.argv[2])]["entries"]) else 1)' "$work/rounds.json" "$r"; then
+    if (cd "$copy" && bash tools/fuzz/ksl/build.sh) > "$work/ksl-build-$r.log" 2>&1; then
+      for d in "$copy"/build/reproducers-c/*/; do
+        c=$(basename "$d")
+        # from a directory of its own: the harness writes a crash-<hash> artifact into its working directory
+        if (cd "$copy/build/reproducers-c-results" && "$copy/build/fuzz-ksl/ksl_fuzz" -runs=0 -timeout=60 "$d") > "$copy/build/reproducers-c-results/$c.log" 2>&1; then
+          echo pass > "$copy/build/reproducers-c-results/$c.status"
+        else
+          echo fail > "$copy/build/reproducers-c-results/$c.status"
+        fi
+      done
+    else
+      echo "FAIL: the ksl harness did not build (see $work/ksl-build-$r.log)"; bad=1
+    fi
+  fi
   python3 -I - "$copy" "$work/rounds.json" "$r" "$work/gradle-$r.log" <<'PY' || bad=1
 import glob, html, json, os, re, sys
 copy, rounds, r, log = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
@@ -93,6 +120,10 @@ for f in glob.glob(os.path.join(copy, "*", "build", "test-results", "jvmTest", "
         name = html.unescape(m.group(1))
         results[(m.group(2), re.sub(r"\[jvm\]$", "", name).removesuffix("()"))] = \
             html.unescape(fail.group(2) + (fail.group(3) if fail.lastindex >= 3 else "")) if fail else None
+for f in glob.glob(os.path.join(copy, "build", "reproducers-c-results", "*.status")):
+    case = os.path.basename(f)[:-len(".status")]
+    failed = open(f).read().strip() == "fail"
+    results[("ksl_fuzz", case)] = open(f[:-len(".status")] + ".log", errors="replace").read() if failed else None
 bad = 0
 label = os.path.basename(plant)[:-len(".patch")] if plant else "no plant"
 def say(ok, text):

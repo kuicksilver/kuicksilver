@@ -2,24 +2,30 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 """Every fuzz reproducer in the tree keeps a record of the bug it guards. A file named like one of libFuzzer's or Jazzer's
-artifacts (crash-, timeout-, oom-, leak-, slow-unit-, also with an underscore and in any case), tracked or not yet tracked,
-anywhere in the repository, must have one entry in tools/fuzz/reproducers.txt:
+artifacts (crash-, timeout-, oom-, leak-, slow-unit-, minimized-from-, also with an underscore and in any case: Jazzer's
+Crash_<hash>.java too), tracked or not yet tracked, anywhere in the repository, must have one entry in
+tools/fuzz/reproducers.txt. Not seen: a reproducer named otherwise (by hand, or by -exact_artifact_path or another
+-artifact_prefix).
 
   <input> | <state> | <fix> | <plant> | <guards> | <expect>
 
   input   the path from the top of the repository: a regression input of a Jazzer target
           (<module>/src/jvmTest/resources/<package>/<Class>Inputs/<method>/<file>) or a committed corpus input
-          (tools/fuzz/corpus/<target>/<file>, the target a jvm row of tools/fuzz/campaign.sh), so it can be replayed;
+          (tools/fuzz/corpus/<target>/<file>, the target a jvm row of tools/fuzz/campaign.sh, or its c row: the ksl
+          harness, replayed by the verifier through tools/fuzz/ksl/build.sh), so it can be replayed;
   state   live (the input fails again when the fix is planted out) or dead (it passes even then: the harness or the code
           around the fix changed, so the input alone no longer guards the bug and a unit test must);
-  fix     the commit(s) of the fix, comma-separated (7 to 40 hex digits; resolved when the clone has the history);
+  fix     the commit(s) of the fix, comma-separated (7 to 40 hex digits; when the clone has the history, each must be a
+          commit that changed at least one of the files the plant changes);
   plant   tools/fuzz/plants/<name>.patch, a small patch that puts the bug back (reverts the guarded fix); it must apply to
           the tree as it is (git apply --check), touch no test resource, and not touch the guard tests' own files;
   guards  the unit tests that cover the bug, comma-separated `<package>.<Class>.<test>` as tools/check/test-count.lock
-          lists them, of a source set the JVM tests run (commonTest, jvmTest, jvmCommonTest); a dead input needs one, a
+          lists them, of a source set the JVM tests run (commonTest, jvmTest, jvmCommonTest) of the target's module (for
+          the ksl harness, kuicksilver-native: the C tests of tools/c-test.sh cannot be named); a dead input needs one, a
           live one may name them or `-`;
-  expect  for a live input, a piece of the failure it gives with the plant (the message the replay reports); `-` for a
-          dead one.
+  expect  for a live input, a piece of the failure it gives with the plant (the message and stack trace the replay
+          reports, or the harness's output): specific enough to name this bug (a message, a frame), not only an
+          exception class; `-` for a dead one.
 
 It also fails on an entry whose input is gone (renamed or deleted: move the entry with it), a duplicate, an unknown state,
 a malformed or unknown commit, a plant that is missing, outside tools/fuzz/plants or does not apply, a plant no entry
@@ -36,7 +42,7 @@ import sys
 
 MANIFEST = "tools/fuzz/reproducers.txt"
 PLANTS = "tools/fuzz/plants/"
-ARTIFACT = re.compile(r"^(crash|timeout|oom|leak|slow-unit)[-_]", re.IGNORECASE)
+ARTIFACT = re.compile(r"^(crash|timeout|oom|leak|slow-unit|minimized-from)[-_]", re.IGNORECASE)
 RESOURCE = re.compile(r"^(kuicksilver-[\w-]+)/src/jvmTest/resources/(.+)/(\w+)Inputs/(\w+)/[^/]+$")
 CORPUS = re.compile(r"^tools/fuzz/corpus/([\w.-]+)/[^/]+$")
 JVM_SETS = ("commonTest", "jvmTest", "jvmCommonTest")
@@ -48,7 +54,7 @@ def git(root, *args):
 
 
 def campaign_targets(root):
-    """target id -> (module, class, method) of the jvm rows of campaign.sh's table."""
+    """target id -> (module, class, method, kind) of the jvm and c rows of campaign.sh's table."""
     out, rows = {}, False
     try:
         with open(os.path.join(root, "tools/fuzz/campaign.sh"), encoding="utf-8") as fh:
@@ -61,19 +67,19 @@ def campaign_targets(root):
                     if line.strip() == "EOF":
                         break
                     f = line.split()
-                    if len(f) == 5 and f[1] == "jvm":
-                        out[f[0]] = (f[2], f[3], f[4])
+                    if len(f) == 5 and f[1] in ("jvm", "c"):
+                        out[f[0]] = (f[2], f[3], f[4], f[1])
     except OSError:
         pass
     return out
 
 
 def target_of(root, path, targets):
-    """(module, class, method) that replays [path], or None."""
+    """(module, class, method, kind) that replays [path], or None: a Jazzer target (jvm), or the ksl harness (c)."""
     m = RESOURCE.match(path)
     if m:
         module, pkg, cls, method = m.groups()
-        return module, pkg.replace("/", ".") + "." + cls, method
+        return module, pkg.replace("/", ".") + "." + cls, method, "jvm"
     m = CORPUS.match(path)
     if m:
         return targets.get(m.group(1))
@@ -128,7 +134,7 @@ def main(argv):
         if target is None:
             findings.append(f"{where} | not replayable | {path} is neither a Jazzer regression input "
                             "(<module>/src/jvmTest/resources/.../<Class>Inputs/<method>/) nor a committed corpus input of a jvm "
-                            "target of tools/fuzz/campaign.sh (tools/fuzz/corpus/<target>/)")
+                            "or c target of tools/fuzz/campaign.sh (tools/fuzz/corpus/<target>/)")
         if state not in ("live", "dead"):
             findings.append(f"{where} | state | `{state}` is neither live nor dead")
         commits = [c.strip() for c in fix.split(",") if c.strip()]
@@ -182,6 +188,12 @@ def main(argv):
                 elif t in guard_files:
                     findings.append(f"{where} | plant | {plant} touches {t}, the file of a guard test: the guard would fail "
                                     "for the plant, not for the bug")
+            for c in commits:
+                if not shallow and HEX.match(c) and touched:
+                    changed = set(git(root, "show", "--name-only", "--format=", c).stdout.split())
+                    if not changed & touched:
+                        findings.append(f"{where} | fix | {c} touches none of the files {plant} changes: the plant does not "
+                                        "take back that fix (or the file moved since: plant it again)")
             check = git(root, "apply", "--check", plant)
             if check.returncode != 0:
                 findings.append(f"{where} | plant | {plant} no longer applies (the fixed code moved: plant it again): "
