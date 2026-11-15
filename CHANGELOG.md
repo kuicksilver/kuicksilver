@@ -1046,6 +1046,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 6455 section 7.1.2). The connection, the HTTP/3 pool's count and the engine's
   `close()` wait for the session's end, not the call's, so `client.close()` right after `close(reason)` no longer cuts
   the Close off. The extensions' state (permessage-deflate) is freed with the session.
+- HTTP/1.1 server: a GET that offers an upgrade (`Connection: Upgrade` with an `Upgrade` field, `h2c`, `websocket` or any
+  other token) and whose handler read the request body before answering hung its connection for good: the body stayed
+  open until the response head settled the upgrade. Such a request has no body (RFC 9112 section 6.3 item 7), so the
+  body now ends at once whether or not the upgrade is taken, and the new protocol reads the connection from a separate
+  input. Upgrades (WebSocket) are unchanged.
+- HTTP/1.1 client and server: an empty `Connection` field, or one of only commas and whitespace, is a valid empty list
+  (RFC 9110 section 5.6.1.2). The client failed the call with an IllegalArgumentException from Ktor's
+  `ConnectionOptions.parse`, and the server answered 400. Connection options are now read over all field lines, with
+  HTAB as whitespace (`keep-alive,<HTAB>close` closes) and empty elements ignored.
+- HTTP/1.1 server: a 101 must name the new protocol in Upgrade and only one the request offered (RFC 9110 section 7.8).
+  An application upgrade that breaks either is now answered 500 (logged as an error) instead of switching. Whether a
+  101 is a WebSocket handshake (RFC 6455 checks and the frame guard) is decided by the protocol it switches to; before,
+  a substring of the request's first Upgrade line decided, so a `websocket` offer on a second line skipped the checks.
+- Client proxy from the environment (`http_proxy`, `https_proxy`, `all_proxy`): user info with a broken percent-escape
+  failed with Ktor's URLDecodeException, whose message quoted the password; a URL whose user info held `://` was
+  refused with a message that quoted it as a scheme; and user info that lost its `@` became the proxy's host, shown in
+  its text. All three now fail without repeating any of the URL (an unsupported scheme is no longer named either: a
+  user name before `://` reads as one): a scheme is one only when it is RFC 3986's, the authority ends at `/`, `?` or
+  `#`, and the host must be an IP literal or a plain name.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

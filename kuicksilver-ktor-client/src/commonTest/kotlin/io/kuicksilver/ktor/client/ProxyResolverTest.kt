@@ -33,6 +33,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -115,6 +116,69 @@ class ProxyResolverTest {
         assertEquals(ProxyCredentials("al@ice", "p:s"), p.credentials)
         assertEquals("http://p.test:3128", p.toString(), "the credentials stay out of its text")
     }
+
+    /**
+     * User info with a broken percent-encoding fails with IllegalArgumentException whose message does not repeat the user
+     * name or password. Before, Ktor's URLDecodeException escaped with the password in its message ("Wrong HEX escape ...
+     * in <password>").
+     */
+    @Test fun negative_brokenPercentEncodingInUserInfoKeepsTheSecretOutOfTheMessage() {
+        for (url in listOf("http://user:pa%zzss@p.test:3128", "http://us%4@p.test:3128", "socks5h://u:secret%@p.test")) {
+            val e = assertFailsWith<IllegalArgumentException>(url) { env("all_proxy" to url).at("https://x.test/") }
+            for (secret in listOf("pa%zzss", "zz", "secret", "us%4")) {
+                assertFalse(e.message.orEmpty().contains(secret), "the message repeats the user info: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * A `://` is a scheme's end only when the text before it is a URI scheme (RFC 3986 section 3.1) and no `/` comes
+     * first: user info that holds `://` fails without being repeated (before, the "unsupported scheme" message quoted all
+     * of it), and a `://` in the path leaves a URL without a scheme, read as HTTP with its credentials.
+     */
+    @Test fun negative_textBeforeColonSlashSlashThatIsNoSchemeIsNotRepeated() {
+        for (url in listOf(
+            "u:S3cRtQ://x@proxy:8080",
+            "u:%@S3cRtQ@p://%",
+            "S3cRtQ@p://h",
+            "1S3cRtQ://h",
+            "://S3cRtQ@h",
+            // user info that lost its "@" is not a host: refused, not shown as one
+            "u:S3cRtQ:/x@proxy:8080",
+            "http://u:S3cRtQ[::1",
+            "http://u:S3cRtQ[zz]:1",
+            "%S3cRtQh",
+            "http://S3cRtQ%/@h",
+            "?S3cRtQ/x@h:1",
+            "http://u:S3cRtQh:1:]2",
+            "http://[::1]S3cRtQ",
+        )) {
+            val e = assertFails(url) { env("all_proxy" to url).at("https://x.test/") }
+            assertFalse(e.message.orEmpty().contains("S3cRtQ"), "the message repeats the user info: ${e.message}")
+        }
+        assertEquals(
+            ProxyResolved("proxy", 3128, ProxyCredentials("user", "S3cRtQ")),
+            env("all_proxy" to "user:S3cRtQ@proxy:3128/a://b").at("https://x.test/")!!.let {
+                ProxyResolved(it.host, it.port, it.credentials)
+            },
+        )
+        // the authority ends at "?" and "#" too, and IP literals stay hosts
+        assertEquals("p.test", env("all_proxy" to "http://u:S3cRtQ@p.test?x").at("https://x.test/")!!.host)
+        assertEquals("::1", env("all_proxy" to "http://[::1]:3128").at("https://x.test/")!!.host)
+        assertEquals("2001:db8::1", env("all_proxy" to "2001:db8::1").at("https://x.test/")!!.host)
+        // an unsupported scheme is not named either: a user name without a password reads as one
+        for (url in listOf("ftp://u:S3cRtQ@h", "S3cRtQ://x@proxy:8080", "uS3cRtQ://x@proxy")) {
+            val e = assertFailsWith<UnsupportedOperationException>(url) { env("all_proxy" to url).at("https://x.test/") }
+            assertTrue("socks5://" in e.message!!, e.message)
+            assertFalse("S3cRtQ".lowercase() in e.message!!.lowercase() || "ftp" in e.message!!, e.message)
+        }
+    }
+
+    private data class ProxyResolved(
+        val host: String,
+        val port: Int,
+        val credentials: ProxyCredentials?,
+    )
 
     /**
      * A `socks5://` URL whose user info has no password (or an empty one) cannot authenticate: RFC 1929 section 2 gives
@@ -798,7 +862,7 @@ class ProxyResolverTest {
                 engine = { proxyResolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "https://127.0.0.1:1") },
             ).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.get("https://origin.test:$port/") }
-                assertTrue("socks4" in e.message!!, e.message)
+                assertTrue("not supported" in e.message!! && "socks4" !in e.message!!, e.message)
                 assertFailsWith<UnsupportedOperationException> { c.get("http://origin.test:$port/") }
             }
             assertEquals(0, accepted, "the origin was contacted around the proxy")

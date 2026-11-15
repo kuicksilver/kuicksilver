@@ -42,12 +42,25 @@ internal class H1Call(
     endsConnection: CompletableDeferred<Boolean>? = null,
     fields: Headers = CIOHeaders(_request.headers),
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** The input of the protocol an upgrade switches to ([H1RequestScope.upgradeInput]); never the request's body [input]. */
+    upgradeInput: ByteReadChannel? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme, fields)
 
     override val response =
-        H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, endsConnection, webSocketMaxMessageSize)
+        H1Response(
+            this,
+            output,
+            upgradeInput ?: ByteReadChannel.Empty,
+            engineDispatcher,
+            appDispatcher,
+            upgraded,
+            altSvc,
+            closing,
+            endsConnection,
+            webSocketMaxMessageSize,
+        )
 
     internal fun release() {
         request.release()

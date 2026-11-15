@@ -500,6 +500,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     endsConnection,
                     fields,
                     configuration.webSocketMaxMessageSize,
+                    upgradeInput,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null

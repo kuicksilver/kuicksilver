@@ -11,6 +11,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.websocket.websocketServerAccept
 import io.ktor.websocket.ProtocolViolationException
 import io.kuicksilver.ktor.network.SentCompression
+import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.negotiatedPerMessageDeflate
 import io.kuicksilver.ktor.network.negotiatedWebSocketRsv
 import io.kuicksilver.ktor.network.webSocketExtensionNames
@@ -65,13 +66,7 @@ internal fun checkWebSocketUpgrade(
     if (upgrade.size != 1 || !upgrade[0].trim().equals("websocket", ignoreCase = true)) {
         handshakeFailure("the 101 response's Upgrade is ${upgrade.describe()}, not websocket (RFC 6455 section 4.1)")
     }
-    val connection =
-        headers
-            .getAll(HttpHeaders.Connection)
-            .orEmpty()
-            .flatMap { it.split(',') }
-            .map { it.trim() }
-    if (connection.none { it.equals("upgrade", ignoreCase = true) }) {
+    if ("upgrade" !in connectionOptions(headers.getAll(HttpHeaders.Connection).orEmpty())) {
         handshakeFailure("the 101 response's Connection has no Upgrade token (RFC 6455 section 4.1)")
     }
     val accept = headers.getAll(HttpHeaders.SecWebSocketAccept).orEmpty()

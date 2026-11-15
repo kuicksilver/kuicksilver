@@ -576,8 +576,9 @@ script, the engine logs that once at Info level instead ("detect the proxy autom
 auto-configuration script was found"), as detection is on by default there: those requests use the fixed proxy setting,
 if any, else connect directly, and detection runs again after 5 minutes.
 Set `proxy` or a `proxyResolver` of your own to decide the route yourself.
-A request that fails with `UnsupportedOperationException` naming a proxy scheme (`socks4://`, `https://`) has a proxy
-setting the engine cannot use; it is never bypassed.
+A request that fails with `UnsupportedOperationException` ("the proxy URL's scheme is not supported", or the message
+for an `https://` proxy) has a proxy setting the engine cannot use, such as `socks4://`; it is never bypassed. The
+message does not name the scheme a proxy URL from the environment gave: a user name before `://` reads as one.
 
 ### `H3Only` requests time out
 

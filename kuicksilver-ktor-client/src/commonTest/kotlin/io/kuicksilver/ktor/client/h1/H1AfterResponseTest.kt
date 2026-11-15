@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client.h1
 
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import io.ktor.http.HttpHeaders
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -34,6 +35,8 @@ class H1AfterResponseTest {
         val tail: ByteArray? = null,
         /** Whether the application drops the body without reading it. */
         val abandon: Boolean = false,
+        /** The Connection field lines of the request. */
+        val requestConnection: List<String> = emptyList(),
     )
 
     private val cases =
@@ -107,7 +110,12 @@ class H1AfterResponseTest {
         val call = Job()
         val done = CompletableDeferred<AfterResponse>()
         try {
-            val request = HttpRequestBuilder().apply { url("http://127.0.0.1:8080/") }.build()
+            val request =
+                HttpRequestBuilder()
+                    .apply {
+                        url("http://127.0.0.1:8080/")
+                        for (line in case.requestConnection) headers.append(HttpHeaders.Connection, line)
+                    }.build()
             val response =
                 readResponse(
                     GMTDate(),
@@ -138,6 +146,44 @@ class H1AfterResponseTest {
     @Test fun everyKindOfResponse() =
         runTest {
             for (case in cases) assertEquals(case.expected, after(case), case.name)
+        }
+
+    /**
+     * The Connection field is a list (RFC 9110 sections 5.6.1 and 7.6.1): an empty value, or one of only commas and OWS,
+     * carries no option and is valid (a recipient MUST parse and ignore empty elements, section 5.6.1.2), with CRLF or a
+     * bare LF ending its line; `close` counts in any case, after HTAB, between empty elements and on any field line, of
+     * the response or of the request. Before, Ktor's `ConnectionOptions.parse` failed with IllegalArgumentException on the
+     * empty value (the response was lost), took `<HTAB>close` for an unknown option and kept the connection, and read only
+     * the request's first Connection line.
+     */
+    @Test fun negative_connectionListsFollowTheListRules() =
+        runTest {
+            val ok = "Content-Length: 2\r\n\r\nok"
+            val listCases =
+                listOf(
+                    Case("an empty Connection", "HTTP/1.1 200 OK\r\nConnection:\r\n$ok", AfterResponse.Reuse),
+                    Case("an empty Connection last", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection:\r\n\r\nok", AfterResponse.Reuse),
+                    Case("Connection of only OWS", "HTTP/1.1 200 OK\r\nConnection: \t \r\n$ok", AfterResponse.Reuse),
+                    Case("an empty Connection, bare LF", "HTTP/1.1 200 OK\nConnection:\nContent-Length: 2\n\nok", AfterResponse.Reuse),
+                    Case("Connection: , ,", "HTTP/1.1 200 OK\r\nConnection: , ,\r\n$ok", AfterResponse.Reuse),
+                    Case("two empty Connection lines", "HTTP/1.1 200 OK\r\nConnection:\r\nConnection:\r\n$ok", AfterResponse.Reuse),
+                    Case("an empty line then close", "HTTP/1.1 200 OK\r\nConnection:\r\nConnection: close\r\n$ok", AfterResponse.Close),
+                    Case("close between empty elements", "HTTP/1.1 200 OK\r\nConnection: , CLOSE ,\r\n$ok", AfterResponse.Close),
+                    Case("close after HTAB", "HTTP/1.1 200 OK\r\nConnection: keep-alive,\tclose\r\n$ok", AfterResponse.Close),
+                    Case(
+                        "an empty request Connection",
+                        "HTTP/1.1 200 OK\r\n$ok",
+                        AfterResponse.Reuse,
+                        requestConnection = listOf(""),
+                    ),
+                    Case(
+                        "close on the request's second Connection line",
+                        "HTTP/1.1 200 OK\r\n$ok",
+                        AfterResponse.Close,
+                        requestConnection = listOf("keep-alive", " close"),
+                    ),
+                )
+            for (case in listCases) assertEquals(case.expected, after(case), case.name)
         }
 
     private companion object {
