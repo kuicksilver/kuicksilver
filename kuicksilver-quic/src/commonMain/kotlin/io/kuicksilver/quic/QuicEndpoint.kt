@@ -156,7 +156,7 @@ public suspend fun QuicEndpoint.checkLoadBalancer(config: QuicLbConfig?) {
 }
 
 /**
- * Suspends until [this] stream is over at the transport level: everything we sent acknowledged (or reset), everything the
+ * Suspends until [this] stream is over at the transport level: everything we sent acknowledged (or our reset), everything the
  * peer sent consumed, or the connection ended. HTTP/3's graceful close waits for it, so a response handed to QUIC is not
  * cut by the CONNECTION_CLOSE while it is still on its way (RFC 9114 section 5.2). Returns at once for streams of other
  * implementations.

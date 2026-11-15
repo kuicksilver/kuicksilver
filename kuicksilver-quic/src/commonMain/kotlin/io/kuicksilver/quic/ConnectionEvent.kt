@@ -91,7 +91,7 @@ public sealed interface ConnectionEvent {
     ) : ConnectionEvent
 
     /**
-     * Stream [id][ConnectionEvent.StreamFinished.id] is done in both directions — its sending half acknowledged or reset, its receiving half read to the end or reset
+     * Stream [id][ConnectionEvent.StreamFinished.id] is done in both directions — its sending half acknowledged, or reset with that RESET_STREAM acknowledged (RFC 9000 section 3.1), its receiving half read to the end or reset
      * and consumed — and was retired: its state is gone and, for a peer stream, its credit returns through MAX_STREAMS. Raised once.
      */
     public class StreamFinished internal constructor(

@@ -224,10 +224,14 @@ internal class StreamManager(
             e.recv?.discardBuffered()
             sendLimit.remove(e.id)
             early -= e.id
+            resetsUnacked -= e.id
             it.remove()
             dropped++
         }
         connBlocked.clear()
+        // a RESET_STREAM of a dropped stream is dropped with it (below), and nothing of it is reported finished any more
+        resetsUnacked.removeAll { StreamIds.isLocal(it, role) }
+        finishedAwaitingResetAck.removeAll { StreamIds.isLocal(it, role) }
         writeRefused.removeAll { !streams.containsKey(it.id) }
         for (i in control.indices.reversed()) {
             val c = control[i]
@@ -590,6 +594,7 @@ internal class StreamManager(
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
+        resetsUnacked += id
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
     }
@@ -815,8 +820,13 @@ internal class StreamManager(
             streams.remove(id)
             sendLimit.remove(id)
             e.send?.let { scheduler.remove(it) }
-            events +=
-                ConnectionEvent.StreamFinished(id)
+            // retired now (its credit is counted), but finished for the application only once our RESET_STREAM is
+            // acknowledged, as a sending half that ended with a FIN is once all of it is ("Reset Recvd", RFC 9000 section 3.1)
+            if (id in resetsUnacked) {
+                finishedAwaitingResetAck += id
+            } else {
+                events += ConnectionEvent.StreamFinished(id)
+            }
         }
     }
 
@@ -837,6 +847,7 @@ internal class StreamManager(
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
+        resetsUnacked += id
         maybeClose(id)
     }
 
@@ -1033,7 +1044,21 @@ internal class StreamManager(
     /** Streams whose [write] took fewer bytes than offered; each gets StreamWritable once acknowledgements free buffer room. */
     private val writeRefused = ArrayList<SendStream>()
 
+    /** Streams whose RESET_STREAM we sent and the peer has not acknowledged yet. */
+    private val resetsUnacked = HashSet<Long>()
+
+    /** Retired streams whose StreamFinished waits for the acknowledgment of their RESET_STREAM. */
+    private val finishedAwaitingResetAck = HashSet<Long>()
+
+    /** (streams with an unacknowledged RESET_STREAM, retired ones among them waiting to be reported finished), a probe. */
+    internal fun resetAcksPendingForTest(): IntArray = intArrayOf(resetsUnacked.size, finishedAwaitingResetAck.size)
+
     fun onFramesAcked(f: SentFrames) {
+        for (i in 0 until f.idCount) {
+            if (f.idKind[i] != SentFrames.ID_RESET_STREAM) continue
+            val id = f.idValue[i]
+            if (resetsUnacked.remove(id) && finishedAwaitingResetAck.remove(id)) events += ConnectionEvent.StreamFinished(id)
+        }
         val bufferedBefore = sendBufferedBytes
         for (i in 0 until f.streamCount) {
             val s =
