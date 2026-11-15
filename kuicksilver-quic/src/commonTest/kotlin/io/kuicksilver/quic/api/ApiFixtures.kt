@@ -93,6 +93,7 @@ internal class ApiPair private constructor(
     suspend fun restartServer(
         serverQuic: QuicConfig,
         crypto: QuicCrypto,
+        admission: io.kuicksilver.quic.ConnectionAdmission? = null,
     ): QuicEndpoint {
         server.closeAndJoin()
         val io = net.open(serverIo.localAddress)
@@ -110,6 +111,7 @@ internal class ApiPair private constructor(
                             }.build()
                     this.crypto = crypto
                     this.io = { io }
+                    admission?.let { this.admission = it }
                 }.build(),
         )
     }

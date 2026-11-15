@@ -39,8 +39,15 @@ import kotlin.time.Duration.Companion.seconds
 class ZeroRttApiTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private fun clientConfig(mode: EarlyDataState = EarlyDataState.Allowed) =
-        QuicClientConfig.Builder(CoreFixtures.client()).apply { earlyData = mode }.build()
+    private fun clientConfig(
+        mode: EarlyDataState = EarlyDataState.Allowed,
+        quic: io.kuicksilver.quic.QuicConfig = io.kuicksilver.quic.QuicConfig.Default,
+    ) = QuicClientConfig
+        .Builder(CoreFixtures.client())
+        .apply {
+            earlyData = mode
+            this.quic = quic
+        }.build()
 
     private suspend fun QuicConnection.echo(text: String): String {
         val s = openBidi()
@@ -60,7 +67,10 @@ class ZeroRttApiTest {
     }
 
     /** A first connection that leaves the client a ticket for [p]'s server. */
-    private suspend fun ticketFrom(p: ApiPair) {
+    private suspend fun ticketFrom(
+        p: ApiPair,
+        quic: io.kuicksilver.quic.QuicConfig = io.kuicksilver.quic.QuicConfig.Default,
+    ) {
         coroutineScope {
             val served =
                 async {
@@ -69,7 +79,7 @@ class ZeroRttApiTest {
                     s.output.writeFully(s.input.readAll().encodeToByteArray())
                     s.output.flushAndClose()
                 }
-            val first = p.client.connect(p.server.localAddress, clientConfig())
+            val first = p.client.connect(p.server.localAddress, clientConfig(quic = quic))
             assertEquals("one", first.echo("one"))
             val sessions = (p.client as EndpointLoop).sessions
             while (sessions.size() == 0) yield()
@@ -80,52 +90,56 @@ class ZeroRttApiTest {
 
     /**
      * A uni stream sent and reset in 0-RTT, before the server's answer: done on our side at once, its final size stands
-     * only once the server accepted, and then both sides agree on it.
+     * only once the server accepted, and then both sides agree on it. RESET_STREAM_AT keeping all 5 bytes makes the size
+     * exact whatever left before the reset.
      */
-    @Test fun earlyStreamResetBeforeTheAnswerHasItsSizeOnAccept(): Unit = earlyReset(admission = null)
+    @Test fun earlyStreamResetBeforeTheAnswerHasItsSizeOnAccept(): Unit = earlyResetAccepted(admission = null)
 
-    /** The same through a Retry (RFC 9000 section 17.2.5): the held size comes once the handshake settles, never hangs. */
-    @Test fun earlyStreamResetThroughARetryHasItsSize(): Unit = earlyReset(admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+    /** The same through a Retry (RFC 9000 section 17.2.5): the 0-RTT that follows it is accepted, the size is exact. */
+    @Test fun earlyStreamResetThroughARetryHasItsSize(): Unit =
+        earlyResetAccepted(admission = io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
 
-    private fun earlyReset(admission: io.kuicksilver.quic.ConnectionAdmission?): Unit =
+    private val withAt = quicConfig { resetStreamAt = true }
+
+    private fun earlyResetAccepted(admission: io.kuicksilver.quic.ConnectionAdmission?): Unit =
         runBlocking {
-            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true, admission = admission).use { p ->
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true, admission = admission, serverQuic = withAt).use { p ->
                 withTimeout(20.seconds) {
-                    ticketFrom(p)
+                    ticketFrom(p, withAt)
                     val peerSize =
                         async {
                             val c = p.server.accept()
                             c.acceptStream().receivedFinalSize!!.await() to c.earlyDataAccepted
                         }
                     p.net.hold(p.clientIo.localAddress)
-                    val second = p.client.connectEarly(p.server.localAddress, clientConfig())
+                    val second = p.client.connectEarly(p.server.localAddress, clientConfig(quic = withAt))
                     val st = second.openUni()
                     st.output.writeFully("early".encodeToByteArray())
                     st.output.flush()
-                    st.reset(4)
+                    st.resetAt(4, 5)
                     p.net.release(p.clientIo.localAddress)
                     second.awaitHandshake()
-                    if (second.earlyDataAccepted == true) {
-                        val size = st.sentFinalSize!!.await()
-                        assertTrue(size in 0L..5L, "$size")
-                        assertEquals(size to true, peerSize.await())
-                    } else {
-                        // a Retry may cost the 0-RTT: then the stream was dropped, never left hanging
-                        assertTrue(admission != null, "accepted without a Retry")
-                        assertFailsWith<QuicException.StreamError.EarlyDataRejected> { st.sentFinalSize!!.await() }
-                        peerSize.cancel()
-                    }
+                    assertEquals(true, second.earlyDataAccepted)
+                    assertEquals(5L, st.sentFinalSize!!.await())
+                    assertEquals(5L to true, peerSize.await())
                     second.close()
                 }
             }
         }
 
-    @Test fun negative_earlyStreamResetBeforeARejectionFailsItsSize(): Unit =
+    /** Through a Retry to a server that refuses the ticket's early data: the stream fails, its size never stands. */
+    @Test fun negative_earlyStreamResetThroughARetryThenARejectionFailsItsSize(): Unit =
+        earlyResetRejected(io.kuicksilver.quic.ConnectionAdmission.AlwaysRetry)
+
+    @Test fun negative_earlyStreamResetBeforeARejectionFailsItsSize(): Unit = earlyResetRejected(null)
+
+    private fun earlyResetRejected(admission: io.kuicksilver.quic.ConnectionAdmission?): Unit =
         runBlocking {
             ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
                 withTimeout(20.seconds) {
                     ticketFrom(p)
-                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    // a restarted server has other ticket keys: it refuses the ticket's early data
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto, admission)
                     try {
                         launch { runCatching { server.accept() } } // ends with the server's close
                         p.net.hold(p.clientIo.localAddress)

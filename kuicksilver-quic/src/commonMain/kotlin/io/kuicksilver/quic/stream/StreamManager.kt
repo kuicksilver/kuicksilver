@@ -819,7 +819,17 @@ internal class StreamManager(
         r: RecvStream,
         before: Long,
     ) {
-        if (before < 0 && r.finalSize >= 0) events += ConnectionEvent.StreamFinalSize(id, sending = false, size = r.finalSize)
+        if (before < 0 && r.finalSize >= 0) {
+            val e = ConnectionEvent.StreamFinalSize(id, sending = false, size = r.finalSize)
+            // 1-RTT packets that waited for their keys are read when the keys come, before the handshake completes and the
+            // 0-RTT answer is settled: a stream of ours is held like its sending half, a stream of the server's never drops
+            if (zeroRttPending && StreamIds.isLocal(id, role)) {
+                heldEvents += e
+                heldIds += id
+            } else {
+                events += e
+            }
+        }
     }
 
     private fun maybeClose(id: Long) {

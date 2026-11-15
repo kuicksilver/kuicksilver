@@ -352,6 +352,99 @@ class ZeroRttTest {
         }
     }
 
+    /** A bidi stream sent and reset in 0-RTT; with [stop], its receiving half is stopped before the answer too. */
+    private fun resetEarlyBidi(
+        ticket: QuicSessionTicket,
+        serverEarly: ServerEarlyData? = early(),
+        stop: Boolean,
+    ): Pair<CorePair, Long> {
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = serverEarly,
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket))
+                    id = c.openStream(bidi = true)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        p.step()
+        p.client.resetStream(id, 4)
+        if (stop) p.client.stopSending(id, 5)
+        p.step()
+        assertTrue(p.clientEvents.none { it is ConnectionEvent.StreamFinished && it.id == id })
+        return p to id
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun List<ConnectionEvent>.bidiOf(id: Long): List<String> =
+        mapNotNull {
+            when {
+                it is ConnectionEvent.StreamFinalSize && it.id == id -> if (it.sending) "sent ${it.size}" else "received ${it.size}"
+                it is ConnectionEvent.StreamFinished && it.id == id -> "finished"
+                else -> null
+            }
+        }
+
+    /** The receiving half ends after the answer (the server's reply read to its FIN): both sizes, then the end. */
+    @Test fun earlyBidiResetThenAnsweredReportsBothSizesBeforeItsEnd() {
+        val (p, id) = resetEarlyBidi(ticket(), stop = false)
+        try {
+            var answered = false
+            assertTrue(
+                p.runUntil(limit = 3.seconds) {
+                    val s = p.server
+                    if (s != null && !answered && p.serverEvents.any { it is ConnectionEvent.StreamOpened && it.id == id }) {
+                        s.writeStream(id, "ok".encodeToByteArray(), 0, 2, fin = true)
+                        answered = true
+                    }
+                    streamText(p.client, id)
+                    "finished" in p.clientEvents.bidiOf(id)
+                },
+            )
+            assertEquals(true, p.client.earlyDataAccepted)
+            val got = p.clientEvents.bidiOf(id)
+            assertEquals("finished", got.last(), "$got")
+            assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
+            assertEquals(listOf("received 2"), got.filter { it.startsWith("received") })
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Its receiving half stopped before the answer: on accept the sizes, then the end; nothing raised before. */
+    @Test fun earlyBidiResetAndStoppedReportsAfterTheAccept() {
+        val (p, id) = resetEarlyBidi(ticket(), stop = true)
+        try {
+            assertTrue(p.handshake())
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.runUntil(limit = 3.seconds) { "finished" in p.clientEvents.bidiOf(id) })
+            val got = p.clientEvents.bidiOf(id)
+            assertEquals("finished", got.last())
+            assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
+            assertEquals(1, got.count { it.startsWith("received") })
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_earlyBidiResetBeforeARejectionReportsNothing() {
+        for (stop in listOf(false, true)) {
+            val (p, id) = resetEarlyBidi(ticket(), serverEarly = early(app = byteArrayOf(9)), stop = stop)
+            try {
+                assertTrue(p.handshake())
+                assertEquals(false, p.client.earlyDataAccepted)
+                p.runUntil(limit = 1.seconds) { false }
+                assertEquals(emptyList(), p.clientEvents.bidiOf(id), "stop=$stop")
+                assertEquals(0, p.client.streams.sizesForTest()[5])
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     /** A rejected 0-RTT drops the stream: no final size is ever reported for it (its FIN went out in 0-RTT). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test

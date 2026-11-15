@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
@@ -67,6 +69,27 @@ class StreamStateTest {
             maxStreamsUni = maxStreams,
         )
         return m
+    }
+
+    /**
+     * 1-RTT packets that waited for their keys are read before the handshake completes, so a receiving frame of a stream of
+     * ours can come while our 0-RTT awaits the server's answer (the first draft of this assumed it could not, and the 0-RTT
+     * API test met it). Its final size is held like the sending half's: raised on accept, dropped on reject.
+     */
+    @Test fun receivingFinalSizeOfOurStreamIsHeldUntilTheZeroRttAnswer() {
+        for (accepted in listOf(true, false)) {
+            val m = manager()
+            val id = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
+            m.zeroRttPending = true
+            recv(m, id, 0, byteArrayOf(1, 2), fin = true)
+            assertTrue(m.events.none { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize }, "held, accepted=$accepted")
+            m.settleHeldFinalSizes(accepted)
+            assertEquals(
+                accepted,
+                m.events.any { it is io.kuicksilver.quic.ConnectionEvent.StreamFinalSize && it.id == id && !it.sending && it.size == 2L },
+            )
+            assertEquals(0, m.sizesForTest()[5])
+        }
     }
 
     @Test fun maxDataWithoutGrowthTouchesNoStream() {
