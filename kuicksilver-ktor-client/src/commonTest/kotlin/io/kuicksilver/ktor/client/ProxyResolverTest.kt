@@ -117,6 +117,20 @@ class ProxyResolverTest {
     }
 
     /**
+     * User info with a broken percent-encoding fails with IllegalArgumentException whose message does not repeat the user
+     * name or password. Before, Ktor's URLDecodeException escaped with the password in its message ("Wrong HEX escape ...
+     * in <password>").
+     */
+    @Test fun negative_brokenPercentEncodingInUserInfoKeepsTheSecretOutOfTheMessage() {
+        for (url in listOf("http://user:pa%zzss@p.test:3128", "http://us%4@p.test:3128", "socks5h://u:secret%@p.test")) {
+            val e = assertFailsWith<IllegalArgumentException>(url) { env("all_proxy" to url).at("https://x.test/") }
+            for (secret in listOf("pa%zzss", "zz", "secret", "us%4")) {
+                assertFalse(e.message.orEmpty().contains(secret), "the message repeats the user info: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * A `socks5://` URL whose user info has no password (or an empty one) cannot authenticate: RFC 1929 section 2 gives
      * PASSWD 1 to 255 octets. The lookup fails, so the request fails rather than going direct; an HTTP proxy URL keeps
      * its empty password (Basic).

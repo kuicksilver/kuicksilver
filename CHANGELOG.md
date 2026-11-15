@@ -984,6 +984,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (RFC 9110 section 5.6.1.2). The client failed the call with an IllegalArgumentException from Ktor's
   `ConnectionOptions.parse`, and the server answered 400. Connection options are now read over all field lines, with
   HTAB as whitespace (`keep-alive,<HTAB>close` closes) and empty elements ignored.
+- Client proxy from the environment (`http_proxy`, `https_proxy`, `all_proxy`): user info with a broken percent-escape
+  failed with Ktor's URLDecodeException, whose message quoted the password. It now fails with an
+  IllegalArgumentException that does not repeat the user info.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

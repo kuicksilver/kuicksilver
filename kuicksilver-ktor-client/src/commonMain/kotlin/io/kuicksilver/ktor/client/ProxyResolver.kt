@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ProxyType
 import io.ktor.client.engine.type
+import io.ktor.http.URLDecodeException
 import io.ktor.http.Url
 import io.ktor.http.decodeURLPart
 import io.ktor.http.isSecure
@@ -141,6 +142,18 @@ internal class EnvironmentProxyResolver(
  * UnsupportedOperationException, a bad port with IllegalArgumentException; neither message repeats the value, which may
  * hold a password.
  */
+
+/**
+ * A percent-decoded part of a proxy URL's user info; a broken escape fails with IllegalArgumentException that does not
+ * repeat [part]: Ktor's URLDecodeException quotes the whole text, a password included.
+ */
+private fun decodeUserInfo(part: String): String =
+    try {
+        part.decodeURLPart()
+    } catch (_: URLDecodeException) {
+        throw IllegalArgumentException("The proxy URL's user info has an invalid percent-encoding")
+    }
+
 internal fun parseProxyUrl(value: String): ResolvedProxy {
     val schemeEnd = value.indexOf("://")
     val scheme = if (schemeEnd < 0) "http" else value.substring(0, schemeEnd).lowercase()
@@ -151,7 +164,7 @@ internal fun parseProxyUrl(value: String): ResolvedProxy {
             null
         } else {
             val info = rest.substring(0, at)
-            ProxyCredentials(info.substringBefore(':').decodeURLPart(), if (':' in info) info.substringAfter(':').decodeURLPart() else "")
+            ProxyCredentials(decodeUserInfo(info.substringBefore(':')), if (':' in info) decodeUserInfo(info.substringAfter(':')) else "")
         }
     val (host, port) = splitHostPort(rest.substring(at + 1), defaultPort = 1080)
     return when (scheme) {
