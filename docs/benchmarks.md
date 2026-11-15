@@ -655,6 +655,37 @@ receiver's regular yield, which costs the 1 MiB operations of `UdpThroughputBenc
 variant above), and in request/response traffic a reply's read can wait up to 1 ms in the socket wait once the socket goes
 quiet (as before this change).
 
+### HTTP/2: a SETTINGS acknowledgement held behind DATA (2026-11-15)
+
+When the peer shrinks SETTINGS_INITIAL_WINDOW_SIZE, the acknowledgement waits for the DATA frames already taken from the
+larger window (RFC 9113 section 6.5.3). Those frames now go ahead of everything else, whatever their priority, so the
+acknowledgement follows within one DATA frame per waiting stream; before, they went in priority order, and the
+acknowledgement could wait without bound. `tools/bench/h2-held-ack.sh [base-rev]` measures the price for an urgent
+stream: `HeldAckInversionBench` (kuicksilver-http2 jvmTest) joins a server and a client connection core in memory by a
+server-to-client link of a fixed rate (virtual time, 50 µs ticks, 2 s after 200 ms of warm-up); urgency-7 streams have
+endless bodies, an urgency-0 request asks for a 1 KiB response every 5 ms (400 responses), and with "IWS changes" the
+client's side sends a SETTINGS every 20 ms that alternately halves SETTINGS_INITIAL_WINDOW_SIZE (4 MiB to 2 MiB) and
+restores it. A response's delay runs from the server queueing it to the client receiving it; an acknowledgement's from
+the SETTINGS reaching the server to the acknowledgement crossing the link. Without IWS changes both revisions measure the
+same (100 Mbit/s: p50 0.70 ms, p99 1.35 ms; 1 Gbit/s: 0.05 / 0.10 ms).
+
+| link | u=7 streams | urgent p50 / p99 ms, before | urgent p50 / p99 ms, after | ACK p50 / max ms, before | ACK p50 / max ms, after |
+|---|---|---|---|---|---|
+| 100 Mbit/s | 1 | 0.70 / 1.35 | 0.75 / 2.55 | 2.05 / 2.60 | 1.95 / 2.55 |
+| 100 Mbit/s | 4 | 0.70 / 1.35 | 0.80 / 6.45 | never sent | 5.90 / 6.50 |
+| 100 Mbit/s | 16 | 0.70 / 1.35 | 6.20 / 22.20 | never sent | 20.90 / 22.20 |
+| 1 Gbit/s | 1 | 0.05 / 0.10 | 0.05 / 0.15 | 0.10 / 0.20 | 0.10 / 0.20 |
+| 1 Gbit/s | 4 | 0.05 / 0.10 | 0.05 / 0.55 | never sent | 0.50 / 0.55 |
+| 1 Gbit/s | 16 | 0.05 / 0.10 | 0.05 / 2.10 | never sent | 2.05 / 2.15 |
+
+"Never sent": before the change, streams of one urgency that are not incremental go one after another in stream order,
+so the acknowledgement held behind the DATA of the second urgency-7 stream waited as long as the first kept sending; no
+acknowledgement went out in 2 s, and a peer with a SETTINGS timeout (ours: 10 s) ends the connection. After it, the
+urgent stream waits for at most one 16 KiB frame per waiting stream at each shrink: 16 × 16 KiB is 21 ms at 100 Mbit/s,
+which a shrink every 40 ms makes the median. A peer that shrinks the window that often is unusual; the cost grows with
+the number of streams that have DATA queued at that moment. Before: 7b17a7b31; after: the change. The same
+shape cannot be driven with h2load, which sends its SETTINGS only at the start of a connection.
+
 ## msquic's goodput outlier
 
 Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five
