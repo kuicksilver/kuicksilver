@@ -194,7 +194,7 @@ It is kept for 0.3.0 as an accepted deviation, recorded in the CHANGELOG; the §
 ([details](rfc/9000.md#s7-2-the-servers-source-connection-id-is)).
 
 **Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:397` (the decision, with
-`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:267`
+`onlyAcks` at :514), `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:284`
 (sequence 0 replaced while it is the only one).
 
 **On by default.** Yes, on every client; no switch.
@@ -229,7 +229,7 @@ duplicate and never woke the application for the FIN (`kuicksilver->quiche:hands
 sum of the Offset and Length fields of a STREAM frame with a FIN flag" — the FIN of a duplicate frame still gives the
 final size.
 
-**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:199-202`.
+**Where.** `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/stream/SendStream.kt:203-206`.
 
 **On by default.** Yes; no switch.
 

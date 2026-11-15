@@ -1092,6 +1092,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   whatever `QuicCrypto` provides the TLS stack; the transport checks the stream's handshake messages itself (ksl's
   OpenSSL already refused one). A `ksl` session in QUIC mode refuses `ksl_ssl_key_update` ("Endpoints MUST NOT send a
   TLS KeyUpdate message"); before, the C API would have written one.
+- QUIC: a stream reset (by us, or in answer to STOP_SENDING) while it waited for flow credit was still reported blocked:
+  the repeat timer and a lost STREAM_DATA_BLOCKED queued STREAM_DATA_BLOCKED for it again, against RFC 9000 section 3.1
+  ("A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state"), it stayed on
+  the connection's blocked list so DATA_BLOCKED kept being repeated, and a later MAX_STREAM_DATA raised StreamWritable for
+  it. A reset now drops the unsent bytes from what the stream waits to send; a stream reset with RESET_STREAM_AT whose
+  reliable bytes were all sent no longer keeps DATA_BLOCKED repeating either, and `sendCredit` is 0 for a stream that
+  takes no more writes (reset, or its FIN queued).
+- QUIC: persistent congestion (RFC 9002 section 7.6.2: "none of the packets sent between the send times of these two
+  packets are acknowledged") ignored acknowledged ACK-only packets between the two lost ones, as loss detection does not
+  keep them; an acknowledged range now counts whatever it covers, so a path that delivered in between is not collapsed to
+  the minimum window. Beyond the 32 acknowledged ranges (and 16 send times of other spaces) kept for the check, what is
+  forgotten no longer counts as acknowledged: the check errs towards declaring persistent congestion, the one error the
+  section accepts, instead of missing it.
+- QUIC: a lost FIN took a sending stream from "Data Sent" back to "Send", a transition RFC 9000 section 3.1 does not
+  have; the FIN is now sent again from "Data Sent".
+- QUIC: a client checked no Stateless Reset during the handshake: the server's connection ID it sends its Handshake
+  packets to was not counted as used until a short header packet went out, so the reset token of the server's transport
+  parameters was ignored (RFC 9000 section 10.3.1: the tokens "associated with the connection IDs and remote addresses
+  for datagrams it has recently sent"). A reset that arrives before a 0-RTT answer now ends the connection and drops
+  what was held for the answer.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

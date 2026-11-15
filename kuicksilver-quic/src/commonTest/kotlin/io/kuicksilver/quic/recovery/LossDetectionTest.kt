@@ -47,6 +47,21 @@ class LossDetectionTest {
         val delivered = ArrayList<String>()
         var ecnCalls = 0
         val ecnValid = ArrayList<Boolean>()
+        var frameStarts = 0
+        val ecnPaths = ArrayList<String>()
+        var rttSamples = 0
+
+        override fun onAckFrameStart() {
+            frameStarts++
+        }
+
+        override fun onRttSample(
+            now: TimeMark,
+            latest: Duration,
+            min: Duration,
+        ) {
+            rttSamples++
+        }
 
         override fun onDelivered(
             p: SentPacket,
@@ -87,6 +102,7 @@ class LossDetectionTest {
         ) {
             ecnCalls++
             ecnValid += countsValid
+            ecnPaths += "$pathId:$newlyAckedMarked"
         }
 
         override fun onAcked(
@@ -143,8 +159,10 @@ class LossDetectionTest {
         inFlight: Boolean = ackEliciting,
         pathId: Int = 0,
         cc: io.kuicksilver.quic.CongestionController? = null,
+        flags: Int = 0,
     ) {
         val p = ld.space(space).newSentPacket()
+        p.frames.flags = flags
         p.pn = pn
         p.timeSent = at
         p.size = size
@@ -616,7 +634,7 @@ class LossDetectionTest {
 
     @Test fun persistentCongestionSpansAckOnlyAndSkippedPacketNumbers() {
         // RFC 9002 section 7.6.2: what breaks the period is an acknowledged packet between the two lost ones, not a packet number
-        // that loss detection never stored (ACK-only packets) or never used (a skipped number, RFC 9000 section 21.4)
+        // left unacknowledged (ACK-only packets nobody acknowledged) or never used (a skipped number, RFC 9000 section 21.4)
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         ld.peerAddressValidated = true
@@ -740,6 +758,313 @@ class LossDetectionTest {
         for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
         ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2300.milliseconds) // sample: 300 ms
         assertEquals(300.milliseconds, ld.rtt.min)
+    }
+
+    /**
+     * RFC 9000 section 13.4.2.1: "An endpoint MUST NOT fail ECN validation as a result of processing an ACK frame that does not
+     * increase the largest acknowledged packet number." An ACK with the same largest that fills a gap below it, carrying older
+     * (lower) counts, must not reach validation at all.
+     */
+    @Test fun negative_ackThatKeepsTheLargestAcknowledgedDoesNotReachEcnValidation() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, marked = true)
+        ld.onAck(SpaceId.Application, ack(3L to 3L, ecn = longArrayOf(1, 0, 0)), t0 + 50.milliseconds)
+        assertEquals(1, l.ecnCalls)
+        ld.onAck(SpaceId.Application, ack(3L to 3L, 1L to 1L, ecn = longArrayOf(0, 0, 0)), t0 + 60.milliseconds)
+        assertEquals(listOf(1L), l.acked.filter { it == 1L }, "packet 1 is newly acknowledged by the second frame")
+        assertEquals(1, l.ecnCalls, "the largest acknowledged did not grow: no validation")
+        assertEquals(listOf(true), l.ecnValid)
+    }
+
+    /**
+     * RFC 9000 section 13.4.2.1: validation fails only "if the sum of the increase in ECT(0) and ECN-CE counts is less than the
+     * number of newly acknowledged packets that were originally sent with an ECT(0) marking": every marked packet reported as CE
+     * (ECT(0) unchanged) is valid.
+     */
+    @Test fun ceOnlyGrowthIsValidEcn() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..1L) send(ld, SpaceId.Application, pn, t0, marked = true)
+        ld.onAck(SpaceId.Application, ack(0L to 1L, ecn = longArrayOf(0, 0, 2)), t0 + 50.milliseconds)
+        assertEquals(listOf(true), l.ecnValid, "two ECT(0) packets, both counted as CE")
+    }
+
+    /** RFC 9002 section 6.1: a packet declared lost and acknowledged later is a spurious loss, also when it is the top of a range. */
+    @Test fun spuriousLossAtTheTopOfAnAckRangeIsFound() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        for (pn in 0L..4L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(1L to 4L), t0 + 50.milliseconds)
+        assertEquals(listOf(0L), l.lost)
+        ld.onAck(SpaceId.Application, ack(1L to 4L, 0L to 0L), t0 + 60.milliseconds)
+        assertEquals(listOf(0L), l.spurious, "the late ACK's range [0..0] has the lost packet as its largest")
+    }
+
+    /** A loss found spurious is not settled again later: [LossListener.onLossSettled] is for losses that stand. */
+    @Test fun negative_spuriousLossIsNotSettledLater() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        for (pn in 0L..4L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(1L to 4L), t0 + 50.milliseconds)
+        ld.onAck(SpaceId.Application, ack(1L to 4L, 0L to 0L), t0 + 60.milliseconds)
+        assertEquals(listOf(0L), l.spurious)
+        send(ld, SpaceId.Application, 5, t0 + 10.seconds)
+        ld.onAck(SpaceId.Application, ack(5L to 5L), t0 + 10.seconds + 50.milliseconds)
+        assertEquals(0, l.settled, "the loss of 0 did not stand")
+    }
+
+    /** Every ACK frame opens with [LossListener.onAckFrameStart] (the controllers' "before the ACK" state) and an RTT sample is reported. */
+    @Test fun eachAckFrameStartsOnceAndReportsItsRttSample() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        send(ld, SpaceId.Application, 0, t0)
+        send(ld, SpaceId.Application, 1, t0)
+        ld.onAck(SpaceId.Application, ack(0L to 0L), t0 + 50.milliseconds)
+        ld.onAck(SpaceId.Application, ack(0L to 1L), t0 + 60.milliseconds)
+        assertEquals(2, l.frameStarts)
+        assertEquals(2, l.rttSamples)
+    }
+
+    /**
+     * RFC 9002 section 7.6.2: persistent congestion needs that "across all packet number spaces, none of the packets sent between
+     * the send times of these two packets are acknowledged" - any packet, an ACK-only one too, although loss detection does not
+     * keep ACK-only packets. Packets 2..9 (ACK-only) acknowledged between the lost 1 and 10 show the path delivered in between;
+     * left unacknowledged, the 1.9 s of losses are persistent congestion.
+     */
+    @Test fun negative_acknowledgedAckOnlyPacketsBetweenTheLostOnesBreakPersistentCongestion() {
+        fun lossByPath(ackOnlyAcknowledged: Boolean): List<String> {
+            val (ld, l) = ld()
+            ld.handshakeConfirmed = true
+            ld.peerAddressValidated = true
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            send(ld, SpaceId.Application, 1, t0)
+            for (pn in 2L..9L) send(ld, SpaceId.Application, pn, t0 + 100.milliseconds, ackEliciting = false)
+            send(ld, SpaceId.Application, 10, t0 + 2000.milliseconds)
+            send(ld, SpaceId.Application, 11, t0 + 2100.milliseconds)
+            ld.onAck(SpaceId.Application, if (ackOnlyAcknowledged) ack(11L to 11L, 2L to 9L) else ack(11L to 11L), t0 + 2200.milliseconds)
+            assertEquals(listOf(1L, 10L), l.lost)
+            return l.lossByPath
+        }
+        assertEquals(listOf("0:false"), lossByPath(ackOnlyAcknowledged = true), "2..9 were acknowledged between 1 and 10")
+        assertEquals(listOf("0:true"), lossByPath(ackOnlyAcknowledged = false))
+    }
+
+    /**
+     * RFC 9002 section 7.6.2 when the acknowledged ranges overflow: more than [ACKED_KEEP] ranges acknowledged above a run of lost
+     * packets must not hide the run's persistent congestion. What the check forgets may only err towards declaring it ("This might
+     * result in erroneously declaring persistent congestion, but it will not lead to a failure to detect persistent congestion").
+     */
+    @Test fun negative_moreAckRangesThanKeptAboveALossRunDoNotHidePersistentCongestion() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        // the run: ack-eliciting 1, 3, .., 39 over 3.8 s, an ACK-only packet (never acknowledged) between each two
+        for (pn in 1L..40L) {
+            send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, ackEliciting = pn % 2 == 1L)
+        }
+        for (pn in 41L..140L) send(ld, SpaceId.Application, pn, t0 + 4100.milliseconds)
+        val odd = (139L downTo 41L step 2).map { it to it } // 50 ranges, all above the run
+        ld.onAck(SpaceId.Application, ack(*odd.toTypedArray()), t0 + 4200.milliseconds)
+        assertEquals((1L..39L step 2).toList(), l.lost.filter { it < 40 })
+        assertTrue(l.lossByPath.single().endsWith("true"), "nothing between 1 and 39 was acknowledged: ${l.lossByPath}")
+    }
+
+    /**
+     * RFC 9002 section 5.1: an RTT sample needs that "The largest acknowledged packet number is newly acknowledged". A later ACK
+     * that only fills a gap below an already acknowledged largest gives none.
+     */
+    @Test fun negative_noRttSampleWhenTheLargestAcknowledgedIsNotNew() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..2L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(2L to 2L), t0 + 50.milliseconds)
+        assertEquals(50.milliseconds, ld.rtt.latest)
+        ld.onAck(SpaceId.Application, ack(2L to 2L, 0L to 0L), t0 + 55.milliseconds)
+        assertEquals(listOf(2L, 0L), l.acked)
+        assertEquals(1, l.rttSamples, "the second frame's largest (2) was acknowledged before")
+        assertEquals(50.milliseconds, ld.rtt.latest)
+    }
+
+    /** RFC 9002 section 5.3: a packet held for its keys is sampled at its arrival, also when it arrived the instant the packet left. */
+    @Test fun sampleIsTakenAtArrivalEvenWhenItEqualsTheSendTime() {
+        val (ld, _) = ld()
+        ld.handshakeConfirmed = true
+        send(ld, SpaceId.Application, 0, t0)
+        ld.onAck(SpaceId.Application, ack(0L to 0L), t0 + 100.milliseconds, arrivedAt = t0)
+        assertEquals(Duration.ZERO, ld.rtt.latest, "sampled at the arrival time, not at processing")
+    }
+
+    /**
+     * RFC 9000 section 13.4.2.1 per path (the counts of a frame validate every path with newly acknowledged marked packets, and the
+     * path of the largest newly acknowledged packet always hears the verdict): which paths `onEcnAck` reaches, with their marked counts.
+     */
+    @Test fun ecnVerdictReachesExactlyThePathsWithMarkedPacketsAndTheLargestsPath() {
+        fun paths(
+            marked0: Boolean,
+            marked1: Boolean,
+        ): List<String> {
+            val (ld, l) = ld()
+            ld.handshakeConfirmed = true
+            send(ld, SpaceId.Application, 0, t0, marked = marked0, pathId = 0)
+            send(ld, SpaceId.Application, 1, t0, marked = marked1, pathId = 1)
+            ld.onAck(SpaceId.Application, ack(0L to 1L, ecn = longArrayOf(2, 0, 0)), t0 + 50.milliseconds)
+            return l.ecnPaths.sorted()
+        }
+        assertEquals(listOf("0:1", "1:1"), paths(marked0 = true, marked1 = true), "both paths had marked packets")
+        assertEquals(listOf("1:0"), paths(marked0 = false, marked1 = false), "nothing marked: only the largest's path")
+        assertEquals(listOf("0:1", "1:0"), paths(marked0 = true, marked1 = false), "path 0 marked, path 1 holds the largest")
+        assertEquals(listOf("1:1"), paths(marked0 = false, marked1 = true), "path 0 has nothing to validate")
+    }
+
+    /** RFC 9000 section 14.4: a lost PMTU probe is no congestion signal, so a path whose only lost packet was a probe sees no loss event. */
+    @Test fun negative_lostPmtuProbeAloneRaisesNoLossEventOnItsPath() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        send(ld, SpaceId.Application, 0, t0, pathId = 0)
+        send(ld, SpaceId.Application, 1, t0, pathId = 1, flags = SentFrames.PMTU_PROBE)
+        for (pn in 2L..4L) send(ld, SpaceId.Application, pn, t0 + 10.milliseconds)
+        ld.onAck(SpaceId.Application, ack(4L to 4L), t0 + 60.milliseconds)
+        assertEquals(listOf(0L, 1L), l.lost)
+        assertEquals(listOf("0:false"), l.lossByPath)
+    }
+
+    /** RFC 9002 section 7.6.2: "The persistent congestion period SHOULD NOT start until there is at least one RTT sample." */
+    @Test fun negative_noPersistentCongestionWithoutAnyRttSample() {
+        val (ld, l) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Initial, pn, t0 + (pn * 2000).milliseconds)
+        send(ld, SpaceId.Initial, 4, t0 + 6100.milliseconds, ackEliciting = false, inFlight = true)
+        ld.onAck(SpaceId.Initial, ack(4L to 4L), t0 + 6200.milliseconds) // its largest elicits nothing: no sample
+        assertTrue(!ld.rtt.hasSample)
+        assertEquals(listOf(0L, 1L), l.lost.take(2))
+        assertTrue(l.lossByPath.none { it.endsWith("true") }, "no RTT sample at all: ${l.lossByPath}")
+    }
+
+    /**
+     * RFC 9002 section 7.6.2 and RFC 9000 section 14.4: the period is spanned by ack-eliciting packets of the path that count for
+     * congestion; a lost PMTU probe (no congestion signal) or a packet of another path does not stretch it.
+     */
+    @Test fun negative_persistentCongestionIsNotStretchedByAProbeOrAnotherPathsPacket() {
+        fun lossesWith(
+            flags: Int,
+            pathId: Int,
+        ): List<String> {
+            val (ld, l) = ld()
+            ld.handshakeConfirmed = true
+            ld.peerAddressValidated = true
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            send(ld, SpaceId.Application, 1, t0)
+            send(ld, SpaceId.Application, 2, t0 + 100.milliseconds)
+            send(ld, SpaceId.Application, 3, t0 + 2000.milliseconds, pathId = pathId, flags = flags)
+            for (pn in 4L..6L) send(ld, SpaceId.Application, pn, t0 + 2050.milliseconds)
+            ld.onAck(SpaceId.Application, ack(6L to 6L), t0 + 2100.milliseconds)
+            assertEquals(listOf(1L, 2L, 3L), l.lost)
+            return l.lossByPath
+        }
+        assertEquals(listOf("0:false"), lossesWith(SentFrames.PMTU_PROBE, 0), "the 2 s probe does not count")
+        assertEquals(listOf("0:false", "1:false"), lossesWith(0, 1), "path 1's packet is not part of path 0's period")
+    }
+
+    /** RFC 9002 section 7.6.2: persistent congestion needs a duration that "exceeds the persistent congestion duration": equal is not enough. */
+    @Test fun negative_lossSpanEqualToTheDurationIsNotPersistentCongestion() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        val d = ld.persistentCongestionDuration()
+        send(ld, SpaceId.Application, 1, t0)
+        send(ld, SpaceId.Application, 2, t0 + d)
+        // ACK-less padding: the frame's largest elicits nothing, so no new sample changes the duration
+        for (pn in 3L..5L) send(ld, SpaceId.Application, pn, t0 + d + 1.milliseconds, ackEliciting = false, inFlight = true)
+        ld.onAck(SpaceId.Application, ack(5L to 5L), t0 + d + 2.milliseconds)
+        assertEquals(d, ld.persistentCongestionDuration())
+        assertEquals(listOf(1L, 2L), l.lost)
+        assertEquals(listOf("0:false"), l.lossByPath, "a span of exactly $d")
+    }
+
+    /** RFC 9002 section 6.2.2.1 (anti-deadlock): the client's PTO with nothing ack-eliciting in flight is armed a PTO after the last send. */
+    @Test fun antiDeadlockPtoIsArmedInTheFuture() {
+        val (ld, _) = ld()
+        send(ld, SpaceId.Initial, 0, t0, ackEliciting = false, inFlight = true)
+        assertEquals(t0 + ld.rtt.smoothed + ld.rtt.rttVar * 4, ld.timeout())
+    }
+
+    /** RFC 9002 appendix A.8, GetPtoTimeAndSpace(): "if (no ack-eliciting packets in flight in space): continue;". */
+    @Test fun negative_ptoIgnoresASpaceWithNothingAckElicitingInFlight() {
+        val (ld, _) = ld()
+        send(ld, SpaceId.Initial, 0, t0)
+        ld.onAck(SpaceId.Initial, ack(0L to 0L), t0 + 50.milliseconds)
+        send(ld, SpaceId.Handshake, 0, t0 + 1.seconds)
+        val pto = ld.rtt.smoothed + maxOf(ld.rtt.rttVar * 4, 1.milliseconds)
+        assertEquals(t0 + 1.seconds + pto, ld.timeout(), "the Handshake packet's PTO, not one from the acknowledged Initial")
+    }
+
+    /**
+     * A PTO takes at most the [n] packets it asked for (RFC 9002 section 6.2.4: "An endpoint MAY send up to two full-sized datagrams
+     * containing ack-eliciting packets").
+     */
+    @Test fun negative_takeForProbeTakesAtMostN() {
+        val (ld, _) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, flags = SentFrames.HANDSHAKE_DONE)
+        val out = ArrayList<SentPacket>()
+        ld.takeForProbe(SpaceId.Application, 1, out)
+        assertEquals(listOf(0L), out.map { it.pn })
+    }
+
+    /** Successive PTOs cycle through the outstanding packets (`takeForProbe`): a packet a probe took is not taken again. */
+    @Test fun successiveProbesTakeDifferentPackets() {
+        val (ld, _) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, flags = SentFrames.HANDSHAKE_DONE)
+        val first = ArrayList<SentPacket>()
+        ld.takeForProbe(SpaceId.Application, 1, first)
+        val second = ArrayList<SentPacket>()
+        ld.takeForProbe(SpaceId.Application, 1, second)
+        assertEquals(listOf(0L), first.map { it.pn })
+        assertEquals(listOf(1L), second.map { it.pn })
+    }
+
+    /** Discarding a space settles each remembered loss once; a loss settled earlier is not settled again. */
+    @Test fun negative_discardSettlesNoLossTwice() {
+        val (ld, l) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Initial, pn, t0)
+        ld.onAck(SpaceId.Initial, ack(3L to 3L), t0 + 50.milliseconds) // 0 is lost (packet threshold)
+        assertEquals(listOf(0L), l.lost)
+        send(ld, SpaceId.Initial, 4, t0 + 10.seconds)
+        ld.onAck(SpaceId.Initial, ack(1L to 4L), t0 + 10.seconds + 50.milliseconds) // the loss of 0 settles, nothing else is lost
+        assertEquals(1, l.settled)
+        ld.discard(SpaceId.Initial, t0 + 11.seconds)
+        assertEquals(1, l.settled, "nothing left to settle")
+    }
+
+    /**
+     * RFC 9002 section 7.6.2 across spaces, with the times kept as the KDoc of `keepAckedTimes` says: a discarded space's acknowledged
+     * send times go with it, while the Application space's stay until both the Initial and the Handshake space are gone.
+     */
+    @Test fun ackedSendTimesFollowTheirSpaceOnDiscard() {
+        fun lossByPath(discardFirst: SpaceId?): List<String> {
+            val (ld, l) = ld()
+            sampleByAck(ld, 0, t0 - 200.milliseconds)
+            for (pn in 0L..15L) send(ld, SpaceId.Handshake, pn, t0 + (pn.toInt() * 100).milliseconds)
+            send(ld, SpaceId.Application, 1, t0 + 750.milliseconds)
+            ld.onAck(SpaceId.Application, ack(1L to 1L), t0 + 800.milliseconds)
+            if (discardFirst != null) ld.discard(discardFirst, t0 + 801.milliseconds)
+            ld.onAck(SpaceId.Handshake, ack(15L to 15L), t0 + 1600.milliseconds)
+            return l.lossByPath
+        }
+        assertEquals(listOf("0:false"), lossByPath(SpaceId.Initial), "the Application time stays while the Handshake space lives")
+        val (ld, l) = ld()
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        for (pn in 0L..15L) send(ld, SpaceId.Application, pn + 1, t0 + (pn.toInt() * 100).milliseconds)
+        send(ld, SpaceId.Handshake, 0, t0 + 750.milliseconds)
+        ld.onAck(SpaceId.Handshake, ack(0L to 0L), t0 + 800.milliseconds)
+        ld.discard(SpaceId.Handshake, t0 + 801.milliseconds)
+        ld.handshakeConfirmed = true
+        ld.onAck(SpaceId.Application, ack(16L to 16L), t0 + 1600.milliseconds)
+        assertEquals(listOf("0:true"), l.lossByPath, "the discarded Handshake space's acknowledged time went with it")
     }
 }
 

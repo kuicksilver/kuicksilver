@@ -1041,8 +1041,10 @@ internal class PacketBuilder(
         }
         p.zeroRtt = type == PacketType.ZeroRtt
         sp.commitPn(pn)
-        // the ID's reset token counts for datagrams from there (RFC 9000 section 10.3.1)
+        // the ID's reset token counts for datagrams from there (RFC 9000 section 10.3.1); a long header packet also marks the
+        // ID used, as the handshake sends to the server's sequence 0 without asking for an ID
         c.cids.noteSentTowards(dcid, target.remoteKey, target.remote.port)
+        if (type != PacketType.OneRtt) c.cids.noteLongHeaderSent(dcid)
         p.pn = pn
         p.timeSent = now
         p.size = end - start

@@ -250,7 +250,6 @@ internal class LossDetection(
             if (sent.isEmpty() || ack.largest(r) < sent.pnAt(sent.start)) break // this and every later range lie below the oldest packet
             var i = sent.lowerBound(ack.largest(r) + 1) - 1
             val lo = sent.lowerBound(smallest)
-            val before = acked.size
             while (i >= lo) {
                 visitedForTest++
                 val p = sent.at(i)
@@ -260,7 +259,9 @@ internal class LossDetection(
                 }
                 i--
             }
-            if (acked.size > before) sp.recordAcked(smallest, ack.largest(r))
+            // every acknowledged number counts, also of packets loss detection never stored (ACK-only ones): RFC 9002 section 7.6.2
+            // asks that "none of the packets sent between the send times of these two packets are acknowledged", any packet
+            sp.recordAcked(smallest, ack.largest(r))
         }
         for (k in acked.indices) listener.onDelivered(acked[k], now)
         settleLost(sp, now)
@@ -625,9 +626,11 @@ internal class LossDetection(
     }
 
     /**
-     * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost, no
-     * packet sent between them acknowledged in any space (packet numbers never stored, such as ACK-only packets, or skipped do not
-     * count; other spaces by the send times [keepAckedTimes] keeps, as A.9 judges the lost packets of one detection), more
+     * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost,
+     * "across all packet number spaces, none of the packets sent between the send times of these two packets are acknowledged"
+     * (this space by the acknowledged packet numbers, ACK-only packets included; a number never sent, such as a skipped one, is
+     * only acknowledged by a peer that guesses, RFC 9000 section 21.4; other spaces by the send times [keepAckedTimes] keeps of
+     * their stored packets, as A.9 judges the lost packets of one detection), more
      * than the persistent congestion duration of that path's RTT estimate [est] apart, and both sent after its first RTT sample
      * ("The persistent congestion period SHOULD NOT start until there is at least one RTT sample"; ngtcp2 filters by
      * first_rtt_sample_ts the same way).

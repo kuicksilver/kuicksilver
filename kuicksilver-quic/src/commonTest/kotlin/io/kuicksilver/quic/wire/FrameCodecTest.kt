@@ -297,4 +297,122 @@ class FrameCodecTest {
             expectCode(0x07, hex("0a 04 10") + ByteArray(5))
             Unit
         }
+
+    /**
+     * RFC 9000 section 19.3.1: "If any computed packet number is negative, an endpoint MUST generate a connection error of type
+     * FRAME_ENCODING_ERROR." The second range starts at 8 (largest 10, first range 0, gap 0) and claims 10 packets below it.
+     */
+    @Test fun negative_ackRangeLengthBelowZeroIsFrameEncodingError() {
+        expectCode(0x07, hex("02 0a 00 01 00 00 09"))
+        assertEquals(listOf(10L to 10L, 0L to 8L), (decode(hex("02 0a 00 01 00 00 08")).first.single() as TestFrame.Ack).ranges)
+    }
+
+    /** RFC 9000 section 13.2.1 / 2: every frame but ACK, PADDING and CONNECTION_CLOSE is ack-eliciting, the stream reset frames too. */
+    @Test fun streamResetFramesAreAckEliciting() {
+        assertTrue(decode(bytesOf(TestFrame.ResetStream(4, 1, 10))).second, "RESET_STREAM")
+        assertTrue(decode(bytesOf(TestFrame.StopSending(4, 1))).second, "STOP_SENDING")
+        assertTrue(decode(bytesOf(TestFrame.ResetStreamAt(4, 1, 10, 3))).second, "RESET_STREAM_AT")
+    }
+
+    /**
+     * The ACK frame's size estimate the packet builder reserves room by (`AckTracker.ackOverhead`) is exactly the size
+     * [FrameEncoder.ack] writes, for any ranges, delay and ECN counts: a low estimate would build a packet past its size limit.
+     */
+    @Test fun ackOverheadIsTheEncodedSize() =
+        forAllSeeded(3_000, seed = 0xAC0L) { rnd, _ ->
+            val count = if (rnd.nextInt(10) == 0) 64 else rnd.nextInt(1, 6) // 64: the Range Count 63 is the last one-byte varint
+            val ranges = LongArray(2 * count)
+            var top = rnd.nextLong(1L shl rnd.nextInt(1, 40)) + 4L * count * 70_000
+            for (i in 0 until count) {
+                val hi = top
+                val lo = hi - rnd.nextLong(0, 1L shl rnd.nextInt(0, 16))
+                ranges[2 * i] = lo
+                ranges[2 * i + 1] = hi
+                top = lo - 2 - rnd.nextLong(0, 1L shl rnd.nextInt(0, 16))
+            }
+            val delay = rnd.nextLong(0, 1L shl rnd.nextInt(0, 40))
+            val ecn = if (rnd.nextBoolean()) LongArray(3) { rnd.nextLong(0, 1L shl rnd.nextInt(0, 40)) } else null
+            val b = PacketBuffer.allocate(2048)
+            try {
+                val w = WireWriter(b, 0, b.capacity)
+                FrameEncoder.ack(w, ranges, count, delay, ecn)
+                assertEquals(
+                    w.pos,
+                    FrameEncoder.ackOverhead(ranges, count, delay, ecn),
+                    "ranges ${ranges.toList()} delay $delay ecn ${ecn?.toList()}",
+                )
+            } finally {
+                b.close()
+            }
+        }
+
+    /** RFC 9000 section 19.15: a NEW_CONNECTION_ID Length outside 1..20 or a token other than 16 bytes is never written. */
+    @Test fun negative_newConnectionIdEncoderRejectsInvalidFields() {
+        val b = PacketBuffer.allocate(128)
+        try {
+            assertFailsWith<IllegalArgumentException> {
+                FrameEncoder.newConnectionId(
+                    WireWriter(b, 0, b.capacity),
+                    1,
+                    0,
+                    ByteArray(21),
+                    ByteArray(16),
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                FrameEncoder.newConnectionId(
+                    WireWriter(b, 0, b.capacity),
+                    1,
+                    0,
+                    ByteArray(0),
+                    ByteArray(16),
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                FrameEncoder.newConnectionId(
+                    WireWriter(b, 0, b.capacity),
+                    1,
+                    0,
+                    ByteArray(8),
+                    ByteArray(15),
+                )
+            }
+        } finally {
+            b.close()
+        }
+    }
+
+    /** RFC 9000 section 2 / 13.2.1: every frame but ACK, PADDING and CONNECTION_CLOSE is ack-eliciting, whatever its type. */
+    @Test fun everyOtherFrameTypeIsAckEliciting() =
+        forAllSeeded(2_000, seed = 0xE11C1L) { rnd, _ ->
+            val f = Arbs.frame(rnd)
+            val eliciting = f !is TestFrame.Ack && f !is TestFrame.Padding && f !is TestFrame.ConnectionClose
+            assertEquals(eliciting, decode(bytesOf(f)).second, "$f")
+        }
+
+    /**
+     * RFC 9000 section 19.6 (CRYPTO): "The largest offset delivered on a stream -- the sum of the offset and data length -- cannot
+     * exceed 2^62-1. Receipt of a frame that exceeds this limit MUST be treated as a connection error of type FRAME_ENCODING_ERROR
+     * or CRYPTO_BUFFER_EXCEEDED." Section 19.8 (STREAM): "The largest offset delivered on a stream -- the sum of the offset and
+     * data length -- cannot exceed 2^62-1, as it is not possible to provide flow control credit for that data. Receipt of a frame
+     * that exceeds this limit MUST be treated as a connection error of type FRAME_ENCODING_ERROR or FLOW_CONTROL_ERROR." Exactly
+     * 2^62-1 is allowed.
+     */
+    @Test fun negative_cryptoAndStreamEndAtMostTwoPow62Minus1() {
+        expectCode(0x07, hex("06 ff ff ff ff ff ff ff ff 01 61"), PacketType.Initial)
+        assertEquals(1, decode(hex("06 ff ff ff ff ff ff ff fe 01 61"), PacketType.Initial).first.size)
+        assertEquals(1, decode(hex("0e 04 ff ff ff ff ff ff ff fe 01 61")).first.size)
+        expectCode(0x07, hex("0e 04 ff ff ff ff ff ff ff ff 01 61"))
+    }
+
+    /** RFC 9000 section 19.11: Maximum Streams "cannot exceed 2^60"; 2^60 itself is a valid MAX_STREAMS value. */
+    @Test fun maxStreamsOfExactlyTwoPow60IsValid() {
+        assertEquals(1, decode(hex("12 d0 00 00 00 00 00 00 00")).first.size)
+        expectCode(0x07, hex("12 d0 00 00 00 00 00 00 01"))
+    }
+
+    /** A NEW_CONNECTION_ID frame cut inside its Stateless Reset Token is FRAME_ENCODING_ERROR (RFC 9000 section 19.15). */
+    @Test fun negative_truncatedNewConnectionIdIsFrameEncodingError() {
+        expectCode(0x07, hex("18 01 00 08 01 02 03 04 05 06 07 08") + ByteArray(10))
+    }
 }

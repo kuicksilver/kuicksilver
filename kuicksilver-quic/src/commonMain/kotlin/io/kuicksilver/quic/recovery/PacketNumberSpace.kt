@@ -49,12 +49,14 @@ internal class PacketNumberSpace(
      * Packet number ranges the peer acknowledged that may lie between two packets still to be declared lost (RFC 9002 section 7.6.2:
      * persistent congestion needs that "none of the packets sent between the send times of these two packets are acknowledged").
      * Ascending, disjoint; ranges below the oldest outstanding packet are pruned. At most [ACKED_KEEP]: when one more is needed
-     * the lowest is forgotten and [ackedUnknownBelow] covers it, which only ever makes the check more conservative.
+     * the lowest range goes. A forgotten range can only make the check answer "nothing acknowledged" where something was, which
+     * errs towards declaring persistent congestion, the one error section 7.6.2 accepts ("This might result in erroneously
+     * declaring persistent congestion, but it will not lead to a failure to detect persistent congestion"); answering
+     * "acknowledged" when unsure would miss it.
      */
     private val ackedLo = LongArray(ACKED_KEEP)
     private val ackedHi = LongArray(ACKED_KEEP)
     private var ackedCount = 0
-    private var ackedUnknownBelow = -1L
 
     /** The peer acknowledged every packet number in [lo]..[hi]. */
     internal fun recordAcked(
@@ -73,11 +75,7 @@ internal class PacketNumberSpace(
             return
         }
         if (ackedCount == ACKED_KEEP) {
-            if (hi <= ackedHi[0]) {
-                if (hi > ackedUnknownBelow) ackedUnknownBelow = hi
-                return
-            }
-            if (ackedHi[0] > ackedUnknownBelow) ackedUnknownBelow = ackedHi[0]
+            if (hi <= ackedHi[0]) return // below every kept range: this one is the lowest, forgotten
             removeAcked(0)
             if (i > 0) i--
         }
@@ -98,13 +96,12 @@ internal class PacketNumberSpace(
         ackedCount--
     }
 
-    /** Whether a packet number strictly between [a] and [b] may have been acknowledged. */
+    /** Whether a packet number strictly between [a] and [b] was acknowledged, as far as the kept ranges show. */
     internal fun anyAckedBetween(
         a: Long,
         b: Long,
     ): Boolean {
         if (b - a < 2) return false
-        if (a + 1 <= ackedUnknownBelow) return true
         for (i in 0 until ackedCount) {
             if (ackedLo[i] >= b) return false
             if (ackedHi[i] > a) return true
@@ -123,43 +120,35 @@ internal class PacketNumberSpace(
             }
             ackedCount -= drop
         }
-        if (ackedUnknownBelow < pn) ackedUnknownBelow = -1L
     }
 
     internal fun clearAcked() {
         ackedCount = 0
-        ackedUnknownBelow = -1L
     }
 
     /**
      * Send times (nanoseconds) of this space's packets acknowledged while several spaces carry packets (before the handshake is
      * confirmed): RFC 9002 section 7.6.2 breaks a persistent congestion period on a packet acknowledged between the two lost ones
-     * "across all packet number spaces", and send times are what spaces share. A ring of the newest [ACKED_TIMES_KEEP];
-     * [ackedTimesForgotten] is the latest of those it dropped, which keeps the check conservative. Null when nothing is kept.
+     * "across all packet number spaces", and send times are what spaces share. A ring of the newest [ACKED_TIMES_KEEP]; an older
+     * one is forgotten, which errs towards declaring persistent congestion as [ackedLo] does. Null when nothing is kept.
      */
     private var ackedTimes: LongArray? = null
     private var ackedTimesCount = 0
     private var ackedTimesNext = 0
-    private var ackedTimesForgotten = Long.MIN_VALUE
 
     internal fun recordAckedTime(sent: TimeMark) {
         val a = ackedTimes ?: LongArray(ACKED_TIMES_KEEP).also { ackedTimes = it }
-        if (ackedTimesCount == a.size) {
-            if (a[ackedTimesNext] > ackedTimesForgotten) ackedTimesForgotten = a[ackedTimesNext]
-        } else {
-            ackedTimesCount++
-        }
+        if (ackedTimesCount < a.size) ackedTimesCount++
         a[ackedTimesNext] = sent.nanos
         ackedTimesNext = (ackedTimesNext + 1) % a.size
     }
 
-    /** Whether a packet of this space sent strictly between [a] and [b] may have been acknowledged (as far as [recordAckedTime] saw). */
+    /** Whether a packet of this space sent strictly between [a] and [b] was acknowledged, as far as the kept times show. */
     internal fun anyAckedSentBetween(
         a: TimeMark,
         b: TimeMark,
     ): Boolean {
         val times = ackedTimes ?: return false
-        if (a.nanos < ackedTimesForgotten) return true
         for (i in 0 until ackedTimesCount) if (times[i] > a.nanos && times[i] < b.nanos) return true
         return false
     }
@@ -168,7 +157,6 @@ internal class PacketNumberSpace(
         ackedTimes = null
         ackedTimesCount = 0
         ackedTimesNext = 0
-        ackedTimesForgotten = Long.MIN_VALUE
     }
 
     /**

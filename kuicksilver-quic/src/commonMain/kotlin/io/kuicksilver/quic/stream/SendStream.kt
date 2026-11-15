@@ -100,6 +100,10 @@ internal class SendStream(
     /** Bytes written but never sent are waiting. */
     val hasUnsent: Boolean get() = sentEnd < written
 
+    /** The application can still write: not reset (RESET_STREAM or RESET_STREAM_AT) and no FIN queued. */
+    val takesWrites: Boolean get() =
+        state != SendState.ResetSent && state != SendState.ResetRecvd && state != SendState.ResetAt && !finQueued
+
     /** A copy of the bytes queued for retransmission, for [restoreRetransmit]. */
     fun saveRetransmit(): LongArray = lost.copyOf(2 * lostCount)
 
@@ -332,10 +336,9 @@ internal class SendStream(
             addLost(start, gapEnd)
             start = gapEnd
         }
-        if (fin && !finAcked && state != SendState.ResetAt) {
-            finSent = false
-            if (state == SendState.DataSent) state = SendState.Send
-        }
+        // the FIN goes again ([hasPending], [nextRange]); the stream stays in "Data Sent": RFC 9000 section 3.1 has no way back
+        // to "Send" ("In this state, the endpoint only retransmits stream data as necessary")
+        if (fin && !finAcked && state != SendState.ResetAt) finSent = false
     }
 
     /**
@@ -475,12 +478,18 @@ internal class SendStream(
         return released
     }
 
-    /** Abandons the stream (RESET_STREAM): pending data is dropped; returns the buffered bytes released. */
+    /**
+     * Abandons the stream (RESET_STREAM): pending data is dropped; returns the buffered bytes released. Bytes written but never
+     * sent are gone with it ([written] comes down to [sentEnd], as [resetAt] lowers it to the reliable size), so nothing of the
+     * stream waits for flow credit any more: RFC 9000 section 3.1, "A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame
+     * for a stream in the "Reset Sent" state or any terminal state".
+     */
     fun reset(): Long {
         val released = buffered
         head = 0
         buffered = 0
         lostCount = 0
+        if (written > sentEnd) written = sentEnd
         state = SendState.ResetSent
         return released
     }

@@ -58,4 +58,16 @@ class RttEstimatorTest {
         r.onSample(110.milliseconds, 20.milliseconds, true, max)
         assertEquals(101.25.milliseconds, r.smoothed) // 110 < min + 20: adjusted stays 110
     }
+
+    /**
+     * RFC 9002 section 5.3: "if (latest_rtt >= min_rtt + ack_delay): adjusted_rtt = latest_rtt - ack_delay". At equality the delay
+     * is subtracted: a 60 ms sample with 10 ms of ack delay over a 50 ms minimum is a 50 ms sample.
+     */
+    @Test fun ackDelayIsSubtractedWhenTheSampleEqualsMinPlusDelay() {
+        val r = RttEstimator(333.milliseconds)
+        r.onSample(50.milliseconds, 0.milliseconds, true, max)
+        r.onSample(60.milliseconds, 10.milliseconds, true, max)
+        assertEquals(50.milliseconds, r.smoothed)
+        assertEquals(18.75.milliseconds, r.rttVar)
+    }
 }
