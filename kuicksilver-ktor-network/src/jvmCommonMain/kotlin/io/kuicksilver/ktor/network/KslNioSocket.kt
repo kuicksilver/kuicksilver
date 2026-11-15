@@ -122,6 +122,9 @@ internal class KslNioSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
+    /** Still registered with a selector: a close the JDK has not finished, its descriptor still held (tests). */
+    internal val isRegisteredForTest: Boolean get() = nio.isRegistered
+
     /** The writer's send failures, for the read side ([SendFailures]). */
     internal val sendFailures = SendFailures()
 
@@ -301,6 +304,7 @@ internal class KslNioSocket(
     private fun closeDescriptor() {
         runCatching { nio.close() }
         runCatching { selector.notifyClosed(selectable) }
+        selector.releaseClosedChannels()
     }
 
     override fun close() {
@@ -342,10 +346,14 @@ internal class KslNioSocket(
         val r = reader
         if (r == null) {
             delegate.close()
+            selector.releaseClosedChannels()
             return
         }
         r.job.cancel()
-        r.job.invokeOnCompletion { delegate.close() }
+        r.job.invokeOnCompletion {
+            delegate.close()
+            selector.releaseClosedChannels()
+        }
     }
 
     override fun dispose(): Unit = close()
@@ -392,4 +400,151 @@ internal class KslNioServerSocket(
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()
+}
+
+/**
+ * Makes this selector run one selection, so that the channels closed on it are really closed: their descriptors released,
+ * and a socket closed with `SO_LINGER` 0 ([KslNioSocket.abort]) sending its reset.
+ *
+ * The JDK closes a non-blocking channel that is still registered with a selector only once a selection of that selector
+ * deregisters its cancelled key (`SocketChannelImpl.implCloseNonBlockingMode`: `tryClose()` refuses while `isRegistered()`;
+ * `SelectorImpl.processDeregisterQueue` then calls `kill()`, which closes the descriptor). ktor's `ActorSelectorManager`
+ * selects only while some interest is pending: `notifyClosed` cancels the key and wakes a selection in progress, but a
+ * selector with nothing pending waits on its queue and never selects again until the next interest. Its socket stayed
+ * open behind the closed channel: an aborted connection sent no reset and no FIN (the peer waited for ever), and a closed
+ * one kept its descriptor (its peer's writes were still taken). A listener closed on an idle selector after an accept
+ * was given up refused connections at once when tried (ktor's server socket), so [KslNioServerSocket] does not ask for it.
+ *
+ * The selection is asked for with an interest that is ready at once: WRITE on the sink of a new pipe (a datagram
+ * channel where a pipe cannot be opened). Requests are coalesced per selector: one round runs at a time, and a request
+ * made while one runs gets one more round after it (a round deregisters only the keys cancelled before it starts), so
+ * closing many sockets at once costs a few rounds, not one pipe each. The waker's own key is deregistered by the next
+ * selection in turn: at most one waker waits per idle selector. A round that cannot open any waker is counted
+ * ([releaseFailures]); the closed channels then wait for the selector's next selection, as before.
+ */
+internal fun SelectorManager.releaseClosedChannels() {
+    val state = synchronized(releaseStates) { releaseStates.getOrPut(this) { ReleaseState() } }
+    state.requests.incrementAndGet()
+    state.requested.set(true)
+    if (!state.running.compareAndSet(false, true)) return // the round in flight, or the one after it, serves this one
+    val selector = this
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO + CoroutineName("ksl-selector-release")) {
+        while (true) {
+            state.requested.set(false) // the requests before this point are served by the round below
+            state.rounds.incrementAndGet()
+            state.maxInFlight.accumulateAndGet(state.inFlight.incrementAndGet(), ::maxOf)
+            try {
+                selectOnce(selector, state)
+            } finally {
+                // whatever the round did (a cancellation included), the selector can have another one
+                state.inFlight.decrementAndGet()
+                state.running.set(false)
+            }
+            // a request after the reset above: one more round, unless its own caller started it
+            if (!state.requested.get() || !state.running.compareAndSet(false, true)) break
+        }
+    }
+}
+
+/**
+ * Per selector: a release round runs ([running]), and a request came since the running round started ([requested]); the
+ * rest is counted for tests.
+ */
+internal class ReleaseState {
+    val running = AtomicBoolean(false)
+    val requested = AtomicBoolean(false)
+
+    /** Requests made. */
+    val requests = AtomicLong()
+
+    /** Rounds started. */
+    val rounds = AtomicLong()
+
+    /** Rounds running now, and the most that ever ran at once (1 with the coalescing). */
+    val inFlight =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+    val maxInFlight =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+
+    /** Wakers opened and closed. */
+    val wakersOpened = AtomicLong()
+    val wakersClosed = AtomicLong()
+}
+
+/** This selector's release state, null before its first request (tests). */
+internal fun SelectorManager.releaseStateForTest(): ReleaseState? = synchronized(releaseStates) { releaseStates[this] }
+
+/** The release state of each selector, dropped with the selector. */
+private val releaseStates = java.util.WeakHashMap<SelectorManager, ReleaseState>()
+
+/** Release rounds that could open no waker (no pipe and no datagram channel: descriptors exhausted). */
+internal val releaseFailures = AtomicLong()
+
+/** One selection on [selector]: WRITE on a waker channel, ready at once; bounded, for a selector that closes meanwhile. */
+private suspend fun selectOnce(
+    selector: SelectorManager,
+    state: ReleaseState,
+) {
+    val waker: SelectableChannel? =
+        runCatching<SelectableChannel> {
+            val pipe = selector.provider.openPipe()
+            pipe.source().close() // never registered: closed at once
+            pipe.sink()
+        }.recoverCatching { selector.provider.openDatagramChannel() } // a datagram channel is writable at once too
+            .getOrNull()
+    if (waker == null) {
+        releaseFailures.incrementAndGet()
+        return
+    }
+    state.wakersOpened.incrementAndGet()
+    val selectable = WakerSelectable(waker)
+    try {
+        waker.configureBlocking(false)
+        selectable.interestOp(SelectInterest.WRITE, true)
+        withTimeoutOrNull(RELEASE_SELECTION_TIMEOUT) { selector.select(selectable, SelectInterest.WRITE) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        // the selector is closed: it deregistered everything
+    } finally {
+        runCatching { waker.close() }
+        state.wakersClosed.incrementAndGet()
+        runCatching { selector.notifyClosed(selectable) }
+    }
+}
+
+/** How long a release round waits for its selection. */
+private val RELEASE_SELECTION_TIMEOUT: Duration = 5.seconds
+
+/** The channel [releaseClosedChannels] waits on, as ktor's selector wants a [Selectable]. */
+private class WakerSelectable(
+    override val channel: java.nio.channels.SelectableChannel,
+) : Selectable {
+    override val suspensions: io.ktor.network.selector.InterestSuspensionsMap =
+        io.ktor.network.selector
+            .InterestSuspensionsMap()
+
+    @Volatile private var ops = 0
+
+    override val isClosed: Boolean get() = !channel.isOpen
+
+    override val interestedOps: Int get() = ops
+
+    override fun interestOp(
+        interest: SelectInterest,
+        state: Boolean,
+    ) {
+        ops = if (state) ops or interest.flag else ops and interest.flag.inv()
+    }
+
+    override fun close() {
+        channel.close()
+    }
+
+    override fun dispose() {
+        close()
+    }
 }

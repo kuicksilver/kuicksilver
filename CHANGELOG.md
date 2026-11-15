@@ -1059,6 +1059,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
+  the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
+  selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.
+  The engines' sockets now have their selector run a selection after every close.
+- WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
+  credit for an open stream comes back as the application takes its bytes (for a stream that ended cleanly, once all of
+  it was handed to its input; for a reset or stopped one, by its final size), so an application that reads a session's
+  open streams strictly one after another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
+  `Http3Settings` now say so (read the streams concurrently, or give the session enough credit). `Http3Settings`'s KDoc
+  no longer says the credit follows bytes taken from the transport.
+- Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket
+  after the close wait (a server that does not read), cut inside a frame, or with a failed writer, now has its connection
+  reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the connection was closed gracefully: it
+  went on sending what was queued for up to 3 s after the close wait and ended with a FIN, so a frame cut part-way read
+  as a truncated frame followed by a clean end. A session whose stream is whole and was taken by the socket (its Close
+  taken by the kernel and the server's never came, or cancelled while idle between frames) is closed cleanly instead: a
+  FIN, and over TLS close_notify first (RFC 9846 section 6.1), where before the TLS session was dropped without one.
+  HTTP/2 and HTTP/3 streams were already reset.
 - WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
   3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
   own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which

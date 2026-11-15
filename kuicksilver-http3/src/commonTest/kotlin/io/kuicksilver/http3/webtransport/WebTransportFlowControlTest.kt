@@ -34,6 +34,7 @@ import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -452,7 +453,16 @@ class WebTransportFlowControlTest {
 
     /**
      * Exact reads (readFully, readByteArray(n)) never wait after their last bytes: what they read still gives credit
-     * back, on the stream's clean end, so a session of such streams never stalls (section 5.6).
+     * back, so a session of such streams never stalls (section 5.6). Here two reports give it: the input reports each chunk
+     * the reader takes, and a stream's clean end counts what was handed to its input; the test fails only when neither
+     * does. Each alone is pinned elsewhere: the reader's report by [negative_exactReadsOfAnOpenStreamGiveCreditBack] (no
+     * end), the clean end by [negative_cleanlyEndedStreamsGiveCreditBackUnread] (no read).
+     *
+     * Every stream is read as it arrives, each by its own reader: the twelve streams are written at once and wait for
+     * credit together, and which of them the sender's next WT_MAX_DATA serves is not in the order they were opened (nothing
+     * in section 5 orders it). A single reader taking the streams one after another could wait on a stream that got no
+     * credit while the credit sat unread in later ones, a stall of the test's own making (credit goes back as the
+     * application reads, by design), not of the exact reads.
      */
     @Test fun negative_exactReadsOfEndedStreamsGiveCreditBack() =
         h3Test {
@@ -469,11 +479,40 @@ class WebTransportFlowControlTest {
                     }
                 }
                 withTimeout(10.seconds) {
-                    repeat(12) {
-                        val r = s.acceptUni()
-                        if (it % 2 == 0) r.input.readFully(ByteArray(1000)) else r.input.readByteArray(1000)
+                    coroutineScope {
+                        repeat(12) {
+                            val r = s.acceptUni()
+                            launch { if (it % 2 == 0) r.input.readFully(ByteArray(1000)) else r.input.readByteArray(1000) }
+                        }
                     }
                 }
+            }
+        }
+
+    /**
+     * A stream that ended cleanly with every byte handed to its input counts as consumed even before the application reads
+     * it: what is left is at most what the application holds (one chunk here), and nothing more can come. Twelve streams
+     * of 1000 bytes under a limit of 4000, accepted and never read: all of them get their credit. Before the clean end
+     * counted, the session stalled at 4000.
+     */
+    @Test fun negative_cleanlyEndedStreamsGiveCreditBackUnread() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 4000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                launch {
+                    repeat(12) {
+                        val st = session.openUni()
+                        st.output.writeFully(ByteArray(1000))
+                        st.output.flushAndClose()
+                    }
+                }
+                val held = ArrayList<Any>()
+                withTimeout(10.seconds) { repeat(12) { held += s.acceptUni() } } // accepted, never read
+                p.client.awaitFlow(session) { it.sendDataForTest.second == 12_000L }
+                assertEquals(12, held.size)
             }
         }
 

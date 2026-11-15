@@ -153,6 +153,76 @@ class ClientH3WebSocketTest {
         }
 
     /**
+     * A server that reads nothing until the session was released: the session gets the close wait (200 ms here) to write
+     * its Close, then the stream is reset (RESET_STREAM H3_REQUEST_CANCELLED, RFC 9220 section 3), so what its writer had
+     * not written never leaves; the server finds the stream reset and no Close. As over HTTP/1.1
+     * (`ClientWebSocketCloseTest.negative_anUnwrittenCloseIsBoundedByTheCloseWait`).
+     */
+    @Test fun negative_anUnwrittenCloseIsBoundedByTheCloseWaitH3() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            try {
+                val read =
+                    unwrittenCloseAttempts { data, frames ->
+                        val released = CompletableDeferred<Unit>()
+                        val listener =
+                            object : KuicksilverEventListener() {
+                                override fun connectionReleased(
+                                    request: io.ktor.client.request.HttpRequestData,
+                                    protocol: io.ktor.http.HttpProtocolVersion,
+                                    kept: Boolean,
+                                ) {
+                                    released.complete(Unit)
+                                }
+                            }
+                        coroutineScope {
+                            val served =
+                                async {
+                                    val conn = ep.accept()
+                                    val s = conn.acceptRequest().acceptConnect()
+                                    released.await() // reads nothing before the client gave the stream up
+                                    readClientFrames(s.input)
+                                }
+                            try {
+                                testClient(Http3DiscoveryMode.H3Only, engine = { eventListener = listener }, block = {
+                                    install(WebSockets)
+                                }).use { c ->
+                                    (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 200
+                                    val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                                    repeat(frames) { session.outgoing.send(Frame.Binary(true, data)) }
+                                    launch { session.close(CloseReason(4002, "client bye")) }
+                                    session.call.coroutineContext[Job]!!.join()
+                                    withTimeout(10.seconds) { released.await() }
+                                    withTimeout(20.seconds) { served.await() }
+                                }
+                            } finally {
+                                served.cancel()
+                            }
+                        }
+                    }
+                assertEquals("reset", read.last(), "the stream was reset, not ended with a FIN: $read")
+            } finally {
+                ep.close()
+            }
+        }
+
+    /**
      * The pool counts a WebSocket's connection as in use until the session ended, not until its call did: a connection
      * retired while a session lingers after its call (its Close still held at the server's flow control) is not closed
      * under it. Before, the pool's count fell to 0 at the call's end and the retired connection closed at once, with the
