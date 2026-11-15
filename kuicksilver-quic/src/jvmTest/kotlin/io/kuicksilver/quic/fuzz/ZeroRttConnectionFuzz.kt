@@ -102,6 +102,21 @@ internal object ZeroRttProgram {
 
     const val MAX_OPS = 300
 
+    /** Every outcome by the name its trace gives it ([FuzzTrace]), in the order of their values (FuzzTraceTest). */
+    val OUTCOME_NAMES = listOf("accept", "rejectApplication", "rejectLimits", "rejectRequired", "rejectAlpn", "noServerEarlyData", "lost")
+
+    /** Every flag by the name its trace gives it; a flag the decoder reads is listed here (FuzzTraceTest). */
+    val FLAG_NAMES =
+        mapOf(
+            RETRY to "retry",
+            VERSION_NEGOTIATION to "versionNegotiation",
+            SMALL to "small",
+            NO_RESET_AT to "noResetAt",
+            LOWERED to "lowered",
+            OVERRUN to "overrun",
+            HIGHER to "higher",
+        )
+
     /** Builds programs for the seed corpus and the seeded test. */
     class Builder(
         outcome: Int,
@@ -303,6 +318,8 @@ internal class ZeroRttConnectionFuzz(
     private val expect: Expect? = null,
     /** Called after every round, before the checks (the negative controls corrupt the state there); [answeredNow]: the client learnt the answer in it. */
     private val tamper: ((pair: CorePair, answeredNow: Boolean) -> Unit)? = null,
+    /** Called with the pair once the program and its closing rounds ran (FuzzTraceTest compares runs by what it sees). */
+    private val observe: ((CorePair) -> Unit)? = null,
 ) {
     enum class Expect {
         Accepted,
@@ -384,18 +401,21 @@ internal class ZeroRttConnectionFuzz(
             pair.filterToServer = { _, b -> toServer(b) }
             pair.filterToClient = { _, _ -> !blocked[1] && outcome != ZeroRttProgram.LOST }
             fuzzOp {
-                val outcomes =
-                    listOf("accept", "rejectApplication", "rejectLimits", "rejectRequired", "rejectAlpn", "noServerEarlyData", "lost")
-                val named = listOf("retry", "versionNegotiation", "small", "noResetAt", "lowered", "overrun", "higher")
-                "outcome=${outcomes[outcome]} flags=${named.filterIndexed { i, _ -> flags and (1 shl i) != 0 }}"
+                "outcome=${ZeroRttProgram.OUTCOME_NAMES[outcome]} flags=${ZeroRttProgram.FLAG_NAMES.filterKeys {
+                    flags and it != 0
+                }.values}"
             }
             var ops = 0
             while (p < data.size && ops++ < ZeroRttProgram.MAX_OPS) {
                 val at = p
-                operation(u8())
+                val o = u8()
+                // an operation whose branch traces nothing is named by its byte, never by the text of the one before
+                if (FuzzTrace.on) op = "untraced operation $o"
+                operation(o)
                 fuzzOp { "@$at $op ->@$p" }
             }
             finish()
+            observe?.invoke(pair)
         } finally {
             pair.close()
         }

@@ -87,6 +87,18 @@ internal object ConnProgram {
     const val MAX_FRAME = 1000
     const val MAX_OPS = 400
 
+    /** Flag: operations start with the first datagram. */
+    const val LIVE = 1
+
+    /** Flag: small limits. */
+    const val SMALL = 2
+
+    /** Flag: PMTUD off. */
+    const val NO_PMTUD = 4
+
+    /** Every flag by the name its trace gives it ([FuzzTrace]); a flag the decoder reads is listed here (FuzzTraceTest). */
+    val FLAG_NAMES = mapOf(LIVE to "live", SMALL to "small", NO_PMTUD to "noPmtud")
+
     /** Frame selectors of the FRAME op. */
     val FRAME_KINDS =
         listOf(
@@ -208,6 +220,8 @@ internal object ConnProgram {
 internal class ConnectionFuzz(
     private val data: ByteArray,
     private val crypto: QuicCrypto,
+    /** Called with the pair once the program and its closing rounds ran (FuzzTraceTest compares runs by what it sees). */
+    private val observe: ((CorePair) -> Unit)? = null,
 ) {
     private var p = 0
     private val flags = if (data.isEmpty()) 0 else data[0].toInt() and 0xff
@@ -437,7 +451,7 @@ internal class ConnectionFuzz(
         override fun hasPending(): Boolean = datagrams.isNotEmpty()
     }
 
-    private val small = flags and 2 != 0
+    private val small = flags and ConnProgram.SMALL != 0
     private val config: QuicConfig =
         QuicConfig
             .Builder()
@@ -454,7 +468,7 @@ internal class ConnectionFuzz(
                     datagramReceiveQueue = 4
                     maxSendBuffer = 65_536
                 }
-                if (flags and 4 != 0) pmtud = false
+                if (flags and ConnProgram.NO_PMTUD != 0) pmtud = false
             }.build()
 
     private val sides = arrayOf(Side(), Side())
@@ -474,21 +488,25 @@ internal class ConnectionFuzz(
             pair.filterToServer = { _, _ -> !blocked[0] }
             pair.filterToClient = { _, _ -> !blocked[1] }
             p = 1
-            fuzzOp { "flags live=${flags and 1 != 0} small=$small pmtud=${flags and 4 == 0}" }
-            if (flags and 1 == 0) {
+            fuzzOp { "flags ${ConnProgram.FLAG_NAMES.filterKeys { flags and it != 0 }.values}" }
+            if (flags and ConnProgram.LIVE == 0) {
                 pair.handshake()
                 checkInvariants()
             }
             var ops = 0
             while (p < data.size && ops++ < ConnProgram.MAX_OPS) {
                 val at = p
-                operation(u8())
+                val o = u8()
+                // an operation whose branch traces nothing is named by its byte, never by the text of the one before
+                if (FuzzTrace.on) op = "untraced operation $o"
+                operation(o)
                 fuzzOp { "@$at $op ->@$p" }
             }
             repeat(8) {
                 pair.advance(10.milliseconds)
                 step()
             }
+            observe?.invoke(pair)
         } finally {
             pair.close()
         }

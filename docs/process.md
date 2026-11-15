@@ -165,10 +165,15 @@ reached through a function of another name (a wrapper) is not seen. `rfc-tests.p
 that it tests what the row claims. `reproducers.py` knows a reproducer by its name only: one committed under another name
 (`seed-*`) is not asked for an entry, and a plant is a patch a reviewer reads (one that makes a harness throw the expected
 text would pass the verifier); whether the records hold is checked weekly and by hand, not on every change. `fuzz-formats.py` and the replay see what a
-program's trace says it decoded: a decoder change that its trace does not state (a value read but not traced, a branch
-that executes an operation differently without decoding it differently) passes, and so does a decoding that depends on
-the run (ConnProgram's application calls read nothing for a side without a connection) changed by a change to the
-library rather than to the decoder (it fails as a changed decoding, and needs its reason). Targets listed in
+program's trace says it decoded. `FuzzTraceTest` checks the trace of the two connection programs: every flag and outcome
+constant must have its name in the trace, and over every value of the flags byte, of an operation byte and of the 0-RTT
+outcome byte, appended to one fixed program, two values with one trace must end in the same state; a meaning that fixed
+program never reaches (PMTUD switched off in a run too short to probe), or a meaning given to a byte read later than
+the one swept, is not seen, nor is a decoder change in the other traced programs that their trace does not state. A
+decoding that depends on the run (ConnProgram's application calls read nothing for a side without a connection) changes
+with a change to the library, not only to the decoder: it fails as a changed decoding and needs its reason. The other
+programs trace only what the input decides (the HTTP/2 server target states all its pieces, also those after the core
+closed). Targets listed in
 `untraced.txt` are not covered (most read the input as the bytes of what they parse; `tls.zeroRttHello`,
 `ktor-network.inflate`, `ktor-network.wsGuard`, `client.h1Response`, `server.h1Request` and `quic.rememberedTicket` have
 small decoders not traced yet), and neither is a Jazzer target that is not in the campaign's table

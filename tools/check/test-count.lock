@@ -4515,6 +4515,11 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FrameDecodeFuzzTest.frameD
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzHarnessTest.internalFailureOfAServerConnectionFailsTheTarget
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.aProgramDecodesToTheSameOperationsInEveryRun
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.bytesTheDecoderDoesNotReadKeepTheTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.everyConnProgramFlagIsNamedInTheTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.everyMeaningOfAConnProgramOperationByteIsInItsTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.everyMeaningOfAZeroRttProgramByteIsInItsTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.everyMeaningOfTheConnProgramFlagsIsInItsTrace
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.everyZeroRttProgramFlagAndOutcomeIsNamedInTheTrace
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_aRunThatDecodesNothingHasNoFingerprint
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_aZeroRttProgramWithAnotherOutcomeIsAnotherTrace
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.fuzz.FuzzTraceTest.negative_anotherFrameKindIsAnotherTrace
