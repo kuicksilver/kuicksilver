@@ -853,6 +853,27 @@ class LossDetectionTest {
     }
 
     /**
+     * RFC 9002 section 7.6.2 when the acknowledged ranges overflow: more than [ACKED_KEEP] ranges acknowledged above a run of lost
+     * packets must not hide the run's persistent congestion. What the check forgets may only err towards declaring it ("This might
+     * result in erroneously declaring persistent congestion, but it will not lead to a failure to detect persistent congestion").
+     */
+    @Test fun negative_moreAckRangesThanKeptAboveALossRunDoNotHidePersistentCongestion() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        // the run: ack-eliciting 1, 3, .., 39 over 3.8 s, an ACK-only packet (never acknowledged) between each two
+        for (pn in 1L..40L) {
+            send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, ackEliciting = pn % 2 == 1L)
+        }
+        for (pn in 41L..140L) send(ld, SpaceId.Application, pn, t0 + 4100.milliseconds)
+        val odd = (139L downTo 41L step 2).map { it to it } // 50 ranges, all above the run
+        ld.onAck(SpaceId.Application, ack(*odd.toTypedArray()), t0 + 4200.milliseconds)
+        assertEquals((1L..39L step 2).toList(), l.lost.filter { it < 40 })
+        assertTrue(l.lossByPath.single().endsWith("true"), "nothing between 1 and 39 was acknowledged: ${l.lossByPath}")
+    }
+
+    /**
      * RFC 9002 section 5.1: an RTT sample needs that "The largest acknowledged packet number is newly acknowledged". A later ACK
      * that only fills a gap below an already acknowledged largest gives none.
      */
@@ -982,7 +1003,10 @@ class LossDetectionTest {
         assertEquals(t0 + 1.seconds + pto, ld.timeout(), "the Handshake packet's PTO, not one from the acknowledged Initial")
     }
 
-    /** A PTO takes at most the [n] packets it asked for (RFC 9002 section 6.2.4: "at most two" probe packets). */
+    /**
+     * A PTO takes at most the [n] packets it asked for (RFC 9002 section 6.2.4: "An endpoint MAY send up to two full-sized datagrams
+     * containing ack-eliciting packets").
+     */
     @Test fun negative_takeForProbeTakesAtMostN() {
         val (ld, _) = ld()
         for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0, flags = SentFrames.HANDSHAKE_DONE)

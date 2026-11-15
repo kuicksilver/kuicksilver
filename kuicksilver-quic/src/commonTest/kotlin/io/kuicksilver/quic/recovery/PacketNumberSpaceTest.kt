@@ -11,16 +11,18 @@ import kotlin.test.assertTrue
 /**
  * The acknowledged ranges [PacketNumberSpace] keeps for persistent congestion (RFC 9002 section 7.6.2: "none of the packets sent
  * between the send times of these two packets are acknowledged"). Property: [PacketNumberSpace.anyAckedBetween] never answers
- * false when a packet number strictly between the two was acknowledged (a miss would declare persistent congestion wrongly), and
- * answers exactly while the acknowledged numbers form at most [ACKED_KEEP] ranges (beyond that it may only err towards true).
+ * true when no packet number strictly between the two was acknowledged (that would miss persistent congestion, an error the
+ * section does not accept), and answers exactly while the acknowledged numbers form at most [ACKED_KEEP] ranges; beyond that it
+ * may only err towards false ("This might result in erroneously declaring persistent congestion, but it will not lead to a failure
+ * to detect persistent congestion").
  */
 class PacketNumberSpaceTest {
-    @Test fun ackedRangesAnswerExactlyWithinCapacityAndConservativelyBeyond() {
+    @Test fun ackedRangesAnswerExactlyWithinCapacityAndNeverClaimAnUnacknowledgedNumber() {
         forAllSeeded(300, seed = 9002) { rnd, _ ->
             val sp = PacketNumberSpace(SpaceId.Application)
             val acked = BooleanArray(UNIVERSE)
             val steps = rnd.nextInt(1, 60)
-            var overflowed = false // more ranges than ACKED_KEEP at some point: answers may err towards true from then on
+            var overflowed = false // more ranges than ACKED_KEEP at some point: answers may err towards false from then on
             var floor = 0 // pruneAckedBelow(floor): only questions about numbers at or above it are asked (`pruneAcked`)
             repeat(steps) {
                 if (rnd.nextInt(8) == 0) {
@@ -106,16 +108,21 @@ class PacketNumberSpaceTest {
         assertEquals(false, sp.anyAckedBetween(3, 10))
     }
 
-    /** Beyond [ACKED_KEEP] separate ranges every acknowledged number is still reported (conservatively), in any insertion order. */
-    @Test fun negative_overflowNeverLosesAnAcknowledgedNumber() {
+    /**
+     * Beyond [ACKED_KEEP] separate ranges, in any insertion order, a gap is never reported acknowledged; the [ACKED_KEEP] highest
+     * ranges stay exact, and a bridging range frees the slots it merges.
+     */
+    @Test fun negative_overflowNeverClaimsAnUnacknowledgedNumber() {
         val xs = (0L..40L).map { 4 * it }
         for (order in listOf(xs, xs.reversed(), xs.shuffled(kotlin.random.Random(7)))) {
             val sp = PacketNumberSpace(SpaceId.Application)
             for (x in order) sp.recordAcked(x, x)
-            for (x in xs) assertTrue(sp.anyAckedBetween(x - 1, x + 1), "$x acknowledged; order $order")
+            for (x in xs) assertEquals(false, sp.anyAckedBetween(x, x + 4), "${x + 1}..${x + 3} never acknowledged; order $order")
+            for (x in xs.takeLast(ACKED_KEEP)) assertTrue(sp.anyAckedBetween(x - 1, x + 1), "$x acknowledged; order $order")
             sp.recordAcked(41, 119) // bridges ranges 44..116 into one
-            for (x in xs + (41L..119L)) assertTrue(sp.anyAckedBetween(x - 1, x + 1), "$x acknowledged after the bridge; order $order")
+            for (x in 41L..119L) assertTrue(sp.anyAckedBetween(x - 1, x + 1), "$x acknowledged after the bridge; order $order")
             assertEquals(false, sp.anyAckedBetween(156, 160), "157..159 never acknowledged")
+            assertEquals(false, sp.anyAckedBetween(0, 4), "1..3 never acknowledged")
         }
     }
 
@@ -128,19 +135,24 @@ class PacketNumberSpaceTest {
         assertEquals(false, sp.anyAckedSentBetween(TimeMark(0), TimeMark(100)), "sent at the second lost packet's time")
     }
 
-    /** Beyond the kept send times, a forgotten one still counts (conservatively) for an interval that starts before it. */
-    @Test fun forgottenAckedSendTimesStillCount() {
+    /**
+     * Beyond the [ACKED_TIMES_KEEP] newest send times the oldest is forgotten: the check errs towards declaring persistent congestion
+     * (RFC 9002 section 7.6.2), never towards an acknowledgement it no longer knows of; the newest stay exact.
+     */
+    @Test fun forgottenAckedSendTimeErrsTowardsDeclaring() {
         val sp = PacketNumberSpace(SpaceId.Handshake)
         for (t in 1L..(ACKED_TIMES_KEEP + 1L)) sp.recordAckedTime(TimeMark(t * 100))
-        assertTrue(sp.anyAckedSentBetween(TimeMark(50), TimeMark(150)), "100 was forgotten but was acknowledged")
+        assertEquals(false, sp.anyAckedSentBetween(TimeMark(50), TimeMark(150)), "100 was forgotten")
+        for (t in 2L..(ACKED_TIMES_KEEP + 1L)) assertTrue(sp.anyAckedSentBetween(TimeMark(t * 100 - 1), TimeMark(t * 100 + 1)), "$t")
     }
 
-    /** Pruning a full set of ranges keeps the rest, and a forgotten number at the prune point still counts. */
+    /** Pruning a full set of ranges keeps the rest. */
     @Test fun pruningAFullSetKeepsWhatLiesAbove() {
         val sp = PacketNumberSpace(SpaceId.Application)
-        for (k in 0L..32L) sp.recordAcked(2 * k, 2 * k) // 33 ranges: 0 is forgotten into the unknown-below mark
+        for (k in 0L..32L) sp.recordAcked(2 * k, 2 * k) // 33 ranges: the lowest (0) is forgotten
         sp.pruneAckedBelow(0)
-        assertTrue(sp.anyAckedBetween(-1, 1), "0 was acknowledged")
+        assertEquals(false, sp.anyAckedBetween(-1, 1), "0 was forgotten: towards declaring")
+        assertTrue(sp.anyAckedBetween(1, 3), "2 is kept")
         sp.pruneAckedBelow(10)
         for (k in 5L..32L) assertTrue(sp.anyAckedBetween(2 * k - 1, 2 * k + 1), "${2 * k} acknowledged")
         assertEquals(false, sp.anyAckedBetween(10, 12))
@@ -158,7 +170,7 @@ class PacketNumberSpaceTest {
             var expected = false
             for (x in a + 1 until b) if (x in 0 until UNIVERSE && acked[x]) expected = true
             val got = sp.anyAckedBetween(a.toLong(), b.toLong())
-            if (expected) assertTrue(got, "($a, $b) holds an acknowledged packet; ranges $ranges, floor $floor")
+            if (!expected) assertEquals(false, got, "($a, $b) holds no acknowledged packet; ranges $ranges, floor $floor")
             if (exact) assertEquals(expected, got, "($a, $b) within capacity; ranges $ranges")
         }
     }

@@ -1074,7 +1074,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: persistent congestion (RFC 9002 section 7.6.2: "none of the packets sent between the send times of these two
   packets are acknowledged") ignored acknowledged ACK-only packets between the two lost ones, as loss detection does not
   keep them; an acknowledged range now counts whatever it covers, so a path that delivered in between is not collapsed to
-  the minimum window.
+  the minimum window. Beyond the 32 acknowledged ranges (and 16 send times of other spaces) kept for the check, what is
+  forgotten no longer counts as acknowledged: the check errs towards declaring persistent congestion, the one error the
+  section accepts, instead of missing it.
 - QUIC: a lost FIN took a sending stream from "Data Sent" back to "Send", a transition RFC 9000 section 3.1 does not
   have; the FIN is now sent again from "Data Sent".
 - QUIC: a client checked no Stateless Reset during the handshake: the server's connection ID it sends its Handshake
