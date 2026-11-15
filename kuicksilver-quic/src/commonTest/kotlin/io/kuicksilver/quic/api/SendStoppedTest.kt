@@ -66,7 +66,7 @@ class SendStoppedTest {
                 withTimeout(10.seconds) {
                     val (c, s) = p.connect()
                     val st = c.openBidi()
-                    val watcher = async { runCatching { st.awaitSendStopped() }.exceptionOrNull() }
+                    val watcher = async { st.awaitSendStopped() }
                     st.output.writeFully(ByteArray(10))
                     st.output.flushAndClose()
                     val ss = s.acceptStream()
@@ -75,8 +75,8 @@ class SendStoppedTest {
                     val b = ByteArray(16)
                     while (st.input.readAvailable(b, 0, b.size) >= 0) { /* to the end */ }
                     // both halves are done: no STOP_SENDING can stop this stream any more, and the watcher learns it
-                    val e = withTimeoutOrNull(5.seconds) { watcher.await() }
-                    assertIs<IllegalStateException>(e, "the watcher ended with its stream")
+                    val ended = withTimeoutOrNull(5.seconds) { watcher.await() ?: "ended" }
+                    assertEquals<Any?>("ended", ended, "the watcher ended with its stream, without a code")
                     // and it does not wait for the connection's end either
                     c.close()
                 }

@@ -113,9 +113,7 @@ private fun H3Session.watchStopped(st: QuicStream) {
             } catch (_: QuicException) {
                 // the connection ended, or the stream went with a rejected 0-RTT (its replacement has a watcher of its own)
                 return@launch
-            } catch (_: IllegalStateException) {
-                return@launch // the stream ended without a stop
-            }
+            } ?: return@launch // the stream ended without a stop
         fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")
     }
 }

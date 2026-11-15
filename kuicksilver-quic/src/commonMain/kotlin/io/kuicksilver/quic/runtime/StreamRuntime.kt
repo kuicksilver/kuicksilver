@@ -171,12 +171,12 @@ internal class StreamRuntime(
     }
 
     /**
-     * Suspends until the peer's STOP_SENDING for this stream arrives and returns its code (`io.kuicksilver.quic.awaitSendStopped`);
-     * throws once none can come any more: RFC 9001 section 4.6.2 resets "application state bound to" the streams a rejected
-     * 0-RTT dropped, and a watcher must not outlive its stream or its connection either.
+     * Suspends until the peer's STOP_SENDING for this stream arrives and returns its code (`io.kuicksilver.quic.awaitSendStopped`),
+     * or null once both halves are done without one; throws when the connection ended or a rejected 0-RTT dropped the stream
+     * (RFC 9001 section 4.6.2 resets "application state bound to" those streams): a watcher never outlives its stream.
      */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-    internal suspend fun awaitSendStopped(): Long {
+    internal suspend fun awaitSendStopped(): Long? {
         // one deferred for every waiter; the loop sets the state before it reads the waiter, and this reads the state after
         // the waiter was published: one of the two sees the other
         val made = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -185,7 +185,7 @@ internal class StreamRuntime(
         return when (val s = stopState) {
             is Long -> s
             is Throwable -> throw s
-            else -> throw IllegalStateException("stream $id ended without STOP_SENDING")
+            else -> null
         }
     }
 

@@ -134,7 +134,7 @@ internal suspend fun awaitCondition(
 internal suspend fun awaitOutputStopped(st: QuicStream): Long {
     val code =
         kotlinx.coroutines.withTimeoutOrNull(kotlin.time.Duration.parse("5s")) { st.awaitSendStopped() }
-            ?: throw AssertionError("no STOP_SENDING on stream ${st.id} within 5s")
+            ?: throw AssertionError("no STOP_SENDING on stream ${st.id} within 5s (or the stream ended without one)")
     awaitCondition("the stop failing the output") { st.output.closedCause != null }
     return code
 }
