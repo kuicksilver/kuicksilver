@@ -325,8 +325,13 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
         return
     }
     receivedVnVersions = offered
-    // the restarted handshake has no ticket left: 0-RTT data waits for 1-RTT, and the limits it used are checked at completion
+    // the restarted handshake has no ticket left (RFC 9369 section 5), so its completion settles our 0-RTT as rejected
     discardZeroRttPackets { p -> streams.onFramesLost(p.frames) }
+    // the new attempt numbers its packets from 0 again (a new LossDetection below): the abandoned 0-RTT packets are no packets of
+    // it, and an acknowledgment of its 1-RTT packets covering their numbers is no "acknowledgment for a 0-RTT packet" (RFC 9001
+    // section 4.6.2)
+    zeroRttFirstPn = -1
+    zeroRttLastPn = -1
     for (i in 0 until 4) {
         readKeys[i]?.close()
         writeKeys[i]?.close()

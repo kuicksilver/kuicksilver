@@ -975,6 +975,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client, 0-RTT and Version Negotiation: after a Version Negotiation answered a first flight that carried 0-RTT,
+  the new attempt numbers its packets from 0 again (RFC 9368 section 2.1, "a new first flight") while the client still
+  took the abandoned 0-RTT packets' numbers for its 0-RTT; the server's acknowledgment of the new attempt's first 1-RTT
+  packets then counted as an acknowledgment of rejected 0-RTT and the client closed with PROTOCOL_VIOLATION (RFC 9001
+  section 4.6.2 means "an acknowledgment for a 0-RTT packet"). Found by the 0-RTT connection fuzzer; pinned by
+  `ZeroRttTest.negative_versionNegotiationAfterZeroRttKeepsTheConnection`.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
