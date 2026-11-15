@@ -95,7 +95,9 @@ public interface QuicStream {
      * The final size of the peer's sending half (RFC 9000 section 4.5), completed as soon as its FIN, RESET_STREAM or
      * RESET_STREAM_AT made it known, whether or not the bytes were read (also after [stopSending]): what a protocol that
      * counts the peer's data across streams needs for a reset stream (draft-ietf-webtrans-http3-16 section 5.4). The size
-     * counts every byte of the stream, an application's own header included. Fails like [sentFinalSize] when the
+     * counts every byte of the stream, an application's own header included. On a client's own stream, while its 0-RTT
+     * awaits the server's answer, it completes only once the server accepted the early data, as [sentFinalSize] does.
+     * Fails like [sentFinalSize] when the
      * connection ends first or a rejected 0-RTT dropped the stream, and at once with IllegalStateException on our own
      * unidirectional stream. Shared like [sentFinalSize]: never cancel it. Null from implementations outside this library
      * that do not track it.

@@ -459,6 +459,16 @@ internal class WtSessionImpl(
                     },
                     flow,
                     inCount,
+                    if (flowEnabled) {
+                        WtSendTurn {
+                            cost,
+                            block,
+                            ->
+                            h3.wtFairness.send.inTurn(this@WtSessionImpl, stream.priority.urgency, cost, block)
+                        }
+                    } else {
+                        null
+                    },
                 )
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -491,7 +501,9 @@ internal class WtSessionImpl(
                 val st =
                     try {
                         val quicOpen = suspend { if (bidi) h3.quic.openBidi(stream.priority) else h3.quic.openUni(stream.priority) }
-                        quicOpen()
+                        // in turn with the connection's other sessions when the peer's stream credit runs short (section 8)
+                        val fair = h3.wtFairness.opening(bidi)
+                        if (f == null) quicOpen() else fair.inTurn(this@WtSessionImpl, stream.priority.urgency, 1, quicOpen)
                     } catch (e: Throwable) {
                         // no stream the peer will see: the slot goes back
                         f?.returnStream(bidi)

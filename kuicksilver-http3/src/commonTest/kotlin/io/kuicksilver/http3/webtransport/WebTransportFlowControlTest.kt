@@ -848,6 +848,30 @@ class WebTransportFlowControlTest {
             }
         }
 
+    /**
+     * A session that ends before it starts (its exchange over during the accept) never counted among the connection's
+     * flow-controlled sessions, so its end does not count it down: the count and the receive-window floor stay right.
+     */
+    @Test fun negative_sessionEndedBeforeItStartedLeavesTheCountAlone() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val (c, s) = q.connect(H3Fixtures.quic)
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientFlowSettings())
+                server.session.endBeforeStartForTest = true
+                val (_, ended) = rawSession(c, server, raw)
+                withTimeout(5.seconds) { ended.closed.await() }
+                assertEquals(0 to 0L, withContext(server.session.dispatcher) { server.session.wtFlowSessionsForTest })
+                server.session.endBeforeStartForTest = false
+                rawSession(c, server, raw)
+                assertEquals(
+                    1 to wtOn.webTransportInitialMaxData,
+                    withContext(server.session.dispatcher) { server.session.wtFlowSessionsForTest },
+                )
+            }
+        }
+
     /** One byte beyond the limit is too many (the limit itself passes, below). */
     @Test fun negative_dataOneByteBeyondTheLimitClosesTheSession() =
         rawFlowTest(serverSettings = wtLimits(data = 100)) { _, raw, connect, session ->

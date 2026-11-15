@@ -48,6 +48,8 @@ internal class WtStreamImpl(
     private val flow: WtSessionFlow? = null,
     /** The count of the peer's bytes on [input] against the session's limit, or null without flow control. */
     private val inCount: WtInCount? = null,
+    /** The session's turn at the connection's send buffer (draft-16 section 8), with flow control. */
+    private val turns: WtSendTurn? = null,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
     private val outCh = ByteChannel()
@@ -151,10 +153,15 @@ internal class WtStreamImpl(
                         // the sending half is over (reset, or stopped by the peer): its own failure tells why
                         if (k == 0) throw st.output.closedCause ?: IOException("WebTransport stream $streamId: sending ended")
                         outCounted += k
-                        st.output.writeFully(buf, off, off + k) // start and end index
+                        val from = off
+                        // a chunk at a time, in turn with the connection's other sessions (section 8); flushed before the
+                        // next wait for credit, as the peer's WT_MAX_DATA follows what it received
+                        val write: suspend () -> Unit = {
+                            st.output.writeFully(buf, from, from + k) // start and end index
+                            st.output.flush()
+                        }
+                        turns?.run(k.toLong(), write) ?: write()
                         off += k
-                        // what the credit allowed goes out before waiting for more: the peer's WT_MAX_DATA follows it
-                        if (off < n) st.output.flush()
                     }
                 }
                 st.output.flush()

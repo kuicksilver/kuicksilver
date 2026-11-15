@@ -130,15 +130,17 @@ internal class H3Session(
     val wt = WtStreamRouter(this)
 
     /**
-     * Server: the request stream of the WebTransport CONNECT handed to the application and not yet over; while it is set
-     * another one is refused with H3_REQUEST_REJECTED (one session per connection, draft-ietf-webtrans-http3-16 section
-     * 5.1). Session dispatcher only.
+     * Server: the request streams of the WebTransport CONNECTs handed to the application and not yet over, each with
+     * whether it is a draft-02 request (which picks its version, [io.kuicksilver.http3.webtransport.wtServerVersion]).
+     * Another one is admitted only as [wtAdmits] says. Session dispatcher only; change it through [wtSessionAdmitted] and
+     * [wtSessionEnded].
      */
-    var wtSessionStream: Long? = null
-        set(v) {
-            field = v
-            wtIdle.value = v == null
-        }
+    val wtSessions = LinkedHashMap<Long, Boolean>()
+
+    /** [wtSessions] changed: [wtIdle] follows. */
+    fun wtSessionsChanged() {
+        wtIdle.value = wtSessions.isEmpty()
+    }
 
     /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
     var wtClientBusy = false
@@ -484,6 +486,12 @@ internal class H3Session(
     /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
     private var wtFlowSessions = 0
 
+    /** [wtFlowSessions] and the receive-window floor it asks for (a test hook; session dispatcher only). */
+    internal val wtFlowSessionsForTest: Pair<Int, Long> get() = wtFlowSessions to wtFloor.value
+
+    /** Test hook: a server session accepted next ends before it starts, as one whose exchange ended during the accept. */
+    internal var endBeforeStartForTest = false
+
     /**
      * A WebTransport session with flow control started ([up]) or ended: the connection's receive window is kept at what
      * the open sessions may have in flight together (draft-16 section 8: a session nobody reads must not hold the whole
@@ -509,6 +517,11 @@ internal class H3Session(
     /** The floor [wtFlowSession] wants for the connection's receive window. */
     private val wtFloor = MutableStateFlow(0L)
     private var wtFloorSender: Job? = null
+
+    /** The fair queues the WebTransport sessions of this connection take turns in (draft-16 section 8). */
+    internal val wtFairness =
+        io.kuicksilver.http3.webtransport
+            .WtFairness()
 
     /** The peer's WebTransport settings ([WtSettings.ALL]); empty before its SETTINGS arrived. */
     internal var wtPeerSettings: Map<Long, Long> = emptyMap()
