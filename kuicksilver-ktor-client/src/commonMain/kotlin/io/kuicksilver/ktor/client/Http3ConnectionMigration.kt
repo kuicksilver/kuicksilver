@@ -33,7 +33,7 @@ import kotlinx.coroutines.flow.Flow
  * `Http3ConnectionMigration { c, scope -> NetworkMigrator(c, myNetworks, { DatagramIo.open(myAddressOn(it)) }, scope) }`.
  *
  * Only HTTP/3 survives a network change: HTTP/1.1, HTTP/2 and WebSockets over HTTP/1.1 run over TCP, which cannot move,
- * and the dedicated connections of WebTransport sessions do not follow either.
+ * and the extra connections a server's WebTransport session limit makes (beyond the pooled one) do not follow either.
  */
 @ExperimentalKuicksilverApi
 public fun interface Http3ConnectionMigration {
