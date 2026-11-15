@@ -30,7 +30,10 @@ internal class HpackEncoder(
 
     val tableCapacity: Int get() = table.capacity
 
-    /** The peer's SETTINGS_HEADER_TABLE_SIZE (RFC 9113 section 6.5.2): the table follows min(it, [maxTableSize]). */
+    /**
+     * The peer's SETTINGS_HEADER_TABLE_SIZE (RFC 9113 section 6.5.2): the table follows min(it, [maxTableSize]). The caller
+     * passes a larger value only once its acknowledgement is ahead of the next block (RFC 7541 section 6.3).
+     */
     fun setPeerMaxTableSize(v: Long) {
         val c = minOf(v, maxTableSize.toLong()).toInt()
         if (c == table.capacity) return

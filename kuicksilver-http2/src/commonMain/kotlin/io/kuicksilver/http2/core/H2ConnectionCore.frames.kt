@@ -334,14 +334,14 @@ internal fun H2ConnectionCore.onSettings(
     }
     glitch(now, "SETTINGS")
     var windowShrank = false
+    var tableSize = -1L
     for (i in f.ids.indices) {
         val v = f.values[i]
         when (f.ids[i]) {
             SettingId.HEADER_TABLE_SIZE -> {
-                hpackOut.setPeerMaxTableSize(v)
+                tableSize = v // applied to the encoder with our acknowledgement (see queueSettingsAck)
             }
 
-            // applied to the next block written, after our ACK
             SettingId.ENABLE_PUSH -> {
                 if (v > 1) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH = $v")
                 // section 6.5.2: a server never sends 1
@@ -414,7 +414,7 @@ internal fun H2ConnectionCore.onSettings(
         }
     }
     peerNoRfc7540PrioritiesFixed = true
-    queueSettingsAck(windowShrank) // section 6.5.3: immediately, behind DATA already taken from a larger window
+    queueSettingsAck(windowShrank, tableSize) // section 6.5.3: immediately, behind DATA already taken from a larger window
     emit(H2Event.SettingsChanged)
 }
 

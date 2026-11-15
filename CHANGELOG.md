@@ -1081,6 +1081,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   on itself was reset with PROTOCOL_ERROR even after the peer sent SETTINGS_NO_RFC7540_PRIORITIES = 1, when RFC 9218
   section 2.1 says such a server "MUST ignore HTTP/2 priority signals". The RFC 7540 self-dependency check now applies
   only to peers that did not send the setting, in all three places.
+- HTTP/2 (RFC 7541 section 6.3, RFC 9113 section 4.3.1): a larger SETTINGS_HEADER_TABLE_SIZE from the peer was used
+  by our HPACK encoder before our acknowledgement of it was written, when that acknowledgement waited behind DATA
+  (SETTINGS that also shrank SETTINGS_INITIAL_WINDOW_SIZE). A field block sent in between could start with a table
+  size update above the peer's acknowledged limit, which the peer treats as a COMPRESSION_ERROR. A larger value now
+  applies once the acknowledgement is queued ahead of later field blocks; a smaller one still applies at once. Client
+  and server alike.
 - HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
   out while the explicit priority scheduled the stream, so the server and the client used different priorities.
 - HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence

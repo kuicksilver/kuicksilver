@@ -7,9 +7,11 @@ import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http2.frame.Frame
 import io.kuicksilver.http2.frame.FrameEncoder
 import io.kuicksilver.http2.frame.SettingId
+import io.kuicksilver.http2.hpack.HpackDecoder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SettingsTest {
@@ -175,6 +177,81 @@ class SettingsTest {
         val h = c.read().filterIsInstance<Frame.Headers>().single()
         assertEquals(0x20, h.fragment[0].toInt() and 0xff) // RFC 7541 section 4.2: an update to 0 first
         assertEquals(GET + ("x-a" to "1"), c.decodeBlock(h.fragment))
+    }
+
+    /**
+     * RFC 7541 section 6.3: the encoder's limit is "the last value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received
+     * from the decoder and acknowledged by the encoder"; RFC 9113 section 4.3.1: a change "takes effect when the endpoint
+     * acknowledges settings". The peer lowered the size to 0 (acknowledged), then raises it to 4096 in a SETTINGS that also
+     * shrinks SETTINGS_INITIAL_WINDOW_SIZE while DATA is queued: our ACK waits behind that DATA, and a field block written
+     * before it must not raise the table. A later held SETTINGS lowering the size to 100 applies at once. The peer's decoder
+     * here follows its limit as our ACKs arrive, so a size update above it fails the decode, as it does in nghttp2.
+     */
+    @Test
+    fun raisedPeerHeaderTableSizeWaitsForOurAck() {
+        for (role in Role.entries) {
+            val p = RawH2Peer(role)
+            p.handshake(settings(SettingId.HEADER_TABLE_SIZE to 0))
+            val peerDecoder = HpackDecoder(4096, 1 shl 20).also { it.setMaxTableSize(0) } // 0 acknowledged by our handshake ACK
+            val limits = ArrayDeque<Int>()
+            val blocks = mutableListOf<ByteArray>()
+
+            fun readInOrder(): List<Frame> {
+                val out = p.read()
+                for (f in out) {
+                    when {
+                        f is Frame.Settings && f.ack -> {
+                            limits.removeFirstOrNull()?.let { peerDecoder.setMaxTableSize(it) }
+                        }
+
+                        f is Frame.Headers -> {
+                            blocks += f.fragment
+                            peerDecoder.decode(f.fragment) { _, _ -> }
+                        }
+                    }
+                }
+                return out
+            }
+            val first: Int
+            val second: Int
+            if (role == Role.CLIENT) {
+                first = p.core.openStream(GET, endStream = false)
+            } else {
+                p.send(p.headers(1, endStream = true), p.headers(3, endStream = true))
+                p.events()
+                first = 1
+                p.core.sendHeaders(first, OK, endStream = false)
+            }
+            readInOrder()
+            assertEquals(16_384, p.core.sendData(first, ByteArray(16_384), 0, 16_384, endStream = false))
+            limits.addLast(4096)
+            p.send(settings(SettingId.INITIAL_WINDOW_SIZE to 1_000, SettingId.HEADER_TABLE_SIZE to 4096)) // ACK held
+            limits.addLast(100)
+            p.send(settings(SettingId.HEADER_TABLE_SIZE to 100)) // its ACK waits behind the first
+            assertEquals(0, p.core.hpackOut.tableCapacity, "$role: the raise waits for the ACK")
+            if (role == Role.CLIENT) {
+                second = p.core.openStream(GET + ("x-a" to "1"), endStream = true)
+            } else {
+                second = 3
+                p.core.sendHeaders(second, OK + ("x-a" to "1"), endStream = true)
+            }
+            val out = readInOrder().filter { it is Frame.Headers || it is Frame.Data || it is Frame.Settings }
+            assertEquals(4, out.size, "$role wrote ${out.map { it::class.simpleName }}")
+            assertEquals(second, assertIs<Frame.Headers>(out[0]).streamId, "$role: the field block goes ahead of the DATA")
+            assertIs<Frame.Data>(out[1])
+            assertTrue(assertIs<Frame.Settings>(out[2]).ack && assertIs<Frame.Settings>(out[3]).ack)
+            assertTrue(blocks.last()[0].toInt() and 0xe0 != 0x20, "$role: no size update ahead of the ACK")
+            // both acknowledged: the last value, 100, holds and is signalled at the start of the next block
+            assertEquals(100, p.core.hpackOut.tableCapacity)
+            if (role == Role.CLIENT) {
+                p.core.openStream(GET, endStream = true)
+            } else {
+                p.core.sendHeaders(first, listOf("x-t" to "1"), endStream = true)
+            }
+            readInOrder()
+            assertEquals(listOf(0x20 or 31, 100 - 31), blocks.last().take(2).map { it.toInt() and 0xff }, "$role")
+            assertEquals(false, p.core.isClosed)
+        }
     }
 
     @Test

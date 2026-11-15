@@ -100,6 +100,18 @@ internal class H2ConnectionCore(
         val behind: MutableSet<H2Stream>,
     ) {
         var followers = 0
+
+        /** The last SETTINGS_HEADER_TABLE_SIZE among this acknowledgement and its followers, -1 for none. */
+        var tableSize = -1L
+
+        /** The smallest SETTINGS_HEADER_TABLE_SIZE among them, -1 for none. */
+        var minTableSize = -1L
+
+        fun carry(v: Long) {
+            if (v < 0) return
+            tableSize = v
+            minTableSize = if (minTableSize < 0) v else minOf(minTableSize, v)
+        }
     }
 
     internal var wroteSincePing = true
@@ -910,19 +922,39 @@ internal class H2ConnectionCore(
      * and such a frame written after it would overrun that window (FLOW_CONTROL_ERROR). Nothing waits for the peer. Held
      * acknowledgements count toward `maxControlFramesQueued` (CVE-2019-9515), so a peer that stops reading cannot pile
      * them up.
+     *
+     * [tableSize] is the SETTINGS_HEADER_TABLE_SIZE the SETTINGS carried (-1 for none). The encoder's limit is "the last
+     * value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received from the decoder and acknowledged by the encoder" (RFC
+     * 7541 section 6.3), and a change "takes effect when the endpoint acknowledges settings" (section 4.3.1): a larger
+     * value is applied once the acknowledgement is in the control queue, which [poll] writes ahead of every field block
+     * encoded later. A smaller one is applied at once, as a table smaller than the peer's limit is always allowed.
      */
-    internal fun queueSettingsAck(windowShrank: Boolean) {
+    internal fun queueSettingsAck(
+        windowShrank: Boolean,
+        tableSize: Long = -1,
+    ) {
         if (closed) return
         val behind = LinkedHashSet<H2Stream>()
         if (windowShrank) {
             for (s in streams.values) if (s.out.any { it is OutItem.Data && it.length > 0 }) behind += s
         }
-        if (behind.isEmpty() && heldSettingsAcks.isEmpty()) return queueControl(FrameEncoder.settingsAck())
+        if (behind.isEmpty() && heldSettingsAcks.isEmpty()) {
+            queueControl(FrameEncoder.settingsAck())
+            if (tableSize >= 0) hpackOut.setPeerMaxTableSize(tableSize)
+            return
+        }
         if (controlQueued >= settings.maxControlFramesQueued) {
             return connectionError(Http2ErrorCode.ENHANCE_YOUR_CALM, "more than ${settings.maxControlFramesQueued} control frames queued")
         }
         heldAcks++
-        if (behind.isEmpty()) heldSettingsAcks.last().followers++ else heldSettingsAcks.addLast(HeldAck(behind))
+        val held =
+            if (behind.isEmpty()) {
+                heldSettingsAcks.last().also { it.followers++ }
+            } else {
+                HeldAck(behind).also { heldSettingsAcks.addLast(it) }
+            }
+        held.carry(tableSize)
+        if (tableSize >= 0) hpackOut.setPeerMaxTableSize(minOf(tableSize, hpackOut.tableCapacity.toLong()))
     }
 
     /** The connection ended with an error: only its GOAWAY goes out, no acknowledgement. */
@@ -935,13 +967,19 @@ internal class H2ConnectionCore(
     private fun dataLeft(s: H2Stream) {
         if (heldSettingsAcks.isEmpty()) return
         for (h in heldSettingsAcks) h.behind.remove(s)
+        var tableSize = -1L
         while (heldSettingsAcks.firstOrNull()?.behind?.isEmpty() == true) {
             val h = heldSettingsAcks.removeFirst()
             repeat(1 + h.followers) {
                 heldAcks-- // first, so moving it into the control queue keeps the count within the bound
                 queueControl(FrameEncoder.settingsAck())
             }
+            if (h.tableSize >= 0) tableSize = h.tableSize
         }
+        if (tableSize < 0) return
+        // acknowledged now (see queueSettingsAck); a smaller value still held stays in force until its own acknowledgement
+        for (h in heldSettingsAcks) if (h.minTableSize >= 0) tableSize = minOf(tableSize, h.minTableSize)
+        hpackOut.setPeerMaxTableSize(tableSize)
     }
 
     /** Credit [n] bytes of [s] back to the peer: the connection at once when due, the stream as one coalesced WINDOW_UPDATE. */
