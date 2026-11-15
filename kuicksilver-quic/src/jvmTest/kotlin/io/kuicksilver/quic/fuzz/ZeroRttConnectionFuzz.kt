@@ -319,8 +319,14 @@ internal class ZeroRttConnectionFuzz(
     /** Called after every round, before the checks (the negative controls corrupt the state there); [answeredNow]: the client learnt the answer in it. */
     private val tamper: ((pair: CorePair, answeredNow: Boolean) -> Unit)? = null,
     /** Called with the pair once the program and its closing rounds ran (FuzzTraceTest compares runs by what it sees). */
-    private val observe: ((CorePair) -> Unit)? = null,
+    private val observe: ((CorePair, String) -> Unit)? = null,
 ) {
+    /**
+     * What went over the wire, for [observe]: the length of every datagram either side sent (their bytes differ from run to
+     * run under real TLS) and the kind and stream of every event either side reported.
+     */
+    private val seen = if (observe != null) StringBuilder() else null
+
     enum class Expect {
         Accepted,
         RejectedGoesOn,
@@ -398,8 +404,14 @@ internal class ZeroRttConnectionFuzz(
             ZeroRttCoverage.hit("runs")
             pair.client.datagramSender = datagrams[0]
             pair.onServerCreated = { it.datagramSender = datagrams[1] }
-            pair.filterToServer = { _, b -> toServer(b) }
-            pair.filterToClient = { _, _ -> !blocked[1] && outcome != ZeroRttProgram.LOST }
+            pair.filterToServer = { _, b ->
+                seen?.append(">")?.append(b.size)
+                toServer(b)
+            }
+            pair.filterToClient = { _, b ->
+                seen?.append("<")?.append(b.size)
+                !blocked[1] && outcome != ZeroRttProgram.LOST
+            }
             fuzzOp {
                 "outcome=${ZeroRttProgram.OUTCOME_NAMES[outcome]} flags=${ZeroRttProgram.FLAG_NAMES.filterKeys {
                     flags and it != 0
@@ -415,7 +427,7 @@ internal class ZeroRttConnectionFuzz(
                 fuzzOp { "@$at $op ->@$p" }
             }
             finish()
-            observe?.invoke(pair)
+            observe?.invoke(pair, seen?.toString().orEmpty())
         } finally {
             pair.close()
         }
@@ -768,6 +780,18 @@ internal class ZeroRttConnectionFuzz(
         pair.step()
         if (pair.server?.earlyDataAccepted == true) serverAcceptedEarly = true
         tamper?.invoke(pair, !wasAnswered && pair.client.earlyAccepted != null)
+        seen?.let { s ->
+            for ((side, events) in listOf(
+                0 to pair.clientEvents,
+                1 to pair.serverEvents,
+            )) {
+                for (e in events) {
+                    s.append(
+                        " $side:${e::class.simpleName}${io.kuicksilver.quic.core.streamEventIdForTest(e)?.let { "#$it" }.orEmpty()}",
+                    )
+                }
+            }
+        }
         observe(0, pair.clientEvents)
         observe(1, pair.serverEvents)
         pair.clientEvents.clear()

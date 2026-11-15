@@ -113,18 +113,27 @@ class FuzzTraceTest {
         assertNotEquals(fp(accept), fp(lost))
     }
 
-    /** What a run ended in: each side's state, collection sizes and counters, and the virtual time. */
-    private fun observation(pair: CorePair): String =
+    /**
+     * What a run ended in: each side's state, why it closed (code and reason), collection sizes and counters, the virtual
+     * time, and what the program saw on the wire and handed to the applications ([wire]: a digest of every datagram and
+     * every byte read for the connection program; datagram lengths and events for the 0-RTT one, whose bytes TLS
+     * randomizes).
+     */
+    private fun observation(
+        pair: CorePair,
+        wire: String,
+    ): String =
         listOfNotNull(pair.client, pair.server).joinToString(" | ") { c ->
             val s = c.stats
-            "${c.state} ${c.sizesForTest().toSortedMap()} sent=${s.packetsSent}/${s.bytesSent} received=${s.packetsReceived}/" +
-                "${s.bytesReceived} lost=${s.lostPackets} keyUpdates=${s.keyUpdates} rtt=${s.smoothedRtt} cwnd=${s.cwnd} mtu=${s.pathMtu}"
-        } + " at ${pair.now}"
+            "${c.state} closed=${c.closedReason?.let { "${it::class.simpleName}:${it.message}" }} ${c.sizesForTest().toSortedMap()} " +
+                "sent=${s.packetsSent}/${s.bytesSent} received=${s.packetsReceived}/${s.bytesReceived} lost=${s.lostPackets} " +
+                "keyUpdates=${s.keyUpdates} rtt=${s.smoothedRtt} cwnd=${s.cwnd} mtu=${s.pathMtu}"
+        } + " at ${pair.now} wire $wire"
 
     /** (the run's trace, what it ended in) for a run that hands [observe] to the program. */
-    private fun traced(run: (observe: (CorePair) -> Unit) -> Unit): Pair<String, String> {
+    private fun traced(run: (observe: (CorePair, String) -> Unit) -> Unit): Pair<String, String> {
         var end = "no end"
-        val (_, text, thrown) = FuzzTrace.record(true) { run { end = observation(it) } }
+        val (_, text, thrown) = FuzzTrace.record(true) { run { pair, wire -> end = observation(pair, wire) } }
         return assertNotNull(text) to end + (thrown?.let { " threw ${it::class.simpleName}: ${it.message}" } ?: "")
     }
 

@@ -220,9 +220,26 @@ internal object ConnProgram {
 internal class ConnectionFuzz(
     private val data: ByteArray,
     private val crypto: QuicCrypto,
-    /** Called with the pair once the program and its closing rounds ran (FuzzTraceTest compares runs by what it sees). */
-    private val observe: ((CorePair) -> Unit)? = null,
+    /**
+     * Called with the pair and a digest of everything on the wire and given to the applications (every datagram either side
+     * sent, every stream byte and datagram an application read) once the program and its closing rounds ran: FuzzTraceTest
+     * compares runs by what it sees.
+     */
+    private val observe: ((CorePair, String) -> Unit)? = null,
 ) {
+    private val seen = if (observe != null) java.security.MessageDigest.getInstance("SHA-256") else null
+
+    private fun see(
+        tag: Int,
+        b: ByteArray,
+        n: Int = b.size,
+    ) {
+        val d = seen ?: return
+        d.update(tag.toByte())
+        d.update(n.toString().toByteArray())
+        d.update(b, 0, maxOf(0, minOf(n, b.size)))
+    }
+
     private var p = 0
     private val flags = if (data.isEmpty()) 0 else data[0].toInt() and 0xff
 
@@ -485,8 +502,14 @@ internal class ConnectionFuzz(
         try {
             pair.client.datagramSender = sides[0]
             pair.onServerCreated = { it.datagramSender = sides[1] }
-            pair.filterToServer = { _, _ -> !blocked[0] }
-            pair.filterToClient = { _, _ -> !blocked[1] }
+            pair.filterToServer = { _, b ->
+                see(0, b)
+                !blocked[0]
+            }
+            pair.filterToClient = { _, b ->
+                see(1, b)
+                !blocked[1]
+            }
             p = 1
             fuzzOp { "flags ${ConnProgram.FLAG_NAMES.filterKeys { flags and it != 0 }.values}" }
             if (flags and ConnProgram.LIVE == 0) {
@@ -506,7 +529,7 @@ internal class ConnectionFuzz(
                 pair.advance(10.milliseconds)
                 step()
             }
-            observe?.invoke(pair)
+            observe?.invoke(pair, seen?.digest()?.joinToString("") { "%02x".format(it) }.orEmpty())
         } finally {
             pair.close()
         }
@@ -637,7 +660,12 @@ internal class ConnectionFuzz(
                 val id = stream(side)
                 val n = minOf(num(), 65_536L).toInt()
                 traced { "APP ${name(side)} read stream#$index $n" }
-                if (id != null) api { c.readStream(id, ByteArray(maxOf(n, 1)), 0, n) }
+                if (id != null) {
+                    api {
+                        val into = ByteArray(maxOf(n, 1))
+                        see(2 + side, into, c.readStream(id, into, 0, n))
+                    }
+                }
             }
 
             3 -> {
@@ -712,7 +740,11 @@ internal class ConnectionFuzz(
         for (side in 0..1) {
             val c = core(side) ?: continue
             var n = 0
-            while (n++ < 64 && c.readDatagram(buf, 0) >= 0) { /* the application consumes them */ }
+            while (n++ < 64) {
+                val k = c.readDatagram(buf, 0)
+                if (k < 0) break
+                see(4 + side, buf, k) // the application consumes them
+            }
         }
     }
 

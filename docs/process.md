@@ -169,9 +169,14 @@ a live entry's expected text is only as specific as it is written (a message or 
 text would pass the verifier); whether the records hold is checked weekly and by hand, not on every change. `fuzz-formats.py` and the replay see what a
 program's trace says it decoded. `FuzzTraceTest` checks the trace of the two connection programs: every flag and outcome
 constant must have its name in the trace, and over every value of the flags byte, of an operation byte and of the 0-RTT
-outcome byte, appended to one fixed program, two values with one trace must end in the same state; a meaning that fixed
-program never reaches (PMTUD switched off in a run too short to probe), or a meaning given to a byte read later than
-the one swept, is not seen, nor is a decoder change in the other traced programs that their trace does not state. A
+outcome byte, appended to one fixed program, two values with one trace must end alike: the same state, close code and
+reason, collection sizes and counters on each side, and, for the connection program, the same bytes of every datagram
+either side sent and of every stream byte and datagram an application read (for the 0-RTT program, whose bytes real TLS
+randomizes, the length of every datagram and the kind and stream of every event). Not seen: a meaning that fixed program
+never reaches (PMTUD switched off in a run too short to probe, a branch only an earlier operation it lacks would open),
+a meaning that leaves no trace on the wire, in what the applications read or in those counters before the run ends (a
+timer set to fire later), a 0-RTT meaning that changes datagram contents but not their lengths or events, and a meaning
+given to a byte read later than the one swept; nor is a decoder change in the other traced programs that their trace does not state. A
 decoding that depends on the run (ConnProgram's application calls read nothing for a side without a connection) changes
 with a change to the library, not only to the decoder: it fails as a changed decoding and needs its reason. The other
 programs trace only what the input decides (the HTTP/2 server target states all its pieces, also those after the core
