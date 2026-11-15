@@ -5,8 +5,10 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -54,7 +56,17 @@ class KtorDatagramIoTest {
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
-                val leaked = openDescriptors() - before
+                // the descriptors a refused bind gives back are not all closed when it returns: its selector's wakeup pipe
+                // is closed by the selector's own loop, on Dispatchers.Default, once that loop runs again (ktor-network's
+                // close() only requests termination), so a busy process (the whole suite, a loaded machine) still has
+                // them open for a while. A leak stays: the count is read until it settles, within 10 s
+                var leaked = openDescriptors() - before
+                withTimeoutOrNull(10.seconds) {
+                    while (leaked >= 10) {
+                        delay(20)
+                        leaked = openDescriptors() - before
+                    }
+                }
                 assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
             } finally {
                 held.close()
