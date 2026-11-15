@@ -1198,8 +1198,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   address, so one ID went to both (RFC 9000 section 9.5 "MUST NOT reuse a connection ID when sending to more than one
   destination address"): when the server's Retire Prior To retired the ID the preferred path probed with before the
   validation finished, the switch took the ID in use toward the original address. The client now moves only with an ID
-  never used toward the original address and, with none, moves once the server's next ID arrives (found by the connection fuzzer over TLS with a compatible version;
-  `PreferredAddressTest.negative_theMoveToThePreferredAddressNeverTakesTheIdUsedTowardTheOriginalOne`).
+  never used toward the original address and, with none, moves once the server's next ID arrives; the same holds when
+  the application's active path takes the preferred address its new socket probed (section 9.6.3) (found by the connection fuzzer over TLS with a compatible version;
+  `PreferredAddressTest.negative_theMoveToThePreferredAddressNeverTakesTheIdUsedTowardTheOriginalOne`,
+  `.negative_theCarriedPreferredProbeNeverMovesTheActivePathWithTheIdUsedTowardTheOriginalAddress`).
 - QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
   was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
   10.2.2). They are dropped when the connection starts closing or draining

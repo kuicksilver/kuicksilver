@@ -761,6 +761,9 @@ public class ConnectionCore internal constructor(
     internal var preferredProbeStarted = false
     internal var movedToPreferred = false
 
+    /** Client: the validated preferred-address path whose move waits for an unused peer connection ID (RFC 9000 section 9.5). */
+    internal var preferredMoveWaiting: Path? = null
+
     /**
      * Server: the connection moved to the preferred-address socket (RFC 9000 section 9.6.2). Its packets on the original address are
      * dropped from then on ([leftAddressDropped]), and its IDs get no Stateless Reset there once they stop routing (EndpointCore).

@@ -154,13 +154,30 @@ internal fun ConnectionCore.onNewConnectionId(
 }
 
 /**
- * Client, RFC 9000 section 9.6.2: the move to the validated preferred-address path [p], with the ID it probed with ("A client constructs
- * packets using any previously unused active connection ID", section 9.6.1) or, when the server retired that one meanwhile (a Retire
- * Prior To), a spare one. Never the ID in use toward the original address (section 9.5: "MUST NOT reuse a connection ID when sending to
- * more than one destination address"): with none, the move waits for the server's next NEW_CONNECTION_ID ([resumeCidWaiters]).
+ * Client, RFC 9000 section 9.6.2: the move to the validated preferred-address path [p] — a switch to it, or, for a probe carried by
+ * the application's path ([Path.carrier], section 9.6.3), that path taking the preferred address ([adoptPreferred]) — with the ID it
+ * probed with ("A client constructs packets using any previously unused active connection ID", section 9.6.1) or, when the server
+ * retired that one meanwhile (a Retire Prior To), a spare one. Never the ID in use toward the original address (section 9.5: "MUST NOT
+ * reuse a connection ID when sending to more than one destination address"): with none, the move waits for the server's next
+ * NEW_CONNECTION_ID ([preferredMoveWaiting], [resumeCidWaiters]). A carried probe whose application path is not the active one moves
+ * nothing: that path takes the address and reports the validation, and the application's switch to it is the move.
  */
 private fun ConnectionCore.moveToPreferredAddress(p: Path) {
-    if (movedToPreferred || p === paths.active || dcidFor(p) == null) return
+    preferredMoveWaiting = null
+    if (movedToPreferred || p === paths.active || !paths.all.contains(p)) return
+    val carrier = usableCarrier(p)
+    if (carrier != null) {
+        if (carrier === paths.active && p.peerCid?.let { cids.isActive(it) } != true && !cids.hasSparePeer()) {
+            preferredMoveWaiting = p
+            return
+        }
+        adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+        return
+    }
+    if (dcidFor(p) == null) {
+        preferredMoveWaiting = p
+        return
+    }
     val old = paths.active
     switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
     movedToPreferred = true
@@ -170,16 +187,15 @@ private fun ConnectionCore.moveToPreferredAddress(p: Path) {
     }
 }
 
+/** The application's path that carries the preferred-address probe [p] (RFC 9000 section 9.6.3), while it is still there. */
+private fun ConnectionCore.usableCarrier(p: Path): Path? = p.carrier?.takeIf { it.state != PathState.Closed && paths.all.contains(it) }
+
 /**
  * Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5), and a client's
  * move to the validated preferred address that waited for one is made.
  */
 private fun ConnectionCore.resumeCidWaiters() {
-    if (role == TlsRole.Client) {
-        paths.all.firstOrNull { it.preferred && it.carrier == null && it.state == PathState.Validated && it !== paths.active }?.let {
-            moveToPreferredAddress(it)
-        }
-    }
+    if (role == TlsRole.Client) preferredMoveWaiting?.takeIf { it.state == PathState.Validated }?.let { moveToPreferredAddress(it) }
     val a = paths.active
     if (a.waitsForPeerCid) {
         val cur = cids.currentPeer
@@ -1028,18 +1044,15 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
             val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
             if (p !== paths.active && !preferredMove && !toPreferred && role == TlsRole.Server && !p.peerProbed) releasePathCid(p)
-            val carrier = p.carrier
-            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
-                adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+            if (toPreferred) {
+                // a carried probe's validation is reported by the application's path ([adoptPreferred]); this one it never knew of
+                if (usableCarrier(p) == null) events += ConnectionEvent.PathValidated(p.id)
+                moveToPreferredAddress(p)
                 return
             }
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
-                return
-            }
-            if (toPreferred) {
-                moveToPreferredAddress(p)
                 return
             }
             // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)

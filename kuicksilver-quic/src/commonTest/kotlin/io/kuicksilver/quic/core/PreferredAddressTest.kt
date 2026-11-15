@@ -190,26 +190,71 @@ class PreferredAddressTest {
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4)?.let { it.challenge != 0L } == true })
             val pp = pathTo(c, v4)!!
-
-            fun ncid(
-                seq: Long,
-                rpt: Long,
-                b: Byte,
-            ) {
-                val frame = PacketBuffer.of(ByteArray(8) { b } + ByteArray(16) { (b + 1).toByte() })
-                try {
-                    c.onNewConnectionId(seq, rpt, frame, 0, 8, 8)
-                } finally {
-                    frame.close()
-                }
-            }
-            ncid(20, 20, 0x61) // retires every earlier ID: the one probed with too
+            newConnectionId(c, 20, 20, 0x61) // retires every earlier ID: the one probed with too
             val inUse = c.remoteCid
             c.onPathResponse(pp.challenge)
             assertTrue(!c.movedToPreferred || c.remoteCid != inUse, "never the ID used toward the original address")
             assertTrue(c.paths.active.isRemote(p.serverAddr), "no unused ID: the client stays")
-            ncid(21, 0, 0x71)
+            newConnectionId(c, 21, 0, 0x71)
             assertTrue(c.movedToPreferred, "it moves once the server gives an unused ID")
+            assertEquals(
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(8) { 0x71 }),
+                c.remoteCid,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A NEW_CONNECTION_ID from the server: [seq], Retire Prior To [rpt], an 8-byte ID of [b] bytes. */
+    private fun newConnectionId(
+        c: ConnectionCore,
+        seq: Long,
+        rpt: Long,
+        b: Byte,
+    ) {
+        val frame = PacketBuffer.of(ByteArray(8) { b } + ByteArray(16) { (b + 1).toByte() })
+        try {
+            c.onNewConnectionId(seq, rpt, frame, 0, 8, 8)
+        } finally {
+            frame.close()
+        }
+    }
+
+    /**
+     * The same for the preferred address probed from the socket of the application's active path (RFC 9000 section 9.6.3): the probe's
+     * ID retired by a Retire Prior To, the application's path took the preferred address with the ID it used toward the original one
+     * (section 9.5 "MUST NOT reuse a connection ID when sending to more than one destination address"). It waits for an unused ID.
+     */
+    @Test fun negative_theCarriedPreferredProbeNeverMovesTheActivePathWithTheIdUsedTowardTheOriginalAddress() {
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        val newSocket = PathId(9)
+        val newSource = InetSocketAddress("10.0.0.7", 50000)
+        p.clientSocketSources[newSocket] = newSource
+        p.clientListens += newSource
+        p.dropToPreferred = true // the probes go out, the carried one's answer is the test's
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
+            val id = c.addPath(p.serverAddr, p.now, newSocket)
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(10.seconds) { p.events[c]!!.any { it is ConnectionEvent.PathValidated && it.path == id } })
+            c.switchPath(id, p.now)
+            val carried = c.paths.all.single { it.preferred && it.socket == newSocket && it.id != id }
+            assertTrue(p.runUntil(5.seconds) { carried.challenge != 0L })
+            assertEquals(PathState.Validating, carried.state)
+            newConnectionId(c, 20, 20, 0x61) // retires every earlier ID: the one the probe used too
+            val inUse = c.remoteCid
+            c.onPathResponse(carried.challenge)
+            assertTrue(
+                !c.path.isRemote(v4) || c.remoteCid != inUse,
+                "never the ID used toward the original address: remote=${c.path.remote} cid=${c.remoteCid} moved=${c.movedToPreferred}",
+            )
+            assertTrue(c.path.id == id && c.path.isRemote(p.serverAddr), "no unused ID: the application's path stays")
+            newConnectionId(c, 21, 0, 0x71)
+            assertTrue(c.movedToPreferred, "it moves once the server gives an unused ID")
+            assertTrue(c.path.id == id && c.path.isRemote(v4) && c.path.socket == newSocket, "${c.path}")
             assertEquals(
                 io.kuicksilver.quic.wire
                     .ConnectionId(ByteArray(8) { 0x71 }),
