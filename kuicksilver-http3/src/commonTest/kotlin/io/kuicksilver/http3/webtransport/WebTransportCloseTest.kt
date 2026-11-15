@@ -18,18 +18,22 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.runtime.RawPeer
+import io.kuicksilver.http3.runtime.awaitCondition
 import io.kuicksilver.http3.runtime.awaitOutputStopped
 import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.runtime.peerMayHaveClosed
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -66,8 +70,11 @@ private class RawSession(
     }
 }
 
-private suspend fun CoroutineScope.rawSession(q: QuicPair): RawSession {
-    val (c, s) = q.connect(H3Fixtures.quic)
+private suspend fun CoroutineScope.rawSession(
+    q: QuicPair,
+    clientQuic: QuicConfig = H3Fixtures.quic,
+): RawSession {
+    val (c, s) = q.connect(clientQuic)
     val server = Http3Connection.server(s, wtOn)
     val raw = RawPeer(c)
     raw.openControl(wtClientSettings)
@@ -166,6 +173,50 @@ class WebTransportCloseTest {
                 r.server.close(5, "done")
                 assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(bidi))
                 assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(uni))
+            }
+        }
+
+    /**
+     * The same section 6 rule for the peer's streams the application has not accepted yet: they are associated with the
+     * session too, so each is stopped, and a bidirectional one also reset, with WT_SESSION_GONE.
+     */
+    @Test fun negative_closeEndsUnacceptedStreamsWithSessionGone() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val r = rawSession(q)
+                val bidi = r.raw.quic.wtBidi(r.connect.id, "hi".encodeToByteArray(), fin = false)
+                val uni = r.raw.uni(StreamType.WT_UNI, VarInt.encode(r.connect.id) + "u".encodeToByteArray())
+                val impl = r.server as WtSessionImpl
+                awaitCondition("both streams waiting for an accept") {
+                    withContext(r.serverConnection.session.dispatcher) { impl.waitingForTest } == 2
+                }
+                r.server.close(5, "done")
+                assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(bidi))
+                assertEquals(Http3ErrorCode.WT_SESSION_GONE, resetCode(bidi))
+                assertEquals(Http3ErrorCode.WT_SESSION_GONE, awaitOutputStopped(uni))
+            }
+        }
+
+    /**
+     * Section 6: once the session is terminated the endpoint "MUST NOT ... open any new streams". An opening that waits for
+     * the peer's QUIC stream credit (a session without WebTransport flow control: only the transport limits it) ends with
+     * the session instead of waiting for credit that may never come.
+     */
+    @Test fun negative_anOpeningWaitingForStreamCreditEndsWithTheSession() =
+        h3Test {
+            QuicPair.open(H3Fixtures.quic).useScoped { q ->
+                val r =
+                    rawSession(
+                        q,
+                        io.kuicksilver.quic.quicConfig {
+                            resetStreamAt = true
+                            maxBidiStreams = 0 // the server may open no bidirectional stream
+                        },
+                    )
+                val opening = async(start = CoroutineStart.UNDISPATCHED) { runCatching { r.server.openBidi() } }
+                r.server.close(5, "done")
+                val e = withTimeout(5.seconds) { opening.await() }.exceptionOrNull()
+                assertIs<WebTransportException.SessionClosed>(e)
             }
         }
 

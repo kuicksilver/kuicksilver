@@ -7,6 +7,8 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.async
@@ -64,6 +66,49 @@ class BodyGapTest {
                     assertEquals(body, resp.body.readAllBytes().decodeToString())
                     served.await()
                 }
+            }
+        }
+
+    /**
+     * RFC 9110 section 15.4.5: "A 304 response is terminated by the end of the header section; it cannot contain content or
+     * trailers." What the application writes for one is dropped, never sent: the client reads an empty body.
+     */
+    @Test fun negative_a304ResponseCarriesNoContent() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val served =
+                    async {
+                        val w = p.server.acceptRequest().respond(304)
+                        w.output.writeFully("not for a 304".encodeToByteArray())
+                        w.finish()
+                    }
+                val resp = p.client.request(get())
+                assertEquals(304, resp.status)
+                assertEquals(0, resp.body.readAllBytes().size)
+                served.await()
+            }
+        }
+
+    /**
+     * RFC 9110 section 15.2: "A client MUST be able to parse one or more 1xx responses received prior to a final response";
+     * the client bounds them together by its SETTINGS_MAX_FIELD_SECTION_SIZE (RFC 9114 section 4.2.2 sizes). Interim
+     * sections that add up to exactly that limit are within it.
+     */
+    @Test fun negative_interimResponsesExactlyAtTheLimitAreRead() =
+        h3Test {
+            val perInterim = entrySize(":status", "103") + entrySize("link", "x".repeat(100))
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 2 * perInterim }).use { p ->
+                val served =
+                    async {
+                        val r = p.server.acceptRequest()
+                        repeat(2) { r.sendInformational(103, Http3Headers.of("link" to "x".repeat(100))) }
+                        r.respond(200).finish()
+                    }
+                var seen = 0
+                val resp = p.client.request(http3Request("GET", "server.test", "/") { onInformational = { _, _ -> seen++ } })
+                assertEquals(200, resp.status)
+                assertEquals(2, seen)
+                served.await()
             }
         }
 }
