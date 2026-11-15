@@ -375,8 +375,11 @@ internal class H1Pool(
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var h2WebSocketOutputForTest: (io.kuicksilver.http2.runtime.H2StreamOutput) -> Unit = {}
 
-    /** A WebSocket's wait for its last frames and the server's END_STREAM after an orderly close (tests lower it). */
-    internal var h2WebSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.h2.H2_WEBSOCKET_CLOSE_WAIT_MILLIS
+    /**
+     * A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (any protocol),
+     * and over HTTP/2 for its last frames and the server's END_STREAM after an orderly close (tests change it).
+     */
+    internal var webSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 
     /**
      * A stream for a WebSocket over HTTP/2 (RFC 8441) on a usable connection of [key] whose server enabled Extended CONNECT,
@@ -815,7 +818,7 @@ internal class H1Pool(
                                 data,
                                 callContext,
                                 events,
-                                h2WebSocketCloseWaitMillis,
+                                webSocketCloseWaitMillis,
                                 config.webSocketMaxMessageSize,
                                 h2WebSocketOutputForTest,
                                 released,
@@ -920,6 +923,7 @@ internal class H1Pool(
                     withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
                         // a new key for every connection a WebSocket handshake is sent on (RFC 6455 section 4.1)
                         val webSocketKey = if (webSocketKeys != null) newWebSocketKey() else null
+                        var webSocket: io.kuicksilver.ktor.client.WebSocketLifetime? = null
                         if (probeFirst) {
                             // first contact: an OPTIONS on the same connection shows the server's version before the
                             // request needs Transfer-Encoding; an HTTP/1.0 server gets the body framed by Content-Length
@@ -970,6 +974,8 @@ internal class H1Pool(
                             requestBodySent = { bodyJob?.sent },
                             webSocketKey = webSocketKey,
                             webSocketMaxMessageSize = config.webSocketMaxMessageSize,
+                            webSocketCloseWaitMillis = webSocketCloseWaitMillis,
+                            onHandOver = { webSocket = it },
                         ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
@@ -1011,11 +1017,14 @@ internal class H1Pool(
                                         }
                                     }
 
+                                    // the connection ends with the WebSocket session: in order (close_notify) when the
+                                    // session did, its own Close written (WebSocketLifetime)
                                     AfterResponse.HandOver -> {
-                                        callContext[Job]?.invokeOnCompletion { cause ->
+                                        val end = { cause: Throwable? ->
                                             if (cause == null) conn.closeOrderly() else conn.close()
                                             released(false)
                                         }
+                                        webSocket?.invokeOnEnd(end) ?: callContext[Job]?.invokeOnCompletion(end)
                                     }
                                 }
                             }

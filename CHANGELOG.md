@@ -975,6 +975,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client, WebSockets: a session closed with `close(reason)` after `HttpClient.webSocketSession()` could end its
+  connection without the Close frame (the server saw 1006, "closed without close frame"): Ktor's builder cancels the
+  call as soon as the session queues its Close, and the session's writer, running under the call, was cancelled with it,
+  often before it wrote that Close. The session now runs under a job of its own: a call that ends with a failure or a
+  cancellation after the session's Close was queued leaves it up to 5 s to write that Close (and the frames before it)
+  before the connection or stream is ended, over HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 6455 section 7.1.2).
+  The extensions' state (permessage-deflate) is freed with the session, not with the call.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

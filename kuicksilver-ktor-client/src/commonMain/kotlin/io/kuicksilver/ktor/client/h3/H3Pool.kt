@@ -40,6 +40,7 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
+import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
@@ -236,6 +237,9 @@ internal class H3Pool(
     private val webSocketConnecting: WebSocketConnecting = WebSocketConnecting(),
 ) {
     private val lock = Mutex()
+
+    /** A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (tests change it). */
+    internal var webSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 
     /**
      * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
@@ -1334,10 +1338,14 @@ internal class H3Pool(
             } finally {
                 held.release()
             }
-        // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
-        // reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The closing
-        // handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side is abandoned
-        callContext[Job]?.invokeOnCompletion { cause ->
+        // the session runs under a job of its own, so that a Close it queued is written even when the call is cancelled
+        // right after (Ktor's webSocketSession() always ends so; WebSocketLifetime); the extensions' state lives as long
+        val lifetime = WebSocketLifetime(callContext, webSocketCloseWaitMillis)
+        // each direction on its own when the session is over. A send side the session closed cleanly ends with its FIN (the
+        // Close reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The
+        // closing handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side
+        // is abandoned
+        lifetime.invokeOnEnd { _ ->
             // a send side the session finished (its Close and FIN queued) keeps them even when the call itself failed after
             // (the application threw once the Close was out): a reset would discard what is still in flight
             val sentCleanly = stream.output.isClosedForWrite && stream.output.closedCause == null
@@ -1359,7 +1367,7 @@ internal class H3Pool(
                 .filter { it.first == name }
                 .map { it.second }
         val handshake =
-            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), callContext)
+            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), lifetime.context)
         // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
         val session =
             RawWebSocket(
@@ -1368,7 +1376,7 @@ internal class H3Pool(
                     handshake.allowedRsv,
                     untilClose = true,
                     peerMasks = false,
-                    context = callContext,
+                    context = lifetime.context,
                     inflate = handshake.inflate,
                     perMessageDeflate = handshake.perMessageDeflate,
                     maxMessageSize = config.webSocketMaxMessageSize,
@@ -1376,7 +1384,7 @@ internal class H3Pool(
                 ),
                 guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
                 masking = false,
-                coroutineContext = callContext,
+                coroutineContext = lifetime.context,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
             )
         // e.g. sec-websocket-protocol
@@ -1386,7 +1394,7 @@ internal class H3Pool(
             requestTime,
             responseHeaders,
             HttpProtocolVersion.HTTP_3_0,
-            session,
+            lifetime.watch(session),
             callContext,
         )
     }

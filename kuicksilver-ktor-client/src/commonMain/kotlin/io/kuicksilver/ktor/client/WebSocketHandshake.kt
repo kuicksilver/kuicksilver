@@ -92,13 +92,14 @@ internal fun checkWebSocketUpgrade(
  * extension the request did not offer (step 5), or a subprotocol the request did not offer (step 6), more than one
  * included; also for an answer to `PerMessageDeflate`'s offer that RFC 7692 section 7 makes the client fail, and one that
  * accepts two installed extensions claiming the same RSV bit (section 5: a PMCE and another user of RSV1). The
- * extension's zlib state is freed when the call ([callContext]) ends.
+ * extension's zlib state is freed when the session ([sessionContext], [WebSocketLifetime.context]) ends: the session may
+ * still be writing its Close after the call ended.
  */
 internal fun webSocketAfterHandshake(
     request: HttpRequestData,
     responseExtensions: List<String>,
     responseProtocols: List<String>,
-    callContext: CoroutineContext,
+    sessionContext: CoroutineContext,
 ): WebSocketHandshake {
     if (responseExtensions.size > 1) {
         handshakeFailure(
@@ -134,7 +135,7 @@ internal fun webSocketAfterHandshake(
         } catch (e: ProtocolViolationException) {
             throw WebSocketException("Handshake exception: ${e.message}", e)
         }
-    if (deflate != null) callContext[Job]?.invokeOnCompletion { deflate.dispose() }
+    if (deflate != null) sessionContext[Job]?.invokeOnCompletion { deflate.dispose() }
     val checkText = webSocketTextCheckable(offered, accepted)
     return WebSocketHandshake(allowedRsv, perMessageDeflate, checkText, inflate, sentCompression(installed, perMessageDeflate))
 }

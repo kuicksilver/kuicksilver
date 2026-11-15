@@ -1,0 +1,243 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.client
+
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocketSession
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.discard
+import io.ktor.utils.io.readByte
+import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
+import io.ktor.websocket.close
+import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.io.EOFException
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * How a client WebSocket session over HTTP/1.1 ends when its call ends with a cancellation right after the session queued
+ * its own Close, as every session of Ktor's `HttpClient.webSocketSession()` does (its builder takes the cancelled
+ * outgoing channel for a failure and cancels the call): the Close still goes out (RFC 6455 section 7.1.2, an endpoint
+ * that starts the closing handshake "MUST send a Close control frame").
+ */
+class ClientWebSocketCloseTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * The client's writer is held at the socket behind a large frame (the server reads nothing yet) when the session
+     * queues its Close and Ktor's builder cancels the call: once the server reads, it gets the frame and then the Close
+     * with the application's code and reason. Before, the call's cancellation cancelled the writer with it, and the
+     * connection ended without a Close.
+     */
+    @Test fun closeQueuedBeforeTheCallIsCancelledIsWritten() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val reading = CompletableDeferred<Unit>()
+            try {
+                coroutineScope {
+                    val served =
+                        async {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                val output = s.openWriteChannel(autoFlush = true)
+                                output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                reading.await() // nothing is read before the client's call is over
+                                readClientFrames(input)
+                            }
+                        }
+                    testClient(block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h1.webSocketCloseWaitMillis = 60_000
+                        val port = (listener.localAddress as InetSocketAddress).port
+                        val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        // close() also waits for the writer: in the background
+                        launch { session.close(CloseReason(4002, "client bye")) }
+                        // Ktor's builder ends the call as soon as the session's Close is queued, with a cancellation
+                        session.call.coroutineContext[Job]!!.join()
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                    }
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /**
+     * The invariant over many sessions of `webSocketSession()`: whatever data frames a session sends before `close(reason)`
+     * (none to several, of random sizes), the server reads them all and then that Close, with its code and reason. The
+     * server reads at once here, so the writer races the call's cancellation as it does in an application.
+     */
+    @Test fun everyClosedSessionDeliversItsClose() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val sessions = 200
+            val random = kotlin.random.Random(6455)
+            try {
+                coroutineScope {
+                    val results = kotlinx.coroutines.channels.Channel<List<String>>(Channel.UNLIMITED)
+                    val served =
+                        launch {
+                            repeat(sessions) {
+                                val s = listener.accept()
+                                launch {
+                                    s.use {
+                                        val input = s.openReadChannel()
+                                        val output = s.openWriteChannel(autoFlush = true)
+                                        output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                        results.send(readClientFrames(input))
+                                    }
+                                }
+                            }
+                        }
+                    testClient(block = { install(WebSockets) }).use { c ->
+                        val port = (listener.localAddress as InetSocketAddress).port
+                        repeat(sessions) { i ->
+                            val sizes = List(random.nextInt(0, 4)) { random.nextInt(0, 200_000) }
+                            val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                            for (size in sizes) session.outgoing.send(Frame.Binary(true, ByteArray(size)))
+                            session.close(CloseReason((4000 + i).toShort(), "bye $i"))
+                            val expected = sizes.map { "binary $it" } + "close ${4000 + i} bye $i"
+                            assertEquals(expected, withTimeout(20.seconds) { results.receive() }, "session $i")
+                        }
+                    }
+                    served.join()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /**
+     * The same against a server that never reads: the session gets the close wait (200 ms here) to write its Close, then
+     * the connection is closed hard and given back, not held for good. The server, reading only once the connection was
+     * released, finds the large frame cut off and no Close.
+     */
+    @Test fun negative_anUnwrittenCloseIsBoundedByTheCloseWait() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val released = CompletableDeferred<Boolean>()
+            val events =
+                object : KuicksilverEventListener() {
+                    override fun connectionReleased(
+                        request: io.ktor.client.request.HttpRequestData,
+                        protocol: io.ktor.http.HttpProtocolVersion,
+                        kept: Boolean,
+                    ) {
+                        released.complete(kept)
+                    }
+                }
+            try {
+                coroutineScope {
+                    val served =
+                        async {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                val output = s.openWriteChannel(autoFlush = true)
+                                output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                released.await() // reads nothing before the client gave the connection up
+                                readClientFrames(input)
+                            }
+                        }
+                    testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h1.webSocketCloseWaitMillis = 200
+                        val port = (listener.localAddress as InetSocketAddress).port
+                        val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        launch { session.close(CloseReason(4002, "client bye")) }
+                        session.call.coroutineContext[Job]!!.join()
+                        assertEquals(false, withTimeout(10.seconds) { released.await() }, "released, not kept")
+                        val frames = withTimeout(20.seconds) { served.await() }
+                        assertEquals("end", frames.last(), "no Close after the close wait: $frames")
+                    }
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    private companion object {
+        /** Far more than the loopback socket and the channels in between take before the writer waits. */
+        const val BIG = 16 shl 20
+    }
+}
+
+/**
+ * The client's frames on [input] (masked, RFC 6455 section 5.3) up to its Close or the end of the stream: `binary <size>`,
+ * `text <size>`, `close <code> <reason>`, `end` when the stream ended without a Close (a frame it cut keeps its line).
+ */
+internal suspend fun readClientFrames(input: ByteReadChannel): List<String> {
+    val frames = ArrayList<String>()
+    try {
+        readFramesInto(input, frames)
+    } catch (e: Exception) {
+        frames += "end" // the stream ended, between frames or inside one
+    }
+    return frames
+}
+
+private suspend fun readFramesInto(
+    input: ByteReadChannel,
+    frames: MutableList<String>,
+) {
+    while (true) {
+        val b0 = input.readByte().toInt() and 0xff
+        val b1 = input.readByte().toInt() and 0xff
+        val length =
+            when (val l = b1 and 0x7f) {
+                126 -> input.readByteArray(2).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
+                127 -> input.readByteArray(8).fold(0L) { a, b -> (a shl 8) or (b.toLong() and 0xff) }
+                else -> l.toLong()
+            }
+        val mask = input.readByteArray(4)
+        when (b0 and 0x0f) {
+            0x8 -> {
+                val p = input.readByteArray(length.toInt())
+                for (i in p.indices) p[i] = (p[i].toInt() xor mask[i % 4].toInt()).toByte()
+                val code = if (p.size >= 2) ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff) else -1
+                frames += "close $code ${p.copyOfRange(minOf(2, p.size), p.size).decodeToString()}"
+                return
+            }
+
+            0x2 -> {
+                frames += "binary $length"
+                if (input.discard(length) < length) throw EOFException("frame cut")
+            }
+
+            0x1 -> {
+                frames += "text $length"
+                if (input.discard(length) < length) throw EOFException("frame cut")
+            }
+
+            else -> {
+                frames += "opcode ${b0 and 0x0f} $length"
+                if (input.discard(length) < length) throw EOFException("frame cut")
+            }
+        }
+    }
+}

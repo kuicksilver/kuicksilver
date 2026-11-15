@@ -4,12 +4,15 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.get
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -18,6 +21,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -89,6 +93,58 @@ class ClientH3WebSocketTest {
                         clientDone.complete(Unit)
                         val got = withTimeout(5.seconds) { served.await() }
                         assertTrue(got.isSuccess && got.getOrThrow() >= 6, "the server reads the client's Close reply and FIN, got $got")
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * Ktor's `webSocketSession()` cancels its call as soon as the session queued its Close (its builder takes the cancelled
+     * outgoing channel for a failure). Here the writer is held at the server's flow control behind a large frame when that
+     * happens: the stream is not reset, and once the server reads it gets the frame and then the Close with the
+     * application's code and reason (RFC 6455 section 7.1.2). Before, the call's cancellation reset the stream and the
+     * Close never left.
+     */
+    @Test fun closeQueuedBeforeTheCallIsCancelledIsWritten() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val reading = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        reading.await() // nothing is read before the client's call is over: its writer waits for credit
+                        readClientFrames(s.input)
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
+                        val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                        session.call.coroutineContext[Job]!!.join()
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
                     }
                 } finally {
                     served.cancel()
@@ -354,4 +410,9 @@ class ClientH3WebSocketTest {
                 }
             }
         }
+
+    private companion object {
+        /** Far more than the server's stream window and the client's send buffer take before the writer waits. */
+        const val BIG = 16 shl 20
+    }
 }

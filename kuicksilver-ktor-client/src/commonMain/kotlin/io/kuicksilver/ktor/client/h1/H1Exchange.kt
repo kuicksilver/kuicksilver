@@ -46,6 +46,8 @@ import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.message.PriorityField
+import io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
+import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.checkWebSocketUpgrade
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
@@ -509,6 +511,8 @@ internal suspend fun readResponse(
     requestBodySent: () -> Deferred<Boolean>? = { null },
     webSocketKey: String? = null,
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    webSocketCloseWaitMillis: Long = WEBSOCKET_CLOSE_WAIT_MILLIS,
+    onHandOver: (WebSocketLifetime) -> Unit = {},
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
@@ -573,13 +577,18 @@ internal suspend fun readResponse(
                 val key = webSocketKey ?: throw ParserException("A 101 (Switching Protocols) response to a request without an upgrade")
                 // the server's answer is checked (RFC 6455 section 4.1) before the connection is handed over
                 checkWebSocketUpgrade(key, headers)
+                // the session runs under a job of its own: a call that ends with a cancellation right after the session's
+                // Close was queued (Ktor's webSocketSession() always ends so) still writes that Close (WebSocketLifetime);
+                // the extensions' state lives as long as the session
+                val lifetime = WebSocketLifetime(callContext, webSocketCloseWaitMillis)
                 val handshake =
                     webSocketAfterHandshake(
                         request,
                         headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty(),
                         headers.getAll(HttpHeaders.SecWebSocketProtocol).orEmpty(),
-                        callContext,
+                        lifetime.context,
                     )
+                onHandOver(lifetime)
                 onBodyDone(AfterResponse.HandOver)
                 val wsConfig = request.attributes[WEBSOCKETS_KEY]
                 val guarded =
@@ -588,7 +597,7 @@ internal suspend fun readResponse(
                         handshake.allowedRsv,
                         untilClose = false,
                         peerMasks = false,
-                        context = callContext,
+                        context = lifetime.context,
                         inflate = handshake.inflate,
                         perMessageDeflate = handshake.perMessageDeflate,
                         maxMessageSize = webSocketMaxMessageSize,
@@ -600,10 +609,10 @@ internal suspend fun readResponse(
                         input = guarded,
                         output = guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
                         masking = false,
-                        coroutineContext = callContext,
+                        coroutineContext = lifetime.context,
                         channelsConfig = wsConfig.channelsConfig,
                     )
-                return@withContext HttpResponseData(status, requestTime, headers, version, session, callContext)
+                return@withContext HttpResponseData(status, requestTime, headers, version, lifetime.watch(session), callContext)
             }
 
             val body =

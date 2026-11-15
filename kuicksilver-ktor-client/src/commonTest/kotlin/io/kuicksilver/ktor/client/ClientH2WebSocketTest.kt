@@ -7,6 +7,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.plugins.websocket.WebSocketException
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -16,8 +17,11 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.RawWebSocket
+import io.ktor.websocket.close
+import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -466,7 +470,7 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 client().use { c ->
-                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    engine(c).h1.webSocketCloseWaitMillis = 200
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(10.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -509,7 +513,7 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 client().use { c ->
-                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    engine(c).h1.webSocketCloseWaitMillis = 200
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(10.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -548,7 +552,7 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 client().use { c ->
-                    engine(c).h1.h2WebSocketCloseWaitMillis = 200
+                    engine(c).h1.webSocketCloseWaitMillis = 200
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(10.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -605,7 +609,7 @@ class ClientH2WebSocketTest {
                 client().use { c ->
                     val output = CompletableDeferred<H2StreamOutput>()
                     engine(c).h1.h2WebSocketOutputForTest = { output.complete(it) }
-                    engine(c).h1.h2WebSocketCloseWaitMillis = 60_000
+                    engine(c).h1.webSocketCloseWaitMillis = 60_000
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(20.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -618,6 +622,57 @@ class ClientH2WebSocketTest {
                             gate.complete(Unit)
                             withTimeout(10.seconds) { serverSawClose.await() }
                         }
+                    }
+                }
+            }
+        }
+
+    /**
+     * Ktor's `webSocketSession()` cancels its call as soon as the session queued its Close (its builder takes the cancelled
+     * outgoing channel for a failure). Here the writer is held at the server's window behind a large frame when that
+     * happens: the stream is not reset, the Close goes out once the server opens its window, and the server reads the
+     * application's code and reason (RFC 6455 section 7.1.2). Before, the call's cancellation reset the stream with CANCEL
+     * and the Close never left.
+     */
+    @Test fun closeQueuedBeforeTheCallIsCancelledIsWritten() =
+        clientTest {
+            val reading = CompletableDeferred<Unit>()
+            val serverSawClose = CompletableDeferred<CloseReason?>()
+            tlsH2WithSilentUdp(
+                settings = Http2Settings(initialStreamWindow = 1_024),
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.invokeOnFailure { serverSawClose.completeExceptionally(it) }
+                    r.respond(200)
+                    reading.await() // reads nothing (no WINDOW_UPDATE) before the client's call is over
+                    val out = ByteChannel()
+                    val sender = launch { runCatching { r.sendBody(out) } }
+                    val ws = RawWebSocket(r.body, out, masking = false, coroutineContext = coroutineContext)
+                    try {
+                        for (frame in ws.incoming) {
+                            if (frame is Frame.Close) {
+                                serverSawClose.complete(frame.readReason())
+                                ws.outgoing.send(Frame.Close())
+                            }
+                        }
+                    } finally {
+                        ws.outgoing.close()
+                        sender.join()
+                    }
+                },
+            ) { port, _ ->
+                client().use { c ->
+                    engine(c).h1.webSocketCloseWaitMillis = 60_000
+                    c.get("https://127.0.0.1:$port/")
+                    val session = c.webSocketSession("wss://127.0.0.1:$port/ws")
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, session.call.response.version)
+                    session.outgoing.send(Frame.Binary(true, ByteArray(300_000)))
+                    kotlinx.coroutines.coroutineScope {
+                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                        session.call.coroutineContext[kotlinx.coroutines.Job]!!.join()
+                        reading.complete(Unit)
+                        assertEquals(CloseReason(4002, "client bye"), withTimeout(20.seconds) { serverSawClose.await() })
                     }
                 }
             }

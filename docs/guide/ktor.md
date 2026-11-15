@@ -1008,7 +1008,8 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
   stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
   resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
-  cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
+  cancelled before the session queued its Close, resets the stream with CANCEL (one cancelled after it, as Ktor's
+  `webSocketSession()` always is, first writes that Close: see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 
 ### Connection pool
@@ -1099,6 +1100,13 @@ the name counts as the host. The connect timeout applies twice to such a WebSock
 waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
 arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
 to the address is in neither: only the call (its request timeout or cancellation) bounds it.
+
+A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
+over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
+session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session's reader and
+writer get up to 5 s more for it, then the connection (HTTP/1.1) or the stream (HTTP/2, HTTP/3) is ended as for a
+failed call. A call that ends before the session queued its Close still ends the session at once.
 
 ### Discovery and Alt-Svc
 
