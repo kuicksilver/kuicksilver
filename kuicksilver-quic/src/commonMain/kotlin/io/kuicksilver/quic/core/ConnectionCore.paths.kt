@@ -159,7 +159,7 @@ internal fun ConnectionCore.onNewConnectionId(
  * probed with ("A client constructs packets using any previously unused active connection ID", section 9.6.1) or, when the server
  * retired that one meanwhile (a Retire Prior To), a spare one. Never the ID in use toward the original address (section 9.5: "MUST NOT
  * reuse a connection ID when sending to more than one destination address"): with none, the move waits for the server's next
- * NEW_CONNECTION_ID ([preferredMoveWaiting], [resumeCidWaiters]). A carried probe whose application path is not the active one moves
+ * NEW_CONNECTION_ID (`preferredMoveWaiting`, [resumeCidWaiters]). A carried probe whose application path is not the active one moves
  * nothing: that path takes the address and reports the validation, and the application's switch to it is the move.
  */
 private fun ConnectionCore.moveToPreferredAddress(p: Path) {
@@ -936,7 +936,7 @@ private fun ConnectionCore.keepActiveOnValidatedAddress(p: Path): Boolean {
 /**
  * Server, RFC 9000 section 9.6.2: "The server MUST send non-probing packets from its original address until it receives a non-probing
  * packet from the client at its preferred address and until the server has validated the new path." A path on the preferred-address
- * socket becomes the active one only through that move ([moveToPreferredSocket]); before it ([leftOriginalAddress] false) a fallback
+ * socket becomes the active one only through that move ([moveToPreferredSocket]); before it (`leftOriginalAddress` false) a fallback
  * may not take it, however validated (a client's probe validates it without moving the connection).
  */
 private fun ConnectionCore.mayBeActive(q: Path): Boolean = q.socket != PREFERRED_SOCKET || leftOriginalAddress

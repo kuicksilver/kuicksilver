@@ -124,7 +124,7 @@ internal class ConnectionIdManager(
         }
     }
 
-    /** Our packet with the peer's ID [cid] goes to [remote] (whose IP key is [ip]): that ID's token now counts for datagrams from there. */
+    /** Our packet with the peer's ID [cid] goes to `remote` (whose IP key is [ip]): that ID's token now counts for datagrams from there. */
     fun noteSentTowards(
         cid: ConnectionId,
         ip: AddressClass.IpKey,

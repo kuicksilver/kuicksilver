@@ -343,6 +343,97 @@ class ZeroRttTest {
         }
     }
 
+    /** Splits a datagram into its long header packets (QUIC v1) and the short header packet that ends it, if any. */
+    private fun splitPackets(d: ByteArray): Pair<ByteArray, ByteArray> {
+        var off = 0
+
+        fun varint(): Long {
+            val first = d[off].toInt() and 0xff
+            val len = 1 shl (first ushr 6)
+            var v = (first and 0x3f).toLong()
+            for (i in 1 until len) v = (v shl 8) or (d[off + i].toLong() and 0xff)
+            off += len
+            return v
+        }
+        while (off < d.size && d[off].toInt() and 0x80 != 0) {
+            val type = (d[off].toInt() ushr 4) and 3
+            off += 5
+            off += 1 + (d[off].toInt() and 0xff)
+            off += 1 + (d[off].toInt() and 0xff)
+            if (type == 0) off += varint().toInt()
+            off += varint().toInt()
+        }
+        return d.copyOfRange(0, off) to d.copyOfRange(off, d.size)
+    }
+
+    /**
+     * The server's acknowledgment of our 0-RTT reset arrives in a 1-RTT packet the client reads before the handshake completes
+     * (it came ahead of the server's Handshake flight and waited for the 1-RTT keys, which come with the server's Finished,
+     * before the answer is settled): the StreamFinished the acknowledgment raises is held after the size, and both are
+     * reported, in that order, by the acceptance.
+     */
+    @Test fun earlyResetAcknowledgedBeforeTheAnswerHasItsEndHeldAfterItsSize() {
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket()))
+                    id = c.openStream(bidi = false)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        try {
+            val toClient = ArrayList<ByteArray>()
+            p.filterToClient = { _, bytes ->
+                toClient += bytes
+                false
+            }
+            p.step()
+            p.client.resetStream(id, 4)
+            assertTrue(p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReset && it.id == id } })
+            p.runUntil(limit = 100.milliseconds) { false } // the server's acknowledgment goes out (max_ack_delay)
+            assertEquals(null, p.client.earlyDataAccepted, "no answer yet")
+            assertEquals(
+                listOf("size 5"),
+                p.client.streams.heldUntilAnswer
+                    .ofStream(id),
+            )
+            val parts = toClient.map { splitPackets(it) }
+            val reordered = parts.map { it.second }.filter { it.isNotEmpty() } + parts.map { it.first }.filter { it.isNotEmpty() }
+            for (d in reordered) {
+                val b = PacketBuffer.of(d)
+                try {
+                    p.client.handleDatagram(b, d.size, CoreFixtures.serverAddr, Ecn.NotEct, p.now)
+                } finally {
+                    b.close()
+                }
+            }
+            p.drainEvents(p.client, p.clientEvents)
+            val info =
+                "short=${parts.count { it.second.isNotEmpty() }} long=${parts.count { it.first.isNotEmpty() }} " +
+                    "buffered=${p.client.receiver.bufferedCount} state=${p.client.state}"
+            // the rest of the handshake as it comes
+            p.filterToClient = { _, _ -> true }
+            if (p.client.earlyDataAccepted == null) assertTrue(p.runUntil(limit = 2.seconds) { p.client.earlyDataAccepted != null }, info)
+            assertEquals(true, p.client.earlyDataAccepted, "${p.closedReason(p.clientEvents)} $info")
+            // raised before the size was reported, the end would come first: held after it, it comes second
+            assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id), info)
+            assertNothingHeld(p)
+            assertEquals(
+                0,
+                p.client.streams
+                    .resetAcksPendingForTest()
+                    .sum(),
+                "the reset was acknowledged",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedByARejection() {
         val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
         try {

@@ -3990,6 +3990,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.application
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.concurrentSameTicketGetsEarlyDataOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyBidiResetAndStoppedReportsAfterTheAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyBidiResetThenAnsweredReportsBothSizesBeforeItsEnd
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyResetAcknowledgedBeforeTheAnswerHasItsEndHeldAfterItsSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAcrossAVersionUpgradeIsReportedOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
