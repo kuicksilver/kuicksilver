@@ -1059,6 +1059,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
+  credit comes back only as the application reads, so an application that reads a session's streams strictly one after
+  another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
+  `Http3Settings` now say so (read the streams concurrently, or give the session enough credit). `Http3Settings`'s KDoc
+  no longer says the credit follows bytes taken from the transport.
 - Ktor client: a WebSocket session over HTTP/1.1 whose Close could not be written within the close wait (a server that
   does not read) now has its connection reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the
   connection was closed gracefully: it went on sending what the session had queued for up to 3 s after the close wait

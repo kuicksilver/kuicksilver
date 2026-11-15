@@ -381,7 +381,15 @@ WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). Several sessions th
 to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
 (the client gets `Http3Exception.RequestNotProcessed` and can open it on another connection), and a client puts at most
 as many on one connection (`WebTransportException.ConnectionFull` beyond). A server also takes new sessions on a
-connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way. Sessions
+connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way.
+
+Because credit comes back only as the application reads, read a session's incoming streams concurrently (a coroutine per
+accepted stream), or give the session enough data credit for what its peer sends at once. Streams waiting for session
+credit are not served in the order they were opened, by this library's sender or any other (section 5 sets no order):
+a reader that takes the streams strictly one after another can wait on a stream that got no credit while the credit sits
+unread in later ones, and under a tight `webTransportInitialMaxData` the session stalls.
+
+Sessions
 sharing a connection take turns for its stream credit and its send buffer (section 8): a weighted round robin in which
 a session's weight follows its CONNECT stream's urgency (8 − urgency), so a more urgent session gets the larger share
 but none waits more than a round, and a PRIORITY_UPDATE takes effect at once. Each session also holds at most its part
