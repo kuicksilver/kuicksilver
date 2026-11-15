@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-"""The compiled side of tools/check/test-discovery.py: reads the JVM test classes the build wrote
-(<module>/build/classes/kotlin/jvm/test/, or the directories given) and reports every test method a runner skips or
+"""The compiled side of tools/check/test-discovery.py: reads the test classes the build wrote for the JVM
+(<module>/build/classes/kotlin/jvm/test/) and for the Android host tests (<module>/build/classes/kotlin/android/hostTest/,
+run by JUnit on the host JVM), or the directories given, and reports every test method a runner skips or
 refuses. A test method is one carrying org.junit.Test, org.junit.jupiter.api.Test or Jazzer's FuzzTest (kotlin.test.Test
 is one of the first two on the JVM, whatever alias imported it):
   returns     its descriptor does not end in )V: JUnit 5 skips a test that returns a value without a word (a test written
@@ -13,8 +14,11 @@ is one of the first two on the JVM, whatever alias imported it):
               constructor), an inner class (it takes the outer instance), a class whose constructor needs arguments;
   abstract    its class is abstract (or an interface) and no class of the same directory extends it.
 It reads the class files themselves (the constant pool, the method table and RuntimeVisibleAnnotations), so it sees what
-the compiler made of any source form. Needs the test classes compiled first: the local gate runs it after the JVM test
-step. Usage: test-bytecode.py [classes-dir...]   (exit 1 on any finding, 2 when no class file was found)
+the compiler made of any source form. Needs the test classes compiled first: the local gate runs it in the JVM test step,
+which also compiles the Android host tests. Without directories it reads every module's, and a module with JVM or
+Android host test sources whose class directory is missing is a finding (missing): an uncompiled module is never a pass.
+--targets jvm or --targets android-host limits that to one kind.
+Usage: test-bytecode.py [--root <repo>] [--targets jvm,android-host] [classes-dir...]   (exit 1 on any finding, 2 when no class file was found)
 """
 import glob
 import os
@@ -121,10 +125,45 @@ def skip_value(data, j):
     raise ValueError(f"annotation value tag {tag}")
 
 
+# the class directory of a kind of test compilation, and the source sets whose tests land in it
+KINDS = {"jvm": ("jvm/test", ("commonTest", "jvmTest", "jvmCommonTest")),
+         "android-host": ("android/hostTest", ("androidHostTest",))}
+
+
+def expected(root, kinds):
+    """(class directory, why) of every kuicksilver-* module whose tracked test sources a kind compiles."""
+    import subprocess
+    out = subprocess.run(["git", "-C", root, "ls-files", "kuicksilver-*/src/*Test/*.kt"], capture_output=True, text=True).stdout
+    want = {}
+    for f in out.splitlines():
+        module, _, sset = f.split("/")[:3]
+        for kind in kinds:
+            sub, sets = KINDS[kind]
+            if sset in sets and (kind != "android-host" or sset == "androidHostTest"):
+                want.setdefault(os.path.join(root, module, "build", "classes", "kotlin", *sub.split("/")), f"{module}/src/{sset}")
+    return want
+
+
 def main(argv):
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    dirs = argv or sorted(glob.glob(os.path.join(root, "*", "build", "classes", "kotlin", "jvm", "test")))
+    kinds = list(KINDS)
+    if argv[:1] == ["--root"]:
+        root, argv = os.path.abspath(argv[1]), argv[2:]
+    if argv[:1] == ["--targets"]:
+        kinds = argv[1].split(",")
+        if not set(kinds) <= set(KINDS):
+            print(f"test-bytecode: --targets takes {', '.join(KINDS)}", file=sys.stderr)
+            return 2
+        argv = argv[2:]
     findings, tests, classes = [], 0, 0
+    if argv:
+        dirs = argv
+    else:
+        want = expected(root, kinds)
+        dirs = sorted(d for d in want if os.path.isdir(d))
+        for d in sorted(set(want) - set(dirs)):
+            findings.append(f"{os.path.relpath(d, root)} | missing | {want[d]} has tests but no class directory: compile them "
+                            "first (compileTestKotlinJvm, compileAndroidHostTest)")
     for d in dirs:
         info = {}
         for f in glob.glob(os.path.join(d, "**", "*.class"), recursive=True):
@@ -153,7 +192,7 @@ def main(argv):
                                     "whose constructor needs arguments)")
                 if acc & (ACC_ABSTRACT | ACC_INTERFACE) and name not in supers:
                     findings.append(f"{where} | abstract | {name.replace('/', '.')} is abstract and no compiled class extends it")
-    if not classes:
+    if not classes and not findings:
         print("test-bytecode: no class file under " + ", ".join(dirs or ["*/build/classes/kotlin/jvm/test"]) +
               ": compile the JVM tests first", file=sys.stderr)
         return 2
