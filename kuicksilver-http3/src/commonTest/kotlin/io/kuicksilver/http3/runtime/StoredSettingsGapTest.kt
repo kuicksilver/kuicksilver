@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 /** The WebTransport settings among the stored 0-RTT settings (RFC 9114 section 7.2.4.2). */
 class StoredSettingsGapTest {
     /**
-     * draft-ietf-webtrans-http3-16 section 4.5 (0-RTT): "If the server accepts 0-RTT, the server MUST NOT reduce these
+     * draft-ietf-webtrans-http3-16 section 3.2 (0-RTT): "If the server accepts 0-RTT, the server MUST NOT reduce these
      * initial flow control values from those negotiated during the previous session. A client MUST close the connection
      * with H3_SETTINGS_ERROR if the SETTINGS frame received in the resumed connection reduces any flow control values from
      * the cached previous values." Every WebTransport setting we understand is compared, the initial limits included.

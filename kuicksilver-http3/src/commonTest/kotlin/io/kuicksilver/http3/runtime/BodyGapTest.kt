@@ -26,7 +26,7 @@ class BodyGapTest {
      * lengths received." A body of exactly the declared length is the ordinary case: every byte goes out and arrives,
      * written in one piece or in several.
      */
-    @Test fun negative_bodyOfExactlyTheDeclaredLengthIsSent() =
+    @Test fun bodyOfExactlyTheDeclaredLengthIsSent() =
         h3Test {
             H3Pair.open().use { p ->
                 for (body in listOf("hello", "x".repeat(70_000))) {
@@ -52,7 +52,7 @@ class BodyGapTest {
         }
 
     /** The same rule for a response: a body of exactly its content-length arrives whole. */
-    @Test fun negative_responseBodyOfExactlyTheDeclaredLengthIsSent() =
+    @Test fun responseBodyOfExactlyTheDeclaredLengthIsSent() =
         h3Test {
             H3Pair.open().use { p ->
                 for (body in listOf("hello", "x".repeat(70_000))) {
@@ -94,7 +94,7 @@ class BodyGapTest {
      * the client bounds them together by its SETTINGS_MAX_FIELD_SECTION_SIZE (RFC 9114 section 4.2.2 sizes). Interim
      * sections that add up to exactly that limit are within it.
      */
-    @Test fun negative_interimResponsesExactlyAtTheLimitAreRead() =
+    @Test fun interimResponsesExactlyAtTheLimitAreRead() =
         h3Test {
             val perInterim = entrySize(":status", "103") + entrySize("link", "x".repeat(100))
             H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 2 * perInterim }).use { p ->

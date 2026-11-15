@@ -26,8 +26,8 @@ class WtRejectGapTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
-     * draft-ietf-webtrans-http3-16 section 4.6: "When the number of buffered streams is exceeded, a stream MUST be closed by
-     * sending a RESET_STREAM and/or STOP_SENDING with the WT_BUFFERED_STREAM_REJECTED error code." A unidirectional stream
+     * draft-ietf-webtrans-http3-16 section 9.5 registers WT_BUFFERED_STREAM_REJECTED as "WebTransport data stream rejected
+     * due to lack of associated session". A stream whose session was refused is such a stream. A unidirectional stream
      * from the peer has no sending side here: STOP_SENDING is the only way to close it, and a bidirectional one gets it
      * too, so the peer stops sending into a stream nobody reads.
      */

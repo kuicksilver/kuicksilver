@@ -144,7 +144,7 @@ class QpackGapTest {
     /**
      * RFC 9204 section 3.2.2: "Whenever the dynamic table capacity is reduced by the encoder (Section 4.3.1), entries are
      * evicted from the end of the dynamic table until the size of the dynamic table is less than or equal to the new
-     * capacity." Equal keeps every entry; one byte less evicts the oldest, and a reference to it then fails (section 2.2.3:
+     * table capacity." Equal keeps every entry; one byte less evicts the oldest, and a reference to it then fails (section 2.2.3:
      * a reference to an evicted entry is QPACK_DECOMPRESSION_FAILED).
      */
     @Test fun negative_capacityReductionEvictsDownToTheNewCapacityOnly() {
@@ -389,14 +389,15 @@ class QpackGapTest {
      * Section 4.3.2 (Insert with Name Reference, T=0) is what the encoder uses for a new value of a name the dynamic table
      * already holds; the newest entry with that name is found, not only the oldest.
      */
-    @Test fun negative_encoderReferencesTheNewestDynamicName() {
+    @Test fun encoderReferencesTheNewestDynamicName() {
         val p = Pair2(cap = 4096, blocked = 100)
         p.ack()
-        p.decode(0, p.encode(0, "x-a" to "1", "x-b" to "2"))
+        p.decode(0, p.encode(0, "x-b" to "1", "x-a" to "2", "x-b" to "2"))
         p.ack()
         val block = p.e.encode(4, listOf("x-b" to "3"))
         val ins = p.e.drainEncoderStream()
-        assertEquals(0x80, ins[0].toInt() and 0xff, "Insert with Name Reference, dynamic, relative index 0 (x-b)")
+        // two entries named x-b: the newest is relative index 0, the oldest 2
+        assertEquals(0x80, ins[0].toInt() and 0xff, "Insert with Name Reference, dynamic, relative index 0 (the newest x-b)")
         p.d.onEncoderStream(ins, 0, ins.size)
         assertEquals(listOf("x-b" to "3"), p.decode(4, block))
     }
