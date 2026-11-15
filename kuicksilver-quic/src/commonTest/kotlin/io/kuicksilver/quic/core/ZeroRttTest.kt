@@ -596,6 +596,73 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * Found by the 0-RTT connection fuzzer. A Version Negotiation answers a first flight with 0-RTT in it; the new attempt in
+     * v2 has no ticket (RFC 9369 section 5), so its 0-RTT counts as rejected, and its packet numbers start again (RFC 9368
+     * section 2.1: "a new first flight"). The server's acknowledgment of the new attempt's first 1-RTT packets covered the
+     * numbers the abandoned 0-RTT packets had had, and the client closed with PROTOCOL_VIOLATION (RFC 9001 section 4.6.2 lets
+     * it do so only for "an acknowledgment for a 0-RTT packet", and those packets belong to the abandoned attempt).
+     */
+    @Test fun negative_versionNegotiationAfterZeroRttKeepsTheConnection() {
+        val t = ticket() // a v1 ticket
+        val v2 = quicConfig { versions = listOf(VersionProfile.V2) } // offering v1 too would make the VN a downgrade
+        val (p, id) = resumed(t, clientQuic = v1v2, serverQuic = v2, serverEarly = early(v2))
+        var vn = false
+        p.filterToServer = { _, b ->
+            // the v1-only first flight, 0-RTT included, is answered with a Version Negotiation offering v2
+            if (p.client.version == VersionProfile.V1) {
+                if (!vn && b[0].toInt() and 0xf0 == 0xc0) {
+                    vn = true
+                    p.toClient += io.kuicksilver.quic.Dgram(versionNegotiation(b, VersionProfile.V2.version), CoreFixtures.serverAddr)
+                }
+                false
+            } else {
+                true
+            }
+        }
+        try {
+            assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
+            assertTrue(vn && p.client.zeroRttPacketsSealed > 0, "0-RTT went out before the Version Negotiation")
+            assertEquals(VersionProfile.V2, p.client.version)
+            assertEquals(false, p.client.earlyDataAccepted, "the restarted attempt had no ticket")
+            assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
+            val again = p.client.openStream(bidi = true)
+            assertEquals(id, again)
+            p.client.writeStream(again, "GET /".encodeToByteArray(), 0, 5, fin = true)
+            assertTrue(
+                p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == again } },
+                "the new request arrives: ${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}",
+            )
+            assertEquals("GET /", streamText(p.server!!, again))
+            // the server acknowledges the client's 1-RTT packets, whose numbers the abandoned 0-RTT packets had too
+            p.runUntil(limit = 1.seconds) { false }
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A Version Negotiation packet answering the client's Initial [initial] with [versions]. */
+    private fun versionNegotiation(
+        initial: ByteArray,
+        vararg versions: Int,
+    ): ByteArray {
+        val b = PacketBuffer.of(initial)
+        val out = PacketBuffer.allocate(1200)
+        try {
+            val v = PacketHeaderView()
+            check(PacketHeaderCodec.parse(b, 0, initial.size, 8, v))
+            val n =
+                io.kuicksilver.quic.wire.VersionNegotiationPacket
+                    .write(out, b, v.scidOff, v.scidLen, b, v.dcidOff, v.dcidLen, versions, 0x12, 1200)
+            return ByteArray(n).also { out.copyTo(it, 0, 0, n) }
+        } finally {
+            b.close()
+            out.close()
+        }
+    }
+
     /** RFC 9369 section 5: a ticket belongs to the negotiated version of its connection and is not used to start another. */
     @Test fun negative_ticketOfAnotherVersionIsNotUsed() {
         for ((start, used) in listOf(v1v2 to false, v2v1 to true)) {

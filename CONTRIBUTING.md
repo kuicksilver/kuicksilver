@@ -273,9 +273,17 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
 - **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic`, `kuicksilver-http3`, `kuicksilver-http2`,
   `kuicksilver-ktor-network`, `kuicksilver-ktor-client` and `kuicksilver-ktor-server` under `src/jvmTest/.../fuzz` (among
-  them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, the 0-RTT targets and the HTTP/1.1
-  targets `H1ResponseFuzzTest` and `H1RequestFuzzTest`); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl`
-  parsing code. Their committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the
+  them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, the 0-RTT targets,
+  `ZeroRttFuzzTest.zeroRttConnection` driving such a pair through every 0-RTT outcome against the 0-RTT invariant of
+  `docs/architecture.md`, and the HTTP/1.1 targets `H1ResponseFuzzTest` and `H1RequestFuzzTest`;
+  `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` run fixed seeds of the 0-RTT target in `jvmTest`,
+  `KUICKSILVER_ZRTT_SEEDS=<n>` runs n seeds per case for a longer hunt, and `KUICKSILVER_ZRTT_ONLY=<outcome>,<seed>` runs
+  one scenario of `ZeroRttRuntimeSeededTest`, the one a failure names); `tools/fuzz/ksl/` holds the libFuzzer harness of
+  the `ksl` parsing code. Their committed inputs run as regression tests in `jvmTest`: the seeds and reproducers in the
+  resources through Jazzer, and the campaigns' minimized corpora in `tools/fuzz/corpus/<target>/` through
+  `CommittedCorpusReplayTest` (in each module's `FuzzCase.kt`, for the module's rows of the campaign.sh table; a target
+  without a committed corpus yet is listed in `tools/fuzz/no-corpus.txt`, and the test fails for one that is in neither);
+  `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan. `tools/fuzz/gen-seeds.sh` regenerates the
   QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
   write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
   `tools/fuzz/planted-check.sh` plants known bugs in a copy of the tree and checks that the HTTP/1.1 targets fail on the

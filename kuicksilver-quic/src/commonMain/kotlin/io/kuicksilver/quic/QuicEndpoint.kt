@@ -179,12 +179,17 @@ public fun QuicStream.markTunnel() {
 
 /**
  * Suspends until the peer sends STOP_SENDING for [this] stream (RFC 9000 section 19.5) and returns its error code; it does
- * not wait for a write to meet the stop. Never returns for a stream the peer does not stop, or for streams of other
- * implementations. HTTP/3 watches its critical streams with it (RFC 9114 section 6.2.1: closed "at any point").
+ * not wait for a write to meet the stop. Returns null once both halves of the stream are done without one, and throws the
+ * connection's [QuicException.ConnectionLost] when the connection ended first, or [QuicException.StreamError.EarlyDataRejected]
+ * when a rejected 0-RTT dropped the stream (RFC 9001 section 4.6.2). Never returns for streams of other implementations. HTTP/3 watches its critical streams with it (RFC 9114
+ * section 6.2.1: closed "at any point").
  */
 @InternalKuicksilverApi
-public suspend fun QuicStream.awaitSendStopped(): Long =
-    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.sendStopped?.await() ?: kotlinx.coroutines.awaitCancellation()
+public suspend fun QuicStream.awaitSendStopped(): Long? {
+    // not `?: awaitCancellation()` after the call: its null (the stream ended without a stop) is an answer
+    val s = this as? io.kuicksilver.quic.runtime.StreamRuntime ?: kotlinx.coroutines.awaitCancellation()
+    return s.awaitSendStopped()
+}
 
 /**
  * Client: what the application kept with the session ticket this connection resumed for 0-RTT

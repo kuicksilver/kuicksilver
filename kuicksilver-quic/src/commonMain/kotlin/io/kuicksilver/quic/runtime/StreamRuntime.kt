@@ -119,6 +119,7 @@ internal class StreamRuntime(
         readable.trySend(Unit)
         conn.removeTicker(ticker)
         done.complete(Unit)
+        settleStop(ENDED) // both halves are done: no STOP_SENDING stops this stream any more
     }
 
     /**
@@ -145,12 +146,48 @@ internal class StreamRuntime(
     }
 
     internal fun peerStopped(code: Long) {
-        sendStopped.complete(code)
+        settleStop(code)
         outChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Peer))
     }
 
-    /** Completed with the error code when the peer's STOP_SENDING for this stream arrives (see `awaitSendStopped`). */
-    internal val sendStopped = kotlinx.coroutines.CompletableDeferred<Long>()
+    /**
+     * How the peer's STOP_SENDING for this stream stands, set once on the loop: its code (a Long), or why none can come any
+     * more ([ENDED]: both halves are done; the connection's [QuicException.ConnectionLost]; the
+     * [QuicException.StreamError.EarlyDataRejected] of a stream a rejected 0-RTT dropped); null while neither.
+     */
+    @Volatile
+    private var stopState: Any? = null
+
+    /** Made only by a caller of [awaitSendStopped], once for all of them: a stream nobody watches allocates nothing. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val stopWaiter = kotlin.concurrent.atomics.AtomicReference<kotlinx.coroutines.CompletableDeferred<Unit>?>(null)
+
+    /** On the loop: the first of the peer's STOP_SENDING and the end of the stream decides [awaitSendStopped]. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun settleStop(state: Any) {
+        if (stopState != null) return
+        stopState = state
+        stopWaiter.load()?.complete(Unit)
+    }
+
+    /**
+     * Suspends until the peer's STOP_SENDING for this stream arrives and returns its code (`io.kuicksilver.quic.awaitSendStopped`),
+     * or null once both halves are done without one; throws when the connection ended or a rejected 0-RTT dropped the stream
+     * (RFC 9001 section 4.6.2 resets "application state bound to" those streams): a watcher never outlives its stream.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal suspend fun awaitSendStopped(): Long? {
+        // one deferred for every waiter; the loop sets the state before it reads the waiter, and this reads the state after
+        // the waiter was published: one of the two sees the other
+        val made = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val waiter = if (stopWaiter.compareAndSet(null, made)) made else stopWaiter.load()!!
+        if (stopState == null) waiter.await()
+        return when (val s = stopState) {
+            is Long -> s
+            is Throwable -> throw s
+            else -> null
+        }
+    }
 
     /** The server rejected 0-RTT and the core dropped this stream (RFC 9001 section 4.6.2): the wrapper failed for good. */
     @Volatile
@@ -178,12 +215,14 @@ internal class StreamRuntime(
         val e = QuicException.StreamError.EarlyDataRejected(id)
         inChannel?.closeWith(e)
         outChannel?.closeWith(e)
+        settleStop(e)
         finished()
     }
 
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
         inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
+        settleStop(reason)
         done.complete(Unit)
     }
 
@@ -221,5 +260,8 @@ internal class StreamRuntime(
         const val HANDED_OUT = 0
         const val QUEUED = 1
         const val RESET_UNREAD = 2
+
+        /** [stopState] of a stream whose halves are both done without a STOP_SENDING. */
+        private val ENDED = Any()
     }
 }

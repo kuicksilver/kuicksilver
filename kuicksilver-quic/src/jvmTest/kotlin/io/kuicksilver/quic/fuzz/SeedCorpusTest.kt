@@ -903,5 +903,70 @@ class SeedCorpusTest {
         put("ZeroRttFuzzTest", "rememberedTicket", "h3-server-tp", cat(bytes(0, h3.size), h3, serverTp))
         put("ZeroRttFuzzTest", "rememberedTicket", "blob", cat(bytes(1, h3.size), h3, serverTp))
         put("ZeroRttFuzzTest", "rememberedTicket", "empty-alpn", cat(bytes(1, 0), serverTp))
+        // zeroRttConnection: [outcome][flags][op]* (see ZeroRttProgram); every outcome, alone and after a Retry or a Version
+        // Negotiation, with the application calls before the answer that the 0-RTT invariant is about
+        for (outcome in 0 until ZeroRttProgram.OUTCOMES) {
+            for (flags in listOf(
+                0,
+                ZeroRttProgram.RETRY,
+                ZeroRttProgram.VERSION_NEGOTIATION,
+                ZeroRttProgram.SMALL,
+                ZeroRttProgram.LOWERED,
+                ZeroRttProgram.OVERRUN or ZeroRttProgram.SMALL,
+                ZeroRttProgram.HIGHER,
+            )) {
+                val every =
+                    ZeroRttProgram
+                        .Builder(outcome, flags)
+                        .open(0, 3000, fin = false)
+                        .open(0, 700, fin = true, uni = true)
+                        .open(0, 100, fin = false)
+                        .write(0, 0, 1500)
+                        .resetAt(0, 0, 7, 1000)
+                        .stop(0, 2, 8)
+                        .finish(0, 2)
+                        .reset(0, 1, 9)
+                        .read(0, 2, 100)
+                        .settle()
+                        .open(0, 200, fin = true)
+                        .read(1, 0, 5000)
+                        .step(4)
+                        .build()
+                put("ZeroRttFuzzTest", "zeroRttConnection", "calls-$outcome-$flags", every)
+                put(
+                    "ZeroRttFuzzTest",
+                    "zeroRttConnection",
+                    "random-$outcome-$flags",
+                    ZeroRttProgram.random(Random(outcome * 16L + flags), outcome, flags),
+                )
+            }
+        }
+        // the application closes before the answer; the server's answer is lost half-way
+        put(
+            "ZeroRttFuzzTest",
+            "zeroRttConnection",
+            "close-early",
+            ZeroRttProgram
+                .Builder(0, 0)
+                .open(0, 500, fin = false)
+                .close(0, 5)
+                .settle()
+                .build(),
+        )
+        put(
+            "ZeroRttFuzzTest",
+            "zeroRttConnection",
+            "answer-cut",
+            ZeroRttProgram
+                .Builder(1, 0)
+                .open(0, 4000, fin = true)
+                .step()
+                .step()
+                .block(1)
+                .tick(15)
+                .block(1)
+                .settle()
+                .build(),
+        )
     }
 }

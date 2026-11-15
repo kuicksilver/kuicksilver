@@ -876,7 +876,7 @@ class RequestTest {
                         }
                         launch {
                             @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                            stops.send(st.awaitSendStopped())
+                            stops.send(st.awaitSendStopped() ?: error("stream ${st.id} ended without STOP_SENDING"))
                         }
                         launch {
                             val e = runCatching { st.input.readAllBytes() }.exceptionOrNull()

@@ -19,6 +19,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
   (the engine's or Ktor's reader or writer) fails; the session may outlive its call while it writes its own Close, so
   this can come after `callEnd`.
+- Fuzzing: 0-RTT is a dimension of the QUIC connection fuzzing. The new target `quic.zeroRttConnection`
+  (`ZeroRttFuzzTest.zeroRttConnection`) resumes a ticket over real TLS and runs every outcome of the server's answer —
+  accepted; rejected for another application context, lower limits, `Required` mode, another ALPN or a server without
+  0-RTT; no answer — alone or after a Retry or a Version Negotiation, while both applications open, write, finish, reset,
+  reset at a size, stop, read, close and queue datagrams and the network drops, duplicates and reorders. After every round
+  it checks the 0-RTT invariant (`docs/architecture.md`, "0-RTT invariant"): nothing held, in flight, charged to flow or
+  congestion control or left in the stream manager after the answer or the end, the rejection reported once, no event for
+  a stream that is gone. `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` (the runtime's Deferreds, channels
+  and watchers) run a fixed seed set in `jvmTest`; `ZeroRttInvariantControlsTest` keeps a negative control per check. The
+  connection fuzzer also checks the recovery bookkeeping and the connection's send credit after every step. Two modes
+  make a ticket remember more than the server sends: an accepting server then looks lowered and the client must close
+  with PROTOCOL_VIOLATION, and a client whose 0-RTT breaks the server's real limits must be refused with
+  FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR (RFC 9000 sections 7.4.1, 17.2.3); a third makes the server's new limits
+  higher, and the client must keep to the remembered ones until the handshake completes. The campaigns' committed corpora
+  (`tools/fuzz/corpus/`) now replay in `jvmTest` (`CommittedCorpusReplayTest`) and in `tools/c-test.sh`.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
@@ -1065,6 +1080,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its text. All three now fail without repeating any of the URL (an unsupported scheme is no longer named either: a
   user name before `://` reads as one): a scheme is one only when it is RFC 3986's, the authority ends at `/`, `?` or
   `#`, and the host must be an IP literal or a plain name.
+- QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
+  was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
+  10.2.2). They are dropped when the connection starts closing or draining
+  (`PathTest.negative_owedPathResponsesGoWhenTheConnectionCloses`).
+- QUIC runtime: a STOP_SENDING watcher (`awaitSendStopped`, internal API) waited forever once its stream could no longer
+  be stopped. It now ends with the connection's `ConnectionLost` when the connection ended, with
+  `StreamError.EarlyDataRejected` when a rejected 0-RTT dropped the stream (RFC 9001 section 4.6.2: the client resets
+  "application state bound to those streams"), and returns null once both halves are done without one; HTTP/3's
+  watchers of its critical streams, which stayed suspended for the rest of a connection whose 0-RTT was rejected, end
+  quietly. Found by the 0-RTT runtime invariant test; pinned by `SendStoppedTest` and
+  `ZeroRttApiTest.negative_sendStoppedWatcherOfARejectedStreamEnds`.
+- QUIC client, 0-RTT and Version Negotiation: after a Version Negotiation answered a first flight that carried 0-RTT,
+  the new attempt numbers its packets from 0 again (RFC 9368 section 2.1, "a new first flight") while the client still
+  took the abandoned 0-RTT packets' numbers for its 0-RTT; the server's acknowledgment of the new attempt's first 1-RTT
+  packets then counted as an acknowledgment of rejected 0-RTT and the client closed with PROTOCOL_VIOLATION (RFC 9001
+  section 4.6.2 means "an acknowledgment for a 0-RTT packet"). Found by the 0-RTT connection fuzzer; pinned by
+  `ZeroRttTest.negative_versionNegotiationAfterZeroRttKeepsTheConnection`.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

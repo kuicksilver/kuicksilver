@@ -161,6 +161,7 @@ internal fun ConnectionCore.onAuthenticationFailure(aead: Aead) {
  * the limit).
  */
 internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
+    if (oneRttFirstPn < 0) oneRttFirstPn = pn
     if (++oneRttSinceRotation >= config.limits.cidRotationPackets &&
         state == ConnectionState.Confirmed
     ) {
@@ -325,8 +326,13 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
         return
     }
     receivedVnVersions = offered
-    // the restarted handshake has no ticket left: 0-RTT data waits for 1-RTT, and the limits it used are checked at completion
+    // the restarted handshake has no ticket left (RFC 9369 section 5), so its completion settles our 0-RTT as rejected
     discardZeroRttPackets { p -> streams.onFramesLost(p.frames) }
+    // the new attempt numbers its packets from 0 again (a new LossDetection below): the abandoned 0-RTT packets are no packets of
+    // it, and an acknowledgment of its 1-RTT packets covering their numbers is no "acknowledgment for a 0-RTT packet" (RFC 9001
+    // section 4.6.2)
+    zeroRttFirstPn = -1
+    zeroRttLastPn = -1
     for (i in 0 until 4) {
         readKeys[i]?.close()
         writeKeys[i]?.close()
@@ -411,6 +417,9 @@ internal class ConnectionHandshakeSink(
         ) {
             core.readKeys[level]?.close()
             core.readKeys[level] = protector
+            // the last moment the client runs on the remembered parameters alone: the server's transport parameters (in its
+            // EncryptedExtensions) are in, and no frame of a 1-RTT packet was read yet
+            if (level == 3 && core.role == TlsRole.Client) core.recordLimitsAtOneRtt()
             // RFC 9001 section 4.1.3: TLS reads Handshake after Initial and never Initial again
             if (level == 2) core.cryptoStreams.seal(0)
         } else {
@@ -426,6 +435,9 @@ internal class ConnectionHandshakeSink(
                     core.readKeys[3] = r
                     core.writeKeys[3] = w
                 }
+        }
+        if (level == 3 && direction == Direction.Write && core.zeroRttSealedAtOneRttKey < 0) {
+            core.zeroRttSealedAtOneRttKey = core.zeroRttPacketsSealed
         }
         if (level == 3 && direction == Direction.Write && core.writeKeys[1] != null) {
             core.writeKeys[1]?.close()
@@ -524,7 +536,7 @@ internal class ConnectionHandshakeSink(
         tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits (and reset_stream_at) apply; settleZeroRtt
         // applies these with 1-RTT
-        if (core.remembered == null) core.applyPeerLimits(tp)
+        if (core.remembered == null || core.testApplyPeerLimitsOnReceipt) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit

@@ -126,6 +126,7 @@ quic.connectionNull jvm kuicksilver-quic io.kuicksilver.quic.fuzz.ConnectionFuzz
 quic.connectionTls jvm kuicksilver-quic io.kuicksilver.quic.fuzz.ConnectionFuzzTest connectionTls
 quic.replayRegister jvm kuicksilver-quic io.kuicksilver.quic.fuzz.ZeroRttFuzzTest replayRegister
 quic.rememberedTicket jvm kuicksilver-quic io.kuicksilver.quic.fuzz.ZeroRttFuzzTest rememberedTicket
+quic.zeroRttConnection jvm kuicksilver-quic io.kuicksilver.quic.fuzz.ZeroRttFuzzTest zeroRttConnection
 tls.clientHelloScan jvm kuicksilver-tls io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTest clientHelloScan
 tls.zeroRttHello jvm kuicksilver-tls io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTest zeroRttHello
 http3.h3Frames jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3FrameFuzzTest h3Frames

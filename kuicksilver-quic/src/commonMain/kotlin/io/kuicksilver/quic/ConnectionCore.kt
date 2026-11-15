@@ -196,6 +196,22 @@ public class ConnectionCore internal constructor(
     internal var zeroRttFirstPn = -1L
     internal var zeroRttLastPn = -1L
 
+    /** The packet number of the first 1-RTT packet sealed (-1 before one): RFC 9000 section 17.2.3 puts every 0-RTT packet before it. */
+    internal var oneRttFirstPn = -1L
+
+    /** [zeroRttPacketsSealed] when the 1-RTT write key arrived (-1 before): no 0-RTT packet is sealed after it (section 17.2.3). */
+    internal var zeroRttSealedAtOneRttKey = -1L
+
+    /**
+     * Fuzzing probe: when the 1-RTT read key arrived during 0-RTT, the first limit we held above the remembered transport
+     * parameters (RFC 9000 section 7.4.1), or null. Recorded there (`recordLimitsAtOneRtt`), since a round of the fuzzer can
+     * take the server's parameters, its 1-RTT frames and the answer together.
+     */
+    internal var limitAboveRememberedAtOneRtt: String? = null
+
+    /** Test hook (negative control): applies the server's limits when its parameters arrive, not with 1-RTT. */
+    internal var testApplyPeerLimitsOnReceipt = false
+
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null

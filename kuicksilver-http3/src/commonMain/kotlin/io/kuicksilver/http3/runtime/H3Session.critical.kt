@@ -107,7 +107,13 @@ internal suspend fun H3Session.writeCritical(
  */
 private fun H3Session.watchStopped(st: QuicStream) {
     scope.launch {
-        val code = st.awaitSendStopped()
+        val code =
+            try {
+                st.awaitSendStopped()
+            } catch (_: QuicException) {
+                // the connection ended, or the stream went with a rejected 0-RTT (its replacement has a watcher of its own)
+                return@launch
+            } ?: return@launch // the stream ended without a stop
         fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer stopped our critical stream ${st.id} (code $code)")
     }
 }

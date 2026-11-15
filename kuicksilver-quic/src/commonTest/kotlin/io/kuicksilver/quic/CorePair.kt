@@ -131,6 +131,12 @@ internal class CorePair(
     var autoVerify = true
     var onServerCreated: (ConnectionCore) -> Unit = {}
 
+    /**
+     * The client's original DCID and the SCID of a Retry the test made it accept (as a stateless server would, RFC 9000
+     * section 17.2.5): the server core is created with them, so its transport parameters carry what the client checks.
+     */
+    var serverAfterRetry: Pair<io.kuicksilver.quic.wire.ConnectionId, io.kuicksilver.quic.wire.ConnectionId>? = null
+
     fun poll(
         core: ConnectionCore,
         queue: ArrayDeque<Dgram>,
@@ -195,6 +201,8 @@ internal class CorePair(
                     d.bytes.size,
                     null,
                     null,
+                    originalDcid = serverAfterRetry?.first,
+                    retryScid = serverAfterRetry?.second,
                     early = serverEarly,
                 )
         } finally {

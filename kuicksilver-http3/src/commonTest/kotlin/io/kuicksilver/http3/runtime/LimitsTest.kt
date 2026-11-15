@@ -439,7 +439,7 @@ class LimitsTest {
                         st.output.flush() // no FIN: the client's STOP_SENDING carries its code
                     }
                     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-                    stopped.complete(withTimeout(5.seconds) { st.awaitSendStopped() })
+                    stopped.complete(withTimeout(5.seconds) { st.awaitSendStopped() } ?: error("the stream ended without STOP_SENDING"))
                     val st2 = s.acceptBidi()
                     st2.input.readAllBytes()
                     st2.output.writeFully(raw.headers(st2.id, listOf(":status" to "204")))

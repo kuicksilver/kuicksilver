@@ -344,6 +344,94 @@ internal class StreamManager(
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
 
+    /**
+     * Client: events held back until the server answers our 0-RTT, facts about a stream that stand only if the server took
+     * the 0-RTT that carried them. [settleHeldUntilAnswer] reports them at an acceptance and drops them at a rejection or at
+     * the end of the connection. No event is held yet; a hold puts its events here rather than in a list of its own, so the
+     * 0-RTT invariant ([heldUntilZeroRttAnswerForTest]) covers it.
+     */
+    internal val heldUntilAnswer = ArrayList<ConnectionEvent>()
+
+    /** The server answered our 0-RTT ([accepted]), or the connection ended (false): what was held is reported or dropped. */
+    fun settleHeldUntilAnswer(accepted: Boolean) {
+        if (heldUntilAnswer.isEmpty()) return
+        if (accepted) events += heldUntilAnswer
+        heldUntilAnswer.clear()
+    }
+
+    /** Fuzzing probe (0-RTT): events still held for the server's answer; 0 once it is known or the connection ended. */
+    internal fun heldUntilZeroRttAnswerForTest(): Int = heldUntilAnswer.size
+
+    /**
+     * Fuzzing probe (0-RTT), while the client still runs on the remembered transport parameters: no limit it uses, and
+     * nothing it sent, exceeds them (RFC 9000 section 7.4.1: "a client MUST only use remembered transport parameters;
+     * importantly, it MUST NOT use updated values that it learns from the server's updated transport parameters"), or the
+     * violation.
+     */
+    internal fun rememberedLimitViolationForTest(
+        maxData: Long,
+        bidiRemote: Long,
+        uni: Long,
+        maxStreamsBidi: Long,
+        maxStreamsUni: Long,
+    ): String? {
+        if (connSend.maxLimit > maxData || connSend.used > maxData) {
+            return "connection limit ${connSend.maxLimit} (used ${connSend.used}) above the remembered $maxData"
+        }
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            val cap = if (StreamIds.isBidi(id)) bidiRemote else uni
+            val sent = streams[id]?.send?.sentEnd ?: 0L
+            if (limit.maxLimit > cap || sent > cap) return "stream $id limit ${limit.maxLimit} (sent $sent) above the remembered $cap"
+        }
+        if (nextIndex[0] > maxStreamsBidi || nextIndex[1] > maxStreamsUni) {
+            return "opened ${nextIndex[0]} bidi / ${nextIndex[1]} uni streams, remembered $maxStreamsBidi / $maxStreamsUni"
+        }
+        return null
+    }
+
+    /** Fuzzing probe: the IDs of every stream in the map. */
+    internal fun streamIdsForTest(): List<Long> = streams.keys.toList()
+
+    /**
+     * Fuzzing probe (0-RTT), right after [resetForRejectedZeroRtt] and before the application opened a stream again: what of
+     * the dropped streams is still held anywhere in this manager (a stream, its send limit, a queued frame or event, credit
+     * on the connection, buffered bytes, a scheduler or blocked-list entry), or null.
+     */
+    internal fun zeroRttResidueForTest(): String? {
+        streams.keys.firstOrNull { StreamIds.isLocal(it, role) }?.let { return "stream $it of ours outlived the rejected 0-RTT" }
+        sendLimit.keys.firstOrNull { StreamIds.isLocal(it, role) }?.let { return "send limit of dropped stream $it" }
+        early.firstOrNull { StreamIds.isLocal(it, role) }?.let { return "dropped stream $it still marked early" }
+        for (c in control) {
+            val connectionLevel =
+                c.kind == ControlKind.MaxData || c.kind == ControlKind.MaxStreamsBidi || c.kind == ControlKind.MaxStreamsUni
+            if (!connectionLevel && (StreamIds.isLocal(c.id, role) || c.kind == ControlKind.DataBlocked)) {
+                return "queued ${c.kind} for dropped stream ${c.id}"
+            }
+        }
+        for (e in events) {
+            val id =
+                io.kuicksilver.quic.core
+                    .streamEventIdForTest(e) ?: continue
+            if (StreamIds.isLocal(id, role)) return "queued ${e::class.simpleName} for dropped stream $id"
+        }
+        if (connSend.used != 0L) return "${connSend.used} bytes of connection credit still charged to the dropped streams"
+        if (sendBufferedBytes != 0L) return "$sendBufferedBytes bytes of the dropped streams still buffered"
+        if (connBlocked.isNotEmpty() || writeRefused.isNotEmpty()) return "a dropped stream is still on a blocked list"
+        scheduler.next()?.let { return "the scheduler still holds dropped stream ${it.id}" }
+        return null
+    }
+
+    /**
+     * Fuzzing probe: the connection's send credit is at least what the streams in the map consumed (each its highest offset
+     * sent; streams that left the map consumed theirs too), or the violation.
+     */
+    internal fun sendCreditViolationForTest(): String? {
+        var sum = 0L
+        for (e in streams.values) sum += e.send?.sentEnd ?: 0L
+        return if (sum > connSend.used) "streams sent $sum, the connection was charged ${connSend.used}" else null
+    }
+
     /** Range comparisons made by the send half of stream [id] (complexity tests). */
     internal fun sendRangeStepsForTest(id: Long): Long = streams[id]?.send?.rangeStepsForTest ?: -1
 
