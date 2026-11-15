@@ -1064,8 +1064,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.
   The engines' sockets now have their selector run a selection after every close.
 - WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
-  credit comes back only as the application reads, so an application that reads a session's streams strictly one after
-  another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
+  credit for an open stream comes back as the application takes its bytes (for a stream that ended cleanly, once all of
+  it was handed to its input; for a reset or stopped one, by its final size), so an application that reads a session's
+  open streams strictly one after another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
   `Http3Settings` now say so (read the streams concurrently, or give the session enough credit). `Http3Settings`'s KDoc
   no longer says the credit follows bytes taken from the transport.
 - Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket

@@ -64,7 +64,8 @@ public class Http3Settings private constructor(
     public val webTransportInitialMaxStreamsUni: Long,
     /**
      * `SETTINGS_WT_INITIAL_MAX_DATA` (section 5.5.3): the stream body bytes the peer may send in each WebTransport
-     * session, raised with WT_MAX_DATA as the application reads them. Streams waiting for this credit are not served in
+     * session, raised with WT_MAX_DATA as they are consumed: taken by the application, all of a stream that ended cleanly
+     * once it was handed to its input, a reset or stopped stream's by its final size. Streams waiting for this credit are not served in
      * the order they were opened: read a session's streams concurrently, or a strictly sequential reader under a tight
      * limit can stall the session ([Builder.webTransportInitialMaxData]).
      */
@@ -156,7 +157,8 @@ public class Http3Settings private constructor(
         /**
          * Stream body bytes the peer may send in each WebTransport session (section 5.5.3), 0..2^62-1; 3 932 160 by
          * default (4 sessions fill the default largest QUIC connection window, 15 MiB). The limit rises with WT_MAX_DATA
-         * as the application reads the bytes.
+         * as the bytes are consumed: taken by the application, all of a stream that ended cleanly once it was handed to its
+         * input, a reset or stopped stream's by its final size.
          *
          * Read a session's incoming streams concurrently, or keep this above what the peer sends at once: streams waiting
          * for credit are not served in the order they were opened (section 5 sets none), so a reader that takes them

@@ -375,7 +375,7 @@ String is ignored).
 WebTransport flow control (draft-ietf-webtrans-http3-16 section 5) is on when both sides declare it in their SETTINGS,
 which `webTransport` does by default with `webTransportInitialMaxStreamsBidi`, `webTransportInitialMaxStreamsUni` and
 `webTransportInitialMaxData` (24, 24 and 3 932 160 bytes per session). Each side keeps to the other's stream and data
-limits; the receiver raises its own as the peer's streams end and as the application reads (WT_MAX_STREAMS,
+limits; the receiver raises its own as the peer's streams end and as their bytes are consumed (WT_MAX_STREAMS,
 WT_MAX_DATA), a blocked sender says so once per limit, and a peer that breaks a limit gets its session closed with
 WT_FLOW_CONTROL_ERROR (`WebTransportException.FlowControl`). Several sessions then share a connection: a server takes up
 to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_REJECTED` before the application sees it
@@ -383,8 +383,10 @@ to `webTransportMaxSessions` (4) at once and refuses one more with `H3_REQUEST_R
 as many on one connection (`WebTransportException.ConnectionFull` beyond). A server also takes new sessions on a
 connection at a bounded rate (section 5.2): a burst of 32, then 8 a second; one more is refused the same way.
 
-Because credit comes back only as the application reads, read a session's incoming streams concurrently (a coroutine per
-accepted stream), or give the session enough data credit for what its peer sends at once. Streams waiting for session
+Credit comes back as the application takes the bytes, for a stream that ended cleanly once all of it was handed to its
+input (read or not), and for a reset or stopped stream once its final size is known; bytes of an open stream that nobody
+reads give none. So read a session's incoming streams concurrently (a coroutine per accepted stream), or give the
+session enough data credit for what its peer sends at once. Streams waiting for session
 credit are not served in the order they were opened, by this library's sender or any other (section 5 sets no order):
 a reader that takes the streams strictly one after another can wait on a stream that got no credit while the credit sits
 unread in later ones, and under a tight `webTransportInitialMaxData` the session stalls.

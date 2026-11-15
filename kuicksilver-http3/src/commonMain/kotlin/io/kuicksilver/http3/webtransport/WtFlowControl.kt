@@ -104,8 +104,9 @@ internal object WtFlow {
  * sender that has to wait announces it with WT_STREAMS_BLOCKED or WT_DATA_BLOCKED once per limit (sections 5.6.3,
  * 5.6.5: "A sender SHOULD send"). Receiving: our limits, initially our settings, enforced on every stream the peer opens
  * and every body byte it sends ("it MUST close the WebTransport session with a WT_FLOW_CONTROL_ERROR error code"), and
- * raised as the peer's streams end and its bytes are taken from the transport (section 5.6: "Endpoints SHOULD send
- * WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data or close streams"), never waiting for a blocked capsule.
+ * raised as the peer's streams end and its bytes are consumed ([WtInCount]: taken by the application, handed whole to a
+ * stream that ended cleanly, or abandoned with a reset or stopped stream; section 5.6: "Endpoints SHOULD send WT_MAX_DATA
+ * and WT_MAX_STREAMS capsules as they consume data or close streams"), never waiting for a blocked capsule.
  *
  * The body bytes of a stream are counted without its header (section 5.4); a stream that was reset counts its final size
  * ([io.kuicksilver.quic.QuicStream.sentFinalSize], [io.kuicksilver.quic.QuicStream.receivedFinalSize]), so both sides
@@ -309,8 +310,9 @@ internal class WtSessionFlow(
     }
 
     /**
-     * [n] more body bytes of the peer were consumed: taken from the transport into a stream's own buffer, or abandoned (a
-     * reset or stopped stream, whose bytes nobody reads). Once half the window is consumed the limit moves to what was
+     * [n] more body bytes of the peer were consumed ([WtInCount]): taken by the application from a stream's input, all of a
+     * stream that ended cleanly once every byte of it was handed to that input, or abandoned (a reset or stopped stream,
+     * whose bytes nobody reads). Once half the window is consumed the limit moves to what was
      * consumed plus the window (section 5.6: "Endpoints SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume
      * data"); bytes only received, of a stream nobody reads yet, give no credit.
      */
