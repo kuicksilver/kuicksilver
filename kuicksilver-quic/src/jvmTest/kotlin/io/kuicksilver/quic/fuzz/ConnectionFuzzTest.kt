@@ -6,20 +6,30 @@ import com.code_intelligence.jazzer.junit.FuzzTest
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.toByteArray
+import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
-import io.kuicksilver.quic.CorePair
+import io.kuicksilver.quic.Cubic
 import io.kuicksilver.quic.DatagramPacketWriter
 import io.kuicksilver.quic.DatagramSender
-import io.kuicksilver.quic.Dgram
 import io.kuicksilver.quic.Ecn
+import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.NullCryptoProvider
+import io.kuicksilver.quic.PREFERRED_SOCKET
+import io.kuicksilver.quic.PathId
+import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.recoveryViolationForTest
 import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.ksl
+import io.kuicksilver.quic.wire.ConnectionId
+import io.kuicksilver.quic.wire.RetryPacket
+import io.kuicksilver.quic.wire.VersionNegotiationPacket
 import io.kuicksilver.tls.QuicCrypto
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInfo
@@ -27,17 +37,23 @@ import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Stateful connection fuzzer: a client/server pair of [ConnectionCore]s (as `CorePair` joins them, virtual time) runs a
- * program of operations read from the input — frames sealed by one side into packets of any level (raw bytes or
- * structured frames with fuzzed fields), application actions on either side (streams, resets, STOP_SENDING, reads,
- * datagrams, key updates, close), network effects (drop, duplicate, reorder, ECN marks, NAT rebinding) and time.
- * Frames are injected into the sender's packet builder (`ConnectionCore.testInjectFrames`), so with [connectionTls] they
- * travel under the keys of a real TLS handshake and reach the receiver's frame handlers exactly as a peer's would.
+ * Stateful connection fuzzer: a client and a server endpoint ([EndpointNet], virtual time) run a program of operations read
+ * from the input — frames sealed by one side into packets of any level (raw bytes or structured frames with fuzzed fields),
+ * application actions on either side (streams, resets, STOP_SENDING, reads, datagrams, key updates, close), network effects
+ * (drop, duplicate, reorder, ECN marks, NAT rebinding), the path itself (a link MTU that turns into a black hole, routers that
+ * answer with ICMP Packet Too Big, forged Packet Too Big, ECN bleaching, remarking and CE marking), the addresses (the server's
+ * preferred address, a client migrating to a new socket, a stranger's copy of a server datagram), Retry and Version Negotiation
+ * (incompatible and compatible, RFC 9368) inside the run, forged ones too, Stateless Resets (valid, retired, unused, random, from
+ * the wrong address, too short, a server that lost its state) and time. The sockets' capabilities (DF, ECN marking and reading)
+ * come from the input. Frames are injected into the sender's packet builder (`ConnectionCore.testInjectFrames`), so with
+ * [connectionTls] they travel under the keys of a real TLS handshake and reach the receiver's frame handlers exactly as a peer's
+ * would.
  *
- * After every step both cores must hold: no exception out of the core, no crash isolated as
+ * After every step both cores must hold: no exception out of a core or endpoint, no crash isolated as
  * [QuicException.ConnectionLost.Internal], a Closed event for every closing connection, the flow-control and stream-state
- * invariants of `StreamManager.invariantViolationForTest`, and bounded per-connection collections
- * (`ConnectionCore.sizesForTest`). The input format is [ConnProgram].
+ * invariants of `StreamManager.invariantViolationForTest`, the recovery bookkeeping, bounded per-connection collections
+ * (`ConnectionCore.sizesForTest`), and the path, ECN, address and reset invariants of [ConnectionInvariants]. The input format
+ * is [ConnProgram].
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 class ConnectionFuzzTest {
@@ -59,9 +75,15 @@ class ConnectionFuzzTest {
 /**
  * The input format of [ConnectionFuzzTest], shared with the seed generator.
  *
- * `[flags][op]*`. Flags: bit 0 — operations start with the first datagram (Initial and Handshake levels are live)
- * instead of after both sides completed the handshake; bit 1 — small limits (4 streams, 1 KiB stream and 4 KiB
- * connection windows, 2 connection IDs, 4 queued datagrams), so the limits are reachable; bit 2 — PMTUD off.
+ * `[flags][setup]?[op]*`. Flags: bit 0 ([LIVE]) — operations start with the first datagram (Initial and Handshake levels are
+ * live) instead of after both sides completed the handshake; bit 1 ([SMALL]) — small limits (4 streams, 1 KiB stream and 4 KiB
+ * connection windows, 2 connection IDs, 4 queued datagrams), so the limits are reachable; bit 2 ([NO_PMTUD]) — PMTUD off;
+ * bit 3 ([DF]) — both sockets set DF (DPLPMTUD runs, RFC 8899); bit 4 ([ECN]) — both sockets mark and read ECN (validation runs,
+ * RFC 9000 section 13.4.2); bit 5 ([RETRY]) — the server asks every new client for a Retry; bit 6 ([VN]) — the client offers v1
+ * and v2 and starts with v1, the server offers v2 only (a Version Negotiation) or, with [COMPATIBLE], v2 then v1 (a compatible
+ * upgrade, RFC 9368 section 2.3); bit 7 ([SETUP]) — a setup byte follows: bit 0 [PREFERRED] (the server offers a preferred
+ * address), 1 [COMPATIBLE], 2/3 the client's/server's socket reads no ECN, 4/5 the client's/server's socket has no DF, 6 no ICMP
+ * hints (`QuicConfig.pmtudIcmpHints` off), 7 BBR instead of CUBIC.
  *
  * An op byte `o`: kind `o & 7`, side `(o >> 3) & 1` (0: the client acts or sends, so the server receives; 1: the
  * server), argument `o >> 4`:
@@ -79,13 +101,60 @@ class ConnectionFuzzTest {
  * - 6 BLOCK: `arg & 1` toggles dropping every datagram from that side to the other (`arg & 1 == 0`: one round). A
  *   blocked direction holds one side at an encryption level the other has left, so it still sends CRYPTO there
  *   (Initial or Handshake data past what TLS consumed: the sealed CRYPTO streams, RFC 9001 section 4.1.3).
- * - 7: one round.
+ * - 7 PATH: `arg` 0 and 15 one round; otherwise one of the E_* operations on the path from that side (the side sends, or for
+ *   [E_RESET], [E_PTB] receives): [E_MTU] `[m]` the link MTU becomes 1180 + 4m (255: 65527) — larger datagrams vanish; [E_ICMP]
+ *   toggles a router that answers them with a Packet Too Big; [E_PTB] `[variant][mtu num][len]` a forged Packet Too Big to that
+ *   side's endpoint (variant 0 quotes its latest datagram, 1 garbage, 2 a stranger's destination, 3 a truncated quote);
+ *   [E_ECN_PATH] `[mode]` an [EcnPath] for the direction; [E_RESET] `[variant][size num]` a Stateless Reset to that side (0 the
+ *   token of an ID it uses, from the address it uses it with; 1 a retired ID's; 2 an unused ID's; 3 a random token; 4 a valid
+ *   token from a stranger; 5 a valid token in 20 bytes; 6 a valid token in a long header; 7 a valid token from a stranger with that
+ *   side's own connection ID as destination); [E_CRASH] the server endpoint forgets its connection; [E_MIGRATE] `[variant]` the
+ *   client opens a path from a new socket and probes it (0), switches to a validated one (1) or closes one (2); [E_STRANGER] the
+ *   server's latest datagram reaches the client from an address it never used; [E_PREFERRED_LOSS] toggles losing everything sent
+ *   to the preferred address; [E_CAPS] `[variant]` that side's socket stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
+ *   Retry to the client (0 the server's last one again, 1 a fresh valid one, 2 a bad integrity tag, 3 the client's own DCID as
+ *   source, 4 an empty token); [E_VN] `[variant]` a Version Negotiation to the client (0 the server's last one, 1 one that offers
+ *   only v2, 2 one that lists the client's version); [E_PTB_INFLIGHT] `[m]` a router's Packet Too Big claiming an MTU of
+ *   1228 + 2m for the first datagram queued from that side; [E_PREFERRED_DOWN] the server's preferred-address socket goes down.
  *
  * A [num] is one byte `b` < 0xf8 for its own value, else `b - 0xf7` big-endian bytes masked to 62 bits.
  */
 internal object ConnProgram {
     const val MAX_FRAME = 1000
     const val MAX_OPS = 400
+
+    const val LIVE = 1
+    const val SMALL = 2
+    const val NO_PMTUD = 4
+    const val DF = 8
+    const val ECN = 16
+    const val RETRY = 32
+    const val VN = 64
+    const val SETUP = 128
+
+    const val PREFERRED = 1
+    const val COMPATIBLE = 2
+    const val CLIENT_NO_ECN_READ = 4
+    const val SERVER_NO_ECN_READ = 8
+    const val CLIENT_NO_DF = 16
+    const val SERVER_NO_DF = 32
+    const val NO_ICMP_HINTS = 64
+    const val BBR = 128
+
+    const val E_MTU = 1
+    const val E_ICMP = 2
+    const val E_PTB = 3
+    const val E_ECN_PATH = 4
+    const val E_RESET = 5
+    const val E_CRASH = 6
+    const val E_MIGRATE = 7
+    const val E_STRANGER = 8
+    const val E_PREFERRED_LOSS = 9
+    const val E_CAPS = 10
+    const val E_RETRY = 11
+    const val E_VN = 12
+    const val E_PTB_INFLIGHT = 13
+    const val E_PREFERRED_DOWN = 14
 
     /** Frame selectors of the FRAME op. */
     val FRAME_KINDS =
@@ -126,11 +195,16 @@ internal object ConnProgram {
         return ByteArray(n + 1) { if (it == 0) (0xf7 + n).toByte() else (v ushr (8 * (n - it))).toByte() }
     }
 
-    /** Builds programs for the seed corpus. */
+    /** Builds programs for the seed corpus; [setup] is written when [flags] has [SETUP]. */
     class Builder(
         flags: Int,
+        setup: Int = 0,
     ) {
-        private val out = ByteArrayOutputStream().also { it.write(flags) }
+        private val out =
+            ByteArrayOutputStream().also {
+                it.write(flags)
+                if (flags and SETUP != 0) it.write(setup)
+            }
 
         private fun op(
             kind: Int,
@@ -199,18 +273,31 @@ internal object ConnProgram {
         /** Toggles dropping the datagrams from [side] to the other side. */
         fun block(side: Int) = apply { op(6, side, 1) }
 
+        /** A PATH operation [e] (one of the E_* constants) with its argument bytes. */
+        fun path(
+            side: Int,
+            e: Int,
+            vararg bytes: ByteArray,
+        ) = apply {
+            require(e in 1..14)
+            op(7, side, e)
+            for (b in bytes) out.write(b)
+        }
+
         fun build(): ByteArray = out.toByteArray()
     }
 }
 
-/** One run of a [ConnProgram] over a pair with [crypto]. */
+/** One run of a [ConnProgram] over an [EndpointNet] with [crypto]; [tamper] (negative controls) runs before the checks of every round. */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class ConnectionFuzz(
     private val data: ByteArray,
     private val crypto: QuicCrypto,
+    private val tamper: ((EndpointNet) -> Unit)? = null,
 ) {
     private var p = 0
     private val flags = if (data.isEmpty()) 0 else data[0].toInt() and 0xff
+    private var setup = 0
 
     private fun u8(): Int = if (p < data.size) data[p++].toInt() and 0xff else 0
 
@@ -433,8 +520,14 @@ internal class ConnectionFuzz(
         override fun hasPending(): Boolean = datagrams.isNotEmpty()
     }
 
-    private val small = flags and 2 != 0
-    private val config: QuicConfig =
+    private val small = flags and ConnProgram.SMALL != 0
+    private val vn = flags and ConnProgram.VN != 0
+    private val compatible get() = vn && setup and ConnProgram.COMPATIBLE != 0
+
+    /** The CUBIC controllers wrapped to check that a larger datagram size never raises the window (RFC 8899 section 3). */
+    val violations = ArrayList<String>()
+
+    private fun config(server: Boolean): QuicConfig =
         QuicConfig
             .Builder()
             .apply {
@@ -450,42 +543,95 @@ internal class ConnectionFuzz(
                     datagramReceiveQueue = 4
                     maxSendBuffer = 65_536
                 }
-                if (flags and 4 != 0) pmtud = false
+                if (flags and ConnProgram.NO_PMTUD != 0) pmtud = false
+                if (setup and ConnProgram.NO_ICMP_HINTS != 0) pmtudIcmpHints = false
+                if (vn) {
+                    versions =
+                        when {
+                            !server -> listOf(VersionProfile.V1, VersionProfile.V2)
+                            compatible -> listOf(VersionProfile.V2, VersionProfile.V1)
+                            else -> listOf(VersionProfile.V2)
+                        }
+                }
+                congestionController =
+                    if (setup and ConnProgram.BBR != 0) {
+                        { Bbr() }
+                    } else {
+                        { MtuCheckedCc(Cubic(), violations) }
+                    }
             }.build()
+
+    private fun caps(side: Int): IoCapabilities {
+        val noDf = setup and (if (side == 0) ConnProgram.CLIENT_NO_DF else ConnProgram.SERVER_NO_DF) != 0
+        val df = flags and ConnProgram.DF != 0 && !noDf
+        val ecn = flags and ConnProgram.ECN != 0
+        return IoCapabilities(ecnSend = ecn, ecnReceive = ecn, gsoMaxSegments = 1, gro = false, df = df, batch = 1)
+    }
 
     private val sides = arrayOf(Side(), Side())
 
     /** BLOCK: datagrams from side 0 (client) / 1 (server) to the other are dropped. */
     private val blocked = BooleanArray(2)
-    private lateinit var pair: CorePair
+    lateinit var net: EndpointNet
+        private set
+    private lateinit var checks: ConnectionInvariants
     private var rebind = 0
 
     fun run() {
         if (data.isEmpty()) return
         KslLoader.ensureLoaded()
-        pair = CorePair(clientQuic = config, serverQuic = config, crypto = crypto)
-        try {
-            pair.client.datagramSender = sides[0]
-            pair.onServerCreated = { it.datagramSender = sides[1] }
-            pair.filterToServer = { _, _ -> !blocked[0] }
-            pair.filterToClient = { _, _ -> !blocked[1] }
-            p = 1
-            if (flags and 1 == 0) {
-                pair.handshake()
-                checkInvariants()
+        p = 1
+        if (flags and ConnProgram.SETUP != 0) setup = u8()
+        val ecnRead =
+            BooleanArray(2) { side ->
+                flags and ConnProgram.ECN != 0 &&
+                    setup and (if (side == 0) ConnProgram.CLIENT_NO_ECN_READ else ConnProgram.SERVER_NO_ECN_READ) == 0
             }
+        val clientQuic = config(server = false)
+        val serverQuic = config(server = true)
+        checks = ConnectionInvariants(crypto === NullCryptoProvider, serverQuic.versions)
+        net =
+            EndpointNet(
+                clientQuic,
+                serverQuic,
+                crypto,
+                retry = flags and ConnProgram.RETRY != 0,
+                preferred = setup and ConnProgram.PREFERRED != 0,
+                caps = arrayOf(caps(0), caps(1)),
+                ecnRead = ecnRead,
+                observer = checks,
+            )
+        checks.net = net
+        QuicReach.begin()
+        try {
+            net.client.datagramSender = sides[0]
+            net.onServerCreated = { it.datagramSender = sides[1] }
+            net.filterToServer = { !blocked[0] }
+            net.filterToClient = { !blocked[1] }
+            if (flags and ConnProgram.LIVE == 0) handshake()
             var ops = 0
             while (p < data.size && ops++ < ConnProgram.MAX_OPS) operation(u8())
             repeat(8) {
-                pair.advance(10.milliseconds)
+                net.advance(10.milliseconds)
                 step()
             }
+            checks.finish()
         } finally {
-            pair.close()
+            QuicReach.end()
+            net.close()
         }
     }
 
-    private fun core(side: Int): ConnectionCore? = if (side == 0) pair.client else pair.server
+    /** CorePair's handshake: rounds 5 ms apart until both sides completed, at most 15 s. */
+    private fun handshake() {
+        repeat(3000) {
+            step()
+            if (checks.completed[0] && checks.completed[1]) return
+            net.advance(5.milliseconds)
+        }
+    }
+
+    private fun core(side: Int): ConnectionCore? = net.core(side)
 
     private fun operation(o: Int) {
         val kind = o and 7
@@ -497,14 +643,17 @@ internal class ConnectionFuzz(
                 val bytes = data.copyOfRange(p, p + n)
                 p += n
                 inject(side, arg and 3, bytes)
+                checks.fakeFrames[side] = true // raw bytes may hold any frame, an ACK of what never arrived among them
             }
 
             1 -> {
-                inject(side, arg and 3, frame())
+                val f = frame()
+                inject(side, arg and 3, f)
+                if (f.isNotEmpty() && (f[0].toInt() == 0x02 || f[0].toInt() == 0x03)) checks.fakeFrames[side] = true
             }
 
             2 -> {
-                pair.advance((arg * 5).milliseconds)
+                net.advance((arg * 5).milliseconds)
                 if (arg and 8 != 0) readDatagrams()
                 step()
             }
@@ -518,7 +667,7 @@ internal class ConnectionFuzz(
             }
 
             5 -> {
-                pair.advance(if (arg == 15) 3_000.milliseconds else (arg * 100).milliseconds)
+                net.advance(if (arg == 15) 3_000.milliseconds else (arg * 100).milliseconds)
                 step()
             }
 
@@ -527,7 +676,7 @@ internal class ConnectionFuzz(
             }
 
             else -> {
-                step()
+                if (arg == 0 || arg == 15) step() else path(side, arg)
             }
         }
     }
@@ -598,7 +747,7 @@ internal class ConnectionFuzz(
             }
 
             5 -> {
-                c.initiateKeyUpdate(pair.now)
+                c.initiateKeyUpdate(net.now)
             }
 
             6 -> {
@@ -608,7 +757,7 @@ internal class ConnectionFuzz(
 
             else -> {
                 val code = num()
-                api { c.close(code, "fuzz", pair.now) }
+                api { c.close(code, "fuzz", net.now) }
             }
         }
     }
@@ -617,7 +766,7 @@ internal class ConnectionFuzz(
         side: Int,
         arg: Int,
     ) {
-        val q = if (side == 0) pair.toServer else pair.toClient
+        val q = if (side == 0) net.toServer else net.toClient
         when (arg and 3) {
             0 -> {
                 q.removeFirstOrNull()
@@ -633,14 +782,226 @@ internal class ConnectionFuzz(
 
             else -> {
                 val mark = if (arg and 4 != 0) Ecn.Ce else Ecn.Ect0
-                for (i in q.indices) q[i] = Dgram(q[i].bytes, q[i].from, mark)
+                for (i in q.indices) q[i] = Flight(q[i].bytes, q[i].from, q[i].to, mark)
             }
         }
-        if (arg and 8 != 0 && side == 0 && pair.server != null) {
+        if (arg and 8 != 0 && side == 0 && net.serverCore != null) {
             rebind++
             val from = InetSocketAddress("10.0.${rebind / 200}.${rebind % 200 + 3}", 40000 + rebind)
-            for (i in q.indices) q[i] = Dgram(q[i].bytes, from, q[i].ecn)
+            net.aliasClient(from)
+            for (i in q.indices) q[i] = Flight(q[i].bytes, from, q[i].to, q[i].ecn)
         }
+    }
+
+    // ---- PATH operations ----
+
+    private fun path(
+        side: Int,
+        e: Int,
+    ) {
+        when (e) {
+            ConnProgram.E_MTU -> {
+                val m = u8()
+                net.linkMtu[side] = if (m == 255) 65_527 else 1180 + 4 * m
+            }
+
+            ConnProgram.E_ICMP -> {
+                net.icmp[side] = !net.icmp[side]
+            }
+
+            ConnProgram.E_PTB -> {
+                forgedPtb(side)
+            }
+
+            ConnProgram.E_ECN_PATH -> {
+                net.ecnPath[side] = EcnPath.entries[u8() % EcnPath.entries.size]
+            }
+
+            ConnProgram.E_RESET -> {
+                forgedReset(side)
+            }
+
+            ConnProgram.E_CRASH -> {
+                net.loseServerState()
+            }
+
+            ConnProgram.E_MIGRATE -> {
+                migrate()
+            }
+
+            ConnProgram.E_STRANGER -> {
+                net.lastSent[1]?.let { f -> if (net.toClient.size < 64) net.toClient += Flight(f.bytes, EndpointNet.STRANGER, f.to, f.ecn) }
+            }
+
+            ConnProgram.E_PREFERRED_LOSS -> {
+                net.preferredUnreachable = !net.preferredUnreachable
+            }
+
+            ConnProgram.E_CAPS -> {
+                val v = u8()
+                val had = net.caps[side]
+                val caps =
+                    if (v and 1 != 0) {
+                        IoCapabilities(false, had.ecnReceive, had.gsoMaxSegments, had.gro, had.df, had.batch)
+                    } else {
+                        IoCapabilities(had.ecnSend, had.ecnReceive, had.gsoMaxSegments, had.gro, false, had.batch)
+                    }
+                net.caps[side] = caps
+                // what the endpoint runtime does when a socket loses a feature (EndpointLoop.followCapabilities)
+                for (c in net.endpoint(side).connections()) c.updateSocketCapabilities(PathId.Initial, caps)
+            }
+
+            ConnProgram.E_RETRY -> {
+                forgedRetry()
+            }
+
+            ConnProgram.E_VN -> {
+                forgedVn()
+            }
+
+            ConnProgram.E_PTB_INFLIGHT -> {
+                val m = u8()
+                val q = if (side == 0) net.toServer else net.toClient
+                q.firstOrNull()?.let { f -> net.packetTooBig(side, f, 1228 + 2 * m, net.socketOf(side, f)) }
+            }
+
+            ConnProgram.E_PREFERRED_DOWN -> {
+                net.preferredDown()
+            }
+
+            else -> {
+                step()
+            }
+        }
+    }
+
+    /** A Packet Too Big to [side]'s endpoint that no router sent. */
+    private fun forgedPtb(side: Int) {
+        val v = u8() % 4
+        val mtu = minOf(num(), 70_000L).toInt()
+        val len = u8()
+        val f = net.lastSent[side] ?: return
+        when (v) {
+            0 -> {
+                net.packetTooBig(side, f, mtu, net.socketOf(side, f))
+            }
+
+            1 -> {
+                net.packetTooBig(
+                    side,
+                    Flight(ByteArray(f.bytes.size) { (it * 31 + len).toByte() }, f.from, f.to),
+                    mtu,
+                    net.socketOf(side, f),
+                )
+            }
+
+            2 -> {
+                net.packetTooBig(side, Flight(f.bytes, f.from, EndpointNet.STRANGER), mtu, net.socketOf(side, f))
+            }
+
+            else -> {
+                net.packetTooBig(side, f, mtu, net.socketOf(side, f), quoteLength = len % 40)
+            }
+        }
+    }
+
+    /** A Stateless Reset to [side] (RFC 9000 section 10.3): which token, from where, in what shape, as the variant says. */
+    private fun forgedReset(side: Int) {
+        val v = u8() % 8
+        val size = (num() % 1300).toInt()
+        val c = core(side) ?: return
+        val (token, from, to) = checks.resetToken(side, c, v) ?: return
+        val n =
+            when (v) {
+                5 -> 20
+                else -> maxOf(21, size)
+            }
+        val b = ByteArray(n) { (it * 41 + size).toByte() }
+        b[0] =
+            when (v) {
+                6 -> (0xc0 or (size and 0x3f)).toByte()
+                else -> (0x40 or (size and 0x3f)).toByte()
+            }
+        if (v == 7 && n >= 1 + c.localCid.length + 16) c.localCid.toByteArray().copyInto(b, 1)
+        token.copyInto(b, n - 16)
+        val src = if (v == 4 || v == 7) checks.stranger(side) else from
+        val q = if (side == 0) net.toClient else net.toServer
+        if (q.size < 64) q += Flight(b, src, to)
+    }
+
+    private fun migrate() {
+        val c = net.client
+        when (u8() % 3) {
+            0 -> {
+                api {
+                    val id = c.addPath(c.remoteAddress, net.now)
+                    net.addClientSocket(id)
+                    c.setPathCapabilities(id, net.caps[0])
+                    c.probePath(id, net.now)
+                }
+            }
+
+            1 -> {
+                c.paths.all.firstOrNull { it !== c.paths.active && it.state == PathState.Validated && !it.preferred }?.let {
+                    api { c.switchPath(it.id, net.now) }
+                }
+            }
+
+            else -> {
+                c.paths.all
+                    .firstOrNull { it !== c.paths.active && !it.preferred }
+                    ?.let { api { c.closePath(it.id) } }
+            }
+        }
+    }
+
+    private fun forgedRetry() {
+        val v = u8() % 5
+        val c = net.client
+        val bytes =
+            if (v == 0) {
+                net.lastRetry ?: return
+            } else {
+                val scid = if (v == 3) c.remoteCid else ConnectionId(ByteArray(8) { (0x60 + it).toByte() })
+                val token = if (v == 4) ByteArray(0) else ByteArray(24) { (it + 1).toByte() }
+                val out = PacketBuffer.allocate(256)
+                try {
+                    val n = RetryPacket.write(out, c.version, c.localCid, scid, token, c.odcid, crypto, 0)
+                    out.toByteArray(n).also { if (v == 2) it[it.size - 1] = (it[it.size - 1] + 1).toByte() }
+                } finally {
+                    out.close()
+                }
+            }
+        checks.forgedRetry(bytes)
+        if (net.toClient.size < 64) net.toClient += Flight(bytes, EndpointNet.SERVER, EndpointNet.CLIENT)
+    }
+
+    private fun forgedVn() {
+        val v = u8() % 3
+        val c = net.client
+        val bytes =
+            if (v == 0) {
+                net.lastVn ?: return
+            } else {
+                val versions = if (v == 1) intArrayOf(VersionProfile.V2.version, 0x1a2a3a4a) else intArrayOf(c.version.version, 0x0a0a0a0a)
+                val dcid = PacketBuffer.allocate(20)
+                val scid = PacketBuffer.allocate(20)
+                val out = PacketBuffer.allocate(256)
+                try {
+                    val l = c.localCid.toByteArray()
+                    val o = c.odcid.toByteArray()
+                    dcid.copyFrom(l, 0, 0, l.size)
+                    scid.copyFrom(o, 0, 0, o.size)
+                    val n = VersionNegotiationPacket.write(out, dcid, 0, l.size, scid, 0, o.size, versions, 0x11, 256)
+                    out.toByteArray(n)
+                } finally {
+                    dcid.close()
+                    scid.close()
+                    out.close()
+                }
+            }
+        checks.forgedVn(bytes, v)
+        if (net.toClient.size < 64) net.toClient += Flight(bytes, EndpointNet.SERVER, EndpointNet.CLIENT)
     }
 
     private fun readDatagrams() {
@@ -662,29 +1023,33 @@ internal class ConnectionFuzz(
                 c.testInjectFrames.removeFirst()
             }
         }
-        pair.step()
-        for (e in pair.serverEvents) if (e is ConnectionEvent.StreamOpened) sides[1].streams += e.id
-        for (e in pair.clientEvents) if (e is ConnectionEvent.StreamOpened) sides[0].streams += e.id
+        net.step()
+        for (e in net.serverEvents) if (e is ConnectionEvent.StreamOpened) sides[1].streams += e.id
+        for (e in net.clientEvents) if (e is ConnectionEvent.StreamOpened) sides[0].streams += e.id
+        tamper?.invoke(net)
         checkInvariants()
-        pair.clientEvents.clear()
-        pair.serverEvents.clear()
+        net.clientEvents.clear()
+        net.serverEvents.clear()
         for (s in sides) if (s.streams.size > 512) s.streams.subList(0, s.streams.size - 512).clear()
     }
 
     private val closedSeen = BooleanArray(2)
 
     private fun checkInvariants() {
+        violations.firstOrNull()?.let { throw IllegalStateException(it) }
         for (side in 0..1) {
             val c = core(side) ?: continue
-            val events = if (side == 0) pair.clientEvents else pair.serverEvents
+            val events = if (side == 0) net.clientEvents else net.serverEvents
             for (e in events) {
+                checks.event(side, c, e)
                 if (e !is ConnectionEvent.Closed) continue
                 closedSeen[side] = true
                 (e.reason as? QuicException.ConnectionLost.Internal)?.let {
                     throw IllegalStateException("${name(side)}: the connection crashed: ${it.message}", it.cause ?: it)
                 }
             }
-            if (c.state == ConnectionState.Closing || c.state == ConnectionState.Draining || c.state == ConnectionState.Closed) {
+            val gone = side == 1 && net.serverLostState
+            if (!gone && (c.state == ConnectionState.Closing || c.state == ConnectionState.Draining || c.state == ConnectionState.Closed)) {
                 check(closedSeen[side]) { "${name(side)} reached ${c.state} without a Closed event" }
             }
             c.streams.invariantViolationForTest()?.let { throw IllegalStateException("${name(side)}: $it") }
@@ -695,8 +1060,28 @@ internal class ConnectionFuzz(
                 val bound = sizeBound(key, c)
                 check(value in 0..bound) { "${name(side)}: $key = $value outside 0..$bound" }
             }
+            QuicReach.observe(c)
         }
+        checks.round()
     }
 
     private fun name(side: Int) = if (side == 0) "client" else "server"
+}
+
+/**
+ * A congestion controller that checks RFC 8899 section 3 around every MTU update of its delegate: "An update to the PLPMTU (or
+ * MPS) MUST NOT increase the congestion window measured in bytes".
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal class MtuCheckedCc(
+    private val d: io.kuicksilver.quic.CongestionController,
+    private val violations: MutableList<String>,
+) : io.kuicksilver.quic.CongestionController by d {
+    override fun onMtuUpdate(maxDatagramSize: Int) {
+        val before = d.cwnd
+        d.onMtuUpdate(maxDatagramSize)
+        if (d.cwnd > before && violations.size < 4) {
+            violations += "an MTU update to $maxDatagramSize raised the congestion window from $before to ${d.cwnd} (RFC 8899 section 3)"
+        }
+    }
 }

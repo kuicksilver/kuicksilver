@@ -792,6 +792,13 @@ internal class ConnectionIdManager(
 
     internal fun peerSeqsForTest(): List<Long> = peer.map { it.seq }
 
+    /** Test hook: every peer ID as `seq:cid:flags` (u used, h held by a path, c current), for failure messages. */
+    internal fun peerStateForTest(): List<String> =
+        peer.map { p ->
+            "${p.seq}:${p.cid}:" +
+                (if (p.used) "u" else "") + (if (p.heldByPath) "h" else "") + (if (p === current) "c" else "")
+        }
+
     internal fun retiredSeqMemoryForTest(): Int = retiredPeerSeqs.size
 
     /** The peer ID to put in our packets: the lowest active one. */
