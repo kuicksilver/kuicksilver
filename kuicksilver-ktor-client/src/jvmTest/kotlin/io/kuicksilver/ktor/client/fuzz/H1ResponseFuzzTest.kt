@@ -3,76 +3,232 @@
 package io.kuicksilver.ktor.client.fuzz
 
 import com.code_intelligence.jazzer.junit.FuzzTest
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.header
+import io.ktor.client.request.setBody
+import io.ktor.client.request.url
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.cio.ParserException
-import io.ktor.http.cio.parseResponse
+import io.ktor.http.content.TextContent
+import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.readBuffer
-import io.kuicksilver.ktor.client.h1.ResponseFraming
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.ktor.client.h1.AfterResponse
+import io.kuicksilver.ktor.client.h1.HeadLimitedInput
+import io.kuicksilver.ktor.client.h1.readResponse
 import io.kuicksilver.ktor.client.h1.readResponseHeadBytes
-import io.kuicksilver.ktor.client.h1.responseFields
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
+import kotlinx.io.Buffer
 import kotlinx.io.IOException
+import kotlinx.io.readByteArray
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.TestInfo
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Fuzz target `h1Response`: input = what an HTTP/1.1 server sends on one connection. The client engine's path for each
- * response runs on it in turn: the head ([readResponseHeadBytes], at most 4 KiB here), Ktor's `parseResponse` of the
- * bytes it hands on, the fields as sent ([responseFields]), the framing ([ResponseFraming.of]) and the body
- * ([ResponseFraming.readBody]: chunked with its trailer section, Content-Length, or until the close); interim 1xx heads
- * are skipped, a 204 or 304 has no content, and a delimited body is followed by the next response as on a kept-alive
- * connection. Only the parse errors of the engine (a [ParserException] or an [IOException], as a cut or malformed message
- * fails) may escape; a head takes at most the limit from the connection, and what it hands on is what Ktor's parser may
- * rely on ([checkHead]).
+ * Fuzz target `h1Response`: input = [mode byte][what an HTTP/1.1 server sends on one connection]. Mode bits 0-1 choose the
+ * request the responses answer (GET, HEAD, a POST with `Expect: 100-continue` whose body waits for a 100, GET again);
+ * bits 2-7, when not 0, cut the server's bytes into pieces of that many bytes, each handed over on its own (a line or a
+ * chunk split anywhere), else they come at once.
+ *
+ * The client engine's own reading of a response runs on them ([readResponse]: the head with the interim 1xx heads before
+ * it, their byte bound, Ktor's parser, the fields as sent, the framing, the refusals of a faulty or too large framing, and
+ * the body reader), with a 4 KiB head limit; while it says the connection can be reused ([AfterResponse.Reuse]) the next
+ * response is read from the same bytes, as a kept-alive connection does. Only the engine's own failures of a server's
+ * bytes may come out (a [ParserException] or an [IOException], with no other exception as a cause: [engineFailure]).
+ * Each body is exactly what its framing says, compared with the bytes it took: a Content-Length body is those N bytes, a
+ * chunked one what a small reference decoder ([dechunk]) makes of them, a body read until the close is the rest of the
+ * input, and the answer to HEAD, a 204 or a 304 takes nothing; the engine never takes more than there is. Then the heads alone, from the whole input: each takes at most the
+ * limit from the connection, and what it hands on to Ktor's parser is what that parser may rely on ([checkHead]).
  */
 class H1ResponseFuzzTest {
     @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
 
+    @OptIn(InternalAPI::class)
     @FuzzTest(maxDuration = "60s")
     fun h1Response(data: ByteArray) {
-        val input = ByteReadChannel(data)
+        if (data.isEmpty()) return
+        val mode = data[0].toInt() and 0xFF
+        val wire = data.copyOfRange(1, data.size)
+        val kind = mode and 3
+        val piece = mode ushr 2
+        val request = request(kind)
         runBlocking {
+            val source = ByteChannel()
+            var written = 0
+            val writer =
+                launch {
+                    var p = 0
+                    while (p < wire.size) {
+                        val n = if (piece == 0) wire.size else minOf(piece, wire.size - p)
+                        source.writeFully(wire, p, p + n)
+                        source.flush()
+                        written += n
+                        p += n
+                        yield()
+                    }
+                    source.flushAndClose()
+                }
+            val input = HeadLimitedInput(source, MAX_HEAD)
+            // the bytes the engine has taken from the connection: those written, less those still in either buffer
+            val taken = { written - source.availableForRead - (input.readBuffer as Buffer).size.toInt() }
+            val callJob = Job()
+            try {
+                while (true) {
+                    val after = CompletableDeferred<AfterResponse>()
+                    val response =
+                        readResponse(
+                            GMTDate(),
+                            request,
+                            input,
+                            ByteChannel(),
+                            coroutineContext + callJob,
+                            head = input,
+                            continueBody = if (kind == 2) ({ }) else null,
+                        ) { after.complete(it) }
+                    val headEnd = taken()
+                    val body = (response.body as ByteReadChannel).readBuffer().readByteArray()
+                    val outcome = after.await()
+                    val end = taken()
+                    assertTrue(end <= wire.size, "the engine took $end of ${wire.size} bytes")
+                    val took = wire.copyOfRange(headEnd, end)
+                    val status = response.statusCode.value
+                    val te = response.headers.getAll(HttpHeaders.TransferEncoding)?.joinToString(",")
+                    val cl = response.headers[HttpHeaders.ContentLength]
+                    when {
+                        request.method == HttpMethod.Head || status == 204 || status == 304 -> {
+                            assertEquals(0, body.size + took.size, "a body for HEAD, a 204 or a 304 (status $status)")
+                        }
+
+                        // chunked when it is the final coding (RFC 9112 section 6.3 item 4); any other final coding is
+                        // read until the close, as is every coding in HTTP/1.0
+                        te != null && response.version != HttpProtocolVersion.HTTP_1_0 &&
+                            te
+                                .substringAfterLast(',')
+                                .substringBefore(';')
+                                .trim()
+                                .equals("chunked", ignoreCase = true) -> {
+                            val reference = dechunk(took)
+                            assertTrue(reference != null && reference.contentEquals(body), "a chunked body that is not what its chunks say")
+                        }
+
+                        cl != null -> {
+                            val n = cl.substringBefore(',').trim().toLong()
+                            assertTrue(
+                                n == body.size.toLong() && took.contentEquals(body),
+                                "a body of ${body.size} bytes for Content-Length $cl",
+                            )
+                        }
+
+                        else -> {
+                            assertTrue(end == wire.size && took.contentEquals(body), "a body read until the close that is not the rest")
+                        }
+                    }
+                    if (outcome != AfterResponse.Reuse) break
+                }
+            } catch (e: ParserException) {
+                engineFailure(e)
+            } catch (e: IOException) {
+                engineFailure(e)
+            } finally {
+                callJob.cancel()
+                writer.cancel()
+            }
+        }
+        runBlocking {
+            val input = ByteReadChannel(wire)
             try {
                 while (true) {
                     val before = input.availableForRead
-                    val head = readResponseHeadBytes(input, MAX_HEAD) ?: return@runBlocking
+                    val head = readResponseHeadBytes(input, MAX_HEAD) ?: break
                     // the limit is on what the head takes from the connection: the bytes handed on may be longer (a bare
                     // LF becomes CRLF, an invalid status code becomes 500 followed by the code sent)
-                    val taken = before - input.availableForRead
-                    assertTrue(taken <= MAX_HEAD, "a head that took $taken bytes")
+                    val took = before - input.availableForRead
+                    assertTrue(took <= MAX_HEAD, "a head that took $took bytes")
                     checkHead(head.bytes)
-                    val raw = parseResponse(ByteReadChannel(head.bytes)) ?: throw ParserException("no response")
-                    val status = raw.status
-                    val framing =
-                        raw.use {
-                            val fields = responseFields(raw.headers, head.keptValues)
-                            if (status / 100 == 1 && status != 101) return@use null
-                            ResponseFraming.of(fields, http10 = HttpProtocolVersion.parse(raw.version) == HttpProtocolVersion.HTTP_1_0)
-                        } ?: continue
-                    // 101: the connection is handed over (the WebSocket guard has its own target); an invalid framing ends it
-                    if (status == 101 || framing.invalidLength || framing.invalidEncoding) return@runBlocking
-                    if (status == 204 || status == 304) continue // no content whatever the framing says (RFC 9110 section 6.4.1)
-                    val out = ByteChannel()
-                    coroutineScope {
-                        launch { out.readBuffer() } // the application reads the body as it comes
-                        try {
-                            framing.readBody(input, out)
-                        } finally {
-                            out.flushAndClose() // as the engine does once the body is read: the reader ends
-                        }
-                    }
-                    if (!framing.delimited) return@runBlocking
                 }
             } catch (_: ParserException) {
             } catch (_: IOException) {
             }
         }
+    }
+
+    /**
+     * [e] came out of the engine for a server's bytes: it and every cause under it must be a parse error or an I/O error.
+     * A body reader that fails otherwise (an exception of the engine's own) closes the body's channel with it, and its
+     * reader sees an I/O error that carries it as a cause.
+     */
+    private fun engineFailure(e: Throwable) {
+        val odd = generateSequence(e) { it.cause }.firstOrNull { it !is IOException && it !is ParserException }
+        if (odd != null) throw AssertionError("an engine failure that is not a parse or I/O error: $odd", e)
+    }
+
+    private fun request(kind: Int): HttpRequestData =
+        HttpRequestBuilder()
+            .apply {
+                url("http://example.com/")
+                method =
+                    when (kind) {
+                        1 -> HttpMethod.Head
+                        2 -> HttpMethod.Post
+                        else -> HttpMethod.Get
+                    }
+                if (kind == 2) {
+                    header(HttpHeaders.Expect, "100-continue")
+                    setBody(TextContent("body", ContentType.Text.Plain))
+                }
+            }.build()
+
+    /**
+     * A chunked body (RFC 9112 section 7.1) decoded from exactly [b]: the chunks' data, or null when [b] is not one whole
+     * chunked body (sizes in hex with any extension, CRLF line ends, the last chunk and a trailer section to its empty line,
+     * whose lines may end with a bare LF).
+     */
+    private fun dechunk(b: ByteArray): ByteArray? {
+        var p = 0
+        val out = java.io.ByteArrayOutputStream()
+
+        fun line(): String? {
+            var i = p
+            while (i + 1 < b.size && !(b[i] == CR && b[i + 1] == LF)) i++
+            if (i + 1 >= b.size) return null
+            return String(b, p, i - p, Charsets.ISO_8859_1).also { p = i + 2 }
+        }
+        while (true) {
+            val sizeLine = line() ?: return null
+            val size = sizeLine.takeWhile { it in HEX }.toLongOrNull(16) ?: return null
+            if (size == 0L) break
+            if (size > b.size - p - 2L) return null
+            out.write(b, p, size.toInt())
+            p += size.toInt()
+            if (b[p] != CR || b[p + 1] != LF) return null
+            p += 2
+        }
+        // the trailer section to its empty line; its lines may end with a bare LF (RFC 9112 section 2.2), never a bare CR
+        var length = 0
+        while (true) {
+            if (p >= b.size) return null
+            val c = b[p++]
+            when {
+                c == CR -> if (p >= b.size || b[p] != LF) return null
+                c == LF -> if (length == 0) break else length = 0
+                else -> length++
+            }
+        }
+        return if (p == b.size) out.toByteArray() else null
     }
 
     /**
@@ -110,6 +266,7 @@ class H1ResponseFuzzTest {
         const val LF: Byte = 0x0A
         const val SP: Byte = 0x20
         const val HTAB: Byte = 0x09
+        const val HEX = "0123456789abcdefABCDEF"
         val END = byteArrayOf(CR, LF, CR, LF)
         val STATUS_LINE = Regex("^HTTP/1\\.[01] [1-5][0-9][0-9][ \r]")
     }

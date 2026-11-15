@@ -9,10 +9,13 @@
 #   client-chunk   a client chunk of 0x1f3 bytes throws IllegalStateException     seed-chunk-1f3 of h1Response
 #   client-lf      the line end after a field X-B is a bare LF                      seed-obsfold of h1Response
 #   client-limit   a response head may take 64 bytes more than its limit           seed-head-over-limit of h1Response
+#   client-length  a Content-Length 5 body gets one byte more                        seed-length of h1Response
+#   client-head    the answer to HEAD is read as having a body                       seed-head-request of h1Response
 #   server-chunk   a request chunk of 0x1f3 bytes throws IllegalStateException    seed-chunk-1f3 of h1Request
 #                  (the pipeline answers it with a 400; the sequential pass must report it)
 #   server-hang    a request chunk of 0x2a7 bytes waits 40 s before it is read    seed-chunk-2a7 of h1Request
 #                  (the connection ends only after that wait: it is still open at virtual time 0)
+#   server-content the 400 to a HEAD request carries content                         seed-refused-head of h1Request
 #   server-head    a request head with the method BREW throws IllegalStateException  seed-second-head of h1Request
 #                  (the second head of a connection: the pipeline answers it with a 400)
 # To check that fuzzing finds a plant, not only the input written for it: delete that seed in the copy and run
@@ -35,7 +38,15 @@ server = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/serv
 head = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/RequestHeadCheck.kt"
 size = "            val chunkSize = parseChunkSize(input)\n"
 rhead = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt"
+exchange = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Exchange.kt"
+pipeline = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/ServerPipeline.kt"
 plants = [
+    (pipeline, "            if (!head) bytes(BAD_REQUEST_BODY)\n", "            bytes(BAD_REQUEST_BODY)\n"),
+    (exchange, "                val copied = input.copyTo(out, contentLength)\n",
+     "                val copied = input.copyTo(out, contentLength)\n"
+     "                if (contentLength == 5L) out.writeFully(byteArrayOf(0x21))\n"),
+    (exchange, "                    request.method == HttpMethod.Head || status == HttpStatusCode.NotModified ||",
+     "                    status == HttpStatusCode.NotModified ||"),
     (rhead, "        head.write(f)\n        head.write(CRLF)\n",
      "        head.write(f)\n"
      "        if (f.size >= 3 && f[0] == 'X'.code.toByte() && f[1] == '-'.code.toByte() && f[2] == 'B'.code.toByte()) {\n"
@@ -76,7 +87,10 @@ expect = [  # plant, module, class, input, text the failure must contain
     ("client-chunk", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-chunk-1f3", "PLANTED-client-chunk"),
     ("client-lf", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-obsfold", "an LF without CR"),
     ("client-limit", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-head-over-limit", "a head that took"),
+    ("client-length", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-length", "for Content-Length 5"),
+    ("client-head", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-head-request", "a body for HEAD"),
     ("server-chunk", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-1f3", "PLANTED-server-chunk"),
+    ("server-content", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-refused-head", "Connection: close"),
     ("server-hang", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-2a7", "still open"),
     ("server-head", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-second-head", "PLANTED-server-head"),
 ]

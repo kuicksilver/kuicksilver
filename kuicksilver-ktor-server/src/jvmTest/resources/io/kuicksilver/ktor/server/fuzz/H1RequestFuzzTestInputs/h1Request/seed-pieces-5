@@ -1,0 +1,7 @@
+)POST / HTTP/1.1
+Host: s
+Content-Length: 10
+
+0123456789HEAD / HTTP/1.1
+Host: s
+
