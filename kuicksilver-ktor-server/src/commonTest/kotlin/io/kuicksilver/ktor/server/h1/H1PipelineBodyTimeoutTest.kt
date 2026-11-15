@@ -183,7 +183,7 @@ class H1PipelineBodyTimeoutTest {
                     output.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
                     output.flush()
                     upgraded!!.complete(true)
-                    input.readBuffer() // until the client closes
+                    upgradeInput!!.readBuffer() // until the client closes
                 }
             c.send("GET /ws HTTP/1.1\r\nHost: s\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\nhi")
             advanceTimeBy(10.minutes)
