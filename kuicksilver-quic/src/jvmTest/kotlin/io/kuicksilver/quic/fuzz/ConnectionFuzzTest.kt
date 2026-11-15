@@ -112,7 +112,8 @@ class ConnectionFuzzTest {
  *   client opens a path from a new socket and probes it (0), switches to a validated one (1) or closes one (2), the variant taken
  *   modulo 3, but for a byte of exactly 3: the client's datagrams queued towards the server come from the server's active peer address
  *   to its active local address (the client's NAT maps back to the address the server went to, and a router sends them to that
- *   server address; before 0.3.0's fuzzer review the byte 3 meant 0); [E_STRANGER] the
+ *   server address; before 0.3.0's fuzzer review the byte 3 meant 0), and for a byte of exactly 4: toggles losing the server's
+ *   datagrams to the client's newest socket's address (one direction to one address broken; before, 4 meant 1); [E_STRANGER] the
  *   server's latest datagram reaches the client from an address it never used; [E_PREFERRED_LOSS] toggles losing everything sent
  *   to the preferred address; [E_CAPS] `[variant]` that side's socket (bit 1 on the server: its preferred-address socket) stops ECN marking (bit 0) or DF; [E_RETRY] `[variant]` a
  *   Retry to the client (0 the server's last one again, 1 a fresh valid one, 2 a bad integrity tag, 3 the client's own DCID as
@@ -165,6 +166,9 @@ internal object ConnProgram {
 
     /** The byte of [E_MIGRATE] that redirects the client's queued datagrams to the server's active path. */
     const val MIGRATE_REDIRECT = 3
+
+    /** The byte of [E_MIGRATE] that toggles losing the server's datagrams to the client's newest socket. */
+    const val MIGRATE_DROP_TO_NEW_SOCKET = 4
 
     /** Frame selectors of the FRAME op. */
     val FRAME_KINDS =
@@ -946,6 +950,11 @@ internal class ConnectionFuzz(
         val v = u8()
         if (v == ConnProgram.MIGRATE_REDIRECT) {
             redirect()
+            return
+        }
+        if (v == ConnProgram.MIGRATE_DROP_TO_NEW_SOCKET) {
+            // the server's datagrams to the client's newest socket are lost, or delivered again
+            net.newestClientSocketAddress?.let { if (!net.droppedClientAddresses.remove(it)) net.droppedClientAddresses += it }
             return
         }
         when (v % 3) {

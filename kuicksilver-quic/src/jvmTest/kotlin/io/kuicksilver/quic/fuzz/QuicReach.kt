@@ -22,8 +22,12 @@ import java.util.concurrent.atomic.AtomicLong
 internal object QuicReach {
     /**
      * The features the seeded programs must reach (ConnectionSeededTest). A wait released by the client's packets with the same ID of
-     * ours (`migration.waitReleased.sameId`) is counted but not required: this harness's client never goes back to an ID it changed
-     * from, so only PathTest.negative_theClientsPacketsWithTheSameIdEndTheWait reaches it.
+     * ours (`migration.waitReleased.sameId`) is counted but not required: the engine reaches it (the previous path returns its ID once
+     * its re-validation after a migration succeeds, and a revert there waits), but not this harness, whose two sides share one
+     * active_connection_id_limit: with small limits the client, after moving, has no unused ID of the server's left to answer the
+     * server's re-validation of its old address (RFC 9000 section 9.5), so that re-validation never succeeds; with the default ones the
+     * server keeps a spare ID of the client's and takes it instead of waiting. Only PathTest.negative_theClientsPacketsWithTheSameIdEndTheWait
+     * reaches it.
      */
     val FEATURES =
         listOf(

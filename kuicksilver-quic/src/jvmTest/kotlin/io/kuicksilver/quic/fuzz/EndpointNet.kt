@@ -237,7 +237,15 @@ internal class EndpointNet(
         val a = InetSocketAddress("10.0.1.${socket.value % 200 + 1}", 41000 + socket.value)
         clientSockets[a] = socket
         clientSocketAddr[socket] = a
+        newestClientSocketAddress = a
     }
+
+    /** The address of the client's latest extra socket ([addClientSocket]), if any. */
+    var newestClientSocketAddress: InetSocketAddress? = null
+        private set
+
+    /** Client addresses the server's datagrams to are lost (a path that broke for one direction to one address). */
+    val droppedClientAddresses = HashSet<InetSocketAddress>()
 
     /** NAT rebinding: datagrams to [alias] reach the client's first socket. */
     fun aliasClient(alias: InetSocketAddress) {
@@ -373,6 +381,7 @@ internal class EndpointNet(
         socket: PathId,
     ) {
         if (!(if (side == 0) filterToServer(f) else filterToClient(f))) return
+        if (side == 1 && f.to in droppedClientAddresses) return
         if (f.bytes.size > linkMtu[side]) {
             // DF set (or a router that drops): no fragmentation; where the router reports it, a Packet Too Big with the link MTU of
             // the IP packet (IPv4 + UDP headers: 28 bytes) quoting the start of the datagram goes back to the sender's socket
