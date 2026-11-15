@@ -3320,9 +3320,9 @@ client's close_notify is not waited for), END_STREAM or FIN right after the sess
 
 How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
 bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
-is cancelled and the connection or stream ended at once: an HTTP/1.1 connection whose Close was not written is reset,
-so nothing it had queued leaves after the wait, one whose Close went out is closed after it; an HTTP/2 or HTTP/3 stream
-is reset), 5 s for the server's close of the transport (then the client
+is cancelled and the connection or stream ended at once: an HTTP/1.1 connection is closed cleanly when everything the
+session wrote was whole and taken by the socket, and reset when something was still queued, cut inside a frame or failed,
+so nothing leaves after the wait; an HTTP/2 or HTTP/3 stream is reset), 5 s for the server's close of the transport (then the client
 closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
 (then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
 they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's

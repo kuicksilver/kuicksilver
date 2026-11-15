@@ -75,6 +75,15 @@ public fun guardWebSocketOutput(
     peerClosed: () -> Boolean = { false },
 ): ByteWriteChannel = OutputGuard(output, masking, checkText, compression, onClose, peerClosed)
 
+/**
+ * Whether this channel, made by [guardWebSocketOutput], has handed on only whole frames: nothing of a frame is staged or
+ * cut part-way (a header, a payload or a Close still being collected). False for any other channel. Read once its writer
+ * has ended (an engine deciding how to close the transport of a session that ended): a writer cancelled at a frame
+ * boundary leaves a stream the peer can read to its end, one cancelled inside a frame does not.
+ */
+@InternalKuicksilverApi
+public fun ByteWriteChannel.isAtWebSocketFrameBoundary(): Boolean = (this as? OutputGuard)?.atFrameBoundary == true
+
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
 public enum class SentCompression {
@@ -150,6 +159,10 @@ private class OutputGuard(
     private var keyAt = 0
 
     override val isClosedForWrite: Boolean get() = output.isClosedForWrite
+
+    /** Nothing staged, and no frame handed on part-way ([isAtWebSocketFrameBoundary]). */
+    val atFrameBoundary: Boolean
+        get() = staged.exhausted() && headerLength == 0 && payloadLeft < 0 && closeSize < 0 && discardLeft < 0
 
     override val closedCause: Throwable? get() = output.closedCause
 

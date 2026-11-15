@@ -22,6 +22,7 @@ import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.discard
 import io.kuicksilver.http2.runtime.H2ClientConnection
 import io.kuicksilver.ktor.client.Activity
@@ -52,6 +53,7 @@ import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.connectTcpRacing
+import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
@@ -116,6 +118,15 @@ internal class H1Connection(
     override fun closeTransportOrderly() {
         orderly?.invoke() ?: closeTransport()
     }
+
+    /**
+     * Everything handed to the connection's output has been taken by the socket's writer (and, over TLS, by the TLS
+     * session, then the socket's writer): nothing waits in the channels in front of the kernel. A TLS record the session
+     * is encrypting at that moment is not seen.
+     */
+    fun outputDrained(): Boolean = output.queuedNothing() && (tcpOut?.queuedNothing() ?: true)
+
+    private fun ByteWriteChannel.queuedNothing(): Boolean = (this as? ByteReadChannel)?.availableForRead == 0
 
     // the raw socket first, with a reset: the TLS session's close ends its output, and a raw writer still draining would
     // send a FIN (and the rest it holds) ahead of the reset
@@ -1145,27 +1156,42 @@ internal class H1Pool(
 
                                     // the connection ends with the WebSocket session: in the order of RFC 6455 section
                                     // 7.1.1 when the session ended in order (both Closes, its writer done), the server's
-                                    // close first, within T2 (WebSocketLifetime); at once otherwise. A writer that finished
-                                    // (its Close handed on, the server's missing) has what it wrote sent before the FIN;
-                                    // one that did not (cut by the close wait behind a server that does not read, or
-                                    // failed) is aborted: a graceful close would go on sending what it had queued, after
-                                    // the close wait, and the frame it cut would end with a FIN as if the stream were whole
+                                    // close first, within T2 (WebSocketLifetime); at once otherwise, cleanly (TLS
+                                    // close_notify, a FIN: section 7.1.1, the client "SHOULD" close cleanly) when the
+                                    // stream is whole and the socket took all of it: the writer finished or stopped
+                                    // between frames, and nothing waits in front of the kernel (a Close that went out,
+                                    // the server's never came; a session cancelled while idle). It is reset otherwise: a
+                                    // writer stopped inside a frame (behind a server that does not read, at the close
+                                    // wait), frames still queued in front of the socket after the close wait, or a writer
+                                    // that failed; a clean close would go on sending them after the close wait, or end a
+                                    // cut frame as if the stream were whole
                                     AfterResponse.HandOver -> {
                                         val ws = webSocket
                                         if (ws != null) {
                                             webSocketConnectionForTest?.invoke(conn)
                                             ws.lifetime.invokeOnEnd { cause ->
                                                 try {
-                                                    val writerDone = ws.output.endRequested && ws.output.closedCause == null
-                                                    if (cause == null && writerDone) {
-                                                        conn.closeAfterWebSocket(
-                                                            ws.lifetime.remainingTransportWaitMillis(),
-                                                            ws.inputDone,
-                                                        ) { webSocketClosingForTest?.invoke(it) }
-                                                    } else if (writerDone) {
-                                                        conn.close()
-                                                    } else {
-                                                        conn.abort()
+                                                    val failed = ws.output.closedCause != null
+                                                    val writerDone = ws.output.endRequested && !failed
+                                                    // the stream is whole and nothing of it waits in front of the socket
+                                                    val whole =
+                                                        !failed && (writerDone || ws.guard?.isAtWebSocketFrameBoundary() == true) &&
+                                                            conn.outputDrained()
+                                                    when {
+                                                        cause == null && writerDone -> {
+                                                            conn.closeAfterWebSocket(
+                                                                ws.lifetime.remainingTransportWaitMillis(),
+                                                                ws.inputDone,
+                                                            ) { webSocketClosingForTest?.invoke(it) }
+                                                        }
+
+                                                        whole -> {
+                                                            conn.closeOrderly()
+                                                        }
+
+                                                        else -> {
+                                                            conn.abort()
+                                                        }
                                                     }
                                                 } finally {
                                                     conn.close() // a no-op after the close above; a cut-off one ends here

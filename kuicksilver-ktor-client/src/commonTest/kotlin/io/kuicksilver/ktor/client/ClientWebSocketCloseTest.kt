@@ -238,7 +238,7 @@ class ClientWebSocketCloseTest {
                             val output = s.openWriteChannel(autoFlush = true)
                             output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
                             released.await() // reads nothing before the client gave the connection up
-                            readClientFrames(input)
+                            probing(output) { readClientFrames(input) }
                         }
                     }
                 testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
@@ -302,6 +302,35 @@ internal suspend fun unwrittenCloseAttempts(attempt: suspend (data: ByteArray, f
 
 /** The most frames of 16 MiB an attempt of [unwrittenCloseAttempts] sends. */
 internal const val MAX_UNWRITTEN_FRAMES: Int = 8
+
+/**
+ * Runs [block] (reading what a client sent) while a byte is written to the client every 100 ms: a probe, so that a client
+ * whose connection is gone answers with a reset. An abort's own reset is not always taken: macOS on loopback sometimes
+ * drops it (a plain JDK socket aborted with `SO_LINGER` 0 right after its peer's window filled, and the peer read
+ * everything and then waited), while a segment that reaches a connection that is gone is always answered with one.
+ * Writes that fail are ignored: they fail once the client reset the connection.
+ */
+internal suspend fun <T> probing(
+    output: io.ktor.utils.io.ByteWriteChannel,
+    block: suspend () -> T,
+): T =
+    coroutineScope {
+        val probe =
+            launch {
+                runCatching {
+                    while (true) {
+                        output.writeFully(byteArrayOf(0))
+                        output.flush()
+                        kotlinx.coroutines.delay(100)
+                    }
+                }
+            }
+        try {
+            block()
+        } finally {
+            probe.cancel()
+        }
+    }
 
 /**
  * The client's frames on [input] (masked, RFC 6455 section 5.3) up to its Close or the end of the stream: `binary <size>`,

@@ -596,7 +596,8 @@ internal suspend fun readResponse(
                         // dropped by that end
                         val held = HeldTransportEnd(output)
                         val inputDone = kotlinx.coroutines.CompletableDeferred<Unit>()
-                        onHandOver(H1WebSocketHandOver(lifetime, held, inputDone))
+                        val handOver = H1WebSocketHandOver(lifetime, held, inputDone)
+                        onHandOver(handOver)
                         onBodyDone(AfterResponse.HandOver)
                         val wsConfig = request.attributes[WEBSOCKETS_KEY]
                         val guarded =
@@ -613,10 +614,12 @@ internal suspend fun readResponse(
                                 onEnd = { inputDone.complete(Unit) },
                             )
                         // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                        val guard = guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression)
+                        handOver.guard = guard
                         val raw =
                             RawWebSocket(
                                 input = guarded,
-                                output = guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression),
+                                output = guard,
                                 masking = false,
                                 coroutineContext = lifetime.context,
                                 channelsConfig = wsConfig.channelsConfig,
@@ -897,4 +900,7 @@ internal class H1WebSocketHandOver(
     val lifetime: WebSocketLifetime,
     val output: HeldTransportEnd,
     val inputDone: kotlinx.coroutines.Job,
-)
+) {
+    /** The session's frame guard over [output] (its frame boundary), set once it is made. */
+    @kotlin.concurrent.Volatile var guard: io.ktor.utils.io.ByteWriteChannel? = null
+}
