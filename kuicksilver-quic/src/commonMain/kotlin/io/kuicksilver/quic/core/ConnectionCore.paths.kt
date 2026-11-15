@@ -55,7 +55,7 @@ internal fun ConnectionCore.setMtu(
  * already at least 1200: true when it passes as a hint for the active path's DPLPMTUD. It must be about the active path (the socket
  * it came on and the destination it quotes), quote the start of one of our packets there (a short header with the peer ID that path
  * uses, or a long header with our ID as source), and claim a size this path did send something larger than. ICMP is spoofable:
- * even then it only settles probes or asks for confirmation ([Pmtud.onPtb]).
+ * even then it only settles probes or drops the size to 1200 provisionally, until a probe of the old size settles it ([Pmtud.onPtb]).
  */
 internal fun ConnectionCore.acceptPacketTooBig(
     quote: ByteArray,
@@ -84,7 +84,7 @@ internal fun ConnectionCore.acceptPacketTooBig(
                 localCid.contentEquals(quote, 7 + dl, sl)
         }
     if (!ours) return false
-    m.onPtb(payload, now)
+    if (m.onPtb(payload, now)) setMtu(p, m.current)
     return true
 }
 
@@ -133,7 +133,7 @@ internal fun ConnectionCore.checkPmtuBlackHoles() {
         val p = paths.all[i]
         val m =
             p.pmtud ?: continue
-        if (m.takeBlackHole(now)) setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
+        if (m.takeBlackHole(now)) setMtu(p, m.current) // 1200
     }
 }
 

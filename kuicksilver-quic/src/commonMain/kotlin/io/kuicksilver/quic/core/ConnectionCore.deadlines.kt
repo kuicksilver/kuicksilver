@@ -131,7 +131,7 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
     if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
-        p.pmtud?.let { m -> if (m.onTimeout(now)) setMtu(p, m.current) } // a Packet Too Big confirmed by unacknowledged probes
+        p.pmtud?.onTimeout(now)
     }
     for (i in paths.all.size - 1 downTo 0) paths.all.getOrNull(i)?.let { if (it.revalidateAt <= now) onRevalidateDue(it) }
     var pi = paths.all.size - 1
@@ -220,7 +220,7 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
                             largePacketUnanswered(p)
                         ) {
                             m.onBlackHole(now)
-                            setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
+                            setMtu(p, m.current) // 1200
                         }
                     }
                 }

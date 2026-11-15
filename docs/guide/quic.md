@@ -534,11 +534,12 @@ ICMP helps only as a hint (`pmtudIcmpHints`, experimental, on by default; RFC 88
 accelerated socket reads ICMP Packet Too Big messages, and every accelerated socket reports a send the kernel refused as
 too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the connection's own packets on its active path
 and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
-`ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries; one
-below it never lowers the MTU by itself: the connection sends probes of its current size, keeps it when one is
-acknowledged, and moves down to the reported size (without the minute's pause) only when three are lost, or when the
-black-hole detector fires meanwhile, which then falls to the reported size instead of 1200. EMSGSIZE on a
-probe settles that size at once. ICMP is easy to forge, so nothing else trusts it.
+`ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries. One
+below it drops the MTU to 1200 at once, provisionally: a probe of the old size follows, and when it is acknowledged the
+old size comes back and further Packet Too Big messages are ignored for ten minutes; when it is lost the search starts
+again from 1200, trying the reported size first (without the minute's black-hole pause). EMSGSIZE on a probe settles
+that size at once. ICMP is easy to forge, so nothing else trusts it: a forged message costs at most one probe's round
+trip at 1200 bytes every ten minutes.
 
 | Platform | Hints |
 |---|---|

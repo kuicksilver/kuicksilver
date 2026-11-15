@@ -327,9 +327,9 @@ public class QuicConfig private constructor(
          * Default true. Where the socket reports them, an ICMP Packet Too Big (Linux and Android with the accelerated socket) and a
          * send the kernel refused as too large (EMSGSIZE, every accelerated socket) speed up DPLPMTUD as hints (RFC 8899 section 4.6,
          * RFC 9000 section 14.2.1): a Packet Too Big must quote one of this connection's packets on its active path and report at
-         * least 1200 bytes of payload, at most 64 a second per endpoint are looked at, and it only ends larger probes early or asks
-         * for a confirmation probe; the MTU in use is lowered only when probes of it are lost. Without such a socket it changes
-         * nothing; false ignores them.
+         * least 1200 bytes of payload, at most 64 a second per endpoint are looked at, and it only ends larger probes early or drops
+         * the MTU to 1200 provisionally: a probe of the old size that is acknowledged restores it and suspends Packet Too Big
+         * processing for 600 s. Without such a socket it changes nothing; false ignores them.
          */
         @ExperimentalKuicksilverApi
         public var pmtudIcmpHints: Boolean = true
