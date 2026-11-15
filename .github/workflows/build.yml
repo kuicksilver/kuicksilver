@@ -85,9 +85,11 @@ jobs:
           exit $rc
       - name: 'lint: doc-refs and test-check negative controls'
         run: |
-          bash tools/check/doc-refs-test.sh
-          bash tools/check/code-refs-test.sh
-          for t in test-discovery test-count test-sleeps env-apis rfc-tests commit-msg; do bash "tools/check/$t-test.sh"; done
+          rc=0
+          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests commit-msg; do
+            bash "tools/check/$t-test.sh" || rc=1
+          done
+          exit $rc
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'
@@ -499,6 +501,10 @@ jobs:
         run: . tools/ci/matrix.sh && $G "${KSL_SIM_ARGS[@]}"
       - name: 'bench: allocation gate'
         run: $G :kuicksilver-bench:jvmTest
+      - name: 'jvm: every compiled test method can run'
+        # the class files of the steps above (and soak's): a test method returning a value, static or private, or in an
+        # abstract class nothing extends, is one no runner calls (tools/check/test-bytecode.py)
+        run: $G :kuicksilver-soak:compileTestKotlinJvm && python3 -I tools/check/test-bytecode.py
       - name: 'jvm: exports whitelist (dylib)'
         run: |
           # shellcheck disable=SC2012   # library names are fixed ASCII

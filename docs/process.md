@@ -137,17 +137,33 @@ leftover of an earlier build.
 
 Bug classes that came back after review are checked by scripts under `tools/check/`, each with negative controls on a
 scratch repository (`<name>-test.sh`), in step 3 of the local gate (step 4 runs the negative controls) and in the hosted
-CI's lint job. Each reads the tracked files in about a second. Where a check keeps a lock file, the lock changes in the
-same commit as the code it records, so the change is in the diff a reviewer reads.
+CI's lint job; `test-bytecode.py` reads compiled classes, so it runs in the gate's JVM test step and after the JVM tests
+of the CI `apple` job. Each takes a few seconds at most. Where a check keeps a lock file, the lock changes in the same
+commit as the code it records, so the change is in the diff a reviewer reads.
 
 | Check | Fails on | Lock or allowlist |
 |---|---|---|
-| [`test-discovery.py`](../tools/check/test-discovery.py) | a `@Test` that no runner runs: declared inside a function body or lambda, at top level, in an object, companion object, object expression or interface, in an inner or private class, private, with parameters, in a class whose constructor needs an argument or an abstract class nothing extends, in a main source set, or in a source set no build script compiles | none: such a test is fixed |
-| [`test-count.py`](../tools/check/test-count.py) | a test source set whose number of tests (`@Test` and `@FuzzTest`, an `@Ignore`'d one not counted) differs from `tools/check/test-count.lock`: a drop means a test was removed, disabled or moved; a rise means the floor must follow | `--update` rewrites the lock; commit it with the change |
-| [`test-sleeps.py`](../tools/check/test-sleeps.py) | more `delay(`, `sleep(` (`Thread.sleep`), `usleep(`, `nanosleep(` or `Sleep(` calls in a test file than `tools/check/test-sleeps.lock` records (a new file: more than none), or fewer, until the lock is lowered | `--update` only lowers the lock; a file that needs a real wait is named in `tools/check/test-sleeps.allow` with its reason |
-| [`env-apis.py`](../tools/check/env-apis.py) | a host-name lookup in the main sources of the library modules: Ktor's `hostname`, java.net's `hostName` / `canonicalHostName`, `InetAddress.getLocalHost`, and in C `gethostname`, `getnameinfo`, `gethostbyaddr` | a use that does no lookup is named in `tools/check/env-apis.allow` with its reason |
-| [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (a `.name` belongs to the class named before it), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
-| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (the gate checks every commit of `main..HEAD` but merges) | none |
+| [`test-discovery.py`](../tools/check/test-discovery.py) | a `@Test` (also imported under another name) that no runner runs: declared inside a function body or lambda, at top level, in an object, companion object, object expression, interface or enum class, in an inner or private class, private, with parameters, returning a value by its source (a declared return type, `= 42`, `= assertFailsWith<E> { }`), in a class whose constructor needs an argument, in an abstract or sealed class nothing extends, in a main source set, or in a source set no build script compiles | none: such a test is fixed |
+| [`test-bytecode.py`](../tools/check/test-bytecode.py) | in the compiled JVM test classes, a test method whose descriptor returns a value (JUnit 5 skips it without a word: `= runBlocking { 1 }`), a static or private one (a test in a top-level function or a local one), one whose class has no non-private constructor without parameters (an object, a companion object, an inner class), or one in an abstract class nothing extends | none |
+| [`test-count.py`](../tools/check/test-count.py) | a test (`@Test` or `@FuzzTest`; an `@Ignore`'d or `@Disabled` one does not count) listed in `tools/check/test-count.lock` that is gone, named in the finding, or a test the lock does not list | `--update` rewrites the lock, one sorted line per test; commit it with the change |
+| [`test-sleeps.py`](../tools/check/test-sleeps.py) | more sleeps in a test file than `tools/check/test-sleeps.lock` records (a new file: none), when its source set has no more than the lock's lines of that set it is a rename, move or split, which `--update` carries; or fewer, until the lock is lowered. Sleeps are calls of `delay`, `sleep` (`Thread.sleep`), `usleep`, `nanosleep`, `Sleep`, `parkNanos` and `parkUntil`, also under an import alias, as a reference (`Thread::sleep`) or in a string template, and calls of the test sources' polling helpers whose body sleeps (`eventually { }`) | `--update` lowers the lock and carries moves; a new file that needs a real wait is named in `tools/check/test-sleeps.allow` with its reason |
+| [`env-apis.py`](../tools/check/env-apis.py) | a host-name lookup in the main Kotlin, Java and C sources of the library modules, also in a string template or as a reference: Ktor's `hostname`, java.net's `hostName` / `getHostName` / `canonicalHostName`, `InetAddress.getLocalHost`, and `gethostname`, `getnameinfo`, `gethostbyaddr`, `GetNameInfoW`, `NSHost` | a use that does no lookup is counted per file in `tools/check/env-apis.allow`, `<path> \| <api> \| <count> \| <reason>`: one use more fails |
+| [`rfc-tests.py`](../tools/check/rfc-tests.py) | a test or test class named in a ✅ section of `docs/spec/rfc/*.md` that does not exist (`Class.test`, `Class#test`, a `.test` of the class named before it, a bare name in a list of tests that is no test and no name of the sources, a class name close to a test class's but in no source), a ✅ section that names no test, a ✅ summary row whose details section is not ✅ | `tools/check/rfc-tests.lock` lists the ✅ sections without a test when the check came; it only shrinks (`--update`) |
+| [`commit-msg.sh`](../tools/check/commit-msg.sh) | a commit subject without a conventional type: `type(scope): subject` or `type: subject`, the type one of `fix`, `feat`, `test`, `docs`, `build`, `ci`, `refactor`, `perf`, `bench`, `chore`, `revert` (Git's `Revert "..."` passes too; the gate checks every commit of `main..HEAD` but merges, and a range end that is no commit is an error) | none |
+
+What the checks cannot see: `test-discovery.py` reads the brace structure of the sources, not their types, so a test
+whose value comes through a lambda (`= runBlocking { ... }`, a fixture helper) is judged by `test-bytecode.py` alone, and
+that one sees only the JVM compilations (a test only in an Apple, Linux, Windows or Android source set is not read
+there). `test-sleeps.py` knows a polling helper by its name: a helper of the main sources (`kuicksilver-testing`) is not
+followed, and a wait written as a busy loop over the clock is no call it counts. `env-apis.py` matches names, so a lookup
+reached through a function of another name (a wrapper) is not seen. `rfc-tests.py` checks that a named test exists, not
+that it tests what the row claims.
+
+**Merging the locks.** `test-count.lock` has one sorted line per test, so two branches that add tests to different
+classes merge without a conflict. On a conflict in any lock (`test-count.lock`, `test-sleeps.lock`, `rfc-tests.lock`),
+take either side, run the check with `--update` on the merged tree, and read the diff of the lock against each parent:
+a line of `test-count.lock` removed there is a test the merge dropped, a finding of the review rather than a conflict to
+resolve by hand (in the other two locks a removed or lowered line is a gain).
 
 The subject check also runs as a Git `commit-msg` hook. To install it in a clone (all its worktrees share the hook; Git
 runs a hook from the top of the working tree, so each worktree runs its own copy of the script):
@@ -158,8 +174,9 @@ printf '#!/bin/sh\nexec bash tools/check/commit-msg.sh "$1"\n' > "$hook"
 chmod +x "$hook"
 ```
 
-The hook reads the first line of the message that is not a comment; Git's own merge and autosquash subjects (`Merge ...`,
-`fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed. It checks the subject only.
+The hook reads the first line of the message that is not a comment; Git's own merge, revert and autosquash subjects
+(`Merge ...`, `Revert "..."`, `fixup! ...`) pass there, and the gate fails a `fixup!` that was not squashed. It checks the
+subject only.
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers
