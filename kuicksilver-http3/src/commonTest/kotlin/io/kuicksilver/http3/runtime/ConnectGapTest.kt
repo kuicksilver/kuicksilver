@@ -42,25 +42,48 @@ class ConnectGapTest {
             }
         }
 
+    /** A header-only control frame from a raw client; returns the code the server closed the connection with. */
+    private suspend fun serverCloseFor(
+        type: Long,
+        length: Long,
+    ): Long =
+        QuicPair.open().use { q ->
+            val (c, s) = q.connect()
+            Http3Connection.server(s)
+            val raw = RawPeer(c)
+            raw.openControl()
+            val header = ByteArray(16)
+            val n = FrameHeaders.write(type, length, header, 0)
+            peerMayHaveClosed {
+                raw.control.output.writeFully(header.copyOf(n))
+                raw.control.output.flush()
+            }
+            withTimeout(10.seconds) { peerSawClose(c) }
+        }
+
     /**
      * RFC 9114 section 10.5: "Implementations SHOULD track the use of these features and set limits on their use. An
-     * endpoint MAY treat activity that is suspicious as a connection error of type H3_EXCESSIVE_LOAD". A control frame we
-     * would buffer, announced above [FrameRules.MAX_CONTROL_PAYLOAD], is refused from its header, before its payload.
+     * endpoint MAY treat activity that is suspicious as a connection error of type H3_EXCESSIVE_LOAD". A PRIORITY_UPDATE
+     * (an ID and a field value of any length, RFC 9218 section 7.2) announced above [FrameRules.MAX_CONTROL_PAYLOAD] is
+     * refused from its header, before its payload.
      */
-    @Test fun negative_oversizedControlFrameIsExcessiveLoad() =
+    @Test fun negative_oversizedPriorityUpdateIsExcessiveLoad() =
         h3Test {
-            QuicPair.open().use { q ->
-                val (c, s) = q.connect()
-                Http3Connection.server(s)
-                val raw = RawPeer(c)
-                raw.openControl()
-                val header = ByteArray(16)
-                val n = FrameHeaders.write(FrameType.MAX_PUSH_ID, FrameRules.MAX_CONTROL_PAYLOAD + 1, header, 0)
-                peerMayHaveClosed {
-                    raw.control.output.writeFully(header.copyOf(n))
-                    raw.control.output.flush()
-                }
-                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, withTimeout(10.seconds) { peerSawClose(c) })
+            assertEquals(
+                Http3ErrorCode.EXCESSIVE_LOAD,
+                serverCloseFor(FrameType.PRIORITY_UPDATE_REQUEST, FrameRules.MAX_CONTROL_PAYLOAD + 1),
+            )
+        }
+
+    /**
+     * RFC 9114 section 7.1: a payload "that contains additional bytes after the identified fields" is H3_FRAME_ERROR.
+     * MAX_PUSH_ID is one variable-length integer (section 7.2.7): a Length of 9, or one above the buffering cap, is that
+     * error from the header, not H3_EXCESSIVE_LOAD and not a wait for bytes that can only be wrong.
+     */
+    @Test fun negative_overlongMaxPushIdIsFrameError() =
+        h3Test {
+            for (len in listOf(9L, FrameRules.MAX_CONTROL_PAYLOAD + 1)) {
+                assertEquals(Http3ErrorCode.FRAME_ERROR, serverCloseFor(FrameType.MAX_PUSH_ID, len), "length $len")
             }
         }
 }

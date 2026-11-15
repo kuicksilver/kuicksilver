@@ -344,9 +344,10 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3ServerQuicConfigTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.documentedDefaultsAreNotCaps
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.earlyDataContextCoversEveryValueOfOurSettings
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.refusalsNameTheOption
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameGapTest.negative_oneIntegerFrameLongerThanAnIntegerIsFrameError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameGapTest.negative_priorityUpdateOfEitherTypeOnARequestStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameGapTest.negative_pushPromiseOnTheControlStream
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameGapTest.negative_zeroTypeAndZeroLengthParse
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameGapTest.zeroTypeAndZeroLengthParse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameHeaderTest.negative_h3ReservedFrameHugeLength
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameHeaderTest.parsesIncrementally
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.frame.FrameRulesTest.controlFirstMustBeSettings
@@ -552,7 +553,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.unknownCapsuleSkipped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.CapsuleStreamTest.useTwiceFails
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_connectAnswered300IsRejected
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_oversizedControlFrameIsExcessiveLoad
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_overlongMaxPushIdIsFrameError
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_oversizedPriorityUpdateIsExcessiveLoad
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.bodyThenFinThenCloseReadsWhole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.drainerLaunchedAfterTheEndRuns
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyThenFinThenCloseReadsWhole

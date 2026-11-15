@@ -38,8 +38,29 @@ class FrameGapTest {
         }
     }
 
+    /**
+     * RFC 9114 section 7.1: "A frame payload that contains additional bytes after the identified fields or a frame payload
+     * that terminates before the end of the identified fields MUST be treated as a connection error of type
+     * H3_FRAME_ERROR." GOAWAY and MAX_PUSH_ID carry one variable-length integer (sections 7.2.6, 7.2.7): a Length above 8
+     * (the longest one) is that error from the header alone, whatever its size; the payload cap of section 10.5
+     * (H3_EXCESSIVE_LOAD) is for frames whose payload is a list or a string.
+     */
+    @Test fun negative_oneIntegerFrameLongerThanAnIntegerIsFrameError() {
+        for (type in listOf(FrameType.GOAWAY, FrameType.MAX_PUSH_ID)) {
+            for (len in listOf(9L, FrameRules.MAX_CONTROL_PAYLOAD, FrameRules.MAX_CONTROL_PAYLOAD + 1, (1L shl 62) - 1)) {
+                assertEquals(Http3ErrorCode.FRAME_ERROR, code { FrameRules.checkControlLength(type, len) }, "type $type length $len")
+            }
+            for (len in 1L..8L) FrameRules.checkControlLength(type, len)
+        }
+        // variable payloads keep the cap: SETTINGS (a list) and PRIORITY_UPDATE (an ID and a field value)
+        for (type in listOf(FrameType.SETTINGS, FrameType.PRIORITY_UPDATE_REQUEST, FrameType.PRIORITY_UPDATE_PUSH)) {
+            FrameRules.checkControlLength(type, FrameRules.MAX_CONTROL_PAYLOAD)
+            assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, code { FrameRules.checkControlLength(type, FrameRules.MAX_CONTROL_PAYLOAD + 1) })
+        }
+    }
+
     /** RFC 9114 section 7.1: type 0 (DATA) and length 0 are ordinary values; a whole header is never "not here yet". */
-    @Test fun negative_zeroTypeAndZeroLengthParse() {
+    @Test fun zeroTypeAndZeroLengthParse() {
         val f = FrameHeaders.frame(FrameType.DATA, ByteArray(0))
         val h = assertNotNull(FrameHeaders.parse(f, 0, f.size))
         assertEquals(FrameType.DATA, h.type)
