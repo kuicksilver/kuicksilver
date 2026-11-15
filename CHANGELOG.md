@@ -1169,7 +1169,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the current ID only where the client used ours from that address, else a spare one, else sending nothing until the
   client provides one (a NEW_CONNECTION_ID, a Retire Prior To that leaves an unused ID current, or the client's packets
   from that address with the ID of ours it used on the path left end the wait, and a re-validation starts only then); it closes only without
-  a validated peer address
+  a validated peer address — a previous path being validated again after a migration (section 9.3.3) counts as one
+  (`PathTest.negative_aNewPathFailingWhileThePreviousIsValidatedAgainRevertsToIt`)
   (`PathTest.negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne`,
   `.negative_theFallbackChoiceReservesNoIdForThePathsItPasses`,
   `.negative_aFailedValidationRevertsToTheLastValidatedPeerAddressFromItsOwnLocalAddress`,
