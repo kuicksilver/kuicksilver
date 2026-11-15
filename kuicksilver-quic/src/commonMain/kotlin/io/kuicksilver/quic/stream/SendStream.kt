@@ -43,6 +43,9 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
     internal var writeRefused = false
 
+    /** Its final size was reported (ConnectionEvent.StreamFinalSize, raised once). */
+    internal var finalSizeReported = false
+
     /**
      * Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water
      * mark once and then never allocates. Empty until the first write: of a connection's four CRYPTO streams one is never written

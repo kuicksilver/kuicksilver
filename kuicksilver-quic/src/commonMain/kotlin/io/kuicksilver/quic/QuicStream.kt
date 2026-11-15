@@ -5,6 +5,7 @@ package io.kuicksilver.quic
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.coroutines.Deferred
 
 /**
  * A QUIC stream as two ktor-io channels. Closing [output] sends FIN; closing it with a cause sends
@@ -72,6 +73,27 @@ public interface QuicStream {
      * [QuicException.StreamError.Stopped] and buffered data is dropped. Returns at once.
      */
     public fun stopSending(code: Long)
+
+    /**
+     * The final size of our sending half (RFC 9000 section 4.5): the flow-control credit it consumed, as the peer counts it.
+     * Completes once the size can no longer change: after [reset], [resetAt] (once its frame went out) or the reset that
+     * answers the peer's STOP_SENDING, with the size that frame carries; after FIN, once all data and the FIN were
+     * acknowledged, with every byte written. Fails with the connection's [QuicException.ConnectionLost] when the connection
+     * ends first, and at once with IllegalStateException on the peer's unidirectional stream. Null from implementations
+     * outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val sentFinalSize: Deferred<Long>? get() = null
+
+    /**
+     * The final size of the peer's sending half (RFC 9000 section 4.5), completed as soon as its FIN, RESET_STREAM or
+     * RESET_STREAM_AT made it known, whether or not the bytes were read (also after [stopSending]): what a protocol that
+     * counts the peer's data across streams needs for a reset stream (draft-ietf-webtrans-http3-16 section 5.4). Fails like
+     * [sentFinalSize] when the connection ends first, and at once with IllegalStateException on our own unidirectional
+     * stream. Null from implementations outside this library that do not track it.
+     */
+    @ExperimentalKuicksilverApi
+    public val receivedFinalSize: Deferred<Long>? get() = null
 
     /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi

@@ -44,6 +44,31 @@ internal class StreamRuntime(
     override val input: ByteReadChannel get() = inChannel ?: throw IllegalStateException("stream $id is send-only")
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
     internal val readable = Channel<Unit>(Channel.CONFLATED)
+    private val sentFinal =
+        kotlinx.coroutines.CompletableDeferred<Long>().also {
+            if (!send) it.completeExceptionally(IllegalStateException("stream $id is receive-only"))
+        }
+    private val receivedFinal =
+        kotlinx.coroutines.CompletableDeferred<Long>().also {
+            if (!recv) it.completeExceptionally(IllegalStateException("stream $id is send-only"))
+        }
+    override val sentFinalSize: kotlinx.coroutines.Deferred<Long> get() = sentFinal
+    override val receivedFinalSize: kotlinx.coroutines.Deferred<Long> get() = receivedFinal
+
+    /** On the loop: the core fixed the final size of one half ([io.kuicksilver.quic.ConnectionEvent.StreamFinalSize]). */
+    internal fun finalSize(
+        sending: Boolean,
+        size: Long,
+    ) {
+        (if (sending) sentFinal else receivedFinal).complete(size)
+    }
+
+    /** The final sizes will never be known: the connection ended, or a rejected 0-RTT dropped the stream. */
+    private fun finalSizesLost(cause: Throwable) {
+        sentFinal.completeExceptionally(cause)
+        receivedFinal.completeExceptionally(cause)
+    }
+
     internal val ticker = conn.newTicker()
 
     // the loop applies the value the property holds when its turn comes, not the one this setter wrote: setters on several
@@ -176,12 +201,14 @@ internal class StreamRuntime(
     internal fun earlyDataRejected() {
         dropped = true
         val e = QuicException.StreamError.EarlyDataRejected(id)
+        finalSizesLost(e)
         inChannel?.closeWith(e)
         outChannel?.closeWith(e)
         finished()
     }
 
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
+        finalSizesLost(reason)
         inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
         done.complete(Unit)

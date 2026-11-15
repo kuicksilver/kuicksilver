@@ -248,6 +248,7 @@ internal class StreamManager(
                     is ConnectionEvent.StreamReset -> ev.id
                     is ConnectionEvent.StopSendingReceived -> ev.id
                     is ConnectionEvent.StreamFinished -> ev.id
+                    is ConnectionEvent.StreamFinalSize -> ev.id
                     else -> return@removeAll false
                 }
             StreamIds.isLocal(id, role)
@@ -484,7 +485,9 @@ internal class StreamManager(
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
         val wasWhole = r.state == RecvState.DataRecvd
+        val finalBefore = r.finalSize
         connReceived += r.onData(offset, data, off, len, fin, connFlow, connReceived) // checks both windows before it changes anything
+        reportReceivedFinal(id, r, finalBefore)
         if (r.stopped) {
             creditConnection(r.abandon())
             if (r.finished) maybeClose(id)
@@ -505,7 +508,9 @@ internal class StreamManager(
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
         val was = r.state
+        val finalBefore = r.finalSize
         connReceived += r.onReset(code, finalSize, connFlow, connReceived)
+        reportReceivedFinal(id, r, finalBefore)
         creditConnection(r.abandon())
         // once, on the move to Reset Recvd: a repeat (a retransmission) or a reset after all data was read changes nothing to report
         if (was != RecvState.ResetRecvd && r.state == RecvState.ResetRecvd) events += ConnectionEvent.StreamReset(id, code)
@@ -522,7 +527,9 @@ internal class StreamManager(
         val e = peerStream(id, 0x24, receiving = true) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x24, "RESET_STREAM_AT on our send-only stream $id")
+        val finalBefore = r.finalSize
         connReceived += r.onResetAt(code, finalSize, reliableSize, connFlow, connReceived)
+        reportReceivedFinal(id, r, finalBefore)
         if (r.takeResetAtReached()) {
             resetAtSurfaced(e, r)
         } else if (r.readable > 0) {
@@ -555,6 +562,7 @@ internal class StreamManager(
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
+        reportSentFinal(s, finalSize)
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
     }
@@ -751,6 +759,25 @@ internal class StreamManager(
         }
     }
 
+    /** Reports the final size of [s]'s sending half once, when it can no longer change (RFC 9000 section 4.5). */
+    private fun reportSentFinal(
+        s: SendStream,
+        size: Long,
+    ) {
+        if (s.finalSizeReported) return
+        s.finalSizeReported = true
+        events += ConnectionEvent.StreamFinalSize(s.id, sending = true, size = size)
+    }
+
+    /** Reports the final size of the receiving half [r] of stream [id] when a frame just fixed it ([before] was unknown). */
+    private fun reportReceivedFinal(
+        id: Long,
+        r: RecvStream,
+        before: Long,
+    ) {
+        if (before < 0 && r.finalSize >= 0) events += ConnectionEvent.StreamFinalSize(id, sending = false, size = r.finalSize)
+    }
+
     private fun maybeClose(id: Long) {
         val e = streams[id] ?: return
         val sendDone = e.send?.let { it.state == SendState.DataRecvd || it.state == SendState.ResetSent } ?: true
@@ -784,6 +811,7 @@ internal class StreamManager(
         scheduler.remove(s)
         wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
+        reportSentFinal(s, finalSize)
         maybeClose(id)
     }
 
@@ -823,7 +851,9 @@ internal class StreamManager(
      */
     private fun announceResetAtIfDue(s: SendStream) {
         if (!s.resetAtDue) return
-        queueControl(ControlKind.ResetStreamAt, s.id, s.resetAtCode, s.announceResetAt(), s.reliableSize)
+        val finalSize = s.announceResetAt()
+        queueControl(ControlKind.ResetStreamAt, s.id, s.resetAtCode, finalSize, s.reliableSize)
+        reportSentFinal(s, finalSize)
         if (s.releasedUpTo >= s.reliableSize) {
             s.onAcked(0, 0) // nothing more to acknowledge: the stream is ResetSent now
             maybeClose(s.id)
@@ -992,6 +1022,7 @@ internal class StreamManager(
             }
             sendBufferedBytes -=
                 s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
+            if (s.state == SendState.DataRecvd) reportSentFinal(s, s.written)
             if (s.state == SendState.DataRecvd || s.state == SendState.ResetSent) maybeClose(s.id)
         }
         if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()

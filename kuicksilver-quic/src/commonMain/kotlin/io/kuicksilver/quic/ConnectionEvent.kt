@@ -100,6 +100,22 @@ public sealed interface ConnectionEvent {
     ) : ConnectionEvent
 
     /**
+     * The final size of one half of stream [id][ConnectionEvent.StreamFinalSize.id] is fixed (RFC 9000 section 4.5): for
+     * [sending][ConnectionEvent.StreamFinalSize.sending], once the sending half was reset (RESET_STREAM, RESET_STREAM_AT, or the
+     * answer to the peer's STOP_SENDING) or all its data and FIN were acknowledged; for the receiving half, once the peer's FIN,
+     * RESET_STREAM or RESET_STREAM_AT told it, whether or not the bytes were read. [size][ConnectionEvent.StreamFinalSize.size]
+     * is the flow-control credit the stream consumed. Raised once per half.
+     */
+    public class StreamFinalSize internal constructor(
+        /** The stream whose final size is known. */
+        public val id: Long,
+        /** True for our sending half, false for the peer's (our receiving half). */
+        public val sending: Boolean,
+        /** The final size in bytes. */
+        public val size: Long,
+    ) : ConnectionEvent
+
+    /**
      * The peer raised its stream limit ([bidi][ConnectionEvent.StreamsAvailable.bidi] or unidirectional) with MAX_STREAMS (RFC 9000 section 4.6) after
      * [ConnectionCore.openStream] was refused at the old one: retry the open. Raised once per refusal.
      */

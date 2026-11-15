@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: `QuicStream.sentFinalSize` and `QuicStream.receivedFinalSize` (experimental) complete with the final size of
+  each half of a stream (RFC 9000 section 4.5) once it can no longer change: after a reset (RESET_STREAM,
+  RESET_STREAM_AT, the answer to STOP_SENDING) with the size the frame carries, or once a FIN fixed it, also when the
+  bytes were never read or reading was stopped. The core reports it with the new `ConnectionEvent.StreamFinalSize`.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the

@@ -608,6 +608,10 @@ internal class ConnectionRuntime(
                     wrapper(e.id)?.peerStopped(e.code)
                 }
 
+                is ConnectionEvent.StreamFinalSize -> {
+                    wrapper(e.id)?.finalSize(e.sending, e.size)
+                }
+
                 is ConnectionEvent.StreamFinished -> {
                     wrapper(e.id)?.let {
                         streams.remove(e.id)

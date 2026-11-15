@@ -358,6 +358,10 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
         abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.quic/QuicStream.output.<get-output>|<get-output>(){}[0]
     open val receivedEarly // io.kuicksilver.quic/QuicStream.receivedEarly|{}receivedEarly[0]
         open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.quic/QuicStream.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
+    open val receivedFinalSize // io.kuicksilver.quic/QuicStream.receivedFinalSize|{}receivedFinalSize[0]
+        open fun <get-receivedFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.receivedFinalSize.<get-receivedFinalSize>|<get-receivedFinalSize>(){}[0]
+    open val sentFinalSize // io.kuicksilver.quic/QuicStream.sentFinalSize|{}sentFinalSize[0]
+        open fun <get-sentFinalSize>(): kotlinx.coroutines/Deferred<kotlin/Long>? // io.kuicksilver.quic/QuicStream.sentFinalSize.<get-sentFinalSize>|<get-sentFinalSize>(){}[0]
 
     abstract var priority // io.kuicksilver.quic/QuicStream.priority|{}priority[0]
         abstract fun <get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.quic/QuicStream.priority.<get-priority>|<get-priority>(){}[0]
@@ -477,6 +481,15 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
             final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code.<get-code>|<get-code>(){}[0]
         final val id // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.id.<get-id>|<get-id>(){}[0]
+    }
+
+    final class StreamFinalSize : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize|null[0]
+        final val id // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.id|{}id[0]
+            final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.id.<get-id>|<get-id>(){}[0]
+        final val sending // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.sending|{}sending[0]
+            final fun <get-sending>(): kotlin/Boolean // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.sending.<get-sending>|<get-sending>(){}[0]
+        final val size // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.size|{}size[0]
+            final fun <get-size>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamFinalSize.size.<get-size>|<get-size>(){}[0]
     }
 
     final class StreamFinished : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamFinished|null[0]
