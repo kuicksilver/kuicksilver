@@ -488,7 +488,9 @@ class ClientH3WebSocketTest {
      * The connect timeout also bounds the QUIC handshake, so a request answered first sets the connection up outside it:
      * on a loaded host (a Windows VM) the handshake took longer than the 500 ms, the first WebSocket failed before its
      * CONNECT was sent, and the test waited for that CONNECT until its own 60 s ran out. The second WebSocket's answer
-     * has its own, longer connect timeout for the same reason; only the first one's wait is under test.
+     * has its own, longer connect timeout for the same reason; only the first one's wait is under test. Nothing waits for
+     * the first's CONNECT to reach the server either (the server tells the two apart by path): the second starts once the
+     * first holds the host, so a slow host changes when things happen, never the outcome.
      */
     @Test fun negative_stalledHandshakeTimesOutAndFreesTheHostH3() =
         h3Test {
@@ -506,17 +508,21 @@ class ClientH3WebSocketTest {
                         .build(),
                     io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
                 )
-            val firstArrived = CompletableDeferred<Unit>()
             coroutineScope {
                 val served =
                     async {
                         val conn = ep.accept()
                         conn.acceptRequest().respond(204, io.kuicksilver.http3.Http3Headers(emptyList())).finish() // the set-up
-                        conn.acceptRequest() // never answered
-                        firstArrived.complete(Unit)
-                        val s = conn.acceptRequest().acceptConnect()
-                        s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
-                        s.output.flush()
+                        // the first's CONNECT is never answered, whenever it arrives (or if it never does: its client can
+                        // give up before it is sent); the second's is
+                        while (true) {
+                            val r = conn.acceptRequest()
+                            if (r.path != "/second") continue
+                            val s = r.acceptConnect()
+                            s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
+                            s.output.flush()
+                            break
+                        }
                     }
                 try {
                     testClient(
@@ -528,7 +534,7 @@ class ClientH3WebSocketTest {
                         },
                     ).use { c ->
                         val engine = c.engine as KuicksilverEngine
-                        val url = "wss://127.0.0.1:${ep.localAddress.port}/ws"
+                        val url = "wss://127.0.0.1:${ep.localAddress.port}"
                         // the connection is set up (and SETTINGS seen) with a longer connect timeout than the one under test
                         val setUp =
                             c.get("https://127.0.0.1:${ep.localAddress.port}/") {
@@ -536,16 +542,16 @@ class ClientH3WebSocketTest {
                             }
                         assertEquals(204, setUp.status.value)
                         coroutineScope {
-                            val first = async { runCatching { c.webSocket(url) { for (f in incoming) continue } } }
-                            // the first's CONNECT reached the server, or the first ended without it (named, not a hang)
-                            kotlinx.coroutines.selects.select {
-                                firstArrived.onAwait {}
-                                first.onAwait { r -> throw AssertionError("the first ended before its CONNECT arrived: $r") }
-                            }
+                            val connecting = engine.h1.webSocketConnecting
+                            val before = connecting.acquiredForTest.value
+                            val first = async { runCatching { c.webSocket("$url/first") { for (f in incoming) continue } } }
+                            // the second starts once the first holds the host: what is under test is how long the first
+                            // holds it (its connect timeout), not how fast its CONNECT reaches the server
+                            withTimeout(10.seconds) { connecting.acquiredForTest.first { it > before } }
                             val second =
                                 async {
                                     withTimeout(10.seconds) {
-                                        c.webSocket(url, request = {
+                                        c.webSocket("$url/second", request = {
                                             timeout { connectTimeoutMillis = 10_000 }
                                         }) { for (f in incoming) continue }
                                     }

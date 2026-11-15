@@ -555,6 +555,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.earl
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.earlyRequestIsSentAgainAfterRejection
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.h3DatagramChangeInvalidatesEarlyData
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.liveCriticalStreamsSurviveARejectionNotedWhileTheyAreSetUp
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_answerBetweenTheDeadlineReadsStillGetsTheDeadline
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_rejectionWithFewerUniStreamsDuringTheAttemptGetsTheDeadline
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_settingsIncompatibleWithTheStoredOnesAreSettingsError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.EarlyDataTest.negative_unsafeMethodNotProcessedInEarlyData
@@ -968,6 +969,8 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CommittedCorpusReplayTes
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.CompletedWithinTest.aBlockStillWaitingGivesNull
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
@@ -2567,7 +2570,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.s
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.upgradeIs501AndReportedSo
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.h3DisabledWhenQuicServerUnsupported
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3DisabledTest.h3SkippedForSniSelectorConnector
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.aStopShorterThanThreeSecondsEndsGracefullyWithAnIdleClient
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.aStopEndsGracefullyWithAnIdleClient
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.aStopGivesAnIdleClientAQuarterOfTheGracePeriod
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.altSvcDisabled
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.altSvcOnH1Responses
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH3Test.appAltSvcNotOverwritten
