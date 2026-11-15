@@ -21,7 +21,7 @@
 # project whose language is jvm, and it reads its certificates from the source tree at run time; the campaigns run it.
 
 cd "$SRC/kuicksilver"
-export JOBS="$(nproc)"
+JOBS="$(nproc)"; export JOBS
 
 # 1-2: OpenSSL and libksl (JNI headers from the JDK in JAVA_HOME)
 bash tools/openssl/fetch.sh
@@ -30,8 +30,12 @@ bash tools/openssl/fetch.sh
 CC="${CC:-clang}" CFLAGS="" bash tools/openssl/build.sh linux-x64
 CC="${CC:-clang}" CFLAGS="" bash tools/build-jni.sh linux-x86_64 kuicksilver-native/build/jni
 
+# The campaign's target table, <id> <kind> <module> <class> <method>: the targets of kind jvm and their modules
+table=$(awk '/^targets_table\(\) \{/ { t = 1; next } t && /^EOF$/ { exit } t && NF == 5' tools/fuzz/campaign.sh)
+modules=$(awk '$2 == "jvm" { print $3 }' <<< "$table" | sort -u | tr '\n' ' ')
+[ -n "$modules" ] || { echo "no jvm target in tools/fuzz/campaign.sh" >&2; exit 1; }
+
 # 3: compile the fuzz targets and resolve their classpath, one FUZZ_CP line per module
-modules="kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-network kuicksilver-ktor-client kuicksilver-ktor-server"
 tasks=""; for m in $modules; do tasks="$tasks :$m:printFuzzClasspath"; done
 # shellcheck disable=SC2086 # the task list is split on purpose
 JAVA_HOME=/opt/jdk-21 ./gradlew --no-daemon --no-watch-fs --max-workers="$JOBS" -q -I tools/fuzz/classpath.init.gradle \
@@ -61,8 +65,7 @@ while IFS= read -r line; do
 done < /tmp/fuzz-classpath.txt
 for m in $modules; do [ -n "${module_cp[$m]:-}" ] || { echo "Gradle printed no classpath for $m" >&2; exit 1; }; done
 
-# One launcher per target of kind jvm in the campaign table: <id> jvm <module> <class> <method>
-table=$(awk '/^targets_table\(\) \{/ { t = 1; next } t && /^EOF$/ { exit } t && NF == 5' tools/fuzz/campaign.sh)
+# One launcher per target of kind jvm in the table
 n=0
 while read -r id kind module cls method; do
   [ "$kind" = jvm ] || continue

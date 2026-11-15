@@ -20,10 +20,10 @@ check() {   # name expected-exit [grep pattern] -- command
 repo="$tmp/Desktop/temp last/repo"; state="$tmp/state dir"; home="$tmp/home dir"; cache="$tmp/gradle cache"
 mkdir -p "$repo/tools/fuzz" "$home/.kuicksilver-tools" "$cache" "$tmp/bin"
 cp "$here/campaign.sh" "$repo/tools/fuzz/campaign.sh"
-# every module whose classpath campaign.sh asks Gradle for (and requires): read from the script, so a module added there
-# cannot leave the stub behind
-modules=$(grep -oE ':kuicksilver-[a-z0-9-]+:printFuzzClasspath' "$here/campaign.sh" | sed 's/^://; s/:.*//' | sort -u | tr '\n' ' ')
-[ -n "$modules" ] || { echo "FAIL no printFuzzClasspath module found in campaign.sh"; exit 1; }
+# every module whose classpath campaign.sh asks Gradle for (and requires): the modules of its jvm targets, read from its
+# target table, so a module added there cannot leave the stub behind
+modules=$(awk '/^targets_table\(\) \{/ { t = 1; next } t && /^EOF$/ { exit } t && $2 == "jvm" { print $3 }' "$here/campaign.sh" | sort -u | tr '\n' ' ')
+[ -n "$modules" ] || { echo "FAIL no jvm target found in campaign.sh"; exit 1; }
 for m in $modules; do
   mkdir -p "$repo/$m/build/test classes"; echo "$m" > "$repo/$m/build/test classes/marker"
 done

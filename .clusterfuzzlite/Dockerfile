@@ -8,7 +8,8 @@
 # signature and SHA-256 checked by tools/openssl/fetch.sh), builds it and builds libksl inside this image, without Docker.
 #
 # Kept OSS-Fuzz-compatible for a future OSS-Fuzz application; no workflow of this repository runs it (CONTRIBUTING.md,
-# "Fuzzing"). Checked by hand: docker build, then the image's compile and the base runner's run_fuzzer.
+# "Fuzzing"). To check it by hand: docker build, then the image's compile and the base runner's run_fuzzer (not yet
+# done in full: the compile has not been run to its end).
 
 # pinned by digest (tools/check/pins.sh; resolved from gcr.io 2026-10-12, Renovate updates it)
 FROM gcr.io/oss-fuzz-base/base-builder-jvm@sha256:bd13a763de1a0fb22099442094e7e0049657a8c47f01e9d7af8bb849e0ad4699

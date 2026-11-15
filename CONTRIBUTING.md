@@ -270,7 +270,9 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   targets `H1ResponseFuzzTest` and `H1RequestFuzzTest`); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl`
   parsing code. Their committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the
   QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
-  write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
+  write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
+  `tools/fuzz/planted-check.sh` plants known bugs in a copy of the tree and checks that the HTTP/1.1 targets fail on the
+  inputs written for them: run it after changing those targets or the code they fuzz. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
   least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;

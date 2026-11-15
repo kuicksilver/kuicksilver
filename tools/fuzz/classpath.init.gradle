@@ -1,9 +1,16 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Gradle init script for tools/fuzz/campaign.sh: compiles the jvmTest classes of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-network, kuicksilver-ktor-client and kuicksilver-ktor-server and
-// prints their test runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`.
+// Gradle init script for tools/fuzz/campaign.sh and .clusterfuzzlite/build.sh: compiles the jvmTest classes of every module
+// with a Jazzer target in campaign.sh's target table (its third column for the rows of kind jvm) and prints their test
+// runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`.
+def fuzzModules = { File root ->
+    def lines = new File(root, 'tools/fuzz/campaign.sh').readLines()
+    def start = lines.findIndexOf { it.startsWith('targets_table() {') }
+    def rows = lines.drop(start + 1).takeWhile { it != 'EOF' }.collect { it.trim().split(/\s+/) }
+    rows.findAll { it.size() == 5 && it[1] == 'jvm' }.collect { it[2] } as Set
+}
 allprojects {
-    if (name in ['kuicksilver-tls', 'kuicksilver-quic', 'kuicksilver-http3', 'kuicksilver-http2', 'kuicksilver-ktor-network', 'kuicksilver-ktor-client', 'kuicksilver-ktor-server']) {
+    if (name in fuzzModules(rootDir)) {
         afterEvaluate {
             def module = name
             tasks.register('printFuzzClasspath') {
