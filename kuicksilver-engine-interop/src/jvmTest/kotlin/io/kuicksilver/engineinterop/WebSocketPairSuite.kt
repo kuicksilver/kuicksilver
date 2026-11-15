@@ -216,12 +216,15 @@ internal class OkHttpToServerWebSocketTest : WebSocketPairSuite(ServerEngine.Kui
      * OkHttp's WebSocket has no fragments in its API and Ktor's OkHttp engine sends each Frame as a message of its own,
      * FIN set, whatever the frame's `fin` says: the server reads the first fragment as a whole message of 1000 characters
      * (one frame). Not an error on either side, but a fragmented message cannot be sent through that engine.
+     *
+     * Only the first fragment is sent: the server answers it as a whole message (it would wait for the rest, and the
+     * answer would never come, had the frame gone out without FIN) and then ends the session, so a second fragment sent
+     * after that raced the server's Close and failed with "WebSocket session closed" on a slow host.
      */
     @Test override fun clientFragmentedMessage() =
         interopTest {
             session("/ws/assemble") {
                 send(Frame.Text(false, "a".repeat(1000).encodeToByteArray()))
-                send(Frame.Text(true, "b".repeat(1000).encodeToByteArray()))
                 assertEquals("1000:1:aaaaaaaaaaaaaaaa", receiveMessage())
             }
         }
