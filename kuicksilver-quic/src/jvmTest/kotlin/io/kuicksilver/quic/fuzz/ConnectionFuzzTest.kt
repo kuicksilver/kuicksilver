@@ -308,6 +308,8 @@ internal class ConnectionFuzz(
     private val data: ByteArray,
     private val crypto: QuicCrypto,
     private val tamper: ((EndpointNet) -> Unit)? = null,
+    /** Told the offset of every PATH operation (kind 7, argument neither 0 nor 15) as it runs ([ConnectionProgramRewriter]). */
+    private val pathOpSeen: ((offset: Int) -> Unit)? = null,
 ) {
     private var p = 0
     private val flags = if (data.isEmpty()) 0 else data[0].toInt() and 0xff
@@ -690,7 +692,12 @@ internal class ConnectionFuzz(
             }
 
             else -> {
-                if (arg == 0 || arg == 15) step() else path(side, arg)
+                if (arg == 0 || arg == 15) {
+                    step()
+                } else {
+                    pathOpSeen?.invoke(p - 1)
+                    path(side, arg)
+                }
             }
         }
     }
