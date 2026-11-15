@@ -20,6 +20,7 @@ import io.kuicksilver.ktor.server.h1.MalformedRequestBody
 import io.kuicksilver.ktor.server.h1.RequestFraming
 import io.kuicksilver.ktor.server.h1.RequestHeadRefused
 import io.kuicksilver.ktor.server.h1.checkRequestHead
+import io.kuicksilver.ktor.server.h1.requestEndsConnection
 import io.kuicksilver.ktor.server.h1.requestFields
 import io.kuicksilver.ktor.server.h1.skipEmptyLines
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
@@ -39,8 +40,10 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Fuzz target `h1Request`: input = [mode byte][what an HTTP/1.1 client sends on one connection], then the end of its side.
  * Mode bits 0-2 choose the handler (read the body, then answer with Content-Length; answer without reading the body;
- * fail; read the body, then answer chunked; answer, then read the body); bits 3-7, when not 0, cut the client's bytes into
- * pieces of that many bytes, each handed over on its own, else they come at once.
+ * fail; read the body, then answer chunked; answer, then read the body), which stands in for the call layer at the
+ * response head as H1Response does: it settles a requested upgrade as refused, says whether the connection ends after
+ * the response and then sends `Connection: close`, and answers CONNECT with 501; bits 3-7, when not 0, cut the
+ * client's bytes into pieces of that many bytes, each handed over on its own, else they come at once.
  *
  * First the server engine's pipeline ([startH1Pipeline]: the request head checks, Ktor's parser, the framing of request
  * bodies, chunked included, pipelining, `Expect: 100-continue`, unread bodies, failed handlers) runs on it with a 4 KiB
@@ -54,7 +57,8 @@ import kotlin.time.Duration.Companion.seconds
  *
  * The pipeline answers any failure of its head checks, of a body's decoding and of the handler with a 400 or a 500 (or
  * ends the connection), which hides a bug in them. So the same input then goes through the same steps on their own, one
- * request after another ([sequentialPass]), where only what the pipeline expects of a client's bytes may come out.
+ * request after another ([sequentialPass]), where only what the pipeline expects of a client's bytes may come out, and
+ * the framing of each request agrees with a reading of Transfer-Encoding from the ABNF alone ([checkFraming]).
  */
 class H1RequestFuzzTest {
     @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
@@ -81,11 +85,22 @@ class H1RequestFuzzTest {
                     if (method.isEmpty() || !method.all { it in TCHAR }) wrong += "method ${method.visible()}"
                     val target = request.uri.toString()
                     if (target.any { it.code <= 0x20 || it.code == 0x7F }) wrong += "target ${target.visible()}"
+                    val ends = requestEndsConnection(HttpProtocolVersion.parse(request.version), fields.getAll("Connection").orEmpty())
                     request.release()
+
+                    // what the call layer settles at the response head (H1Response): no upgrade, whether the connection
+                    // ends after this response and then saying so, and a CONNECT refused with 501
+                    fun head(framing: String): String {
+                        upgraded?.complete(false)
+                        val close = closing() || method == "CONNECT" || ends
+                        endsConnection?.complete(close)
+                        val status = if (method == "CONNECT") "501 Not Implemented" else "200 OK"
+                        return "HTTP/1.1 $status\r\n" + (if (close) "Connection: close\r\n" else "") + framing + "\r\n"
+                    }
                     val content = if (method == "HEAD") "" else "ok"
                     when (handlerMode) {
                         1 -> {
-                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n$content")
+                            output.writeStringUtf8(head("Content-Length: 2\r\n") + content)
                         }
 
                         2 -> {
@@ -95,18 +110,18 @@ class H1RequestFuzzTest {
                         3 -> {
                             input.readBuffer()
                             val chunks = if (method == "HEAD") "" else "2\r\nok\r\n0\r\n\r\n"
-                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n$chunks")
+                            output.writeStringUtf8(head("Transfer-Encoding: chunked\r\n") + chunks)
                         }
 
                         4 -> {
-                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n$content")
+                            output.writeStringUtf8(head("Content-Length: 2\r\n") + content)
                             output.flush()
                             input.readBuffer()
                         }
 
                         else -> {
                             input.readBuffer() // the body, to its end
-                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n$content")
+                            output.writeStringUtf8(head("Content-Length: 2\r\n") + content)
                         }
                     }
                     output.flush()
@@ -212,15 +227,11 @@ class H1RequestFuzzTest {
                     val fields = requestFields(request, input.keptFieldValues, version)
                     val method = request.method.value
                     val tunnel = method == "CONNECT" || fields["Upgrade"] != null
-                    val options =
-                        fields
-                            .getAll("Connection")
-                            .orEmpty()
-                            .flatMap { it.split(',') }
-                            .map { it.trim().lowercase() }
-                    val ends = "close" in options || (version == HttpProtocolVersion.HTTP_1_0 && "keep-alive" !in options)
+                    // as the call layer decides it (requestEndsConnection, what the stand-in handler uses too)
+                    val ends = requestEndsConnection(version, fields.getAll("Connection").orEmpty())
                     heads += Head(method == "HEAD", tunnel, ends)
                     val framing = RequestFraming.of(request, fields)
+                    checkFraming(fields.getAll("Transfer-Encoding").orEmpty(), framing)
                     if (framing.fault != null) return Pass(heads, open = false)
                     if (tunnel) return Pass(heads, open = true)
                     if (!framing.hasBody) continue
@@ -351,6 +362,28 @@ class H1RequestFuzzTest {
         return -1
     }
 
+    /**
+     * The engine's framing of a request with Transfer-Encoding [te] against [transferCodingVerdict], which reads the field
+     * from the ABNF alone: a request the engine frames without a fault has chunked as its final coding, and one the
+     * engine refuses for its Transfer-Encoding does not, unless it lists other codings before chunked (501, the codings
+     * this server does not implement). A disagreement is a request the server and a front proxy would split differently.
+     */
+    private fun checkFraming(
+        te: List<String>,
+        framing: RequestFraming,
+    ) {
+        if (te.isEmpty()) return
+        val verdict = transferCodingVerdict(te)
+        if (framing.fault == null) {
+            assertTrue(
+                verdict == TransferCodingVerdict.CHUNKED_FINAL && framing.chunked,
+                "Transfer-Encoding $te framed as chunked: $verdict",
+            )
+        } else if (verdict == TransferCodingVerdict.CHUNKED_FINAL) {
+            assertTrue(framing.fault !in TE_FAULTS, "Transfer-Encoding $te refused (${framing.fault}), but chunked is final")
+        }
+    }
+
     private fun String.visible(): String =
         map {
             if (it.code < 0x20 ||
@@ -366,6 +399,8 @@ class H1RequestFuzzTest {
     private class HandlerFailure : Exception("the handler fails")
 
     private companion object {
+        /** RequestFraming's faults that say the Transfer-Encoding value itself is wrong. */
+        val TE_FAULTS = setOf("Invalid Transfer-Encoding", "Transfer coding other than a final chunked", "chunked applied more than once")
         const val MAX_HEAD = 4_096
         val CRLF = byteArrayOf(0x0D, 0x0A)
         val END = byteArrayOf(0x0D, 0x0A, 0x0D, 0x0A)

@@ -13,6 +13,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.cio.ParserException
+import io.ktor.http.cio.parseResponse
 import io.ktor.http.content.TextContent
 import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteChannel
@@ -24,8 +25,10 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.client.h1.AfterResponse
 import io.kuicksilver.ktor.client.h1.HeadLimitedInput
 import io.kuicksilver.ktor.client.h1.ResponseFraming
+import io.kuicksilver.ktor.client.h1.ResponseHeadBytes
 import io.kuicksilver.ktor.client.h1.readResponse
 import io.kuicksilver.ktor.client.h1.readResponseHeadBytes
+import io.kuicksilver.ktor.client.h1.responseFields
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -52,8 +55,10 @@ import kotlin.test.assertTrue
  * bytes may come out (a [ParserException] or an [IOException], with no other exception as a cause: [engineFailure]).
  * Each body is exactly what its framing says, compared with the bytes it took: a Content-Length body is those N bytes, a
  * chunked one what a small reference decoder ([dechunk]) makes of them, a body read until the close is the rest of the
- * input, and the answer to HEAD, a 204 or a 304 takes nothing; the engine never takes more than there is. Then the heads alone, from the whole input: each takes at most the
- * limit from the connection, and what it hands on to Ktor's parser is what that parser may rely on ([checkHead]).
+ * input, and the answer to HEAD, a 204 or a 304 takes nothing; the engine never takes more than there is. Then the heads
+ * alone, from the whole input: each takes at most the limit from the connection, what it hands on to Ktor's parser is
+ * what that parser may rely on ([checkHead]), and the engine's framing agrees with a reading of Transfer-Encoding from
+ * the ABNF alone ([checkFraming]).
  */
 class H1ResponseFuzzTest {
     @BeforeEach fun nameTheCase(case: TestInfo) = fuzzCase(case)
@@ -162,6 +167,7 @@ class H1ResponseFuzzTest {
                     val took = before - input.availableForRead
                     assertTrue(took <= MAX_HEAD, "a head that took $took bytes")
                     checkHead(head.bytes)
+                    checkFraming(head)
                 }
             } catch (_: ParserException) {
             } catch (_: IOException) {
@@ -177,6 +183,28 @@ class H1ResponseFuzzTest {
     private fun engineFailure(e: Throwable) {
         val odd = generateSequence(e) { it.cause }.firstOrNull { it !is IOException && it !is ParserException }
         if (odd != null) throw AssertionError("an engine failure that is not a parse or I/O error: $odd", e)
+    }
+
+    /**
+     * The engine's framing of a response head ([ResponseFraming.of] on the fields as sent) against [transferCodingVerdict],
+     * which reads Transfer-Encoding from the ABNF alone: invalid, chunked as the final coding, or another final coding
+     * (read until the close). A disagreement is where a peer and the engine would split the stream differently.
+     */
+    private suspend fun checkFraming(head: ResponseHeadBytes) {
+        val raw = parseResponse(ByteReadChannel(head.bytes)) ?: return
+        raw.use {
+            val fields = responseFields(raw.headers, head.keptValues)
+            val te = fields.filterKeys { it.equals(HttpHeaders.TransferEncoding, ignoreCase = true) }.values.flatten()
+            if (te.isEmpty() || HttpProtocolVersion.parse(raw.version) == HttpProtocolVersion.HTTP_1_0) return
+            val framing = ResponseFraming.of(fields)
+            val engine =
+                when {
+                    framing.invalidEncoding -> TransferCodingVerdict.INVALID
+                    framing.delimited -> TransferCodingVerdict.CHUNKED_FINAL
+                    else -> TransferCodingVerdict.OTHER
+                }
+            assertEquals(transferCodingVerdict(te), engine, "Transfer-Encoding $te")
+        }
     }
 
     private fun request(kind: Int): HttpRequestData =

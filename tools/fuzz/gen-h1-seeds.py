@@ -39,6 +39,8 @@ targets = {
         "pieces-1": pieces(1) + b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
         "pieces-7": pieces(7) + b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbodyHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;x=y\r\nz\r\n0\r\nT: 1\r\n\r\n",
         "too-large": GET + b"HTTP/1.1 200 OK\r\nContent-Length: 1000000000000000000\r\n\r\n",
+        # chunked listed before another coding: read until the close (tools/fuzz/planted-check.sh takes it for chunked)
+        "te-chunked-not-final": GET + b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
         # a head of 4,120 bytes, above the target's 4 KiB limit (tools/fuzz/planted-check.sh raises the limit)
         "head-over-limit": GET + b"HTTP/1.1 200 OK\r\nX-Long: " + b"v" * 4_084 + b"\r\nContent-Length: 0\r\n\r\n",
         # a chunk of 0x1f3 bytes (tools/fuzz/planted-check.sh plants a failure on that size)
@@ -65,6 +67,7 @@ targets = {
         "fail": FAIL + b"GET /a HTTP/1.1\r\nHost: s\r\n\r\nGET /b HTTP/1.1\r\nHost: s\r\n\r\n",
         "chunked-answer": CHUNKED + b"GET / HTTP/1.1\r\nHost: s\r\n\r\nHEAD / HTTP/1.1\r\nHost: s\r\n\r\n",
         "answer-first": FIRST + b"PUT /u HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nok",
+        "te-chunked-not-final": READ + b"POST / HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked, gzip\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
         "refused-head": READ + b"HEAD / HTTP/1.1\r\nHost: s\r\nBad Name: v\r\n\r\n",
         "close": READ + b"GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\nGET /after HTTP/1.1\r\nHost: s\r\n\r\n",
         "pieces-1": pieces(1, READ) + b"POST / HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\n\r\n",

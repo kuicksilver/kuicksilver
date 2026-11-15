@@ -18,6 +18,8 @@
 #   server-content the 400 to a HEAD request carries content                         seed-refused-head of h1Request
 #   server-reset   every response is followed by a reset (IllegalStateException)    seed-get of h1Request
 #   server-drop    the pipeline stops reading after a safe request                  seed-pipelined of h1Request
+#   client-te      `chunked, gzip` is read as chunked-final (the client's FramingFields)  seed-te-chunked-not-final of h1Response
+#   server-te      the same in the server's FramingFields                            seed-te-chunked-not-final of h1Request
 #   server-head    a request head with the method BREW throws IllegalStateException  seed-second-head of h1Request
 #                  (the second head of a connection: the pipeline answers it with a 400)
 # To check that fuzzing finds a plant, not only the input written for it: delete that seed in the copy and run
@@ -45,7 +47,12 @@ size = "            val chunkSize = parseChunkSize(input)\n"
 rhead = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt"
 exchange = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/H1Exchange.kt"
 pipeline = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/ServerPipeline.kt"
+fields_c = "kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/FramingFields.kt"
+fields_s = "kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/h1/FramingFields.kt"
+first_only = "    if (result.size > 1 && result[0].name == \"chunked\") return listOf(result[0])\n    return result\n"
 plants = [
+    (fields_c, "    return result\n}\n", first_only + "}\n"),
+    (fields_s, "    return result\n}\n", first_only + "}\n"),
     (pipeline, "            if (!head) bytes(BAD_REQUEST_BODY)\n", "            bytes(BAD_REQUEST_BODY)\n"),
     (pipeline, "        closedCause?.let { throw it }\n    } catch (thrown: Throwable) {\n",
      "        closedCause?.let { throw it }\n        if (sent) throw IllegalStateException(\"PLANTED-reset\")\n    } catch (thrown: Throwable) {\n"),
@@ -106,6 +113,8 @@ expect = [  # plant, module, class, input, text the failure must contain
     ("client-head", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-head-request", "a body for HEAD"),
     ("server-chunk", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-1f3", "PLANTED-server-chunk"),
     ("server-content", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-refused-head", "Connection: close"),
+    ("client-te", "kuicksilver-ktor-client", ("client", "H1ResponseFuzzTest"), "seed-te-chunked-not-final", "Transfer-Encoding [chunked, gzip]"),
+    ("server-te", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-te-chunked-not-final", "Transfer-Encoding [chunked, gzip]"),
     ("server-reset", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-get", "reset by an unexpected failure"),
     ("server-drop", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-pipelined", "final response(s) to"),
     ("server-hang", "kuicksilver-ktor-server", ("server", "H1RequestFuzzTest"), "seed-chunk-2a7", "still open"),
