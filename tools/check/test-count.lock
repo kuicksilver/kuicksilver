@@ -4381,6 +4381,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.RecvStreamGapsTest.re
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.RecvStreamGapsTest.resetReleasesBufferedRanges
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamComplexityTest.negative_maxStreamDataFloodStaysCheapWithAlternatingAcks
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamModelTest.lostRangesOneByteApartStayApart
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamModelTest.negative_lostFinIsResentWithoutLeavingDataSent
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamModelTest.negative_resetAtDropsLostRangesFromTheReliableSizeUp
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamModelTest.negative_resetAtKeepsOnlyTheReliableBytes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.SendStreamModelTest.restoreRetransmitPutsTheSavedRangesBack

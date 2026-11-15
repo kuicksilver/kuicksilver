@@ -1069,6 +1069,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ("A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state"), it stayed on
   the connection's blocked list so DATA_BLOCKED kept being repeated, and a later MAX_STREAM_DATA raised StreamWritable for
   it. A reset now drops the unsent bytes from what the stream waits to send.
+- QUIC: a lost FIN took a sending stream from "Data Sent" back to "Send", a transition RFC 9000 section 3.1 does not
+  have; the FIN is now sent again from "Data Sent".
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

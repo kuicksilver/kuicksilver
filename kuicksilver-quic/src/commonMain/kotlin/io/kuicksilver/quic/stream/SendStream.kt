@@ -332,10 +332,9 @@ internal class SendStream(
             addLost(start, gapEnd)
             start = gapEnd
         }
-        if (fin && !finAcked && state != SendState.ResetAt) {
-            finSent = false
-            if (state == SendState.DataSent) state = SendState.Send
-        }
+        // the FIN goes again ([hasPending], [nextRange]); the stream stays in "Data Sent": RFC 9000 section 3.1 has no way back
+        // to "Send" ("In this state, the endpoint only retransmits stream data as necessary")
+        if (fin && !finAcked && state != SendState.ResetAt) finSent = false
     }
 
     /**

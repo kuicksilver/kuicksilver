@@ -26,6 +26,9 @@ class SendStreamModelTest {
         var released = 0
         var finQueued = false
         var finSent = false
+
+        /** The FIN went out at least once: RFC 9000 section 3.1 has no way back from "Data Sent" to "Send". */
+        var finEverSent = false
         var finAcked = false
         var everWritten = false
     }
@@ -100,7 +103,10 @@ class SendStreamModelTest {
         s.markSent(r.offset, r.length, r.fin)
         for (i in r.offset.toInt() until r.offset.toInt() + r.length) m.lost.remove(i)
         m.sentEnd = maxOf(m.sentEnd, r.offset.toInt() + r.length)
-        if (r.fin) m.finSent = true
+        if (r.fin) {
+            m.finSent = true
+            m.finEverSent = true
+        }
         return Sent(r.offset, r.length, r.fin)
     }
 
@@ -143,15 +149,42 @@ class SendStreamModelTest {
         assertEquals(m.finSent, s.finSent)
         assertEquals(m.finAcked && m.finQueued && m.released == m.data.size, s.state == SendState.DataRecvd, "Data Recvd")
         assertEquals(if (m.lost.isNotEmpty()) m.lost.first().toLong() else m.sentEnd.toLong(), s.nextOffset)
-        // RFC 9000 section 3.1: "Ready" until the first write, "Send", "Data Sent" once the FIN went out, "Data Recvd"
+        // RFC 9000 section 3.1: "Ready" until the first write, "Send", "Data Sent" once the FIN went out (and stays there when it
+        // is lost: "In this state, the endpoint only retransmits stream data as necessary"), "Data Recvd"
         val state =
             when {
                 m.finAcked && m.finQueued && m.released == m.data.size -> SendState.DataRecvd
-                m.finSent -> SendState.DataSent
+                m.finEverSent -> SendState.DataSent
                 m.data.isNotEmpty() || m.finQueued || m.everWritten -> SendState.Send
                 else -> SendState.Ready
             }
         assertEquals(state, s.state)
+    }
+
+    /**
+     * RFC 9000 section 3.1: in "Data Sent" "the endpoint only retransmits stream data as necessary"; the state machine has no
+     * transition back to "Send". A lost FIN goes out again from "Data Sent", and its acknowledgement reaches "Data Recvd".
+     */
+    @Test fun negative_lostFinIsResentWithoutLeavingDataSent() {
+        val s = SendStream(0, StreamPriority.Default)
+        s.enqueue(ByteArray(10), 0, 10, true)
+        val r = SendRange()
+        assertTrue(s.nextRange(100, r))
+        s.markSent(r.offset, r.length, r.fin)
+        assertEquals(SendState.DataSent, s.state)
+        s.onLost(0, 10, fin = true)
+        assertEquals(SendState.DataSent, s.state, "a lost FIN does not take the stream back to Send")
+        assertTrue(s.hasPending)
+        assertTrue(s.nextRange(100, r))
+        s.markSent(r.offset, r.length, r.fin)
+        if (!r.fin) {
+            assertTrue(s.nextRange(100, r))
+            assertTrue(r.fin, "the FIN goes again")
+            s.markSent(r.offset, r.length, r.fin)
+        }
+        assertEquals(SendState.DataSent, s.state)
+        s.onAcked(0, 10, fin = true)
+        assertEquals(SendState.DataRecvd, s.state)
     }
 
     /** The retransmission queue saved before a mirrored flight is put back as it was, ranges included. */
