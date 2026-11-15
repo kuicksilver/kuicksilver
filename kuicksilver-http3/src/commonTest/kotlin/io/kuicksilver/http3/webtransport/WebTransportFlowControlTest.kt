@@ -34,6 +34,7 @@ import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -375,6 +376,34 @@ class WebTransportFlowControlTest {
         }
 
     /**
+     * Section 5.6, "Endpoints SHOULD send WT_MAX_DATA and WT_MAX_STREAMS capsules as they consume data or close streams": a
+     * stream stopped as it is accepted, before its reader ever ran, abandons its bytes all the same, and they come back
+     * as credit. Accepted and stopped in one step on the session's dispatcher, so the reader is cancelled before it
+     * starts (what a loaded host does by chance). Before, only a running reader gave them back: the session's whole
+     * window stayed taken and the next stream's bytes never came.
+     */
+    @Test fun negative_aStreamStoppedBeforeItsReaderRanGivesItsCreditBack() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 1000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val st = session.openUni()
+                st.output.writeFully(ByteArray(1000)) // the whole window
+                st.output.flush()
+                p.server.awaitFlow(s) { it.receiveDataForTest.second == 1000L }
+                // the reader the accept launches runs on this dispatcher too: it is still queued when the stop cancels it
+                withContext(p.server.session.dispatcher) { s.acceptUni().stopSending(4) }
+                val second = session.openUni()
+                second.output.writeFully(ByteArray(10))
+                second.output.flushAndClose()
+                assertEquals(10, withTimeout(5.seconds) { s.acceptUni().input.readAllBytes() }.size)
+                awaitAgreement(p.client, session, p.server, s)
+            }
+        }
+
+    /**
      * Section 5.3: both sides count the same streams. An open given up while it waits for the session's stream credit
      * takes no slot the peer never sees.
      */
@@ -382,6 +411,57 @@ class WebTransportFlowControlTest {
 
     /** The same while it waits for the connection's (the QUIC peer's MAX_STREAMS), its session slot already taken. */
     @Test fun negative_openCancelledWhileWaitingForTheConnectionsCreditTakesNoSlot() = cancelledOpen(waitsForQuic = true)
+
+    /**
+     * A slot given back wakes the opens waiting for one. An open holding the session's last slot while it waits for the
+     * connection's credit is given up: its slot goes back (section 5.3, nothing the peer saw), and the next open, which
+     * waited for the session's credit, takes it at once. Before, the slot went back without waking anyone, so that open
+     * slept on with a slot free until the peer happened to raise the limit (a cancelled open that won the race for new
+     * credit stalled the next one for good).
+     */
+    @Test fun negative_aSlotGivenBackWakesTheNextOpen() =
+        h3Test {
+            // the server grants the client 4 unidirectional QUIC streams (its 3 HTTP/3 streams and one more) and 2
+            // WebTransport ones: the first open takes the QUIC stream, the second a session slot and waits for QUIC credit
+            val quic =
+                io.kuicksilver.quic.quicConfig {
+                    resetStreamAt = true
+                    maxUniStreams = 4
+                }
+            val server = wtLimits(uni = 2).toBuilder().apply { grease = false }.build()
+            val client = wtOn.toBuilder().apply { grease = false }.build()
+            H3Pair.open(clientSettings = client, serverSettings = server, serverQuic = quic).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val first = session.openUni()
+                val holding = async { session.openUni() }
+                p.client.awaitFlow(session) { it.openedForTest(false).first == 2L } // the last slot taken, waiting for QUIC
+                val next = async { session.openUni() }
+                p.client.awaitFlow(session) { (it.sentForTest[WtFlow.STREAMS_BLOCKED_UNI] ?: 0) >= 1 } // waiting for a slot
+                holding.cancelAndJoin()
+                // the slot went back and the waiting open took it, with its turn at the connection's credit (it waits there
+                // now): the first open's turn, the given-up one's, and this one's
+                val turns =
+                    p.client.session.wtFairness
+                        .opening(false)
+                p.client.awaitFlow(session) { it.openedForTest(false).first == 2L && turns.grantsForTest.size == 3 }
+                next.cancelAndJoin()
+                p.client.awaitFlow(session) { it.openedForTest(false).first == 1L }
+                first.output.writeFully("x".encodeToByteArray())
+                first.output.flushAndClose()
+                assertEquals(
+                    "x",
+                    s
+                        .acceptUni()
+                        .input
+                        .readAllBytes()
+                        .decodeToString(),
+                )
+                assertEquals(1L, withContext(p.server.session.dispatcher) { assertNotNull(s.flow).openedForTest(false).second })
+            }
+        }
 
     private fun cancelledOpen(waitsForQuic: Boolean) =
         h3Test {
@@ -407,7 +487,11 @@ class WebTransportFlowControlTest {
                 } else {
                     p.client.awaitFlow(session) { (it.sentForTest[WtFlow.STREAMS_BLOCKED_UNI] ?: 0) >= 1 }
                 }
-                waiting.cancel()
+                // given up while it still waits: joined, so its opening has stopped before any new credit can come. A
+                // cancellation still pending when the first stream's slot came back let the opening take that slot and
+                // open a stream after all (then reset, as nobody wanted it), and the open below waited for the slot of
+                // a stream this test never accepts (a loaded host's test thread, preempted between the two)
+                waiting.cancelAndJoin()
                 p.client.awaitFlow(session) { it.openedForTest(false).first == 1L }
                 if (waitsForQuic) {
                     // the QUIC credit of a retired stream may come late (the server batches MAX_STREAMS): the counts agree

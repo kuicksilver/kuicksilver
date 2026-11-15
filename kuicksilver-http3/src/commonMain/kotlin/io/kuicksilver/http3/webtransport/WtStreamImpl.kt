@@ -85,8 +85,15 @@ internal class WtStreamImpl(
     init {
         inPump = if (readable) scope.launch { pumpIn() } else null.also { inCh.finish() }
         outPump = if (writable) scope.launch { pumpOut() } else null.also { outCh.close() }
-        // a pump cancelled before it ran (the connection ended first) still ends its channel: the application never hangs on it
-        inPump?.invokeOnCompletion { e -> if (e != null) inCh.fail(IOException("the WebTransport stream $streamId stopped reading", e)) }
+        // a pump cancelled before it ran (the connection ended first, or the application stopped the stream as it accepted it)
+        // still ends its channel, so the application never hangs on it, and abandons the rest: its bytes count as consumed
+        // (section 5.6), as when the running pump is cancelled. Counted on the session's dispatcher; a second call changes nothing
+        inPump?.invokeOnCompletion { e ->
+            if (e != null) {
+                inCh.fail(IOException("the WebTransport stream $streamId stopped reading", e))
+                if (inCount != null) scope.launch { inCount.abandon() }
+            }
+        }
         outPump?.invokeOnCompletion { e ->
             if (e !=
                 null

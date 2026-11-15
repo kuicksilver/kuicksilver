@@ -35,7 +35,9 @@ internal enum class ClientEngine(
 /**
  * A Ktor client of [engine] that trusts the test CA ([otherCa]: an unrelated CA only). [http2] off keeps it on HTTP/1.1
  * (ALPN `http/1.1` only), [h3Only] puts Kuicksilver's client on HTTP/3 alone. [deflate] offers permessage-deflate:
- * PerMessageDeflate on ours, Ktor's WebSocketDeflateExtension on CIO.
+ * PerMessageDeflate on ours, Ktor's WebSocketDeflateExtension on CIO. [quicIdleTimeout] gives Kuicksilver's client that
+ * QUIC idle timeout with keep-alive PINGs at a third of it, so the connection is lost only when the peer stops
+ * answering, never because a healthy one had nothing to send.
  */
 internal fun ktorClient(
     engine: ClientEngine,
@@ -68,7 +70,13 @@ internal fun ktorClient(
                     trust = if (otherCa) Pki.otherTrust else Pki.trust
                     http3 { discovery = if (h3Only) Http3DiscoveryMode.H3Only else Http3DiscoveryMode.H1Only }
                     http2 { enabled = http2 }
-                    quicIdleTimeout?.let { t -> quic = io.kuicksilver.quic.quicConfig { maxIdleTimeout = t } }
+                    quicIdleTimeout?.let { t ->
+                        quic =
+                            io.kuicksilver.quic.quicConfig {
+                                maxIdleTimeout = t
+                                keepAlive = t / 3
+                            }
+                    }
                     qlog?.let { http3 { this.qlog = it } }
                 }
                 common()

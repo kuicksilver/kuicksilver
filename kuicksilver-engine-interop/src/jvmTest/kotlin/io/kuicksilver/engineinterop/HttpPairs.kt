@@ -121,9 +121,14 @@ internal class ClientToNettyH3Test : HttpPairSuite(ServerEngine.Netty, ClientEng
         }
 
     /**
-     * Ktor's Netty engine stops HTTP/3 without a GOAWAY and without CONNECTION_CLOSE, and the response in flight never
-     * completes (RFC 9114 section 5.2 describes the graceful shutdown with GOAWAY). Our side: the call fails once the
-     * QUIC idle timeout passes (RFC 9000 section 10.1), here a short one, instead of hanging.
+     * Unlike what the inherited name says, Ktor's Netty engine does not reliably complete a request in flight over HTTP/3:
+     * it stops by closing its UDP channel, without a GOAWAY and without CONNECTION_CLOSE (RFC 9114 section 5.2 describes
+     * the graceful shutdown with GOAWAY), and a response released as the stop begins gets out or not depending on whether
+     * the handler's write or that close comes first (on a loaded host, 2 CPUs or a CI runner, the write often wins).
+     * What this override checks is our side when the server goes away mid-response: the response stays held until the
+     * call has ended, and the call fails with ConnectionLost once the QUIC idle timeout passes (RFC 9000 section 10.1),
+     * here a short one, instead of hanging. The client sends keep-alive PINGs, so a server that still runs keeps the
+     * connection up and only the stop ends it: without the stop the call would still be waiting.
      */
     @Test override fun gracefulStopCompletesTheRequestInFlight() =
         interopTest {
@@ -138,8 +143,8 @@ internal class ClientToNettyH3Test : HttpPairSuite(ServerEngine.Netty, ClientEng
                     hold.entered.await()
                     val stop = launch { s.stop(5_000, 6_000) }
                     s.probe.stopping.await()
-                    hold.release.complete(Unit)
                     val e = call.await().exceptionOrNull()
+                    hold.release.complete(Unit) // only now: the stopped server has nothing left to send it on
                     assertTrue(generateSequence(e) { it.cause }.any { it is QuicException.ConnectionLost }, "the call ended with $e")
                     stop.join()
                 }
