@@ -5,6 +5,13 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.async
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.IOException
@@ -54,9 +61,47 @@ class KtorDatagramIoTest {
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                // a refused bind returns once its selector's loop has ended and closed its pipe (KtorDatagramIo.open)
                 val leaked = openDescriptors() - before
                 assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
             } finally {
+                held.close()
+            }
+        }
+
+    /**
+     * The same while every thread of `Dispatchers.Default` and `Dispatchers.IO` is held (as in a loaded run of the whole
+     * suite), so no selector loop can run: a refused bind must not return with its selector's wakeup pipe still open, it
+     * waits for the loop. The binds start on the test's own thread while the threads are held; a bind that returns there
+     * at once (the previous code: 40 refused binds left 78 descriptors open at that point) is counted before the threads
+     * are let go, one that waits is counted once they were and it returned.
+     */
+    @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
+        runBlocking {
+            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            val go = CompletableDeferred<Unit>()
+            try {
+                val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
+                assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val before = openDescriptors()
+                // more tasks than either dispatcher has threads, each holding its thread until the binds were made
+                val holding =
+                    List(512) { i ->
+                        launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { runBlocking { go.await() } }
+                    }
+                val binds =
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                    }
+                val leakedWhileHeld = if (binds.isCompleted) openDescriptors() - before else null
+                go.complete(Unit)
+                binds.await()
+                holding.joinAll()
+                val leaked = leakedWhileHeld ?: (openDescriptors() - before)
+                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+            } finally {
+                go.complete(Unit)
                 held.close()
             }
         }

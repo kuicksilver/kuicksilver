@@ -20,5 +20,6 @@ Original row: draft-ietf-quic-qlog-*.
 **Tests that pin it.**
 
 - `qlog.QlogWriterTest.firstRecordIsHeader`, `qlog.QlogWriterTest.eventsUseRelativeMillis`, `qlog.QlogWriterTest.packetSentFields`, `qlog.QlogWriterTest.lossAndMetricsEvents`, `qlog.QlogWriterTest.stopsAtCapWithoutError`, `qlog.QlogWriterTest.filePerConnectionNamedByOdcid`
+- a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame carries `stream_id` and `error_code` (and `final_size`, `reliable_size`) as the schema's ResetStreamFrame and StopSendingFrame do (0.3.0; before, only `frame_type`) — `qlog.QlogWriterTest.resetAndStopSendingNameTheirStream`
 - the trace is opened on the first event (an undecrypted Initial creates no file) and closed in `release()`, a failure of the sink's `open`/`write`/`close` disables tracing for that connection without touching it or the endpoint — `qlog.QlogRobustnessTest.*`
 - schema draft-ietf-quic-qlog-main-schema/quic-events 0.3 — not validated in qvis yet

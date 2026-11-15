@@ -60,9 +60,12 @@ internal abstract class PooledConnection(
     /** Closes the transport; called once. */
     protected abstract fun closeTransport()
 
-    /** Closes the connection and gives its slot back; idempotent and safe from any thread. */
+    /**
+     * Closes the connection and gives its slot back; idempotent and safe from any thread. A close of its own in progress
+     * ([claimClose]) is aborted: the connection closes now.
+     */
     fun close() {
-        if (closedFlag.compareAndSet(0, 1)) closeTransport()
+        if (closedFlag.compareAndSet(0, 1)) closeTransport() else abortClaimedClose()
         pool?.slotReturned(this)
     }
 
@@ -71,12 +74,28 @@ internal abstract class PooledConnection(
      * first where it can (TLS close_notify, RFC 9846 section 6.1), bounded; the slot comes back at once.
      */
     fun closeOrderly() {
-        if (closedFlag.compareAndSet(0, 1)) closeTransportOrderly()
+        if (closedFlag.compareAndSet(0, 1)) closeTransportOrderly() else abortClaimedClose()
         pool?.slotReturned(this)
     }
 
     /** Closes the transport in order; called once, instead of [closeTransport]. */
     protected open fun closeTransportOrderly(): Unit = closeTransport()
+
+    /**
+     * For a close of its own (one that waits for the peer): true for the one caller that may close the transport; that
+     * caller gives the slot back with [slotBack] when it is done. [close] and [closeOrderly] meanwhile give the slot back at
+     * once and abort that close ([abortClaimedClose]): a pool or an engine that closes the connection ends it now, as
+     * any other.
+     */
+    protected fun claimClose(): Boolean = closedFlag.compareAndSet(0, 1)
+
+    /** Aborts a close [claimClose] allowed, which closes the transport at once; nothing when there is none. */
+    protected open fun abortClaimedClose() {}
+
+    /** Gives the slot back after a close [claimClose] allowed. */
+    protected fun slotBack() {
+        pool?.slotReturned(this)
+    }
 
     /** True for the one caller that gives the slot back. */
     internal fun claimSlot(): Boolean = slotFlag.compareAndSet(0, 1)

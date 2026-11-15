@@ -116,8 +116,10 @@ internal class H1Response(
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
-            webSocket?.done()
+            // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
+            // the order is for clarity, not safety)
             guard.cancel()
+            webSocket?.done()
             output.flushAndClose()
             input.cancel()
         }

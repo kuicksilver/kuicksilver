@@ -161,8 +161,10 @@ internal class H2UpgradeResponse(
             // (the send-stall deadline bounds them, RFC 6455 section 7.1.1)
             upgrade.upgrade(input.channel, input.output(output) { output.releaseLead() }, engineDispatcher, userDispatcher).join()
         } finally {
-            webSocket?.done()
+            // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
+            // the order is for clarity, not safety)
             guard.cancel()
+            webSocket?.done()
             // a call cancelled while the session ran cannot end the stream in order: CANCEL both ways (RFC 8441 section 5).
             // Otherwise the session's output ends the stream: END_STREAM once its last frames went out, then the client's
             // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client

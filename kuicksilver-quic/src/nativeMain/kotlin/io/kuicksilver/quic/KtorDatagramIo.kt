@@ -10,11 +10,18 @@ import io.ktor.network.sockets.aSocket
 import io.ktor.utils.io.errors.PosixException
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use: an empty incoming
@@ -137,15 +144,26 @@ internal class KtorDatagramIo private constructor(
             return null
         }
 
+        /** How long a refused bind waits for its selector's loop to end (and close its wakeup pipe). */
+        private val SELECTOR_CLOSE_WAIT = 5.seconds
+
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val ip = local.ipBytes()
             if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(unsupportedIpv6(local))
-            val selector = SelectorManager()
+            // the selector's loop runs as a child of selectorJob: close() only asks it to end, and the loop closes its wakeup
+            // pipe on its way out, so a refused bind joins the job to return with nothing of it left open
+            val selectorJob = Job()
+            val selector = SelectorManager(Dispatchers.IO + selectorJob)
             val s =
                 try {
                     aSocket(selector).udp().bind(local)
                 } catch (e: Throwable) {
-                    selector.close() // a refused bind (port taken) must not keep its selection thread and pipe
+                    // a refused bind (port taken) must not keep its selection thread and pipe
+                    selector.close()
+                    selectorJob.complete()
+                    // bounded: a starved Dispatchers.IO must not hold a refused bind for good; past it the loop still
+                    // closes the pipe once it runs, as before
+                    withContext(NonCancellable) { withTimeoutOrNull(SELECTOR_CLOSE_WAIT) { selectorJob.join() } }
                     throw e
                 }
             return KtorDatagramIo(selector, s)

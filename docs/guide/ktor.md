@@ -530,6 +530,11 @@ Ktor's `WebSockets` plugin and `webSocket("/path") {}` routes work as on Ktor's 
   and a malformed control frame, fragment, length or Close frame with 1002.
 - The server's frames are never masked (section 5.1), whatever `WebSockets { masking }` says, and a Close the
   application sends with a code no endpoint may send (1005, 1006, 1015, below 1000, …) goes out without a code.
+- Once the session ended (both Closes), the server closes the connection at once (section 5.5.1: "The server MUST close
+  the underlying TCP connection immediately"): over HTTP/1.1 its FIN, right after close_notify over TLS, without
+  waiting for the client to close first; over HTTP/2 and HTTP/3 its END_STREAM or FIN, after which it waits up to 5 s
+  for the client's, reading what still comes, and only then stops a client that did not end its side (RST_STREAM
+  NO_ERROR, STOP_SENDING H3_NO_ERROR).
 
 The client engine applies the same rules to what servers send ([Client](#client)).
 
@@ -1005,10 +1010,11 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   session after its `Sec-WebSocket-Extensions` and `Sec-WebSocket-Protocol` were checked against the offer (an extension
   or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
   fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
-  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
-  stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
-  resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
-  cancelled before the session closed, resets the stream with CANCEL. As over HTTP/1.1, one WebSocket per remote host
+  is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order sends its
+  END_STREAM only after the server's (at most 5 s after both Closes, then anyway; the stream is reset with CANCEL only
+  when the server's END_STREAM has not come 5 s after that); a handshake refused here, or a call that failed or was
+  cancelled before the session queued its Close, resets the stream with CANCEL (one cancelled after it, as Ktor's
+  `webSocketSession()` always is, first writes that Close: see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 
 ### Connection pool
@@ -1099,6 +1105,33 @@ the name counts as the host. The connect timeout applies twice to such a WebSock
 waiting for a pool slot and connecting (TCP and TLS) share one, as for any request; the answer to the handshake must then
 arrive within the same timeout again, counted from the moment the connection is in hand. The wait for another WebSocket
 to the address is in neither: only the call (its request timeout or cancellation) bounds it.
+
+A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
+over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
+session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
+it ends, within 5 s counted from its own Close for writing it and for the server's Close; past that the HTTP/1.1
+connection is closed at once, the HTTP/2 stream reset with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED.
+
+The transport is then closed the server's side first (RFC 6455 section 7.1.1: the client "SHOULD wait for a TCP Close
+from the server"): the engine reads and drops what the server still sends, waits for its FIN (close_notify, then the FIN,
+over TLS), its END_STREAM (HTTP/2) or its FIN (HTTP/3), and closes its own side after it, cleanly: close_notify and a FIN,
+END_STREAM, a FIN. A server that has not closed its side 5 s after both Closes (the close wait, counted again from
+there) gets the client's clean close then; over HTTP/2 and HTTP/3 the stream is reset (RST_STREAM CANCEL,
+STOP_SENDING H3_REQUEST_CANCELLED) only if the server's end has not come another 5 s later. Ktor's own WebSocket writer
+closes its channel right after its Close, which used to half-close the connection (or end the stream) at once; the
+engine no longer lets that through. The server engine closes first: its FIN right after its close_notify over TLS (the
+client's close_notify is not waited for), END_STREAM or FIN right after the session.
+
+How long `client.close()` can wait for a WebSocket whose server stays silent: it waits for the session's end, and that is
+bounded by three close waits (15 s) after the session's own Close at most: 5 s for the server's Close (then the session
+is cancelled and the connection or stream ended at once), 5 s for the server's close of the transport (then the client
+closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's END_STREAM or FIN after the client's own
+(then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
+they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
+`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
+before the pools close. A call that ends before the session queued its Close ends the session at once. A coroutine of
+the session that fails is reported to the event listener (`webSocketFailed`).
 
 ### Discovery and Alt-Svc
 
@@ -1828,7 +1861,8 @@ connection is in hand, with `HTTP_2_0` when the server picked `h2`, since 0.3.0)
 with the HTTP/3 failure itself (not the `FallbackReason`, which is on the response, below); `retry` (a request the server
 did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
 (reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
-followed the network, [Connection migration](#connection-migration)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+followed the network, [Connection migration](#connection-migration)); `webSocketFailed` (a coroutine of a WebSocket
+session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin

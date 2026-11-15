@@ -245,7 +245,8 @@ class ClientWebSocketConnectingTest {
                     }
                     assertEquals(2, handshakes.value)
                     assertEquals(2, accepted.value, "the connection given back was not used again")
-                    assertEquals(0, engine.h1.pool.liveCount, "a connection outlived its WebSocket")
+                    // each connection closes once the server closed it, after the call: none outlives its WebSocket
+                    withTimeout(10.seconds) { while (engine.h1.pool.liveCount != 0) kotlinx.coroutines.yield() }
                     assertEquals(0, connecting.size())
                 }
             }
@@ -582,6 +583,8 @@ class ClientWebSocketConnectingTest {
     ) {
         output.writeStringUtf8(switchingProtocols(key))
         output.writeFully(byteArrayOf(0x88.toByte(), 0x00))
-        input.discard()
+        // the client's Close, then the server closes the connection at once (RFC 6455 section 5.5.1), and the client
+        // follows: a server that waited for the client's close first would hold it for the client's close wait
+        readClientFrames(input)
     }
 }

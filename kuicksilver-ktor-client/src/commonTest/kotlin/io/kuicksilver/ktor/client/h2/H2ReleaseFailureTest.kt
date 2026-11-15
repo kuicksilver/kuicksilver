@@ -300,12 +300,14 @@ class H2ReleaseFailureTest {
             session.outgoing.send(Frame.Close())
             runCurrent()
             f.armed = true
-            call.complete() // the close wait starts: no reset at once, the server's END_STREAM is waited for
+            call.complete() // T2 starts: no reset at once, the server's END_STREAM is waited for
             assertTrue(call.isCompleted)
             runCurrent()
             assertEquals(0, f.released.size, "the stream is held for the server's END_STREAM")
-            assertTrue(server.awaitClientEnd(), "the client's END_STREAM went out, no RST_STREAM")
+            // the server's END_STREAM first, then the client's (RFC 6455 section 7.1.1), and no RST_STREAM
             server.sendBody(ByteReadChannel(ByteArray(0)), end = true)
+            runCurrent()
+            assertTrue(server.awaitClientEnd(), "the client's END_STREAM went out after the server's, no RST_STREAM")
             runCurrent()
             f.assertReleasedOnce()
             f.assertWarned()
@@ -326,14 +328,14 @@ class H2ReleaseFailureTest {
             val session = response.await().body as WebSocketSession
             session.outgoing.send(Frame.Close())
             runCurrent()
+            call.complete() // as Ktor's webSocket { } once its block returned: the call waits for the session
+            runCurrent()
             assertEquals(0, f.released.size)
             f.armed = true
-            testScheduler.advanceTimeBy(1_001) // the server answered neither with its Close nor with END_STREAM
+            testScheduler.advanceTimeBy(1_001) // T1: the server's Close did not come
             runCurrent()
             f.assertReleasedOnce()
             f.assertWarned()
-            call.complete()
-            runCurrent()
-            assertEquals(1, f.released.size)
+            assertTrue(call.isCompleted)
         }
 }

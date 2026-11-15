@@ -155,6 +155,7 @@ abstract class io.kuicksilver.ktor.client/KuicksilverEventListener { // io.kuick
     open fun protocolSelected(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, io.kuicksilver.ktor.client/ProtocolReason) // io.kuicksilver.ktor.client/KuicksilverEventListener.protocolSelected|protocolSelected(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;io.kuicksilver.ktor.client.ProtocolReason){}[0]
     open fun raceEnded(io.ktor.client.request/HttpRequestData, io.ktor.http/HttpProtocolVersion, kotlin.time/Duration, kotlin/Throwable?) // io.kuicksilver.ktor.client/KuicksilverEventListener.raceEnded|raceEnded(io.ktor.client.request.HttpRequestData;io.ktor.http.HttpProtocolVersion;kotlin.time.Duration;kotlin.Throwable?){}[0]
     open fun retry(io.ktor.client.request/HttpRequestData, kotlin/Int, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.retry|retry(io.ktor.client.request.HttpRequestData;kotlin.Int;kotlin.Throwable){}[0]
+    open fun webSocketFailed(io.ktor.client.request/HttpRequestData, kotlin/Throwable) // io.kuicksilver.ktor.client/KuicksilverEventListener.webSocketFailed|webSocketFailed(io.ktor.client.request.HttpRequestData;kotlin.Throwable){}[0]
 }
 
 final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.client/AltSvcEntry|null[0]

@@ -89,6 +89,9 @@ internal class H1Connection(
     createdAt: Long = 0,
     /** Ends the TLS session in order (close_notify) and then the socket, bounded; null: as [closeTransport]. */
     private val orderly: (() -> Unit)? = null,
+    /** The socket's own channels under [tls] (the TCP connection's FIN in both directions); null without TLS. */
+    private val tcpIn: ByteReadChannel? = null,
+    private val tcpOut: ByteWriteChannel? = null,
 ) : PooledConnection(key, createdAt) {
     override val remoteIp: ByteArray? get() = WebSocketConnecting.peerIp(socket.remoteAddress)
 
@@ -120,7 +123,109 @@ internal class H1Connection(
     fun cancelInput(cause: Throwable) {
         input.cancel(cause)
     }
+
+    /**
+     * Ends the connection of a WebSocket session that ended in order (both Closes sent and received), as RFC 6455 section
+     * 7.1.1 wants of a client: "when a client is instructed to [_Close the WebSocket Connection_], it SHOULD wait for a TCP
+     * Close from the server", closing "cleanly ... discarding any trailing bytes", as in its example: "shutdown() with
+     * SHUT_WR on the socket, call recv() until obtaining a return value of 0 indicating that the peer has also performed an
+     * orderly shutdown, and finally call close()". Here the order is the server's first:
+     *
+     * - without TLS: what the server still sends is read and dropped until its FIN, then this side's FIN, then the close;
+     * - over TLS: the server's plaintext is read and dropped until its close_notify (or the end of its transport), then this
+     *   side's close_notify (RFC 9846 section 6.1: "Each party MUST send a "close_notify" alert before closing its write
+     *   side of the connection"; with TLS 1.2 it answers the server's, which TLS before 1.3 required at once), then the
+     *   server's TCP FIN is awaited, then this side's FIN and the close.
+     *
+     * The waits for the server end after [waitMillis] (T2, [io.kuicksilver.ktor.client.WebSocketLifetime.remainingTransportWaitMillis]):
+     * "in abnormal cases (such as not having received a TCP Close from the server after a reasonable amount of time) a
+     * client MAY initiate the TCP Close", so this side's close_notify (bounded by [ORDERLY_CLOSE_TIMEOUT] more) and FIN go
+     * then, cleanly, never a reset. [inputDone] completes once the session stopped reading [input]. [onEvent] (tests) gets
+     * "waiting" once everything this side sends before the server's close is out, then "server closed" or "T2". A
+     * cancellation (the end handlers' bound) or a [close] meanwhile (the pool's, the engine's) closes the connection where it
+     * stands. The slot comes back when it is over, or at that [close].
+     */
+    suspend fun closeAfterWebSocket(
+        waitMillis: Long,
+        inputDone: Job,
+        onEvent: (String) -> Unit = {},
+    ) {
+        if (!claimClose()) return
+        try {
+            // in a coroutine of its own, which [close] cancels (abortClaimedClose): the end handler that runs this goes on
+            coroutineScope {
+                val work = launch { closeInOrder(waitMillis, inputDone, onEvent) }
+                lingering = work
+                if (abortRequested) work.cancel()
+                work.join()
+            }
+        } finally {
+            lingering = null
+            tls?.close()
+            socket.close()
+            slotBack()
+        }
+    }
+
+    @kotlin.concurrent.Volatile private var lingering: Job? = null
+
+    @kotlin.concurrent.Volatile private var abortRequested = false
+
+    override fun abortClaimedClose() {
+        abortRequested = true
+        lingering?.cancel()
+    }
+
+    private suspend fun closeInOrder(
+        waitMillis: Long,
+        inputDone: Job,
+        onEvent: (String) -> Unit,
+    ) {
+        val deadline =
+            kotlin.time.TimeSource.Monotonic
+                .markNow() + waitMillis.milliseconds
+
+        fun left() = (-deadline.elapsedNow()).inWholeMilliseconds.coerceAtLeast(0)
+        try {
+            // the server's close of its side: its plaintext ends (close_notify, or its transport's end), or its FIN
+            onEvent("waiting")
+            val serverClosed =
+                withTimeoutOrNull(left()) {
+                    inputDone.join()
+                    drainToEnd(input)
+                    true
+                } == true
+            onEvent(if (serverClosed) "server closed" else "T2")
+            if (tls != null) {
+                // close_notify: after the server's, or once T2 is over; then the server's FIN
+                withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.shutdown(drainTimeout = null, stopAwaitingPeer = DONE) }
+                // the session's pumps stop before the socket's input is read here: its reader may still be reading it
+                // (the server's input ended without close_notify, or the shutdown above did not wait for the peer)
+                val pumpsStopped = withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { tls.closeAndAwaitPumps() } != null
+                if (serverClosed && pumpsStopped && tcpIn != null) withTimeoutOrNull(left()) { drainToEnd(tcpIn) }
+            }
+            // this side's FIN after everything written, then the close
+            withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) { (tcpOut ?: output).flushAndClose() }
+        } finally {
+            tls?.close()
+            socket.close()
+        }
+    }
 }
+
+/** Reads and drops [input] to its end; a failed input (a reset, a TLS truncation) ends it too. */
+private suspend fun drainToEnd(input: ByteReadChannel) {
+    try {
+        input.discard()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        // the input failed: it has ended all the same
+    }
+}
+
+/** A completed job: a TLS shutdown that does not wait for the peer's close_notify, already in hand. */
+private val DONE: Job = Job().also { it.complete() }
 
 /**
  * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3.
@@ -188,6 +293,15 @@ internal class H1Pool(
      * (Chromium checks a session idle for 10 s, "at risk of loss"); internal so tests can check every reuse.
      */
     internal var h2HealthAfterIdleMillis: Long = 10_000
+
+    /**
+     * Tests: the connection of a WebSocket that ended in order has sent everything it sends before the server closes its
+     * side ("waiting"), then saw that close ("server closed") or gave up at T2 ("T2").
+     */
+    internal var webSocketClosingForTest: ((String) -> Unit)? = null
+
+    /** Tests: the connection a WebSocket session was handed over. */
+    internal var webSocketConnectionForTest: ((H1Connection) -> Unit)? = null
 
     /** Runs after a request got a pool permit and before it may become its route's dialer (tests: widens that gap). */
     internal var beforeDialForTest: (suspend () -> Unit)? = null
@@ -375,8 +489,14 @@ internal class H1Pool(
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var h2WebSocketOutputForTest: (io.kuicksilver.http2.runtime.H2StreamOutput) -> Unit = {}
 
-    /** A WebSocket's wait for its last frames and the server's END_STREAM after an orderly close (tests lower it). */
-    internal var h2WebSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.h2.H2_WEBSOCKET_CLOSE_WAIT_MILLIS
+    /** Tests: an HTTP/2 WebSocket waits for the server's END_STREAM ("waiting"); its own goes after it ("server ended") or at T2 ("T2"). */
+    internal var h2WebSocketClosingForTest: ((String) -> Unit)? = null
+
+    /**
+     * A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (any protocol),
+     * and over HTTP/2 for its last frames and the server's END_STREAM after an orderly close (tests change it).
+     */
+    internal var webSocketCloseWaitMillis: Long = io.kuicksilver.ktor.client.WEBSOCKET_CLOSE_WAIT_MILLIS
 
     /**
      * A stream for a WebSocket over HTTP/2 (RFC 8441) on a usable connection of [key] whose server enabled Extended CONNECT,
@@ -815,9 +935,10 @@ internal class H1Pool(
                                 data,
                                 callContext,
                                 events,
-                                h2WebSocketCloseWaitMillis,
+                                webSocketCloseWaitMillis,
                                 config.webSocketMaxMessageSize,
                                 h2WebSocketOutputForTest,
+                                { h2WebSocketClosingForTest?.invoke(it) },
                                 released,
                             )
                         }
@@ -920,6 +1041,7 @@ internal class H1Pool(
                     withSocketInactivityTimeout(data, activity, onExpiry = { closeAfterExpiry() }) {
                         // a new key for every connection a WebSocket handshake is sent on (RFC 6455 section 4.1)
                         val webSocketKey = if (webSocketKeys != null) newWebSocketKey() else null
+                        var webSocket: H1WebSocketHandOver? = null
                         if (probeFirst) {
                             // first contact: an OPTIONS on the same connection shows the server's version before the
                             // request needs Transfer-Encoding; an HTTP/1.0 server gets the body framed by Content-Length
@@ -970,6 +1092,8 @@ internal class H1Pool(
                             requestBodySent = { bodyJob?.sent },
                             webSocketKey = webSocketKey,
                             webSocketMaxMessageSize = config.webSocketMaxMessageSize,
+                            webSocketCloseWaitMillis = webSocketCloseWaitMillis,
+                            onHandOver = { webSocket = it },
                         ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
@@ -1011,10 +1135,33 @@ internal class H1Pool(
                                         }
                                     }
 
+                                    // the connection ends with the WebSocket session: in the order of RFC 6455 section
+                                    // 7.1.1 when the session ended in order (both Closes, its writer done), the server's
+                                    // close first, within T2 (WebSocketLifetime); at once otherwise
                                     AfterResponse.HandOver -> {
-                                        callContext[Job]?.invokeOnCompletion { cause ->
-                                            if (cause == null) conn.closeOrderly() else conn.close()
-                                            released(false)
+                                        val ws = webSocket
+                                        if (ws != null) {
+                                            webSocketConnectionForTest?.invoke(conn)
+                                            ws.lifetime.invokeOnEnd { cause ->
+                                                try {
+                                                    if (cause == null && ws.output.endRequested && ws.output.closedCause == null) {
+                                                        conn.closeAfterWebSocket(
+                                                            ws.lifetime.remainingTransportWaitMillis(),
+                                                            ws.inputDone,
+                                                        ) { webSocketClosingForTest?.invoke(it) }
+                                                    } else {
+                                                        conn.close()
+                                                    }
+                                                } finally {
+                                                    conn.close() // a no-op after the close above; a cut-off one ends here
+                                                    released(false)
+                                                }
+                                            }
+                                        } else {
+                                            callContext[Job]?.invokeOnCompletion {
+                                                conn.close()
+                                                released(false)
+                                            }
                                         }
                                     }
                                 }
@@ -1365,7 +1512,17 @@ internal class H1Pool(
                     }
                     // ALPN `http/1.1` (RFC 7301): the server agreed to speak HTTP/1.1 (RFC 9112 section 6.1 knowledge)
                     if (tls.negotiatedAlpn == "http/1.1") http11Routes.mark(key)
-                    H1Connection(tcp, tls, tls.input, tls.output, key, clock(), orderly = { closeOrderly(tls, rawOut, tcp) })
+                    H1Connection(
+                        tcp,
+                        tls,
+                        tls.input,
+                        tls.output,
+                        key,
+                        clock(),
+                        orderly = { closeOrderly(tls, rawOut, tcp) },
+                        tcpIn = rawIn,
+                        tcpOut = rawOut,
+                    )
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }

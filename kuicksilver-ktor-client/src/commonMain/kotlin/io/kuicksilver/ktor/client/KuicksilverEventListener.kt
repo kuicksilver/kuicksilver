@@ -119,6 +119,17 @@ public abstract class KuicksilverEventListener {
     ) {}
 
     /**
+     * A coroutine of [request]'s WebSocket session (the engine's or Ktor's reader or writer) failed with [cause]: the
+     * session ends, and its connection (HTTP/1.1) or stream (HTTP/2, HTTP/3) is closed as for a failed call. The
+     * application sees the end through the session's channels; this is where the failure itself is reported, also after
+     * [callEnd] (the session may outlive its call while it writes its own Close). Runs on the session's coroutine.
+     */
+    public open fun webSocketFailed(
+        request: HttpRequestData,
+        cause: Throwable,
+    ) {}
+
+    /**
      * An HTTP/3 connection to [origin] (`https://host:port`) followed the network ([Http3ClientConfig.connectionMigration]):
      * [event] is what its [io.kuicksilver.quic.NetworkMigrator] did, a move to another network
      * ([MigrationEvent.Migrated]), a move that failed and left the connection where it was ([MigrationEvent.Failed]), a

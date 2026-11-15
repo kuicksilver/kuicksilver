@@ -81,6 +81,8 @@ public class TlsSocket private constructor(
     public val tls: TlsConnection,
     /** The context of the coroutines of this socket. */
     override val coroutineContext: CoroutineContext,
+    /** Accepted with [Socket.tlsServer]: [close] ends the write side right after close_notify. */
+    private val server: Boolean = false,
 ) : Socket {
     /** The job of the underlying TCP socket. */
     override val socketContext: Job get() = raw.socketContext
@@ -194,7 +196,9 @@ public class TlsSocket private constructor(
         }
 
     /**
-     * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes. Runs in the
+     * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes; on a server
+     * the raw socket's write side ends right after `close_notify` (its FIN), and the client's `close_notify` or FIN is
+     * awaited only after that (at most 3 s), so a client that never answers does not hold the FIN back. Runs in the
      * socket's scope. On a client ([Socket.tls]) bounded: when the raw socket has not closed after 3 s in all (a peer that
      * stopped reading holds the flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the
      * TLS session is freed and the raw socket is aborted as by [abort], which releases its descriptor. On a server ([Socket.tlsServer]) the close
@@ -217,7 +221,17 @@ public class TlsSocket private constructor(
                     runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()
                 }
-                tls.shutdown(drainTimeout = bound, stopAwaitingPeer = stopAwaitingPeer)
+                // a server's FIN follows its close_notify at once, and the client's close_notify (or its FIN) is awaited
+                // after it (RFC 6455 section 5.5.1: "The server MUST close the underlying TCP connection immediately"; RFC
+                // 9112 section 9.6: the write side first, then reading until the client closes); a client's FIN waits
+                // for the server's close_notify, as before
+                val finAtOnce: (suspend () -> Unit)? =
+                    if (server) {
+                        { runCatching { rawOut.flushAndClose() } }
+                    } else {
+                        null
+                    }
+                tls.shutdown(drainTimeout = bound, stopAwaitingPeer = stopAwaitingPeer, afterSent = finAtOnce)
             } finally {
                 tls.close()
                 runCatching { rawOut.flushAndClose() } // everything handed to the socket's write channel reaches the wire before FIN
@@ -355,7 +369,9 @@ public class TlsSocket private constructor(
                     }
                     throw t
                 }
-            return TlsSocket(raw, rawIn, rawOut, tls, ctx).also { if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT }
+            return TlsSocket(raw, rawIn, rawOut, tls, ctx, server = config.role == TlsRole.Server).also {
+                if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT
+            }
         }
     }
 }

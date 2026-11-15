@@ -4,12 +4,15 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.client.request.get
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -18,6 +21,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -37,8 +41,9 @@ class ClientH3WebSocketTest {
 
     /**
      * The server's FIN can trail its Close frame (the core sends a flushed frame at once, the FIN with the close): a client
-     * whose closing handshake ends before that FIN arrives still delivers its Close reply and FIN, and abandons only the
-     * read side (STOP_SENDING), never its own finished send side (RESET_STREAM). Ordered here by holding the FIN back.
+     * whose closing handshake ends before that FIN arrives delivers its Close reply at once and its FIN after the server's
+     * (RFC 9220 section 3, RFC 6455 section 7.1.1), never a RESET_STREAM over the Close reply. Ordered here by holding the
+     * server's FIN back until the client's call is over.
      * On every platform: Ktor's JVM WebSocket reader stops at the Close frame, and the engine ends the stream it hands to the
      * common (Native) reader after the peer's Close frame too, so a session never waits for a FIN that does not come.
      */
@@ -70,15 +75,13 @@ class ClientH3WebSocketTest {
                         s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
                         s.output.flush() // Close(1000) without FIN: the FIN follows only after the client's call is over
                         clientDone.await()
-                        val read =
-                            runCatching {
-                                s.input
-                                    .readBuffer()
-                                    .readByteArray()
-                                    .size
-                            }
-                        runCatching { s.output.flushAndClose() }
-                        read
+                        runCatching { s.output.flushAndClose() } // the server's FIN, then the client's
+                        runCatching {
+                            s.input
+                                .readBuffer()
+                                .readByteArray()
+                                .size
+                        }
                     }
                 try {
                     testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
@@ -89,6 +92,172 @@ class ClientH3WebSocketTest {
                         clientDone.complete(Unit)
                         val got = withTimeout(5.seconds) { served.await() }
                         assertTrue(got.isSuccess && got.getOrThrow() >= 6, "the server reads the client's Close reply and FIN, got $got")
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * Ktor's `webSocketSession()` cancels its call as soon as the session queued its Close (its builder takes the cancelled
+     * outgoing channel for a failure). Here the writer is held at the server's flow control behind a large frame when that
+     * happens: the stream is not reset, and once the server reads it gets the frame and then the Close with the
+     * application's code and reason (RFC 6455 section 7.1.2). Before, the call's cancellation reset the stream and the
+     * Close never left.
+     */
+    @Test fun closeQueuedBeforeTheCallIsCancelledIsWritten() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val reading = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        reading.await() // nothing is read before the client's call is over: its writer waits for credit
+                        readClientFrames(s.input)
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
+                        val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                        session.call.coroutineContext[Job]!!.join()
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * The pool counts a WebSocket's connection as in use until the session ended, not until its call did: a connection
+     * retired while a session lingers after its call (its Close still held at the server's flow control) is not closed
+     * under it. Before, the pool's count fell to 0 at the call's end and the retired connection closed at once, with the
+     * Close unsent.
+     */
+    @Test fun aRetiredConnectionKeepsALingeringSession() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val reading = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        reading.await() // nothing is read before the client's call is over: its writer waits for credit
+                        readClientFrames(s.input)
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                        (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
+                        val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                        session.call.coroutineContext[Job]!!.join()
+                        // the connection is retired (this client's GOAWAY) while the session still holds it: it closes only
+                        // once the session ended, not at once because the call is over
+                        (c.engine as KuicksilverEngine).closeHttp3Connections()
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * `close(reason)` and then `client.close()` at once, the writer held at the server's flow control: the engine's
+     * cleanup (the HTTP/3 connections, the endpoint) waits for the session to write its Close and end. Before, the cleanup
+     * closed the connection under it and the server never saw the Close.
+     */
+    @Test fun clientCloseWaitsForTheSessionsClose() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            val reading = CompletableDeferred<Unit>()
+            coroutineScope {
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        reading.await() // nothing is read before the client's call is over: its writer waits for credit
+                        val frames = readClientFrames(s.input)
+                        // the server's Close and FIN end the session (and with it the engine's wait)
+                        s.output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xE8.toByte()))
+                        s.output.flushAndClose()
+                        frames
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).let { c ->
+                        (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 60_000
+                        val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
+                        session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                        launch { session.close(CloseReason(4002, "client bye")) } // close() also waits for the writer
+                        session.call.coroutineContext[Job]!!.join()
+                        c.close()
+                        // a cleanup that does not wait for the session is over well within this
+                        val cleanedFirst =
+                            kotlinx.coroutines.withTimeoutOrNull(1.seconds) { (c.engine as KuicksilverEngine).cleanup.join() } != null
+                        reading.complete(Unit)
+                        assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                        assertEquals(false, cleanedFirst, "the cleanup ran before the session wrote its Close")
+                        withTimeout(20.seconds) { (c.engine as KuicksilverEngine).cleanup.join() }
                     }
                 } finally {
                     served.cancel()
@@ -354,4 +523,9 @@ class ClientH3WebSocketTest {
                 }
             }
         }
+
+    private companion object {
+        /** Far more than the server's stream window and the client's send buffer take before the writer waits. */
+        const val BIG = 16 shl 20
+    }
 }

@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
+  (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
+- Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
+  (the engine's or Ktor's reader or writer) fails; the session may outlive its call while it writes its own Close, so
+  this can come after `callEnd`.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
@@ -1009,6 +1014,38 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
+  3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
+  own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which
+  it answers then), END_STREAM or FIN, reading and dropping what still comes, and closes its side cleanly after it, or
+  after the close wait (5 s) counted from both Closes; an HTTP/2 or HTTP/3 stream is reset (CANCEL,
+  H3_REQUEST_CANCELLED) only another close wait later, and a peer's STOP_SENDING while the FIN is held is answered with
+  RESET_STREAM.
+- Ktor client, WebSockets over HTTP/1.1 and HTTP/3: a session that sent its Close to a server that never answers with its
+  own no longer hangs. Ktor's session waited for that Close for good, and with it the call and `client.close()`; now, as
+  over HTTP/2 already, the session is cancelled 5 s after its own Close (the close wait, RFC 6455 section 7.1.1: the client
+  may close "if it has not received a TCP Close from the server in a reasonable time period") and the connection closed
+  (HTTP/1.1) or the stream reset with H3_REQUEST_CANCELLED (HTTP/3). For a silent server `client.close()` waits at most
+  three close waits (15 s) after the session's Close (docs/guide/ktor.md).
+- Ktor server, WebSockets: the server closes first: an upgraded HTTP/1.1 connection closes as soon as the
+  WebSocket ends (before, it stayed open until the client closed it), its FIN follows close_notify at once (before, it
+  waited up to 3 s for the client's close_notify; this applies to every TLS connection the server engine closes,
+  HTTP/1.1 and HTTP/2 alike: its FIN right after its close_notify, then at most 3 s for the client's close_notify or FIN
+  before the socket closes, the write side first as RFC 9112 section 9.6 has it, and RFC 8446 section 6.1 allows not
+  waiting for the peer's close_notify), and over HTTP/3 the client's direction is read to its FIN for up to 5
+  s after the server's FIN, STOP_SENDING H3_NO_ERROR only after that (before, right after the server's FIN).
+- QUIC, Kotlin/Native portable UDP socket: a refused bind (the port taken) returned while its selector's wakeup pipe was
+  still open; ktor-network closes it from the selector's own loop, so a busy process held those descriptors for a while.
+  The bind now waits for that loop to end before it fails.
+- Ktor client, WebSockets: a session closed with `close(reason)` after `HttpClient.webSocketSession()` could end its
+  connection without the Close frame (the server saw 1006, "closed without close frame"): Ktor's builder cancels the
+  call as soon as the session queues its Close, and the session's writer, running under the call, was cancelled with it,
+  often before it wrote that Close. The session now runs under a job of its own: a call that ends with a failure or a
+  cancellation after the session's Close was queued leaves it, within 5 s counted from that Close (one deadline that
+  also covers the server's Close and, over HTTP/2, its END_STREAM), to write that Close and the frames before it, over
+  HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 6455 section 7.1.2). The connection, the HTTP/3 pool's count and the engine's
+  `close()` wait for the session's end, not the call's, so `client.close()` right after `close(reason)` no longer cuts
+  the Close off. The extensions' state (permessage-deflate) is freed with the session.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

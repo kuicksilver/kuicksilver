@@ -43,7 +43,8 @@ import kotlin.io.encoding.Base64
  * the output: no frame of the server is masked, whatever Ktor's `WebSockets { masking }` says (RFC 6455 section 5.1: "A
  * server MUST NOT mask any frames that it sends to the client"), no Close goes out with a code an endpoint must not send
  * (section 7.4.1) and no text that is not UTF-8 (section 5.6); see `guardWebSocketOutput`. [done] frees the extension's
- * zlib state when the session has ended.
+ * zlib state when the session has ended. The input is read after the client's Close too, to the client's end of the
+ * stream: [onInputEnd] runs once it stopped (that end, a failure, or the end of [context]'s job).
  */
 internal class ServerWebSocket(
     input: ByteReadChannel,
@@ -53,6 +54,7 @@ internal class ServerWebSocket(
     context: CoroutineContext,
     maxMessageSize: Long,
     onPeerClose: () -> Unit = {},
+    onInputEnd: () -> Unit = {},
 ) {
     private val deflate: PerMessageDeflate? = attributes.perMessageDeflate()
     private val checkText: Boolean
@@ -83,7 +85,10 @@ internal class ServerWebSocket(
                 perMessageDeflate = perMessageDeflate,
                 maxMessageSize = maxMessageSize,
                 checkText = checkText,
-                onEnd = onPeerClose,
+                onEnd = {
+                    onPeerClose()
+                    onInputEnd()
+                },
                 onClose = {
                     clientClosed = true
                     onPeerClose()
@@ -122,9 +127,10 @@ internal suspend fun startServerWebSocket(
     output: ByteWriteChannel,
     log: io.ktor.util.logging.Logger,
     onPeerClose: () -> Unit = {},
+    onInputEnd: () -> Unit = {},
 ): ServerWebSocket? =
     try {
-        ServerWebSocket(input, request, response, attributes, context, maxMessageSize, onPeerClose)
+        ServerWebSocket(input, request, response, attributes, context, maxMessageSize, onPeerClose, onInputEnd)
     } catch (e: ProtocolViolationException) {
         log.warn("WebSocket upgrade: the answer's Sec-WebSocket-Extensions cannot be read (${e.message}); closing with 1011")
         output.writeFully(byteArrayOf(0x88.toByte(), 0x02, 0x03, 0xF3.toByte()))

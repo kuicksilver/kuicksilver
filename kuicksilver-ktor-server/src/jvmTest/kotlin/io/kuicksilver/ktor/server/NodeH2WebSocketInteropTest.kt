@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.nio.file.Files
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -97,7 +98,19 @@ class NodeH2WebSocketInteropTest {
             val first = reader.readLine() ?: error("node exited: ${process.waitFor()}")
             assertTrue(first.startsWith("LISTENING "), first)
             val port = first.removePrefix("LISTENING ").trim().toInt()
-            val pump = Thread { reader.lineSequence().forEach { output.append(it).append('\n') } }.apply { start() }
+            // node prints the stream's end (STREAM_CLOSED) after the client's END_STREAM; it is stopped only once it did, or
+            // its last lines would race the stop (run 43654092978: stopped before it printed either)
+            val streamClosed = CountDownLatch(1)
+            val pump =
+                Thread {
+                    // the stop below closes the pipe under a read still waiting: "Stream closed", after the lines needed
+                    runCatching {
+                        reader.lineSequence().forEach {
+                            output.append(it).append('\n')
+                            if (it.startsWith("STREAM_CLOSED")) streamClosed.countDown()
+                        }
+                    }
+                }.apply { start() }
             serverTest {
                 HttpClient(KuicksilverClient) {
                     install(ClientWebSockets)
@@ -119,10 +132,12 @@ class NodeH2WebSocketInteropTest {
                     }
                 }
             }
+            val ended = streamClosed.await(10, TimeUnit.SECONDS)
             process.destroy()
             process.waitFor(10, TimeUnit.SECONDS)
             pump.join(10_000)
             val out = output.toString()
+            assertTrue(ended, "node did not see the stream end within 10 s:\n$out")
             println("our client against the node server:\n$out")
             val connect = out.lines().single { it.startsWith("CONNECT ") }
             for (expected in listOf(
