@@ -17,8 +17,10 @@ tools/fuzz/reproducers.txt. Not seen: a reproducer named otherwise (by hand, or 
           around the fix changed, so the input alone no longer guards the bug and a unit test must);
   fix     the commit(s) of the fix, comma-separated (7 to 40 hex digits; when the clone has the history, each must be a
           commit that changed at least one source file the plant changes (documents do not count), and the plant must
-          remove at least one line one of them added (compared without comments and spacing): it takes back the code
-          of the fix as it is now, so a fix whose code was rewritten later is named with the commit of that rewrite;
+          remove at least one line each of them added (compared without comments and spacing): it takes back the code
+          of the fix as it is now, so a fix whose code was rewritten later is named with the commit of that rewrite; a
+          commit that only changed the same file is marked `<hash>~file` and needs a matching one beside it; and every
+          file the plant changes must have been changed by one of the fix commits;
   plant   tools/fuzz/plants/<name>.patch, a small patch that puts the bug back (reverts the guarded fix); it must apply to
           the tree as it is (git apply --check), touch no test resource, and not touch the guard tests' own files;
   guards  the unit tests that cover the bug, comma-separated `<package>.<Class>.<test>` as tools/check/test-count.lock
@@ -174,7 +176,10 @@ def main(argv):
                             "or c target of tools/fuzz/campaign.sh (tools/fuzz/corpus/<target>/)")
         if state not in ("live", "dead"):
             findings.append(f"{where} | state | `{state}` is neither live nor dead")
-        commits = [c.strip() for c in fix.split(",") if c.strip()]
+        # `<hash>~file`: a commit of the fix that only changed a file of the plant (not the lines it removes)
+        marked = [c.strip() for c in fix.split(",") if c.strip()]
+        filewise = {c[:-len("~file")] for c in marked if c.endswith("~file")}
+        commits = [c[:-len("~file")] if c.endswith("~file") else c for c in marked]
         if not commits:
             findings.append(f"{where} | fix | no fix commit named")
         for c in commits:
@@ -229,19 +234,26 @@ def main(argv):
             code = {t for t in touched if not is_doc(t)}
             if not shallow and code and all(HEX.match(c) for c in commits):
                 removed = removed_lines(os.path.join(root, plant))
-                overlap = False
+                overlap, covered = False, set()
                 for c in commits:
                     changed = set(git(root, "show", "--name-only", "--format=", c).stdout.split())
+                    covered |= changed
                     if not changed & code:
                         findings.append(f"{where} | fix | {c} changed none of the source files {plant} changes: the plant "
                                         "does not take back that fix (or the file moved since: plant it again)")
                         continue
-                    for f in changed & code & set(removed):
-                        if removed[f] & added_lines(root, c, f):
-                            overlap = True
-                if commits and not overlap and not any("fix |" in x and x.startswith(where) for x in findings):
-                    findings.append(f"{where} | fix | {plant} removes no line that {', '.join(commits)} added: a plant takes "
-                                    "back the code of its fix (name the commit that wrote the code as it is now)")
+                    mine = any(removed[f] & added_lines(root, c, f) for f in changed & code & set(removed))
+                    overlap = overlap or mine
+                    if not mine and c not in filewise:
+                        findings.append(f"{where} | fix | {plant} removes no line that {c} added: every fix commit wrote code "
+                                        f"the plant takes back (name the commit that wrote it as it is now), or is marked "
+                                        f"`{c}~file` when it only changed the same file")
+                if filewise and not overlap:
+                    findings.append(f"{where} | fix | {plant} removes no line any fix commit added: a `~file` commit needs "
+                                    "one beside it whose code the plant takes back")
+                for t in sorted(code - covered):
+                    findings.append(f"{where} | plant | {plant} changes {t}, which no fix commit changed: a plant takes back "
+                                    "its fix and nothing else (not a harness made to throw the expected failure)")
             check = git(root, "apply", "--check", plant)
             if check.returncode != 0:
                 findings.append(f"{where} | plant | {plant} no longer applies (the fixed code moved: plant it again): "

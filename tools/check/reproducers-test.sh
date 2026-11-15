@@ -113,7 +113,22 @@ printf 'fun more(n: Int) = n + 1\n' >> "$r/kuicksilver-x/src/commonMain/kotlin/x
 later=$(git -C "$r" rev-parse --short=9 HEAD)
 line 1 "negative: a fix commit that only changed the plant's file elsewhere" "| fix | tools/fuzz/plants/bound.patch removes no line that $later added" \
   "$L | live | $later | tools/fuzz/plants/bound.patch | - | x"
+line 1 "negative: a bogus extra fix commit beside the real one" "| fix | tools/fuzz/plants/bound.patch removes no line that $later added" \
+  "$L | live | $fix,$later | tools/fuzz/plants/bound.patch | - | x"
+line 0 "a commit marked ~file beside the one whose code the plant takes back passes" "0 finding(s)" \
+  "$L | live | $fix,$later~file | tools/fuzz/plants/bound.patch | - | x"
+line 1 "negative: a ~file commit alone" "removes no line any fix commit added: a \`~file\` commit needs" \
+  "$L | live | $later~file | tools/fuzz/plants/bound.patch | - | x"
 git -C "$r" reset -q --hard HEAD~1
+# a plant that takes the fix back and also edits a harness no fix commit changed (to throw the expected failure)
+mkdir -p "$r/kuicksilver-x/src/jvmTest/kotlin/x"; printf 'fun harness() = Unit\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/x/Harness.kt"
+git -C "$r" add -A; git -C "$r" commit -qm harness
+python3 -c 'import sys; p=sys.argv[1]; s=open(p).read(); open(p,"w").write(s.replace("minOf(n, 64)", "n"))' "$r/kuicksilver-x/src/commonMain/kotlin/x/Code.kt"
+printf 'fun harness(): Unit = error("outside 0..64")\n' > "$r/kuicksilver-x/src/jvmTest/kotlin/x/Harness.kt"
+git -C "$r" diff -- kuicksilver-x > "$r/tools/fuzz/plants/bound.patch"; git -C "$r" checkout -q -- kuicksilver-x
+expect 1 "negative: a plant that also edits a file no fix commit changed" \
+  "changes kuicksilver-x/src/jvmTest/kotlin/x/Harness.kt, which no fix commit changed"
+git -C "$r" reset -q --hard HEAD~1; git -C "$r" clean -qfd
 # a fix commit and a plant that meet only in the changelog
 printf -- '- bounded\n' >> "$r/CHANGELOG.md"; git -C "$r" commit -qam notes2; doc=$(git -C "$r" rev-parse --short=9 HEAD)
 plant bound CHANGELOG.md '- bounded' '- not bounded'
