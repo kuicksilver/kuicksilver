@@ -1024,7 +1024,8 @@ internal class H1Pool(
                                             if (cause == null) conn.closeOrderly() else conn.close()
                                             released(false)
                                         }
-                                        webSocket?.invokeOnEnd(end) ?: callContext[Job]?.invokeOnCompletion(end)
+                                        val ws = webSocket
+                                        if (ws != null) ws.invokeOnEnd { end(it) } else callContext[Job]?.invokeOnCompletion(end)
                                     }
                                 }
                             }

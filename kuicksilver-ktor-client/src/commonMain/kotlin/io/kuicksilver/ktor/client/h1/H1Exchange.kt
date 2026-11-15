@@ -580,39 +580,47 @@ internal suspend fun readResponse(
                 // the session runs under a job of its own: a call that ends with a cancellation right after the session's
                 // Close was queued (Ktor's webSocketSession() always ends so) still writes that Close (WebSocketLifetime);
                 // the extensions' state lives as long as the session
-                val lifetime = WebSocketLifetime(callContext, webSocketCloseWaitMillis)
-                val handshake =
-                    webSocketAfterHandshake(
-                        request,
-                        headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty(),
-                        headers.getAll(HttpHeaders.SecWebSocketProtocol).orEmpty(),
-                        lifetime.context,
-                    )
-                onHandOver(lifetime)
-                onBodyDone(AfterResponse.HandOver)
-                val wsConfig = request.attributes[WEBSOCKETS_KEY]
-                val guarded =
-                    guardWebSocketInput(
-                        input,
-                        handshake.allowedRsv,
-                        untilClose = false,
-                        peerMasks = false,
-                        context = lifetime.context,
-                        inflate = handshake.inflate,
-                        perMessageDeflate = handshake.perMessageDeflate,
-                        maxMessageSize = webSocketMaxMessageSize,
-                        checkText = handshake.checkText,
-                    )
-                // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                val lifetime = WebSocketLifetime(request, callContext, webSocketCloseWaitMillis)
+                // a refused answer (or anything else before the session exists) gives the lifetime up: nothing waits for it
                 val session =
-                    RawWebSocket(
-                        input = guarded,
-                        output = guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
-                        masking = false,
-                        coroutineContext = lifetime.context,
-                        channelsConfig = wsConfig.channelsConfig,
-                    )
-                return@withContext HttpResponseData(status, requestTime, headers, version, lifetime.watch(session), callContext)
+                    try {
+                        val handshake =
+                            webSocketAfterHandshake(
+                                request,
+                                headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty(),
+                                headers.getAll(HttpHeaders.SecWebSocketProtocol).orEmpty(),
+                                lifetime.context,
+                            )
+                        onHandOver(lifetime)
+                        onBodyDone(AfterResponse.HandOver)
+                        val wsConfig = request.attributes[WEBSOCKETS_KEY]
+                        val guarded =
+                            guardWebSocketInput(
+                                input,
+                                handshake.allowedRsv,
+                                untilClose = false,
+                                peerMasks = false,
+                                context = lifetime.context,
+                                inflate = handshake.inflate,
+                                perMessageDeflate = handshake.perMessageDeflate,
+                                maxMessageSize = webSocketMaxMessageSize,
+                                checkText = handshake.checkText,
+                            )
+                        // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                        val raw =
+                            RawWebSocket(
+                                input = guarded,
+                                output = guardWebSocketOutput(output, masking = true, handshake.checkText, handshake.sentCompression),
+                                masking = false,
+                                coroutineContext = lifetime.context,
+                                channelsConfig = wsConfig.channelsConfig,
+                            )
+                        lifetime.watch(raw)
+                    } catch (e: Throwable) {
+                        lifetime.abandon(e)
+                        throw e
+                    }
+                return@withContext HttpResponseData(status, requestTime, headers, version, session, callContext)
             }
 
             val body =

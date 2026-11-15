@@ -41,6 +41,7 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WebSocketLifetime
+import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
@@ -1197,9 +1198,23 @@ internal class H3Pool(
                     } else {
                         exchange(conn, data, callContext, extraHeaders)
                     }
-                // in use until the call ends (its body read or abandoned), not just until the response head
+                // in use until the call ends (its body read or abandoned), not just until the response head; a WebSocket
+                // until its session ended, which may be after the call (WebSocketLifetime): a connection whose count fell to
+                // 0 is closed when retired or idle, and the session may still be writing its Close on it
+                val session =
+                    if (r.statusCode ==
+                        HttpStatusCode.SwitchingProtocols
+                    ) {
+                        data.attributes.getOrNull(WebSocketLifetimeKey)
+                    } else {
+                        null
+                    }
                 val job = callContext[Job]
-                if (job == null) entry.release(clock()) else job.invokeOnCompletion { entry.release(clock()) }
+                when {
+                    session != null -> session.invokeOnEnd { entry.release(clock()) }
+                    job == null -> entry.release(clock())
+                    else -> job.invokeOnCompletion { entry.release(clock()) }
+                }
                 return r
             } catch (e: Throwable) {
                 entry.release(clock())
@@ -1340,7 +1355,7 @@ internal class H3Pool(
             }
         // the session runs under a job of its own, so that a Close it queued is written even when the call is cancelled
         // right after (Ktor's webSocketSession() always ends so; WebSocketLifetime); the extensions' state lives as long
-        val lifetime = WebSocketLifetime(callContext, webSocketCloseWaitMillis)
+        val lifetime = WebSocketLifetime(data, callContext, webSocketCloseWaitMillis)
         // each direction on its own when the session is over. A send side the session closed cleanly ends with its FIN (the
         // Close reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The
         // closing handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side
@@ -1355,38 +1370,46 @@ internal class H3Pool(
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.ended()) }
         }
 
-        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        stream.headers.neverIndexed.takeIf { it.isNotEmpty() }?.let {
-            data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
-        }
-
-        // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441
-        // section 5 and RFC 9220 section 3); the call's failure resets the stream (above)
-        fun values(name: String) =
-            stream.headers.fields
-                .filter { it.first == name }
-                .map { it.second }
-        val handshake =
-            webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), lifetime.context)
-        // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+        // a refused answer (or anything else before the session exists) gives the lifetime up: its end resets the stream
         val session =
-            RawWebSocket(
-                guardWebSocketInput(
-                    stream.input,
-                    handshake.allowedRsv,
-                    untilClose = true,
-                    peerMasks = false,
-                    context = lifetime.context,
-                    inflate = handshake.inflate,
-                    perMessageDeflate = handshake.perMessageDeflate,
-                    maxMessageSize = config.webSocketMaxMessageSize,
-                    checkText = handshake.checkText,
-                ),
-                guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
-                masking = false,
-                coroutineContext = lifetime.context,
-                channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
-            )
+            try {
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                stream.headers.neverIndexed.takeIf { it.isNotEmpty() }?.let {
+                    data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, it)
+                }
+
+                // an extension or a subprotocol the client did not offer fails the handshake (RFC 6455 section 4.1, kept by RFC 8441
+                // section 5 and RFC 9220 section 3); the call's failure resets the stream (above)
+                fun values(name: String) =
+                    stream.headers.fields
+                        .filter { it.first == name }
+                        .map { it.second }
+                val handshake =
+                    webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), lifetime.context)
+                // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
+                val raw =
+                    RawWebSocket(
+                        guardWebSocketInput(
+                            stream.input,
+                            handshake.allowedRsv,
+                            untilClose = true,
+                            peerMasks = false,
+                            context = lifetime.context,
+                            inflate = handshake.inflate,
+                            perMessageDeflate = handshake.perMessageDeflate,
+                            maxMessageSize = config.webSocketMaxMessageSize,
+                            checkText = handshake.checkText,
+                        ),
+                        guardWebSocketOutput(stream.output, masking = true, handshake.checkText, handshake.sentCompression),
+                        masking = false,
+                        coroutineContext = lifetime.context,
+                        channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
+                    )
+                lifetime.watch(raw)
+            } catch (e: Throwable) {
+                lifetime.abandon(e)
+                throw e
+            }
         // e.g. sec-websocket-protocol
         val responseHeaders = HeadersBuilder().apply { for ((n, v) in stream.headers.fields) append(n, v) }.build()
         return HttpResponseData(
@@ -1394,7 +1417,7 @@ internal class H3Pool(
             requestTime,
             responseHeaders,
             HttpProtocolVersion.HTTP_3_0,
-            lifetime.watch(session),
+            session,
             callContext,
         )
     }

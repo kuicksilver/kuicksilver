@@ -1006,10 +1006,11 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   or a subprotocol not offered fails the handshake with `WebSocketException`, RFC 6455 section 4.1); any other answer
   fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
   is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order ends the
-  stream with END_STREAM and waits up to 5 s, in all, for its last frames to go out and for the server's END_STREAM, then
-  resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
+  stream with END_STREAM and waits for its last frames to go out and for the server's END_STREAM within 5 s counted from
+  its own Close, then resets the stream with CANCEL if either is missing; a handshake refused here, or a call that failed or was
   cancelled before the session queued its Close, resets the stream with CANCEL (one cancelled after it, as Ktor's
-  `webSocketSession()` always is, first writes that Close: see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
+  `webSocketSession()` always is, first writes that Close, all within the same 5 s from it: see
+  [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 
 ### Connection pool
@@ -1104,9 +1105,14 @@ to the address is in neither: only the call (its request timeout or cancellation
 A session's own Close goes out even when its call ends with a failure or a cancellation once that Close was queued,
 over every protocol: Ktor's `webSocketSession()` ends its call that way each time the session closes (it takes the
 session's cancelled outgoing channel for a failure), and the Close, and the frames queued before it, would otherwise be
-lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session's reader and
-writer get up to 5 s more for it, then the connection (HTTP/1.1) or the stream (HTTP/2, HTTP/3) is ended as for a
-failed call. A call that ends before the session queued its Close still ends the session at once.
+lost with the call (RFC 6455 section 7.1.2: the endpoint "MUST send a Close control frame"). The session runs on until
+it ends, within 5 s counted from its own Close; that one deadline covers writing the Close, the server's Close and, over
+HTTP/2, the server's END_STREAM. Within it the connection is closed in order (HTTP/1.1, close_notify over TLS) or the
+stream ended (HTTP/2 END_STREAM, HTTP/3 FIN); past it the HTTP/1.1 connection is closed at once, the HTTP/2 stream reset
+with CANCEL and the HTTP/3 stream reset with H3_REQUEST_CANCELLED. The connection, its pool slot and the engine's
+`close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
+before the pools close. A call that ends before the session queued its Close ends the session at once. A coroutine of
+the session that fails is reported to the event listener (`webSocketFailed`).
 
 ### Discovery and Alt-Svc
 
@@ -1836,7 +1842,8 @@ connection is in hand, with `HTTP_2_0` when the server picked `h2`, since 0.3.0)
 with the HTTP/3 failure itself (not the `FallbackReason`, which is on the response, below); `retry` (a request the server
 did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
 (reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
-followed the network, [Connection migration](#connection-migration)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+followed the network, [Connection migration](#connection-migration)); `webSocketFailed` (a coroutine of a WebSocket
+session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin

@@ -300,6 +300,7 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V
 	public fun raceEnded-exY8QGI (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;JLjava/lang/Throwable;)V
 	public fun retry (Lio/ktor/client/request/HttpRequestData;ILjava/lang/Throwable;)V
+	public fun webSocketFailed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 }
 
 public final class io/kuicksilver/ktor/client/NeverIndexedKt {

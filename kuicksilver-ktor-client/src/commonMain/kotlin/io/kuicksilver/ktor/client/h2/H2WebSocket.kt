@@ -133,6 +133,7 @@ internal suspend fun h2WebSocket(
         releaseUnder(events, stream, e) { release() }
         throw e
     }
+    var made: WebSocketLifetime? = null
     try {
         val head = stream.response()
         if (head.neverIndexed.isNotEmpty()) data.attributes.put(io.kuicksilver.ktor.client.NeverIndexedReceivedKey, head.neverIndexed)
@@ -157,7 +158,8 @@ internal suspend fun h2WebSocket(
         fun values(name: String) = head.fields.filter { it.first == name }.map { it.second }
         // the session runs under a job of its own, so that a Close it queued is written even when the call is cancelled
         // right after (Ktor's webSocketSession() always ends so; WebSocketLifetime); the extensions' state lives as long
-        val lifetime = WebSocketLifetime(callContext, closeWaitMillis)
+        val lifetime = WebSocketLifetime(data, callContext, closeWaitMillis)
+        made = lifetime
         val handshake =
             webSocketAfterHandshake(data, values("sec-websocket-extensions"), values("sec-websocket-protocol"), lifetime.context)
         // the frames go out within the server's windows, at most H2StreamOutput.DEFAULT_LIMIT ahead of the stream (the
@@ -201,24 +203,22 @@ internal suspend fun h2WebSocket(
         }
         lifetime.invokeOnEnd { cause ->
             // a session that ended in order closed its output: its last frames and END_STREAM go out, and the server's
-            // END_STREAM is waited for (RFC 6455 section 7.1.1); a call that failed or was cancelled before the session's
-            // own Close (its output may still have been closed without a cause) is reset with CANCEL at once
+            // END_STREAM is waited for (RFC 6455 section 7.1.1) within what is left of the close wait counted from the
+            // session's own Close (one deadline with the wait above); a call that failed or was cancelled before the
+            // session's own Close (its output may still have been closed without a cause) is reset with CANCEL at once
             if (cause != null || !output.isClosedForWrite || output.closedCause != null) {
                 sender.cancel()
                 releaseLogged(events, stream) { release() }
                 return@invokeOnEnd
             }
-            // one bound for both: the last frames may wait for a window the server never opens again
-            GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h2-websocket-close")) {
-                try {
-                    withTimeoutOrNull(closeWaitMillis) {
-                        sender.join()
-                        stream.awaitServerEnd()
-                    }
-                } finally {
-                    sender.cancel()
-                    releaseLogged(events, stream) { release() }
+            try {
+                withTimeoutOrNull(lifetime.remainingCloseWaitMillis()) {
+                    sender.join()
+                    stream.awaitServerEnd()
                 }
+            } finally {
+                sender.cancel()
+                releaseLogged(events, stream) { release() }
             }
         }
         val raw =
@@ -251,6 +251,7 @@ internal suspend fun h2WebSocket(
         val session = lifetime.watch(raw, ::onOwnClose)
         return HttpResponseData(HttpStatusCode.SwitchingProtocols, requestTime, headers, HttpProtocolVersion.HTTP_2_0, session, callContext)
     } catch (e: Throwable) {
+        made?.abandon(e) // nothing waits for a session that was never made
         releaseUnder(events, stream, e) { release() } // the handshake fails with e (or goes again for it) whatever the release throws
         if (e !is Http2Exception) throw e
         if (e.notProcessed) throw H2NotProcessed(e, bodyConsumed = false)

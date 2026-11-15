@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
+  (the engine's or Ktor's reader or writer) fails; the session may outlive its call while it writes its own Close, so
+  this can come after `callEnd`.
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
@@ -982,9 +985,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection without the Close frame (the server saw 1006, "closed without close frame"): Ktor's builder cancels the
   call as soon as the session queues its Close, and the session's writer, running under the call, was cancelled with it,
   often before it wrote that Close. The session now runs under a job of its own: a call that ends with a failure or a
-  cancellation after the session's Close was queued leaves it up to 5 s to write that Close (and the frames before it)
-  before the connection or stream is ended, over HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 6455 section 7.1.2).
-  The extensions' state (permessage-deflate) is freed with the session, not with the call.
+  cancellation after the session's Close was queued leaves it, within 5 s counted from that Close (one deadline that
+  also covers the server's Close and, over HTTP/2, its END_STREAM), to write that Close and the frames before it, over
+  HTTP/1.1, HTTP/2 and HTTP/3 alike (RFC 6455 section 7.1.2). The connection, the HTTP/3 pool's count and the engine's
+  `close()` wait for the session's end, not the call's, so `client.close()` right after `close(reason)` no longer cuts
+  the Close off. The extensions' state (permessage-deflate) is freed with the session.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

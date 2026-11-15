@@ -85,9 +85,56 @@ class ClientWebSocketCloseTest {
         }
 
     /**
+     * `close(reason)` and then `client.close()` at once, the writer still held behind a large frame: the engine's cleanup
+     * (its pools, its selector) waits for the session to write its Close and end, instead of closing the connection under
+     * it. Before, the cleanup ran as soon as the call ended and the handed-over socket stayed open past it, unaccounted.
+     */
+    @Test fun clientCloseWaitsForTheSessionsClose() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val listener = bindTcp(selector, "127.0.0.1", 0)
+            val reading = CompletableDeferred<Unit>()
+            try {
+                coroutineScope {
+                    val served =
+                        async {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                val output = s.openWriteChannel(autoFlush = true)
+                                output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
+                                reading.await()
+                                readClientFrames(input)
+                            }
+                        }
+                    val c = testClient(block = { install(WebSockets) })
+                    val engine = c.engine as KuicksilverEngine
+                    engine.h1.webSocketCloseWaitMillis = 60_000
+                    val port = (listener.localAddress as InetSocketAddress).port
+                    val session = c.webSocketSession("ws://127.0.0.1:$port/ws")
+                    session.outgoing.send(Frame.Binary(true, ByteArray(BIG)))
+                    launch { session.close(CloseReason(4002, "client bye")) }
+                    session.call.coroutineContext[Job]!!.join()
+                    c.close()
+                    // a cleanup that does not wait for the session is over well within this
+                    val cleanedFirst = kotlinx.coroutines.withTimeoutOrNull(1.seconds) { engine.cleanup.join() } != null
+                    reading.complete(Unit)
+                    assertEquals(listOf("binary $BIG", "close 4002 client bye"), withTimeout(20.seconds) { served.await() })
+                    assertEquals(false, cleanedFirst, "the cleanup ran before the session wrote its Close")
+                    withTimeout(20.seconds) { engine.cleanup.join() }
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+        }
+
+    /**
      * The invariant over many sessions of `webSocketSession()`: whatever data frames a session sends before `close(reason)`
      * (none to several, of random sizes), the server reads them all and then that Close, with its code and reason. The
      * server reads at once here, so the writer races the call's cancellation as it does in an application.
+     *
+     * A regression guard, not the test that shows the bug: over cleartext loopback the race is rare (the previous code
+     * passed 200 sessions here; a TLS server under CPU load lost 73 of 4000 Closes), and the tests above force it.
      */
     @Test fun everyClosedSessionDeliversItsClose() =
         clientTest {

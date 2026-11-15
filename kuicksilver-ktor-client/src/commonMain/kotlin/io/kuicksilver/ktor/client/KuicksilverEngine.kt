@@ -300,6 +300,9 @@ internal class KuicksilverEngine(
             inFlight.complete()
             throw ClientEngineClosedException()
         }
+        // a WebSocket session may outlive its call while it writes its own Close: it holds this call in flight until it
+        // ended (WebSocketLifetime), so the cleanup after close() waits for it too
+        data.attributes.put(WebSocketCallTrackKey, WebSocketCallTrack(inFlight, events))
         events.emit("callStart") { callStart(data) }
         // a new one per call, also when the request's attributes came with one (a redirect or a retry copies them): the
         // pools count their retries in it, and the response hands it out
