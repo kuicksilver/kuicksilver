@@ -279,7 +279,7 @@ internal object ConnectionPathSeeds {
                 .build()
         // a failed validation of the active path (RFC 9000 section 9.3.2), from inputs the campaigns found: another validated path
         // takes over; the only validated one is on the server's other local address, so the server goes back to that peer address
-        // from its own; no validated peer address is left, so the connection closes
+        // from its own
         m["fallback-after-failed-validation"] =
             hex(
                 "0083fdf42e3df42e2ef43af4f4f52ef402fdf43d02f4f4f5f4fd02f42e3df4f52ef43af4f5f4f43d02f4f4f5f4fd02f42e3d" +
@@ -309,18 +309,21 @@ internal object ConnectionPathSeeds {
                 "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
                     "128412121235f512121c24397c12121232e3f524121231113c3c085ef5f512121212",
             )
-        // the same revert, then the client's packets reach the reverted path (E_REDIRECT) with another ID of ours than it used on the
+        // the same revert, then the client's packets reach the reverted path (E_MIGRATE's redirect) with another ID of ours than it used on the
         // path the server left (it moved to the preferred address and retired that one): the path keeps waiting (RFC 9000 section 9.5)
         m["revert-then-client-with-another-id"] =
             hex(
                 "fd3d02f4fdf4f43df502f4f42ef4fd3d02f4f52ef4f5f42ef4fd3d022ef4fd3d02f4f52e2ef4fd740254f4f52ef4fd3d397c" +
-                    "128412121235f512121c24397c12121232e3f52403f901f40103f901f40112f7121203f901f40103f901f40112f71212f5f7" +
-                    "1212",
+                    "128412121235f512121c24397c12121232e3f52403f901f40103f901f401127703121203f901f40103f901f4011277031212" +
+                    "f577031212",
             )
+        // the client migrates to a new socket on purpose, the server follows it, and its datagrams to the client stop: the new
+        // address fails its validation, the server goes back to the previous one, under its re-validation (RFC 9000 sections 9.3.2,
+        // 9.3.3), which fails too: no validated peer address is left and the connection closes
         m["no-viable-path"] =
             hex(
-                "00a49c9ca4e47f3113113113313914ff31131102f42e3df4f52ef43af4f5f4464646f43d000a00001100000005fd02f42e3d" +
-                    "2ef43af4ef",
+                "0003f907d00012121212121277001212161212161e770103f907d0001212f5f5f5f5f51e7703121203f907d0001277031212" +
+                    "1212",
             )
         // the client migrates, so the server sends with one of the client's IDs that has a reset token; then that token arrives from a
         // stranger, with the server's own ID as destination (routed to the connection, not by the peer's address): not a reset
@@ -449,7 +452,7 @@ internal object ConnectionPathSeeds {
                 }
 
                 else -> {
-                    val e = r.nextInt(1, 16)
+                    val e = r.nextInt(1, 15)
                     val args =
                         when (e) {
                             E_MTU, E_ECN_PATH, E_MIGRATE, E_CAPS, E_RETRY, E_VN, E_PTB_INFLIGHT -> arrayOf(one(r.nextInt(256)))
