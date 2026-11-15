@@ -486,6 +486,9 @@ internal class H3Session(
     /** WebTransport sessions with flow control open on this connection (session dispatcher only). */
     private var wtFlowSessions = 0
 
+    /** [wtFlowSessions] for whoever follows it from elsewhere: the sessions' shares of the send buffer ([WtSendShare]). */
+    internal val wtFlowSessionCount = MutableStateFlow(0)
+
     /** [wtFlowSessions] and the receive-window floor it asks for (a test hook; session dispatcher only). */
     internal val wtFlowSessionsForTest: Pair<Int, Long> get() = wtFlowSessions to wtFloor.value
 
@@ -501,6 +504,7 @@ internal class H3Session(
     fun wtFlowSession(up: Boolean) {
         wtFlowSessions += if (up) 1 else -1
         check(wtFlowSessions >= 0) { "WebTransport session count below 0" }
+        wtFlowSessionCount.value = wtFlowSessions
         wtFloor.value = wtFlowSessions.toLong() * settings.webTransportInitialMaxData
         // one sender of the latest value: a stale floor never overtakes a newer one
         if (wtFloorSender == null) {

@@ -48,6 +48,10 @@ import kotlin.time.Duration.Companion.seconds
 class WebTransportServerSessionsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    private companion object {
+        const val BUFFER = 262_144L
+    }
+
     private class Raw(
         val c: QuicConnection,
         val server: Http3Connection,
@@ -175,12 +179,57 @@ class WebTransportServerSessionsTest {
      * writer filled the buffer while holding the turn, and every session stalled.
      */
     @Test fun negative_aSessionWhosePeerNeverReadsDoesNotStallTheOthers() =
+        smallBufferTest { r ->
+            val (_, sa) = rawSession(r.c, r.server, r.raw)
+            val (_, sb) = rawSession(r.c, r.server, r.raw)
+            val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
+            // two sessions split the buffer less the reserve (one part in webTransportMaxSessions + 1)
+            assertEquals((BUFFER - BUFFER / 5) / 2, share.cap)
+            val flooding = r.flood(sa, share)
+            assertTrue(r.sendAndReceive(sb, 500_000), "the other session's data arrived whole")
+            assertTrue(share.held.value <= share.cap, "the stuck session stays within its share")
+            flooding.cancel()
+        }
+
+    /**
+     * A session alone on its connection is not held to the part it would have among many: it may use the whole buffer
+     * less the reserve, so one session's throughput is not cut to a fraction of the buffer per round trip.
+     */
+    @Test fun aLoneSessionUsesTheBufferLessTheReserve() =
+        smallBufferTest { r ->
+            val (_, sa) = rawSession(r.c, r.server, r.raw)
+            val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
+            assertEquals(BUFFER - BUFFER / 5, share.cap)
+            val flooding = r.flood(sa, share)
+            assertTrue(share.held.value > BUFFER / 5, "it holds more than one part in webTransportMaxSessions + 1")
+            flooding.cancel()
+        }
+
+    /**
+     * A session that joins while another holds its whole (alone) part finds the reserve free and writes at once; the first
+     * one, over its smaller part now, waits until the transport released enough.
+     */
+    @Test fun negative_aSessionJoiningAFullBufferWritesAtOnce() =
+        smallBufferTest { r ->
+            val (_, sa) = rawSession(r.c, r.server, r.raw)
+            val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
+            val flooding = r.flood(sa, share)
+            assertTrue(share.held.value > (BUFFER - BUFFER / 5) / 2, "the first session holds more than its later part")
+            val (_, sb) = rawSession(r.c, r.server, r.raw)
+            assertEquals((BUFFER - BUFFER / 5) / 2, share.cap)
+            assertTrue(r.sendAndReceive(sb, 200_000), "the newcomer's data arrived whole")
+            assertTrue(share.held.value <= BUFFER - BUFFER / 5)
+            flooding.cancel()
+        }
+
+    /** A server send buffer of [BUFFER] bytes; the client takes at most 16 KiB of a stream it does not read. */
+    private fun smallBufferTest(block: suspend CoroutineScope.(Raw) -> Unit) =
         serverTest(
             clientSettings = wtClientFlowSettings(data = 64_000_000),
             serverQuic =
                 H3Fixtures.quic
                     .toBuilder()
-                    .apply { maxSendBuffer = 262_144 }
+                    .apply { maxSendBuffer = BUFFER }
                     .build(),
             clientQuic =
                 H3Fixtures.quic
@@ -189,17 +238,31 @@ class WebTransportServerSessionsTest {
                         initialStreamWindow = 16_384
                         maxStreamWindow = 16_384
                     }.build(),
-        ) { r ->
-            val (_, sa) = rawSession(r.c, r.server, r.raw)
-            val (_, sb) = rawSession(r.c, r.server, r.raw)
-            val share = assertNotNull((sa as WtSessionImpl).sendShareForTest)
-            assertEquals(262_144L / 5, share.cap)
-            // the client takes 16 KiB of this stream and never reads it: the rest stays in the server's buffer
-            val stuck = sa.openUni()
-            val flooding = launch { runCatching { stuck.output.writeFully(ByteArray(2_000_000)) } }
-            withTimeout(5.seconds) { share.held.first { it + WtFairness.SEND_QUANTUM > share.cap } }
-            val out = sb.openUni()
-            val data = ByteArray(500_000) { it.toByte() }
+            block = block,
+        )
+
+    /**
+     * [session] writes to a stream the client never reads (16 KiB go out, the rest stays in the server's buffer) until its
+     * share is full; the writer is returned for the caller to cancel.
+     */
+    private suspend fun Raw.flood(
+        session: WebTransportSession,
+        share: WtSendShare,
+    ): kotlinx.coroutines.Job {
+        val stuck = session.openUni()
+        val job = server.session.scope.launch { runCatching { stuck.output.writeFully(ByteArray(4_000_000)) } }
+        withTimeout(5.seconds) { share.held.first { it + WtFairness.SEND_QUANTUM > share.cap } }
+        return job
+    }
+
+    /** [session] sends [size] bytes on a new stream the client reads; whether they all arrived within ten seconds. */
+    private suspend fun Raw.sendAndReceive(
+        session: WebTransportSession,
+        size: Int,
+    ): Boolean =
+        kotlinx.coroutines.coroutineScope {
+            val out = session.openUni()
+            val data = ByteArray(size) { it.toByte() }
             launch {
                 out.output.writeFully(data)
                 out.output.flushAndClose()
@@ -207,16 +270,14 @@ class WebTransportServerSessionsTest {
             val got =
                 withTimeout(10.seconds) {
                     while (true) {
-                        val st = r.c.acceptStream()
+                        val st = c.acceptStream()
                         if (st.id and 2L == 0L || st.readVarInt() != StreamType.WT_UNI) continue
-                        if (st.readVarInt() == sb.sessionId) return@withTimeout st.input.readAllBytes()
+                        if (st.readVarInt() == session.sessionId) return@withTimeout st.input.readAllBytes()
                     }
                     @Suppress("UNREACHABLE_CODE")
                     error("unreachable")
                 }
-            assertTrue(data.contentEquals(got), "the other session's data arrived whole")
-            assertTrue(share.held.value <= share.cap, "the stuck session stays within its share")
-            flooding.cancel()
+            data.contentEquals(got)
         }
 
     /**

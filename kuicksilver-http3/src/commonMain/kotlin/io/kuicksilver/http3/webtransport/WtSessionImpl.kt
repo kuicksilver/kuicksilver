@@ -103,14 +103,15 @@ internal class WtSessionImpl(
 
     /**
      * The session's turns at the connection's send buffer and its share of it (section 8), with flow control (sessions
-     * share the connection only then): a part of QUIC's `maxSendBuffer` for each session the connection may carry, and one
-     * more for the rest of the connection, at its CONNECT stream's current urgency. Session dispatcher only.
+     * share the connection only then), at its CONNECT stream's current urgency: QUIC's `maxSendBuffer` less a reserve of
+     * one part in webTransportMaxSessions + 1, which a session that joins finds free, split between the open sessions.
+     * Session dispatcher only.
      */
     private val sendTurns: WtSendTurns? =
         if (flowEnabled) {
             val buffer = runCatching { h3.quic.core.maxSendBuffer }.getOrDefault(DEFAULT_SEND_BUFFER)
-            val cap = maxOf(WtFairness.SEND_QUANTUM, buffer / (h3.settings.webTransportMaxSessions + 1))
-            WtSendTurns(this, { stream.priority.urgency }, h3.wtFairness.send, WtSendShare(cap))
+            val share = WtSendShare(buffer, buffer / (h3.settings.webTransportMaxSessions + 1), h3.wtFlowSessionCount)
+            WtSendTurns(this, { stream.priority.urgency }, h3.wtFairness.send, share)
         } else {
             null
         }

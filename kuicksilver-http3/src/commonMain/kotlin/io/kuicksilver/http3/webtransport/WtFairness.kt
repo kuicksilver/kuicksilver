@@ -9,6 +9,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -136,14 +138,25 @@ internal class WtFairQueue(
 
 /**
  * A session's part of its connection's send buffer (QUIC's `maxSendBuffer`, the bytes of all streams written and not yet
- * acknowledged): at most [cap] bytes of its own may be in it, so a session whose peer never reads a stream holds only its
- * part and the others keep writing (section 8: one session "aggressively using up those resources can cause other
- * sessions to stall"). A session over its part waits outside the turn ([WtSendTurns]). A session with nothing in the
- * buffer may always write one chunk, so a part smaller than a chunk still moves. Session dispatcher only.
+ * acknowledged), so a session whose peer never reads a stream holds only its part and the others keep writing (section 8:
+ * one session "aggressively using up those resources can cause other sessions to stall"). A [reserve] of the [buffer]
+ * stays free for a session that joins; the rest is split between the [sessions] with flow control open on the
+ * connection: a session alone gets all of it, and the parts always add up to the buffer less the reserve, so a newcomer
+ * finds the reserve free at once. A session over its part (the others joined after it took more) waits outside the turn
+ * ([WtSendTurns]) until the transport released enough. A session with nothing in the buffer may always write one chunk,
+ * so a part smaller than a chunk still moves. Session dispatcher only.
  */
 internal class WtSendShare(
-    val cap: Long,
+    private val buffer: Long,
+    private val reserve: Long,
+    private val sessions: StateFlow<Int>,
 ) {
+    /** The part of a session among [n]. */
+    private fun capFor(n: Int): Long = maxOf(WtFairness.SEND_QUANTUM, (buffer - reserve) / maxOf(1, n))
+
+    /** The session's part now. */
+    val cap: Long get() = capFor(sessions.value)
+
     /** Bytes of the session written and not yet released by the transport. */
     val held = MutableStateFlow(0L)
 
@@ -158,8 +171,9 @@ internal class WtSendShare(
 
     fun fits(cost: Long): Boolean = held.value == 0L || held.value + cost <= cap
 
+    /** Waits until [cost] more bytes fit the part, which shrinks as sessions join and grows as they leave. */
     suspend fun awaitRoom(cost: Long) {
-        held.first { it == 0L || it + cost <= cap }
+        combine(held, sessions) { h, n -> h == 0L || h + cost <= capFor(n) }.first { it }
     }
 
     fun take(

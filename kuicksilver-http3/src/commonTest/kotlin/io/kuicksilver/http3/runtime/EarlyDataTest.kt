@@ -1036,6 +1036,50 @@ class EarlyDataTest {
             }
         }
 
+    /**
+     * A WebTransport CONNECT in 0-RTT the server rejects (its flow-control settings changed since the ticket, section
+     * 3.2): the transport drops it, so the server never sees it and keeps nothing of it, and the stream fails on the
+     * client.
+     */
+    @Test fun negative_webTransportConnectInRejected0RttLeavesNothing(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val seen = AtomicInt(0)
+                var st: io.kuicksilver.quic.QuicStream? = null
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer =
+                            io.kuicksilver.http3.http3Settings {
+                                enableConnectProtocol = true
+                                webTransport = true
+                            },
+                        resumer =
+                            io.kuicksilver.http3.http3Settings {
+                                enableConnectProtocol = true
+                                webTransport = true
+                                webTransportInitialMaxData = 2_000_000
+                            },
+                        resumerRequests = seen,
+                        clientSettings = wtClient,
+                        beforeRequest = { c, release ->
+                            st = earlyWebTransportConnect(c)
+                            release()
+                        },
+                        after = { _, resumed ->
+                            assertTrue(
+                                runCatching {
+                                    io.kuicksilver.http3.webtransport
+                                        .readHeaders(st!!)
+                                }.isFailure,
+                            )
+                            for (s in resumed()) assertNoWebTransportLeft(s.session)
+                        },
+                    )
+                assertEquals(false, accepted, "the server rejected the 0-RTT")
+                assertEquals(1, seen.load(), "only the request sent after the handshake reached the server")
+            }
+        }
+
     @Test fun reject425PolicyAndOneRetry(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.Reject425()).use { f ->
