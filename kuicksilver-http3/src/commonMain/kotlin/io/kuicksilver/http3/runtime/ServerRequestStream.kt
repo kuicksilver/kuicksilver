@@ -534,7 +534,18 @@ internal class ServerRequestImpl(
     private suspend fun abandonedBeforeTheFullResponse() {
         if (respondedInFull) kotlinx.coroutines.awaitCancellation()
         kotlinx.coroutines.coroutineScope {
-            val stopped = launch { st.awaitSendStopped().also { peerAbandoned.complete(Unit) } }
+            // a STOP_SENDING abandons the request; a stream that ended both ways without one (null) does not, and the end of the
+            // connection (which awaitSendStopped throws) is the watch below
+            val stopped =
+                launch {
+                    val code =
+                        try {
+                            st.awaitSendStopped()
+                        } catch (_: io.kuicksilver.quic.QuicException) {
+                            null
+                        }
+                    if (code != null) peerAbandoned.complete(Unit)
+                }
             val lost =
                 launch {
                     session.quic.closed
