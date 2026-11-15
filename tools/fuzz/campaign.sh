@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-network and
-# kuicksilver-ktor-client and the libFuzzer harness of
-# ksl (tools/fuzz/ksl/). It replaces the ClusterFuzzLite path for this project: the laptop stays usable, so by default
+# Local fuzzing campaigns for the Jazzer targets of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2, kuicksilver-ktor-network,
+# kuicksilver-ktor-client and kuicksilver-ktor-server and the libFuzzer harness of
+# ksl (tools/fuzz/ksl/), this project's fuzzing (ClusterFuzzLite is not enabled). The laptop stays usable, so by default
 # every run is a slice of at most 20 minutes at background priority (taskpolicy -b, nice 19, one fuzzing thread, the
 # serial collector), with a pause between slices so other builds get the machine. Progress is resumable: the growing
 # corpora, per-slice statistics and crash reproducers live in build/fuzz-campaign/ (KSL_FUZZ_STATE), and the next run
@@ -139,11 +139,15 @@ http2.hpackRoundTrip jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackRoundT
 ktor-network.inflate jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.InflateFuzzTest inflate
 ktor-network.wsGuard jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fuzz.WsGuardFuzzTest wsGuard
 client.svcb jvm kuicksilver-ktor-client io.kuicksilver.ktor.client.fuzz.SvcbFuzzTest svcbMessage
+client.h1Response jvm kuicksilver-ktor-client io.kuicksilver.ktor.client.fuzz.H1ResponseFuzzTest h1Response
+server.h1Request jvm kuicksilver-ktor-server io.kuicksilver.ktor.server.fuzz.H1RequestFuzzTest h1Request
 ksl.parsers c kuicksilver-native ksl_fuzz parsers
 EOF
 }
 
 die() { echo "campaign: $*" >&2; exit 2; }
+# the modules with a Jazzer target (tools/fuzz/classpath.init.gradle reads the same table)
+jvm_modules() { targets_table | awk '$2 == "jvm" { print $3 }' | sort -u; }
 field() { targets_table | awk -v id="$1" -v f="$2" '$1 == id { print $f }'; }
 seeds_dir() { # committed seed inputs (Jazzer regression inputs) of a target
   local module cls method; module=$(field "$1" 3); cls=$(field "$1" 4); method=$(field "$1" 5)
@@ -213,15 +217,16 @@ quiet() { if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b nice -n "
 # change the classes under a running fuzzer; dependency jars from the Gradle cache are used in place.
 head_rev() { git -C "$root" rev-parse HEAD 2>/dev/null || echo none; }
 snapshot_classpath() {
-  local out="$state/cp" tmp line module entries i dest new
+  local out="$state/cp" tmp line module entries i dest new m cp_tasks=()
+  for m in $(jvm_modules); do cp_tasks+=(":$m:printFuzzClasspath"); done
   if [ "$build" = 1 ]; then
     tmp=$(mktemp "$state/cp-print.XXXXXX")
     if [ -x "$HOME/.kuicksilver-tools/quiet-gradle" ]; then
       (cd "$root" && "$HOME/.kuicksilver-tools/quiet-gradle" -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath :kuicksilver-ktor-client:printFuzzClasspath) > "$tmp"
+        "${cp_tasks[@]}") > "$tmp"
     else
       (cd "$root" && quiet ./gradlew --max-workers=2 -q -I tools/fuzz/classpath.init.gradle \
-        :kuicksilver-tls:printFuzzClasspath :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath :kuicksilver-ktor-network:printFuzzClasspath :kuicksilver-ktor-client:printFuzzClasspath) > "$tmp"
+        "${cp_tasks[@]}") > "$tmp"
     fi
     rm -rf "$out.new"; mkdir -p "$out.new"
     while IFS= read -r line; do
@@ -242,7 +247,7 @@ snapshot_classpath() {
       [ -z "$new" ] || printf '%s\n' "$new" > "$out.new/$module.cp"
     done < "$tmp"
     rm -f "$tmp"
-    for m in kuicksilver-tls kuicksilver-quic kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-network kuicksilver-ktor-client; do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
+    for m in $(jvm_modules); do [ -s "$out.new/$m.cp" ] || die "Gradle printed no classpath for $m"; done
     rm -rf "$out"; mv "$out.new" "$out"
     head_rev > "$out/HEAD"
     [ -x "$root/build/fuzz-ksl/ksl_fuzz" ] && quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null || true

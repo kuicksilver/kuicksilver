@@ -23,8 +23,8 @@
 # QUIC or HTTP parsers may be remotely triggerable, so it stays private until fixed (SECURITY.md). Only stats.tsv (the
 # finding's file name, no input) is the fuzz-stats-<target> artifact; the maintainers reproduce the finding locally with
 # tools/fuzz/campaign.sh. That a target found something is visible in the public run (its job fails); what it found is
-# not. The summary job prints the campaign.sh status table of all targets. ClusterFuzzLite
-# (.github/workflows/cflite_pr.yml, disabled) stays as it is.
+# not. The summary job prints the campaign.sh status table of all targets. ClusterFuzzLite is not used here: it would
+# publish a finding's input and stack trace (CONTRIBUTING.md, "Fuzzing"); .clusterfuzzlite/ is kept for OSS-Fuzz.
 name: fuzz
 on:
   # weekly, every target for the default hours (inputs are empty on a schedule: the defaults below apply)

@@ -999,7 +999,7 @@ private suspend fun readRequestHeadInTime(
  * returns once a byte of something else is there: true, a request has started; false when the input ended first.
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)
-private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
+internal suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
     while (true) {
         if (readBuffer.exhausted() && !awaitContent()) return false
         // read the buffered bytes in place, as Ktor's own line reader does (no peek source per line)

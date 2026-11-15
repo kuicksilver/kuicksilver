@@ -2,7 +2,8 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # The fuzz packages' FuzzCase.kt (one copy per module: the modules share no test source set) stay identical but for their
-# package line, and every jvmTest package with a @FuzzTest has one.
+# package line, and every jvmTest package with a @FuzzTest has one. The copies of TransferCodingVerdict.kt (the HTTP/1.1
+# targets of the client and the server) stay identical but for their package line too.
 # Usage: tools/check/fuzz-case-sync.sh [root]   (exit 1 on a drifted or missing copy)
 set -uo pipefail
 root="${1:-.}"; cd "$root" || exit 2
@@ -27,5 +28,13 @@ while IFS= read -r dir; do
   fi
 done < <(fuzz_files | xargs -0 grep -l '@FuzzTest' 2>/dev/null | xargs -n1 dirname | sort -u)
 [ "$packages" -gt 0 ] || { echo "no fuzz package found under $root"; rc=1; }
-[ $rc -eq 0 ] && echo "FuzzCase.kt copies OK"
+first=""
+while IFS= read -r f; do
+  if [ -z "$first" ]; then first="$f"; continue; fi
+  if ! diff <(grep -v '^package ' "$first") <(grep -v '^package ' "$f") >/dev/null; then
+    echo "drifted: $f differs from $first (package line aside):"
+    diff <(grep -v '^package ' "$first") <(grep -v '^package ' "$f") | head -10; rc=1
+  fi
+done < <(fuzz_files | tr '\0' '\n' | grep '/TransferCodingVerdict\.kt$' | sort)
+[ $rc -eq 0 ] && echo "FuzzCase.kt and TransferCodingVerdict.kt copies OK"
 exit $rc

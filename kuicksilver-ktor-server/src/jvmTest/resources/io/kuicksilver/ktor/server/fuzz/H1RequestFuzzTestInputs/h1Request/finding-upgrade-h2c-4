@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+Host: s
+Connection: Upgrade
+Upgrade: h2c
+

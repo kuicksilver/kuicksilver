@@ -2,22 +2,26 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# ClusterFuzzLite / OSS-Fuzz build for the Jazzer targets of kuicksilver-quic, kuicksilver-http3 and kuicksilver-http2.
+# ClusterFuzzLite / OSS-Fuzz build of the Jazzer targets of tools/fuzz/campaign.sh (every target of kind jvm in its
+# target table, read from there so that the two never drift apart).
 # 1. OpenSSL: the pinned release (gradle/openssl.toml) is downloaded, its PGP signature and SHA-256 are checked
 #    (tools/openssl/fetch.sh) and it is built statically for linux-x64 (tools/openssl/build.sh). The local CI builds this
 #    target inside manylinux2014 through Docker; Docker is not available here, so the base image's compiler is used:
 #    the glibc floor of that library does not matter, it only runs in the fuzzing container.
 # 2. libksl: tools/build-jni.sh links ksl + JNI + OpenSSL into libksl_<abi>_linux_x86_64.so and writes it, with its
 #    SHA-256 manifest, to kuicksilver-native/build/jni/resources (the kuicksilver-native jar picks it up from there).
+#    The QUIC and TLS targets load it (KslLoader); the others have it on their classpath and never load it.
 # 3. Gradle compiles the jvmTest classes with JDK 21, skipping buildJniHost (which would rebuild OpenSSL through
-#    Docker), and prints the test runtime classpath of both modules (an init script, below).
-# 4. The classpath is copied into $OUT and one Jazzer launcher is written per @FuzzTest method (--target_class and
-#    --target_method), with the committed inputs of that method as its seed corpus.
-# Status: prepared, never run; superseded for this project by local campaigns (tools/fuzz/campaign.sh). The target list
-# below does not include the targets added since (ConnectionFuzzTest, ZeroRttFuzzTest, kuicksilver-tls, the ksl harness).
+#    Docker), and prints the test runtime classpath of each module (tools/fuzz/classpath.init.gradle, as the campaigns).
+# 4. The classpath is copied into $OUT and one Jazzer launcher is written per target (--target_class and
+#    --target_method of its @FuzzTest), named after the campaign id with '.' and '-' replaced by '_'
+#    (quic.frameDecode -> quic_frameDecode, ktor-network.inflate -> ktor_network_inflate). Its seed corpus is the
+#    committed inputs of that method and tools/fuzz/corpus/<id>/, the inputs the campaigns start from.
+# The ksl C harness (campaign id ksl.parsers) is not built here: it is a C libFuzzer target with ASan and UBSan in a
+# project whose language is jvm, and it reads its certificates from the source tree at run time; the campaigns run it.
 
 cd "$SRC/kuicksilver"
-export JOBS="$(nproc)"
+JOBS="$(nproc)"; export JOBS
 
 # 1-2: OpenSSL and libksl (JNI headers from the JDK in JAVA_HOME)
 bash tools/openssl/fetch.sh
@@ -26,79 +30,68 @@ bash tools/openssl/fetch.sh
 CC="${CC:-clang}" CFLAGS="" bash tools/openssl/build.sh linux-x64
 CC="${CC:-clang}" CFLAGS="" bash tools/build-jni.sh linux-x86_64 kuicksilver-native/build/jni
 
-# 3: compile the fuzz targets and resolve their classpath
-cat > /tmp/fuzz-classpath.init.gradle <<'GRADLE'
-allprojects {
-    if (name == 'kuicksilver-quic' || name == 'kuicksilver-http3' || name == 'kuicksilver-http2') {
-        afterEvaluate {
-            tasks.register('printFuzzClasspath') {
-                def cp = configurations.getByName('jvmTestRuntimeClasspath')
-                dependsOn 'jvmTestClasses', 'jvmTestProcessResources', cp   // cp: builds the jars of the project dependencies
-                def out = layout.buildDirectory.get().asFile
-                def own = files("$out/classes/kotlin/jvm/test", "$out/processedResources/jvm/test")
-                doLast { println('FUZZ_CP=' + (own.files + cp.files).join(':')) }
-            }
-        }
-    }
-}
-GRADLE
-CP=$(JAVA_HOME=/opt/jdk-21 ./gradlew --no-daemon --max-workers="$JOBS" -q -I /tmp/fuzz-classpath.init.gradle \
-       -x :kuicksilver-native:buildJniHost \
-       :kuicksilver-quic:printFuzzClasspath :kuicksilver-http3:printFuzzClasspath :kuicksilver-http2:printFuzzClasspath \
-     | sed -n 's/^FUZZ_CP=//p' | tr ':' '\n' | awk 'NF && !seen[$0]++')
+# The campaign's target table, <id> <kind> <module> <class> <method>: the targets of kind jvm and their modules
+table=$(awk '/^targets_table\(\) \{/ { t = 1; next } t && /^EOF$/ { exit } t && NF == 5' tools/fuzz/campaign.sh)
+modules=$(awk '$2 == "jvm" { print $3 }' <<< "$table" | sort -u | tr '\n' ' ')
+[ -n "$modules" ] || { echo "no jvm target in tools/fuzz/campaign.sh" >&2; exit 1; }
 
-# 4: runtime classpath in $OUT. Jazzer itself comes from the base image (jazzer_agent_deploy.jar, $JAZZER_JUNIT_PATH),
-#    so the project's own Jazzer jars are left out to avoid two versions on one classpath.
+# 3: compile the fuzz targets and resolve their classpath, one FUZZ_CP line per module
+tasks=""; for m in $modules; do tasks="$tasks :$m:printFuzzClasspath"; done
+# shellcheck disable=SC2086 # the task list is split on purpose
+JAVA_HOME=/opt/jdk-21 ./gradlew --no-daemon --no-watch-fs --max-workers="$JOBS" -q -I tools/fuzz/classpath.init.gradle \
+  -x :kuicksilver-native:buildJniHost $tasks > /tmp/fuzz-classpath.txt
+
+# 4: the runtime classpath of each module in $OUT. Jazzer itself comes from the base image (jazzer_agent_deploy.jar,
+#    $JAZZER_JUNIT_PATH), so the project's own Jazzer jars are left out to avoid two versions on one classpath. An
+#    entry shared by several modules (a dependency jar) is copied once.
 mkdir -p "$OUT/cp"
-RUNTIME_CP=""
-i=0
-while IFS= read -r entry; do
-  [ -e "$entry" ] || continue
-  case "$(basename "$entry")" in jazzer-*.jar) continue ;; esac
-  i=$((i + 1)); dest="cp/$i-$(basename "$entry")"
-  cp -r "$entry" "$OUT/$dest"
-  RUNTIME_CP="$RUNTIME_CP\$this_dir/$dest:"
-done <<< "$CP"
 cp "$JAZZER_JUNIT_PATH" "$OUT/cp/jazzer_junit.jar"
-RUNTIME_CP="$RUNTIME_CP\$this_dir/cp/jazzer_junit.jar"
+declare -A copied module_cp
+i=0
+while IFS= read -r line; do
+  case "$line" in "FUZZ_CP "*) ;; *) continue ;; esac
+  line=${line#FUZZ_CP }; module=${line%%=*}; cp_str=""
+  IFS=: read -r -a entries <<< "${line#*=}"
+  for entry in "${entries[@]}"; do
+    [ -e "$entry" ] || continue
+    case "$(basename "$entry")" in jazzer-*.jar) continue ;; esac
+    if [ -z "${copied[$entry]:-}" ]; then
+      i=$((i + 1)); copied[$entry]="cp/$i-$(basename "$entry")"
+      cp -r "$entry" "$OUT/${copied[$entry]}"
+    fi
+    cp_str="$cp_str\$this_dir/${copied[$entry]}:"
+  done
+  module_cp[$module]="$cp_str\$this_dir/cp/jazzer_junit.jar"
+done < /tmp/fuzz-classpath.txt
+for m in $modules; do [ -n "${module_cp[$m]:-}" ] || { echo "Gradle printed no classpath for $m" >&2; exit 1; }; done
 
-# One launcher per @FuzzTest: <module> <package> <class> <method>
-targets="
-kuicksilver-quic io.kuicksilver.quic.fuzz FrameDecodeFuzzTest frameDecode
-kuicksilver-quic io.kuicksilver.quic.fuzz PacketHeaderFuzzTest packetHeader
-kuicksilver-quic io.kuicksilver.quic.fuzz TransportParametersFuzzTest transportParameters
-kuicksilver-quic io.kuicksilver.quic.fuzz ReassemblerFuzzTest streamReassembler
-kuicksilver-quic io.kuicksilver.quic.fuzz RetryPacketFuzzTest retryPacket
-kuicksilver-quic io.kuicksilver.quic.fuzz EndpointRouteFuzzTest endpointRoute
-kuicksilver-quic io.kuicksilver.quic.fuzz PacketReceiveFuzzTest packetRecvServer
-kuicksilver-quic io.kuicksilver.quic.fuzz PacketReceiveFuzzTest packetRecvClient
-kuicksilver-quic io.kuicksilver.quic.fuzz PacketReceiveFuzzTest multiPacket
-kuicksilver-quic io.kuicksilver.quic.fuzz PacketReceiveFuzzTest postHandshake
-kuicksilver-http3 io.kuicksilver.http3.fuzz H3FrameFuzzTest h3Frames
-kuicksilver-http3 io.kuicksilver.http3.fuzz H3FrameFuzzTest capsules
-kuicksilver-http3 io.kuicksilver.http3.fuzz QpackDecodeFuzzTest qpackDecode
-kuicksilver-http2 io.kuicksilver.http2.fuzz H2FrameFuzzTest frames
-kuicksilver-http2 io.kuicksilver.http2.fuzz HpackDecodeFuzzTest hpackDecode
-kuicksilver-http2 io.kuicksilver.http2.fuzz H2ConnectionFuzzTest connectionServer
-kuicksilver-http2 io.kuicksilver.http2.fuzz HpackRoundTripFuzzTest hpackRoundTrip
-"
-echo "$targets" | while read -r module pkg cls method; do
-  [ -n "$module" ] || continue
-  fuzzer="${module#kuicksilver-}_${method}"
-  seeds="$module/src/jvmTest/resources/${pkg//.//}/${cls}Inputs/$method"
-  if [ -d "$seeds" ] && [ -n "$(ls -A "$seeds")" ]; then (cd "$seeds" && zip -q -r "$OUT/${fuzzer}_seed_corpus.zip" .); fi
+# One launcher per target of kind jvm in the table
+n=0
+while read -r id kind module cls method; do
+  [ "$kind" = jvm ] || continue
+  fuzzer=${id//[.-]/_}
+  pkg=${cls%.*}
+  seeds="$module/src/jvmTest/resources/${pkg//.//}/${cls##*.}Inputs/$method"
+  rm -rf /tmp/seeds && mkdir -p /tmp/seeds
+  for d in "$seeds" "tools/fuzz/corpus/$id"; do
+    if [ -d "$d" ]; then find "$d" -maxdepth 1 -type f -exec cp {} /tmp/seeds/ \;; fi
+  done
+  if [ -n "$(ls -A /tmp/seeds)" ]; then (cd /tmp/seeds && zip -q -r "$OUT/${fuzzer}_seed_corpus.zip" .); fi
   cat > "$OUT/$fuzzer" <<LAUNCHER
 #!/bin/bash
 # LLVMFuzzerTestOneInput for fuzzer detection.
 this_dir=\$(dirname "\$0")
-if [[ "\$@" =~ (^| )-runs=[0-9]+($| ) ]]; then mem_settings='-Xmx1900m:-Xss900k'; else mem_settings='-Xmx2048m:-Xss1024k'; fi
+if [[ "\$@" =~ (^| )-runs=[0-9]+($| ) ]]; then mem_settings='-Xmx1900m:-Xss4m'; else mem_settings='-Xmx2048m:-Xss4m'; fi
 LD_LIBRARY_PATH="$JVM_LD_LIBRARY_PATH":\$this_dir \\
 \$this_dir/jazzer_driver --agent_path=\$this_dir/jazzer_agent_deploy.jar \\
-  --cp=$RUNTIME_CP \\
-  --target_class=$pkg.$cls --target_method=$method \\
+  --cp=${module_cp[$module]} \\
+  --target_class=$cls --target_method=$method \\
   --instrumentation_includes=io.kuicksilver.** \\
   --jvm_args="\$mem_settings:-Djava.awt.headless=true" \\
   \$@
 LAUNCHER
   chmod +x "$OUT/$fuzzer"
-done
+  n=$((n + 1))
+done <<< "$table"
+[ "$n" -gt 0 ] || { echo "no jvm target in tools/fuzz/campaign.sh" >&2; exit 1; }
+echo "built $n Jazzer targets"

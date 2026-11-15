@@ -271,11 +271,15 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   report also lists RSS and heap at idle before and after the load. Run it on an otherwise
   idle machine: a starved process misses the scenarios' timeouts (a 1 s idle timeout checked within 10 s) and fails on
   unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
-- **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic` and `kuicksilver-http3` under
-  `src/jvmTest/.../fuzz` (among them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, and
-  the 0-RTT targets); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run
-  as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh
-  --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
+- **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic`, `kuicksilver-http3`, `kuicksilver-http2`,
+  `kuicksilver-ktor-network`, `kuicksilver-ktor-client` and `kuicksilver-ktor-server` under `src/jvmTest/.../fuzz` (among
+  them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, the 0-RTT targets and the HTTP/1.1
+  targets `H1ResponseFuzzTest` and `H1RequestFuzzTest`); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl`
+  parsing code. Their committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the
+  QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
+  write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
+  `tools/fuzz/planted-check.sh` plants known bugs in a copy of the tree and checks that the HTTP/1.1 targets fail on the
+  inputs written for them: run it after changing those targets or the code they fuzz. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
   least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;
@@ -298,9 +302,14 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
-  in `build/fuzz-campaign/load-timeouts/` and is not a finding. ClusterFuzzLite is not used: `.clusterfuzzlite/` and
-  `.github/workflows/cflite_pr.yml` are a setup that was prepared but never run, kept disabled, and they cover fewer
-  targets than the campaigns.
+  in `build/fuzz-campaign/load-timeouts/` and is not a finding. The hosted fuzzing is `fuzz.yml` alone, which keeps
+  findings private. ClusterFuzzLite is not enabled in this repository: on a finding it uploads the input as a workflow
+  artifact and prints the stack trace in the job log, both public in a public repository, which the rule above rules out
+  (pinning its actions by commit does not pin the images they run either, which are named by a mutable tag).
+  `.clusterfuzzlite/` is kept OSS-Fuzz-compatible for a future OSS-Fuzz application, where a finding stays private
+  until it is fixed: it builds every Jazzer target of `tools/fuzz/campaign.sh list` (it reads the campaign's target
+  table; the fuzzer of `quic.frameDecode` is `quic_frameDecode`), the ksl harness aside (a C target in a JVM project,
+  with test data read from the source tree).
 
 ## Proposing a change
 
