@@ -970,6 +970,8 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aCloseWrittenAsTheDeadlineFiresIsNotReset
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aDrainWrittenAsTheDeadlineFiresIsNotReportedUnwritten
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientDownloadsAllRequestsOnOneConnection
