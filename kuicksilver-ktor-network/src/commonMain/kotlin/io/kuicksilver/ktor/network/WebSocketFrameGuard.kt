@@ -22,6 +22,7 @@ import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.network.websocket.WebSocketInflate
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.io.EOFException
@@ -207,7 +208,7 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  *
  * A failed [input] fails the returned channel with its cause, and the end of [input] ends it. [onEnd] runs once the
  * returned channel has ended or failed for any of these reasons (with [untilClose], right after the peer's Close frame was
- * handed on), or the copy was stopped. [onClose] runs when the peer's Close frame arrives (checked, before it is handed
+ * handed on), or the copy was stopped, also when [context]'s job ended before the copy ran. [onClose] runs when the peer's Close frame arrives (checked, before it is handed
  * on), with [untilClose] or not: the session is closing. The copy runs in [context]
  * but outside its job, so it never holds a call open (a reader that gave up leaves it waiting for room); the end of
  * [context]'s job stops it.
@@ -215,6 +216,7 @@ public const val DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE: Long = 16L shl 20
  * @throws IllegalArgumentException when [maxMessageSize] is less than 1.
  */
 @InternalKuicksilverApi
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
 public fun guardWebSocketInput(
     input: ByteReadChannel,
     allowedRsv: Int,
@@ -233,7 +235,9 @@ public fun guardWebSocketInput(
     val job = Job()
     context[Job]?.invokeOnCompletion { job.cancel() }
     val rules = InputRules(allowedRsv, untilClose, peerMasks, perMessageDeflate, maxMessageSize, checkText)
-    CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard")) {
+    // ATOMIC: a session that ended before the copy ran (its job cancelled at once) still runs its finally, so [onEnd]
+    // comes in every case and nobody waits for it in vain
+    CoroutineScope(context + job).launch(CoroutineName("ws-frame-guard"), start = CoroutineStart.ATOMIC) {
         val guard = InputGuard(input, out, rules, inflate, onClose)
         try {
             guard.run()

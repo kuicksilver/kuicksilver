@@ -36,6 +36,26 @@ class WebSocketFrameGuardTest {
                 .readByteArray()
         }
 
+    /**
+     * A session that ended before its guard's copy ran (its job cancelled already): the guard still reports its end, so an
+     * engine that waits for it (the HTTP/3 server, before it reads the client's direction to its FIN) does not wait its
+     * whole close wait. Before, the copy never started and [guardWebSocketInput]'s `onEnd` never came.
+     */
+    @Test fun negative_aGuardWhoseSessionEndedBeforeItRanStillReportsItsEnd() =
+        runBlocking {
+            val ended = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val session = kotlinx.coroutines.Job().also { it.cancel() }
+            guardWebSocketInput(
+                ByteChannel(),
+                0,
+                untilClose = false,
+                peerMasks = false,
+                context = session + kotlinx.coroutines.Dispatchers.Default,
+                onEnd = { ended.complete(Unit) },
+            )
+            kotlinx.coroutines.withTimeout(5_000) { ended.await() }
+        }
+
     /** RFC 6455 section 5.2: the most significant bit of a 64-bit payload length MUST be 0; such a frame fails with 1002. */
     @Test fun negative_lengthWithTopBitClosesWith1002() {
         val frame = bytes(0x81, 0x7f, 0x80, 0, 0, 0, 0, 0, 0, 1, 0x61)
