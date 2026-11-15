@@ -31,6 +31,7 @@ import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.RetryPacket
+import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.VersionNegotiationPacket
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
@@ -56,7 +57,12 @@ import kotlin.time.Duration.Companion.seconds
  * datagram lost ([LOST]). Flags: [RETRY] the first flight gets a Retry (RFC 9000 section 17.2.5) and the 0-RTT goes
  * again; [VERSION_NEGOTIATION] it gets a Version Negotiation offering only QUIC v2, so the handshake restarts without
  * the ticket; [SMALL] the remembered limits are small (3 bidirectional and 2 unidirectional streams, 2 KiB per stream,
- * 6000 bytes per connection) so 0-RTT runs into them; [NO_RESET_AT] the client does not offer `reset_stream_at`.
+ * 6000 bytes per connection) so 0-RTT runs into them; [NO_RESET_AT] the client does not offer `reset_stream_at`;
+ * [LOWERED] the ticket remembers a larger `active_connection_id_limit` than the server sends, so a server that accepts
+ * looks to the client like one that lowered a limit (RFC 9000 section 7.4.1: it "MUST NOT set values ... that are
+ * smaller than the remembered values"; the client closes with PROTOCOL_VIOLATION); [OVERRUN] the ticket remembers four
+ * times the server's flow-control limits and more streams, so the client's 0-RTT can break the server's real limits
+ * (section 17.2.3: "A server SHOULD treat a violation of remembered limits ... as a connection error").
  *
  * An op byte `o`: kind `o & 7`, side `(o >> 3) & 1` (0 the client, 1 the server), argument `o >> 4`:
  * - 0 APP: action `arg & 7` of that side's application — 0 open a stream (`arg & 8`: unidirectional) and write [num]
@@ -88,6 +94,8 @@ internal object ZeroRttProgram {
     const val VERSION_NEGOTIATION = 2
     const val SMALL = 4
     const val NO_RESET_AT = 8
+    const val LOWERED = 16
+    const val OVERRUN = 32
 
     const val MAX_OPS = 300
 
@@ -293,7 +301,14 @@ internal class ZeroRttConnectionFuzz(
     /** Called after every round, before the checks (the negative controls corrupt the state there); [answeredNow]: the client learnt the answer in it. */
     private val tamper: ((pair: CorePair, answeredNow: Boolean) -> Unit)? = null,
 ) {
-    enum class Expect { Accepted, RejectedGoesOn, RejectedCloses }
+    enum class Expect {
+        Accepted,
+        RejectedGoesOn,
+        RejectedCloses,
+
+        /** The server accepted below the remembered limits ([ZeroRttProgram.LOWERED], [ZeroRttProgram.OVERRUN]): the connection ends for it. */
+        ClosedForLimits,
+    }
 
     private var p = 2
     private val outcome = if (data.isEmpty()) 0 else (data[0].toInt() and 0xff) % ZeroRttProgram.OUTCOMES
@@ -338,6 +353,7 @@ internal class ZeroRttConnectionFuzz(
         if (data.size < 2) return
         KslLoader.ensureLoaded()
         val ticket = Tickets.take(small)
+        if (flags and (ZeroRttProgram.LOWERED or ZeroRttProgram.OVERRUN) != 0) inflate(ticket)
         val serverQuic = serverQuic()
         val serverTls = if (outcome == ZeroRttProgram.REJECT_ALPN) Tickets.altServerTls else Tickets.serverTls
         val early =
@@ -371,6 +387,32 @@ internal class ZeroRttConnectionFuzz(
             pair.close()
         }
         expect?.let { checkExpected(it) }
+    }
+
+    private val lowered = flags and ZeroRttProgram.LOWERED != 0
+    private val overrun = flags and ZeroRttProgram.OVERRUN != 0
+
+    /** The ticket remembers more than the server will send ([ZeroRttProgram.LOWERED], [ZeroRttProgram.OVERRUN]). */
+    private fun inflate(ticket: QuicSessionTicket) {
+        val blob = ticket.remembered ?: return
+        val tp =
+            TransportParametersCodec.decode(
+                io.kuicksilver.quic.core
+                    .rememberedTp(blob),
+                TlsRole.Server,
+            )
+        if (lowered) tp.activeConnectionIdLimit += 5
+        if (overrun) {
+            tp.initialMaxData *= 4
+            tp.initialMaxStreamDataBidiLocal *= 4
+            tp.initialMaxStreamDataBidiRemote *= 4
+            tp.initialMaxStreamDataUni *= 4
+            tp.initialMaxStreamsBidi += 4
+            tp.initialMaxStreamsUni += 4
+        }
+        ticket.remembered =
+            io.kuicksilver.quic.core
+                .withTp(blob, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
     }
 
     private fun clientQuic(): QuicConfig =
@@ -830,10 +872,20 @@ internal class ZeroRttConnectionFuzz(
             }
         }
         if (c.earlyAccepted == true) check(rejectedEvents == 0) { "client: EarlyDataRejected after an acceptance" }
+        // an accepting server sent less than the ticket remembers: the client must not go on (RFC 9000 section 7.4.1)
+        if ((lowered || overrun) && c.earlyAccepted == true) {
+            check(isClosing(c)) { "client: the server accepted 0-RTT below the remembered limits and the connection goes on" }
+        }
+        if (closedForLimits() && !limitsCounted) {
+            limitsCounted = true
+            val r = closedReason as QuicException.ConnectionLost.TransportClosed
+            ZeroRttCoverage.hit(if (r.initiator == io.kuicksilver.quic.Initiator.Local) "limits.clientClosed" else "limits.serverRefused")
+        }
         if (!answered && isClosing(c)) wasClosedBeforeAnswer = true
     }
 
     private var wasClosedBeforeAnswer = false
+    private var limitsCounted = false
 
     /** Both sides close and run until they are gone; the invariants hold at the end too. */
     private fun finish() {
@@ -885,9 +937,11 @@ internal class ZeroRttConnectionFuzz(
         val c = pair.client
         val got =
             when {
+                closedForLimits() -> Expect.ClosedForLimits
                 acceptedEvents > 0 -> Expect.Accepted
                 rejectedEvents > 0 -> Expect.RejectedGoesOn
                 closedReason is QuicException.ConnectionLost.ZeroRttRejected -> Expect.RejectedCloses
+                closedForLimits() -> Expect.ClosedForLimits
                 else -> null
             }
         check(got == e) {
@@ -895,7 +949,7 @@ internal class ZeroRttConnectionFuzz(
                 it::class.simpleName
             }}: ${closedReason?.message})"
         }
-        if (e != Expect.RejectedCloses) {
+        if (e != Expect.RejectedCloses && e != Expect.ClosedForLimits) {
             // the connection went on until the program closed it itself
             val r = closedReason
             check(
@@ -904,6 +958,24 @@ internal class ZeroRttConnectionFuzz(
                 "after the $e answer the connection ended with ${r?.let { it::class.simpleName }}: ${r?.message}"
             }
         }
+    }
+
+    /**
+     * The connection ended over the remembered limits: the client found the accepting server's parameters below them
+     * (PROTOCOL_VIOLATION, RFC 9000 section 7.4.1), or the server found the client's 0-RTT beyond its real limits
+     * (FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR, section 17.2.3).
+     */
+    private fun closedForLimits(): Boolean {
+        val r = closedReason as? QuicException.ConnectionLost.TransportClosed ?: return false
+        val local = r.initiator == io.kuicksilver.quic.Initiator.Local
+        return (local && r.code == io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION && "below the remembered" in r.reason) ||
+            (
+                !local &&
+                    (
+                        r.code == io.kuicksilver.quic.TransportError.FLOW_CONTROL_ERROR ||
+                            r.code == io.kuicksilver.quic.TransportError.STREAM_LIMIT_ERROR
+                    )
+            )
     }
 
     private fun name(side: Int) = if (side == 0) "client" else "server"
@@ -980,49 +1052,90 @@ internal fun sizeBound(
     val cfg = c.config
     val streams = 2 * (cfg.maxBidiStreams + cfg.maxUniStreams) + ConnProgram.MAX_OPS
     return when (key) {
-        "events" -> 20_000
+        "events" -> {
+            20_000
+        }
 
-        "streams", "streamSendLimits", "streamsEarly" -> streams
+        "streams", "streamSendLimits", "streamsEarly" -> {
+            streams
+        }
 
-        "streamControlFrames" -> 8 * streams + 64
+        "streamControlFrames" -> {
+            8 * streams + 64
+        }
 
-        "streamEvents" -> 20_000
+        "streamEvents" -> {
+            20_000
+        }
 
         // the gap limit plus the readable range at each stream's read offset, which is always taken
-        "reassemblyRanges" -> cfg.limits.reassemblyRangesPerConnection + streams
+        "reassemblyRanges" -> {
+            cfg.limits.reassemblyRangesPerConnection + streams
+        }
 
-        "sendBufferedBytes" -> cfg.maxSendBuffer + 20_000
+        "sendBufferedBytes" -> {
+            cfg.maxSendBuffer + 20_000
+        }
 
-        "cidsLocal" -> 2L * maxOf(cfg.activeConnectionIdLimit, 8) + 2
+        "cidsLocal" -> {
+            2L * maxOf(cfg.activeConnectionIdLimit, 8) + 2
+        }
 
-        "cidsPeer" -> cfg.activeConnectionIdLimit.toLong() + 1
+        "cidsPeer" -> {
+            cfg.activeConnectionIdLimit.toLong() + 1
+        }
 
-        "cidsRetiredLocal", "cidsRetiredUntil" -> cfg.limits.retiredConnectionIds.toLong() + 1
+        "cidsRetiredLocal", "cidsRetiredUntil" -> {
+            cfg.limits.retiredConnectionIds.toLong() + 1
+        }
 
-        "cidsPendingRetire", "cidsUnackedRetire" -> 4L * cfg.limits.retiredConnectionIds + cfg.activeConnectionIdLimit
+        "cidsPendingRetire", "cidsUnackedRetire" -> {
+            4L * cfg.limits.retiredConnectionIds + cfg.activeConnectionIdLimit
+        }
 
-        "paths" -> 8
+        "paths" -> {
+            8
+        }
 
         // RFC 9000 section 8.2.2: every PATH_CHALLENGE "MUST" get its PATH_RESPONSE, so every one is queued; past three
         // waiting each costs a glitch token, and the cap closes the connection. A connection closed by the flood keeps what was
         // queued until it is Closed (a closing endpoint sends only CONNECTION_CLOSE, section 10.2.1), within the cap
-        "pathResponses" -> io.kuicksilver.quic.core.Paths.MAX_RESPONSES.toLong()
+        "pathResponses" -> {
+            io.kuicksilver.quic.core.Paths.MAX_RESPONSES
+                .toLong()
+        }
 
-        "sentInitial", "sentHandshake", "sentApplication" -> 50_000
+        "sentInitial", "sentHandshake", "sentApplication" -> {
+            50_000
+        }
 
-        "ackRangesInitial", "ackRangesHandshake", "ackRangesApplication" -> cfg.limits.ackRanges.toLong() + 1
+        "ackRangesInitial", "ackRangesHandshake", "ackRangesApplication" -> {
+            cfg.limits.ackRanges.toLong() + 1
+        }
 
-        "receiverBufferedBytes" -> cfg.limits.undecryptablePackets.toLong() * 65_536
+        "receiverBufferedBytes" -> {
+            cfg.limits.undecryptablePackets.toLong() * 65_536
+        }
 
-        "cryptoBufferedBytes" -> 4L * (cfg.limits.cryptoOutOfOrderPerLevel + cfg.limits.cryptoPostHandshake)
+        "cryptoBufferedBytes" -> {
+            4L * (cfg.limits.cryptoOutOfOrderPerLevel + cfg.limits.cryptoPostHandshake)
+        }
 
-        "datagramsQueued" -> cfg.datagramReceiveQueue.toLong()
+        "datagramsQueued" -> {
+            cfg.datagramReceiveQueue.toLong()
+        }
 
-        "challengedAddresses", "mtuUpdates" -> 64
+        "challengedAddresses", "mtuUpdates" -> {
+            64
+        }
 
         // nothing is held for a 0-RTT answer on a connection that never attempted 0-RTT
-        "zeroRttHeld" -> 0
+        "zeroRttHeld" -> {
+            0
+        }
 
-        else -> throw IllegalStateException("no bound for $key")
+        else -> {
+            throw IllegalStateException("no bound for $key")
+        }
     }
 }

@@ -906,7 +906,14 @@ class SeedCorpusTest {
         // zeroRttConnection: [outcome][flags][op]* (see ZeroRttProgram); every outcome, alone and after a Retry or a Version
         // Negotiation, with the application calls before the answer that the 0-RTT invariant is about
         for (outcome in 0 until ZeroRttProgram.OUTCOMES) {
-            for (flags in listOf(0, ZeroRttProgram.RETRY, ZeroRttProgram.VERSION_NEGOTIATION, ZeroRttProgram.SMALL)) {
+            for (flags in listOf(
+                0,
+                ZeroRttProgram.RETRY,
+                ZeroRttProgram.VERSION_NEGOTIATION,
+                ZeroRttProgram.SMALL,
+                ZeroRttProgram.LOWERED,
+                ZeroRttProgram.OVERRUN or ZeroRttProgram.SMALL,
+            )) {
                 val every =
                     ZeroRttProgram
                         .Builder(outcome, flags)

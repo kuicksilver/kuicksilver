@@ -48,10 +48,11 @@ class ZeroRttConnectionSeededTest {
         outcome: Int,
         flags: Int,
         faults: Boolean,
+        expect: Expect? = if (faults) null else expected(outcome, flags),
     ) {
         val program = ZeroRttProgram.random(Random(seed), outcome, flags, network = faults)
         try {
-            ZeroRttConnectionFuzz(program, if (faults) null else expected(outcome, flags)).run()
+            ZeroRttConnectionFuzz(program, expect).run()
         } catch (e: Throwable) {
             throw AssertionError(
                 "seed $seed, outcome $outcome, flags $flags, faults $faults, program ${program.joinToString(
@@ -74,6 +75,19 @@ class ZeroRttConnectionSeededTest {
                 }
             }
         }
+        // the ticket remembers more than the accepting server sends: the connection must end over it
+        for (flags in listOf(ZeroRttProgram.LOWERED, ZeroRttProgram.OVERRUN, ZeroRttProgram.OVERRUN or SMALL)) {
+            for (s in 0 until seeds) run(70_000L + 10L * flags + s, ACCEPT, flags, faults = false, expect = Expect.ClosedForLimits)
+            for (s in 0 until seeds) run(80_000L + 10L * flags + s, ACCEPT, flags, faults = true)
+        }
+        // a 0-RTT request beyond the server's real stream window (2048): the server refuses it before the client could
+        val beyond =
+            ZeroRttProgram
+                .Builder(ACCEPT, ZeroRttProgram.OVERRUN or SMALL)
+                .open(0, 7000, fin = true)
+                .settle()
+                .build()
+        ZeroRttConnectionFuzz(beyond, Expect.ClosedForLimits).run()
         val after = ZeroRttCoverage.snapshot()
         println("0-RTT fuzzer coverage: $after")
         val missing =
@@ -97,6 +111,8 @@ class ZeroRttConnectionSeededTest {
                 "retry.after0rtt",
                 "retry.answered",
                 "retry.earlyDataArrived",
+                "limits.clientClosed",
+                "limits.serverRefused",
                 "vn.after0rtt",
                 "vn.rejected",
                 "early.open",

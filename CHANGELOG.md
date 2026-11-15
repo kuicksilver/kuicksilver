@@ -23,7 +23,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   congestion control or left in the stream manager after the answer or the end, the rejection reported once, no event for
   a stream that is gone. `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` (the runtime's Deferreds, channels
   and watchers) run a fixed seed set in `jvmTest`; `ZeroRttInvariantControlsTest` keeps a negative control per check. The
-  connection fuzzer also checks the recovery bookkeeping and the connection's send credit after every step.
+  connection fuzzer also checks the recovery bookkeeping and the connection's send credit after every step. Two modes
+  make a ticket remember more than the server sends: an accepting server then looks lowered and the client must close
+  with PROTOCOL_VIOLATION, and a client whose 0-RTT breaks the server's real limits must be refused with
+  FLOW_CONTROL_ERROR or STREAM_LIMIT_ERROR (RFC 9000 sections 7.4.1, 17.2.3).
 - Ktor server, `EngineMain`: `kuicksilver.tls.ocspStapling` (a DER OCSP response file, stapled on TCP and QUIC, read
   again every `kuicksilver.tls.reloadInterval`; a response that is not stapled, at startup or later, is logged as a
   warning) and `kuicksilver.tls.trustedGateway` (`true`: no `421 Misdirected Request` on the deployment port, TLS or the
