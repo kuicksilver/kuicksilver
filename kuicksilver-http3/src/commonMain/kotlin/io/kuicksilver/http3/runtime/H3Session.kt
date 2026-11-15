@@ -73,7 +73,7 @@ internal class H3Session(
     val settings: Http3Settings,
 ) {
     val isServer: Boolean get() = role == Http3Role.Server
-    val dispatcher = Dispatchers.Default.limitedParallelism(1)
+    val dispatcher: kotlinx.coroutines.CoroutineDispatcher = dispatcherForTest ?: Dispatchers.Default.limitedParallelism(1)
     internal val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
 
@@ -770,6 +770,13 @@ internal class H3Session(
          */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
+
+        /**
+         * Test hook: the dispatcher of every session made from here on instead of its own single thread; the fuzzer runs
+         * both sides of a connection on one virtual-time dispatcher so a run is the same every time. Global like [createdForTest].
+         */
+        @kotlin.concurrent.Volatile
+        internal var dispatcherForTest: kotlinx.coroutines.CoroutineDispatcher? = null
 
         /** Test hook: runs when the start's wait ended with an error, before it decides whether that error fails the start. */
         @kotlin.concurrent.Volatile

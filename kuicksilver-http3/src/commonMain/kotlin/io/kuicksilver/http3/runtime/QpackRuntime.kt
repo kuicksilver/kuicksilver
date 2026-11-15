@@ -152,6 +152,11 @@ internal class QpackRuntime(
     /** Streams whose section waits for the peer's encoder stream (a test hook; the session's dispatcher). */
     val blockedStreamsForTest: Int get() = decoder.blockedCount
 
+    /** Fuzzing probes: our encoder's and our decoder's dynamic tables (insert count, capacity, entries). */
+    internal fun encoderTableForTest() = encoder.tableForTest()
+
+    internal fun decoderTableForTest() = decoder.tableForTest()
+
     /** The stream was abandoned before its field sections were all decoded. */
     suspend fun cancelStream(streamId: Long) {
         decoder.cancelStream(streamId)

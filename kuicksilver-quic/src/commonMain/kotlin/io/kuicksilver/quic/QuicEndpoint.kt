@@ -163,7 +163,17 @@ public suspend fun QuicEndpoint.checkLoadBalancer(config: QuicLbConfig?) {
  */
 @InternalKuicksilverApi
 public suspend fun QuicStream.awaitFinished() {
-    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.done?.await()
+    when (this) {
+        is io.kuicksilver.quic.runtime.StreamRuntime -> {
+            done.await()
+        }
+
+        is StreamTransportHooks -> {
+            awaitFinishedHook()
+        }
+
+        else -> {}
+    }
 }
 
 /**
@@ -188,6 +198,7 @@ public fun QuicStream.markTunnel() {
 @InternalKuicksilverApi
 public fun QuicConnection.holdPeerStreamCredit() {
     (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.holdPeerBidiCredit()
+        ?: (this as? ConnectionTransportHooks)?.holdPeerStreamCreditHook()
 }
 
 /**
@@ -197,7 +208,7 @@ public fun QuicConnection.holdPeerStreamCredit() {
  */
 @InternalKuicksilverApi
 public fun QuicStream.releaseStreamCredit() {
-    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.releaseCredit()
+    (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.releaseCredit() ?: (this as? StreamTransportHooks)?.releaseStreamCreditHook()
 }
 
 /**
@@ -267,7 +278,7 @@ public suspend fun QuicStream.sendCredit(): Long = (this as? io.kuicksilver.quic
  */
 @InternalKuicksilverApi
 public val QuicStream.receivedAll: Boolean
-    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.receivedAll ?: false
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.receivedAll ?: (this as? StreamTransportHooks)?.receivedAllHook ?: false
 
 /**
  * Test hook: suspends until [receivedAll] is true for [this] stream, without polling. Fails for a stream of another
@@ -277,4 +288,34 @@ public val QuicStream.receivedAll: Boolean
 public suspend fun QuicStream.awaitReceivedAllForTest() {
     val s = this as? io.kuicksilver.quic.runtime.StreamRuntime ?: error("not a runtime stream: ${this::class}")
     s.awaitReceivedAllForTest()
+}
+
+/**
+ * For [QuicConnection] implementations outside this module, such as the in-memory transport of the HTTP/3 fuzzer: the
+ * transport operations HTTP/3 asks for through [holdPeerStreamCredit] and the stream limits of
+ * `io.kuicksilver.quic.runtime.QuicStreamLimits`. A connection that does not implement it gets the defaults (nothing held, limits unknown).
+ */
+@InternalKuicksilverApi
+public interface ConnectionTransportHooks {
+    /** See [holdPeerStreamCredit]. */
+    public fun holdPeerStreamCreditHook()
+
+    /** How many bidirectional streams the peer may open in total (our last MAX_STREAMS). */
+    public val peerBidiStreamsGrantedHook: Long?
+
+    /** How many bidirectional streams we may open in total (the peer's last MAX_STREAMS). */
+    public val localBidiStreamsAllowedHook: Long?
+}
+
+/** The stream side of [ConnectionTransportHooks]: [releaseStreamCredit], [awaitFinished] and [receivedAll]. */
+@InternalKuicksilverApi
+public interface StreamTransportHooks {
+    /** See [releaseStreamCredit]. */
+    public fun releaseStreamCreditHook()
+
+    /** See [awaitFinished]. */
+    public suspend fun awaitFinishedHook()
+
+    /** See [receivedAll]. */
+    public val receivedAllHook: Boolean
 }

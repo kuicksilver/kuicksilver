@@ -18,6 +18,7 @@ public object QuicStreamLimits {
     @OptIn(ExperimentalKuicksilverApi::class)
     public fun peerBidiStreamsGranted(connection: QuicConnection): Long? =
         (connection as? ConnectionRuntime)?.core?.streams?.peerMaxStreamsGranted(bidi = true)
+            ?: (connection as? io.kuicksilver.quic.ConnectionTransportHooks)?.peerBidiStreamsGrantedHook
 
     /**
      * How many bidirectional streams we may open in total (the peer's last MAX_STREAMS); null for a connection of another
@@ -26,6 +27,7 @@ public object QuicStreamLimits {
     @OptIn(ExperimentalKuicksilverApi::class)
     public fun localBidiStreamsAllowed(connection: QuicConnection): Long? =
         (connection as? ConnectionRuntime)?.core?.streams?.localMaxStreamsAllowed(bidi = true)
+            ?: (connection as? io.kuicksilver.quic.ConnectionTransportHooks)?.localBidiStreamsAllowedHook
 
     /**
      * Peer bidirectional streams whose MAX_STREAMS credit is held for the application now (`holdPeerStreamCredit`): live

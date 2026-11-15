@@ -131,6 +131,7 @@ tls.zeroRttHello jvm kuicksilver-tls io.kuicksilver.tls.fuzz.ZeroRttHelloFuzzTes
 http3.h3Frames jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3FrameFuzzTest h3Frames
 http3.capsules jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3FrameFuzzTest capsules
 http3.qpackDecode jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest qpackDecode
+http3.h3Connection jvm kuicksilver-http3 io.kuicksilver.http3.fuzz.H3ConnectionFuzzTest h3Connection
 http2.frames jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2FrameFuzzTest frames
 http2.hpackDecode jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.HpackDecodeFuzzTest hpackDecode
 http2.connectionServer jvm kuicksilver-http2 io.kuicksilver.http2.fuzz.H2ConnectionFuzzTest connectionServer

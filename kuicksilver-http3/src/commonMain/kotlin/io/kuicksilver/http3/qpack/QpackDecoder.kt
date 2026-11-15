@@ -59,6 +59,10 @@ internal class QpackDecoder(
     private var knownReceived = 0L // inserts the encoder knows we have (acks + increments)
 
     val insertCount: Long get() = table.insertCount
+
+    /** Test and fuzzing probe: see [DynamicTable.snapshotForTest]. */
+    internal fun tableForTest() = table.snapshotForTest()
+
     val tableSize: Long get() = table.size
     val blockedCount: Int get() = blocked.size
 
