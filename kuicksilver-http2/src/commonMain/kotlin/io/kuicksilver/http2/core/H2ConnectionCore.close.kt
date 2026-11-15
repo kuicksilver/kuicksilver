@@ -74,7 +74,17 @@ internal fun H2ConnectionCore.resetStream(
     if (!active && recentlyClosed[id] == true) return // reset by us already: one RST_STREAM per stream
     if (causedByPeer) glitch(now, "stream error ${code.name}")
     // later frames on this stream are discarded (section 5.1), so a peer cannot make us answer them again
-    if (active) closeStream(s, weReset = true) else rememberClosed(id, weReset = true)
+    if (active) {
+        closeStream(s, weReset = true)
+    } else {
+        rememberClosed(id, weReset = true)
+        // section 5.4.2: "A RST_STREAM is the last frame that an endpoint can send on a stream": what a stream that ended
+        // both ways still had queued to flush is dropped with the reset (its DATA gives the connection window back)
+        if (s != null) {
+            dropQueued(s)
+            if (s.released) removeStream(s)
+        }
+    }
     queueControl(FrameEncoder.rstStream(id, code.code))
     if (active) emit(H2Event.StreamReset(id, code, byPeer = false, notProcessed = code == Http2ErrorCode.REFUSED_STREAM))
 }

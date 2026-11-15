@@ -539,4 +539,35 @@ class StreamStateTest {
         )
         s.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
     }
+
+    /**
+     * RFC 9113 section 5.4.2: "A RST_STREAM is the last frame that an endpoint can send on a stream." A stream that ended
+     * both ways while our last frames were still queued (closed for us, its frames to flush) gets the peer's DATA after its
+     * END_STREAM, a stream error STREAM_CLOSED: the queued frames are dropped with the reset, never written after it, and
+     * their DATA gives the connection window back. Found by http2.connectionServer and http2.connectionClient.
+     */
+    @Test
+    fun negative_nothingFollowsOurResetOfAStreamWithFramesQueued() {
+        // server: the request ended, our whole response is queued (the stream is closed for us), the client sends DATA
+        val s = RawH2Peer(Role.SERVER).also { it.handshake() }
+        s.send(s.headers(1, endStream = true))
+        s.events()
+        s.core.sendHeaders(1, OK, endStream = false)
+        assertEquals(100, s.core.sendData(1, ByteArray(100), 0, 100, endStream = true))
+        s.send(s.data(1, 0, endStream = false))
+        val after = s.read().filter { it.streamId == 1 }
+        assertEquals(listOf("RstStream"), after.map { it::class.simpleName!! }, "nothing on the stream but the reset")
+        assertEquals(Http2ErrorCode.STREAM_CLOSED.code, (after.single() as Frame.RstStream).errorCode)
+        assertEquals(H2.DEFAULT_WINDOW.toLong(), s.core.connectionSendWindowAccounted, "the dropped DATA gave its window back")
+        assertTrue(s.core.sendWindowConserved)
+        // client: the request's HEADERS went, its last DATA is queued, the server's response ends the stream, then DATA
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val id = c.core.openStream(GET, endStream = false)
+        c.read()
+        assertEquals(100, c.core.sendData(id, ByteArray(100), 0, 100, endStream = true))
+        c.send(c.headers(id, OK, endStream = true), c.data(id, 0, endStream = false))
+        val frames = c.read().filter { it.streamId == id }
+        assertEquals(listOf("RstStream"), frames.map { it::class.simpleName!! })
+        assertTrue(c.core.sendWindowConserved)
+    }
 }
