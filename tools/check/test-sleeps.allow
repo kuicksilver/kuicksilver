@@ -1,0 +1,3 @@
+# Test files that may add sleeps, for tools/check/test-sleeps.py: <path> | <reason>. A file named here gets its count
+# recorded by --update (and raised by it later); every other file's count only goes down. The reason says why the test
+# needs a real wait (for example a timer or an idle timeout against the real clock) instead of waiting for an event.
