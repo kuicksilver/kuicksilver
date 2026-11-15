@@ -55,7 +55,7 @@ the codepoints are those of the older drafts.
 `offeredIn` at :39, `WtSettings.ours` at :149, `WtTokens.LEGACY` at :178),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/frame/SettingsCodec.kt:22` and :25 (the codepoints),
 `kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/runtime/H3Session.control.kt:236` (the 0-or-1 check),
-`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:601` (the client's draft-02
+`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtSessionImpl.kt:605` (the client's draft-02
 request field).
 
 **On by default.** No: only with `Http3Settings.webTransport` (false by default) or the Ktor server's `webTransport`
@@ -68,8 +68,17 @@ request field).
 `ChromeWebTransportTest.chromeDraft02` (opt-in, `-Pkuicksilver.browserTests=true`).
 
 **Risk.** Low. A draft-02 session resets streams with RESET_STREAM, so a reset stream's header can be lost and the peer
-may not tie the reset to the session (robustness, not security). None of the drafts has WebTransport flow control here
-for any version: one session per connection, a second CONNECT is refused with `H3_REQUEST_REJECTED`.
+may not tie the reset to the session (robustness, not security). draft-02 has no WebTransport flow control: a draft-02
+session keeps its connection to itself, and another CONNECT on it is refused with `H3_REQUEST_REJECTED`. draft-14 and
+draft-16 sessions have it when both sides declare it.
+
+**draft-14 flow control (interop risk, conformant).** draft-14 §5.1 counts "Sending SETTINGS_WT_MAX_SESSIONS with a value
+greater than "1"" as declaring flow control, and its `SETTINGS_WT_INITIAL_*` default to 0 (§5.5). A draft-14 client
+(Safari) that sends `SETTINGS_WT_MAX_SESSIONS` above 1 and no initial limits therefore gets a session where our side may
+open no stream and send no stream data until the client sends WT_MAX_STREAMS and WT_MAX_DATA; one that never does
+leaves our sends waiting (we send WT_STREAMS_BLOCKED and WT_DATA_BLOCKED once per limit). We cannot avoid this and
+conform. Escape hatch: with all three `Http3Settings.webTransportInitialMax*` at 0 we never declare flow control, and a
+connection carries one session, as before pooling. Not observed with a real Safari yet: a release-checklist item.
 
 **Removal.** draft-02 when Chrome and Firefox ship draft-15 or later (`SETTINGS_WT_ENABLED`, `webtransport-h3`) by
 default; draft-14 when Safari does. Of the three settings, 0x2c7cf000 is draft-16's own `SETTINGS_WT_ENABLED` (its IANA

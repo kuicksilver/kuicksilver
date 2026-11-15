@@ -57,6 +57,9 @@ internal class WtInput(
 
     override val readBuffer: Source get() {
         failure?.let { throw it }
+        // a reader that reads exactly what it needs (readFully, readByteArray(n)) waits only while bytes are missing: what it
+        // read since is reported here, at its next look at the buffer
+        account()
         return buf
     }
 

@@ -269,7 +269,21 @@ public class Http3Endpoint private constructor(
         @OptIn(ExperimentalKuicksilverApi::class)
         internal fun QuicConfig.forWebTransport(settings: Http3Settings): QuicConfig {
             settings.requireWebTransportFits(this)
-            return if (settings.webTransport && !resetStreamAt) toBuilder().apply { resetStreamAt = true }.build() else this
+            if (!settings.webTransport) return this
+            // with flow control the sessions' data limits add up to the connection window's maximum: the window starts there,
+            // so the bytes of a session nobody reads cannot hold the others back while it grows (draft-16 section 8)
+            val window =
+                if (settings.webTransportFlowControl) {
+                    minOf(maxConnectionWindow, settings.webTransportMaxSessions.toLong() * settings.webTransportInitialMaxData)
+                } else {
+                    0L
+                }
+            if (resetStreamAt && initialConnectionWindow >= window) return this
+            return toBuilder()
+                .apply {
+                    resetStreamAt = true
+                    if (initialConnectionWindow < window) initialConnectionWindow = window
+                }.build()
         }
 
         /**

@@ -120,6 +120,7 @@ internal class WtStreamImpl(
             }
             st.input.closedCause?.let { throw it }
             inCh.finish()
+            inCount?.delivered()
         } catch (e: CancellationException) {
             inCount?.abandon() // we stopped reading: the rest counts as consumed once its final size is known
             inCh.fail(IOException("the WebTransport stream $streamId stopped reading", e))

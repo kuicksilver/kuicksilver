@@ -471,24 +471,28 @@ internal class WtSessionImpl(
                     unwanted(st)
                     throw CancellationException("the opening of a WebTransport stream was given up")
                 }
-                st
+                // tracked inside the unit too: a caller cancelled now finds the stream handed over below, never lost
+                track(st, readable = bidi, writable = true, headerLength = header.size)
             }
-        val st =
-            try {
-                select<QuicStream> {
-                    unit.onAwait { it }
-                    closedInfo.onAwait { throw sessionClosed() }
-                }
-            } catch (e: Throwable) {
-                // the caller gave up, or the session closed: an opening still waiting stops; a stream it opened is ended
-                unit.cancel()
-                unit.invokeOnCompletion { ex ->
-                    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-                    if (ex == null) unwanted(unit.getCompleted())
-                }
-                throw e
+        try {
+            return select {
+                unit.onAwait { it }
+                closedInfo.onAwait { throw sessionClosed() }
             }
-        return track(st, readable = bidi, writable = true, headerLength = header.size)
+        } catch (e: Throwable) {
+            // the caller gave up, or the session closed: an opening still waiting stops; a stream it opened is ended, keeping
+            // its header (section 4.4), with application code 0
+            unit.cancel()
+            unit.invokeOnCompletion { ex ->
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                if (ex == null) {
+                    val s = unit.getCompleted()
+                    runCatching { s.reset(0) }
+                    if (bidi) runCatching { s.stopSending(0) }
+                }
+            }
+            throw e
+        }
     }
 
     override suspend fun openBidi(): WebTransportBidiStream = open(bidi = true)

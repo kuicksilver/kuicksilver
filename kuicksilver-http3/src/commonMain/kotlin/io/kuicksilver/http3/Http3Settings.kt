@@ -127,8 +127,9 @@ public class Http3Settings private constructor(
          * `SETTINGS_WT_INITIAL_*`, draft-ietf-webtrans-http3-16 section 5.1), 1..65535; 4 by default. A server resets a
          * CONNECT beyond it with H3_REQUEST_REJECTED (section 5.2), and a client opens another connection instead of
          * putting more on one. The per-session limits below, times this, must fit the QUIC connection's
-         * ([Http3Endpoint] refuses a configuration where they do not): no session can then hold every stream slot or the
-         * whole connection window.
+         * ([Http3Endpoint] refuses a configuration where they do not, and starts the connection window at their sum): no
+         * session can then hold every stream slot or the whole connection window. `Http3Connection.client` and `server`
+         * on a QUIC connection made by the caller cannot check this: its configuration must fit them the same way.
          */
         @ExperimentalKuicksilverApi
         public var webTransportMaxSessions: Int = 4

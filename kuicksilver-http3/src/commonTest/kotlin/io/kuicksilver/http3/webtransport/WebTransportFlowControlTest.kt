@@ -5,6 +5,9 @@
 package io.kuicksilver.http3.webtransport
 
 import io.ktor.utils.io.cancel
+import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Fixtures
 import io.kuicksilver.http3.H3Pair
@@ -446,23 +449,101 @@ class WebTransportFlowControlTest {
         }
 
     /**
+     * Exact reads (readFully, readByteArray(n)) never wait after their last bytes: what they read still gives credit
+     * back, on the stream's clean end, so a session of such streams never stalls (section 5.6).
+     */
+    @Test fun negative_exactReadsOfEndedStreamsGiveCreditBack() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 4000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                launch {
+                    repeat(12) {
+                        val st = session.openUni()
+                        st.output.writeFully(ByteArray(1000))
+                        st.output.flushAndClose()
+                    }
+                }
+                withTimeout(10.seconds) {
+                    repeat(12) {
+                        val r = s.acceptUni()
+                        if (it % 2 == 0) r.input.readFully(ByteArray(1000)) else r.input.readByteArray(1000)
+                    }
+                }
+            }
+        }
+
+    /** The same on one stream that never ends: each exact read reports the one before it when it looks for more. */
+    @Test fun negative_exactReadsOfAnOpenStreamGiveCreditBack() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 4000)).useScoped { p ->
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val session = p.client.webTransport(wtReq())
+                val s = withTimeout(5.seconds) { serverSide.await() }
+                val st = session.openUni()
+                launch {
+                    repeat(12) {
+                        st.output.writeFully(ByteArray(1000) { i -> (it + i).toByte() })
+                        st.output.flush()
+                    }
+                }
+                val r = s.acceptUni()
+                withTimeout(10.seconds) {
+                    repeat(12) {
+                        val b = ByteArray(1000)
+                        r.input.readFully(b)
+                        assertEquals(it.toByte(), b[0])
+                    }
+                }
+            }
+        }
+
+    /**
      * Randomized through the real streams: writes, the writer's reset, the reader's stop, cancelled inputs and outputs, and
-     * clean ends in random order on random streams; once everything ended both sides count the same bytes and streams,
-     * and neither keeps credit it will never get back.
+     * clean ends in random order on random streams, read in random styles (to the end, exact reads, readAvailable, part
+     * then cancel); once everything ended both sides count the same bytes and streams, and neither keeps credit it will
+     * never get back.
      */
     @Test fun randomizedStreamEndingsLeakNoCredit() =
         h3Test {
-            for (seed in 0 until 4) {
+            for (seed in 0 until 8) {
                 H3Pair.open(clientSettings = wtOn, serverSettings = wtLimits(data = 20_000)).useScoped { p ->
                     val rnd = kotlin.random.Random(seed)
                     val serverSide = CompletableDeferred<WebTransportSession>()
                     launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
                     val session = p.client.webTransport(wtReq())
                     val s = withTimeout(5.seconds) { serverSide.await() }
-                    repeat(8) {
+                    repeat(16) {
                         val st = session.openUni()
                         val peer = withTimeout(5.seconds) { s.acceptUni() }
-                        val reader = launch { runCatching { peer.input.readAllBytes() } }
+                        val style = rnd.nextInt(4)
+                        val reader =
+                            launch {
+                                runCatching {
+                                    when (style) {
+                                        0 -> {
+                                            peer.input.readAllBytes()
+                                        }
+
+                                        1 -> {
+                                            while (true) peer.input.readFully(ByteArray(500))
+                                        }
+
+                                        2 -> {
+                                            val b = ByteArray(700)
+                                            while (true) if (peer.input.readAvailable(b, 0, b.size) < 0) break
+                                        }
+
+                                        else -> {
+                                            peer.input.readByteArray(300)
+                                            peer.input.cancel(null)
+                                        }
+                                    }
+                                }
+                            }
                         val writer =
                             launch {
                                 runCatching {

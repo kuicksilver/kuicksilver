@@ -451,6 +451,15 @@ internal class WtInCount(
         update()
     }
 
+    /**
+     * The peer's half ended cleanly and every byte of it was handed to the application's input: it counts as consumed (an
+     * exact read after the last wait is never reported, and what is left is at most what the application holds).
+     */
+    fun delivered() {
+        read = maxOf(read, taken)
+        update()
+    }
+
     /** Nobody reads the rest (the peer reset the stream, or we stopped reading): it counts as consumed once its size is known. */
     fun abandon() {
         abandoned = true
