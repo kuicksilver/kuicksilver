@@ -161,10 +161,17 @@ class H2ConnectionFuzzTest {
         val piece = 1 + (data[0].toInt() and 0xff)
         var now = 0L
         core.receive(io.kuicksilver.http2.frame.H2.PREFACE, 0, 24, now)
+        // the pieces as the input defines them, all of them: the loop below stops early when the core closes, which the
+        // library decides, not the decoder
+        var q = 1
+        while (q < data.size && FuzzTrace.on) {
+            val n = minOf(piece, data.size - q)
+            fuzzOp { "@$q piece $n, body window ${1 + (data[q + n - 1].toInt() and 0xff) * 64}" }
+            q += n
+        }
         var p = 1
         while (p < data.size && !core.isClosed) {
             val n = minOf(piece, data.size - p)
-            fuzzOp { "@$p piece $n, body window ${1 + (data[p + n - 1].toInt() and 0xff) * 64}" }
             now += 1_000_000
             handlers.returnCancelled(core) // the handlers of the streams reset in the previous piece return now
             core.receive(data, p, n, now)
