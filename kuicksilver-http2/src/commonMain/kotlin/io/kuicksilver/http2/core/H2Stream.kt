@@ -77,8 +77,11 @@ internal class H2Stream(
     /** A DATA frame of this stream is queued: [H2ConnectionCore.sendData] accepts no more until it is written. */
     var dataQueued = false
 
-    /** We wrote DATA on this stream since the peer's last tiny increment to its window ([H2ConnectionCore.TINY_CREDIT]). */
-    var wroteSinceTinyCredit = true
+    /**
+     * Tiny increments to this stream's window the peer may still send for free ([H2ConnectionCore.TINY_CREDIT]): one more
+     * for each DATA frame we write on it, at most [H2ConnectionCore.TINY_CREDITS_HELD].
+     */
+    var tinyAllowance = 1
 
     /** [H2ConnectionCore.sendData] accepted less than offered: report [H2Event.WindowAvailable] when it can take more. */
     var wantsWindow = false

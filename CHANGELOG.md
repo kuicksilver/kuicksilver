@@ -1015,8 +1015,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   window back). Found by the `http2.connectionServer` and `http2.connectionClient` fuzz targets.
 - HTTP/2 client (RFC 9113 section 5.1): frames on a request whose HEADERS were still queued (a stream idle to the
   server) were accepted, so a server could answer, credit or reset a request it had never seen, and the request went out
-  afterwards. Every such frame but PRIORITY is now a connection error PROTOCOL_ERROR; unknown frame types and ALTSVC
-  stay ignored there.
+  afterwards. Every such frame but PRIORITY is now a connection error PROTOCOL_ERROR, also on a request dropped before
+  it went out while no later one did (section 5.1.1); unknown frame types and ALTSVC stay ignored there.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.
@@ -1907,17 +1907,19 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   peer makes us reset cost it nothing. A malformed request or response (section 8.1.1: missing or invalid pseudo-header
   fields, a zero-length field block, connection-specific fields, a content-length that does not match) is reset by the
   engine with PROTOCOL_ERROR, and that reset now takes from the glitch budget as the core's own stream errors do; and a
-  request above SETTINGS_MAX_CONCURRENT_STREAMS, refused once our SETTINGS were acknowledged (section 5.1.2: the peer
-  knows the limit then), is a glitch too. Before, a client that read our RST_STREAM frames could send malformed requests
+  request refused while the client's open and half-closed streams fill SETTINGS_MAX_CONCURRENT_STREAMS, once the
+  SETTINGS carrying it were acknowledged (section 5.1.2: the peer knows the limit then), is a glitch too; one refused only
+  because our handlers still hold streams the protocol has closed is not. Before, a client that read our RST_STREAM frames could send malformed requests
   without end, and one that let its 100 running requests finish between batches never had more than 4 x the limit
   refused in a row, so neither flood ended; both now end with ENHANCE_YOUR_CALM after the budget (10 000 by default).
   Refusals before our SETTINGS are acknowledged stay free. A driver's `reset` never throws when the budget runs out:
   the connection ends with the GOAWAY instead.
 - HTTP/2 (RFC 9113 section 10.5, "Providing tiny increments to flow control in WINDOW_UPDATE frames"; "Implementations
   SHOULD track the use of these features and set limits on their use"): WINDOW_UPDATE frames were neither answered nor
-  counted, so 100 000 increments of one byte went on without end. An increment below 1024 bytes is now a glitch unless
-  DATA of ours went out on that window since the previous one (a reader that credits each frame it read stays free);
-  larger increments stay uncounted, bounded by the 2^31 - 1 window.
+  counted, so 100 000 increments of one byte went on without end. Each DATA frame we write on a window now allows one
+  increment below 1024 bytes to it (at most 16 held); beyond those such an increment is a glitch. Readers that credit each
+  frame they read, or what they read once their window is used up (Go's x/net/http2), stay free; larger increments stay
+  uncounted, bounded by the 2^31 - 1 window.
 - Ktor server (RFC 9110 section 7.4): a request on a TLS connection (any scheme: the application sees it as https) whose
   host the certificate of its connection does not name was served like any other, so a browser that reuses a connection for another host of the same address (RFC 9113
   section 9.1.1, RFC 9114 section 3.3), or anyone who sends another `Host`, reached the application under the wrong

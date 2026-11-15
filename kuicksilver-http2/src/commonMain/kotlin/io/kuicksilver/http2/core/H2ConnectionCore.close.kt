@@ -48,6 +48,11 @@ internal fun H2ConnectionCore.closeStream(
 
 internal fun H2ConnectionCore.removeStream(s: H2Stream) {
     if (streams.remove(s.id) == null) return
+    // the peer may still credit the DATA it read of this stream (see onWindowUpdate)
+    if (s.tinyAllowance > 0) {
+        closedTinyAllowance[s.id] = s.tinyAllowance
+        if (closedTinyAllowance.size > recentlyClosedMax) closedTinyAllowance.remove(closedTinyAllowance.keys.first())
+    }
     if (!s.local) peerStreams--
     dropUnconsumed(s)
     maybeFinished()

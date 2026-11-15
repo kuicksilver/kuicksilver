@@ -165,10 +165,19 @@ internal fun H2ConnectionCore.onHeaders(
                 calm("more than ${4 * settings.maxConcurrentStreams} refused streams in a row")
             }
             // "An endpoint that receives a HEADERS frame that causes its advertised concurrent stream limit to be exceeded
-            // MUST treat this as a stream error": once our SETTINGS are acknowledged the peer knows the limit, so each
-            // refusal is its error and a glitch (handlers that finish in between reset the count above, not this budget);
-            // a burst before that acknowledgement is not
-            return resetStream(id, Http2ErrorCode.REFUSED_STREAM, now, causedByPeer = settingsUnacked == 0)
+            // MUST treat this as a stream error", where "Streams that are in the "open" state or in either of the
+            // "half-closed" states count toward the maximum": once the SETTINGS
+            // that carried the limit are acknowledged the peer knows it, so a refusal while its open streams fill the
+            // limit is its error and a glitch (handlers that finish in between reset the count above, not this budget).
+            // A burst before that acknowledgement is not, and neither is a refusal only because our handlers still hold
+            // streams that are closed for the protocol: those stay bounded by the count above
+            val peerOpen = streams.values.count { !it.local && it.state != StreamState.CLOSED }
+            return resetStream(
+                id,
+                Http2ErrorCode.REFUSED_STREAM,
+                now,
+                causedByPeer = concurrencyLimitAcknowledged && peerOpen >= settings.maxConcurrentStreams,
+            )
         }
         val ns =
             H2Stream(
@@ -438,6 +447,7 @@ internal fun H2ConnectionCore.onSettings(
 
 /** Section 6.5.3: our values hold once acknowledged; a smaller value than the protocol's initial one tightens only now. */
 private fun H2ConnectionCore.ourSettingsAcknowledged() {
+    concurrencyLimitAcknowledged = true // our only SETTINGS frame carries SETTINGS_MAX_CONCURRENT_STREAMS
     hpackIn.setMaxTableSize(settings.headerTableSize) // section 4.3.1
     val ours = settings.initialStreamWindow.toLong()
     if (ours != recvInitialWindow) {
@@ -492,14 +502,30 @@ internal fun H2ConnectionCore.onWindowUpdate(
 ) {
     val id = f.streamId
     // section 10.5: "Providing tiny increments to flow control in WINDOW_UPDATE frames" and "Large numbers of small or empty
-    // frames" are abuses, and "Implementations SHOULD track the use of these features and set limits on their use". A tiny
-    // increment is free right after DATA of ours on that window (a reader that credits each frame it read); otherwise it
-    // is a glitch. Larger increments are bounded by the window: 2^31 - 1 is reached after at most 2^21 of them
+    // frames" are abuses, and "Implementations SHOULD track the use of these features and set limits on their use". Each
+    // DATA frame we write on a window allows one tiny increment to it (a reader credits what it read, however little);
+    // beyond those, a tiny increment is a glitch. Larger increments are bounded by the window: 2^31 - 1 is reached after
+    // at most 2^21 of them
     if (f.increment in 1 until H2ConnectionCore.TINY_CREDIT) {
         val s = if (id == 0) null else streams[id]
-        val free = if (id == 0) wroteDataSinceTinyCredit else s?.wroteSinceTinyCredit == true
-        if (!free) glitch(now, "WINDOW_UPDATE of ${f.increment}")
-        if (id == 0) wroteDataSinceTinyCredit = false else s?.wroteSinceTinyCredit = false
+        val allowed =
+            when {
+                id == 0 -> {
+                    connectionTinyAllowance--
+                }
+
+                s != null -> {
+                    s.tinyAllowance--
+                }
+
+                else -> {
+                    closedTinyAllowance[id]?.also { if (it > 1) closedTinyAllowance[id] = it - 1 else closedTinyAllowance.remove(id) }
+                        ?: 0
+                }
+            }
+        if (id == 0) connectionTinyAllowance = maxOf(connectionTinyAllowance, 0)
+        if (s != null) s.tinyAllowance = maxOf(s.tinyAllowance, 0)
+        if (allowed <= 0) glitch(now, "WINDOW_UPDATE of ${f.increment}")
     }
     if (id == 0) {
         if (f.increment == 0) throw H2ConnectionError(Http2ErrorCode.PROTOCOL_ERROR, "WINDOW_UPDATE of 0 on the connection")

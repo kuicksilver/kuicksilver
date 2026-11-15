@@ -91,8 +91,11 @@ internal class H2ConnectionCore(
 
     internal var wroteSincePing = true
 
-    /** We wrote DATA since the peer's last tiny increment to the connection window ([TINY_CREDIT]). */
-    internal var wroteDataSinceTinyCredit = true
+    /** Tiny increments to the connection window the peer may still send for free ([TINY_CREDIT]), as [H2Stream.tinyAllowance]. */
+    internal var connectionTinyAllowance = 1
+
+    /** The [H2Stream.tinyAllowance] left of streams we forgot, as long as [recentlyClosed] remembers them. */
+    internal val closedTinyAllowance = LinkedHashMap<Int, Int>()
     internal val creditReady = ArrayDeque<H2Stream>()
     internal val headerReady = ArrayDeque<H2Stream>()
     internal val dataReady = DataScheduler()
@@ -158,7 +161,13 @@ internal class H2ConnectionCore(
     internal var rttNanos = 100_000_000L // until the SETTINGS acknowledgement measures it
     private var nextLocalId = if (client) 1 else 2
     internal var lastPeerStreamId = 0
+
+    /** The largest of our streams whose HEADERS were written. */
+    internal var lastLocalSent = 0
     internal var refusedInARow = 0
+
+    /** The peer acknowledged the SETTINGS carrying our SETTINGS_MAX_CONCURRENT_STREAMS. */
+    internal var concurrencyLimitAcknowledged = false
     internal var emptyDataInARow = 0
     private var lastNow = now // the latest time a caller gave, for work that a call without a time triggers
 
@@ -349,14 +358,23 @@ internal class H2ConnectionCore(
     /** Our stream whose HEADERS are still queued: idle to the peer (section 5.1). */
     internal fun notYetSent(id: Int): Boolean = streams[id]?.let { it.local && !it.headersSent } == true
 
-    /** Idle (section 5.1): never used by its initiator yet. */
-    internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id >= nextLocalId
+    /**
+     * Idle (section 5.1): never used by its initiator yet. Ours are used once their HEADERS are written: one we opened and
+     * dropped before that stays idle to the peer until a later one of ours goes out ("The first use of a new stream
+     * identifier implicitly closes all streams in the 'idle' state that might have been initiated by that peer with a
+     * lower-valued stream identifier", section 5.1.1).
+     */
+    internal fun isIdle(id: Int): Boolean = if (peerInitiated(id)) id > lastPeerStreamId else id > lastLocalSent
+
+    /** Glitches counted so far (a test hook). */
+    internal var glitchesTaken = 0
 
     /** Section 10.5: legal but suspicious when frequent; an empty glitch budget ends the connection (nghttp2's glitch limit). */
     internal fun glitch(
         now: Long,
         what: String,
     ) {
+        glitchesTaken++
         if (!glitches.take(
                 now,
             )
@@ -898,11 +916,14 @@ internal class H2ConnectionCore(
                     }
                 }
             }
-        if (frame[3].toInt() == 0x1) s.headersSent = true // HEADERS: the stream left the idle state for the peer
+        if (frame[3].toInt() == 0x1) {
+            s.headersSent = true // HEADERS: the stream left the idle state for the peer
+            if (s.local) lastLocalSent = maxOf(lastLocalSent, s.id)
+        }
         if (frame[3].toInt() <= 0x1) wroteSincePing = true // DATA or HEADERS
         if (frame[3].toInt() == 0x0) {
-            wroteDataSinceTinyCredit = true
-            s.wroteSinceTinyCredit = true
+            connectionTinyAllowance = minOf(connectionTinyAllowance + 1, TINY_CREDITS_HELD)
+            s.tinyAllowance = minOf(s.tinyAllowance + 1, TINY_CREDITS_HELD)
         }
         if (frame[3].toInt() == 0x0 && s.out.none { it is OutItem.Data }) {
             s.dataQueued = false
@@ -1152,10 +1173,18 @@ internal class H2ConnectionCore(
 
         /**
          * A WINDOW_UPDATE increment below this many bytes is tiny (RFC 9113 section 10.5: "Providing tiny increments to flow
-         * control in WINDOW_UPDATE frames"): readers credit at least 4 KiB or half a window at a time (Go, nghttp2, Chromium,
-         * Firefox, OkHttp), or exactly what our last DATA frame carried (Jetty's SimpleFlowControlStrategy).
+         * control in WINDOW_UPDATE frames"). Readers send them: one that credits each frame it read (Jetty's
+         * SimpleFlowControlStrategy) credits exactly that frame, and Go's x/net/http2 (flow.go, inflow.add) credits what it
+         * read, however little, once the window it granted is used up. Each follows DATA of ours, so each DATA frame we
+         * write allows one ([TINY_CREDITS_HELD]); only increments beyond those are glitches.
          */
         const val TINY_CREDIT = 1_024
+
+        /**
+         * At most this many tiny increments are allowed ahead on one window (Envoy counts DATA frames sent against
+         * WINDOW_UPDATEs received the same way): enough for a reader whose credits cross our DATA on the wire, no more.
+         */
+        const val TINY_CREDITS_HELD = 16
 
         /**
          * How long the other streams' DATA waits for a more urgent stream's writer that was just told to hand over its

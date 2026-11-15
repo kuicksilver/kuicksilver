@@ -599,4 +599,35 @@ class StreamStateTest {
         assertEquals(false, c.core.isClosed)
         assertEquals(listOf(id), c.read().filterIsInstance<Frame.Headers>().map { it.streamId })
     }
+
+    /**
+     * A request dropped before its HEADERS went out (the application cancelled it) stays idle to the server as long as no
+     * later stream of ours was used (RFC 9113 section 5.1.1: only "the first use of a new stream identifier implicitly
+     * closes" the idle ones below it), so a frame on it is a connection error PROTOCOL_ERROR (section 5.1), also after the
+     * core forgot the stream; once a later request was written it is closed, and a frame on it is not.
+     */
+    @Test
+    fun negative_framesOnADroppedRequestThatNeverWentOutAreOnAnIdleStream() {
+        val c = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val a = c.core.openStream(GET, endStream = true)
+        c.read()
+        val b = c.core.openStream(GET, endStream = true)
+        c.core.reset(b, Http2ErrorCode.CANCEL, c.now) // never written
+        c.events()
+        c.core.release(b)
+        c.read()
+        assertEquals(listOf(a), c.written.filterIsInstance<Frame.Headers>().map { it.streamId })
+        c.send(c.data(b, 1))
+        c.assertConnectionError(Http2ErrorCode.PROTOCOL_ERROR)
+
+        val d = RawH2Peer(Role.CLIENT).also { it.handshake() }
+        val x = d.core.openStream(GET, endStream = true)
+        d.core.reset(x, Http2ErrorCode.CANCEL, d.now)
+        d.events()
+        d.core.release(x)
+        d.core.openStream(GET, endStream = true)
+        d.read() // the later request went out: stream x is closed now
+        d.send(FrameEncoder.windowUpdate(x, 100))
+        assertEquals(false, d.core.isClosed)
+    }
 }

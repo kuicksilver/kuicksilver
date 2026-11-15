@@ -533,8 +533,9 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   counted events: PRIORITY, which creates no state, unknown frame types, empty DATA, SETTINGS, a PING with no DATA or
   HEADERS of ours since the previous PING, and every stream error the peer causes: WINDOW_UPDATE of 0, DATA on a closed
   stream, MadeYouReset, a malformed request or response the engine resets (RFC 9113 §8.1.1, a zero-length field block
-  included), a request refused above SETTINGS_MAX_CONCURRENT_STREAMS once our SETTINGS are acknowledged (§5.1.2)), one
-  reset per stream; DATA dropped before it was written gives its window back; on a
+  included), a request refused while the peer's open and half-closed streams fill SETTINGS_MAX_CONCURRENT_STREAMS once the SETTINGS
+  carrying it are acknowledged (§5.1.2; a refusal only because our handlers still hold streams the protocol has closed is
+  free, bounded by the 4 x limit in a row)), one reset per stream; DATA dropped before it was written gives its window back; on a
   server, the client's RST_STREAM frames take from a reset budget (1000, 33 per second, as nghttp2; a client keeps none,
   since a server may legitimately end a response with RST_STREAM NO_ERROR); a stream the peer reset counts toward
   SETTINGS_MAX_CONCURRENT_STREAMS until its handler returns (`release`), and more than 4 x that limit refused in a row ends
@@ -544,17 +545,22 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   at most); a sender holds at most one DATA frame per stream; per-frame work does not grow with the number of streams.
   WINDOW_UPDATE (§10.5: "Providing tiny increments to flow control in WINDOW_UPDATE frames can cause a sender to
   generate a large number of DATA frames"; "Implementations SHOULD track the use of these features and set limits on
-  their use"): an increment below 1024 bytes is a glitch unless DATA of ours went out on that window (the stream's, or
-  the connection's) since the previous tiny one. Readers credit at least 4 KiB or half a window (Go, nghttp2, Chromium,
-  Firefox, OkHttp), or exactly the frame they read (Jetty's SimpleFlowControlStrategy), which follows our DATA and stays
-  free. Larger increments are not counted: they are bounded by the window itself (at most 2^21 of them before the
-  connection window passes 2^31 - 1 and the connection ends with FLOW_CONTROL_ERROR, §6.9.1), and on a stream that has
-  ended they change nothing, since Go's client still credits a body it reads after our END_STREAM, 4 KiB at a time, and
-  counting those would end healthy connections. None is answered or builds state. The data dribble (CVE-2019-9511): a
-  peer that opens its windows a byte at a time without reading makes us hold one byte per stream and its increments end
-  it as glitches; one that reads every 1-byte frame before its next increment gets one frame of ours for each 13-byte
-  frame of its own, no amplification and nothing held, the efficient tracking of outbound frames §10.5 asks for, and is
-  not counted (it is indistinguishable from a slow reader with a tiny window, which h2spec 6.9.1 requires us to serve).
+  their use"): each DATA frame we write on a window (the stream's, or the connection's) allows one increment below
+  1024 bytes to it, at most 16 held (Envoy counts DATA frames sent against WINDOW_UPDATEs received the same way); a tiny
+  increment beyond those is a glitch. Readers send tiny increments after our DATA: one that credits each frame it read
+  (Jetty's SimpleFlowControlStrategy) after a burst of frames, and Go's x/net/http2 (flow.go, inflow.add), which credits
+  what it read, however little, once the window it granted is used up; with jitter two such credits often cross the DATA
+  the first one allowed, which is why a single "DATA since the last one" flag was not enough (a model of Go's reader
+  took about 480 glitches a second with it, above the refill of 330). What a stream we have forgotten still allows is
+  remembered as long as its identifier is. Larger increments are not counted: they are bounded by the window itself (at
+  most 2^21 of them before the connection window passes 2^31 - 1 and the connection ends with FLOW_CONTROL_ERROR,
+  §6.9.1), and on a stream that has ended they change nothing, since Go's client still credits a body it reads after our
+  END_STREAM, 4 KiB at a time, and counting those would end healthy connections. None is answered or builds state. The
+  data dribble (CVE-2019-9511): a peer that opens its windows a byte at a time without reading makes us hold one byte per
+  stream and its increments end it as glitches; one that reads every 1-byte frame before its next increment gets one
+  frame of ours for each 13-byte frame of its own, no amplification and nothing held, the efficient tracking of outbound
+  frames §10.5 asks for, and is not counted (it is indistinguishable from a slow reader with a tiny window, which h2spec
+  6.9.1 requires us to serve).
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
 - **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS after ALPN `h2` (no h2c), TLS 1.3,

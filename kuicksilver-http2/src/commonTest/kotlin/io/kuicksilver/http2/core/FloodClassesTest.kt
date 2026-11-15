@@ -269,6 +269,36 @@ class FloodClassesTest {
         assertEquals(10, early.read().count { it is io.kuicksilver.http2.frame.Frame.RstStream })
     }
 
+    /**
+     * RFC 9113 section 5.1.2: "Streams that are in the "open" state or in either of the "half-closed" states count toward
+     * the maximum number of streams that an endpoint is permitted to open", closed ones do not. A client at a limit of 1 that opens its next request as soon as
+     * our END_STREAM closed the last one is within the protocol; our handler may still hold that stream, so the request is
+     * refused, but not as the client's error (no glitch). Two requests open at once at that limit are its error.
+     */
+    @Test
+    fun negative_refusalWhileOnlyOurHandlerHoldsTheStreamIsNoGlitch() {
+        val s = RawH2Peer(Role.SERVER, Http2Settings(maxConcurrentStreams = 1, glitchBurst = 3))
+        s.handshake()
+        var id = 1
+        repeat(10) {
+            s.send(s.headers(id, endStream = true))
+            s.events()
+            s.core.sendHeaders(id, OK, endStream = true) // closed both ways; the handler has not returned
+            s.read()
+            s.send(s.headers(id + 2, endStream = true)) // the client's next request: refused, as the handler holds a slot
+            s.events()
+            s.core.release(id)
+            id += 4
+        }
+        assertEquals(false, s.core.isClosed)
+        s.read()
+        assertEquals(10, s.resets().count { it.errorCode == Http2ErrorCode.REFUSED_STREAM.code })
+        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only")
+        // two open at once at a limit of 1: the second is the client's error
+        s.send(s.headers(id, endStream = false), s.headers(id + 2, endStream = false))
+        assertEquals(2, s.core.glitchesTaken)
+    }
+
     @Test
     fun negative_priorityShufflingWithoutReading() {
         // CVE-2019-9513: dependencies that change on every frame; no tree is kept (section 5.3.2), each frame is a glitch
@@ -320,9 +350,10 @@ class FloodClassesTest {
     }
 
     /**
-     * Credit that follows our DATA is what a reader sends, however small: an implementation that credits each DATA frame it
-     * read (Jetty's SimpleFlowControlStrategy) gets a stream of 10-byte frames and answers each with 10-byte increments on
-     * the stream and the connection, 20 000 times, and is not punished.
+     * Credit that follows our DATA is what a reader sends, however small. A reader that credits each frame it read (10-byte
+     * frames, 10-byte increments on the stream and the connection, 20 000 times), and one that credits each frame only
+     * after a burst of four went out (four 50-byte credits per window after four frames), take no glitch: each DATA
+     * frame we write on a window allows one tiny increment to it, up to 16 held.
      */
     @Test
     fun tinyCreditsAfterOurDataAreFree() {
@@ -335,6 +366,118 @@ class FloodClassesTest {
             s.send(FrameEncoder.windowUpdate(0, 10), FrameEncoder.windowUpdate(1, 10))
         }
         assertEquals(false, s.core.isClosed)
+        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only")
+
+        val b = peer(Role.SERVER)
+        b.send(b.headers(1, endStream = true))
+        b.core.sendHeaders(1, OK, endStream = false)
+        b.read()
+        repeat(5_000) {
+            repeat(4) {
+                assertEquals(50, b.core.sendData(1, ByteArray(50), 0, 50, endStream = false))
+                b.read()
+            }
+            repeat(4) { b.send(FrameEncoder.windowUpdate(1, 50), FrameEncoder.windowUpdate(0, 50)) }
+        }
+        assertEquals(false, b.core.isClosed)
+        assertEquals(1, b.core.glitchesTaken, "the client's SETTINGS only")
+    }
+
+    /**
+     * A reader modelled on Go's x/net/http2 receive flow control (flow.go, inflow.add: credit what was read once 4 KiB is
+     * unsent or the window it granted is used up), reading 512 bytes at exponentially distributed intervals of 50 µs on
+     * average (a fixed seed), 25 µs from us each way, while we keep its stream window full. Its increments are mostly
+     * below 1 KiB, and with the jitter two of them often arrive before the DATA the first one allowed went out. Two
+     * seconds of it, several thousand tiny increments, take no glitch.
+     */
+    @Test
+    fun goLikeSlowReaderTakesNoGlitch() {
+        val s = peer(Role.SERVER)
+        s.send(s.headers(1, endStream = true))
+        s.core.sendHeaders(1, OK, endStream = false)
+        s.send(FrameEncoder.windowUpdate(0, 1 shl 30)) // only the stream window is in play, as in the model
+        s.read()
+        val body = ByteArray(16_384)
+        val random = kotlin.random.Random(1)
+        val oneWay = 25_000L
+        val events = sortedMapOf<Pair<Long, Int>, () -> Unit>(compareBy({ it.first }, { it.second }))
+        var seq = 0
+
+        fun at(
+            t: Long,
+            e: () -> Unit,
+        ) {
+            events[t to seq++] = e
+        }
+        var avail = 0L // granted by the reader and not yet received
+        var unsent = 0L
+        var buffered = 0L
+        var tiny = 0
+
+        fun write(t: Long) {
+            s.now = t
+            val got = mutableListOf<io.kuicksilver.http2.frame.Frame>()
+            while (!s.core.isClosed && s.core.sendData(1, body, 0, body.size, endStream = false) > 0) got += s.read()
+            got += s.read()
+            for (f in got) {
+                if (f is io.kuicksilver.http2.frame.Frame.Data) {
+                    at(t + oneWay) {
+                        buffered += f.flowLength
+                        avail -= f.flowLength
+                    }
+                }
+            }
+        }
+        write(0)
+        avail = H2.DEFAULT_WINDOW.toLong()
+
+        fun read(t: Long) {
+            if (buffered >= 512) {
+                buffered -= 512
+                unsent += 512
+                if (!(unsent < 4_096 && unsent < avail)) {
+                    val inc = unsent.toInt()
+                    if (inc < 1_024) tiny++
+                    avail += unsent
+                    unsent = 0
+                    at(t + oneWay) {
+                        s.now = t + oneWay
+                        s.send(FrameEncoder.windowUpdate(1, inc))
+                        at(t + oneWay + 5_000) { write(t + oneWay + 5_000) }
+                    }
+                }
+            }
+            val next = t + (-kotlin.math.ln(1 - random.nextDouble()) * 50_000).toLong()
+            if (next < 2 * SECOND) at(next) { read(next) }
+        }
+        at(0) { read(0) }
+        while (events.isNotEmpty() && !s.core.isClosed) {
+            val k = events.firstKey()
+            events.remove(k)!!()
+        }
+        assertTrue(tiny > 1_000, "the model sends tiny increments: $tiny")
+        assertEquals(false, s.core.isClosed)
+        assertEquals(1, s.core.glitchesTaken, "the client's SETTINGS only, after $tiny tiny increments")
+    }
+
+    /**
+     * Tiny increments for a stream we already forgot are free as far as the DATA we wrote there allows (here one frame:
+     * two increments, the stream's first one and that frame's), however late they come.
+     */
+    @Test
+    fun tinyCreditForAFinishedStreamAfterItsDataIsFree() {
+        val s = peer(Role.SERVER)
+        s.send(s.headers(1, endStream = true))
+        s.events()
+        s.core.sendHeaders(1, OK, endStream = false)
+        assertEquals(100, s.core.sendData(1, ByteArray(100), 0, 100, endStream = true))
+        s.read()
+        s.core.release(1)
+        assertEquals(0, s.core.activeStreams)
+        s.send(FrameEncoder.windowUpdate(1, 100), FrameEncoder.windowUpdate(1, 100))
+        assertEquals(1, s.core.glitchesTaken)
+        s.send(FrameEncoder.windowUpdate(1, 100)) // a third one: no DATA of ours allows it
+        assertEquals(2, s.core.glitchesTaken)
     }
 
     /**
