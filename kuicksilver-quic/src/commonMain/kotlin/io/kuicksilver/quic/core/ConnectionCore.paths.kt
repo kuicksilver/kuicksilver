@@ -704,6 +704,7 @@ internal fun ConnectionCore.switchPath(
     }
     remoteCid = cids.activePeerCid()
     events += ConnectionEvent.PathChanged(old.id, p.id, reason)
+    pathChangedForTest?.invoke(p, reason)
     // a path whose stale address a revert could not validate (it could not send then) is validated now that it is active and can
     if (p.revalidateOnceSending && !p.waitsForPeerCid) {
         p.revalidateOnceSending = false

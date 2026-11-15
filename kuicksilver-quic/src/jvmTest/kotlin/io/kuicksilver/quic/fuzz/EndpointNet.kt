@@ -19,7 +19,9 @@ import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.PREFERRED_SOCKET
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathId
+import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.PreferredAddress
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
@@ -40,6 +42,13 @@ internal class Flight(
     val from: InetSocketAddress,
     val to: InetSocketAddress,
     val ecn: Ecn = Ecn.NotEct,
+)
+
+/** A move of the server to its preferred address, as the path moved to was at the switch. */
+internal class PreferredMove(
+    val path: PathId,
+    val socket: PathId,
+    val state: PathState,
 )
 
 /** What the network does to the ECN field of a direction (RFC 9000 section 13.4.2: faulty elements bleach, remark or drop). */
@@ -161,6 +170,10 @@ internal class EndpointNet(
 
     val toServer = ArrayDeque<Flight>()
     val toClient = ArrayDeque<Flight>()
+
+    /** The server's moves to its preferred address: the path moved to, its socket and its state at the move. */
+    val serverPreferredMoves = ArrayList<PreferredMove>()
+
     val clientEvents = ArrayList<ConnectionEvent>()
     val serverEvents = ArrayList<ConnectionEvent>()
 
@@ -467,6 +480,9 @@ internal class EndpointNet(
             if (c !in serverCores) {
                 serverCores += c
                 c.setPathCapabilities(PathId.Initial, caps[1])
+                c.pathChangedForTest = { p, reason ->
+                    if (reason == PathChangeReason.PreferredAddress) serverPreferredMoves += PreferredMove(p.id, p.socket, p.state)
+                }
                 if (preferredAddress != null) c.setSocketCapabilities(PREFERRED_SOCKET, preferredCaps)
                 serverCore = c
                 onServerCreated(c)

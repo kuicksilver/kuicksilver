@@ -17,7 +17,6 @@ import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
-import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.Path
@@ -654,14 +653,15 @@ internal class ConnectionInvariants(
             is ConnectionEvent.PathChanged -> {
                 if (side == 1 && e.reason == PathChangeReason.PreferredAddress && !serverMoved) {
                     serverMoved = true
-                    // the move itself needs a validated path at the preferred address (section 9.6.2). Events are read at the end of the
-                    // round, and by then the path may be validated again: a client migrating from it in the same round makes the server
-                    // check it once more (section 9.3.3), so it must have been validated, not be so still. Later paths there (a NAT
-                    // rebinding of the client) may be unvalidated, as any migration's (section 9.3)
-                    val p = c.paths.byId(e.new)
-                    if (p != null && (p.socket != PREFERRED_SOCKET || p.validatedAt == TimeMark.NEVER)) {
+                    // the move itself needs a validated path at the preferred address (section 9.6.2), as the path was at the switch
+                    // (EndpointNet records it then): events are read at the end of the round, and by then the path may be validated
+                    // again (a client migrating from it in the same round, section 9.3.3), have failed that, or be gone. Later paths
+                    // there (a NAT rebinding of the client) may be unvalidated, as any migration's (section 9.3)
+                    val m = net.serverPreferredMoves.lastOrNull { it.path == e.new }
+                    if (m == null || m.socket != PREFERRED_SOCKET || m.state != PathState.Validated) {
                         fail(
-                            "server moved to its preferred address without a validated path there (RFC 9000 section 9.6.2): ${p.id} ${p.state}",
+                            "server moved to its preferred address without a validated path there (RFC 9000 section 9.6.2): " +
+                                "${e.new} ${m?.socket} ${m?.state}",
                         )
                     }
                 }
