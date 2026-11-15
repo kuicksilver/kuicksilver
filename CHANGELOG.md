@@ -1164,19 +1164,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `QuicConnection.migrate` then closes the validated path and the new socket, as after a failed validation. The fallback
   after a failed validation (RFC 9000 section 9.3.2) chooses, without reserving IDs for the paths it passes over, the most
   recently validated path it may send on; when there is none, a server goes back to the last validated peer address from
-  the failed path's own local address with the ID it already uses there, and closes only without one
+  the failed path's own local address — to the path already there, one path per local and peer address, a path under
+  validation giving way when all four are taken, the address validated again when it was not heard from recently — with
+  the current ID only where the client used ours from that address, else a spare one, else sending nothing until the
+  client provides one; it closes only without a validated peer address
   (`PathTest.negative_aSwitchToAnotherSocketNeverTakesTheIdOfTheOldOne`,
   `.negative_theFallbackChoiceReservesNoIdForThePathsItPasses`,
   `.negative_aFailedValidationRevertsToTheLastValidatedPeerAddressFromItsOwnLocalAddress`,
+  `.negative_aRevertOnTheSameLocalAddressKeepsOnePathPerPeerAddress`, `.negative_aRevertWithEveryPathSlotTakenDoesNotClose`,
+  `.negative_aRevertedPathWaitingForAnIdSendsNothingUntilOneArrives`,
   `SocketLostTest.negative_aSwitchRefusedAfterTheProbeClosesThePathAndTheSocket`).
 - QUIC: a client's path to the server's preferred address, also when probed again from an application's new socket, and a
   server's handshake-time candidate path kept the portable socket capabilities: after moving to the preferred address the
   client ran no DPLPMTUD (it stayed at 1200-byte datagrams) and no ECN (RFC 9000 sections 13.4.2, 14.2); a server's path on
   its preferred-address socket copied the main socket's capabilities, DF and ECN included, whatever that socket can do.
-  Every path now gets the capabilities of its own socket, kept per socket by the core
+  Every path now gets the capabilities of its own socket, kept per socket (and per address family for the preferred-address
+  sockets) by the core; a closed migration socket's are forgotten
   (`PreferredAddressTest.negative_thePreferredPathGetsTheSocketsDplpmtudAndEcn`,
   `.negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn`,
-  `.negative_aServerPathOnThePreferredSocketGetsThatSocketsCapabilities`).
+  `.negative_aServerPathOnThePreferredSocketGetsThatSocketsCapabilities`,
+  `.negative_eachPreferredSocketFamilyKeepsItsOwnCapabilities`, `PathTest.negative_aClosedClientSocketIsForgotten`).
 - QUIC: a connection that started closing or draining kept the PATH_RESPONSEs it still owed, up to 1024 of them, until it
   was gone, although a closing endpoint sends only CONNECTION_CLOSE and a draining one nothing (RFC 9000 sections 10.2.1,
   10.2.2). They are dropped when the connection starts closing or draining
