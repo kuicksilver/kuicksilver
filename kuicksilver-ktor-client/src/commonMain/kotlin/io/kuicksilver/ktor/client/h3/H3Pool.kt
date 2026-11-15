@@ -454,7 +454,7 @@ internal class H3Pool(
      * host and port (RFC 9114 section 3.3), made or swapped in for a request-only one as needed ([connectionEntryOnce]),
      * else on an extra one with room, else on a new extra one. A connection the session cannot join is passed over: the
      * HTTP/3 layer refuses a second session without flow control or beyond `webTransportMaxSessions`
-     * ([WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
+     * ([io.kuicksilver.http3.WebTransportException.ConnectionFull]), and a server's H3_REQUEST_REJECTED (its limit, section 5.2; nothing of the
      * request was processed, RFC 9114 section 4.1.1) marks the connection full at its current count. At most two refusals,
      * then the server's answer is the caller's. At most `maxWebTransportSessions` sessions are open at once; one more fails
      * at once (IllegalStateException), nothing queues.
@@ -545,7 +545,7 @@ internal class H3Pool(
         }
     }
 
-    /** Whether a new session may be tried on [e]'s connection [c]: usable, not drained, below the count a server refused. */
+    /** Whether a new session may be tried on this entry's connection [c]: usable, not drained, below the count a server refused. */
     private fun H3Entry.takesSessions(c: Http3Connection): Boolean =
         c.usable() && !drained && (wtFullAt < 0 || wtSessions.load() < wtFullAt)
 
