@@ -32,6 +32,7 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(kotlin("test-junit5"))
+            implementation(libs.jazzer.junit) // the HTTP/1.1 request pipeline's fuzz target (fuzz/H1RequestFuzzTest.kt)
         }
     }
 }

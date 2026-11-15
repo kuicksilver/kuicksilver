@@ -1,0 +1,10 @@
+GET / HTTP/1.1
+Host: s
+
+POST /p HTTP/1.1
+Host: s
+Content-Length: 3
+
+abcHEAD / HTTP/1.1
+Host: s
+

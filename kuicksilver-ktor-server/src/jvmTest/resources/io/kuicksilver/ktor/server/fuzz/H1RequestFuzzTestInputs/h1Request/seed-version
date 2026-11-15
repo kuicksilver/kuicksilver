@@ -1,0 +1,6 @@
+GET / HTTP/1.9
+Host: s
+
+GET / HTTP/2.0
+Host: s
+

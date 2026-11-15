@@ -6,3 +6,7 @@
 *.jar binary
 *.der binary
 *.api linguist-generated
+# fuzz inputs (Jazzer regression inputs, campaign corpora) are bytes: line ends are part of an input
+**/src/jvmTest/resources/**/*Inputs/** binary
+tools/fuzz/corpus/** binary
+tools/fuzz/ksl/seeds/** binary

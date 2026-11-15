@@ -172,7 +172,9 @@ change lands; the hosted results are read, not enforced. The other workflows:
 - [`release.yml`](../.github/workflows/release.yml): a hosted release, not used ([release.md](release.md#alternative-the-release-workflow-not-used));
 - [`interop-image.yml`](../.github/workflows/interop-image.yml): publishes the interop images of a released version to
   GHCR, by hand;
-- [`cflite_pr.yml`](../.github/workflows/cflite_pr.yml): ClusterFuzzLite, prepared and kept off.
+- [`cflite_pr.yml`](../.github/workflows/cflite_pr.yml): ClusterFuzzLite pull request fuzzing of the
+  `.clusterfuzzlite/` build, kept off: ClusterFuzzLite publishes a finding's input as an artifact and its stack trace in
+  the job log, which the rule above for `fuzz.yml` rules out ([CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests), "Fuzzing").
 
 ## 7. Before a release: soak, fuzzing, benchmarks
 
@@ -185,10 +187,13 @@ These run by hand on the maintainer's machine; each has a computed verdict, not 
   under 0.5% ([CONTRIBUTING.md, Tests](../CONTRIBUTING.md#tests), "Soak and churn"). Before a release: 24 to 72 hours.
   For 0.2.1 these were a 24-hour Kotlin/Native soak and a 37-hour JVM soak ([roadmap.md](roadmap.md)).
 - **Fuzzing campaigns.** [`tools/fuzz/campaign.sh`](../tools/fuzz/campaign.sh) fuzzes every Jazzer target (TLS, QUIC,
-  HTTP/3, QPACK, HTTP/2, HPACK, WebSocket, and stateful fuzzers of QUIC and HTTP/2 connections; `campaign.sh list`) and the libFuzzer harness of the `ksl` C parsing
+  HTTP/3, QPACK, HTTP/2, HPACK, HTTP/1.1, WebSocket, HTTPS records, and stateful fuzzers of QUIC and HTTP/2 connections; `campaign.sh list`) and the libFuzzer harness of the `ksl` C parsing
   code, resumably and in slices, locally and in the weekly hosted run (stage 6); the grown corpora are minimized into
   `tools/fuzz/corpus/`, which the gate replays. A crash becomes a committed input, a unit test and a fix, and is
   handled as a private vulnerability report until it is fixed when it may be reachable by a peer. For 0.2.1: 2 hours per target.
+  `.clusterfuzzlite/` builds the same Jazzer targets (the ksl harness aside) the way OSS-Fuzz and ClusterFuzzLite
+  build a project; after a change to it or to the target table, it is checked by hand with `docker build -f
+  .clusterfuzzlite/Dockerfile`, the image's `compile`, and `run_fuzzer <target>` in the OSS-Fuzz base runner image.
 - **Benchmarks.** [docs/benchmarks.md](benchmarks.md) compares goodput, CPU per GB and handshakes per second with
   quiche, quinn and msquic (`tools/bench/run-table.sh`), with its caveats: one Apple Silicon host, and the amd64 peer
   images run emulated. It is rerun for releases that change performance, not for every release.
