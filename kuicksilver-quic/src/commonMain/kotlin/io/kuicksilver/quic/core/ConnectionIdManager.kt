@@ -208,6 +208,9 @@ internal class ConnectionIdManager(
         ) {
             peer.clear()
             val p = Peer(0, cid, null)
+            // used from now on, as the DCID of our packets: the reset token the server's transport parameters give it counts (RFC 9000
+            // section 10.3.1) whether or not a NEW_CONNECTION_ID ever comes
+            p.used = true
             peer += p
             current = p
             largestPeerSeq =
