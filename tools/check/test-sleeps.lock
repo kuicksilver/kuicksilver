@@ -26,6 +26,8 @@ kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientH3Test.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientMigrationTest.kt	5
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientPoolTest.kt	6
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketCloseOrderTest.kt	1
+kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketCloseTest.kt	3
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ClientWebSocketConnectingTest.kt	1
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/InactivityTest.kt	6
 kuicksilver-ktor-client/src/commonTest/kotlin/io/kuicksilver/ktor/client/ProtocolRaceTest.kt	7
@@ -44,8 +46,10 @@ kuicksilver-ktor-client/src/jvmTest/kotlin/io/kuicksilver/ktor/client/ClientUdpR
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/EngineSelectorTest.kt	1
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsResolutionTest.kt	18
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/HappyEyeballsTest.kt	13
+kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/IdleSelectorCloseTest.kt	5
 kuicksilver-ktor-network/src/commonTest/kotlin/io/kuicksilver/ktor/network/SocketAddressAfterCloseTest.kt	3
 kuicksilver-ktor-network/src/jvmCommonTest/kotlin/io/kuicksilver/ktor/network/DescriptorClosed.jvmCommon.kt	1
+kuicksilver-ktor-network/src/jvmTest/kotlin/io/kuicksilver/ktor/network/ReleaseCoalescingTest.kt	2
 kuicksilver-ktor-network/src/jvmTest/kotlin/io/kuicksilver/ktor/network/TcpWriterTest.kt	4
 kuicksilver-ktor-network/src/mingwTest/kotlin/io/kuicksilver/ktor/network/WindowsTcpSocketTest.kt	1
 kuicksilver-ktor-network/src/mingwTest/kotlin/io/kuicksilver/ktor/network/WindowsWinsockErrorTest.kt	1
