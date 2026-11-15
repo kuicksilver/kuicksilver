@@ -304,7 +304,7 @@ of this document remain interoperable with implementations that use the priority
 9113 has no self-dependency rule (§6.3 keeps only the stream 0 and frame length errors).
 
 **Where.** `kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/core/H2ConnectionCore.frames.kt:158` (HEADERS
-opening a stream), :190 (HEADERS on an open stream), :276 (PRIORITY).
+opening a stream), :194 (HEADERS on an open stream), :280 (PRIORITY).
 
 **On by default.** Yes; no switch.
 

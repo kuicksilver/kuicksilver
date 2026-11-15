@@ -716,7 +716,28 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   reproducer `finding-peer-list-limit-1`). `http2.connectionClient` (0.3.0, with the client engine): a client core with
   up to eight requests, fed arbitrary server bytes after a valid SETTINGS and driven like the engine (every field section
   through the section 8 checks): nothing escapes but protocol errors, its state stays within its settings and the send
-  window is conserved; regression runs on its seeds only so far.
+  window is conserved. Since 0.3.0 (the blind-spot audit of 2026-11-15 found that the two connection targets had never
+  reached CONTINUATION, PING, most settings or any protocol error): both connection targets take a mode byte (limit
+  presets, one with every flood limit small enough for a short input; Extended CONNECT, RFC 8441; a peer that reads every
+  piece, every fourth, only at the end, or in 64-byte reads that leave frames partly written; a 1 ms or 1 s clock;
+  the driver's own PINGs, GOAWAYs, resets, priorities and trailers), the server driver runs every request through the
+  section 8 checks, timeouts fire only when due, and a `WireMirror`, the peer's view built from the bytes alone, checks
+  every frame we write: no DATA beyond the windows the peer granted (§6.9.1, with SETTINGS_INITIAL_WINDOW_SIZE applied at
+  our ACK), an ACK per SETTINGS and PING ACKs in order (§6.5.3, §6.7), nothing after a RST_STREAM either way (§5.1,
+  §5.4.2), GOAWAY last stream IDs that never grow (§6.8), field blocks that decode with the acknowledged table size to what
+  was sent (§4.3.1), and the connection ended where the CONTINUATION, field-block and empty-DATA limits say. Seeds come
+  from `H2SeedCorpusTest` (`tools/fuzz/gen-seeds.sh`: 59 server and 27 client conversations, their frames and field
+  blocks); `H2FuzzReachTest` replays seeds and `tools/fuzz/corpus/http2.*` with reach counters and fails when the seeds
+  stop reaching a listed frame type, setting, window change, error path or Extended CONNECT. First campaign
+  (2026-11-15, short slices: `frames` 5.5 min, the others 2 min each): the connection targets found within 22 s and 16 s
+  that a stream ended both ways with its last frames queued sent them after our RST_STREAM (§5.4.2), and that a client
+  accepted frames on a request whose HEADERS were still queued (§5.1, an idle stream); both fixed with `negative_*` tests
+  in `core.StreamStateTest` and kept as `finding-*` reproducers; 2 min more on each found nothing (660 000 and 191 000
+  executions). Corpora: `frames` 105, `hpackDecode` 120, `connectionServer` 663, `connectionClient` 638,
+  `hpackRoundTrip` 195 inputs. Four bugs planted in a scratch copy (queued DATA not charged again after a window shrink,
+  the CONTINUATION limit not enforced, PING answers out of order, a GOAWAY whose last stream ID grows) were each found by
+  `connectionServer` within 7 s, three of them with no seeds at all; the targets as they were before missed all four in
+  60 s each (2.2 million executions per run).
 
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 
