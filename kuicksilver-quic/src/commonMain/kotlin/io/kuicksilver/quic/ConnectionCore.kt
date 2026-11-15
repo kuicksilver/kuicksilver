@@ -30,6 +30,7 @@ import io.kuicksilver.quic.core.amplificationLeavesNoProbe
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkTlsInput
+import io.kuicksilver.quic.core.dcidFor
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.drainStreamEvents
 import io.kuicksilver.quic.core.driveTls
@@ -215,6 +216,19 @@ public class ConnectionCore internal constructor(
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null
+
+    /** Test hook: called on every switch of the active path with the path switched to, as it is at the switch, and the reason. */
+    internal var pathChangedForTest: ((Path, PathChangeReason) -> Unit)? = null
+
+    /** Times a failed validation fell back to another validated path, and went back to the last validated peer address (RFC 9000 section 9.3.2). */
+    internal var pathFallbacksForTest = 0
+    internal var pathRevertsForTest = 0
+
+    /** Times a reverted path waiting for a peer connection ID could send again. */
+    internal val pathWaitReleasesForTest = IntArray(3) // by io.kuicksilver.quic.core.WaitRelease
+
+    /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
+    internal var testBeforeSwitch: ((PathId) -> Unit)? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
     internal var pathChallengesSentForTest = 0
@@ -241,13 +255,28 @@ public class ConnectionCore internal constructor(
     /** The peer addresses of [paths] under which the endpoint lists this connection (`EndpointCore.byRemote`); the endpoint's to keep. */
     internal val registeredRemotes = ArrayList<io.kuicksilver.quic.core.AddressClass.AddrKey>(2)
 
-    /** Tells the path what its socket can do; `ecnSend` starts ECN validation (the first ten packets go out ECT(0)). */
+    /**
+     * Tells the path what its socket can do; `ecnSend` starts ECN validation (the first ten packets go out ECT(0)). A client's probe of
+     * the server's preferred address from that path's socket (RFC 9000 section 9.6.3) gets the same.
+     */
     public fun setPathCapabilities(
         path: PathId,
         caps: IoCapabilities,
     ) {
         val p =
             paths.byId(path) ?: return
+        socketCaps[socketKey(p.socket, p.remote)] = caps
+        applyCapabilities(p, caps)
+        for (i in 0 until paths.all.size) {
+            val q = paths.all[i]
+            if (q.carrier === p) applyCapabilities(q, caps)
+        }
+    }
+
+    private fun applyCapabilities(
+        p: io.kuicksilver.quic.core.Path,
+        caps: IoCapabilities,
+    ) {
         p.caps = caps
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
         p.pmtud =
@@ -260,33 +289,77 @@ public class ConnectionCore internal constructor(
     internal fun serverLocal(l: InetSocketAddress?): InetSocketAddress? = if (role == TlsRole.Server) l else null
 
     /**
-     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
-     * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
-     * or a smaller batch shrink theirs. A gain waits for the next path (validation would have to start over).
+     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]; for the server's preferred-address
+     * sockets, one per address family, [v6] names which ([PREFERRED_SOCKET] is both). Only losses apply to the paths already on it: no
+     * ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments or a smaller batch shrink theirs.
+     * A gain waits for the next path (validation would have to start over).
      */
     internal fun updateSocketCapabilities(
         socket: PathId,
         caps: IoCapabilities,
+        v6: Boolean? = null,
     ) {
         for (i in 0 until paths.all.size) {
             val p = paths.all[i]
             if (p.socket != socket) continue
+            if (v6 != null && socket == PREFERRED_SOCKET && isV6(p.remote) != v6) continue
             val had = p.caps
             if (had.ecnSend && !caps.ecnSend) p.ecn.socketStoppedMarking()
             if (had.df && !caps.df) {
                 p.pmtud = null
                 if (p.mtu > 1200) setMtu(p, 1200)
             }
-            p.caps =
-                IoCapabilities(
-                    ecnSend = had.ecnSend && caps.ecnSend,
-                    ecnReceive = had.ecnReceive && caps.ecnReceive,
-                    gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
-                    gro = had.gro && caps.gro,
-                    df = had.df && caps.df,
-                    batch = minOf(had.batch, caps.batch),
-                )
+            p.caps = narrowedCaps(had, caps)
         }
+        for (k in socketKeys(socket, v6)) socketCaps[k]?.let { socketCaps[k] = narrowedCaps(it, caps) }
+    }
+
+    private fun isV6(a: InetSocketAddress): Boolean =
+        io.kuicksilver.quic.core.AddressClass
+            .ipBytes(a)
+            .size == 16
+
+    /** The keys of [socketCaps] for [socket]: its own, or for [PREFERRED_SOCKET] the one of the family [v6] names (both when null). */
+    private fun socketKeys(
+        socket: PathId,
+        v6: Boolean?,
+    ): List<Long> {
+        val base = socket.value.toLong() * 2
+        return if (socket != PREFERRED_SOCKET) {
+            listOf(base)
+        } else if (v6 == null) {
+            listOf(base, base + 1)
+        } else {
+            listOf(base + if (v6) 1 else 0)
+        }
+    }
+
+    /** The [socketCaps] key of a path to [remote] on [socket]: the server's preferred-address sockets are one per address family. */
+    internal fun socketKey(
+        socket: PathId,
+        remote: InetSocketAddress,
+    ): Long = socket.value.toLong() * 2 + if (socket == PREFERRED_SOCKET && isV6(remote)) 1 else 0
+
+    /**
+     * What each socket of this connection can do (the endpoint's is [PathId.Initial], the server's preferred-address sockets
+     * [PREFERRED_SOCKET] (one per address family), a client's extra socket its path id), by [socketKey]: a path made later on a socket
+     * takes that socket's capabilities, not those of the path it came from. A client's entry goes when its socket's last path does.
+     */
+    internal val socketCaps = HashMap<Long, IoCapabilities>(2)
+
+    /** The socket [socket] can do [caps] (the runtime's preferred-address sockets, of the family [v6] names or both, before any path is on them). */
+    internal fun setSocketCapabilities(
+        socket: PathId,
+        caps: IoCapabilities,
+        v6: Boolean? = null,
+    ) {
+        for (k in socketKeys(socket, v6)) socketCaps[k] = caps
+    }
+
+    /** A client's socket [socket] has no path left: what it could do is forgotten (each migration brings a new socket). */
+    internal fun forgetSocketIfUnused(socket: PathId) {
+        if (socket == PathId.Initial || socket == PREFERRED_SOCKET) return
+        if (paths.all.none { it.socket == socket }) for (k in socketKeys(socket, null)) socketCaps.remove(k)
     }
 
     /**
@@ -691,6 +764,9 @@ public class ConnectionCore internal constructor(
     internal var preferredProbeStarted = false
     internal var movedToPreferred = false
 
+    /** Client: the validated preferred-address path whose move waits for an unused peer connection ID (RFC 9000 section 9.5). */
+    internal var preferredMoveWaiting: Path? = null
+
     /**
      * Server: the connection moved to the preferred-address socket (RFC 9000 section 9.6.2). Its packets on the original address are
      * dropped from then on ([leftAddressDropped]), and its IDs get no Stateless Reset there once they stop routing (EndpointCore).
@@ -926,6 +1002,8 @@ public class ConnectionCore internal constructor(
     ): Int {
         if (state == ConnectionState.Closed || state == ConnectionState.Draining) return 0
         this.now = now
+        // a reverted path with no connection ID of the peer it may use: nothing can go out (RFC 9000 sections 9.3, 9.5)
+        if (paths.active.waitsForPeerCid) return 0
         if (tlsDirty) {
             tlsDirty = false
             driveTls(now)
@@ -1184,7 +1262,11 @@ public class ConnectionCore internal constructor(
         if (p.state != PathState.Validating) startValidation(p)
     }
 
-    /** Moves the connection to the validated path [id]; the previous path stays as a fallback. */
+    /**
+     * Moves the connection to the validated path [id]; the previous path stays as a fallback. Throws IllegalStateException while no
+     * unused peer connection ID is left for it: RFC 9000 section 9.5, "An endpoint MUST NOT reuse a connection ID when sending from
+     * more than one local address" (the peer replaces a retired ID within a round trip).
+     */
     public fun switchPath(
         id: PathId,
         now: TimeMark,
@@ -1193,6 +1275,8 @@ public class ConnectionCore internal constructor(
             paths.byId(id) ?: throw IllegalStateException("unknown path $id")
         check(p.state == PathState.Validated) { "path $id is ${p.state}, not Validated" }
         this.now = now
+        testBeforeSwitch?.invoke(id)
+        check(p === paths.active || dcidFor(p) != null) { "no unused connection ID of the peer for path $id yet (RFC 9000 section 9.5)" }
         switchPath(p, PathChangeReason.ActiveMigration, challengeOld = false)
         if (p.preferred) movedToPreferred = true // it took the server's preferred address (RFC 9000 section 9.6.3)
     }
@@ -1207,6 +1291,7 @@ public class ConnectionCore internal constructor(
             paths.remove(it)
             releasePathCid(it)
         }
+        forgetSocketIfUnused(p.socket)
     }
 
     /** Glitch tokens spent per frame type (index 31 for anything above; 0 for an undecryptable packet, 1 for a PING flood), for diagnostics. */
@@ -1304,3 +1389,18 @@ internal fun <T> MutableList<T>.recordForTest(value: T) {
     if (size >= ConnectionCore.TEST_RECORD_LIMIT) removeAt(0)
     add(value)
 }
+
+/** What both [had] and [caps] allow: a socket that lost a feature, or the features two sockets share. */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal fun narrowedCaps(
+    had: IoCapabilities,
+    caps: IoCapabilities,
+): IoCapabilities =
+    IoCapabilities(
+        ecnSend = had.ecnSend && caps.ecnSend,
+        ecnReceive = had.ecnReceive && caps.ecnReceive,
+        gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
+        gro = had.gro && caps.gro,
+        df = had.df && caps.df,
+        batch = minOf(had.batch, caps.batch),
+    )

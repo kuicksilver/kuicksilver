@@ -80,6 +80,229 @@ class PreferredAddressTest {
         }
     }
 
+    /**
+     * Found by the connection fuzzer (`connectionNull`, a client on a socket with DF and ECN): the path to the preferred address took
+     * the portable capabilities, so after the move the client ran no DPLPMTUD (its datagrams stayed at 1200 bytes) and never set ECT.
+     * RFC 9000 section 14.2: "An endpoint SHOULD use DPLPMTUD (Section 14.3) or PMTUD"; section 13.4.2: "An endpoint thus attempts to
+     * use ECN and validates this for each new connection, when switching to a server's preferred address, and on active connection
+     * migration to a new path." The path is on the client's socket, so it gets what that socket does.
+     */
+    @Test fun negative_thePreferredPathGetsTheSocketsDplpmtudAndEcn() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1))
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred address is probed")
+            val pp = pathTo(c, v4)!!
+            assertTrue(pp.pmtud != null, "DPLPMTUD on the preferred path")
+            assertEquals(io.kuicksilver.quic.EcnState.Testing, pp.ecn.state, "ECN validation on the preferred path")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The same for the preferred address probed again from the socket of an application's migration (RFC 9000 section 9.6.3). */
+    @Test fun negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            p.dropToPreferred = true // the first probe stays pending
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null && c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
+            repeat(3) { p.step() }
+            val caps = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+            // what the runtime's addPath does: the path, then its socket's capabilities
+            val pid = c.addPath(p.serverAddr, p.now)
+            c.setPathCapabilities(pid, caps)
+            val carried = c.paths.all.firstOrNull { it.preferred && it.socket == pid }
+            assertTrue(carried != null, "the preferred address is probed from the new socket")
+            assertTrue(carried.pmtud != null, "DPLPMTUD on the preferred path of the new socket")
+            assertEquals(io.kuicksilver.quic.EcnState.Testing, carried.ecn.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 review: a server's path on its preferred-address socket copied the capabilities of the main socket's path, so a preferred
+     * socket without DF or ECN still ran DPLPMTUD (probes the kernel would fragment or refuse) and marked ECT (marks the socket never
+     * sets, so ECN validation could only fail). A path takes what its own socket does.
+     */
+    @Test fun negative_aServerPathOnThePreferredSocketGetsThatSocketsCapabilities() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        val full = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+        p.onServerCreated = {
+            it.setPathCapabilities(PathId.Initial, full)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, io.kuicksilver.quic.IoCapabilities.Portable)
+        }
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, full)
+            assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
+            val s = p.server.connections().single()
+            val there = s.paths.all.first { it.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+            assertNull(there.pmtud, "no DPLPMTUD on a socket without DF")
+            assertEquals(io.kuicksilver.quic.EcnState.Disabled, there.ecn.state, "no ECN on a socket that does not mark")
+            assertTrue(s.paths.all.any { it.socket == PathId.Initial } || s.paths.active === there)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.3.0 re-review, RFC 9000 section 14 ("SHOULD use DPLPMTUD"): the server has a preferred-address socket per address family; one
+     * entry for both let the IPv6 socket's capabilities (no DF, no ECN) decide for the path on the IPv4 one, and a loss reported by the
+     * IPv6 socket narrowed the IPv4 path.
+     */
+    @Test fun negative_eachPreferredSocketFamilyKeepsItsOwnCapabilities() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        val full = io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1)
+        val portable = io.kuicksilver.quic.IoCapabilities.Portable
+        p.onServerCreated = {
+            it.setPathCapabilities(PathId.Initial, full)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, full, v6 = false)
+            it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
+        }
+        try {
+            val c = p.connect()
+            c.setPathCapabilities(PathId.Initial, full)
+            assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
+            val s = p.server.connections().single()
+            val there = s.paths.all.first { it.socket == io.kuicksilver.quic.PREFERRED_SOCKET }
+            assertTrue(there.pmtud != null, "DPLPMTUD on the IPv4 preferred socket")
+            s.updateSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
+            assertTrue(there.pmtud != null, "a loss of the IPv6 socket leaves the IPv4 path alone")
+            assertTrue(there.ecn.state != io.kuicksilver.quic.EcnState.Disabled, "ECN on the IPv4 preferred socket")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Found by the connection fuzzer (connectionTls), RFC 9000 sections 9.6.1 and 9.5: the server's NEW_CONNECTION_ID with a Retire Prior
+     * To above every ID it had given retired the sequence-1 ID the client probed the preferred address with; when the probe validated,
+     * the client moved there with the only ID left, the one it already sent to the original address ("MUST NOT reuse a connection ID
+     * when sending to more than one destination address"). It waits for an unused ID and moves with it.
+     */
+    @Test fun negative_theMoveToThePreferredAddressNeverTakesTheIdUsedTowardTheOriginalOne() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            p.dropToPreferred = true // the probe goes out, its answer is the test's
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4)?.let { it.challenge != 0L } == true })
+            val pp = pathTo(c, v4)!!
+            newConnectionId(c, 20, 20, 0x61) // retires every earlier ID: the one probed with too
+            val inUse = c.remoteCid
+            c.onPathResponse(pp.challenge)
+            assertTrue(!c.movedToPreferred || c.remoteCid != inUse, "never the ID used toward the original address")
+            assertTrue(c.paths.active.isRemote(p.serverAddr), "no unused ID: the client stays")
+            newConnectionId(c, 21, 0, 0x71)
+            assertTrue(c.movedToPreferred, "it moves once the server gives an unused ID")
+            assertEquals(
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(8) { 0x71 }),
+                c.remoteCid,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A NEW_CONNECTION_ID from the server: [seq], Retire Prior To [rpt], an 8-byte ID of [b] bytes. */
+    private fun newConnectionId(
+        c: ConnectionCore,
+        seq: Long,
+        rpt: Long,
+        b: Byte,
+    ) {
+        val frame = PacketBuffer.of(ByteArray(8) { b } + ByteArray(16) { (b + 1).toByte() })
+        try {
+            c.onNewConnectionId(seq, rpt, frame, 0, 8, 8)
+        } finally {
+            frame.close()
+        }
+    }
+
+    /**
+     * The same for the preferred address probed from the socket of the application's active path (RFC 9000 section 9.6.3): the probe's
+     * ID retired by a Retire Prior To, the application's path took the preferred address with the ID it used toward the original one
+     * (section 9.5 "MUST NOT reuse a connection ID when sending to more than one destination address"). It waits for an unused ID.
+     */
+    @Test fun negative_theCarriedPreferredProbeNeverMovesTheActivePathWithTheIdUsedTowardTheOriginalAddress() {
+        val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
+        val newSocket = PathId(9)
+        val newSource = InetSocketAddress("10.0.0.7", 50000)
+        p.clientSocketSources[newSocket] = newSource
+        p.clientListens += newSource
+        p.dropToPreferred = true // the probes go out, the carried one's answer is the test's
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
+            val id = c.addPath(p.serverAddr, p.now, newSocket)
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(10.seconds) { p.events[c]!!.any { it is ConnectionEvent.PathValidated && it.path == id } })
+            c.switchPath(id, p.now)
+            val carried = c.paths.all.single { it.preferred && it.socket == newSocket && it.id != id }
+            assertTrue(p.runUntil(5.seconds) { carried.challenge != 0L })
+            assertEquals(PathState.Validating, carried.state)
+            newConnectionId(c, 20, 20, 0x61) // retires every earlier ID: the one the probe used too
+            val inUse = c.remoteCid
+            c.onPathResponse(carried.challenge)
+            assertTrue(
+                !c.path.isRemote(v4) || c.remoteCid != inUse,
+                "never the ID used toward the original address: remote=${c.path.remote} cid=${c.remoteCid} moved=${c.movedToPreferred}",
+            )
+            assertTrue(c.path.id == id && c.path.isRemote(p.serverAddr), "no unused ID: the application's path stays")
+            newConnectionId(c, 21, 0, 0x71)
+            assertTrue(c.movedToPreferred, "it moves once the server gives an unused ID")
+            assertTrue(c.path.id == id && c.path.isRemote(v4) && c.path.socket == newSocket, "${c.path}")
+            assertEquals(
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(8) { 0x71 }),
+                c.remoteCid,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The same over the null crypto, with the application's path made active directly (a switch right after its validation) and the
+     * carried probe validated afterwards: the move waits for an unused ID and is made with it, never with the ID used toward the
+     * original address (RFC 9000 sections 9.5, 9.6.3).
+     */
+    @Test fun negative_aCarriedProbeAnsweredAfterARetirePriorToWaitsForAnUnusedId() {
+        val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
+        try {
+            p.dropToPreferred = true
+            val c = p.connect()
+            assertTrue(
+                p.runUntil(10.seconds) { c.paths.all.any { it.preferred } && c.state == io.kuicksilver.quic.ConnectionState.Confirmed },
+            )
+            repeat(3) { p.step() }
+            val pid = c.addPath(p.serverAddr, p.now)
+            val app = c.paths.byId(pid)!!
+            val carried = c.paths.all.first { it.preferred && it.socket == pid }
+            app.state = PathState.Validated
+            app.validatedAt = p.now
+            c.dcidFor(app)
+            c.switchPath(app, PathChangeReason.ActiveMigration, challengeOld = false)
+            c.startValidation(carried)
+            assertTrue(p.runUntil(5.seconds) { carried.challenge != 0L } || carried.challenge != 0L)
+            newConnectionId(c, 20, 20, 0x61)
+            val inUse = c.remoteCid
+            c.onPathResponse(carried.challenge)
+            assertTrue(
+                !c.paths.active.isRemote(v4) || c.remoteCid != inUse,
+                "never the original-address ID to the preferred address: remote=${c.paths.active.remote} cid=${c.remoteCid}",
+            )
+            assertTrue(c.preferredMoveWaiting === carried, "the move waits for an ID")
+            newConnectionId(c, 21, 0, 0x71)
+            assertTrue(c.paths.active.isRemote(v4) && c.remoteCid != inUse, "moves once an unused ID arrives")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))

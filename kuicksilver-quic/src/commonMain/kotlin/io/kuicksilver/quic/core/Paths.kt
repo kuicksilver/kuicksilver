@@ -192,6 +192,31 @@ internal class Path(
      */
     var peerChangedDcid: Boolean = false
 
+    /** Server: a 1-RTT packet of the client arrived on this path while another was active, so [peerChangedDcid] is known, not a default. */
+    var peerDcidKnown: Boolean = false
+
+    /**
+     * Server: the active path after a revert (RFC 9000 section 9.3.2) with no peer connection ID it may use there (section 9.5): nothing
+     * is sent until the client provides one (section 9.3: "it will not be able to send anything on the new path until the peer
+     * provides one").
+     */
+    var waitsForPeerCid: Boolean = false
+
+    /** Server, while [waitsForPeerCid]: the peer ID the connection kept from the path it left, which this path must not send with. */
+    var keptPeer: ConnectionIdManager.Peer? = null
+
+    /** Server, while [waitsForPeerCid]: the ID of ours (sequence number) the client used on the path the connection left; -1 if unknown. */
+    var waitDcidSeq: Long = -1L
+
+    /** Server, while [waitsForPeerCid]: the address is validated again once the path can send (a PATH_CHALLENGE cannot leave before). */
+    var revalidateOnceSending: Boolean = false
+
+    /** Server: the sequence number of the ID of ours the client's latest 1-RTT packet on this path carried; -1 before one. */
+    var lastRxDcidSeq: Long = -1L
+
+    /** Server: this active path failed a validation once while its peer address was validated elsewhere, too long ago, and validates again. */
+    var revalidatedForStaleAddress: Boolean = false
+
     /** Server: the client probed this path (a PATH_CHALLENGE from it while another path was active), typically to migrate there. */
     var peerProbed: Boolean = false
 
@@ -392,13 +417,20 @@ internal class Paths(
         return best
     }
 
+    /** All path slots are taken. */
+    val isFull: Boolean get() = all.size >= maxPaths
+
     /** The most recently validated path other than [except], if any. */
-    fun fallback(except: Path): Path? {
+    fun fallback(
+        except: Path,
+        usable: (Path) -> Boolean = { true },
+    ): Path? {
         var best: Path? = null
         for (i in 0 until all.size) {
             val p = all[i]
             if (p !== except &&
                 p.state == PathState.Validated &&
+                usable(p) &&
                 (best == null || p.validatedAt > best.validatedAt)
             ) {
                 best = p

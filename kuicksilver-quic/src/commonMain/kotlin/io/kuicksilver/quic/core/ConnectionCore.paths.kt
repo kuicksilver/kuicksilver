@@ -153,8 +153,67 @@ internal fun ConnectionCore.onNewConnectionId(
     resumeCidWaiters()
 }
 
-/** Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5). */
+/**
+ * Client, RFC 9000 section 9.6.2: the move to the validated preferred-address path [p] — a switch to it, or, for a probe carried by
+ * the application's path ([Path.carrier], section 9.6.3), that path taking the preferred address ([adoptPreferred]) — with the ID it
+ * probed with ("A client constructs packets using any previously unused active connection ID", section 9.6.1) or, when the server
+ * retired that one meanwhile (a Retire Prior To), a spare one. Never the ID in use toward the original address (section 9.5: "MUST NOT
+ * reuse a connection ID when sending to more than one destination address"): with none, the move waits for the server's next
+ * NEW_CONNECTION_ID ([preferredMoveWaiting], [resumeCidWaiters]). A carried probe whose application path is not the active one moves
+ * nothing: that path takes the address and reports the validation, and the application's switch to it is the move.
+ */
+private fun ConnectionCore.moveToPreferredAddress(p: Path) {
+    preferredMoveWaiting = null
+    if (movedToPreferred || p === paths.active || !paths.all.contains(p)) return
+    val carrier = usableCarrier(p)
+    if (carrier != null) {
+        if (carrier === paths.active && p.peerCid?.let { cids.isActive(it) } != true && !cids.hasSparePeer()) {
+            preferredMoveWaiting = p
+            return
+        }
+        adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+        return
+    }
+    if (dcidFor(p) == null) {
+        preferredMoveWaiting = p
+        return
+    }
+    val old = paths.active
+    switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
+    movedToPreferred = true
+    if (old !== paths.active) {
+        paths.remove(old)
+        releasePathCid(old)
+    }
+}
+
+/** The application's path that carries the preferred-address probe [p] (RFC 9000 section 9.6.3), while it is still there. */
+private fun ConnectionCore.usableCarrier(p: Path): Path? = p.carrier?.takeIf { it.state != PathState.Closed && paths.all.contains(it) }
+
+/**
+ * Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5), and a client's
+ * move to the validated preferred address that waited for one is made.
+ */
 private fun ConnectionCore.resumeCidWaiters() {
+    if (role == TlsRole.Client) preferredMoveWaiting?.takeIf { it.state == PathState.Validated }?.let { moveToPreferredAddress(it) }
+    val a = paths.active
+    if (a.waitsForPeerCid) {
+        val cur = cids.currentPeer
+        if (cur != null && cur !== a.keptPeer && cids.isActive(cur) && !cur.heldByPath && cur.sentOnlyTowards(a.remoteKey, a.remote.port)) {
+            // the kept ID went (a Retire Prior To) and the current one never went elsewhere
+            remoteCid = cur.cid
+            releasePeerCidWait(a, WaitRelease.RetirePriorTo)
+        } else {
+            // the reverted active path takes the first ID the client gives; the one it kept from elsewhere is retired
+            val fresh = cids.takePathPeer()
+            if (fresh != null) {
+                cids.makeCurrent(fresh)
+                remoteCid = fresh.cid
+                if (cur != null && cur !== fresh) cids.releasePathPeer(cur)
+                releasePeerCidWait(a, WaitRelease.NewId)
+            }
+        }
+    }
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
         if (p.awaitingCid && p.state == PathState.Validating && p !== paths.active && dcidFor(p) != null) startValidation(p)
@@ -263,7 +322,14 @@ internal fun ConnectionCore.onPathPacket(
         socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
-        if (rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
+        // a reverted path waiting for an ID: the client's packets from its address carry the ID of ours it used on the path the
+        // connection left, so the current ID may follow it there (RFC 9000 section 9.5: "it MAY continue to use the current
+        // connection ID with the new remote address while still sending from the same local address")
+        if (active.waitsForPeerCid && rxDcidSeq >= 0 && rxDcidSeq == active.waitDcidSeq) releasePeerCidWait(active, WaitRelease.SameId)
+        if (rxDcidSeq >= 0) {
+            activeDcidSeq = rxDcidSeq
+            active.lastRxDcidSeq = rxDcidSeq
+        }
         active.lastReceivedAt = now
         return
     }
@@ -409,6 +475,7 @@ internal fun ConnectionCore.startPreferredProbe() {
     val p = paths.add(active.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
     p.amplification.validated = true // our own probe toward the server: nothing to amplify against
     p.preferred = true
+    initPathOnSocket(p, active) // the client's socket: its DPLPMTUD and ECN carry over (RFC 9000 sections 13.4.2, 14.2)
     startValidation(p)
 }
 
@@ -438,6 +505,7 @@ internal fun ConnectionCore.probePreferredFrom(
     p.amplification.validated = true // our own probe toward the server
     p.preferred = true
     p.carrier = app
+    initPathOnSocket(p, app) // the application's socket and what it does
     startValidation(p)
 }
 
@@ -482,7 +550,11 @@ private fun ConnectionCore.adoptPreferred(
 
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
 private fun ConnectionCore.notePeerDcid(p: Path) {
-    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) {
+        p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+        p.peerDcidKnown = true
+        p.lastRxDcidSeq = rxDcidSeq
+    }
 }
 
 /**
@@ -493,8 +565,19 @@ private fun ConnectionCore.notePeerDcid(p: Path) {
 private fun ConnectionCore.initServerPath(
     p: Path,
     active: Path,
+) = initPathOnSocket(p, active)
+
+/**
+ * A new path [p] gets what its socket does (`socketCaps`; [onSocket]'s capabilities when the socket was never described, which
+ * shares it): its capabilities, ECN validated afresh (RFC 9000 section 13.4.2) and DPLPMTUD (RFC 9000 section 14), from [Path.mtu]
+ * (1200 on a new address, or what a NAT rebinding inherited). A server's path on its preferred-address socket so gets that socket's,
+ * not those of the main socket the connection came from.
+ */
+private fun ConnectionCore.initPathOnSocket(
+    p: Path,
+    onSocket: Path,
 ) {
-    p.caps = active.caps
+    p.caps = socketCaps[socketKey(p.socket, p.remote)] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
     if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
 }
@@ -578,6 +661,19 @@ internal fun ConnectionCore.switchPath(
     dropHandshakeCandidate() // a migration after the handshake supersedes a handshake-time rebind still being decided
     val oldPeer = cids.currentPeer
     paths.active = p
+    p.peerChangedDcid = false // relative to the active path, which this one is now
+    // and the path it leaves: whether the client's packets there carried another ID of ours than on this one (section 9.5), known only
+    // when both showed one
+    if (old.lastRxDcidSeq >= 0 && p.lastRxDcidSeq >= 0) {
+        old.peerChangedDcid = old.lastRxDcidSeq != p.lastRxDcidSeq
+        old.peerDcidKnown = true
+    } else {
+        old.peerDcidKnown = false
+    }
+    old.waitsForPeerCid = false // a path that is not the active one sends with an ID of its own (dcidFor), or not at all
+    old.keptPeer = null
+    old.waitDcidSeq = -1L
+    // old.revalidateOnceSending stays: the address was not heard from recently, and is validated when the path is active again
     p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
@@ -608,6 +704,12 @@ internal fun ConnectionCore.switchPath(
     }
     remoteCid = cids.activePeerCid()
     events += ConnectionEvent.PathChanged(old.id, p.id, reason)
+    pathChangedForTest?.invoke(p, reason)
+    // a path whose stale address a revert could not validate (it could not send then) is validated now that it is active and can
+    if (p.revalidateOnceSending && !p.waitsForPeerCid) {
+        p.revalidateOnceSending = false
+        startValidation(p)
+    }
     qlog?.metricsUpdated(stats, now)
 }
 
@@ -664,6 +766,7 @@ internal fun ConnectionCore.onPathFailed(
     p: Path,
     reason: PathFailureReason = PathFailureReason.ValidationTimeout,
 ) {
+    if (keepActiveOnValidatedAddress(p)) return
     p.state = PathState.Failed
     p.awaitingCid = false
     p.challengePending = false
@@ -678,13 +781,179 @@ internal fun ConnectionCore.onPathFailed(
         if (p.preferred) paths.remove(p)
         return
     }
-    val back = paths.fallback(p)
+    // RFC 9000 section 9.3.2: "an endpoint MUST revert to using the last validated peer address when validation of a new peer
+    // address fails": the most recently validated path we can send on with an ID never used from another local address (section
+    // 9.5: "An endpoint MUST NOT reuse a connection ID when sending from more than one local address"). The choice reserves nothing;
+    // only the chosen path takes the spare ID it may need
+    val back = paths.fallback(p) { mayBeActive(it) && canSendOnAfter(it, p) }
     if (back != null) {
-        // RFC 9000 section 9.3.2: the most recently validated path
+        dcidFor(back)
         switchPath(back, PathChangeReason.ValidationFailed, challengeOld = false)
-    } else {
-        silentClose(QuicException.ConnectionLost.NoViablePath())
+        pathFallbacksForTest++
+        return
     }
+    // no such path (the validated ones are on another local address, or the client changed its ID there, with no spare ID): a server
+    // goes back to the last validated peer address from the failed path's own local address; only without any validated peer address
+    // does the connection close, silently (section 9.3.2: "If an endpoint has no state about the last validated peer address, it MUST
+    // close the connection silently")
+    // a path validated before and being validated again (section 9.3.3: the previous path after a migration) is still a validated
+    // peer address: its re-validation goes on there
+    val last =
+        paths.fallback(p) ?: paths.lastValidated.takeIf { it !== p && it.state == PathState.Validated }
+            ?: paths.all
+                .filter { it !== p && it.state == PathState.Validating && it.validatedAt != TimeMark.NEVER && !it.handshakeCandidate }
+                .maxByOrNull { it.validatedAt.nanos }
+    if (role == TlsRole.Server && last != null && !p.isRemote(last.remote)) {
+        revertTo(p, last)
+        return
+    }
+    silentClose(QuicException.ConnectionLost.NoViablePath())
+}
+
+/**
+ * Server, RFC 9000 section 9.3.2: the active path [p] failed its validation and no validated path can take over as it is; the
+ * connection goes back to [last]'s peer address from [p]'s local address. The path for that pair is [last] itself when it is on [p]'s
+ * local address, or one already there (one path per local and peer address), or a new one, for which a path that is neither [p] nor
+ * [last] gives way when all are taken (section 9.3: "After changing the address to which it sends non-probing packets, an endpoint can
+ * abandon any path validation for other addresses"). An address not heard from within a validation period is validated again (section
+ * 9.3: "An endpoint MAY skip validation of a peer address if that address has been seen recently").
+ */
+private fun ConnectionCore.revertTo(
+    p: Path,
+    last: Path,
+) {
+    // one path per socket and peer address, as packets find their path (Paths.byRemote: a path keeps the local address it was made
+    // with, and a client's datagram to another address of ours is processed on it, as quinn-proto's and quic-go's paths do)
+    var k =
+        paths.all.firstOrNull {
+            it !== p && it.socket == p.socket && it.isRemote(last.remote) && !it.handshakeCandidate
+        }
+    if (k == null) {
+        if (paths.isFull) {
+            val victim =
+                paths.all.firstOrNull { it !== p && it !== last && it.state != PathState.Validated }
+                    ?: paths.all.first { it !== p && it !== last }
+            paths.remove(victim)
+            releasePathCid(victim)
+        }
+        k = paths.add(p.socket, last.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now)!!
+        k.local = p.local
+        initPathOnSocket(k, p)
+        k.validatedAt = last.validatedAt
+        k.lastReceivedAt = last.lastReceivedAt
+    }
+    // section 9.5: the ID it may send with from [p]'s local address to that peer address. One it holds; the current one when the
+    // client's packets from there reached this local address with the ID of ours it uses on the active path (a NAT rebinding, "it MAY
+    // continue to use the current connection ID"); otherwise a spare one; with none, nothing goes out until the client gives one
+    val held = k.peerCid?.takeIf { cids.isActive(it) }
+    val sameLocal = sameLocal(k.local, p.local)
+    val keepCurrent = held == null && sameLocal && k.peerDcidKnown && !k.peerChangedDcid
+    // the ID of ours the client used on the path the connection leaves: its packets from [k]'s address with that one (to the same local
+    // address) are section 9.5's case, and end a wait
+    val leftDcidSeq = if (sameLocal) activeDcidSeq else -1L
+    if (held == null && !keepCurrent) {
+        val spare = cids.takePathPeer()
+        if (spare != null) k.peerCid = spare else k.waitsForPeerCid = true
+    }
+    if (k.state == PathState.Validating && k.validatedAt != TimeMark.NEVER) {
+        // a re-validation under way: it goes on where it can send; on a path that waits for an ID it starts again once it can
+        if (k.waitsForPeerCid) {
+            k.state = PathState.Validated
+            k.challengePending = false
+            k.challengeDeadline = TimeMark.NEVER
+            k.nextChallengeAt = TimeMark.NEVER
+            k.revalidateOnceSending = true
+        }
+    } else {
+        k.state = PathState.Validated
+    }
+    k.amplification.validated = true
+    paths.lastValidated = k
+    switchPath(k, PathChangeReason.ValidationFailed, challengeOld = false)
+    pathRevertsForTest++
+    if (k.waitsForPeerCid) {
+        k.keptPeer = cids.currentPeer
+        k.waitDcidSeq = leftDcidSeq
+    }
+    val heard = if (k.validatedAt > k.lastReceivedAt) k.validatedAt else k.lastReceivedAt
+    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
+        // a PATH_CHALLENGE needs an ID too: its validation period starts once the path can send, never while nothing can leave
+        if (k.waitsForPeerCid) k.revalidateOnceSending = true else startValidation(k)
+    }
+}
+
+/** What ended a reverted path's wait for a peer connection ID. */
+internal enum class WaitRelease { NewId, RetirePriorTo, SameId }
+
+/** The reverted active path [a] may send again (an ID it may use is current): a validation it postponed starts now. */
+private fun ConnectionCore.releasePeerCidWait(
+    a: Path,
+    cause: WaitRelease,
+) {
+    a.waitsForPeerCid = false
+    a.keptPeer = null
+    a.waitDcidSeq = -1L
+    pathWaitReleasesForTest[cause.ordinal]++
+    if (a.revalidateOnceSending) {
+        a.revalidateOnceSending = false
+        startValidation(a)
+    }
+}
+
+/**
+ * Server: the active path [p] failed its validation, but its peer address is validated on another path (the client answered a
+ * challenge there; on the preferred-address socket before the move, the only one a fallback may not take, [mayBeActive]). Address
+ * validation proves the peer address, whatever local address the challenge left from, so the connection stays on [p] with that
+ * address taken as validated when it was seen within a validation period (otherwise [p] validates it again, once): RFC 9000 section 9.3, "An endpoint MAY skip validation of a peer address if that address has been seen
+ * recently"; section 9.3.2 allows the silent close only to an endpoint that "has no state about the last validated peer address";
+ * and non-probing packets keep leaving the original address (section 9.6.2). True when it did so.
+ */
+private fun ConnectionCore.keepActiveOnValidatedAddress(p: Path): Boolean {
+    if (role != TlsRole.Server || p !== paths.active) return false
+    val other = paths.all.firstOrNull { it !== p && it.state == PathState.Validated && it.isRemote(p.remote) } ?: return false
+    val heard = if (other.validatedAt > other.lastReceivedAt) other.validatedAt else other.lastReceivedAt
+    if (heard == TimeMark.NEVER || now - heard > validationTimeout()) {
+        // not seen recently: no validation to skip. The original path validates the address again, once; a second failure is a
+        // failure (the client stopped answering there)
+        if (p.revalidatedForStaleAddress) return false
+        p.revalidatedForStaleAddress = true
+        startValidation(p)
+        return true
+    }
+    p.revalidatedForStaleAddress = false
+    p.state = PathState.Validated
+    p.validatedAt = other.validatedAt
+    p.amplification.validated = true
+    p.challengePending = false
+    p.challengeDeadline = TimeMark.NEVER
+    p.nextChallengeAt = TimeMark.NEVER
+    p.awaitingCid = false
+    paths.lastValidated = p
+    events += ConnectionEvent.PathValidated(p.id)
+    return true
+}
+
+/**
+ * Server, RFC 9000 section 9.6.2: "The server MUST send non-probing packets from its original address until it receives a non-probing
+ * packet from the client at its preferred address and until the server has validated the new path." A path on the preferred-address
+ * socket becomes the active one only through that move ([moveToPreferredSocket]); before it ([leftOriginalAddress] false) a fallback
+ * may not take it, however validated (a client's probe validates it without moving the connection).
+ */
+private fun ConnectionCore.mayBeActive(q: Path): Boolean = q.socket != PREFERRED_SOCKET || leftOriginalAddress
+
+/**
+ * Whether [q] can become the active path in place of [failed] without an ID used from another local address, and without reserving
+ * one (RFC 9000 section 9.5; [dcidFor] takes it once [q] is chosen): it holds an ID of its own, a spare one is left, or, on a server,
+ * it shares [failed]'s local address and the client did not change its ID there (a NAT rebinding: the current one may go there).
+ */
+private fun ConnectionCore.canSendOnAfter(
+    q: Path,
+    failed: Path,
+): Boolean {
+    if (remoteCid.length == 0) return true
+    q.peerCid?.let { if (cids.isActive(it)) return true }
+    if (cids.hasSparePeer()) return true
+    return role == TlsRole.Server && q.socket == failed.socket && sameLocal(q.local, failed.local) && !q.peerChangedDcid
 }
 
 /**
@@ -757,6 +1026,8 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                 TimeMark.NEVER
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
+            // the address is seen again: a later staleness earns its own re-validation (keepActiveOnValidatedAddress)
+            p.revalidatedForStaleAddress = false
             paths.lastValidated = p
             if (p === paths.active) {
                 handshakeFallback = null
@@ -767,30 +1038,22 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
                     handshakeMovesFrozen = true
                 }
             }
-            // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
-            // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
+            // a validated path keeps the ID it probed with while it may become the active one: a client's own path (its application
+            // probes to switch there, and closing or losing the path gives the ID back), a server's path the client probed (the client
+            // probes to migrate there next). A switch to a path whose ID went back would need a spare one, and with none left it must
+            // not take the ID used from another local address (RFC 9000 section 9.5). A server returns the ID of a path it only probed
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
             val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
-            if (p !== paths.active && !preferredMove && !toPreferred && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
-            val carrier = p.carrier
-            if (toPreferred && carrier != null && carrier.state != PathState.Closed && paths.all.contains(carrier)) {
-                adoptPreferred(carrier, p) // the application's path reports the validation; this one it never knew of
+            if (p !== paths.active && !preferredMove && !toPreferred && role == TlsRole.Server && !p.peerProbed) releasePathCid(p)
+            if (toPreferred) {
+                // a carried probe's validation is reported by the application's path ([adoptPreferred]); this one it never knew of
+                if (usableCarrier(p) == null) events += ConnectionEvent.PathValidated(p.id)
+                moveToPreferredAddress(p)
                 return
             }
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
-                return
-            }
-            if (toPreferred) {
-                // RFC 9000 section 9.6.2: the move happens on the validated path, which keeps the sequence-1 ID it probed with
-                val old = paths.active
-                switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
-                movedToPreferred = true
-                if (old !== paths.active) {
-                    paths.remove(old)
-                    releasePathCid(old)
-                }
                 return
             }
             // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)
@@ -1242,6 +1505,7 @@ private fun ConnectionCore.openHandshakeCandidate(
     val k = paths.add(p.socket, p.remote, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
     k.local = p.local
     k.handshakeCandidate = true
+    initPathOnSocket(k, p) // it may become the active path: what the socket does goes with it
     k.amplification.restore(p.amplification.received, p.amplification.sent, p.amplification.validated)
     k.state = p.state
     k.validatedAt = p.validatedAt
@@ -1283,6 +1547,7 @@ private fun ConnectionCore.openHandshakeMirror(from: InetSocketAddress) {
     val p = paths.active
     val k = paths.add(p.socket, from, config.congestionController(), config.newPathInitialRtt, evict = false, now = now) ?: return
     k.local = p.local // handshake-time moves follow the client's address only; our end stays the one its first Initial reached
+    initPathOnSocket(k, p)
     handshakeRebindFrom = p.remote
     handshakeRebindTo = from
     k.handshakeCandidate = true

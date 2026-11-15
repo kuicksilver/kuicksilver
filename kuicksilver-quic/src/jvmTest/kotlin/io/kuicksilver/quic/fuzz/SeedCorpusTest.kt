@@ -875,6 +875,8 @@ class SeedCorpusTest {
                 .raw(1, 3, byteArrayOf(0x07, 0x04, 1, 2, 3, 4))
                 .steps(3)
                 .build()
+        // the path, ECN, address, version and reset dimensions (ConnectionSeededTest runs the same programs)
+        for ((name, program) in ConnectionPathSeeds.programs) programs["path-$name"] = program
         for ((name, program) in programs) {
             put("ConnectionFuzzTest", "connectionNull", name, program)
             put("ConnectionFuzzTest", "connectionTls", name, program)

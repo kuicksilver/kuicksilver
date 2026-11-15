@@ -48,6 +48,104 @@ internal fun fuzzCase(case: TestInfo) {
  * runs it, and every failure is listed. Nothing passes silently: the script must be found, the module must have rows, and a
  * target without a committed corpus must be listed in `tools/fuzz/no-corpus.txt` (and one listed there must have none).
  */
+
+/**
+ * The rows of campaign.sh's `targets_table` in [lines]: each must have exactly the five fields `id kind module class method` (a row
+ * with another count, as a sixth column once made, would otherwise be skipped with all its inputs), and every id must be unique.
+ * Each malformed row is added to [failures]; only well-formed rows are returned.
+ */
+internal fun campaignTable(
+    lines: List<String>,
+    failures: MutableList<String>,
+): List<List<String>> {
+    val from = lines.indexOfFirst { it.startsWith("targets_table()") }
+    if (from < 0) {
+        failures += "campaign.sh has no targets_table()"
+        return emptyList()
+    }
+    val body =
+        lines
+            .drop(from + 1)
+            .dropWhile { !it.contains("<<'EOF'") }
+            .drop(1)
+            .takeWhile { it != "EOF" }
+    val rows = ArrayList<List<String>>()
+    val ids = HashSet<String>()
+    for (line in body) {
+        if (line.isBlank()) {
+            failures += "campaign.sh's target table has a blank line"
+            continue
+        }
+        val f = line.trim().split(Regex("\\s+"))
+        if (f.size != 5) {
+            failures += "campaign.sh's target row has ${f.size} fields, not 5 (id kind module class method): $line"
+            continue
+        }
+        if (!ids.add(f[0])) failures += "campaign.sh lists target ${f[0]} twice"
+        rows += f
+    }
+    if (rows.isEmpty()) failures += "campaign.sh's target table is empty"
+    return rows
+}
+
+/** The ids of `tools/fuzz/no-corpus.txt` in [lines]; each must be a target of [table] (a stale or misspelled entry is in [failures]). */
+internal fun noCorpusList(
+    lines: List<String>,
+    table: List<List<String>>,
+    failures: MutableList<String>,
+): Set<String> {
+    val known = table.map { it[0] }.toSet()
+    val ids = lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+    for (id in ids) if (id !in known) failures += "tools/fuzz/no-corpus.txt lists $id, which is not a target of campaign.sh"
+    return ids.toSet()
+}
+
+/** Negative controls of [campaignTable] and [noCorpusList]: the shapes of table and list that must not pass. */
+class CampaignTableTest {
+    private val good = "quic.a jvm kuicksilver-quic io.x.A a"
+
+    private fun table(vararg rows: String) = listOf("targets_table() {", "  cat <<'EOF'") + rows.toList() + listOf("EOF", "}")
+
+    @org.junit.jupiter.api.Test
+    fun aWellFormedTablePasses() {
+        val failures = ArrayList<String>()
+        val rows = campaignTable(table(good, "ksl.p c kuicksilver-native ksl_fuzz parsers"), failures)
+        org.junit.jupiter.api.Assertions
+            .assertEquals(2, rows.size)
+        org.junit.jupiter.api.Assertions
+            .assertEquals(emptyList<String>(), failures)
+        noCorpusList(listOf("# comment", "", "quic.a"), rows, failures)
+        org.junit.jupiter.api.Assertions
+            .assertEquals(emptyList<String>(), failures)
+    }
+
+    @org.junit.jupiter.api.Test
+    fun negative_aRowWithSixFieldsFails() {
+        val failures = ArrayList<String>()
+        val rows = campaignTable(table(good, "quic.b jvm kuicksilver-quic io.x.B b extra"), failures)
+        org.junit.jupiter.api.Assertions
+            .assertEquals(1, rows.size)
+        org.junit.jupiter.api.Assertions
+            .assertTrue(failures.single().contains("6 fields"), failures.toString())
+    }
+
+    @org.junit.jupiter.api.Test
+    fun negative_aRowWithFourFieldsOrABlankLineOrATwinFails() {
+        val failures = ArrayList<String>()
+        campaignTable(table(good, "quic.c jvm kuicksilver-quic io.x.C", "", good), failures)
+        org.junit.jupiter.api.Assertions
+            .assertEquals(3, failures.size, failures.toString())
+    }
+
+    @org.junit.jupiter.api.Test
+    fun negative_aNoCorpusEntryThatIsNoTargetFails() {
+        val failures = ArrayList<String>()
+        noCorpusList(listOf("quic.a", "quic.renamed"), campaignTable(table(good), failures), failures)
+        org.junit.jupiter.api.Assertions
+            .assertTrue(failures.single().contains("quic.renamed"), failures.toString())
+    }
+}
+
 class CommittedCorpusReplayTest {
     @org.junit.jupiter.api.Test
     fun everyCommittedInputPasses() {
@@ -56,24 +154,11 @@ class CommittedCorpusReplayTest {
             generateSequence(start) { it.parentFile }.firstOrNull { File(it, "tools/fuzz/campaign.sh").isFile }
                 ?: throw AssertionError("tools/fuzz/campaign.sh not found above $start")
         val module = generateSequence(start) { it.parentFile }.first { it.parentFile == root }.name
-        val lines = File(root, "tools/fuzz/campaign.sh").readLines()
-        val from = lines.indexOfFirst { it.startsWith("targets_table()") }
-        val rows =
-            lines
-                .drop(from + 1)
-                .dropWhile { !it.contains("<<'EOF'") }
-                .drop(1)
-                .takeWhile { it != "EOF" }
-                .map { it.trim().split(Regex("\\s+")) }
-                .filter { it.size == 5 && it[1] == "jvm" && it[2] == module }
-        if (rows.isEmpty()) throw AssertionError("no jvm target of $module in campaign.sh's table, but $module has fuzz targets")
-        val noCorpus =
-            File(root, "tools/fuzz/no-corpus.txt")
-                .readLines()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") }
-                .toSet()
         val failures = ArrayList<String>()
+        val table = campaignTable(File(root, "tools/fuzz/campaign.sh").readLines(), failures)
+        val rows = table.filter { it[1] == "jvm" && it[2] == module }
+        if (rows.isEmpty()) throw AssertionError("no jvm target of $module in campaign.sh's table, but $module has fuzz targets")
+        val noCorpus = noCorpusList(File(root, "tools/fuzz/no-corpus.txt").readLines(), table, failures)
         var inputs = 0
         val started = System.nanoTime()
         for ((id, _, _, cls, method) in rows) {

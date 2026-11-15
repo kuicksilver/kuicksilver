@@ -18,6 +18,8 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.quic.core.releasePathCid
+import io.kuicksilver.quic.core.switchPath
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -149,6 +151,63 @@ class SocketLostTest {
                     back.old.close()
                     ping(c, s)
                     collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * 0.3.0 review: `migrate` promises that a migration that does not happen leaves the connection where it was and closes the new
+     * socket. A switch refused after a successful probe (no unused connection ID of the server's left for the path, RFC 9000 section
+     * 9.5) left the validated path and its socket open.
+     */
+    @Test fun negative_aSwitchRefusedAfterTheProbeClosesThePathAndTheSocket() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, _) = p.connect()
+                    awaitSpareConnectionId(c)
+                    val core = c.core
+                    core.testBeforeSwitch = { id ->
+                        // the path's ID and every spare one are retired before the switch can take them
+                        core.paths.byId(id)?.let { core.releasePathCid(it) }
+                        while (true) core.cids.releasePathPeer(core.cids.takePathPeer() ?: break)
+                    }
+                    val io = p.net.open(InetSocketAddress("10.0.0.5", 5555))
+                    assertFailsWith<IllegalStateException> { c.migrate(io) }
+                    assertTrue(io.closed, "the new socket is closed")
+                    assertEquals(
+                        1,
+                        kotlinx.coroutines.withContext(
+                            (c as io.kuicksilver.quic.runtime.ConnectionRuntime).loopDispatcherForTest,
+                        ) {
+                            core.pathCountForTest
+                        },
+                        "the validated path is closed",
+                    )
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * Third review of "a refused switch in migrate never closes the path the connection is on": a switch that made the path active
+     * and then threw leaves the path and its socket alone.
+     */
+    @Test fun negative_aSwitchThatThrowsAfterMakingThePathActiveKeepsItsSocket() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, _) = p.connect()
+                    awaitSpareConnectionId(c)
+                    val core = c.core
+                    core.testBeforeSwitch = { id ->
+                        core.switchPath(core.paths.byId(id)!!, io.kuicksilver.quic.PathChangeReason.ActiveMigration, challengeOld = false)
+                        throw IllegalStateException("after the switch")
+                    }
+                    val io = p.net.open(InetSocketAddress("10.0.0.5", 5555))
+                    assertFailsWith<IllegalStateException> { c.migrate(io) }
+                    assertFalse(io.closed, "the active path's socket stays open")
                     c.close()
                 }
             }

@@ -17,7 +17,7 @@ kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/webtransport/WtVers
 kuicksilver-interop/src/commonMain/kotlin/io/kuicksilver/interop/HqInteropClient.kt:113	private fun request(st: QuicStream, url: String) { val req = "GET ${Url.parse(url).path}\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size) }
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/ResponseHead.kt:125	if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
 kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/h1/Socks5.kt:78	// RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
-kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:204	/** Sequence 0 of the peer: adopted from the first Initial; replaced while it is still the only one (an ACK-only Initial before the ServerHello may carry a provisional SCID, msquic). */
+kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ConnectionIdManager.kt:267	/** Sequence 0 of the peer: adopted from the first Initial; replaced while it is still the only one (an ACK-only Initial before the ServerHello may carry a provisional SCID, msquic). */
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:397	// Section 7.2: the first Initial from the server fixes its SCID. One exception, for msquic: until it has the whole
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/PacketReceiver.kt:514	private fun onlyAcks(): Boolean {
 kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/core/ZeroRtt.kt:270	(old.resetStreamAt && !tp.resetStreamAt)

@@ -259,7 +259,7 @@ internal class EndpointLoop private constructor(
         scope.launch { followCapabilities(io, PathId.Initial) }
         for (p in preferredIos) {
             preferredJobs += scope.launch { receivePreferred(p) }
-            scope.launch { followCapabilities(p, PREFERRED_SOCKET) }
+            scope.launch { followCapabilities(p, PREFERRED_SOCKET, v6 = isV6Socket(p)) }
         }
         if (group !=
             null
@@ -424,6 +424,8 @@ internal class EndpointLoop private constructor(
         runtimes[c] = rt
         observer.opened(rt)
         c.setPathCapabilities(PathId.Initial, io.capabilities.value)
+        // the preferred-address sockets, one per address family: a path there gets what the socket of its family can do
+        for (p in preferredIos) c.setSocketCapabilities(PREFERRED_SOCKET, p.capabilities.value, isV6Socket(p))
         c.onEcnFailed =
             { path ->
                 ioFor(rt, path)?.disableEcnMarking()

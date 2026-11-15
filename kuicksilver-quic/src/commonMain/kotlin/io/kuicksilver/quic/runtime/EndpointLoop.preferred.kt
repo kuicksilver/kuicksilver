@@ -35,12 +35,14 @@ internal suspend fun EndpointLoop.followCapabilities(
     io: DatagramIo,
     socket: PathId,
     only: ConnectionCore? = null,
+    /** For a preferred-address socket: its address family (the paths of the other family are on the other one). */
+    v6: Boolean? = null,
 ) {
     // the current value too: a drop between the path's setup and this subscription must not be missed (a repeat changes nothing)
     io.capabilities.collect { caps ->
         for (rt in runtimes.values) {
             if (only != null && rt.core !== only) continue
-            rt.core.updateSocketCapabilities(socket, caps)
+            rt.core.updateSocketCapabilities(socket, caps, v6)
             core.markDirty(rt.core)
         }
     }
@@ -151,3 +153,6 @@ internal suspend fun EndpointLoop.dropPreferred() {
     }
     flush()
 }
+
+/** The preferred-address socket [p] is an IPv6 one. */
+internal fun isV6Socket(p: DatagramIo): Boolean = AddressClass.ipBytes(p.localAddress).size == 16

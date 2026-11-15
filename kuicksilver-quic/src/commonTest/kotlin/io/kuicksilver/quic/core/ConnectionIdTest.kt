@@ -141,6 +141,39 @@ class ConnectionIdTest {
     }
 
     /**
+     * The cap on retired IDs that keep routing ([QuicLimits.retiredConnectionIds]) on its own: since replacements are rationed (at
+     * most [ConnectionIdManager.REPLACEMENT_WINDOW] times the issued IDs retired within 3 x PTO) the rationing bounds the set first with
+     * the default cap, and the fuzzer's reproducer of the original finding (crash-retired-cids-unbounded) no longer reaches the cap.
+     * With a cap below the rationing bound the oldest retired ID leaves the registry early and the set never exceeds the cap.
+     */
+    @Test fun negative_retiredIdsThatKeepRoutingNeverExceedTheCap() {
+        val removed = ArrayList<ConnectionId>()
+        val registrar =
+            object : CidRegistrar {
+                override fun add(
+                    cid: ConnectionId,
+                    core: io.kuicksilver.quic.ConnectionCore,
+                ) {}
+
+                override fun remove(cid: ConnectionId) {
+                    removed += cid
+                }
+            }
+        val m = ConnectionIdManager(localLimit = 4, retiredCap = 4, cidLength = 8, random = Random(1), registrar = registrar)
+        m.setPeerLimit(3)
+        val until = TimeMark(1_000_000_000L)
+        var seq = 0L
+        repeat(100) {
+            while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+            if (m.localForTest(seq) == null) return@repeat
+            m.onPeerRetired(seq++, until)
+            assertTrue(m.sizesForTest()[2] <= 4, "retired IDs still routing: ${m.sizesForTest()[2]} > the cap of 4")
+        }
+        assertTrue(seq > 4, "more retirements than the cap: $seq")
+        assertEquals((seq - 4).toInt(), removed.size, "the oldest left the registry early")
+    }
+
+    /**
      * 0.3.0 cross-review: the periodic rotation retired the old peer ID with no room left in the retirement backlog and threw
      * CONNECTION_ID_LIMIT_ERROR out of poll(), mid-packet. With the backlog full it now waits.
      */

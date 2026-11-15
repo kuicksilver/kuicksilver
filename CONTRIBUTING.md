@@ -273,7 +273,10 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
 - **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic`, `kuicksilver-http3`, `kuicksilver-http2`,
   `kuicksilver-ktor-network`, `kuicksilver-ktor-client` and `kuicksilver-ktor-server` under `src/jvmTest/.../fuzz` (among
-  them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, the 0-RTT targets,
+  them `ConnectionFuzzTest`, a stateful fuzzer of a client and a server endpoint whose input also picks the sockets' DF
+  and ECN, the path MTU, ICMP, Retry, Version Negotiation, Stateless Resets and the preferred address —
+  `ConnectionSeededTest` fails when its fixed programs stop reaching one of those, and `KUICKSILVER_FUZZ_REACH=1` with
+  `ConnectionReachReport` prints what the seeds and corpora reach —, the 0-RTT targets,
   `ZeroRttFuzzTest.zeroRttConnection` driving such a pair through every 0-RTT outcome against the 0-RTT invariant of
   `docs/architecture.md`, and the HTTP/1.1 targets `H1ResponseFuzzTest` and `H1RequestFuzzTest`;
   `ZeroRttConnectionSeededTest` and `ZeroRttRuntimeSeededTest` run fixed seeds of the 0-RTT target in `jvmTest`,

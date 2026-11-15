@@ -64,7 +64,8 @@ public interface QuicConnection : AutoCloseable {
      * Client only: [addPath] + [QuicPath.probe] + [QuicPath.switchTo]. A failed validation throws [PathValidationException] (an
      * IllegalStateException, "path validation failed"), leaves the connection where it was and closes [newIo]; its reason is
      * [PathFailureReason.NoSpareConnectionId] when the server gave no spare connection ID in time (right after the handshake the probe
-     * waits for one, see [QuicPath.probe]).
+     * waits for one, see [QuicPath.probe]). When the path validated but the switch finds no unused connection ID left for it
+     * ([QuicPath.switchTo]), the IllegalStateException of the switch is thrown and the path and [newIo] are closed the same way.
      */
     public suspend fun migrate(newIo: DatagramIo): PathEvent.Changed
 

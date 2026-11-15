@@ -478,6 +478,62 @@ class StatelessResetTest {
     }
 
     /**
+     * Found by the connection fuzzer (`connectionNull`, a server that lost its state): RFC 9000 section 10.3.1 counts "the server's
+     * transport parameters" among the tokens to compare, and "If the last 16 bytes of the datagram are identical in value to a
+     * stateless reset token, the endpoint MUST enter the draining period". The client marked its handshake-time server ID as used
+     * only once a NEW_CONNECTION_ID arrived; a server that issued no other ID (here its `preferred_address` ID fills the client's
+     * limit of 2, and the client stays on the original address) had its reset ignored, and the client waited for its idle timeout.
+     */
+    @Test fun negative_resetForTheHandshakeIdEndsAClientThatGotNoOtherId() {
+        val p =
+            EndpointPair(
+                serverPreferred =
+                    io.kuicksilver.quic.PreferredAddress(InetSocketAddress("10.0.0.3", 4433), null),
+            )
+        try {
+            val c =
+                p.connect(
+                    io.kuicksilver.quic.QuicConfig
+                        .Builder()
+                        .apply {
+                            activeConnectionIdLimit = 2
+                            followPreferredAddress = false
+                        }.build(),
+                )
+            assertTrue(p.confirmed(c))
+            repeat(5) { p.step() }
+            assertEquals(listOf(0L, 1L), c.cids.peerSeqsForTest(), "the server issued no ID beyond its preferred-address one")
+            val restarted =
+                EndpointCore(
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                        }.build(),
+                    Random(99),
+                )
+            try {
+                val id = c.openStream(true)
+                c.writeStream(id, ByteArray(100), 0, 100, false)
+                p.batch.clear()
+                assertTrue(c.poll(p.batch, p.now) >= 1)
+                val dg = p.batch.buffer(0).toByteArray(p.batch.length(0))
+                assertNull(p.feed(restarted, dg, p.clientAddr))
+                val reset = p.stateless(restarted).single()
+                p.feed(p.client, reset, p.serverAddr)
+                p.drain(c)
+                assertIs<QuicException.ConnectionLost.StatelessReset>(p.closed(c))
+                assertEquals(ConnectionState.Draining, c.state)
+            } finally {
+                restarted.close()
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
      * Review finding 16, RFC 9000 section 10.3: "endpoints MUST treat any packet ending in a valid stateless reset token as a
      * Stateless Reset, as other QUIC versions might allow the use of a long header." Only short-header datagrams were checked.
      */
@@ -579,6 +635,69 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * Found by the connection fuzzer (`connectionTls`, a reset from a stranger): RFC 9000 section 10.3.1, "An endpoint remembers all
+     * stateless reset tokens associated with the connection IDs and remote addresses for datagrams it has recently sent ... The
+     * endpoint identifies a received datagram as a Stateless Reset by comparing the last 16 bytes of the datagram with all stateless
+     * reset tokens associated with the remote address on which the datagram was received." A datagram routed to the connection by our
+     * own ID (so the endpoint's per-address lookup was skipped) was matched against every used token, whatever its source.
+     */
+    @Test fun negative_resetFromAnAddressTheIdWasNeverUsedTowardsIsIgnored() {
+        val p = Pair()
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            val s = p.server.connections().single()
+            // the client retires its earlier IDs for one with a token of its own choosing: the server moves to it and uses it
+            // towards the client's address (clients give no token for their handshake ID)
+            val token = ByteArray(16) { 0x5a }
+            c.testInjectFrames += 3 to (byteArrayOf(0x18, 9, 9, 8) + ByteArray(8) { 0x77 } + token)
+            repeat(6) { p.step() }
+            assertEquals(ConnectionState.Confirmed, s.state)
+
+            fun reset(seed: Int): ByteArray = shortTo(s.localCid.toByteArray(), 60, seed).also { token.copyInto(it, it.size - 16) }
+            // routed to the server's connection by its own ID from an address the client never had: not a reset of it
+            p.feed(p.server, reset(1), InetSocketAddress("10.0.0.9", 40000))
+            assertEquals(ConnectionState.Confirmed, s.state, "a token is matched only for the addresses its ID was used towards")
+            assertEquals(1L, s.stats.invalidResets)
+            p.feed(p.server, reset(2), clientAddr)
+            assertEquals(ConnectionState.Draining, s.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Found by the connection fuzzer (`connectionTls`, a client that moved to the server's preferred address): RFC 9000 section
+     * 10.3.1, "the comparison MUST be performed when the first packet in an incoming datagram either cannot be associated with a
+     * connection or cannot be decrypted". The endpoint dropped any datagram of an unknown ID on the preferred-address socket before
+     * comparing it with the tokens of the connections there, so a client's reset never reached a connection that had moved.
+     */
+    @Test fun negative_aResetToThePreferredAddressIsRecognised() {
+        val pref = InetSocketAddress("10.0.0.3", 4433)
+        val p = EndpointPair(serverPreferred = io.kuicksilver.quic.PreferredAddress(pref, null))
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            repeat(20) { p.step() }
+            val s = p.server.connections().single()
+            assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.paths.active.socket, "the connection moved to the preferred address")
+            val token = ByteArray(16) { 0x5a }
+            c.testInjectFrames += 3 to (byteArrayOf(0x18, 9, 9, 8) + ByteArray(8) { 0x77 } + token)
+            repeat(6) { p.step() }
+            val reset = shortTo(ByteArray(8) { 0x33 }, 60).also { token.copyInto(it, it.size - 16) }
+            val b = PacketBuffer.of(reset)
+            try {
+                p.server.handleDatagram(b, reset.size, p.clientAddr, Ecn.NotEct, p.now, io.kuicksilver.quic.PREFERRED_SOCKET)
+            } finally {
+                b.close()
+            }
+            assertEquals(ConnectionState.Draining, s.state)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_wrongStatelessResetToken() {
         val p = Pair()
         try {
@@ -621,13 +740,13 @@ class StatelessResetTest {
         }
         add(1, 0, 0x11)
         add(2, 2, 0x22) // retire_prior_to = 2 retires sequences 0 and 1
-        m.markUsedForTest(1)
-        m.markUsedForTest(2)
+        m.markUsedForTest(1, serverAddr)
+        m.markUsedForTest(2, serverAddr)
         val dg1 = PacketBuffer.of(ByteArray(40) { 0x11 })
         val dg2 = PacketBuffer.of(ByteArray(40) { 0x22 })
         try {
-            assertFalse(m.matchesPeerToken(dg1, 40), "token of a retired ID never matches")
-            assertTrue(m.matchesPeerToken(dg2, 40))
+            assertFalse(m.matchesPeerToken(dg1, 40, serverAddr), "token of a retired ID never matches")
+            assertTrue(m.matchesPeerToken(dg2, 40, serverAddr))
         } finally {
             dg1.close()
             dg2.close()
@@ -646,10 +765,10 @@ class StatelessResetTest {
             )
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
         m.setPeerResetToken(0, ByteArray(16))
-        m.markUsedForTest(0)
+        m.markUsedForTest(0, serverAddr)
         val dg = PacketBuffer.of(ByteArray(40))
         try {
-            assertFalse(m.matchesPeerToken(dg, 40), "all-zero token advertised by the peer never matches")
+            assertFalse(m.matchesPeerToken(dg, 40, serverAddr), "all-zero token advertised by the peer never matches")
         } finally {
             dg.close()
         }
@@ -665,13 +784,19 @@ class StatelessResetTest {
                 registrar = NoopRegistrar,
                 resetKey = null,
             )
+        // the handshake ID is used from the start (every packet carries it); an ID from NEW_CONNECTION_ID only once a packet does
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
-        m.setPeerResetToken(0, ByteArray(16) { 9 })
+        val ncid = PacketBuffer.of(ByteArray(8) { 1 } + ByteArray(16) { 9 })
+        try {
+            m.onNewConnectionId(1, 0, ncid, 0, 8, 8)
+        } finally {
+            ncid.close()
+        }
         val dg = PacketBuffer.of(ByteArray(40) { 9 })
         try {
-            assertFalse(m.matchesPeerToken(dg, 40), "RFC 9000 section 10.3.1: tokens of IDs we never used are not checked")
-            m.markUsedForTest(0)
-            assertTrue(m.matchesPeerToken(dg, 40))
+            assertFalse(m.matchesPeerToken(dg, 40, serverAddr), "RFC 9000 section 10.3.1: tokens of IDs we never used are not checked")
+            m.markUsedForTest(1, serverAddr)
+            assertTrue(m.matchesPeerToken(dg, 40, serverAddr))
         } finally {
             dg.close()
         }

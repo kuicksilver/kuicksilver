@@ -147,8 +147,8 @@ internal fun ConnectionCore.peerClosed(
 }
 
 /**
- * RFC 9000 section 10.3.1: a datagram that could not be processed and ends with the reset token of a peer ID we used
- * is a Stateless Reset — the connection enters Draining with [QuicException.ConnectionLost.StatelessReset] and sends
+ * RFC 9000 section 10.3.1: a datagram from [from] that could not be processed and ends with the reset token of a peer ID we used
+ * towards [from] is a Stateless Reset — the connection enters Draining with [QuicException.ConnectionLost.StatelessReset] and sends
  * nothing more. Anything else is ignored and, with [countInvalid], counted in `ConnectionStats.invalidResets`: a datagram
  * whose first packet was not ours or did not authenticate. One led by a packet of a space whose keys we discarded is
  * checked but not counted.
@@ -156,6 +156,7 @@ internal fun ConnectionCore.peerClosed(
 internal fun ConnectionCore.checkStatelessReset(
     data: PacketBuffer,
     length: Int,
+    from: io.ktor.network.sockets.InetSocketAddress,
     now: TimeMark,
     countInvalid: Boolean = true,
 ): Boolean {
@@ -164,7 +165,7 @@ internal fun ConnectionCore.checkStatelessReset(
     ) {
         return false
     }
-    if (!cids.matchesPeerToken(data, length)) {
+    if (!cids.matchesPeerToken(data, length, from)) {
         if (countInvalid) invalidResets++
         return false
     }
