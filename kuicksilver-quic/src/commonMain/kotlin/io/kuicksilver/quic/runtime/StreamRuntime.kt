@@ -112,17 +112,21 @@ internal class StreamRuntime(
      * 17.4.4, a total synchronization order), Kotlin/Native compiles them as sequentially consistent atomics without
      * documenting more than happens-before. This needs only happens-before: a write the loop made before [check] runs,
      * [check] sees in program order; a write after it follows the publication through the dispatch, so the loop sees the
-     * published object and completes it itself. Nothing runs once the loop's scope ended.
+     * published object and completes it itself. Once the loop's scope ended (or ends before the check ran), the check runs
+     * when its job completes: the loop no longer writes then, and the cancellation that ended the job came after its last
+     * write. The handler sits on this short-lived job, never on the scope's.
      */
     private fun confirmOnLoop(check: () -> Unit) {
-        loop.scope.launch { check() }
+        loop.scope.launch { check() }.invokeOnCompletion { if (it != null) check() }
     }
 
     /** Brings [w] up to the fields; any thread, any number of times: Deferreds complete once, flows only grow. */
     private fun sync(w: Watch) {
+        // the loss first: the loop writes it after any size it fixed before, so a loss seen here brings those sizes with it
+        // and the first outcome stands even without sequentially consistent accesses
+        val lost = finalsLost
         val sent = sentFinalKnown
         val received = receivedFinalKnown
-        val lost = finalsLost
         settle(w.sentFinal, sent, lost)
         settle(w.receivedFinal, received, lost)
         grow(w.receivedOffset, receivedHigh)

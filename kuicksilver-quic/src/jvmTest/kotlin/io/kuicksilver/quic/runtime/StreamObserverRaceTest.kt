@@ -29,7 +29,9 @@ import kotlin.time.Duration.Companion.seconds
  * threads race the two: one plays the loop (offsets, released bytes, both final sizes and the loss, in a random order),
  * two read the observers for the first time meanwhile. However they interleave, once the loop's calls returned: both
  * Deferreds are complete, with the first outcome the loop gave each half; the flows hold the last value; every reader got
- * the same objects; and no reader ever saw a flow go down.
+ * the same objects; and no reader ever saw a flow go down. The "loop" here is a test thread: the maker's re-check
+ * (`confirmOnLoop`) still runs on the connection's real loop, so the test covers the readers' own catch-up and the loop
+ * role's, with the re-check as one more concurrent reader.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class StreamObserverRaceTest {
