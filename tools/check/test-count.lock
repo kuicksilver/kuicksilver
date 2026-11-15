@@ -4287,6 +4287,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.los
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.lostStreamDataBlockedIsSentAgainWhileStillBlocked
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.lostStreamsBlockedIsSentAgainWhileStillBlocked
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.lostUpdatesAreQueuedOncePerStream
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.negative_resetStreamIsNeverReportedBlockedAgain
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.negative_resetStreamLeavesNoDataBlockedBehind
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.sendCreditIsTheSmallerCreditLessUnsentData
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.staleBlockedIsAnsweredOncePerRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.BlockedFramesTest.staleDataBlockedIsAnsweredWithTheCurrentMaxData

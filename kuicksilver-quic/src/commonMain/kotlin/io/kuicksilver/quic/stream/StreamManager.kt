@@ -751,10 +751,7 @@ internal class StreamManager(
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
         val finalSize = s.finalSizeForReset
         val resetCode = codeAfterResetAt(s, code)
-        sendBufferedBytes -= s.reset()
-        noteSendReleased(id)
-        scheduler.remove(s)
-        wakeRefusedWriters()
+        abandonSend(id, s)
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         reportSentFinal(s, finalSize)
         events += ConnectionEvent.StopSendingReceived(id, code)
@@ -1025,13 +1022,30 @@ internal class StreamManager(
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
         val finalSize = s.finalSizeForReset
         val resetCode = codeAfterResetAt(s, code)
-        sendBufferedBytes -= s.reset()
-        noteSendReleased(id)
-        scheduler.remove(s)
-        wakeRefusedWriters()
+        abandonSend(id, s)
         queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         reportSentFinal(s, finalSize)
         maybeClose(id)
+    }
+
+    /**
+     * Drops what [s] (the sending half of [id]) still holds for a RESET_STREAM, ours or the answer to STOP_SENDING: its buffer, its
+     * place in the schedule and on the connection-blocked list. Nothing of it waits for flow credit afterwards, so neither
+     * STREAM_DATA_BLOCKED nor DATA_BLOCKED is reported for it again (RFC 9000 section 3.1: "A sender MUST NOT send a STREAM or
+     * STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state or any terminal state").
+     */
+    private fun abandonSend(
+        id: Long,
+        s: SendStream,
+    ) {
+        sendBufferedBytes -= s.reset()
+        noteSendReleased(id)
+        scheduler.remove(s)
+        if (s.connBlocked) {
+            s.connBlocked = false
+            connBlocked.remove(s)
+        }
+        wakeRefusedWriters()
     }
 
     /**

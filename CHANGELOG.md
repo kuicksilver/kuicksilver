@@ -1064,6 +1064,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
   work (a loaded CI VM) gave up on its own connection. With three streams allowed the streams are now opened without a
   deadline; only a peer whose limit is lower still gets 3 s to raise it.
+- QUIC: a stream reset (by us, or in answer to STOP_SENDING) while it waited for flow credit was still reported blocked:
+  the repeat timer and a lost STREAM_DATA_BLOCKED queued STREAM_DATA_BLOCKED for it again, against RFC 9000 section 3.1
+  ("A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state"), it stayed on
+  the connection's blocked list so DATA_BLOCKED kept being repeated, and a later MAX_STREAM_DATA raised StreamWritable for
+  it. A reset now drops the unsent bytes from what the stream waits to send.
 - JVM and Android: a TCP socket closed or aborted while its selector waited for nothing was not closed: the JDK keeps
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.

@@ -244,4 +244,47 @@ class BlockedFramesTest {
             b.close()
         }
     }
+
+    /**
+     * RFC 9000 section 3.1: "A sender MUST NOT send a STREAM or STREAM_DATA_BLOCKED frame for a stream in the "Reset Sent" state
+     * or any terminal state". A stream reset while blocked by its own limit is not reported blocked again: not by the repeat
+     * timer, not when the earlier STREAM_DATA_BLOCKED is lost, and a later MAX_STREAM_DATA wakes no writer of it.
+     */
+    @Test fun negative_resetStreamIsNeverReportedBlockedAgain() {
+        val m = manager(streamWindow = 100)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(150), 0, 150, false)
+        sendOnce(m)
+        sendOnce(m)
+        assertEquals(listOf(100L), drain(m).of(ControlKind.StreamDataBlocked).map { it.a })
+        m.reset(id, 1)
+        assertEquals(1, drain(m).of(ControlKind.ResetStream).size)
+        assertFalse(m.flowBlocked(), "nothing of a reset stream waits for credit")
+        m.repeatBlockedReports()
+        m.onFramesLost(SentFrames().also { it.addId(SentFrames.ID_STREAM_DATA_BLOCKED, id, 100) })
+        assertTrue(drain(m).of(ControlKind.StreamDataBlocked).isEmpty(), "no STREAM_DATA_BLOCKED after RESET_STREAM")
+        m.events.clear()
+        assertTrue(m.onMaxStreamData(id, 1000))
+        assertTrue(m.events.none { it is io.kuicksilver.quic.ConnectionEvent.StreamWritable }, "no data waits for the new credit")
+        assertEquals(null, sendOnce(m), "no STREAM frame after RESET_STREAM")
+    }
+
+    /**
+     * The same for the connection: a stream reset while it waited for MAX_DATA no longer waits, so DATA_BLOCKED is neither
+     * repeated nor sent again when lost (RFC 9000 section 4.1: it reports data "blocked due to connection-level flow control").
+     */
+    @Test fun negative_resetStreamLeavesNoDataBlockedBehind() {
+        val m = manager(peerMaxData = 500)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(3000), 0, 3000, false)
+        sendOnce(m)
+        sendOnce(m)
+        assertEquals(listOf(500L), drain(m).of(ControlKind.DataBlocked).map { it.a })
+        m.reset(id, 1)
+        drain(m)
+        assertFalse(m.flowBlocked())
+        m.repeatBlockedReports()
+        m.onFramesLost(SentFrames().also { it.flags = SentFrames.DATA_BLOCKED })
+        assertTrue(drain(m).of(ControlKind.DataBlocked).isEmpty(), "nothing waits for MAX_DATA")
+    }
 }
