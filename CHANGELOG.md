@@ -979,6 +979,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `withTimeout` around `first()`, a `select`) lost that capsule, since a coroutine channel's receive drops an element
   taken by a receiver cancelled before it resumes. Capsules now wait in a queue they leave only while the collector
   runs: the next collector gets them, in order.
+- HTTP/3 server: `Http3Connection.acceptRequest` cancelled after a request was handed to it lost the request, which was
+  then never answered and kept counting as open (a graceful shutdown waited for it). The next call now returns it.
 - TLS over TCP: a server whose first flight is larger than about 17 KiB (a long certificate chain, a large stapled OCSP
   response) stalled until the handshake deadline: OpenSSL stops writing when ksl's BIO pair is full, and the handshake
   loop then waited for the peer instead of sending the rest. It now drives again after each drain that sent something.

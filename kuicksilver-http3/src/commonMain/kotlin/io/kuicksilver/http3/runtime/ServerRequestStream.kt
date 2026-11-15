@@ -213,7 +213,7 @@ internal suspend fun handleRequestStream(
             }
         }
         handedOff = true // from here ServerRequestImpl.done() ends the request
-        if (requests.trySend(req).isFailure) {
+        if (!requests.offer(req)) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
             req.done()
             return@with

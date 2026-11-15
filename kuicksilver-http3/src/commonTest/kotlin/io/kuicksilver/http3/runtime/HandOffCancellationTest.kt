@@ -8,6 +8,7 @@ import io.kuicksilver.http3.Capsule
 import io.kuicksilver.http3.CapsuleConfig
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CancellationException
@@ -127,6 +128,56 @@ class HandOffCancellationTest {
                 }
                 assertEquals(n, next, "$d: capsule $next was lost (${d.cancelled} cancelled)")
                 assertTrue(d.cancelled > 0, "$d cancelled no collector")
+            }
+        }
+
+    /** A request handed to an acceptRequest caller cancelled while being resumed goes to the next caller, and is answered. */
+    @Test fun negative_anAcceptRequestCancelledWhileBeingResumedLosesNoRequest() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val steps = StepDispatcher()
+                val acceptor = launch(steps, start = CoroutineStart.UNDISPATCHED) { p.server.acceptRequest() }
+                val response = async { p.client.request(get("/lost")) }
+                val resumed = withTimeout(5.seconds) { steps.tasks.receive() }
+                acceptor.cancel()
+                resumed.run()
+                while (!acceptor.isCompleted) steps.tasks.receive().run()
+                assertTrue(acceptor.isCancelled)
+                val again = withTimeoutOrNull(5.seconds) { p.server.acceptRequest() }
+                assertEquals("/lost", again?.path, "the request was lost")
+                again!!.respond(204).finish()
+                assertEquals(204, withTimeout(5.seconds) { response.await() }.status)
+            }
+        }
+
+    /** Requests taken by acceptRequest callers that an adversarial dispatcher cancels are all answered. */
+    @Test fun negative_requestsSurviveRandomlyCancelledAcceptors() =
+        h3Test {
+            val d = CancellingDispatcher(Random.nextLong())
+            H3Pair.open().useScoped { p ->
+                val n = 60
+                // each request goes once the one before it was taken: the acceptor is mostly waiting when one arrives
+                val taken = MutableStateFlow(0)
+                val responses =
+                    (0 until n).map { i ->
+                        async {
+                            taken.first { it >= i }
+                            p.client.request(get("/$i")).also { it.body.readAllBytes() }
+                        }
+                    }
+                var answered = 0
+                // bounded: with a request lost the loop would wait for it forever
+                withTimeoutOrNull(15.seconds) {
+                    while (answered < n) {
+                        val r = underCancellation(d) { p.server.acceptRequest() } ?: continue
+                        launch { r.respond(204).finish() }
+                        answered++
+                        taken.value = answered
+                    }
+                }
+                assertEquals(n, answered, "$d: requests were lost (${d.cancelled} cancelled)")
+                assertTrue(d.cancelled > 0, "$d cancelled no acceptor")
+                responses.forEachIndexed { i, r -> assertEquals(204, withTimeout(10.seconds) { r.await() }.status, "/$i") }
             }
         }
 }
