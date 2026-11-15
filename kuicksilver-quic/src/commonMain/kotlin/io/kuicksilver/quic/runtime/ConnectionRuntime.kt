@@ -201,7 +201,8 @@ internal class ConnectionRuntime(
         } catch (e: IllegalStateException) {
             // validated, but no unused connection ID of the server's is left for it (RFC 9000 section 9.5): the connection stays where
             // it was, and the path and [newIo] go, as after a failed validation
-            withContext(NonCancellable + loop.dispatcher) { closePath(p as PathRuntime) }
+            // unless the path became the active one meanwhile (then the connection is on it, and it stays)
+            withContext(NonCancellable + loop.dispatcher) { if (core.path.id != p.id) closePath(p as PathRuntime) }
             throw e
         }
         return PathEvent.Changed(old, p, PathChangeReason.ActiveMigration)
