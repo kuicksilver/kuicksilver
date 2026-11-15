@@ -41,6 +41,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -195,7 +196,14 @@ internal class ConnectionRuntime(
             throw PathValidationException(reason ?: PathFailureReason.ValidationTimeout)
         }
         val old = withContext(loop.dispatcher) { pathRuntime(core.path.id) }
-        p.switchTo()
+        try {
+            p.switchTo()
+        } catch (e: IllegalStateException) {
+            // validated, but no unused connection ID of the server's is left for it (RFC 9000 section 9.5): the connection stays where
+            // it was, and the path and [newIo] go, as after a failed validation
+            withContext(NonCancellable + loop.dispatcher) { closePath(p as PathRuntime) }
+            throw e
+        }
         return PathEvent.Changed(old, p, PathChangeReason.ActiveMigration)
     }
 

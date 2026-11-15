@@ -216,6 +216,9 @@ public class ConnectionCore internal constructor(
     /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
     internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null
+
+    /** Test hook: runs at the start of the public [switchPath], after the path was found validated (to take its IDs away there). */
+    internal var testBeforeSwitch: ((PathId) -> Unit)? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
     internal var pathChallengesSentForTest = 0
@@ -1211,6 +1214,7 @@ public class ConnectionCore internal constructor(
             paths.byId(id) ?: throw IllegalStateException("unknown path $id")
         check(p.state == PathState.Validated) { "path $id is ${p.state}, not Validated" }
         this.now = now
+        testBeforeSwitch?.invoke(id)
         check(p === paths.active || dcidFor(p) != null) { "no unused connection ID of the peer for path $id yet (RFC 9000 section 9.5)" }
         switchPath(p, PathChangeReason.ActiveMigration, challengeOld = false)
         if (p.preferred) movedToPreferred = true // it took the server's preferred address (RFC 9000 section 9.6.3)

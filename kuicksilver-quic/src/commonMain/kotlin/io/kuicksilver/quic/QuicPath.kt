@@ -32,7 +32,11 @@ public interface QuicPath {
      */
     public suspend fun probe(): Boolean
 
-    /** Moves the connection to this validated path; the previous path stays as a fallback until it is closed. IllegalStateException when the path is not validated. */
+    /**
+     * Moves the connection to this validated path; the previous path stays as a fallback until it is closed. IllegalStateException when
+     * the path is not validated, or while no unused connection ID of the peer is left for it (RFC 9000 section 9.5: "An endpoint MUST
+     * NOT reuse a connection ID when sending from more than one local address"; the peer replaces a retired one within a round trip).
+     */
     public suspend fun switchTo()
 
     /** Forgets the path and closes its socket (asynchronously, on the endpoint loop). The active path cannot be closed: IllegalStateException. */
