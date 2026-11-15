@@ -53,7 +53,12 @@ class H3ConnectionFuzzTest {
 
     @FuzzTest(maxDuration = "60s")
     fun h3Connection(data: ByteArray) {
-        H3Run(data).run()
+        try {
+            H3Run(data).run()
+        } catch (e: H3Finding) {
+            // the run's last steps go with the finding, so a reproducer explains itself
+            throw AssertionError("${e.message}\n" + (e.trace.take(40) + listOf("...") + e.trace.takeLast(20)).joinToString("\n"), e)
+        }
     }
 }
 
@@ -135,6 +140,9 @@ internal class H3Run(
     private val app = ArrayList<App>()
     private val seenByServer = HashMap<Int, Int>()
     private val rejectedByApp = HashSet<Int>()
+
+    /** Requests whose whole response the server application handed over (finish returned). */
+    private val answeredInFull = HashSet<Int>()
     private var maxAppActive = 0
 
     private val names = listOf("x-a", "x-b", "accept", "user-agent", "cookie", "x-trace", "cache-control")
@@ -395,6 +403,7 @@ internal class H3Run(
                         val w = a.r.respond(status, hs)
                         if (size > 0) w.output.writeFully(ByteArray(size))
                         w.finish(if (withTrailers) Http3Headers.of("x-t" to "1") else null)
+                        answeredInFull += a.tag
                         reach?.hit("server: response $status${if (withTrailers) " with trailers" else ""}")
                     }
                 }
@@ -436,6 +445,7 @@ internal class H3Run(
                     scope.launch {
                         try {
                             a.r.respond(200).finish()
+                            answeredInFull += a.tag
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
@@ -475,11 +485,11 @@ internal class H3Run(
                     throw H3Finding("request ${r.tag} failed with RequestNotProcessed, but the server application saw it")
                 }
                 if (e is Http3Exception.RequestNotProcessed) reach?.hit("client: RequestNotProcessed")
-                // RFC 9114 section 5.2: a graceful close comes "once all accepted requests ... have been processed"
-                if (e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR && !closedByProgram &&
-                    (seenByServer[r.tag] ?: 0) > 0
-                ) {
-                    throw H3Finding("request ${r.tag}, which the server application saw, failed with the graceful close: $e")
+                // RFC 9114 section 5.2: a graceful close comes "once all accepted requests ... have been processed", and the
+                // server waits until a whole response arrived (its stream finished) before it closes; a response it reset
+                // may still be overtaken by the close (a reset half counts as done once sent, RFC 9000 section 3.1)
+                if (e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR && !closedByProgram && r.tag in answeredInFull) {
+                    throw H3Finding("request ${r.tag}, answered in full, failed with the graceful close: $e")
                 }
             }
         }
