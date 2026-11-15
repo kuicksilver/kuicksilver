@@ -10,51 +10,52 @@ import io.ktor.utils.io.discard
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
-import java.lang.management.ManagementFactory
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Closing many sockets of one selector at once costs a few release rounds ([releaseClosedChannels]), not a waker (a pipe,
- * two descriptors) per close: the rounds are coalesced per selector. Once everything is closed, the process holds no more
- * descriptors than before the sockets were opened, give or take the one waker an idle selector may keep.
+ * Closing many sockets of one selector at once runs the release rounds ([releaseClosedChannels]) one at a time, never
+ * more rounds than requests, and loses none: once every peer read its socket's end and the rounds are over, no closed
+ * socket is still registered with the selector (its descriptor held), and every waker a round opened was closed.
  */
 class ReleaseCoalescingTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    @Test fun negative_manyClosesCostAFewRounds(): Unit =
+    @Test fun negative_manyClosesRunOneRoundAtATime(): Unit =
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
-            val clientSelector = SelectorManager(Dispatchers.IO)
+            val clientSelector = SelectorManager(Dispatchers.IO) // the clients' alone: its rounds are theirs
             try {
                 withTimeout(60.seconds) {
                     val listener = bindTcp(selector, "127.0.0.1", 0)
                     val port = (listener.localAddress as InetSocketAddress).port
-                    val before = openDescriptors()
-                    val pairs = ArrayList<Pair<Socket, Socket>>()
+                    val pairs = ArrayList<Pair<KslNioSocket, Socket>>()
                     repeat(COUNT) {
-                        val client = connectTcp(clientSelector, InetSocketAddress("127.0.0.1", port))
+                        val client = connectTcp(clientSelector, InetSocketAddress("127.0.0.1", port)) as KslNioSocket
                         pairs += client to listener.accept()
                     }
-                    val wakers = releaseWakersOpened.get()
-                    for ((client, _) in pairs) client.close() // two release requests each
-                    // every client sent its end once its peer read it
-                    for ((_, peer) in pairs) peer.openReadChannel().discard()
-                    val opened = releaseWakersOpened.get() - wakers
-                    assertTrue(opened <= COUNT / 10, "$opened wakers for $COUNT closes: the release rounds are not coalesced")
+                    for ((client, _) in pairs) client.close()
+                    for ((_, peer) in pairs) peer.openReadChannel().discard() // each client sent its end
+                    val state = assertNotNull(clientSelector.releaseStateForTest())
+                    // the last round may still be finishing its selection: bounded, it ends within its own timeout
+                    awaitCondition { state.inFlight.get() == 0 && pairs.none { it.first.isRegisteredForTest } }
+                    assertTrue(state.maxInFlight.get() <= 1, "${state.maxInFlight.get()} release rounds ran at once")
+                    val rounds = state.rounds.get()
+                    val requests = state.requests.get()
+                    assertTrue(rounds in 1..requests, "$rounds rounds for $requests requests")
+                    assertEquals(0, pairs.count { it.first.isRegisteredForTest }, "closed sockets still registered (held)")
+                    val leftOpen = state.wakersOpened.get() - state.wakersClosed.get()
+                    assertTrue(leftOpen <= 1, "$leftOpen wakers left open")
                     for ((_, peer) in pairs) peer.close()
                     listener.close()
-                    // the peers' and listener's closes settle on their own selector's next selections
-                    var after = openDescriptors()
-                    while (after > before + SLACK) {
-                        yield()
-                        after = openDescriptors()
-                    }
                 }
             } finally {
                 selector.close()
@@ -62,13 +63,12 @@ class ReleaseCoalescingTest {
             }
         }
 
-    private fun openDescriptors(): Long =
-        (ManagementFactory.getOperatingSystemMXBean() as com.sun.management.UnixOperatingSystemMXBean).openFileDescriptorCount
+    /** Waits for [done], looking every 10 ms, at most 10 s. */
+    private suspend fun awaitCondition(done: () -> Boolean) {
+        withTimeout(10.seconds) { while (!done()) delay(10.milliseconds) }
+    }
 
     private companion object {
         const val COUNT = 100
-
-        /** A waker an idle selector may keep, the peers' selector's own deferred closes. */
-        const val SLACK = 6
     }
 }

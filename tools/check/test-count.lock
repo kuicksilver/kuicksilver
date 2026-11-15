@@ -2285,7 +2285,7 @@ kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPoli
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.otherVersionFailsFastUnlessTurnedOff
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.propertyTurnsTheCheckOff
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.KtorVersionPolicyJvmTest.readsTheJarManifest
-kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.ReleaseCoalescingTest.negative_manyClosesCostAFewRounds
+kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.ReleaseCoalescingTest.negative_manyClosesRunOneRoundAtATime
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.closeAfterTheWriterFinishedReleasesTheSocket
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.negative_aCancelledReadChannelEndsABackedUpReadLoop
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.TcpWriterTest.negative_aFailedStreamResetsTheConnection

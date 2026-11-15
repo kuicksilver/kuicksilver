@@ -122,6 +122,9 @@ internal class KslNioSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
+    /** Still registered with a selector: a close the JDK has not finished, its descriptor still held (tests). */
+    internal val isRegisteredForTest: Boolean get() = nio.isRegistered
+
     /** The writer's send failures, for the read side ([SendFailures]). */
     internal val sendFailures = SendFailures()
 
@@ -394,9 +397,6 @@ internal class KslNioServerSocket(
     /** False once the descriptor is closed (tests). */
     internal val isOpen: Boolean get() = nio.isOpen
 
-    /** Registered with a selector (tests: an accept waited on it). */
-    internal val isRegisteredForTest: Boolean get() = nio.isRegistered
-
     override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()
@@ -424,6 +424,7 @@ internal class KslNioServerSocket(
  */
 internal fun SelectorManager.releaseClosedChannels() {
     val state = synchronized(releaseStates) { releaseStates.getOrPut(this) { ReleaseState() } }
+    state.requests.incrementAndGet()
     state.requested.set(true)
     if (!state.running.compareAndSet(false, true)) return // the round in flight, or the one after it, serves this one
     val selector = this
@@ -431,31 +432,62 @@ internal fun SelectorManager.releaseClosedChannels() {
     kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO + CoroutineName("ksl-selector-release")) {
         while (true) {
             state.requested.set(false) // the requests before this point are served by the round below
-            selectOnce(selector)
-            state.running.set(false)
+            state.rounds.incrementAndGet()
+            state.maxInFlight.accumulateAndGet(state.inFlight.incrementAndGet(), ::maxOf)
+            try {
+                selectOnce(selector, state)
+            } finally {
+                // whatever the round did (a cancellation included), the selector can have another one
+                state.inFlight.decrementAndGet()
+                state.running.set(false)
+            }
             // a request after the reset above: one more round, unless its own caller started it
             if (!state.requested.get() || !state.running.compareAndSet(false, true)) break
         }
     }
 }
 
-/** Per selector: a release round runs, and a request came since the running round started. */
-private class ReleaseState {
+/**
+ * Per selector: a release round runs ([running]), and a request came since the running round started ([requested]); the
+ * rest is counted for tests.
+ */
+internal class ReleaseState {
     val running = AtomicBoolean(false)
     val requested = AtomicBoolean(false)
+
+    /** Requests made. */
+    val requests = AtomicLong()
+
+    /** Rounds started. */
+    val rounds = AtomicLong()
+
+    /** Rounds running now, and the most that ever ran at once (1 with the coalescing). */
+    val inFlight =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+    val maxInFlight =
+        java.util.concurrent.atomic
+            .AtomicInteger()
+
+    /** Wakers opened and closed. */
+    val wakersOpened = AtomicLong()
+    val wakersClosed = AtomicLong()
 }
+
+/** This selector's release state, null before its first request (tests). */
+internal fun SelectorManager.releaseStateForTest(): ReleaseState? = synchronized(releaseStates) { releaseStates[this] }
 
 /** The release state of each selector, dropped with the selector. */
 private val releaseStates = java.util.WeakHashMap<SelectorManager, ReleaseState>()
-
-/** Wakers [releaseClosedChannels] opened (tests: rounds are coalesced). */
-internal val releaseWakersOpened = AtomicLong()
 
 /** Release rounds that could open no waker (no pipe and no datagram channel: descriptors exhausted). */
 internal val releaseFailures = AtomicLong()
 
 /** One selection on [selector]: WRITE on a waker channel, ready at once; bounded, for a selector that closes meanwhile. */
-private suspend fun selectOnce(selector: SelectorManager) {
+private suspend fun selectOnce(
+    selector: SelectorManager,
+    state: ReleaseState,
+) {
     val waker: SelectableChannel? =
         runCatching<SelectableChannel> {
             val pipe = selector.provider.openPipe()
@@ -467,7 +499,7 @@ private suspend fun selectOnce(selector: SelectorManager) {
         releaseFailures.incrementAndGet()
         return
     }
-    releaseWakersOpened.incrementAndGet()
+    state.wakersOpened.incrementAndGet()
     val selectable = WakerSelectable(waker)
     try {
         waker.configureBlocking(false)
@@ -479,6 +511,7 @@ private suspend fun selectOnce(selector: SelectorManager) {
         // the selector is closed: it deregistered everything
     } finally {
         runCatching { waker.close() }
+        state.wakersClosed.incrementAndGet()
         runCatching { selector.notifyClosed(selectable) }
     }
 }
