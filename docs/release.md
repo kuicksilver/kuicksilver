@@ -341,7 +341,8 @@ draft (not public, and `pages.yml` does not run) until its zip is checked. Every
    [Every release](#every-release), step 6): `swift-package-check.sh prepush <version>` right before the push checks
    that the commit and the tag have UTC dates and the release key's identity `Kuicksilver <hello@kuicksilver.io>` (set
    in the clone's own git config), that the
-   annotated tag names the commit and is signed by the release key, and that no file names a home directory; the
+   annotated tag names the commit, that the tag and the commit are both signed by the release key (checked against the
+   pinned key in a keyring of their own), and that no file names a home directory; the
    clone's pre-push hook runs the same checks and refuses a commit pushed as a tag.
 6. `tools/release/swift-package-check.sh resolve <version>`: an empty package with
    `.package(url: "https://github.com/kuicksilver/kuicksilver-swift", exact: "<version>")` resolves (SwiftPM fetches

@@ -19,7 +19,8 @@
 #            asset URL does not resolve publicly) and GitHub's own digest of it is compared too, when gh reports one;
 #            without --draft: downloaded from the public URL Package.swift names (the release is published).
 #   prepush  right before the push: files, and the tag <version> exists, is annotated, names HEAD, has a UTC tagger
-#            date and the release identity as its tagger, and is signed by the release key.
+#            date and the release identity as its tagger, and is signed by the release key; so is the commit (gpgsig).
+#   signed   the commit --commit <sha> (default HEAD) is signed by the release key (the clone's hook, for branches).
 #   resolve  after the tag is pushed: an empty package naming kuicksilver-swift with exact: "<version>" resolves (SwiftPM
 #            fetches the tag and downloads the zip, checking its checksum) and builds for the iOS Simulator.
 #
@@ -31,16 +32,17 @@
 #      KSL_SWIFT_PACKAGE_URL  the package repository resolve names (default https://github.com/kuicksilver/kuicksilver-swift)
 #      KSL_SWIFT_AUTHOR  "Name <email>" every commit and tag must carry when the clone has no kuicksilver.swift.author
 #                        (which swift-package.sh writes; default the release key's identity)
-#      KSL_SWIFT_TAG_KEY, KSL_SWIFT_TAG_FPR  the public key and fingerprint a tag's signature must verify against (default
+#      KSL_SWIFT_TAG_KEY, KSL_SWIFT_TAG_FPR  the public key and fingerprint signatures must verify against (default
 #                        tools/release/kuicksilver-release-key.asc, 22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 cmd="${1:-}"; [ $# -gt 0 ] && shift
-case "$cmd" in files|local|remote|prepush|resolve) ;; -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
+case "$cmd" in files|local|remote|prepush|resolve|signed) ;; -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
   *) echo "usage: $0 files|local|remote|prepush|resolve <version> [--package <dir>] [--zip <file>] [--draft] (see --help)" >&2; exit 2 ;; esac
-version=""; pkg=build/release/kuicksilver-swift; zip=build/release/Kuicksilver.xcframework.zip; draft=0
+version=""; pkg=build/release/kuicksilver-swift; zip=build/release/Kuicksilver.xcframework.zip; draft=0; commit=HEAD
 while [ $# -gt 0 ]; do case "$1" in
   --package) pkg="${2:?--package <dir>}"; shift ;; --zip) zip="${2:?--zip <file>}"; shift ;; --draft) draft=1 ;;
+  --commit) commit="${2:?--commit <sha>}"; shift ;;
   -*) echo "unknown option $1" >&2; exit 2 ;;
   *) [ -z "$version" ] || { echo "one version only" >&2; exit 2; }; version="$1" ;;
 esac; shift; done
@@ -92,6 +94,27 @@ check_manifest() {
   echo "OK: $pkg/Package.swift names $url"
   sum="$s"
 }
+# signed by the release key: the signature of a tag (a trailing armored block) or of a commit (its gpgsig header) checked
+# against the pinned key in a keyring of its own, VALIDSIG on the primary fingerprint
+verify_signature() { # <tag|commit> <object> <what, for the messages>
+  local h st key fpr
+  git -C "$pkg" cat-file "$1" "$2" > "$tmp/obj" 2>/dev/null || fail "$3: cannot read the $1 object"
+  if [ "$1" = tag ]; then
+    sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$tmp/obj" > "$tmp/obj.payload"
+    sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$tmp/obj" > "$tmp/obj.asc"
+  else   # the gpgsig header and its continuation lines (one leading space) are the signature; the rest is what it signs
+    awk '/^gpgsig / { s = 1; print substr($0, 8); next } s && /^ / { print substr($0, 2); next } { s = 0 }' "$tmp/obj" > "$tmp/obj.asc"
+    awk '/^gpgsig / { s = 1; next } s && /^ / { next } { s = 0; print }' "$tmp/obj" > "$tmp/obj.payload"
+  fi
+  [ -s "$tmp/obj.asc" ] || fail "$3 is not signed ($([ "$1" = tag ] && echo "git tag -s" || echo "git commit -S"))"
+  h=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$h"
+  key="${KSL_SWIFT_TAG_KEY:-tools/release/kuicksilver-release-key.asc}"; fpr="${KSL_SWIFT_TAG_FPR:-22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68}"
+  gpg --homedir "$h" --batch --import "$key" >/dev/null 2>&1
+  st=$(gpg --homedir "$h" --batch --status-fd 1 --verify "$tmp/obj.asc" "$tmp/obj.payload" 2>/dev/null || true)
+  gpgconf --homedir "$h" --kill all >/dev/null 2>&1 || true; rm -rf "$h"
+  grep -q '^\[GNUPG:\] GOODSIG ' <<< "$st" && grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$" <<< "$st" || fail "$3 is not signed by $fpr"
+  echo "OK: $3 is signed by $fpr"
+}
 # the commit: UTC dates (a time zone in a commit or tag of a public repository says where the maintainer is), no home path
 check_files() {
   local G=(git -C "$pkg") d files
@@ -114,6 +137,7 @@ check_files() {
 
 case "$cmd" in
 files) check_files ;;
+signed) verify_signature commit "$commit" "the commit $(git -C "$pkg" rev-parse --short "$commit" 2>/dev/null || echo "$commit")" ;;
 local)
   check_files
   check_manifest
@@ -175,19 +199,8 @@ prepush)
   who=$("${G[@]}" for-each-ref --format='%(taggername) %(taggeremail)' "refs/tags/$version")
   [ "$who" = "$identity" ] || fail "the tag $version has the tagger '$who', not $identity"
   echo "OK: the tag $version names HEAD, tagger $identity, date UTC"
-  # signed by the release key: the signature of the tag object against the pinned key, in a keyring of its own
-  "${G[@]}" cat-file tag "refs/tags/$version" > "$tmp/tag"
-  sed '/^-----BEGIN PGP SIGNATURE-----$/,$d' "$tmp/tag" > "$tmp/tag.payload"
-  sed -n '/^-----BEGIN PGP SIGNATURE-----$/,$p' "$tmp/tag" > "$tmp/tag.asc"
-  [ -s "$tmp/tag.asc" ] || fail "the tag $version is not signed (git tag -s)"
-  gh_home=$(mktemp -d /tmp/ksl-gpg.XXXXXX); chmod 700 "$gh_home"
-  key="${KSL_SWIFT_TAG_KEY:-tools/release/kuicksilver-release-key.asc}"; fpr="${KSL_SWIFT_TAG_FPR:-22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68}"
-  gpg --homedir "$gh_home" --batch --import "$key" >/dev/null 2>&1
-  st=$(gpg --homedir "$gh_home" --batch --status-fd 1 --verify "$tmp/tag.asc" "$tmp/tag.payload" 2>/dev/null || true)
-  gpgconf --homedir "$gh_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gh_home"
-  grep -q '^\[GNUPG:\] GOODSIG ' <<< "$st" && grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$" <<< "$st" \
-    || fail "the tag $version is not signed by $fpr"
-  echo "OK: the tag $version is signed by $fpr"
+  verify_signature tag "refs/tags/$version" "the tag $version"
+  verify_signature commit HEAD "the commit $("${G[@]}" rev-parse --short HEAD)"
   echo "prepush check of the Swift package $version passed"
   ;;
 resolve)

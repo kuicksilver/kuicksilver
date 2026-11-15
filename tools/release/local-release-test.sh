@@ -196,8 +196,8 @@ sp() { # <label> <ok|refuse> <pattern|-> <prepare|finish> <args...>: runs swift-
   elif [ "$pat" != - ] && ! grep -qE -- "$pat" <<< "$sp_out"; then sp_fail "$label" "no '$pat' in: $(tr '\n' ' ' <<< "$sp_out" | cut -c1-200)"
   else return 0; fi; return 1
 }
-ptag() { # <version> <branch>: what the maintainer does after finish (here unsigned, in UTC; the clone's hook checks it)
-  TZ=UTC git -C "$tmp/sp" tag -s "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q --atomic "$tmp/sp.git" "$2" "refs/tags/$1" > "$tmp/ptag.log" 2>&1
+ptag() { # <version> <branch>: what the maintainer does after finish (the test key, in UTC; the clone's hook checks it)
+  TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit -S && TZ=UTC git -C "$tmp/sp" tag -s "$1" -m "Kuicksilver $1" && git -C "$tmp/sp" push -q --atomic "$tmp/sp.git" "$2" "refs/tags/$1" > "$tmp/ptag.log" 2>&1
 }
 git init -q --bare -b main "$tmp/sp.git"
 S1=$(printf a | shasum -a 256 | cut -d' ' -f1); S2=$(printf b | shasum -a 256 | cut -d' ' -f1)
@@ -290,7 +290,7 @@ TZ=UTC git -C "$tmp/sph" commit -q --no-gpg-sign -m notes; htag UTC
 hpush "negative_swiftPushHomePath"        refuse "names a home directory"
 git -C "$tmp/sph" reset -q --hard HEAD~1; TZ=Asia/Yekaterinburg git -C "$tmp/sph" commit -q --amend --no-edit --no-gpg-sign --reset-author; htag UTC
 hpush "negative_swiftPushCommitZone"      refuse "[+]0500"
-TZ=UTC git -C "$tmp/sph" commit -q --amend --no-edit --no-gpg-sign --reset-author; htag UTC
+TZ=UTC git -C "$tmp/sph" commit -q --amend --no-edit -S --reset-author; htag UTC
 out=$(git -C "$tmp/sph" push "$tmp/sph.git" HEAD:refs/tags/2.0.0-rc1 2>&1)
 if [ $? != 0 ] && grep -q "must be the annotated tag 2.0.0-rc1 itself" <<< "$out" && ! git -C "$tmp/sph.git" rev-parse -q --verify refs/tags/2.0.0-rc1 >/dev/null
 then sp_pass "negative_swiftPushCommitAsTag"; else sp_fail "negative_swiftPushCommitAsTag" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
@@ -299,10 +299,14 @@ out=$(cd "$tmp/sph" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git r
 if [ $? != 0 ] && grep -q "cannot list $tmp/no-such-remote.git" <<< "$out"; then sp_pass "negative_swiftPushUnlistableRemote"
 else sp_fail "negative_swiftPushUnlistableRemote" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
 hpush "swift package: a clean push goes through the hook" ok -
+TZ=UTC git -C "$tmp/sph" commit -q --allow-empty --no-gpg-sign -m "unsigned"
+out=$(git -C "$tmp/sph" push "$tmp/sph.git" main 2>&1)
+if [ $? != 0 ] && grep -q "is not signed (git commit -S)" <<< "$out" && [ "$(git -C "$tmp/sph.git" rev-parse main)" != "$(git -C "$tmp/sph" rev-parse HEAD)" ]
+then sp_pass "negative_swiftPushUnsignedCommit"; else sp_fail "negative_swiftPushUnsignedCommit" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
 git init -q --bare -b main "$tmp/spr.git"
 KSL_SWIFT_AUTHOR="Rel Ease <rel@example.invalid>" KSL_SWIFT_REPO="$tmp/spr.git" bash "$root/tools/release/swift-package.sh" finish 3.0.0-rc1 "$SH" --out "$tmp/spr" >/dev/null 2>&1 \
   || { echo "FAIL: swift-package.sh finish with another identity"; exit 2; }
-TZ=UTC git -C "$tmp/spr" tag -s 3.0.0-rc1 -m "Kuicksilver 3.0.0-rc1"
+TZ=UTC git -C "$tmp/spr" commit -q --amend --no-edit -S; TZ=UTC git -C "$tmp/spr" tag -s 3.0.0-rc1 -m "Kuicksilver 3.0.0-rc1"
 out=$(env -u KSL_SWIFT_AUTHOR git -C "$tmp/spr" push --atomic "$tmp/spr.git" main refs/tags/3.0.0-rc1 2>&1)
 if [ $? = 0 ] && [ "$(git -C "$tmp/spr" config kuicksilver.swift.author)" = "Rel Ease <rel@example.invalid>" ]; then sp_pass "swift package: the hook reads the identity the clone stores"
 else sp_fail "swift package: the hook reads the identity the clone stores" "$(tr '\n' ' ' <<< "$out" | cut -c1-200)"; fi
@@ -344,7 +348,7 @@ git -C "$tmp/sp" tag 1.1.0-rc1
 spc "negative_swiftCheckPrepushLightweightTag"  refuse "no annotated tag 1.1.0-rc1"        "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=Asia/Tokyo git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
 spc "negative_swiftCheckPrepushTaggerZone"      refuse "tagger zone [+]0900"                "$tmp/zip-a" prepush 1.1.0-rc1
-git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit -S; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
 spc "swift check: prepush, UTC tag on HEAD"     ok     "prepush check .* passed"           "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" tag -a 1.1.0-rc1 -m x
 spc "negative_swiftCheckUnsignedTag"            refuse "is not signed [(]git tag -s[)]"      "$tmp/zip-a" prepush 1.1.0-rc1
@@ -354,8 +358,13 @@ git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" -c user.na
 spc "negative_swiftCheckTaggerIdentity"         refuse "tagger 'Other <o@example.invalid>'" "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 # the commands the maintainer runs (amend, tag) take the clone's identity, not the global one (Global Person here)
-TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit --no-gpg-sign; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
+TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit -S; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
 spc "swift check: amend and tag ignore the global identity" ok "tagger Kuicksilver"           "$tmp/zip-a" prepush 1.1.0-rc1
+# the commit's own signature (gpgsig), checked against the pinned key like the tag's
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit --no-gpg-sign; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
+spc "negative_swiftCheckUnsignedCommit"         refuse "the commit [0-9a-f]+ is not signed [(]git commit -S[)]" "$tmp/zip-a" prepush 1.1.0-rc1
+git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null; TZ=UTC git -C "$tmp/sp" commit -q --amend --no-edit -S"$OTHER_FPR"; TZ=UTC git -C "$tmp/sp" tag -s 1.1.0-rc1 -m x
+spc "negative_swiftCheckCommitOtherKey"         refuse "the commit [0-9a-f]+ is not signed by $FPR" "$tmp/zip-a" prepush 1.1.0-rc1
 git -C "$tmp/sp" tag -d 1.1.0-rc1 >/dev/null
 TZ=UTC git -C "$tmp/sp" -c user.name=Other -c user.email=o@example.invalid commit -q --amend --no-edit --no-gpg-sign
 spc "negative_swiftCheckCommitterIdentity"      refuse "author[|]committer is"              "$tmp/zip-a" files 1.1.0-rc1
