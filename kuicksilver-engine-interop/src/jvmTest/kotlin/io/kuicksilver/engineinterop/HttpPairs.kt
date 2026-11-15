@@ -121,9 +121,12 @@ internal class ClientToNettyH3Test : HttpPairSuite(ServerEngine.Netty, ClientEng
         }
 
     /**
-     * Ktor's Netty engine stops HTTP/3 without a GOAWAY and without CONNECTION_CLOSE, and the response in flight never
-     * completes (RFC 9114 section 5.2 describes the graceful shutdown with GOAWAY). Our side: the call fails once the
-     * QUIC idle timeout passes (RFC 9000 section 10.1), here a short one, instead of hanging.
+     * Ktor's Netty engine stops HTTP/3 by closing its UDP channel, without a GOAWAY and without CONNECTION_CLOSE (RFC 9114
+     * section 5.2 describes the graceful shutdown with GOAWAY). A response released as the stop begins gets out or not
+     * depending on whether the handler's write or that close comes first: on a loaded host (2 CPUs, a CI runner) the
+     * write often wins and the response completes. What is under test is our side when nothing more comes, so the
+     * response stays held until the call has ended: the call fails once the QUIC idle timeout passes (RFC 9000 section
+     * 10.1), here a short one, instead of hanging.
      */
     @Test override fun gracefulStopCompletesTheRequestInFlight() =
         interopTest {
@@ -138,8 +141,8 @@ internal class ClientToNettyH3Test : HttpPairSuite(ServerEngine.Netty, ClientEng
                     hold.entered.await()
                     val stop = launch { s.stop(5_000, 6_000) }
                     s.probe.stopping.await()
-                    hold.release.complete(Unit)
                     val e = call.await().exceptionOrNull()
+                    hold.release.complete(Unit) // only now: the stopped server has nothing left to send it on
                     assertTrue(generateSequence(e) { it.cause }.any { it is QuicException.ConnectionLost }, "the call ended with $e")
                     stop.join()
                 }
