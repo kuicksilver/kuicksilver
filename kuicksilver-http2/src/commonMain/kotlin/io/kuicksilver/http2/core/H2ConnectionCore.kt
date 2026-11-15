@@ -103,9 +103,16 @@ internal class H2ConnectionCore(
 
         /**
          * The last SETTINGS_HEADER_TABLE_SIZE among this acknowledgement and its followers, -1 for none: the encoder's limit
-         * once they are written (their smallest values were applied when they arrived, see [queueSettingsAck]).
+         * once they are written.
          */
         var tableSize = -1L
+
+        /**
+         * The smallest SETTINGS_HEADER_TABLE_SIZE among them, -1 for none. Applied when they arrive and again when they are
+         * written: a peer that applies each frame's smallest value with our acknowledgement (as nghttp2 does) then expects
+         * the next block to start with an update to at most it, even after a larger value was acknowledged meanwhile.
+         */
+        var minTableSize = -1L
     }
 
     internal var wroteSincePing = true
@@ -623,7 +630,7 @@ internal class H2ConnectionCore(
         get() =
             partial != null || initial.isNotEmpty() || pingAnswers.isNotEmpty() || control.isNotEmpty() || creditReady.isNotEmpty() ||
                 headerReady.isNotEmpty() ||
-                heldSettingsAcks.firstOrNull()?.behind?.any { it.out.isNotEmpty() } == true ||
+                heldSettingsAcks.firstOrNull()?.behind?.any { it.out.firstOrNull() is OutItem.Data } == true ||
                 nextData(lastNow) != null
 
     /**
@@ -923,9 +930,9 @@ internal class H2ConnectionCore(
      * acknowledgements count toward `maxControlFramesQueued` (CVE-2019-9515), so a peer that stops reading cannot pile
      * them up.
      *
-     * While acknowledgements are held, [poll] writes the queued frames of the streams the oldest one waits for ahead of
-     * every other field block and DATA frame, whatever their priority, so it follows within one DATA frame (and the field
-     * blocks queued before it) per such stream.
+     * While acknowledgements are held, [poll] writes the DATA the oldest one waits for ahead of every other field block
+     * and DATA frame, whatever their priority, so it follows within one DATA frame per such stream and the field blocks
+     * queued before that DATA (field blocks keep their order, RFC 9113 section 5.1.1).
      *
      * [tableMin] and [tableLast] are the smallest and the last SETTINGS_HEADER_TABLE_SIZE the SETTINGS carried (-1 for
      * none). The encoder's limit is "the last value of the SETTINGS_HEADER_TABLE_SIZE parameter ... received from the
@@ -962,6 +969,7 @@ internal class H2ConnectionCore(
                 HeldAck(behind).also { heldSettingsAcks.addLast(it) }
             }
         if (tableLast >= 0) held.tableSize = tableLast
+        if (tableMin >= 0) held.minTableSize = if (held.minTableSize < 0) tableMin else minOf(held.minTableSize, tableMin)
     }
 
     /** The connection ended with an error: only its GOAWAY goes out, no acknowledgement. */
@@ -974,33 +982,29 @@ internal class H2ConnectionCore(
     private fun dataLeft(s: H2Stream) {
         if (heldSettingsAcks.isEmpty()) return
         for (h in heldSettingsAcks) h.behind.remove(s)
-        var tableSize = -1L
         while (heldSettingsAcks.firstOrNull()?.behind?.isEmpty() == true) {
             val h = heldSettingsAcks.removeFirst()
             repeat(1 + h.followers) {
                 heldAcks-- // first, so moving it into the control queue keeps the count within the bound
                 queueControl(FrameEncoder.settingsAck())
             }
-            if (h.tableSize >= 0) tableSize = h.tableSize
+            // acknowledged now (see queueSettingsAck): the smallest value again (RFC 7541 section 4.2), then the last one,
+            // the peer's limit from here on
+            if (h.minTableSize >= 0) hpackOut.setPeerMaxTableSize(h.minTableSize)
+            if (h.tableSize >= 0) hpackOut.setPeerMaxTableSize(h.tableSize)
         }
-        // the last value acknowledged now (see queueSettingsAck); a smaller one still held is legal too, but this one is
-        // the peer's limit from here on, and the held one is applied again with its own acknowledgement
-        if (tableSize >= 0) hpackOut.setPeerMaxTableSize(tableSize)
     }
 
     /**
-     * The stream whose queued frames go first while an acknowledgement is held (see [queueSettingsAck]): one the oldest
-     * held acknowledgement waits for, taken out of the field block and DATA queues; null when none is held.
+     * The stream whose DATA goes first while an acknowledgement is held (see [queueSettingsAck]): one the oldest held
+     * acknowledgement waits for with a DATA frame next in its queue, taken out of the DATA queue; null when there is none.
+     * A field block queued before that DATA keeps its place among the field blocks: moving a stream's first HEADERS ahead
+     * of an earlier one would open a lower stream identifier after a higher one (RFC 9113 section 5.1.1).
      */
     private fun heldAckStream(): H2Stream? {
-        val s = heldSettingsAcks.firstOrNull()?.behind?.firstOrNull { it.out.isNotEmpty() } ?: return null
-        if (s.out.first() is OutItem.Fields) {
-            headerReady.remove(s)
-            s.scheduled = false
-        } else {
-            dataReady.remove(s)
-            dataReady.onServed(s)
-        }
+        val s = heldSettingsAcks.firstOrNull()?.behind?.firstOrNull { it.out.firstOrNull() is OutItem.Data } ?: return null
+        dataReady.remove(s)
+        dataReady.onServed(s)
         return s
     }
 

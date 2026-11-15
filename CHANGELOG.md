@@ -1090,8 +1090,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its smallest and then its last value (RFC 7541 section 4.2), as nghttp2 requires. Client and server alike.
 - HTTP/2 (RFC 9113 section 6.5.3, "MUST immediately emit"): a SETTINGS acknowledgement held behind DATA already taken
   from a larger window waited for that DATA in priority order, so a stream of lower urgency could hold it back for as
-  long as more urgent streams kept sending. The frames of the streams it waits for now go first, so it follows within
-  one DATA frame per such stream.
+  long as more urgent streams kept sending. The DATA it waits for now goes ahead of other DATA and field blocks, so it
+  follows within one DATA frame per such stream and the field blocks queued before that DATA (which keep their order).
 - HTTP/3 client: `Http3Request.priority` now replaces a `priority` field among the request's headers. The header went
   out while the explicit priority scheduled the stream, so the server and the client used different priorities.
 - HTTP/3 (RFC 8941 section 4.2): a `priority` field that fails to parse now counts as absent wherever its presence

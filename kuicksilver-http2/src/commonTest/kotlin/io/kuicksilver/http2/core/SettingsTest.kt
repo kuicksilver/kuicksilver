@@ -15,6 +15,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SettingsTest {
+    private companion object {
+        const val SEEDS = 1_000
+    }
+
     private fun settings(vararg kv: Pair<Int, Long>) =
         FrameEncoder.settings(kv.map { it.first }.toIntArray(), kv.map { it.second }.toLongArray())
 
@@ -184,24 +188,25 @@ class SettingsTest {
      * from the decoder and acknowledged by the encoder"; RFC 9113 section 4.3.1: a change "takes effect when the endpoint
      * acknowledges settings". The peer lowered the size to 0 (acknowledged), then raises it to 4096 in a SETTINGS that also
      * shrinks SETTINGS_INITIAL_WINDOW_SIZE while a stream has HEADERS and DATA queued: our ACK waits behind that DATA (and
-     * only that stream's frames go before it), and the HEADERS written before it must not raise the table. A reduction
+     * the field blocks queued before it, in their order), and the HEADERS written before it must not raise the table. A reduction
      * held the same way applies at once: the HEADERS written before the ACK already shrink the table.
      */
     @Test
     fun raisedPeerHeaderTableSizeWaitsForOurAck() {
         for (role in Role.entries) {
             val m = TableMirror(role, SettingId.HEADER_TABLE_SIZE to 0)
-            val other = m.block(endStream = true) // queued first, but the ACK does not wait for it
+            val other = m.block(endStream = true) // queued first: its field block goes first
             val a = m.block(endStream = false)
             assertEquals(16_384, m.p.core.sendData(a, ByteArray(16_384), 0, 16_384, endStream = false))
             m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 1_000, SettingId.HEADER_TABLE_SIZE to 4096) // ACK held
             assertEquals(0, m.p.core.hpackOut.tableCapacity, "$role: the raise waits for the ACK")
-            assertEquals(listOf("H$a", "D$a", "ACK", "H$other"), m.read(), "$role")
-            assertEquals(listOf(0), m.updates[a], "$role: only the acknowledged 0 ahead of the ACK")
-            assertEquals(listOf(4096), m.updates[other], "$role: the raise after the ACK")
+            assertEquals(listOf("H$other", "H$a", "D$a", "ACK"), m.read(), "$role")
+            assertEquals(listOf(0), m.updates[other], "$role: only the acknowledged 0 ahead of the ACK")
+            assertEquals(emptyList(), m.updates[a], "$role: no raise ahead of the ACK")
             assertEquals(4096, m.p.core.hpackOut.tableCapacity)
             val b = m.block(endStream = false)
             assertEquals(listOf("H$b"), m.read(), "$role")
+            assertEquals(listOf(4096), m.updates[b], "$role: the raise after the ACK")
             // a reduction held behind DATA
             assertEquals(100, m.p.core.sendData(b, ByteArray(100), 0, 100, endStream = false))
             val c = m.block(endStream = false)
@@ -297,6 +302,50 @@ class SettingsTest {
     }
 
     /**
+     * RFC 7541 section 4.2 across two held ACKs: the second SETTINGS carries 0 then 4096 and is acknowledged after the first
+     * (100) was. A peer that applies the smallest and the last value of each SETTINGS with our ACK (nghttp2) requires the
+     * first block after the second ACK to start with an update to at most 0, although the encoder already signalled 0
+     * before the first ACK raised the table to 100.
+     */
+    @Test
+    fun heldAckSignalsItsSmallestTableSizeAgainWhenWritten() {
+        for (role in Role.entries) {
+            val m = TableMirror(role)
+            val a = m.block(endStream = false)
+            m.read()
+            assertEquals(1_000, m.p.core.sendData(a, ByteArray(1_000), 0, 1_000, endStream = false))
+            m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 30_000, SettingId.HEADER_TABLE_SIZE to 100) // behind a
+            val b = m.block(endStream = false)
+            assertEquals(1_000, m.p.core.sendData(b, ByteArray(1_000), 0, 1_000, endStream = false))
+            m.sendSettings(
+                SettingId.INITIAL_WINDOW_SIZE to 20_000,
+                SettingId.HEADER_TABLE_SIZE to 0,
+                SettingId.HEADER_TABLE_SIZE to 4096,
+            ) // behind a and b
+            assertEquals(listOf("D$a", "ACK", "H$b", "D$b", "ACK"), m.read(), "$role")
+            assertEquals(listOf(0, 100), m.updates[b], "$role")
+            val c = m.block(endStream = true)
+            m.read()
+            assertEquals(listOf(0, 4096), m.updates[c], "$role")
+        }
+    }
+
+    /**
+     * RFC 9113 section 5.1.1: "The identifier of a newly established stream MUST be numerically greater than all streams
+     * that the initiating endpoint has opened or reserved." A held ACK waits for the DATA of stream 3, whose HEADERS are
+     * queued behind those of stream 1: the DATA goes first among the DATA frames, but the HEADERS keep their order.
+     */
+    @Test
+    fun negative_heldAckDoesNotReorderNewClientStreams() {
+        val m = TableMirror(Role.CLIENT)
+        val first = m.block(endStream = true)
+        val second = m.block(endStream = false)
+        assertEquals(1_000, m.p.core.sendData(second, ByteArray(1_000), 0, 1_000, endStream = false))
+        m.sendSettings(SettingId.INITIAL_WINDOW_SIZE to 100) // held behind the DATA of the second stream
+        assertEquals(listOf("H$first", "H$second", "D$second", "ACK"), m.read())
+    }
+
+    /**
      * Random interleavings of streams, DATA, window updates, resets and SETTINGS (window and table sizes, several table
      * sizes in one frame): every field block decodes with the peer's decoder, which takes each limit with our ACK, the
      * connection stays open, and each ACK follows within one DATA frame per stream it waits for.
@@ -304,25 +353,20 @@ class SettingsTest {
     @Test
     fun randomSettingsKeepTheEncoderWithinTheAcknowledgedLimit() {
         for (role in Role.entries) {
-            for (seed in 0 until 300) {
+            for (seed in 0 until SEEDS) {
                 val r = Random(seed)
                 val m = TableMirror(role)
                 val open = mutableListOf<Int>()
                 repeat(60) {
-                    when (r.nextInt(7)) {
+                    when (r.nextInt(8)) {
                         0 -> {
-                            if (m.streams <
-                                40
-                            ) {
-                                open +=
-                                    m.block(
-                                        endStream = false,
-                                        extra =
-                                            List(r.nextInt(1, 4)) {
-                                                "x-k${r.nextInt(6)}" to
-                                                    "v".repeat(r.nextInt(1, 30))
-                                            },
-                                    )
+                            val room = m.streams < 40
+                            if (room) {
+                                val extra = List(r.nextInt(1, 4)) { "x-k${r.nextInt(6)}" to "v".repeat(r.nextInt(1, 30)) }
+                                val id = m.block(endStream = false, extra = extra)
+                                open += id
+                                // often a field block and DATA queued together, so a held ACK waits behind both
+                                if (r.nextBoolean()) m.p.core.sendData(id, ByteArray(500), 0, 500, endStream = false)
                             }
                         }
 
@@ -348,6 +392,13 @@ class SettingsTest {
 
                         4 -> {
                             m.p.send(*(listOf(0) + open).map { FrameEncoder.windowUpdate(it, 1 shl 20) }.toTypedArray())
+                        }
+
+                        7 -> {
+                            // a shrinking window (the ACK is held when DATA is queued) and several table sizes
+                            val kv = mutableListOf(SettingId.INITIAL_WINDOW_SIZE to listOf(1_000L, 10_000L, 20_000L)[r.nextInt(3)])
+                            repeat(r.nextInt(1, 4)) { kv += SettingId.HEADER_TABLE_SIZE to listOf(0L, 50L, 100L, 4096L)[r.nextInt(4)] }
+                            m.sendSettings(*kv.toTypedArray())
                         }
 
                         6 -> {
@@ -411,6 +462,7 @@ private class TableMirror(
     private val sent = HashMap<Int, List<Pair<String, String>>>()
     val updates = HashMap<Int, List<Int>>()
     private var nextPeerStream = 1
+    private var lastOpened = 0
 
     /** SETTINGS frames received since the oldest unacknowledged one, with the DATA frames we wrote meanwhile. */
     private val dataSince = ArrayDeque<MutableSet<Int>>()
@@ -480,6 +532,11 @@ private class TableMirror(
                 }
 
                 f is Frame.Headers -> {
+                    if (client && f.streamId !in updates) {
+                        // RFC 9113 section 5.1.1: our new streams open in increasing order
+                        assertTrue(f.streamId > lastOpened, "stream ${f.streamId} opened after $lastOpened")
+                        lastOpened = f.streamId
+                    }
                     updates[f.streamId] = leadingUpdates(f.fragment)
                     val got = mutableListOf<Pair<String, String>>()
                     decoder.decode(f.fragment) { n, v -> got += n to v }
