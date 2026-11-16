@@ -376,6 +376,33 @@ static int refused_handshake(ksl_ssl *c, ksl_ssl *s, wire_log *wc, wire_log *ws)
     }
     return KSL_WANT_READ;
 }
+/* Runs a handshake both sides complete, logging what each side wrote */
+static int logged_handshake(ksl_ssl *c, ksl_ssl *s, wire_log *wc, wire_log *ws) {
+    for (int i = 0; i < 60; i++) {
+        int r = ksl_drive(c);
+        shuttle_logged(c, s, wc);
+        int r2 = ksl_drive(s);
+        shuttle_logged(s, c, ws);
+        if (r == KSL_ERROR || r2 == KSL_ERROR)
+            return KSL_ERROR;
+        if (c->done && s->done) {
+            ksl_drive(c);
+            shuttle_logged(c, s, wc);
+            ksl_drive(s);
+            shuttle_logged(s, c, ws);
+            return KSL_OK;
+        }
+    }
+    return KSL_WANT_READ;
+}
+static int records_of_type(const wire_log *w, uint8_t type) {
+    uint8_t types[64];
+    size_t lens[64];
+    int n = wire_records(w, types, lens, 64), k = 0;
+    for (int i = 0; i < n; i++)
+        k += types[i] == type;
+    return n < 0 ? -1 : k;
+}
 static void test_client_alert_after_server_hello_is_encrypted(void) {
     SECTION("tcp_client_alert_after_server_hello_is_encrypted");
     /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
@@ -450,6 +477,85 @@ static void test_client_alert_after_server_hello_is_encrypted(void) {
         n = wire_records(&wc, types, lens, 16);
         CHECK(n >= 1 && types[0] == 22 && wc.len > 5 + 4 + 2 + 32 && wc.wire[5 + 4 + 2 + 32] == 0,
               "a ksl client sends an empty legacy_session_id (no compatibility mode)");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    /* after a HelloRetryRequest (the server takes only P-384): no dummy change_cipher_spec before the second ClientHello
+       (appendix E.4 places one there only in compatibility mode), and the alert after the second ServerHello is protected */
+    for (int refuse = 0; refuse < 2; refuse++) {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL),
+                *sc = server_ctx(refuse ? "server-other-ca" : "server");
+        SSL_CTX_set1_groups_list(sc->ctx, "secp384r1");
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        static wire_log wc, ws;
+        wc.len = ws.len = 0;
+        int r = refuse ? refused_handshake(c, s, &wc, &ws) : logged_handshake(c, s, &wc, &ws), sent = 0, got = 0;
+        uint8_t types[16];
+        size_t lens[16];
+        int n = wire_records(&wc, types, lens, 16);
+        if (refuse) {
+            last_code(c, &sent);
+            last_code(s, &got);
+            CHECK(r == KSL_ERROR && n == 3 && types[0] == 22 && types[1] == 22 && types[2] == 23 &&
+                      lens[2] == 2 + 1 + 16 && sent != 0 && got == (sent | 0x100),
+                  "negative: after a HelloRetryRequest the client's alert is protected, and the server reads it");
+        } else
+            CHECK(r == KSL_OK && SSL_get_negotiated_group(c->ssl) == NID_secp384r1 && n >= 3 && types[0] == 22 &&
+                      types[1] == 22 && records_of_type(&wc, 20) == 0,
+                  "negative: after a HelloRetryRequest the client sends no change_cipher_spec");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    /* a resumed TLS 1.3 handshake: an empty session ID and no change_cipher_spec either */
+    {
+        uint8_t keys[80];
+        for (int i = 0; i < 80; i++)
+            keys[i] = (uint8_t)(i * 13 + 1);
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+        ksl_ctx_set_ticket_keys(sc, keys, 1);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        uint8_t buf[16], reused = 0;
+        size_t n;
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "the first handshake");
+        ksl_tcp_read(c, buf, sizeof buf, &n); /* takes the NewSessionTicket */
+        ksl_session *sess = ksl_ssl_get1_session(c);
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        c = tcp_client(cc, "server.test");
+        s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        static wire_log wc, ws;
+        wc.len = ws.len = 0;
+        int r = ksl_ssl_set_session(c, sess) == KSL_OK ? logged_handshake(c, s, &wc, &ws) : KSL_ERROR;
+        ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n);
+        CHECK(r == KSL_OK && reused == 1 && wc.len > 5 + 4 + 2 + 32 && wc.wire[5 + 4 + 2 + 32] == 0 &&
+                  records_of_type(&wc, 20) == 0,
+              "negative: a resumed handshake has an empty session ID and no change_cipher_spec");
+        ksl_session_free(sess);
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    /* a client in compatibility mode (most stacks) is still served: the server answers its session ID with change_cipher_spec
+       (appendix E.4: "if the client sends a non-empty session ID, the server MUST send the change_cipher_spec") */
+    {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        SSL_CTX_set_options(cc->ctx, SSL_OP_ENABLE_MIDDLEBOX_COMPAT);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        static wire_log wc, ws;
+        wc.len = ws.len = 0;
+        int r = logged_handshake(c, s, &wc, &ws);
+        uint8_t types[16];
+        size_t lens[16];
+        int n = wire_records(&ws, types, lens, 16);
+        CHECK(r == KSL_OK && wc.len > 5 + 4 + 2 + 32 && wc.wire[5 + 4 + 2 + 32] == 32 && n >= 2 && types[0] == 22 &&
+                  types[1] == 20 && lens[1] == 1,
+              "a client in compatibility mode is served: change_cipher_spec right after the ServerHello");
         ksl_ssl_free(c);
         ksl_ssl_free(s);
         ksl_ctx_free(cc);
