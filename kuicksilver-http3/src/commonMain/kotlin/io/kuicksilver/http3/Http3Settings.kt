@@ -72,9 +72,10 @@ public class Http3Settings private constructor(
     /**
      * `SETTINGS_WT_INITIAL_MAX_DATA` (section 5.5.3): the stream body bytes the peer may send in each WebTransport
      * session, raised with WT_MAX_DATA as they are consumed: taken by the application, all of a stream that ended cleanly
-     * once it was handed to its input, a reset or stopped stream's by its final size. Streams waiting for this credit are not served in
-     * the order they were opened: read a session's streams concurrently, or a strictly sequential reader under a tight
-     * limit can stall the session ([Builder.webTransportInitialMaxData]).
+     * once it was handed to its input, a reset or stopped stream's by its final size. Our sender serves a
+     * non-incremental session's streams in the order they were opened and shares an incremental session's credit
+     * between them (RFC 9218); otherwise, or with a peer of another implementation, read the streams concurrently, or a
+     * strictly sequential reader under a tight limit can stall the session ([Builder.webTransportInitialMaxData]).
      */
     @property:ExperimentalKuicksilverApi
     public val webTransportInitialMaxData: Long,
@@ -177,8 +178,15 @@ public class Http3Settings private constructor(
          * as the bytes are consumed: taken by the application, all of a stream that ended cleanly once it was handed to its
          * input, a reset or stopped stream's by its final size.
          *
-         * Read a session's incoming streams concurrently, or keep this above what the peer sends at once: streams waiting
-         * for credit are not served in the order they were opened (section 5 sets none), so a reader that takes them
+         * How our sender shares a session's credit follows the session's RFC 9218 `incremental` parameter. Non-incremental
+         * (`i=?0`, the default): in the order the streams were opened, a stream waiting for credit, or writing what it was given,
+         * served before every stream opened after it; streams written one after another then reach a peer that reads
+         * them one after another in that order, but a stream that keeps writing holds the later ones. Incremental (`i`, signalled with `priority: i`):
+         * the grants led by the streams that ask in turn, none starved, no order. A session without a signal is
+         * non-incremental (RFC 9218 section 4.2). Each side chooses for its own sending: the client by its request's
+         * priority, the server by the client's signal unless its `acceptWebTransport` answer carries a `priority` field. Section 5
+         * sets no order, so a peer of another implementation may serve its streams in any order: unless the order is
+         * ours, read the streams concurrently, or keep this above what the peer sends at once, as a reader that takes them
          * strictly one after another can wait on a stream with no credit while the credit sits unread in later ones, and
          * under a tight limit the session stalls.
          */

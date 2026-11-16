@@ -80,14 +80,12 @@ internal class H2Call(
         if (h2.neverIndexed.isNotEmpty()) attributes.put(NeverIndexedReceivedKey, h2.neverIndexed)
         // the client's signal (RFC 9218): the Priority field, then each PRIORITY_UPDATE (section 7.1), one that came before
         // the request included (it overrides the field, section 7); the response's DATA goes by it (section 10) until the
-        // response chose its own (section 8, [H2Response]); a CONNECT without a signal is a tunnel, incremental as on
-        // HTTP/3 (sections 10.1, 11)
+        // response chose its own (section 8, [H2Response]); without a signal the defaults (section 4), a CONNECT too: a
+        // tunnel's share behind more urgent streams (section 10.1) is the scheduler's tunnel turn, not its priority
         val field = request.headers.getAll("Priority")
         val signal = ClientSignal(h1Priority(field).value)
         attributes.put(RequestPriorityKey, signal.flow)
-        // an Extended CONNECT stream (a WebSocket over HTTP/2 with RFC 8441) carries a tunnel
-        val p =
-            if (h2.method == "CONNECT" && !PriorityField.isSignal(field?.joinToString(", "))) TUNNEL_PRIORITY else signal.flow.value
+        val p = signal.flow.value
         h2.schedule(p.urgency, p.incremental, signal)
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (h2.fields.any { it.first == EARLY_DATA_FIELD.lowercase() }) {
@@ -128,9 +126,6 @@ internal class H2Call(
     }
 
     companion object {
-        /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (as on HTTP/3). */
-        private val TUNNEL_PRIORITY = StreamPriority(3, incremental = true)
-
         /** HTTP/2 fields as Ktor headers; `:authority` becomes `Host`, split `cookie` fields one (RFC 9113 section 8.2.3). */
         fun toKtorHeaders(r: H2ServerStream): Headers {
             val b = HeadersBuilder()

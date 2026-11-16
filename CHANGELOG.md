@@ -1068,9 +1068,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   browsers do, instead of an absolute-form Upgrade the proxy may not forward. A CONNECT the proxy refuses fails with
   `ProxyException` (`replyCode` 407 when it wants credentials) instead of a plain `IOException`. The
   `protocolSelected` reason for a request through a proxy is the new `ProtocolReason.Proxy` (was `NotSecure`).
-- HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
-  scheduled incremental on both sides, so it shares bandwidth with the incremental streams of its urgency instead of
-  holding back every response of that urgency. Within one urgency the incremental and the non-incremental streams now
+- HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 or a WebTransport
+  session among them, keeps RFC 9218's defaults on both sides (u=3, non-incremental, section 4.2) like any request, on
+  HTTP/2 too; a client that wants a tunnel to share bandwidth with the incremental streams of its urgency signals
+  `priority: i` (section 11). (An earlier change in this release made unsignalled tunnels incremental; that is undone.
+  For a WebTransport session the default means its credit goes to its streams in open order, where a stream that keeps
+  writing holds the later ones; `priority: i` shares it.) Within one urgency the incremental and the non-incremental streams now
   take turns frame by frame (section 10), where non-incremental streams used to go strictly first and could starve an
   incremental stream or tunnel; and a CONNECT tunnel gets at least one frame in 16 while more urgent streams have data
   (section 10.1: "servers SHOULD allocate some amount of bandwidths to streams acting as tunnels"). A `priority` header on a request now schedules the client's own stream too, and a
@@ -1163,12 +1166,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the descriptor of a channel still registered with a selector until that selector selects again, and an idle ktor
   selector never did. An aborted connection sent no reset (its peer waited for ever), a closed one kept its descriptor.
   The engines' sockets now have their selector run a selection after every close.
-- WebTransport docs: streams waiting for a session's data credit are not served in the order they were opened, and
-  credit for an open stream comes back as the application takes its bytes (for a stream that ended cleanly, once all of
-  it was handed to its input; for a reset or stopped one, by its final size), so an application that reads a session's
-  open streams strictly one after another under a tight `webTransportInitialMaxData` can stall the session; the guide, the configuration table and
-  `Http3Settings` now say so (read the streams concurrently, or give the session enough credit). `Http3Settings`'s KDoc
-  no longer says the credit follows bytes taken from the transport.
+- WebTransport: a session's data credit is shared between its streams by the session's RFC 9218 priority
+  (draft-ietf-webtrans-http3-16 section 3.4; section 5 sets no order), read again at every grant. A non-incremental
+  session (`i=?0`) serves its streams in the order they were opened: while a stream waits for credit, or writes what it
+  was just given, no stream opened after it gets any; a stream that asks more than there is gets what there is and keeps
+  its place. Streams the application writes one after another then reach a peer that reads them one after another
+  without a stall; the cost is that a stream that keeps writing holds the later ones. An incremental session (`i`,
+  signalled with `priority: i`; without a signal a session is non-incremental, RFC 9218 section 4.2; each side chooses
+  for its own sending) lets each grant start one stream further along the streams that ask, so none starves behind a
+  busy one. In both, a stream with nothing to send, or cancelled
+  or reset while it waits, keeps no credit and loses none, and opens waiting for the peer's stream limit are served in
+  the order they asked. Before, waiting streams were served in no particular order, so a peer that read a session's
+  streams strictly one after another under a tight limit could stall. Both roles, every session on its own; the weighted
+  turns between sessions are unchanged. Credit for an open stream still comes back as the application takes its bytes
+  (for a stream that ended cleanly, once all of it was handed to its input; for a reset or stopped one, by its final
+  size); the guide, the configuration table and `Http3Settings` say when to read a peer's streams concurrently.
+  `Http3Settings`'s KDoc no longer says the credit follows bytes taken from the transport.
+- HTTP/3: a CONNECT (a tunnel, or an Extended CONNECT such as a WebTransport session) whose `Http3Request.priority`
+  the caller set now always carries the `priority` field, RFC 9218's defaults included (`StreamPriority(3, incremental
+  = false)` is sent as `i=?0`), so a server with a tunnel default of its own cannot override the caller's choice. An
+  ordinary request at the defaults still sends no field.
 - Ktor client: a WebSocket session over HTTP/1.1 that ends with something it wrote still queued in front of the socket
   after the close wait (a server that does not read), cut inside a frame, or with a failed writer, now has its connection
   reset (`SO_LINGER` 0, over TLS without close_notify), as documented. Before, the connection was closed gracefully: it

@@ -55,6 +55,7 @@ class WtSessionFlowPropertyTest {
             var taken = 0L
             var read = 0L
             val count = WtInCount(receiver, 3) { violation = it }
+            val out = sender.sender()
             var done = false
         }
 
@@ -106,7 +107,8 @@ class WtSessionFlowPropertyTest {
                     val s = streams.filter { !it.done }.randomOrNull(rnd) ?: return
                     val (max, used) = sender.sendDataForTest
                     if (max > used) {
-                        s.sent += sender.takeData(rnd.nextInt(1, 3000))
+                        s.sent += s.out.take(rnd.nextInt(1, 3000))
+                        s.out.idle() // written: nothing stays kept for it
                         deliver(s)
                     }
                 }
@@ -116,6 +118,7 @@ class WtSessionFlowPropertyTest {
                     // both learn the same final size, the rest is abandoned
                     val s = streams.filter { !it.done }.randomOrNull(rnd) ?: return
                     val wentOut = rnd.nextLong(s.taken, s.sent + 1)
+                    s.out.close()
                     sender.sentFinal(s.sent, wentOut)
                     s.count.final(wentOut + 3)
                     s.count.abandon()
@@ -126,6 +129,7 @@ class WtSessionFlowPropertyTest {
                 3 -> {
                     // a FIN: every byte went out; the application reads it all
                     val s = streams.filter { !it.done }.randomOrNull(rnd) ?: return
+                    s.out.close()
                     sender.sentFinal(s.sent, s.sent)
                     s.count.final(s.sent + 3)
                     s.count.taken((s.sent - s.taken).toInt())
@@ -157,6 +161,7 @@ class WtSessionFlowPropertyTest {
                 repeat(400) { r.step() }
                 // settle: every open stream ends with a FIN, read to the end
                 for (s in r.streams.filter { !it.done }) {
+                    s.out.close()
                     r.sender.sentFinal(s.sent, s.sent)
                     s.count.final(s.sent + 3)
                     s.count.taken((s.sent - s.taken).toInt())
@@ -165,6 +170,7 @@ class WtSessionFlowPropertyTest {
                 }
                 r.pump()
                 assertNull(r.violation, "seed $seed")
+                assertTrue(r.sender.creditIdleForTest, "seed $seed: ${r.sender.sendersForTest}")
                 val (max, sent) = r.sender.sendDataForTest
                 val (rmax, received) = r.receiver.receiveDataForTest
                 assertEquals(sent, received, "seed $seed: both count the same bytes")
@@ -218,22 +224,22 @@ class WtSessionFlowPropertyTest {
         runBlocking {
             val sent = ArrayList<Pair<Long, Long>>()
             val f = WtSessionFlow(0, 0, 0, 1, 0, 10) { sent += it.type to assertNotNull(WtFlow.valueOf(it)) }
-            assertEquals(10, f.takeData(100))
-            val waiting = async(start = CoroutineStart.UNDISPATCHED) { f.takeData(5) }
-            f.wake()
-            yield()
-            f.wake()
+            val a = f.sender()
+            val b = f.sender()
+            assertEquals(10, a.take(100))
+            a.idle()
+            val waiting = async(start = CoroutineStart.UNDISPATCHED) { b.take(5) }
             yield()
             assertEquals(listOf(WtFlow.DATA_BLOCKED to 10L), sent)
             assertNull(f.onCapsule(WtFlow.MAX_DATA, 12))
             assertEquals(2, waiting.await())
-            val again = async(start = CoroutineStart.UNDISPATCHED) { f.takeData(1) }
+            b.idle()
+            val again = async(start = CoroutineStart.UNDISPATCHED) { b.take(1) }
             assertEquals(listOf(WtFlow.DATA_BLOCKED to 10L, WtFlow.DATA_BLOCKED to 12L), sent)
             assertNull(f.onCapsule(WtFlow.MAX_DATA, 13))
             assertEquals(1, again.await())
             f.takeStream(bidi = true)
             val stream = async(start = CoroutineStart.UNDISPATCHED) { f.takeStream(bidi = true) }
-            f.wake()
             yield()
             assertEquals(1, sent.count { it.first == WtFlow.STREAMS_BLOCKED_BIDI })
             assertNull(f.onCapsule(WtFlow.MAX_STREAMS_BIDI, 2))

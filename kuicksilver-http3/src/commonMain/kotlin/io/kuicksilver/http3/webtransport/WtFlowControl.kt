@@ -7,9 +7,11 @@ import io.kuicksilver.http3.WebTransportException
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.runtime.H3Session
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -108,6 +110,12 @@ internal object WtFlow {
  * stream that ended cleanly, or abandoned with a reset or stopped stream; section 5.6: "Endpoints SHOULD send WT_MAX_DATA
  * and WT_MAX_STREAMS capsules as they consume data or close streams"), never waiting for a blocked capsule.
  *
+ * Order (ours; section 5 sets none): stream credit goes to opens in the order they asked; data credit follows the
+ * session's RFC 9218 priority (section 3.4): a non-incremental session serves its streams in the order it handed them
+ * to the application ([Sender]), an incremental one shares the credit between the streams that ask ([distribute]). The
+ * order is per session: the connection's turns between sessions ([WtFairQueue], section 8) come after the credit, and a
+ * stream that holds credit while it waits for its session's turn holds nothing of another session's.
+ *
  * The body bytes of a stream are counted without its header (section 5.4); a stream that was reset counts its final size
  * ([io.kuicksilver.quic.QuicStream.sentFinalSize], [io.kuicksilver.quic.QuicStream.receivedFinalSize]), so both sides
  * agree on the credit it used.
@@ -129,6 +137,13 @@ internal class WtSessionFlow(
     private val equalLimitIsViolation: Boolean = true,
     /** A sender just started waiting at a limit of 0. */
     private val onBlockedAtZero: () -> Unit = {},
+    /**
+     * The session's RFC 9218 `incremental` parameter now (its CONNECT stream's priority, which a PRIORITY_UPDATE changes):
+     * how [distribute] shares the credit between the session's streams.
+     */
+    private val incremental: () -> Boolean = { false },
+    /** Runs a block in a later turn of the session's dispatcher ([Sender.idle]); at once by default (unit tests). */
+    private val later: (() -> Unit) -> Unit = { it() },
     /** Queues a capsule on the CONNECT stream; never suspends. */
     private val sendCapsule: (Capsule) -> Unit,
 ) {
@@ -160,9 +175,17 @@ internal class WtSessionFlow(
     private var sentData = 0L
     private var dataBlockedAt = -1L
 
-    /** Moves whenever sending credit grows or the session ends: waiters look again. */
-    private val credit = MutableStateFlow(0L)
+    /** The session is over: every wait ends with it (session dispatcher only). */
     private var over: Throwable? = null
+
+    /** Opens waiting for the peer's stream limit, by kind, in the order they asked (section 5.6.2). */
+    private val openers = arrayOf(ArrayDeque<CompletableDeferred<Unit>>(), ArrayDeque())
+
+    /** Our writable streams, in the order the session handed them to the application: the order of service. */
+    private val senders = ArrayList<Sender>()
+
+    /** Credit kept for a stream ([Sender.reserved]) and not yet counted as sent. */
+    private var reservedTotal = 0L
 
     // receiving
     private val initialStreams = longArrayOf(ourBidi, ourUni)
@@ -186,39 +209,72 @@ internal class WtSessionFlow(
     /** Our data limit and what the peer used of it (a test hook). */
     val receiveDataForTest: Pair<Long, Long> get() = ourMaxData to received
 
-    /** The session ended: waiters fail with [cause]. */
+    /**
+     * Nothing waits for credit, no credit is kept for a stream and no stream holds a place (a test hook, once every stream
+     * of the session ended).
+     */
+    val creditIdleForTest: Boolean get() = senders.isEmpty() && reservedTotal == 0L && openers.all { it.isEmpty() }
+
+    /** The places held, in order, as `order:need/reserved` (a test hook). */
+    val sendersForTest: List<String> get() = senders.map { "${it.order}:${it.need}/${it.reserved}" }
+
+    /** The session ended: waiters fail with [cause], and nothing stays kept or waiting. */
     fun end(cause: Throwable) {
         if (over != null) return
         over = cause
-        credit.value++
+        for (q in openers) {
+            while (q.isNotEmpty()) q.removeFirst().completeExceptionally(cause)
+        }
+        for (s in senders.toList()) {
+            s.reserved = 0
+            s.need = 0
+            s.waiter?.complete(Unit)
+        }
+        senders.clear()
+        reservedTotal = 0
+        changed()
     }
 
-    private suspend fun awaitCredit(seen: Long) {
-        credit.first { it != seen }
-    }
-
-    /** Waits for the peer's limit to allow one more stream of the kind, and takes it. */
+    /**
+     * Waits for the peer's limit to allow one more stream of the kind, and takes it. Opens are served in the order they
+     * asked: one that started waiting earlier gets its slot before any that started later. Cancelled while waiting: it
+     * leaves the queue, and a slot handed to it meanwhile goes to the next.
+     */
     suspend fun takeStream(bidi: Boolean) {
         val i = if (bidi) 0 else 1
-        while (true) {
-            over?.let { throw it }
-            if (opened[i] < peerMaxStreams[i]) {
-                opened[i]++
-                changed()
-                return
-            }
-            if (streamsBlockedAt[i] != peerMaxStreams[i]) {
-                streamsBlockedAt[i] = peerMaxStreams[i]
-                if (peerMaxStreams[i] == 0L) onBlockedAtZero()
-                send(WtFlow.capsule(if (bidi) WtFlow.STREAMS_BLOCKED_BIDI else WtFlow.STREAMS_BLOCKED_UNI, peerMaxStreams[i]))
-            }
-            awaitCredit(credit.value)
+        over?.let { throw it }
+        val q = openers[i]
+        if (q.isEmpty() && opened[i] < peerMaxStreams[i]) {
+            opened[i]++
+            changed()
+            return
+        }
+        if (streamsBlockedAt[i] != peerMaxStreams[i]) {
+            streamsBlockedAt[i] = peerMaxStreams[i]
+            if (peerMaxStreams[i] == 0L) onBlockedAtZero()
+            send(WtFlow.capsule(if (bidi) WtFlow.STREAMS_BLOCKED_BIDI else WtFlow.STREAMS_BLOCKED_UNI, peerMaxStreams[i]))
+        }
+        val w = CompletableDeferred<Unit>()
+        q.addLast(w)
+        try {
+            w.await()
+        } catch (e: CancellationException) {
+            q.remove(w)
+            // the slot was handed over, but its opener is gone: it goes to the next
+            @OptIn(ExperimentalCoroutinesApi::class)
+            if (w.isCompleted && w.getCompletionExceptionOrNull() == null) returnStream(bidi)
+            throw e
         }
     }
 
-    /** Waiters look again (a stream's sending ended: its [takeData] returns 0). */
-    fun wake() {
-        credit.value++
+    /** Hands the free stream slots of kind [i] to the waiting opens, first come first served. */
+    private fun serveOpens(i: Int) {
+        val q = openers[i]
+        while (q.isNotEmpty() && opened[i] < peerMaxStreams[i]) {
+            opened[i]++
+            q.removeFirst().complete(Unit)
+            changed()
+        }
     }
 
     /**
@@ -226,35 +282,195 @@ internal class WtSessionFlow(
      * the transport): the peer never sees it, so it is not counted, and an open waiting for a slot takes it.
      */
     fun returnStream(bidi: Boolean) {
-        opened[if (bidi) 0 else 1]--
-        credit.value++
+        val i = if (bidi) 0 else 1
+        opened[i]--
         changed()
+        if (over == null) serveOpens(i)
     }
 
     /**
-     * Waits until the peer's data limit leaves room, and takes up to [want] bytes of it; returns how many, or 0 once
-     * [ended] says the stream can send nothing more (its final size is fixed): nothing is taken then.
+     * A place in the session's data credit for one of our streams that sends, made when the session hands the stream to
+     * the application (the stream we opened once [takeStream] and its header are done, the peer's bidirectional stream
+     * once accepted).
      */
-    suspend fun takeData(
-        want: Int,
-        ended: () -> Boolean = { false },
-    ): Int {
-        while (true) {
-            over?.let { throw it }
-            if (ended()) return 0
-            val room = peerMaxData - sentData
-            if (room > 0) {
-                val n = minOf(want.toLong(), room).toInt()
-                sentData += n
+    fun sender(): Sender =
+        Sender(nextOrder++).also {
+            if (over == null) senders += it
+            changed()
+        }
+
+    private var nextOrder = 0L
+
+    /**
+     * Free credit: the peer's limit less what was sent and what is kept for a stream. Section 5.6.4: "The sum of the
+     * lengths of Stream Body data sent on all streams associated with this session MUST NOT exceed the Maximum Data value
+     * advertised by a receiver", so nothing is ever kept or taken beyond it.
+     */
+    private fun free(): Long = peerMaxData - sentData - reservedTotal
+
+    /**
+     * Hands free credit to the streams that ask for it: one that waits for credit, or writes what it was just given (a
+     * chunk is written in parts as credit comes), asks up to [LOOKAHEAD] kept for it; one that asks nothing (idle, or
+     * ended) holds no place. How follows the session's RFC 9218 priority, the `incremental` parameter of its CONNECT
+     * stream, read at every grant (draft-16 section 3.4 recommends RFC 9218's scheduling for all of a session's data):
+     * - non-incremental: in [senders] order (RFC 9218 section 10: "serving one response at a time" in order): each
+     *   stream gets what it asks before any stream after it gets anything;
+     * - incremental: shared ("interleaved", the same section): each grant starts one stream further along the ring of
+     *   the streams that ask and goes on in order from there, so with any credit at all each of n streams that keep
+     *   asking leads, and gets some, within n grants, and a busy stream never holds the others. A grant is not split
+     *   evenly: the stream it starts with gets what it asks first, so a stream nobody reads still gets all its bytes out
+     *   and ends, and a receiver that gives credit back only for ended streams (draft-16 section 5.6) moves.
+     */
+    private fun distribute() {
+        if (free() <= 0 || over != null) return
+        if (incremental()) share() else inOrder()
+        changed()
+    }
+
+    private fun ask(s: Sender): Long = if (s.need > 0 || s.writing) maxOf(s.need, LOOKAHEAD) - s.reserved else 0L
+
+    private fun give(
+        s: Sender,
+        g: Long,
+    ) {
+        s.reserved += g
+        s.grantedForTest += g
+        reservedTotal += g
+        s.waiter?.complete(Unit)
+    }
+
+    private fun inOrder() {
+        var free = free()
+        for (s in senders) {
+            val cap = ask(s)
+            if (cap <= 0) continue
+            val g = minOf(cap, free)
+            give(s, g)
+            free -= g
+            if (free == 0L) break
+        }
+    }
+
+    /** The order of the stream the last shared grant started with: the next one starts after it. */
+    private var shareFrom = -1L
+
+    private fun share() {
+        val asking = senders.filter { ask(it) > 0 }
+        if (asking.isEmpty()) return
+        // the first stream after the one the last grant started with, round the ring, then on in order from there
+        val start = asking.indexOfFirst { it.order > shareFrom }.let { if (it < 0) 0 else it }
+        shareFrom = asking[start].order
+        var free = free()
+        for (s in asking.drop(start) + asking.take(start)) {
+            val g = minOf(ask(s), free)
+            give(s, g)
+            free -= g
+            if (free == 0L) break
+        }
+    }
+
+    /**
+     * One of our streams' place in the session's data credit (section 5.4), made in the order the session hands its
+     * streams to the application ([sender]). In a non-incremental session that is the order of service: whenever credit is
+     * handed out, a stream that is waiting for it, or writing what it was just given, is served before every stream made
+     * after it; in an incremental one the credit is shared between them ([distribute]). A take that asks more than the
+     * credit there is gets what there is (a partial grant: one frame's worth goes out, never a wait for all of it), and
+     * the stream keeps asking for the rest (in order, a later stream never overtakes it), and the credit that comes while
+     * it writes is kept for it (up to [LOOKAHEAD]). A stream that has nothing more to send ([idle]) keeps no credit: what was kept for it goes on once its
+     * pump really waits for the application (it is given back in the next turn of the session's dispatcher, so a pump
+     * that finds more bytes at once keeps its place). Session dispatcher only.
+     */
+    inner class Sender internal constructor(
+        val order: Long,
+    ) {
+        internal var need = 0L
+        internal var reserved = 0L
+        internal var writing = false
+        internal var closed = false
+        internal var waiter: CompletableDeferred<Unit>? = null
+
+        /** All credit ever handed to this stream (a test hook). */
+        internal var grantedForTest = 0L
+
+        /**
+         * Waits until credit is handed to this stream, and takes up to [want] bytes of it; returns how many, or 0 once the
+         * stream [close]d (its final size is fixed): nothing is taken then.
+         */
+        suspend fun take(want: Int): Int {
+            require(want > 0) { "want $want" }
+            while (true) {
+                over?.let { throw it }
+                if (closed) return 0
+                need = want.toLong()
+                distribute()
+                if (reserved > 0) {
+                    val k = minOf(want.toLong(), reserved)
+                    reserved -= k
+                    reservedTotal -= k
+                    sentData += k
+                    need = 0
+                    writing = true
+                    changed()
+                    return k.toInt()
+                }
+                // nothing for it: the peer's limit is all sent or kept for other streams. WT_DATA_BLOCKED goes now although
+                // part of the limit may be kept and not yet sent: the session as a whole has no credit left for what it
+                // wishes to send, which is what section 5.6.5 reports ("when it wishes to send data but is unable to do so
+                // due to WebTransport session-level flow control"); the kept credit goes out as its streams write it
+                if (dataBlockedAt != peerMaxData) {
+                    dataBlockedAt = peerMaxData
+                    if (peerMaxData == 0L) onBlockedAtZero()
+                    send(WtFlow.capsule(WtFlow.DATA_BLOCKED, peerMaxData))
+                }
+                val w = CompletableDeferred<Unit>()
+                waiter = w
                 changed()
-                return n
+                try {
+                    w.await()
+                } catch (e: CancellationException) {
+                    // gone while waiting: what was kept for it goes to the streams after it
+                    waiter = null
+                    need = 0
+                    writing = false
+                    giveBack()
+                    throw e
+                }
+                waiter = null
             }
-            if (dataBlockedAt != peerMaxData) {
-                dataBlockedAt = peerMaxData
-                if (peerMaxData == 0L) onBlockedAtZero()
-                send(WtFlow.capsule(WtFlow.DATA_BLOCKED, peerMaxData))
+        }
+
+        /**
+         * The stream wrote everything it was given and looks for more bytes of the application: unless it takes again in
+         * this turn of the dispatcher, what was kept for it goes on.
+         */
+        fun idle() {
+            writing = false
+            need = 0
+            if (reserved == 0L || closed) return
+            later {
+                if (!closed && !writing && waiter == null && reserved > 0) giveBack()
             }
-            awaitCredit(credit.value)
+        }
+
+        /** The stream's sending half ended (FIN, reset, the pump's end): it leaves the order, and a waiting take returns 0. */
+        fun close() {
+            if (closed) return
+            closed = true
+            need = 0
+            writing = false
+            senders.remove(this)
+            waiter?.complete(Unit)
+            changed()
+            giveBack()
+        }
+
+        private fun giveBack() {
+            if (reserved > 0) {
+                reservedTotal -= reserved
+                reserved = 0
+                changed()
+            }
+            distribute()
         }
     }
 
@@ -268,8 +484,8 @@ internal class WtSessionFlow(
     ) {
         if (bodyFinal < counted) {
             sentData -= counted - bodyFinal
-            credit.value++
             changed()
+            distribute()
         }
     }
 
@@ -370,8 +586,8 @@ internal class WtSessionFlow(
                 }
                 if (value == peerMaxData) return null
                 peerMaxData = value
-                credit.value++
                 changed()
+                distribute()
             }
 
             WtFlow.MAX_STREAMS_BIDI, WtFlow.MAX_STREAMS_UNI -> {
@@ -384,8 +600,8 @@ internal class WtSessionFlow(
                 }
                 if (value == peerMaxStreams[i]) return null
                 peerMaxStreams[i] = value
-                credit.value++
                 changed()
+                if (over == null) serveOpens(i)
             }
 
             WtFlow.STREAMS_BLOCKED_BIDI, WtFlow.STREAMS_BLOCKED_UNI -> {
@@ -404,6 +620,7 @@ internal class WtSessionFlow(
             h3: H3Session,
             version: WtVersion,
             send: (Capsule) -> Unit,
+            incremental: () -> Boolean,
             onBlockedAtZero: () -> Unit = {},
         ): WtSessionFlow? {
             if (!WtFlow.enabled(h3, version)) return null
@@ -419,8 +636,13 @@ internal class WtSessionFlow(
                 equalLimitIsViolation = version != WtVersion.Draft14,
                 sendCapsule = send,
                 onBlockedAtZero = onBlockedAtZero,
+                later = { block -> h3.scope.launch { block() } },
+                incremental = incremental,
             )
         }
+
+        /** The most credit kept for a stream while it writes what it was given: one chunk, what its next take asks at most. */
+        const val LOOKAHEAD: Long = WtFairness.SEND_QUANTUM
 
         /** Why a session failed its flow control. */
         fun error(reason: String): WebTransportException = WebTransportException.FlowControl(reason)
