@@ -400,7 +400,8 @@ class FloodClassesTest {
         val body = ByteArray(16_384)
         val random = kotlin.random.Random(1)
         val oneWay = 25_000L
-        val events = sortedMapOf<Pair<Long, Int>, () -> Unit>(compareBy({ it.first }, { it.second }))
+        val order = compareBy<Pair<Long, Int>>({ it.first }, { it.second })
+        val events = mutableMapOf<Pair<Long, Int>, () -> Unit>() // in (time, seq) order; sortedMapOf is JVM-only
         var seq = 0
 
         fun at(
@@ -452,7 +453,7 @@ class FloodClassesTest {
         }
         at(0) { read(0) }
         while (events.isNotEmpty() && !s.core.isClosed) {
-            val k = events.firstKey()
+            val k = events.keys.minWith(order)
             events.remove(k)!!()
         }
         assertTrue(tiny > 1_000, "the model sends tiny increments: $tiny")
