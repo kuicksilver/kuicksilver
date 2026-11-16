@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
  * program may listen and answer.
  */
 internal class Tripwire : AutoCloseable {
-    private val socket = ServerSocket(0, 50, InetAddress.getLoopbackAddress())
+    private val socket = ServerSocket(0, 50, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))) // IPv4: the tests resolve to 127.0.0.1
     val port: Int = socket.localPort
     val hits = AtomicInteger(0)
 
