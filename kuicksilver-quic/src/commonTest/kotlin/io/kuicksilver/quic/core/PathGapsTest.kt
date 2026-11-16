@@ -961,6 +961,7 @@ class PathGapsTest {
                     q.peerCid = assertNotNull(s.cids.takePathPeer())
                 } else {
                     q.local = failed.local
+                    q.peerDcidKnown = true // the client's packets there carried the ID of ours it uses on the active path
                 }
                 leaveSpares(s, 0)
                 s.onPathFailed(failed)
@@ -970,6 +971,36 @@ class PathGapsTest {
             } finally {
                 p.close()
             }
+        }
+    }
+
+    /**
+     * RFC 9000 section 9.5: "Due to network changes outside the control of its peer, an endpoint might receive packets from a new
+     * source address with the same Destination Connection ID field value, in which case it MAY continue to use the current connection
+     * ID with the new remote address while still sending from the same local address." The permission rests on having seen the
+     * client use that ID from the new address: a validated path on the failed path's local address whose packets showed no ID of ours
+     * (unknown, not "unchanged") does not take the current ID; with no spare one it waits for the client's next ID.
+     */
+    @Test fun negative_aFallbackNeverTakesTheCurrentIdWithoutSeeingTheClientUseIt() {
+        val p = EndpointPair()
+        try {
+            val s = serverOf(p)
+            val failed = s.paths.active
+            val q = addValidated(s, failed.socket, InetSocketAddress("10.0.0.8", 40008))
+            q.local = failed.local
+            assertFalse(q.peerDcidKnown)
+            assertFalse(q.peerChangedDcid)
+            leaveSpares(s, 0)
+            val id = s.remoteCid
+            s.onPathFailed(failed)
+            assertSame(q, s.paths.active)
+            assertTrue(q.waitsForPeerCid, "no ID it may use there: the client never showed $id from that address")
+            val sid = s.openStream(true)
+            s.writeStream(sid, ByteArray(500), 0, 500, false)
+            p.batch.clear()
+            assertEquals(0, s.poll(p.batch, p.now), "nothing leaves with $id toward that address")
+        } finally {
+            p.close()
         }
     }
 }

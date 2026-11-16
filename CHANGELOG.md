@@ -1152,6 +1152,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   transport parameters (RFC 9001 section 8.2), the TLS session of a connection whose construction failed (client and
   server, including a reset token that failed for its first connection ID), the first derived key of a key phase whose
   second derivation failed, and the TLS session of a server whose OCSP staple could not be set.
+- QUIC: a server whose active path failed its validation could fall back to a validated path on the same local address, or
+  answer a new client address there, with the client's current connection ID although the client's packets from that address
+  never showed which ID of ours they carried (RFC 9000 section 9.5 allows the current ID only when the client used it from the
+  new address); it now waits for a spare ID as it does when the client showed another one.
 - QUIC: a server reverting to the last validated peer address after a failed path validation, or keeping a peer address
   validated on another of its addresses, took an address validated or heard from just now for one never seen when the other
   of the two times was unknown, and validated it again (RFC 9000 section 9.3 lets it skip that). A revert that ends a

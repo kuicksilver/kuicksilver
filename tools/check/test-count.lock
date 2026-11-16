@@ -3856,6 +3856,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.negative_zeroRttRejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.NativeLeakTest.zeroRttAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aFailedPathHasNoChallengePending
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aFallbackNeverTakesTheCurrentIdWithoutSeeingTheClientUseIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aFallbackOnAnotherLocalAddressNeverTakesTheCurrentId
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aFallbackTakesAValidatedPathThatCanSendThere
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aPathChallengeFromANewAddress

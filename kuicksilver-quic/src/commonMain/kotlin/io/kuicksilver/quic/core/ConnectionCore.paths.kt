@@ -748,9 +748,7 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
     // the current ID only toward a new client address from the same local address (a NAT rebinding the client did not choose, section
     // 9.5 MAY); "MUST NOT reuse a connection ID when sending from more than one local address": a path that took another address of
     // ours (its first datagram reached it) waits for a spare one
-    return if (role == TlsRole.Server && p.socket == paths.active.socket && sameLocal(p.local, paths.active.local) &&
-        !p.peerChangedDcid
-    ) {
+    return if (mayKeepCurrentId(p, paths.active)) {
         remoteCid
     } else {
         null
@@ -859,7 +857,7 @@ private fun ConnectionCore.revertTo(
     // continue to use the current connection ID"); otherwise a spare one; with none, nothing goes out until the client gives one
     val held = k.peerCid?.takeIf { cids.isActive(it) }
     val sameLocal = sameLocal(k.local, p.local)
-    val keepCurrent = held == null && sameLocal && k.peerDcidKnown && !k.peerChangedDcid
+    val keepCurrent = held == null && mayKeepCurrentId(k, p)
     // the ID of ours the client used on the path the connection leaves: its packets from [k]'s address with that one (to the same local
     // address) are section 9.5's case, and end a wait
     val leftDcidSeq = if (sameLocal) activeDcidSeq else -1L
@@ -982,8 +980,20 @@ private fun ConnectionCore.canSendOnAfter(
     if (remoteCid.length == 0) return true
     q.peerCid?.let { if (cids.isActive(it)) return true }
     if (cids.hasSparePeer()) return true
-    return role == TlsRole.Server && q.socket == failed.socket && sameLocal(q.local, failed.local) && !q.peerChangedDcid
+    return mayKeepCurrentId(q, failed)
 }
+
+/**
+ * Server, RFC 9000 section 9.5: "Due to network changes outside the control of its peer, an endpoint might receive packets from a new
+ * source address with the same Destination Connection ID field value, in which case it MAY continue to use the current connection ID
+ * with the new remote address while still sending from the same local address." True only when the client's packets on [q] showed
+ * the ID of ours it uses on [ref]'s path ([Path.peerDcidKnown] and not [Path.peerChangedDcid]: unknown is not "the same") and [q]
+ * sends from [ref]'s socket and local address ("MUST NOT reuse a connection ID when sending from more than one local address").
+ */
+private fun ConnectionCore.mayKeepCurrentId(
+    q: Path,
+    ref: Path,
+): Boolean = role == TlsRole.Server && q.socket == ref.socket && sameLocal(q.local, ref.local) && q.peerDcidKnown && !q.peerChangedDcid
 
 /**
  * PATH_CHALLENGE from [from]: answered once, back on the network path it came by (RFC 9000 section 8.2.2), from the local address it
