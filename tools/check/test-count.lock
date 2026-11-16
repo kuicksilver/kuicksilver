@@ -3995,9 +3995,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.validationTime
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathTest.validationTimeoutUsesTheNewPathPto
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_aLaterVerdictKeepsTheNewerStateToUndo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_aOneStepRangeIsNarrowedNotAbandoned
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_aProbeSentBeforeTheDropChangesNothing
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_anEmptyRangeEndsTheSearch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_blackHoleCounting
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_blackHoleUnderAConfirmedHintFallsToTheHint
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_blackHoleVerdictAndItsUndo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_emsgsizeSettlesOnlyTheProbeInFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_finalProbeOfTheTopEndsTheSearch
@@ -4005,7 +4005,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negativ
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_lostProbeMemory
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_maxProbesLostEndsThatSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_packetTooBigAtTheBaseEndsTheSearch
-kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_packetTooBigBelowTheSizeInUseIsConfirmedFirst
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_packetTooBigBelowTheSizeInUseDropsToTheBaseProvisionally
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_packetTooBigSettlesOnlyALargerProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_peerMaxUdpPayloadSizeOnlyLowersTheRange
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_probeTimerAndItsFloor

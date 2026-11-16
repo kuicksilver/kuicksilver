@@ -26,7 +26,7 @@ class PmtudSearchTest {
         val m = Pmtud(upperBound = upper)
         val s = m.nextProbeSize(t0)
         m.onProbeSent(1, s)
-        m.onProbeAcked(s, t0)
+        m.onProbeAcked(s, 1, t0)
         assertEquals(s, m.current)
         return m
     }
@@ -47,7 +47,7 @@ class PmtudSearchTest {
         m.onTimeout(t0 + 600.seconds)
         assertEquals(1340, m.nextProbeSize(t0 + 600.seconds), "the new search starts over the whole range")
         m.onProbeSent(1, 1340)
-        m.onProbeAcked(1340, t0 + 600.seconds)
+        m.onProbeAcked(1340, 1, t0 + 600.seconds)
         assertFalse(m.searchDone, "its first probe is an ordinary one, not a final probe")
     }
 
@@ -74,47 +74,52 @@ class PmtudSearchTest {
         capped.nextProbeSize(t0)
         capped.onProbeSent(1, 1340)
         capped.onPtb(1340, t0)
-        capped.onProbeAcked(1340, t0)
+        capped.onProbeAcked(1340, 1, t0)
         assertTrue(capped.searchDone, "the probe of the size the PTB reported passed: nothing above it to search")
         assertEquals(t0 + 600.seconds, capped.timeout())
     }
 
     /**
-     * RFC 8899 section 4.6.2: a PTB below the PLPMTU is not trusted on its own; the size in use is probed again, and only
-     * MAX_PROBES (3) of those probes failing at their PROBE_TIMER lower it to the reported size (rounded down to a step). The lowest
-     * of several hints counts; an acknowledged confirmation probe forgets the hint.
+     * RFC 8899 section 4.6.2, "BASE_PLPMTU <= PL_PTB_SIZE < PLPMTU": "The PLPMTU SHOULD be set to BASE_PLPMTU", provisionally (RFC
+     * 9000 section 14.2.1: "Any reduction in the QUIC maximum packet size in response to ICMP messages MAY be provisional until QUIC's
+     * loss detection algorithm determines that the quoted packet has actually been lost"). A probe of the old size goes first: its
+     * acknowledgment restores the old size and suspends PTB processing (section 8); its failure lets the drop stand, and the search
+     * starts at the reported size ("can be used to initialize a search algorithm"). A late acknowledgment of that probe still
+     * disproves the PTB.
      */
-    @Test fun negative_packetTooBigBelowTheSizeInUseIsConfirmedFirst() {
-        val m = raised()
-        m.onPtb(1320, t0)
-        m.onPtb(1330, t0)
-        m.onPtb(1305, t0)
-        assertEquals(1305, m.confirmingForTest, "the lowest hint")
-        assertEquals(1340, m.current, "not lowered on the hint alone")
-        var t = t0
-        for (i in 1..3) {
-            assertEquals(1340, m.nextProbeSize(t), "confirmation probe $i: the size in use")
-            assertEquals(t + 16.seconds, m.timeout())
-            t = m.timeout()
-            assertEquals(i == 3, m.onTimeout(t), "lowered only at the third lost confirmation")
-        }
-        assertEquals(1300, m.current, "the reported size, a whole step above the base")
-        assertEquals(0, m.confirmingForTest)
-        assertEquals(1319, m.nextProbeSize(t), "the search resumes at the top of the step, without a pause")
-        m.onProbeSent(2, 1319)
-        m.onProbeAcked(1319, t)
-        assertEquals(1319, m.current, "an ordinary probe again, no longer a confirmation")
-
+    @Test fun negative_packetTooBigBelowTheSizeInUseDropsToTheBaseProvisionally() {
         val ok = raised()
-        ok.onPtb(1300, t0)
-        assertEquals(1340, ok.nextProbeSize(t0))
-        ok.onProbeAcked(1340, t0)
-        assertEquals(0, ok.confirmingForTest, "the size in use passed: the hint is forgotten")
+        assertTrue(ok.onPtb(1305, t0))
+        assertEquals(1200, ok.current, "dropped to the base at once")
+        assertEquals(1340, ok.confirmingForTest, "the size the PTB disputes")
+        assertEquals(1340, ok.nextProbeSize(t0), "a probe of the old size goes first")
+        ok.onProbeSent(2, 1340)
+        ok.onProbeAcked(1340, 2, t0)
+        assertEquals(1340, ok.current, "it got through: the PTB was wrong")
+        assertEquals(0, ok.confirmingForTest)
+        assertTrue(ok.ptbSuspendedForTest)
+        assertFalse(ok.onPtb(1300, t0), "PTB processing is suspended for a while")
         assertEquals(1340, ok.current)
-        assertEquals(1420, ok.nextProbeSize(t0), "the search goes on above")
+        assertEquals(1420, ok.nextProbeSize(t0), "the search goes on above, with ordinary probes")
         ok.onProbeSent(3, 1420)
-        ok.onProbeAcked(1420, t0)
-        assertEquals(1420, ok.current, "an ordinary probe once the confirmation ended")
+        ok.onProbeAcked(1420, 3, t0)
+        assertEquals(1420, ok.current)
+
+        val lost = raised()
+        assertTrue(lost.onPtb(1305, t0))
+        assertEquals(1340, lost.nextProbeSize(t0))
+        lost.onProbeSent(2, 1340)
+        val t = lost.timeout()
+        lost.onTimeout(t)
+        assertEquals(1200, lost.current, "the probe failed: the drop stands")
+        assertEquals(0, lost.confirmingForTest)
+        assertEquals(1300, lost.nextProbeSize(t), "the search starts at the reported size, on the step grid")
+        lost.onProbeSent(3, 1300)
+        lost.onProbeAcked(1300, 3, t)
+        assertEquals(1300, lost.current)
+        lost.onProbeAcked(1340, 2, t)
+        assertEquals(1340, lost.current, "a late acknowledgment of the old size still disproves the PTB")
+        assertTrue(lost.ptbSuspendedForTest)
     }
 
     /** An EMSGSIZE about the probe in flight settles that size at once (as MAX_PROBES losses); about any other size it is ignored. */
@@ -173,7 +178,7 @@ class PmtudSearchTest {
         late.onProbeSent(5, 1340)
         late.onProbeDeclaredLost(5, at(5.seconds))
         assertEquals(t0 + 5.seconds, late.timeout(), "declared lost after the floor: fails then")
-        assertFalse(late.onTimeout(at(4.seconds)), "not yet")
+        late.onTimeout(at(4.seconds)) // not yet
         assertEquals(1340, late.probeInFlightForTest)
     }
 
@@ -187,14 +192,14 @@ class PmtudSearchTest {
         for (i in 1..2) {
             assertEquals(1340, m.nextProbeSize(t))
             t = m.timeout()
-            assertFalse(m.onTimeout(t), "a lost probe changes nothing in use")
+            m.onTimeout(t)
         }
         assertEquals(1340, m.nextProbeSize(t), "two lost: the same size once more")
         m.deferProbe()
         assertEquals(TimeMark.NEVER, m.timeout(), "a deferred probe runs no timer")
         assertEquals(1340, m.nextProbeSize(t), "deferred: the same size")
         t = m.timeout()
-        assertFalse(m.onTimeout(t), "the size in use stays")
+        m.onTimeout(t)
         assertEquals(1260, m.nextProbeSize(t), "three lost: below 1340")
     }
 
@@ -206,7 +211,7 @@ class PmtudSearchTest {
         val m = Pmtud(upperBound = 1215)
         assertEquals(1215, m.nextProbeSize(t0), "a range smaller than a step: one probe of its top")
         m.onProbeSent(1, 1215)
-        m.onProbeAcked(1215, t0)
+        m.onProbeAcked(1215, 1, t0)
         assertEquals(1215, m.current)
         assertTrue(m.searchDone)
         val lost = Pmtud(upperBound = 1215)
@@ -214,12 +219,12 @@ class PmtudSearchTest {
         repeat(3) {
             assertEquals(1215, lost.nextProbeSize(t))
             t = lost.timeout()
-            assertFalse(lost.onTimeout(t), "the size in use does not change")
+            lost.onTimeout(t)
         }
         assertTrue(lost.searchDone, "the final probe failed: done at the base")
         assertEquals(1200, lost.current)
         assertEquals(t + 600.seconds, lost.timeout())
-        assertFalse(lost.onTimeout(t + 600.seconds))
+        lost.onTimeout(t + 600.seconds)
         assertFalse(lost.searchDone, "the raise timer starts a new search")
         assertEquals(1215, lost.nextProbeSize(t + 600.seconds))
     }
@@ -248,7 +253,10 @@ class PmtudSearchTest {
         assertEquals(t0 + 600.seconds, m.timeout(), "the raise timer runs")
     }
 
-    /** An acknowledged probe of a size a hint had settled proves that size; the probe in flight stays in flight. */
+    /**
+     * An acknowledged probe of a size a hint had settled proves that size; a probe in flight no larger than the size now proven says
+     * nothing more and is settled too.
+     */
     @Test fun negative_lateAckOfASettledProbeRaisesTheSize() {
         val m = Pmtud(upperBound = 1500)
         m.nextProbeSize(t0)
@@ -256,10 +264,9 @@ class PmtudSearchTest {
         m.onPtb(1300, t0)
         assertEquals(1240, m.nextProbeSize(t0))
         m.onProbeSent(2, 1240)
-        m.onProbeAcked(1340, t0)
+        m.onProbeAcked(1340, 1, t0)
         assertEquals(1340, m.current, "the acknowledgement outweighs the hint")
-        assertEquals(1240, m.probeInFlightForTest, "the other probe is still in flight")
-        assertEquals(0, m.nextProbeSize(t0))
+        assertEquals(0, m.probeInFlightForTest, "the 1240-byte probe proves nothing more")
     }
 
     /**
@@ -268,16 +275,20 @@ class PmtudSearchTest {
      * acknowledgement of a packet sent before the losses do not count.
      */
     @Test fun negative_blackHoleCounting() {
-        val m = Pmtud(upperBound = 1500)
+        val m = raised()
         m.onPacketLost(1200, 1)
         m.onPacketLost(1200, 2)
         m.onPacketLost(1200, 3)
         assertFalse(m.takeBlackHole(t0), "packets of the base size cannot vanish in a black hole")
-        m.onPacketLost(1300, 10)
-        assertTrue(m.onPacketAcked(1200, 8).not())
-        m.onPacketLost(1300, 11)
+        m.onPacketLost(1400, 4)
+        m.onPacketLost(1400, 5)
+        m.onPacketLost(1400, 6)
+        assertFalse(m.takeBlackHole(t0), "larger than the size in use: sent before a drop, says nothing about it")
+        m.onPacketLost(1340, 10)
+        assertTrue(m.onPacketAcked(1340, 8).not())
+        m.onPacketLost(1340, 11)
         assertFalse(m.takeBlackHole(t0), "two")
-        m.onPacketLost(1300, 12)
+        m.onPacketLost(1340, 12)
         assertTrue(m.takeBlackHole(t0), "an acknowledgement of a packet sent before the first loss proves nothing")
         val reset = raised()
         reset.onPacketLost(1340, 10)
@@ -334,7 +345,7 @@ class PmtudSearchTest {
         assertFalse(part.pausedForTest)
         assertEquals(1380, part.nextProbeSize(t0), "the search goes on between that size and the top it had")
         part.onProbeSent(14, 1380)
-        part.onProbeAcked(1380, t0)
+        part.onProbeAcked(1380, 14, t0)
         assertEquals(1380, part.current)
         assertFalse(part.searchDone, "an ordinary probe of the middle, not the final one")
 
@@ -348,27 +359,29 @@ class PmtudSearchTest {
     }
 
     /**
-     * A black hole while a validated PTB below the size in use is being confirmed falls to the PTB's size, not the base, and without
-     * the pause: the next probe is due at once.
+     * Only probes sent after a PTB drop speak about the path since (RFC 8899 section 8 trusts "subsequent probes"): a late
+     * acknowledgment of one sent before neither overturns the drop nor raises the size; likewise for a search that replaced an older
+     * one, whose probes up to `sentAfterPn` were the older search's.
      */
-    @Test fun negative_blackHoleUnderAConfirmedHintFallsToTheHint() {
+    @Test fun negative_aProbeSentBeforeTheDropChangesNothing() {
         val m = raised()
-        m.onPtb(1300, t0)
-        for (pn in 10L..12L) m.onPacketLost(1340, pn)
-        assertTrue(m.takeBlackHole(t0))
-        assertEquals(1300, m.current)
-        assertFalse(m.pausedForTest)
-        assertEquals(0, m.confirmingForTest)
-        assertEquals(1320, m.nextProbeSize(t0), "probing above the hint at once")
-        m.onProbeSent(13, 1320)
-        m.onProbeAcked(1320, t0)
-        assertEquals(1320, m.current, "an ordinary probe: its acknowledgement raises the size")
-        assertEquals(1339, m.nextProbeSize(t0), "the top of the range stays below the size the black hole hit")
+        assertEquals(1420, m.nextProbeSize(t0))
+        m.onProbeSent(2, 1420)
+        assertTrue(m.onPtb(1300, t0))
+        assertEquals(0, m.probeInFlightForTest, "the probe in flight is settled by the drop")
+        m.onProbeAcked(1420, 2, t0)
+        assertEquals(1200, m.current, "sent before the drop: about the path before it")
+        assertEquals(1340, m.confirmingForTest, "the drop is still provisional")
+        val replaced = Pmtud(upperBound = 1500, sentAfterPn = 50)
+        replaced.onProbeAcked(1340, 40, t0)
+        assertEquals(1200, replaced.current, "the old search's probe")
+        replaced.onProbeAcked(1340, 51, t0)
+        assertEquals(1340, replaced.current)
     }
 
     /**
-     * A second black hole under a confirmed hint, after the search went above the size of the first verdict, keeps the newer state to
-     * undo: a full-size packet acknowledged later restores the size in use just before it, not the older one.
+     * A second black hole, after the search went above the size of the first verdict, keeps the newer state to undo: a full-size
+     * packet acknowledged later restores the size in use just before it, not the older one.
      */
     @Test fun negative_aLaterVerdictKeepsTheNewerStateToUndo() {
         val m = raised()
@@ -378,13 +391,12 @@ class PmtudSearchTest {
         for ((pn, size) in listOf(13L to 1340, 14L to 1420)) {
             assertEquals(size, m.nextProbeSize(t1))
             m.onProbeSent(pn, size)
-            m.onProbeAcked(size, t1)
+            m.onProbeAcked(size, pn, t1)
         }
         assertEquals(1420, m.current)
-        m.onPtb(1400, t1)
         for (pn in 20L..22L) m.onPacketLost(1420, pn)
         assertTrue(m.takeBlackHole(t1))
-        assertEquals(1400, m.current)
+        assertEquals(1200, m.current)
         assertTrue(m.onPacketAcked(1420, 23))
         assertEquals(1420, m.current, "the state just before the newer verdict")
     }
