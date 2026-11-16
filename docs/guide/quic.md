@@ -779,7 +779,7 @@ connection.pathEvents.collect { e ->
 }
 ```
 
-`rebind(local, prefer)` opens `DatagramIo.open` on the wildcard address of the peer's family, `migrate`s there (the new path
+`rebind(local, prefer)` opens `DatagramIo.open` on the wildcard address of the peer's family (the loopback address of its family for a peer on `127.0.0.0/8` or `::1`), `migrate`s there (the new path
 is validated first) and closes the path it left. Like any migration it needs an unused connection ID of the server (RFC
 9000 section 9.5), which arrives within a round trip after the handshake: the probe waits for one, and if none comes in
 time the move fails with `PathValidationException` (`PathFailureReason.NoSpareConnectionId`) and the connection stays

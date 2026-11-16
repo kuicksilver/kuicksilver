@@ -29,8 +29,8 @@ connect to 127.0.0.1). What is a wildcard bind:
 Comments and KDoc are skipped. Known blind spots: an address built elsewhere (a helper in another file, a function
 parameter), a wildcard reached through string templates or concatenation, a bind in a file that reaches loopback only
 through a helper of another file other than rawHttp/slowHttp, a socket that binds implicitly on its first send (an unbound
-DatagramChannel), library code (out of scope: the ktor-client HTTP/3 endpoint binds 0.0.0.0 by design), and code that is
-not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
+DatagramChannel), library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
+address for a loopback peer themselves, through loopbackLocalFor), and code that is not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
 
 Usage: wildcard-binds.py [root]   exit 0: no finding; exit 1: findings listed
 """

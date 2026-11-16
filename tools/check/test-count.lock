@@ -1479,6 +1479,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Connec
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.negative_originsAtOneAddressGetAConnectionAndTlsConfigurationEach
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.poolKeysByDestinationName
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.sameOriginSharesOneConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv4LoopbackServerIsReachedFromLoopback
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv6LoopbackServerIsReachedFromLoopback
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aServerElsewhereIsReachedFromTheWildcard
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.aCallRacingCloseFailsAsClosed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.cancelledCallResetsStream
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.chunkedAndH3BodiesReadWhole
@@ -3373,6 +3376,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aPa
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aRemovedConnectionNotReleasedFailsTheEndpointsClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.overlappingPairsCloseInEitherOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.GuideCompleteExampleTest.customAlpnSample
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.loopbackPeersGetTheLoopbackOfTheirFamily
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.negative_lookalikesAreNoLoopback
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.aFailedSlotAllocationFreesTheSlotsMadeBeforeIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.closeFreesEverySlot
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.defaultControllerIsCubic

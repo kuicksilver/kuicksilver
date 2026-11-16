@@ -205,8 +205,8 @@ runtime check (the JVM cannot read a static field without initializing its class
 what `commit-msg.sh` sees, in text files only, and the CI `lint` job's shallow clone only lists what it would fail. `wildcard-binds.py`
 reads Kotlin and Java syntax, file by file: an address built in another file or passed as a parameter, a wildcard in a
 string template or a constant of another file, a file that reaches loopback only through another file's helper (other than `rawHttp`/`slowHttp`), and
-scripts or external peers are not seen; library code is out of its scope (the ktor-client HTTP/3 endpoint binds the
-wildcard address by design).
+scripts or external peers are not seen; library code is out of its scope (the ktor-client HTTP/3 pool and
+`QuicConnection.rebind` pick the loopback address for a loopback peer themselves).
 
 **Merging the locks.** `test-count.lock` has one sorted line per test, so two branches that add tests to different
 classes merge without a conflict. On a conflict in any lock (`test-count.lock`, `test-sleeps.lock`, `rfc-tests.lock`),
