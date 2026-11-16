@@ -1746,7 +1746,7 @@ internal enum class WebSocketTransportEnd {
 /**
  * The end of an HTTP/1.1 WebSocket's connection from what is left of its stream. Whole frames still queued in front of the
  * socket (the writer finished, or stopped between frames) go out in order unless the close wait cut the session
- * ([WebSocketLifetime.cutByCloseWait]: nothing it queued leaves after T1); a session cancelled by its call while idle is
+ * (`WebSocketLifetime.cutByCloseWait`: nothing it queued leaves after T1); a session cancelled by its call while idle is
  * closed in order whether or not the socket's writer has taken its last frames yet.
  */
 internal fun webSocketTransportEnd(
