@@ -63,7 +63,6 @@ need Docker. Prefer module-scoped tasks: the root `checkKotlinAbi` builds every 
 
 ## Never
 
-- Never add `Signed-off-by:` yourself; the human who reviews and commits the change signs off.
 - Never push, publish artifacts, create releases or tags, or change repository settings.
 - Never open, comment on or close issues or pull requests on your own.
 - Never weaken a security check to make a test pass: host name verification, pins, the OpenSSL signature and SHA-256
