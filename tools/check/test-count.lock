@@ -3869,6 +3869,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_a
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aRevalidationUnderWayGoesOnAfterARevert
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aRevertWithEverySlotTakenEvictsTheRightPath
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aStaleAddressIsValidatedAfreshOncePerStaleness
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_aValidationOfUnknownTimeIsNotTheMostRecent
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_anMtuChangeReachesTheCongestionController
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_anUndersizedChallengesAnswerStartsASecondValidation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_clientWithoutSpareIdWaitsInsteadOfProbing
@@ -4012,6 +4013,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negativ
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_packetTooBigSettlesOnlyALargerProbe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_peerMaxUdpPayloadSizeOnlyLowersTheRange
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_probeTimerAndItsFloor
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudSearchTest.negative_theFirstLostPacketAcknowledgedAfterAllDisprovesTheBlackHole
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.atMostThreeLostProbesPerSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.blackHoleFallsBackTo1200AndPauses60s
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PmtudTest.ccNotifiedOnMtuChange

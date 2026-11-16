@@ -417,7 +417,7 @@ internal class Paths(
     /** All path slots are taken. */
     val isFull: Boolean get() = all.size >= maxPaths
 
-    /** The most recently validated path other than [except], if any. */
+    /** The most recently validated path other than [except], if any (one of unknown validation time only when no other is). */
     fun fallback(
         except: Path,
         usable: (Path) -> Boolean = { true },
@@ -428,13 +428,19 @@ internal class Paths(
             if (p !== except &&
                 p.state == PathState.Validated &&
                 usable(p) &&
-                (best == null || p.validatedAt > best.validatedAt)
+                (best == null || validatedLater(p.validatedAt, best.validatedAt))
             ) {
                 best = p
             }
         }
         return best
     }
+
+    /** [a] is a later validation time than [b]; an unknown one ([TimeMark.NEVER]) is earlier than any known one. */
+    private fun validatedLater(
+        a: TimeMark,
+        b: TimeMark,
+    ): Boolean = a != TimeMark.NEVER && (b == TimeMark.NEVER || a > b)
 
     fun remove(p: Path) {
         all.remove(p)

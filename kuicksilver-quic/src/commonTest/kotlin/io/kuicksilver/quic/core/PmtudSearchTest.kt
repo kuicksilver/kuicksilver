@@ -422,4 +422,24 @@ class PmtudSearchTest {
         for (pn in 2L..4L) assertEquals(1300, ring.takeLostProbeIn(pn, pn))
         assertFalse(ring.hasLostProbes, "the overwritten entry no longer counts")
     }
+
+    /**
+     * RFC 8899 section 4.1: an acknowledged packet confirms its size. A late acknowledgment of the first packet a black-hole count or
+     * verdict rested on (its loss was spurious) counts as one of the packets after it: the count starts over, and a verdict is undone,
+     * as for the second or third of them.
+     */
+    @Test fun negative_theFirstLostPacketAcknowledgedAfterAllDisprovesTheBlackHole() {
+        val count = raised()
+        count.onPacketLost(1340, 10)
+        count.onPacketLost(1340, 11)
+        count.onPacketAcked(1340, 10)
+        count.onPacketLost(1340, 12)
+        assertFalse(count.takeBlackHole(t0), "the count started over at the acknowledgment")
+        val verdict = raised()
+        for (pn in 10L..12L) verdict.onPacketLost(1340, pn)
+        assertTrue(verdict.takeBlackHole(t0))
+        assertTrue(verdict.onPacketAcked(1340, 10), "the first of them got through: the verdict was wrong")
+        assertEquals(1340, verdict.current)
+        assertFalse(verdict.pausedForTest)
+    }
 }

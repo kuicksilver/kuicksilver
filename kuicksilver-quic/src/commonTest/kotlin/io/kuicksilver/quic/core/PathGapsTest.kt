@@ -1030,4 +1030,22 @@ class PathGapsTest {
             p.close()
         }
     }
+
+    /**
+     * RFC 9000 section 9.3.2: the fallback is "the last validated peer address": a validated path whose validation time is unknown
+     * ([TimeMark.NEVER]) is not the most recent one.
+     */
+    @Test fun negative_aValidationOfUnknownTimeIsNotTheMostRecent() {
+        val ps = paths()
+        val except = ps.active
+        val timed = ps.addAt(1)
+        timed.state = PathState.Validated
+        timed.validatedAt = TimeMark(1_000)
+        val unknown = ps.addAt(2)
+        unknown.state = PathState.Validated
+        assertEquals(TimeMark.NEVER, unknown.validatedAt)
+        assertSame(timed, ps.fallback(except))
+        timed.state = PathState.Failed
+        assertSame(unknown, ps.fallback(except), "still validated: taken when no other is")
+    }
 }

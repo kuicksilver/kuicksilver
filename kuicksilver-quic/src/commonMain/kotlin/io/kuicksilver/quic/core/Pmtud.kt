@@ -15,11 +15,12 @@ import kotlin.time.Duration.Companion.seconds
  * "MUST NOT be smaller than 1 second"), or when [probeTimer] passed with neither verdict; only then does the next probe go
  * (section 5.2). The SHOULD of the same section ("larger than 15 seconds") is not followed for the loss-detection verdict:
  * docs/spec/rfc/8899.md records why. An acknowledgment that comes after all still confirms the size. Three lost packets
- * larger than the base with no full-size packet sent after the first of them acknowledged mean a black hole: back to
+ * larger than the base with no full-size packet acknowledged from the first of them on mean a black hole: back to
  * 1200 and no probe for [blackHolePause]. The verdict waits for [takeBlackHole], after the whole ACK was processed:
  * loss detection reports the losses of an ACK before its newly acknowledged packets, and a congestion burst is exactly
- * full-size packets lost while later full-size ones arrive. A verdict is undone when a full-size packet sent after the
- * packets it rested on is acknowledged later on (the path carried it: a peer that stalled for a few PTOs, delayed ACKs),
+ * full-size packets lost while later full-size ones arrive. A verdict is undone when a full-size packet from the first of
+ * those it rested on is acknowledged later on, one of them included (the path carried it: a loss declared spuriously, a peer
+ * that stalled for a few PTOs, delayed ACKs),
  * see [onPacketAcked]. Probes are ack-eliciting and count in flight inside the congestion window ("PMTU probes consume
  * congestion window"), but their loss is not a congestion signal (section 14.4).
  *
@@ -437,9 +438,9 @@ internal class Pmtud(
     }
 
     /**
-     * A regular (non-probe) packet [pn] of [size] bytes was acknowledged: a full-size one sent after the lost ones proves the path
-     * carries the MTU. One larger than [current], sent before a black-hole verdict and after the packets that verdict rested on,
-     * proves the verdict wrong (RFC 8899 section 4.1: an acknowledged packet confirms its size): the search state from before it
+     * A regular (non-probe) packet [pn] of [size] bytes was acknowledged: a full-size one from the first lost one on (that one
+     * included: its loss was spurious) proves the path carries the MTU. One larger than [current], sent before a black-hole verdict
+     * and no earlier than the first packet that verdict rested on, proves the verdict wrong (RFC 8899 section 4.1: an acknowledged packet confirms its size): the search state from before it
      * comes back, without a pause. Returns true when [current] changed so.
      */
     fun onPacketAcked(
@@ -469,7 +470,7 @@ internal class Pmtud(
             undoCurrent = 0
         }
         if (pn > largestBigAckedPn) largestBigAckedPn = pn
-        if (bigLost > 0 && pn > firstBigLostPn) {
+        if (bigLost > 0 && pn >= firstBigLostPn) {
             bigLost = 0
             firstBigLostPn = -1L
         }
@@ -492,7 +493,7 @@ internal class Pmtud(
     /** After an ACK or a loss timer was processed: true (and back to the base) when three large packets were lost with none acknowledged after them, a black hole (RFC 8899 section 4.3). */
     fun takeBlackHole(now: TimeMark): Boolean {
         if (bigLost < 3) return false
-        fallBack(now, firstBigLostPn)
+        fallBack(now, firstBigLostPn - 1) // the first lost packet itself, acknowledged after all, disproves it too
         return true
     }
 
