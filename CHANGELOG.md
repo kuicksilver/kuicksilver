@@ -1059,6 +1059,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS over TCP, client: an alert sent after the ServerHello (a refused server certificate, name or pin, a malformed
+  server flight) went out in the clear, because OpenSSL's middlebox compatibility mode moves a client to its handshake key
+  only right before its second flight. RFC 9846 appendix A.1: clients "SHOULD first rekey to the handshake keys if
+  possible". A server already reading under that key could not take it: a JDK (Netty) server failed with "Insufficient
+  buffer remaining for AEAD cipher fragment (2)" instead of reporting the client's alert. Clients now run without the
+  compatibility mode (appendix E.4, optional): the hello carries no compatibility session ID, no dummy
+  `change_cipher_spec` is sent, and every alert after the ServerHello is protected under the client handshake key. Servers
+  keep the mode (they must answer a client's session ID with `change_cipher_spec`); QUIC never used it.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the

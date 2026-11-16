@@ -329,6 +329,155 @@ static int reject_chain(ksl_ssl *s, int rc, void *a) {
     (void)a;
     return rc != KSL_WANT_VERIFY || ksl_ssl_verify_resume(s, 0, 48) == KSL_OK;
 }
+
+/* The records one side wrote: type and fragment length of each, in order */
+typedef struct {
+    uint8_t wire[16384];
+    size_t len;
+} wire_log;
+static int wire_records(const wire_log *w, uint8_t *types, size_t *lens, int max) {
+    int n = 0;
+    for (size_t off = 0; off + 5 <= w->len && n < max; n++) {
+        types[n] = w->wire[off];
+        lens[n] = (size_t)w->wire[off + 3] << 8 | w->wire[off + 4];
+        off += 5 + lens[n];
+        if (off > w->len)
+            return -1;
+    }
+    return n;
+}
+/* moves all pending ciphertext from a to b, logging it */
+static void shuttle_logged(ksl_ssl *a, ksl_ssl *b, wire_log *w) {
+    uint8_t buf[4096];
+    size_t n, used;
+    while (ksl_tcp_drain(a, buf, sizeof buf, &n) == KSL_OK && n) {
+        if (w->len + n <= sizeof w->wire) {
+            memcpy(w->wire + w->len, buf, n);
+            w->len += n;
+        }
+        for (size_t off = 0; off < n; off += used)
+            if (ksl_tcp_feed(b, buf + off, n - off, &used) != KSL_OK || !used)
+                break;
+    }
+}
+/* Runs a handshake one side refuses (a paused client verification is rejected with unknown_ca), logging what each side wrote */
+static int refused_handshake(ksl_ssl *c, ksl_ssl *s, wire_log *wc, wire_log *ws) {
+    for (int i = 0; i < 60; i++) {
+        int r = ksl_drive(c);
+        if (r == KSL_WANT_VERIFY && ksl_ssl_verify_resume(c, 0, 48) == KSL_OK)
+            r = ksl_drive(c);
+        shuttle_logged(c, s, wc);
+        int r2 = ksl_drive(s);
+        shuttle_logged(s, c, ws);
+        if (r == KSL_ERROR || r2 == KSL_ERROR) {
+            ksl_drive(r == KSL_ERROR ? s : c); /* the peer reads the alert */
+            return KSL_ERROR;
+        }
+    }
+    return KSL_WANT_READ;
+}
+static void test_client_alert_after_server_hello_is_encrypted(void) {
+    SECTION("tcp_client_alert_after_server_hello_is_encrypted");
+    /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
+       keys. If clients need to send such alerts, they SHOULD first rekey to the handshake keys if possible." In middlebox
+       compatibility mode OpenSSL 3.5 moved the client to its handshake key only right before its second flight, and the alert for a
+       refused certificate went out in the clear: a JDK server, already reading under that key, failed with "Insufficient buffer
+       remaining for AEAD cipher fragment (2)" instead of reporting the alert. Every alert the client sends after the ServerHello
+       is protected under the client handshake key, and the server decrypts it: for every TLS 1.3 suite ksl negotiates, under the
+       OpenSSL verifier and a rejected pause, and for a name mismatch. */
+    static const char *const suites[] = {"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384",
+                                         "TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256"};
+    static const char *const cases[] = {"an untrusted chain", "an untrusted chain refused at the pause",
+                                        "a trusted chain for another name"};
+    for (size_t i = 0; i < sizeof suites / sizeof suites[0]; i++)
+        for (int how = 0; how < 3; how++) {
+            ksl_ctx *cc = client_ctx("test-ca", how == 1 ? KSL_VERIFY_PAUSE : KSL_VERIFY_OPENSSL),
+                    *sc = server_ctx(how == 2 ? "server" : "server-other-ca");
+            ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_3);
+            ksl_ctx_set_ciphers(cc, suites[i], NULL);
+            ksl_ctx_set_ciphers(sc, suites[i], NULL);
+            ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+            const char *name = how == 2 ? "other.test" : "server.test";
+            ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)name, strlen(name));
+            ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)name, strlen(name));
+            static wire_log wc, ws;
+            wc.len = ws.len = 0;
+            int r = refused_handshake(c, s, &wc, &ws), sent = 0, got = 0;
+            last_code(c, &sent);
+            last_code(s, &got);
+            uint8_t types[16];
+            size_t lens[16];
+            int n = wire_records(&wc, types, lens, 16);
+            char what[200];
+            snprintf(what, sizeof what, "%s, %s: the client's alert is protected under its handshake key", suites[i],
+                     cases[how]);
+            CHECK(r == KSL_ERROR && n == 2 && types[0] == 22 && types[1] == 23 && lens[1] == 2 + 1 + 16, what);
+            snprintf(what, sizeof what, "%s, %s: the server decrypted the alert", suites[i], cases[how]);
+            CHECK(sent != 0 && got == (sent | 0x100), what);
+            ksl_ssl_free(c);
+            ksl_ssl_free(s);
+            ksl_ctx_free(cc);
+            ksl_ctx_free(sc);
+        }
+    /* the server side: its alert for a refused client certificate is protected (its keys are in use from its ServerHello); the
+       client's hello has no compatibility session ID any more */
+    {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        blob ch = chain_of(1, "client-other-ca");
+        size_t kl;
+        uint8_t *k = key_of("client-other-ca", &kl);
+        ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl);
+        free(ch.buf);
+        free(k);
+        blob roots = chain_of(1, "test-ca");
+        ksl_ctx_set_roots(sc, roots.buf, roots.len);
+        free(roots.buf);
+        ksl_ctx_set_option(sc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_REQUIRED);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        static wire_log wc, ws;
+        wc.len = ws.len = 0;
+        int r = refused_handshake(c, s, &wc, &ws), sent = 0, got = 0;
+        last_code(s, &sent);
+        last_code(c, &got);
+        uint8_t types[16];
+        size_t lens[16];
+        int n = wire_records(&ws, types, lens, 16), plain = 0;
+        for (int k2 = 1; k2 < n; k2++)
+            plain += types[k2] == 21;
+        CHECK(r == KSL_ERROR && n >= 3 && types[0] == 22 && plain == 0 && types[n - 1] == 23 && sent != 0 &&
+                  got == (sent | 0x100),
+              "the server's alert for a refused client certificate is protected, and the client reads it");
+        n = wire_records(&wc, types, lens, 16);
+        CHECK(n >= 1 && types[0] == 22 && wc.len > 5 + 4 + 2 + 32 && wc.wire[5 + 4 + 2 + 32] == 0,
+              "a ksl client sends an empty legacy_session_id (no compatibility mode)");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    /* negative control: TLS 1.2 has no key before ChangeCipherSpec, its alert stays in the clear (RFC 5246 section 7.2) */
+    {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server-other-ca");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        static wire_log wc, ws;
+        wc.len = ws.len = 0;
+        int r = refused_handshake(c, s, &wc, &ws), got = 0;
+        last_code(s, &got);
+        uint8_t types[16];
+        size_t lens[16];
+        int n = wire_records(&wc, types, lens, 16);
+        CHECK(r == KSL_ERROR && n == 2 && types[1] == 21 && lens[1] == 2 && got == (48 | 0x100),
+              "negative: a TLS 1.2 alert before ChangeCipherSpec stays in the clear");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    END();
+}
 static void test_client_verification_still_refuses(void) {
     SECTION("tcp_client_verification_still_refuses_bad_chains");
     /* A client SSL is always SSL_VERIFY_PEER and ksl_cert_verify_cb accepts every chain only under KSL_VERIFY_NONE (its guard reads
@@ -2465,6 +2614,7 @@ void run_tcp(void) {
     test_tls12();
     test_renegotiation_attempt_reported();
     test_client_verification_still_refuses();
+    test_client_alert_after_server_hello_is_encrypted();
     test_resumption();
     test_resumption_bounded();
     test_ticket_lifetime_clamped();
