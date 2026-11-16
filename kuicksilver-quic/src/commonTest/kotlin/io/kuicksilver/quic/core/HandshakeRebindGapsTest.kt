@@ -178,6 +178,8 @@ class HandshakeRebindGapsTest {
             assertFalse(k in s.paths.all)
             assertEquals(PathState.Validated, a.state)
             assertSame(a, s.paths.lastValidated)
+            assertFalse(a.amplification.validated, "the path state only: RFC 9000 section 8.1's limit still needs a proof")
+            assertTrue(a.amplification.budget() < Long.MAX_VALUE)
         } finally {
             p.close()
         }
@@ -323,6 +325,24 @@ class HandshakeRebindGapsTest {
             assertFalse(fb.reached)
             assertFalse(a.amplification.validated)
             assertEquals(PathState.Unknown, a.state)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** An address a handshake-time move took the path to keeps its fallback: dropping the candidate after confirmation settles nothing there. */
+    @Test fun negative_droppingTheCandidateLeavesAnUnprovenMoveToItsFallback() {
+        val p = EndpointPair()
+        try {
+            val s = midHandshake(p)
+            val a = s.paths.active
+            s.onHandshakeDatagramDone(other) // moved with the completing datagram: unvalidated, the fallback pending
+            assertSame(a, s.handshakeFallback?.path)
+            assertEquals(PathState.Unknown, a.state)
+            s.handshakeConfirmedAt = s.now
+            s.dropHandshakeCandidate()
+            assertEquals(PathState.Unknown, a.state, "the fallback decides (revert at its deadline)")
+            assertFalse(a.amplification.validated)
         } finally {
             p.close()
         }

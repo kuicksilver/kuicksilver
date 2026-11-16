@@ -1678,6 +1678,14 @@ internal fun ConnectionCore.finishPathResponses() {
  * Ends the handshake-time candidate, if any: its path is removed (no event: the application never saw it). A handshake that
  * completed while it was still open left the active address to it (confirmHandshake): one still unvalidated then counts as
  * validated by the handshake, as it would have at completion.
+ *
+ * Why that is sound: with no [HandshakeFallback] on the active path, its address is either one a proof validated (the client's
+ * Handshake packet or acknowledgement, a PATH_RESPONSE: those also lift the amplification limit) or the address the connection
+ * began on, restored after an unvalidated move ([restoreHandshakeAddress]); an address a move took the path to keeps its fallback
+ * until then and is not settled here. That is what confirmHandshake settles when no candidate is open. The path state only names
+ * that address as validated for section 9.3.2's revert; RFC 9000 section 8.1's anti-amplification limit stays bound to
+ * [AmplificationLimit.validated], which only a proof for that address sets, so nothing here lets an unproven address receive more
+ * than three times what it sent.
  */
 internal fun ConnectionCore.dropHandshakeCandidate() {
     val k = handshakeCandidate ?: return
