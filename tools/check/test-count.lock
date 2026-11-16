@@ -3200,6 +3200,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KeyFileSecretsJvm
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.LoopbackSquatterTest.loopbackServerPasses
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.LoopbackSquatterTest.negative_wildcardServerIsShadowedOnLoopback
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.nodeClientAgainstOurServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.ourClientAgainstNodeServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.RespondBytesHeapJvmTest.negative_largeBytesResponseFitsAHeapWithoutRoomForACopy

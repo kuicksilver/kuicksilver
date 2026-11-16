@@ -284,7 +284,10 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // reached over 127.0.0.1 below; the wildcard address shares the port there
+                }
             }) {
                 intercept(ApplicationCallPipeline.Plugins) {
                     // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
@@ -304,6 +307,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     val get = "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n"
 
                     fun altSvc(resp: String) = resp.lines().filter { it.startsWith("Alt-Svc", ignoreCase = true) }
@@ -328,6 +332,7 @@ class GuideSamplesTest {
                     embeddedServer(Kuicksilver, configure = {
                         // guide:ktor:trusted-gateway
                         tlsConnector(internalIdentity) {
+                            host = "127.0.0.1" // reached over 127.0.0.1 below; the wildcard address shares the port there
                             port = 0
                             trustedGateway = true // every client of this port is the gateway
                         }
@@ -340,6 +345,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     // a name the certificate does not carry, forwarded by the gateway: served
                     val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: public.example\r\nConnection: close\r\n\r\n")
                     assertTrue(r.startsWith("HTTP/1.1 200 "), r)
@@ -516,7 +522,10 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // reached over 127.0.0.1 below; the wildcard address shares the port there
+                }
             }) {
                 routing {
                     // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
@@ -545,6 +554,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     val health = rawHttp(port, "GET /healthz HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                     assertTrue(health.startsWith("HTTP/1.1 200") && health.endsWith("ok"), health)
                     val metrics = rawHttp(port, "GET /metrics/quic HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")

@@ -15,8 +15,13 @@ import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.runBlocking
+import java.net.BindException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.fail
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 
@@ -33,7 +38,10 @@ class GuideBothEnginesTest {
         // guide:ktor:both-engines
         val server =
             embeddedServer(KuicksilverServer, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // reached over 127.0.0.1 below; the wildcard address shares the port there
+                }
             }, module = Application::module)
         val client =
             HttpClient(KuicksilverClient) {
@@ -48,11 +56,28 @@ class GuideBothEnginesTest {
                         .resolvedConnectors()
                         .first()
                         .port
+                assertNoLoopbackSquatter(port)
                 assertEquals("both", client.get("https://127.0.0.1:$port/").bodyAsText())
             }
         } finally {
             client.close()
             server.stop(100, 500)
         }
+    }
+}
+
+/**
+ * Fails when another socket can still take 127.0.0.1:[port] while the test server listens on it (the server is bound to the
+ * wildcard address, which BSD sockets let a 127.0.0.1 listener share; a connection to 127.0.0.1 then reaches that
+ * listener). ktor-server's `assertNoLoopbackSquatter` explains it in full.
+ */
+private fun assertNoLoopbackSquatter(port: Int) {
+    ServerSocket().use { squatter ->
+        try {
+            squatter.bind(InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), port))
+        } catch (_: BindException) {
+            return // the port is the server's alone on 127.0.0.1
+        }
+        fail("another process could take 127.0.0.1:$port from the test server: bind the server to 127.0.0.1 (host = \"127.0.0.1\")")
     }
 }
