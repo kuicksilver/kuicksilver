@@ -17,8 +17,11 @@ import kotlin.time.Duration
  *
  * What the block did before a cancellation that stopped it is not covered: a block whose steps hand over ownership must
  * keep what it took when it is cancelled half-way (see `HandOffQueue` in kuicksilver-http3). Nor is a block that ends in a
- * `coroutineScope` (or another scope builder): a timeout that lands as the scope completes makes the scope throw instead
- * of returning, so such a block sets its result inside the scope, as the work ends (a variable written there).
+ * scope builder (`coroutineScope`, `supervisorScope`, `withContext`): a timeout that lands as the scope completes makes the
+ * scope throw instead of returning. The builder may sit in a function the block calls (`RequestDns.answered` ends in a
+ * `coroutineScope`, `Http3Connection.connect` in a `withContext`), where the deadline-sites check cannot see it. The rule:
+ * the result is kept where it is made, inside the innermost scope (a variable or a callback written there, as
+ * `RequestDns.answered`'s `onAnswered` and `Http3Connection.connect`'s `keep`), and the caller reads it after the deadline.
  */
 @InternalKuicksilverApi
 public suspend fun <T : Any> completedWithin(

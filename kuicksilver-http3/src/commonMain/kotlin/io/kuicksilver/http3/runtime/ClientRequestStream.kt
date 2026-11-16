@@ -46,20 +46,30 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.ContinuationInterceptor
 
-/** Extended CONNECT (RFC 9220 section 3): waits for the peer's SETTINGS, then a request whose stream stays open both ways. */
+/**
+ * Extended CONNECT (RFC 9220 section 3): waits for the peer's SETTINGS, then a request whose stream stays open both ways.
+ * With [keep], the stream is handed to it on the session's dispatcher as soon as it exists, and is then the caller's: a
+ * cancellation that lands as this returns (a deadline of the caller's) no longer resets it, the caller uses or ends it.
+ */
 internal suspend fun H3Session.connect(
     r: Http3Request,
     protocol: String,
     ended: CompletableDeferred<Unit>? = null,
+    keep: (suspend (Http3Stream) -> Unit)? = null,
 ): Http3Stream {
     val caller = callerDispatcher()
     var made: Http3Stream? = null // as in requestOnce: a stream set up for a caller cancelled at the return is closed
     try {
-        return connectOnDispatcher(r, protocol, caller, ended) { made = it }
+        return connectOnDispatcher(r, protocol, caller, ended) {
+            made = it
+            keep?.invoke(it)
+        }
     } catch (e: CancellationException) {
-        made?.let {
-            it.reset(Http3ErrorCode.REQUEST_CANCELLED)
-            it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+        if (keep == null) {
+            made?.let {
+                it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+            }
         }
         throw e
     }
@@ -70,7 +80,7 @@ private suspend fun H3Session.connectOnDispatcher(
     protocol: String,
     caller: ContinuationInterceptor,
     ended: CompletableDeferred<Unit>?,
-    made: (Http3Stream) -> Unit,
+    made: suspend (Http3Stream) -> Unit,
 ): Http3Stream =
     withContext(dispatcher) {
         val ps = awaitPeerSettings()
@@ -131,7 +141,7 @@ private suspend fun H3Session.connectOnDispatcher(
             isClient = true,
             onReset = { scope.launch { datagrams.unregister(resp.streamId) } },
             datagramsAllowed = resp.datagramChannel != null,
-        ).also(made)
+        ).also { made(it) }
     }
 
 /**

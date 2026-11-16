@@ -51,6 +51,7 @@ import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
+import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
@@ -860,12 +861,14 @@ internal class H1Pool(
         }
         // the families that answered: one that stalls (dropped AAAA queries) holds back neither the keys nor the connection,
         // which the race makes with what came (RFC 8305 section 3); the connection's own address is added once it is up
-        // (exchange). completedWithin: answers that came as the connect timeout fires are the answers
-        val addresses =
-            completedWithin(data.connectTimeoutMillis(config).milliseconds) {
-                dns.answered(url.host, url.port).also { remoteHostsForTest?.invoke() }
-            } ?: throw ConnectTimeoutException(data, null)
-        return listOf(WebSocketConnecting.nameKey(url.host)) + addresses.map { WebSocketConnecting.addressKey(it) }
+        // (exchange). Kept as they are known, inside the lookups' scope: answers that came as the connect timeout fires
+        // are the answers, also when it lands as that scope completes
+        var addresses: List<TcpAddress>? = null
+        withTimeoutOrNull(data.connectTimeoutMillis(config)) {
+            dns.answered(url.host, url.port, onAnswered = { addresses = it }, afterForTest = remoteHostsForTest)
+        }
+        val answered = addresses ?: throw ConnectTimeoutException(data, null)
+        return listOf(WebSocketConnecting.nameKey(url.host)) + answered.map { WebSocketConnecting.addressKey(it) }
     }
 
     /**

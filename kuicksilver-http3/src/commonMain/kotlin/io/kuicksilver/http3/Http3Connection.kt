@@ -89,6 +89,22 @@ public class Http3Connection private constructor(
     }
 
     /**
+     * [connect], handing the stream to [keep] (on the connection's dispatcher) as soon as it exists: from then on it is the
+     * caller's, and a cancellation that lands as this call returns (a deadline of the caller's) does not reset it, so a
+     * CONNECT answered as the deadline fires is a stream the caller can still use or end. A caller that is cancelled
+     * after [keep] ran ends the stream itself.
+     */
+    @io.kuicksilver.annotations.InternalKuicksilverApi
+    public suspend fun connect(
+        request: Http3Request,
+        protocol: String,
+        keep: suspend (Http3Stream) -> Unit,
+    ): Http3Stream {
+        check(role == Http3Role.Client) { "connect() is client-only" }
+        return session.connect(request, protocol, keep = keep)
+    }
+
+    /**
      * Server: the next request; malformed requests are answered at the stream level and never returned. A caller cancelled
      * while it waits takes no request with it: the next call returns it. A wrapper that is itself cancelled after this
      * returned (`withTimeout`, `async`, `withContext`) may still drop the request it got, so accept in one long-lived loop

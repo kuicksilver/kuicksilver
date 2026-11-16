@@ -169,14 +169,25 @@ internal class RequestDns private constructor(
      * literal itself; else the first family that answers with addresses, and the other one when it answers within the
      * Resolution Delay (RFC 8305 section 3), never waiting for a family that stalls (a network that drops AAAA queries).
      * A family that answers with none or fails is waited past. Fails only when both failed or neither has an address.
+     *
+     * [onAnswered] gets the addresses inside the lookups' scope, as soon as they are known: a caller under a deadline keeps
+     * them from there even when the deadline cancels this call as its scope completes (the scope then throws instead of
+     * returning); [afterForTest] runs right after it, still inside the scope.
      */
     suspend fun answered(
         host: String,
         port: Int,
+        onAnswered: ((List<TcpAddress>) -> Unit)? = null,
+        afterForTest: (suspend () -> Unit)? = null,
     ): List<TcpAddress> {
-        if (endpoint != null) return root().answered(endpoint.first, endpoint.second)
+        if (endpoint != null) return root().answered(endpoint.first, endpoint.second, onAnswered, afterForTest)
         val name = socketHost(host)
-        if (':' in name || parseIpv4Literal(name) != null) return resolveBoth(SystemResolution(name, port), name)
+        if (':' in name || parseIpv4Literal(name) != null) {
+            return resolveBoth(SystemResolution(name, port), name).also {
+                onAnswered?.invoke(it)
+                afterForTest?.invoke()
+            }
+        }
         val got =
             coroutineScope {
                 val answers = Channel<Result<List<TcpAddress>>>(2)
@@ -207,8 +218,17 @@ internal class RequestDns private constructor(
                     } else {
                         answers.receive()
                     }
+                val both = listOfNotNull(first, second)
+                both
+                    .flatMap { it.getOrNull().orEmpty() }
+                    .distinct()
+                    .map { it.withPort(port) }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { onAnswered?.invoke(it) }
+                afterForTest?.invoke()
+                // the scope waits for the slower lookup's cancellation: a deadline landing then makes it throw
                 lookups.forEach { it.cancel() }
-                listOfNotNull(first, second)
+                both
             }
         val found = got.flatMap { it.getOrNull().orEmpty() }.distinct().map { it.withPort(port) }
         if (found.isNotEmpty()) return found
