@@ -1185,12 +1185,17 @@ internal class H1Pool(
                                                 try {
                                                     val failed = ws.output.closedCause != null
                                                     val writerDone = ws.output.endRequested && !failed
-                                                    // the stream is whole and nothing of it waits in front of the socket
-                                                    val whole =
-                                                        !failed && (writerDone || ws.guard?.isAtWebSocketFrameBoundary() == true) &&
-                                                            conn.outputDrained()
-                                                    when {
-                                                        cause == null && writerDone -> {
+                                                    val end =
+                                                        webSocketTransportEnd(
+                                                            endedInOrder = cause == null,
+                                                            failed = failed,
+                                                            writerDone = writerDone,
+                                                            atFrameBoundary = ws.guard?.isAtWebSocketFrameBoundary() == true,
+                                                            drained = conn.outputDrained(),
+                                                            cutByCloseWait = ws.lifetime.cutByCloseWait,
+                                                        )
+                                                    when (end) {
+                                                        WebSocketTransportEnd.AfterServer -> {
                                                             conn.closeAfterWebSocket(
                                                                 ws.lifetime.remainingTransportWaitMillis(),
                                                                 ws.inputDone,
@@ -1198,11 +1203,11 @@ internal class H1Pool(
                                                             ) { webSocketClosingForTest?.invoke(it) }
                                                         }
 
-                                                        whole -> {
+                                                        WebSocketTransportEnd.Orderly -> {
                                                             conn.closeOrderly()
                                                         }
 
-                                                        else -> {
+                                                        WebSocketTransportEnd.Reset -> {
                                                             conn.abort()
                                                         }
                                                     }
@@ -1712,3 +1717,35 @@ internal class Http11Routes {
 
 /** The server closed the connection after answering the first-contact probe ([H1Pool.probeVersion]). */
 internal class ProbeEndedConnection : Exception("the server closed the connection after the OPTIONS probe")
+
+/** How an HTTP/1.1 WebSocket's connection ends once its session did ([webSocketTransportEnd]). */
+internal enum class WebSocketTransportEnd {
+    /** The session ended in order: the server closes first, this side follows within T2 (closeAfterWebSocket). */
+    AfterServer,
+
+    /** The stream is whole: what is queued goes out, then a FIN (over TLS close_notify first), bounded. */
+    Orderly,
+
+    /** A frame cut in the middle, a failed writer, or frames still queued when the close wait cut the session. */
+    Reset,
+}
+
+/**
+ * The end of an HTTP/1.1 WebSocket's connection from what is left of its stream. Whole frames still queued in front of the
+ * socket (the writer finished, or stopped between frames) go out in order unless the close wait cut the session
+ * ([WebSocketLifetime.cutByCloseWait]: nothing it queued leaves after T1); a session cancelled by its call while idle is
+ * closed in order whether or not the socket's writer has taken its last frames yet.
+ */
+internal fun webSocketTransportEnd(
+    endedInOrder: Boolean,
+    failed: Boolean,
+    writerDone: Boolean,
+    atFrameBoundary: Boolean,
+    drained: Boolean,
+    cutByCloseWait: Boolean,
+): WebSocketTransportEnd =
+    when {
+        endedInOrder && writerDone -> WebSocketTransportEnd.AfterServer
+        !failed && (writerDone || atFrameBoundary) && (drained || !cutByCloseWait) -> WebSocketTransportEnd.Orderly
+        else -> WebSocketTransportEnd.Reset
+    }

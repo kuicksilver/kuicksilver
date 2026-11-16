@@ -1150,6 +1150,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 3), over HTTP/2 a reset stream got `END_STREAM` and one more close wait, and over HTTP/1.1 with TLS the server's
   FIN was not read before the close. A data tick seen as the socket inactivity timeout fired no longer cuts the exchange,
   and the Ktor server no longer ends an HTTP/2 connection with GOAWAY for a client preface read as its deadline fired.
+- A client WebSocket over HTTP/1.1 cancelled with its call while idle could end with a Close 1000 it never asked for, or
+  with a reset that cut its last frame off: Ktor's session answers the cancellation with a Close, which was taken for the
+  session's own, and a frame not yet taken by the socket's writer (a loaded host) made the connection reset. That Close is
+  no longer sent, and whole frames still queued go out before the FIN; only a session the close wait cut is reset with
+  data queued.
 - QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
   as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC

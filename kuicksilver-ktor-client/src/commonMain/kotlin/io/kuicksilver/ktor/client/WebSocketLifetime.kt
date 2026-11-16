@@ -139,6 +139,13 @@ internal class WebSocketLifetime(
                 }
             }
 
+    /**
+     * The session was cut at the end of the close wait (T1): what it still had queued must not leave after it, so the
+     * transport is reset rather than closed in order behind it.
+     */
+    val cutByCloseWait: Boolean get() = cut.load()
+    private val cut = AtomicBoolean(false)
+
     /** The session's own Close went to its outgoing channel (queued, maybe not written yet). */
     val ownCloseQueued: Boolean get() = ownClose.load()
 
@@ -201,11 +208,16 @@ internal class WebSocketLifetime(
     ): WebSocketSession {
         job.complete()
         return OwnCloseWatch(session) {
+            // a Close sent once the call is being cancelled answers that cancellation (Ktor's session closes its outgoing
+            // channel when its call is cancelled, and its processor then sends a Close 1000): no own Close, and not sent;
+            // the session is cancelled with the call
+            if (callJob.isCancelled && !ownClose.load()) return@OwnCloseWatch false
             if (ownClose.compareAndSet(false, true)) {
                 ownCloseAt.store(TimeSource.Monotonic.markNow())
                 boundByCloseWait()
             }
             onClose()
+            true
         }
     }
 
@@ -222,6 +234,7 @@ internal class WebSocketLifetime(
                 done = withTimeoutOrNull(remainingCloseWaitMillis()) { job.join() } != null
             } finally {
                 if (!done) {
+                    cut.store(true)
                     job.cancel(
                         CancellationException("no Close from the server (or the own Close not written) within the close wait"),
                     )
@@ -324,27 +337,35 @@ internal class WebSocketLifetime(
     }
 }
 
-/** [raw] with [onClose] run when the session sends its own Close (see [WebSocketLifetime.watch]). */
+/**
+ * [raw] with [onClose] run when the session sends its own Close (see [WebSocketLifetime.watch]); a Close [onClose] refuses
+ * (false) is dropped, as if sent.
+ */
 private class OwnCloseWatch(
     private val raw: WebSocketSession,
-    private val onClose: () -> Unit,
+    private val onClose: () -> Boolean,
 ) : WebSocketSession by raw {
     override val outgoing: SendChannel<Frame> =
         object : SendChannel<Frame> by raw.outgoing {
             override suspend fun send(element: Frame) {
-                if (element is Frame.Close) onClose()
+                if (element is Frame.Close && !onClose()) return
                 raw.outgoing.send(element)
             }
 
             override fun trySend(element: Frame): ChannelResult<Unit> {
-                if (element is Frame.Close) onClose()
+                // dropped: the success a channel that takes everything gives (ChannelResult's constructors are internal)
+                if (element is Frame.Close && !onClose()) {
+                    return kotlinx.coroutines.channels
+                        .Channel<Frame>(1)
+                        .trySend(element)
+                }
                 return raw.outgoing.trySend(element)
             }
 
             @Deprecated("Use trySend", level = DeprecationLevel.ERROR)
             @Suppress("DEPRECATION_ERROR", "OVERRIDE_DEPRECATION")
             override fun offer(element: Frame): Boolean {
-                if (element is Frame.Close) onClose()
+                if (element is Frame.Close && !onClose()) return true
                 return raw.outgoing.offer(element)
             }
         }
