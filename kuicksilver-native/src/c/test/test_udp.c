@@ -327,7 +327,10 @@ static int flow_label_child(void) {
         return 77;
     if (lo_set(1, 0) != 0)
         return 77;
-    FILE *f = fopen("/proc/sys/net/ipv6/auto_flowlabels", "w");
+    int sfd = open("/proc/sys/net/ipv6/auto_flowlabels", O_WRONLY); /* an existing sysctl: never created */
+    FILE *f = sfd >= 0 ? fdopen(sfd, "w") : NULL;
+    if (sfd >= 0 && !f)
+        close(sfd);
     if (!f)
         return 78;
     int ok = fputs("2", f) >= 0;

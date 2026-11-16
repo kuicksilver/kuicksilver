@@ -5,7 +5,9 @@
  * builds it against the bundled OpenSSL (build/openssl/<host>) for a response that is stale when it is made.
  * Usage: ocsp-backdate <leaf.pem> <issuer.pem> <signer.pem> <signer.key> <thisUpdate> <nextUpdate> <out.der>
  *        (times as GeneralizedTime, e.g. 20200101000000Z) */
+#include <fcntl.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <openssl/err.h>
 #include <openssl/ocsp.h>
 #include <openssl/pem.h>
@@ -41,7 +43,10 @@ int main(int argc, char **argv) {
         OCSP_basic_sign(bs, signer, key, EVP_sha256(), NULL, 0) == 1 &&
         (resp = OCSP_response_create(OCSP_RESPONSE_STATUS_SUCCESSFUL, bs)) != NULL &&
         (len = i2d_OCSP_RESPONSE(resp, &der)) > 0) {
-        FILE *out = fopen(argv[7], "wb");
+        int fd = open(argv[7], O_WRONLY | O_CREAT | O_TRUNC, 0644); /* not world-writable, whatever the umask */
+        FILE *out = fd >= 0 ? fdopen(fd, "wb") : NULL;
+        if (fd >= 0 && !out)
+            close(fd);
         rc = out && fwrite(der, 1, (size_t)len, out) == (size_t)len ? 0 : 1;
         if (out && fclose(out) != 0)
             rc = 1;
