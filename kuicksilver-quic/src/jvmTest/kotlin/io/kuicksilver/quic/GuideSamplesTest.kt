@@ -141,7 +141,7 @@ class GuideSamplesTest {
                             echoed.output.flushAndClose()
                         }
                     // guide:quic:client-connect
-                    val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
+                    val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
                     val connection =
                         client.connect(
                             serverAddress, // an InetSocketAddress; the TLS config carries the name to verify
@@ -537,13 +537,13 @@ class GuideSamplesTest {
                         }
                     watcher.cancel()
                     // guide:quic:migration
-                    val change = connection.migrate(DatagramIo.open(InetSocketAddress("0.0.0.0", 0))) // addPath + probe + switchTo
+                    val change = connection.migrate(DatagramIo.open(InetSocketAddress("127.0.0.1", 0))) // addPath + probe + switchTo
                     println("now on ${change.new.localAddress} (${change.reason})")
                     assertEquals(PathChangeReason.ActiveMigration, change.reason)
                     val networks = kotlinx.coroutines.flow.MutableStateFlow<String?>("wifi") // what the platform reports
                     val scope = this
                     // guide:quic:network-migrator
-                    val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
+                    val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)) }, scope)
                     val log = scope.launch { migrator.events.collect { println("network: $it") } }
                     migrator.start()
                     migrator.network.first { it == "wifi" }

@@ -71,7 +71,19 @@ internal object HostInterop {
         remote: InetSocketAddress,
         payload: ByteArray,
     ): ByteArray {
-        val local = InetSocketAddress(if (remote.ipLiteral().contains(':')) "::" else "0.0.0.0", 0)
+        // a loopback peer from the loopback of its family: a wildcard endpoint shares its port with a socket another process
+        // binds to 127.0.0.1 (BSD sockets), and the peer's replies would reach that socket (tools/check/wildcard-binds.py)
+        val literal = remote.ipLiteral()
+        val local =
+            InetSocketAddress(
+                when {
+                    literal == "::1" -> "::1"
+                    literal.startsWith("127.") -> "127.0.0.1"
+                    literal.contains(':') -> "::"
+                    else -> "0.0.0.0"
+                },
+                0,
+            )
         val endpoint = QuicEndpoint.bind(local, QuicEndpointConfig.Builder().build())
         try {
             val c =

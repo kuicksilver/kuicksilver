@@ -36,6 +36,27 @@ import kotlin.time.Duration.Companion.seconds
  */
 class KslDatagramIoTest {
     private val lo = InetSocketAddress("127.0.0.1", 0)
+
+    /**
+     * [open] on the wildcard address at a port no socket holds on 127.0.0.1, so that what these tests send to 127.0.0.1
+     * reaches the wildcard socket: on macOS a wildcard bind shares its port with a socket another process holds on
+     * 127.0.0.1 (the kernel even hands a wildcard `port = 0` bind such a port), and datagrams to 127.0.0.1 then go to that
+     * socket (tools/check/wildcard-binds.py). The port is taken free on 127.0.0.1 first; a port taken meanwhile is tried
+     * again. A later bind of another process on 127.0.0.1 does not get a port the wildcard socket holds.
+     */
+    private inline fun <T> onUnshadowedWildcard(open: (InetSocketAddress) -> T): T {
+        var last: java.io.IOException? = null
+        repeat(16) {
+            val port = java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", 0)).use { it.localPort }
+            try {
+                return open(InetSocketAddress("0.0.0.0", port))
+            } catch (e: java.io.IOException) {
+                last = e
+            }
+        }
+        throw AssertionError("no wildcard port free on 127.0.0.1 after 16 tries", last)
+    }
+
     private val linux = System.getProperty("os.name").lowercase().contains("linux")
     private val windows = System.getProperty("os.name").lowercase().contains("windows")
 
@@ -128,7 +149,7 @@ class KslDatagramIoTest {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val v6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
             assumeTrue(v6 != null, "needs an IPv6 loopback")
-            val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
+            val w = assertNotNull(onUnshadowedWildcard { KslDatagramIo.open(it) })
             val v4 = assertNotNull(KslDatagramIo.open(lo))
             try {
                 assertContentEquals(ByteArray(4), w.localAddress.resolveAddress(), "0.0.0.0 asked, 0.0.0.0 reported")
@@ -217,7 +238,7 @@ class KslDatagramIoTest {
             if (second == null) {
                 println("wildcardSocketReportsTheDestinationAndRepliesFromIt: SKIP second-address case (none usable on this host)")
             }
-            val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
+            val w = assertNotNull(onUnshadowedWildcard { KslDatagramIo.open(it) })
             val c4 = assertNotNull(KslDatagramIo.open(lo))
             val c6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
             if (c6 == null) println("wildcardSocketReportsTheDestinationAndRepliesFromIt: SKIP ::1 case (no IPv6 loopback)")
@@ -271,16 +292,18 @@ class KslDatagramIoTest {
             val second = secondAddress()
             assumeTrue(second != null, "needs a second local IPv4 address a loopback client reaches (none on Windows: see secondAddress)")
             val server =
-                QuicEndpoint.bind(
-                    InetSocketAddress("0.0.0.0", 0),
-                    QuicEndpointConfig
-                        .Builder()
-                        .apply {
-                            this.server =
-                                QuicServerConfig.Builder(CoreFixtures.server()).build()
-                            ; crypto = KslQuicCrypto
-                        }.build(),
-                )
+                onUnshadowedWildcard { wildcard ->
+                    QuicEndpoint.bind(
+                        wildcard,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server =
+                                    QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                ; crypto = KslQuicCrypto
+                            }.build(),
+                    )
+                }
             val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
             try {
                 withTimeout(30.seconds) {

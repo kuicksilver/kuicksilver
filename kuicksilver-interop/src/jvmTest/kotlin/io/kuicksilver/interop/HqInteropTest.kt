@@ -38,14 +38,14 @@ class HqInteropTest {
 
     @Test fun serverServesFileOverHqInterop() = runBlocking {
         val data = ByteArray(3 shl 20) { (it * 11).toByte() }; val root = www("big.bin" to data); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${srv.port}/big.bin", "DOWNLOADS" to downloads.path))
             assertEquals(0, code); assertContentEquals(data, File(downloads, "big.bin").readBytes())
         }
     }
     @Test fun clientDownloadsAllRequestsOnOneConnection() = runBlocking {
         val files = (1..5).map { "f$it" to ByteArray(10_000 * it) { (it + 3).toByte() } }; val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(1, srv.connectionsAccepted, "one connection for all requests")
         }
@@ -54,7 +54,7 @@ class HqInteropTest {
     fun bbrModeTransfersAFile() = runBlocking {
         // KSL_CC=bbr: the endpoint mode the interop agent runs the runner's goodput and crosstraffic measurements with
         val data = ByteArray(2 shl 20) { (it * 13).toByte() }; val root = www("bbr.bin" to data); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1, congestionController = { io.kuicksilver.quic.Bbr() }).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1, congestionController = { io.kuicksilver.quic.Bbr() }).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "KSL_CC" to "bbr", "REQUESTS" to "https://127.0.0.1:${srv.port}/bbr.bin", "DOWNLOADS" to downloads.path))
             assertEquals(0, code); assertContentEquals(data, File(downloads, "bbr.bin").readBytes())
         }
@@ -107,7 +107,7 @@ class HqInteropTest {
     @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "connectionmigration", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
     @Test fun keylogWrittenWhenEnvSet() = runBlocking {
         val root = www("k" to ByteArray(100)); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             assertEquals(0, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "handshake", "REQUESTS" to "https://127.0.0.1:${srv.port}/k", "DOWNLOADS" to downloads.path, "SSLKEYLOGFILE" to keylog.path)))
             assertTrue(keylog.readText().contains("CLIENT_TRAFFIC_SECRET_0"), keylog.readText().take(200))
         }
@@ -115,7 +115,7 @@ class HqInteropTest {
 
     @Test fun keyupdateTestcaseInitiatesUpdate() = runBlocking {
         val data = ByteArray(3 shl 20) { (it * 13).toByte() }; val root = www("big.bin" to data); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "keyupdate", "REQUESTS" to "https://127.0.0.1:${srv.port}/big.bin", "DOWNLOADS" to downloads.path))
             assertEquals(0, code); assertContentEquals(data, File(downloads, "big.bin").readBytes())
             assertTrue(srv.keyUpdatesSeen >= 1, "the server followed the client's key update: ${srv.keyUpdatesSeen}")
@@ -142,7 +142,7 @@ class HqInteropTest {
     }
     @Test fun multiconnectUsesOneConnectionPerRequest() = runBlocking {
         val files = (1..3).map { "m$it" to ByteArray(1000) { it.toByte() } }; val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(3, srv.connectionsAccepted, "one connection per request")
         }
@@ -151,7 +151,7 @@ class HqInteropTest {
     @Test fun serverStreamsEmptyAndExactlyOneChunkFiles() = runBlocking {
         val files = listOf("empty" to ByteArray(0), "chunk" to ByteArray(io.kuicksilver.interop.Files.CHUNK) { (it * 31).toByte() }, "chunk1" to ByteArray(io.kuicksilver.interop.Files.CHUNK + 1) { (it * 7).toByte() })
         val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes(), n)
         }
@@ -162,7 +162,7 @@ class HqInteropTest {
      */
     @Test fun serverForgetsEndedConnections() = runBlocking {
         val root = www("f" to ByteArray(32) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to List(5) { "https://127.0.0.1:${srv.port}/f" }.joinToString(" "), "DOWNLOADS" to downloads.path))
             assertEquals(0, code); assertEquals(5, srv.connectionsAccepted)
             val deadline = System.nanoTime() + 5_000_000_000L
@@ -178,7 +178,7 @@ class HqInteropTest {
     @Test fun ipv6CaseBindsDualStack() = runBlocking {
         if (!System.getProperty("os.name").lowercase().contains("linux")) { println("ipv6CaseBindsDualStack: Linux only (dual-stack loopback answers from the wrong family on macOS)"); return@runBlocking }
         val data = ByteArray(20_000) { (it * 7).toByte() }; val root = www("six.bin" to data); val downloads = Files.createTempDirectory("dl").toFile()
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val p6 = srv.port6; if (p6 == null) { println("no IPv6 on this host; v4 only"); return@use }
             assertEquals(0, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://[::1]:$p6/six.bin", "DOWNLOADS" to downloads.path, "KSL_INTEROP_EXPECTED_NAME" to "server.test")))
             assertContentEquals(data, File(downloads, "six.bin").readBytes())
@@ -190,7 +190,7 @@ class HqInteropTest {
     // ---- the runner's `http3` case (an H3 transaction per file, one connection, ALPN h3)
     @Test fun http3CaseDownloadsOverH3() = runBlocking {
         val files = listOf("a.bin" to ByteArray(5_000) { (it * 3).toByte() }, "b.bin" to ByteArray(500_000) { (it * 5).toByte() }); val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
-        H3InteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+        H3InteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = Interop.v1).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "http3", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(1, srv.connectionsAccepted, "one connection for all requests")
             assertEquals(1, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "http3", "REQUESTS" to "https://127.0.0.1:${srv.port}/missing.bin", "DOWNLOADS" to downloads.path)), "a missing file fails the case")
@@ -208,7 +208,7 @@ class HqInteropTest {
     @Test fun resumptionCaseResumesTheFirstConnectionsTicket() = runBlocking {
         val files = listOf("r1.bin" to ByteArray(5_000) { (it * 3).toByte() }, "r2.bin" to ByteArray(10_000) { (it * 5).toByte() }); val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
         val plan = Testcases.server("resumption")!!
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "resumption", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes())
             assertEquals(2, srv.connectionsAccepted, "the first file on one connection, the rest on a second")
@@ -219,7 +219,7 @@ class HqInteropTest {
     @Test fun zerorttCaseSendsTheRemainingRequestsIn0Rtt() = runBlocking {
         val files = (1..6).map { "z$it-" + "x".repeat(200) to ByteArray(32) { b -> (b + it).toByte() } }; val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")
         val plan = Testcases.server("zerortt")!!
-        HqInteropServer.start(identity(), port = 0, www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
+        HqInteropServer.start(identity(), port = 0, host = "127.0.0.1", www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
             // on loopback the server answers the ClientHello within a millisecond, so whether the requests left before the client
             // had the 1-RTT keys was scheduling (1 failure in 6 runs, 2026-10-21); the relay holds the server's answer on the 0-RTT
             // connection until the requests arrived, as the runner's 30 ms round trip does, and the client is made to write only

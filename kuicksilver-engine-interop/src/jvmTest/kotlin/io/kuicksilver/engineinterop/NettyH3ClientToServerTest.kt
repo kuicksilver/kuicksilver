@@ -74,7 +74,7 @@ internal class NettyH3ClientToServerTest {
                 .group(group)
                 .channel(NioDatagramChannel::class.java)
                 .handler(codec)
-                .bind(0)
+                .bind(InetSocketAddress("127.0.0.1", 0)) // the server's replies go to 127.0.0.1: a wildcard socket shares that port
                 .sync()
                 .channel()
         quic =
