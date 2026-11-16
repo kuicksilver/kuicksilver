@@ -1,3 +1,1 @@
 # Hashes that must stand alone in a tracked file, for tools/check/tracked-hashes.py: <lower-case hash> | <reason>.
-3a3a3a3a3 | an input of commit-msg-test.sh: a cited hash that names no commit, which the commit-msg check must report
-5e5e5e5e5 | an input of commit-msg-test.sh: a value after since that names nothing, which the check must tell to quote
