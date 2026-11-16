@@ -307,6 +307,7 @@ class CidGapsTest {
         val held = m.takePathPeer()!!
         m.releasePathPeer(held)
         assertTrue(m.takeRetireFrames().isEmpty(), "no room: the path's ID stays")
+        assertFalse(held.heldByPath, "no path holds it any more: it stays used, never a spare")
         assertEquals(
             TransportError.CONNECTION_ID_LIMIT_ERROR,
             assertFailsWith<QuicWireException> { newCid(m, 6, retire = 6) }.code,
@@ -393,5 +394,85 @@ class CidGapsTest {
         newCid(m, 1)
         assertTrue(newCid(m, 1), "the same ID again: a retransmission")
         assertEquals(TransportError.PROTOCOL_VIOLATION, assertFailsWith<QuicWireException> { newCid(m, 1, cidByte = 0x77) }.code)
+    }
+
+    /**
+     * RFC 9000 section 9.5: "An endpoint MUST NOT reuse a connection ID when sending to more than one destination address". An ID a path
+     * probed with that becomes the active one's is used; once the active path moves on to another, it is never handed to a new path as
+     * a spare.
+     */
+    @Test fun negative_anIdMadeCurrentIsNeverASpareAgain() {
+        val m = manager(limit = 8)
+        m.adoptInitialPeerCid(cid(1))
+        m.activePeerCid()
+        newCid(m, 1)
+        newCid(m, 2)
+        val probed = m.takePathPeer()!!
+        assertEquals(1L, probed.seq)
+        m.makeCurrent(probed)
+        assertTrue(m.rotatePeerCid(retireOld = false))
+        assertEquals(2L, m.currentPeer!!.seq)
+        assertNull(m.takePathPeer(), "0, 1 and 2 all went somewhere: no spare")
+        assertFalse(m.hasSparePeer())
+        assertFalse(probed.heldByPath, "the active path's ID is no other path's")
+        assertFalse(m.rotatePeerCid(retireOld = false), "no spare to rotate to")
+        val r = manager(limit = 8)
+        r.adoptInitialPeerCid(cid(1))
+        r.activePeerCid()
+        for (seq in 1L..3L) newCid(r, seq)
+        assertTrue(r.rotatePeerCid(retireOld = false))
+        assertTrue(r.rotatePeerCid(retireOld = false))
+        assertEquals(2L, r.currentPeer!!.seq)
+        assertEquals(3L, r.takePathPeer()?.seq, "1 carried our packets after the first rotation: never a spare again")
+    }
+
+    /**
+     * RFC 9000 section 10.3.1: a peer's reset token counts for "the connection IDs and remote addresses for datagrams it has recently
+     * sent". Our packets name an ID by value: a copy of it (another instance, as a packet header gives) marks that ID used and sent
+     * to the address, and no other one.
+     */
+    @Test fun negative_aPeerIdIsMatchedByValueForItsResetToken() {
+        val m = manager()
+        m.adoptInitialPeerCid(cid(1))
+        newCid(m, 1)
+        val copy = ConnectionId(ByteArray(8) { 0x41 })
+        val to =
+            io.ktor.network.sockets
+                .InetSocketAddress("10.0.0.2", 443)
+        m.noteLongHeaderSent(copy)
+        m.noteSentTowards(ConnectionId(ByteArray(8) { 0x41 }), AddressClass.ipKey(to), to.port)
+        val datagram = PacketBuffer.of(ByteArray(24) { 0x40 } + ByteArray(16) { 1 })
+        try {
+            assertTrue(m.matchesPeerToken(datagram, 40, to), "sequence 1's token from where its ID went")
+            assertFalse(
+                m.matchesPeerToken(
+                    datagram,
+                    40,
+                    io.ktor.network.sockets
+                        .InetSocketAddress("10.0.0.3", 443),
+                ),
+                "not from another address",
+            )
+        } finally {
+            datagram.close()
+        }
+    }
+
+    /**
+     * A NEW_CONNECTION_ID retransmitted for a sequence number we retired, whose RETIRE_CONNECTION_ID is still unacknowledged but which
+     * the retired-sequence memory already forgot, needs no second RETIRE_CONNECTION_ID: it is not queued again, so it costs no room
+     * in the backlog (no CONNECTION_ID_LIMIT_ERROR for a benign retransmission).
+     */
+    @Test fun negative_aRetirementInFlightIsNotQueuedTwice() {
+        val m = manager(limit = 8, retiredCap = 2)
+        m.adoptInitialPeerCid(cid(1))
+        m.activePeerCid()
+        for (seq in 1L..4L) newCid(m, seq)
+        repeat(2) { m.releasePathPeer(m.takePathPeer()!!) }
+        assertEquals(listOf(1L, 2L), m.takeRetireFrames())
+        m.onRetireAcked(2)
+        m.releasePathPeer(m.takePathPeer()!!) // sequence 3; the memory of retired sequences forgets 1
+        newCid(m, 1) // the peer's retransmission
+        assertEquals(listOf(3L), m.takeRetireFrames(), "1 is in flight already")
     }
 }
