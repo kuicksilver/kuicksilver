@@ -3884,6 +3884,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_p
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_previousPathRevalidation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_removingAPathReportsTheRemotesChanged
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_switchPathBookkeeping
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_theCurrentIdGoesToANewAddressOnlyWhenTheClientUsedItThere
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_theIdTheClientUsedOnANewPathIsNoted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_theOldPathKeepsItsIdForADeferredRevalidation
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.PathGapsTest.negative_validRetirementCostsNoGlitchToken

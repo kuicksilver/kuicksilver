@@ -1003,4 +1003,31 @@ class PathGapsTest {
             p.close()
         }
     }
+
+    /**
+     * RFC 9000 section 9.5 for a path that is not the active one: with no spare ID, the server answers a new client address from the
+     * same local address with the current ID only when the client's packets from there carried the ID of ours it uses on the active
+     * path; a path whose packets showed no ID gets none.
+     */
+    @Test fun negative_theCurrentIdGoesToANewAddressOnlyWhenTheClientUsedItThere() {
+        val p = EndpointPair()
+        try {
+            val s = serverOf(p)
+            val a = s.paths.active
+            leaveSpares(s, 0)
+            s.activeDcidSeq = 0
+            s.rxDcidSeq = -1
+            val unknown = InetSocketAddress("10.0.0.8", 40008)
+            s.onPathChallenge(1, a.socket, unknown, 1200)
+            val q = assertNotNull(s.paths.byRemote(a.socket, unknown))
+            assertNull(s.dcidFor(q), "nothing shown from there: no ID to send with")
+            s.rxDcidSeq = 0
+            val same = InetSocketAddress("10.0.0.8", 40010)
+            s.onPathChallenge(2, a.socket, same, 1200)
+            val r = assertNotNull(s.paths.byRemote(a.socket, same))
+            assertEquals(s.remoteCid, s.dcidFor(r), "the client used the current ID from there: it may follow")
+        } finally {
+            p.close()
+        }
+    }
 }
