@@ -30,7 +30,7 @@ class WindowAutoTuneTest {
         serverQuic: QuicConfig = QuicConfig.Default,
     ): Pair<Long, Long> {
         val p = CorePair(serverQuic = serverQuic)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(200.milliseconds) { false }
             val id = p.client.openStream(bidi = true, StreamPriority.Default)
@@ -64,8 +64,6 @@ class WindowAutoTuneTest {
                 "delivered $read of $size",
             )
             return windows
-        } finally {
-            p.close()
         }
     }
 

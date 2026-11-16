@@ -91,7 +91,7 @@ class NewTokenTest {
                 true
             }
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.serverCore()
@@ -105,28 +105,24 @@ class NewTokenTest {
             assertEquals(33, sent[0].size, "type, nonce(8), issuedAt(8) and the tag(16)")
             assertEquals(0x02, sent[0][0].toInt())
             assertEquals(ConnectionState.Confirmed, c.state)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun noTokenWhenLifetimeIsNull() {
         val p = EndpointPair(crypto = KslQuicCrypto, newTokenLifetime = null)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             p.runUntil(1.seconds) { false }
             assertTrue(p.serverCore().newTokenSendsForTest.isEmpty())
             assertEquals(0L, p.server.stats.newTokensIssued)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun validTokenSkipsRetryAndLiftsAmplification() {
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             val token = p.tokenFromNewConnection()
             val retriesBefore = p.server.stats.retriesSent
             assertTrue(retriesBefore >= 1, "the first connection went through a Retry")
@@ -154,15 +150,13 @@ class NewTokenTest {
             assertTrue(s2.validatedByToken, "the token validated the address")
             val sent = s2.stats.bytesSent
             assertTrue(sent > 3 * received, "the anti-amplification limit is lifted: $sent bytes sent for $received received")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun tokenBoundToIpNotPort() {
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             val a = p.tokenFromNewConnection()
             val b = p.tokenFromNewConnection()
             rec.attempts.clear()
@@ -181,8 +175,6 @@ class NewTokenTest {
             // counted per Initial: the first flight of a post-quantum ClientHello spans two datagrams, each answered by a Retry
             assertTrue(p.server.stats.newTokensRejected >= 1, "${p.server.stats}")
             assertEquals(1L, p.server.stats.newTokensAccepted)
-        } finally {
-            p.close()
         }
     }
 
@@ -194,7 +186,7 @@ class NewTokenTest {
     @Test fun foreignTokenThatReadsAsARetryTokenIsTreatedAsAbsent() {
         val rec = Recording(ConnectionAdmission.default())
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             val c = p.connect()
             // a DCID not in our format (no 0x01 format byte): this Initial answers no Retry of ours, so the token is someone else's
             assertTrue(c.odcid.toByteArray()[0].toInt() != 0x01, "the client's first DCID is not in our format")
@@ -202,8 +194,6 @@ class NewTokenTest {
             assertTrue(p.confirmed(c), "the client connects: ${p.closed(c)}")
             assertEquals(0L, p.server.stats.invalidTokens, "no INVALID_TOKEN")
             assertFalse(rec.attempts.first().addressValidated)
-        } finally {
-            p.close()
         }
     }
 
@@ -213,7 +203,7 @@ class NewTokenTest {
         for (case in listOf("corrupted", "expired", "otherIp")) {
             val rec = Recording()
             val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-            try {
+            p.use { _ ->
                 var token = p.tokenFromNewConnection()
                 when (case) {
                     "corrupted" -> {
@@ -239,8 +229,6 @@ class NewTokenTest {
                 assertEquals(0L, p.server.stats.invalidTokens, "$case: no INVALID_TOKEN")
                 assertTrue(p.server.stats.newTokensRejected >= 1, "$case: ${p.server.stats}")
                 assertEquals(0L, p.server.stats.newTokensAccepted, case)
-            } finally {
-                p.close()
             }
         }
     }
@@ -248,7 +236,7 @@ class NewTokenTest {
     @Test fun tokenAcceptedUpToItsLifetime() {
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             val token = p.tokenFromNewConnection()
             p.now += 23.hours // 24 rotations of the hourly key later the token still opens
             rec.attempts.clear()
@@ -256,8 +244,6 @@ class NewTokenTest {
             c.initialToken = token
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             assertTrue(rec.attempts.first().addressValidated)
-        } finally {
-            p.close()
         }
     }
 
@@ -266,7 +252,7 @@ class NewTokenTest {
         // a NEW_TOKEN token "SHOULD" not validate more than one connection: the replay register lets it through once
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             val token = p.tokenFromNewConnection()
             rec.attempts.clear()
             val first = p.connect()
@@ -280,8 +266,6 @@ class NewTokenTest {
             assertFalse(rec.attempts.first().addressValidated, "the same token a second time validates nothing")
             assertEquals(1L, p.server.stats.newTokensAccepted)
             assertTrue(p.server.stats.newTokensRejected >= 1, "${p.server.stats}")
-        } finally {
-            p.close()
         }
     }
 
@@ -291,7 +275,7 @@ class NewTokenTest {
         var drop = true
         val rec = Recording(ConnectionAdmission { a -> if (drop) AdmissionDecision.Drop else ConnectionAdmission.AlwaysRetry.admit(a) })
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             drop = false
             val token = p.tokenFromNewConnection()
             drop = true
@@ -304,8 +288,6 @@ class NewTokenTest {
             rec.attempts.clear()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             assertTrue(rec.attempts.first().addressValidated, "the retransmitted Initial is still validated by the token")
-        } finally {
-            p.close()
         }
     }
 
@@ -521,7 +503,7 @@ class NewTokenTest {
     @Test fun secondTokenAfterMigrationToNewIp() {
         // ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN: a client validated on a new IP gets a token for that IP; at most four per connection
         val p = EndpointPair(crypto = KslQuicCrypto)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             val s = p.serverCore()
@@ -542,8 +524,6 @@ class NewTokenTest {
             assertEquals(4, distinct.size, "one token at the handshake, then one per new IP, four at most")
             assertEquals(4L, p.server.stats.newTokensIssued)
             assertNotNull(c)
-        } finally {
-            p.close()
         }
     }
 }

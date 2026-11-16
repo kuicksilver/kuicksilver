@@ -45,7 +45,7 @@ class TlsKeyUpdateMessageTest {
     @Test fun negative_tlsKeyUpdateFromClientIsCryptoError0x10a() {
         for (crypto in cryptos()) {
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p), "$crypto")
                 // a client sends nothing in the 1-RTT CRYPTO stream: the KeyUpdate starts it
                 p.client.testInjectFrames.addLast(3 to cryptoFrame(0, keyUpdate))
@@ -53,8 +53,6 @@ class TlsKeyUpdateMessageTest {
                 val r = p.closedReason(p.serverEvents)
                 assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$crypto: $r")
                 assertEquals(0x010aL, r.code, "$crypto")
-            } finally {
-                p.close()
             }
         }
     }
@@ -62,7 +60,7 @@ class TlsKeyUpdateMessageTest {
     @Test fun negative_tlsKeyUpdateFromServerIsCryptoError0x10a() {
         for (crypto in cryptos()) {
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p), "$crypto")
                 // after everything the server's TLS stack wrote at 1-RTT (its NewSessionTickets), so the client's TLS reads it next
                 assertTrue(
@@ -82,8 +80,6 @@ class TlsKeyUpdateMessageTest {
                 val r = p.closedReason(p.clientEvents)
                 assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$crypto: $r")
                 assertEquals(0x010aL, r.code, "$crypto")
-            } finally {
-                p.close()
             }
         }
     }
@@ -92,7 +88,7 @@ class TlsKeyUpdateMessageTest {
     @Test fun negative_tlsKeyUpdateSplitAcrossFramesIsCryptoError0x10a() {
         for (crypto in cryptos()) {
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p), "$crypto")
                 p.client.testInjectFrames.addLast(3 to cryptoFrame(0, keyUpdate.copyOfRange(0, 1)))
                 p.client.testInjectFrames.addLast(3 to cryptoFrame(1, keyUpdate.copyOfRange(1, keyUpdate.size)))
@@ -100,8 +96,6 @@ class TlsKeyUpdateMessageTest {
                 val r = p.closedReason(p.serverEvents)
                 assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$crypto: $r")
                 assertEquals(0x010aL, r.code, "$crypto")
-            } finally {
-                p.close()
             }
         }
     }

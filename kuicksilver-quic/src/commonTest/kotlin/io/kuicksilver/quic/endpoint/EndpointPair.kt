@@ -50,7 +50,7 @@ internal class EndpointPair(
     /** The server's address (a public one for the tests of what a public server may point a client at). */
     val serverAddr: InetSocketAddress = InetSocketAddress("10.0.0.2", 443),
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
-) {
+) : AutoCloseable {
     private val buffers = BufferWatch.opened()
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
 
@@ -392,9 +392,10 @@ internal class EndpointPair(
     /**
      * Closes both endpoints (their connections and keys), then checks that nothing leaked: every object they got from the
      * crypto provider is closed, and no [io.kuicksilver.native.PacketBuffer] the fixtures allocated on this thread is left
-     * open ([BufferWatch]). A second close checks nothing more.
+     * open ([BufferWatch]). A second close checks nothing more. Close it with `use { }`, so that a failure of the test is
+     * not hidden by the leak it left: a leak found then is added to it as suppressed.
      */
-    fun close() {
+    override fun close() {
         if (closed) return
         closed = true
         batch.close()

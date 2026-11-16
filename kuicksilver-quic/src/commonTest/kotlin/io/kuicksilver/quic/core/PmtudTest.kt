@@ -80,7 +80,7 @@ class PmtudTest {
 
     @Test fun searchConvergesTo1452OnCleanPath() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "mtu ${c.stats.pathMtu}")
             assertTrue(
@@ -90,8 +90,6 @@ class PmtudTest {
                 },
                 "a full-size datagram was sent",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -135,7 +133,7 @@ class PmtudTest {
      */
     @Test fun serverPathsAfterClientMovesKeepPmtud() {
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             val s = p.server.connections().single()
             download(p, s)
             assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu == 1452 }, "the server's search: ${s.stats.pathMtu}")
@@ -160,34 +158,28 @@ class PmtudTest {
             assertTrue(s.paths.active.pmtud != null, "the migrated path runs DPLPMTUD")
             download(p, s)
             assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu > 1200 }, "the search on the new address: ${s.stats.pathMtu}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun searchStopsBelowLinkMtu() {
         val (p, c) = pair(linkMtu = 1400)
-        try {
+        p.use { _ ->
             transfer(p, c)
             // two sizes above the link, three probes each about a second apart: done within seconds (a 16 s PROBE_TIMER per probe
             // took about 100 s here)
             assertTrue(p.runUntil(10.seconds) { c.pmtudSearchDoneForTest }, "search done: mtu ${c.stats.pathMtu}")
             assertTrue(c.stats.pathMtu in 1380..1400, "mtu ${c.stats.pathMtu}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun atMostThreeLostProbesPerSize() {
         val (p, c) = pair(linkMtu = 1200)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(60.seconds) { c.pmtudSearchDoneForTest }, "search gives up: mtu ${c.stats.pathMtu}")
             val perSize = probesTo(p).groupingBy { it }.eachCount()
             assertTrue(perSize.isNotEmpty() && perSize.values.all { it <= 3 }, "probes per size: $perSize")
             assertEquals(1200, c.stats.pathMtu)
-        } finally {
-            p.close()
         }
     }
 
@@ -196,7 +188,7 @@ class PmtudTest {
         // and loss detection declares each within a few 10 ms RTTs; the next probe still waits until a second after the lost one was
         // sent (before 0.3.0 it went at once, about 30 ms later), and not the 15 s of the section's SHOULD (see the RFC 8899 row)
         val (p, c) = pair(linkMtu = 1400)
-        try {
+        p.use { _ ->
             val lost = ArrayList<Pair<io.kuicksilver.quic.TimeMark, Int>>()
             p.filterToServer = { _, b ->
                 if (b.size > 1400) lost += p.now to b.size
@@ -208,8 +200,6 @@ class PmtudTest {
                 val gap = lost[i].first - lost[i - 1].first
                 assertTrue(gap >= 1.seconds && gap < 5.seconds, "probe ${i + 1} (${lost[i].second} B) after $gap: $lost")
             }
-        } finally {
-            p.close()
         }
     }
 
@@ -234,7 +224,7 @@ class PmtudTest {
         // transfer on a link that drops everything above 1200 bytes and nothing else, so every loss is a probe's: the controller
         // never left slow start. 0.3.0 cross-review: this test compared lostPackets with itself and ran with no traffic at all
         val (p, c) = pair(linkMtu = 1200)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(60.seconds) { c.pmtudSearchDoneForTest })
             assertTrue(probesTo(p).size >= 3, "probes were lost: ${probesTo(p)}")
@@ -246,14 +236,12 @@ class PmtudTest {
                 }
             assertEquals(Long.MAX_VALUE, ssthresh, "no congestion event for the lost probes")
             assertTrue(c.stats.cwnd > 12_000L, "the window grew with the transfer: ${c.stats.cwnd}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun blackHoleFallsBackTo1200AndPauses60s() {
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             p.linkMtuToServer = 1280
@@ -310,14 +298,12 @@ class PmtudTest {
             )
             assertTrue(p.now - fellAt >= 60.seconds, "resumed after ${p.now - fellAt}")
             assertTrue(c.ccMtuUpdatesForTest.contains(1200), "the congestion controller learned the new MTU: ${c.ccMtuUpdatesForTest}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun researchAfter600s() {
         val (p, c) = pair(linkMtu = 1300, clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest })
             val mtu = c.stats.pathMtu
@@ -334,38 +320,32 @@ class PmtudTest {
                 },
                 "and found more: ${c.stats.pathMtu}",
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun noProbesWithoutDf() {
         val (p, c) = pair(caps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             transfer(p, c)
             p.runUntil(5.seconds) { false }
             assertTrue(probesTo(p).isEmpty())
             assertEquals(1200, c.stats.pathMtu)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun peerMaxUdpPayloadCapsSearch() {
         val (p, c) = pair(serverQuic = quicConfig { maxUdpPayloadSize = 1300 })
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(30.seconds) { c.pmtudSearchDoneForTest })
             assertTrue(c.stats.pathMtu in 1280..1300, "mtu ${c.stats.pathMtu}")
             assertTrue(probesTo(p).all { it <= 1300 })
-        } finally {
-            p.close()
         }
     }
 
     @Test fun mtuUpdatedEventAndStats() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             val updates = p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>()
@@ -379,38 +359,32 @@ class PmtudTest {
                 },
                 "monotonic during the search: ${updates.map { it.mtu }}",
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun ccNotifiedOnMtuChange() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             assertEquals(1452, c.ccMtuUpdatesForTest.last())
-        } finally {
-            p.close()
         }
     }
 
     @Test fun pmtudOffKeeps1200() {
         val (p, c) = pair(clientQuic = quicConfig { pmtud = false })
-        try {
+        p.use { _ ->
             transfer(p, c)
             p.runUntil(5.seconds) { false }
             assertTrue(probesTo(p).isEmpty())
             assertEquals(1200, c.stats.pathMtu)
-        } finally {
-            p.close()
         }
     }
 
     /** A black-hole pause left on a path that is no longer active must not keep the connection's deadline in the past (a timer loop that never sleeps). */
     @Test fun pauseOnFormerPathDoesNotStallTimers() {
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             p.linkMtuToServer = 1280
@@ -451,15 +425,13 @@ class PmtudTest {
                 c.nextTimeoutOrNever() > p.now,
                 "deadline ${c.nextTimeoutOrNever()} is not in the past at ${p.now} (a stale PMTUD pause on the former path)",
             )
-        } finally {
-            p.close()
         }
     }
 
     /** A burst of lost full-size data packets on an otherwise healthy link is congestion, not a black hole: the ACK that declares them lost also acknowledges full-size packets sent after them. */
     @Test fun congestionBurstDoesNotFallBack() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             val lostBefore = c.stats.lostPackets
@@ -483,8 +455,6 @@ class PmtudTest {
                 },
                 "no fallback to 1200: ${c.ccMtuUpdatesForTest}",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -496,7 +466,7 @@ class PmtudTest {
      */
     @Test fun stalledPeerIsNotABlackHole() {
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.pmtudSearchDoneForTest && c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             val id = c.openStream(true)
@@ -531,8 +501,6 @@ class PmtudTest {
             )
             assertEquals(1452, c.stats.pathMtu, "the late ACKs of full-size packets undo the fallback: ${c.ccMtuUpdatesForTest}")
             assertTrue(c.pmtudSearchDoneForTest, "the search result stands, no pause and no new search")
-        } finally {
-            p.close()
         }
     }
 
@@ -543,7 +511,7 @@ class PmtudTest {
      */
     @Test fun unansweredSmallPacketsAreNotABlackHole() {
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.pmtudSearchDoneForTest && c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             p.runUntil(2.seconds) { false } // the transfer's paced tail is sent and acknowledged
@@ -566,8 +534,6 @@ class PmtudTest {
             p.serverStalled = false
             assertTrue(p.runUntil(10.seconds) { c.stats.bytesInFlight == 0L })
             assertTrue(c.pmtudSearchDoneForTest, "no pause, no new search")
-        } finally {
-            p.close()
         }
     }
 
@@ -578,7 +544,7 @@ class PmtudTest {
      */
     @Test fun negative_icmpPtbIgnored() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
             val updates = p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>().size
@@ -606,8 +572,6 @@ class PmtudTest {
             assertEquals(1452, c.stats.pathMtu)
             assertEquals(updates, p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>().size, "no MTU change from injected input")
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -650,7 +614,7 @@ class PmtudTest {
         // a 1350-byte link: the probe above it is lost; a PTB reporting 1378 (payload 1350) ends it at once, and the next probe is at
         // most 1350 bytes, without the three-probe, 3 x PTO wait
         val (p, c) = pair(linkMtu = 1350, caps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             val probe = probeAbove(p, c, 1350)
             val sizesBefore = p.clientDatagramSizes.size
             val t0 = p.now
@@ -662,8 +626,6 @@ class PmtudTest {
             )
             assertTrue(p.now - t0 < c.stats.smoothedRtt * 3 + 100.milliseconds, "without waiting for the lost probe: ${p.now - t0}")
             assertTrue(p.clientDatagramSizes.drop(sizesBefore).none { it > 1350 && it != probe }, "nothing above the reported size again")
-        } finally {
-            p.close()
         }
     }
 
@@ -671,7 +633,7 @@ class PmtudTest {
         // RFC 9000 section 14.2.1: "MUST ignore an ICMP message that claims the PMTU has decreased below QUIC's smallest allowed
         // maximum datagram size": an IPv4 MTU of 1227 leaves 1199 bytes of UDP payload
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             ptb(p, c, 1227)
@@ -680,15 +642,13 @@ class PmtudTest {
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
             transfer(p, c, 50_000)
             assertEquals(1452, c.stats.pathMtu)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_ptbWithForeignCidIgnored() {
         // the quote must be one of our datagrams on that path: an off-path attacker who does not know the connection ID cannot aim one
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             ptb(p, c, 1328, quote = quoteOf(c, ByteArray(c.remoteCid.length) { 0x5a }))
@@ -697,8 +657,6 @@ class PmtudTest {
             assertEquals(0L, p.client.stats.ptbAccepted)
             assertEquals(3L, p.client.stats.ptbIgnored)
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
-        } finally {
-            p.close()
         }
     }
 
@@ -723,7 +681,7 @@ class PmtudTest {
         // size to 1200 at once; the link still carries 1452 (the PTB was forged), so the probe of 1452 that follows is acknowledged and
         // restores it, and PTBs are not processed for the next 600 s (RFC 8899 section 8: "suspend processing of PTB messages")
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             val before = mtuUpdates(p, c)
@@ -740,8 +698,6 @@ class PmtudTest {
             transfer(p, c, 50_000)
             assertEquals(1452, c.stats.pathMtu)
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -749,7 +705,7 @@ class PmtudTest {
         // an attacker who can forge valid PTBs sends one every 5 s for 1300 s: each disproved drop suspends PTB processing for 600 s,
         // so the path is at 1200 at most three times, each for the round trip of one probe
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             val before = mtuUpdates(p, c)
@@ -764,8 +720,6 @@ class PmtudTest {
             assertEquals(0, atBase, "the probe restored 1452 within 5 s every time")
             assertEquals(1452, c.stats.pathMtu)
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -774,7 +728,7 @@ class PmtudTest {
         // probe of 1452 is lost, the drop stands, and the search starts at the reported 1300 (a multiple of the 20-byte step above the
         // base: "The PL_PTB_SIZE reported in the PTB message can be used to initialize a search algorithm"), with no black-hole pause
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             assertTrue(p.runUntil(10.seconds) { !c.streams.hasStreamData() && c.stats.bytesInFlight == 0L }, "the transfer drained")
@@ -799,8 +753,6 @@ class PmtudTest {
             transfer(p, c, 50_000)
             assertTrue(c.stats.pathMtu in 1300..1320, "the search goes on from there: ${c.stats.pathMtu}")
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -845,7 +797,7 @@ class PmtudTest {
         // rests on the address and port alone (RFC 9000 section 14.2.1: validation includes "when possible, connection IDs"). It may
         // not lower the size in use (nor cap the search, see the next test)
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY // as with a server whose Source Connection ID was empty
@@ -855,8 +807,6 @@ class PmtudTest {
             assertEquals(2L, p.client.stats.ptbIgnored)
             assertEquals(1452, c.stats.pathMtu, "not lowered")
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
-        } finally {
-            p.close()
         }
     }
 
@@ -864,15 +814,13 @@ class PmtudTest {
         // zero-length IDs again, a PTB at or above the size in use: on the address and port alone it may not settle the probe in
         // flight nor cap the search (that would hold the size down until the 600 s re-search); ignored and counted
         val (p, c) = pair(linkMtu = 1500, caps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             val probe = probeAbove(p, c, 1250)
             c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY
             ptb(p, c, 1278, quote = byteArrayOf(0x43, 0x11)) // payload 1250: above the size in use, below the probe
             assertEquals(0L, p.client.stats.ptbAccepted)
             assertEquals(1L, p.client.stats.ptbIgnored)
             assertEquals(probe, c.path.pmtud!!.probeInFlightForTest, "the probe in flight is not settled by it")
-        } finally {
-            p.close()
         }
     }
 
@@ -880,7 +828,7 @@ class PmtudTest {
         // the search is replaced while a probe is in flight (new capabilities; an IP change does the same through resetForNewIp): the
         // new search did not send that probe, so its acknowledgment, which arrives afterwards, must not raise the new search's size
         val (p, c) = pair(linkMtu = 1500, caps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             val probe = probeAbove(p, c, 1200)
             assertEquals(1200, c.stats.pathMtu, "the probe is not acknowledged yet")
             c.setPathCapabilities(PathId.Initial, df)
@@ -888,8 +836,6 @@ class PmtudTest {
             val acked = p.runUntil(2.seconds) { c.stats.pathMtu > 1200 }
             assertTrue(!acked, "the old $probe-byte probe raised the new search to ${c.stats.pathMtu}")
             assertEquals(1200, c.path.pmtud!!.current)
-        } finally {
-            p.close()
         }
     }
 
@@ -898,7 +844,7 @@ class PmtudTest {
         // (new capabilities) has no DPLPMTUD and nothing keeps a larger datagram from being fragmented: back to 1200, and nothing
         // larger goes out afterwards
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             c.setPathCapabilities(PathId.Initial, IoCapabilities.Portable) // no DF
@@ -908,15 +854,13 @@ class PmtudTest {
             transfer(p, c, 100_000)
             assertTrue(p.clientDatagramSizes.drop(sizesBefore).all { it <= 1200 }, "nothing above 1200 without DF")
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_ptbWithEmptyQuoteIgnored() {
         // a message that quotes nothing of ours cannot be checked: ignored
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             ptb(p, c, 1328, quote = ByteArray(0))
@@ -924,8 +868,6 @@ class PmtudTest {
             assertEquals(0L, p.client.stats.ptbAccepted)
             assertEquals(2L, p.client.stats.ptbIgnored)
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
-        } finally {
-            p.close()
         }
     }
 
@@ -1032,7 +974,7 @@ class PmtudTest {
         // packets in flight that the link now drops are no black hole (they were sent before the drop), so no pause, and the search
         // climbs back to the link's size
         val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             assertTrue(p.runUntil(10.seconds) { !c.streams.hasStreamData() && c.stats.bytesInFlight == 0L }, "the transfer drained")
@@ -1049,15 +991,13 @@ class PmtudTest {
             assertTrue(!c.path.pmtud!!.pausedForTest, "no pause")
             assertTrue(p.runUntil(10.seconds) { c.stats.pathMtu in 1300..1320 }, "the search reached the link: ${mtuChanges(p, c, before)}")
             assertEquals(null, p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_ptbFloodIsRateLimited() {
         // 10 000 valid-looking PTB messages in one second: at most 64 are looked at, the rest only counted
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             val start = p.now
@@ -1069,15 +1009,13 @@ class PmtudTest {
             assertTrue(s.ptbAccepted + s.ptbIgnored == 10_000L, "$s")
             assertTrue(s.ptbAccepted <= 64, "at most 64 a second: ${s.ptbAccepted}")
             assertTrue(s.ptbIgnored >= 9_936, "${s.ptbIgnored}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_ptbForNonActivePathIgnored() {
         // a PTB about a datagram to another address, or one that arrived on another socket, says nothing about the active path
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             ptb(p, c, 1328, to = InetSocketAddress("10.0.0.99", 443))
@@ -1085,21 +1023,17 @@ class PmtudTest {
             assertEquals(0L, p.client.stats.ptbAccepted)
             assertEquals(2L, p.client.stats.ptbIgnored)
             assertEquals(0, c.path.pmtud!!.confirmingForTest)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_ptbIgnoredWhenHintsAreOff() {
         val (p, c) = pair(clientQuic = quicConfig { pmtudIcmpHints = false })
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
             ptb(p, c, 1328)
             assertEquals(0L, p.client.stats.ptbAccepted)
             assertEquals(1L, p.client.stats.ptbIgnored)
-        } finally {
-            p.close()
         }
     }
 
@@ -1107,7 +1041,7 @@ class PmtudTest {
         // the kernel refused the probe as larger than the MTU it knows (EMSGSIZE): that size is settled at once, like a probe lost
         // three times, and the next probe is smaller
         val (p, c) = pair(linkMtu = 1350, caps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             val probe = probeAbove(p, c, 1350)
             val sizesBefore = p.clientDatagramSizes.size
             val t0 = p.now
@@ -1118,8 +1052,6 @@ class PmtudTest {
             )
             assertTrue(p.now - t0 < c.stats.smoothedRtt * 3 + 100.milliseconds, "without waiting: ${p.now - t0}")
             assertTrue(p.clientDatagramSizes.drop(sizesBefore).none { it >= probe }, "the refused size is not tried again")
-        } finally {
-            p.close()
         }
     }
 }

@@ -105,7 +105,7 @@ class RetryTest {
                 if (isRetry(b)) retries++
                 true
             }
-            try {
+            p.use { _ ->
                 val c = p.connect()
                 assertTrue(p.confirmed(c), "handshake after Retry with $crypto: ${p.closed(c)}")
                 assertTrue(retries in 1..2, "one Retry per Initial datagram of the first flight (the server is stateless): $retries")
@@ -114,8 +114,6 @@ class RetryTest {
                 assertFalse(handshakeBeforeValidated)
                 assertNull(p.closed(c))
                 assertNull(p.closed(s))
-            } finally {
-                p.close()
             }
         }
     }
@@ -130,7 +128,7 @@ class RetryTest {
             if (b[0].toInt() and 0x80 == 0) shortDcids += b.copyOfRange(1, 9)
             true
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "handshake: ${p.closed(c)}")
             val s = p.server.connections().single()
@@ -146,8 +144,6 @@ class RetryTest {
                     "every 1-RTT packet goes to the server's Initial SCID, never back to the Retry SCID",
                 )
             }
-        } finally {
-            p.close()
         }
     }
 
@@ -162,13 +158,11 @@ class RetryTest {
                 }
                 true
             } // the first Retry arrives with a bad tag; the client's PTO repeats the Initial and the second Retry is genuine
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             assertEquals(1, forged)
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -177,7 +171,7 @@ class RetryTest {
         for (forge in listOf(true, false)) {
             val p = EndpointPair()
             p.serverStalled = true // no server packet before the Retry
-            try {
+            p.use { _ ->
                 val c = p.connect()
                 p.step()
                 val b = PacketBuffer.allocate(100)
@@ -200,8 +194,6 @@ class RetryTest {
                     b.close()
                 }
                 assertEquals(!forge, c.retryReceivedForTest, if (forge) "a forged tag is dropped" else "the control is taken")
-            } finally {
-                p.close()
             }
         }
     }
@@ -209,7 +201,7 @@ class RetryTest {
     @Test fun negative_retryEmptyToken() {
         val p = EndpointPair()
         p.serverStalled = true // no server packet before the Retry: a client that processed one ignores any Retry anyway
-        try {
+        p.use { _ ->
             val c = p.connect()
             p.step()
             val b = PacketBuffer.allocate(100)
@@ -231,8 +223,6 @@ class RetryTest {
             }
             assertFalse(c.retryReceivedForTest, "a Retry with an empty token is dropped (RFC 9000 section 17.2.5.2)")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -241,7 +231,7 @@ class RetryTest {
         for (retryVersion in listOf(VersionProfile.V2, VersionProfile.V1)) {
             val p = EndpointPair()
             p.serverStalled = true // no server packet before the Retry
-            try {
+            p.use { _ ->
                 val c = p.connect(io.kuicksilver.quic.quicConfig { versions = listOf(VersionProfile.V1, VersionProfile.V2) })
                 p.step()
                 val b = PacketBuffer.allocate(100)
@@ -263,8 +253,6 @@ class RetryTest {
                 }
                 // the v1 Retry is the control: the same packet in the Initial's version is taken
                 assertEquals(retryVersion == VersionProfile.V1, c.retryReceivedForTest, "Retry in $retryVersion answering a v1 Initial")
-            } finally {
-                p.close()
             }
         }
     }
@@ -276,7 +264,7 @@ class RetryTest {
     @Test fun negative_retryOversizedTokenDropped() {
         for ((size, taken) in listOf(1150 to false, 1060 to false, PacketReceiver.MAX_RETRY_TOKEN to true)) {
             val p = EndpointPair()
-            try {
+            p.use { _ ->
                 val c = p.connect() // the Retry arrives before any server packet
                 val b = PacketBuffer.allocate(1500)
                 try {
@@ -299,8 +287,6 @@ class RetryTest {
                 repeat(3) { p.step() } // the next Initials carry the token (or none): polling must not throw
                 // a forged Retry the server never sent ends in a transport-parameter mismatch; a dropped one changes nothing
                 if (!taken) assertNull(p.closed(c), "the client keeps its handshake going after a $size-byte Retry token")
-            } finally {
-                p.close()
             }
         }
     }
@@ -308,7 +294,7 @@ class RetryTest {
     @Test fun negative_retryScidEqualsOdcid() {
         val p = EndpointPair()
         p.serverStalled = true // no server packet before the Retry: a client that processed one ignores any Retry anyway
-        try {
+        p.use { _ ->
             val c = p.connect()
             p.step()
             val b = PacketBuffer.allocate(100)
@@ -330,8 +316,6 @@ class RetryTest {
             }
             assertFalse(c.retryReceivedForTest, "SCID equal to the Initial's DCID: dropped")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -340,7 +324,7 @@ class RetryTest {
         // other server packet" (RFC 9000 section 17.2.5.2) can drop a Retry now (with the server's own SCID, a valid tag)
         val p = EndpointPair(crypto = KslQuicCrypto)
         p.filterToClient = { i, _ -> i == 0 }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil { c.anyPeerPacket })
             assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, c.state)
@@ -364,8 +348,6 @@ class RetryTest {
             assertFalse(c.retryReceivedForTest)
             p.filterToClient = { _, _ -> true }
             assertTrue(p.confirmed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -376,7 +358,7 @@ class RetryTest {
             if (isRetry(b) && dup == null) dup = b.copyOf()
             true
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil { c.retryReceivedForTest })
             val before = c.remoteCid
@@ -385,8 +367,6 @@ class RetryTest {
             p.feed(p.client, second, p.serverAddr)
             assertEquals(before, c.remoteCid, "a second Retry is ignored")
             assertTrue(p.confirmed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -412,7 +392,7 @@ class RetryTest {
                 }
                 ; true
             }
-        try {
+        p.use { _ ->
             // RFC 9000 section 8.1.2: the Initial answers our Retry (its DCID is our Retry SCID, an ID in our format) but its token
             // does not open (damaged here; a restart between the Retry and the Initial does the same): the client "will not accept
             // another Retry token", so the server closes with INVALID_TOKEN at once rather than sending a second Retry
@@ -424,8 +404,6 @@ class RetryTest {
             assertEquals(retriesAtFirstToken, p.server.stats.retriesSent, "no Retry after the Initial with the token")
             assertTrue(p.server.stats.invalidTokens >= 1)
             assertEquals(0, p.server.connectionCount, "no connection for it")
-        } finally {
-            p.close()
         }
     }
 
@@ -439,7 +417,7 @@ class RetryTest {
             }
             true
         } // the token is already older than its lifetime when the client uses it
-        try {
+        p.use { _ ->
             val c = p.connect(quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 60.seconds })
             assertTrue(
                 p.runUntil(limit = 30.seconds) {
@@ -451,8 +429,6 @@ class RetryTest {
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$r")
             assertEquals(0x0bL, r.code)
             assertEquals(0, p.server.connectionCount)
-        } finally {
-            p.close()
         }
     }
 
@@ -467,14 +443,12 @@ class RetryTest {
                 }
                 true
             } // the client's port changes before it uses the token
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil { p.closed(c) != null })
             val r = p.closed(c)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0bL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -496,7 +470,7 @@ class RetryTest {
                 }
                 true
             }
-        try {
+        p.use { _ ->
             val c1 = p.connect()
             assertTrue(p.confirmed(c1), "${p.closed(c1)}")
             val stolen = assertNotNull(token)
@@ -507,8 +481,6 @@ class RetryTest {
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0bL, r.code, "INVALID_TOKEN, not a connection with mismatching transport parameters")
             assertEquals(1, p.server.connectionCount, "no connection for a token under another DCID")
-        } finally {
-            p.close()
         }
     }
 
@@ -540,14 +512,12 @@ class RetryTest {
     @Test fun clientChecksRetrySourceConnectionId() {
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.AlwaysRetry }
         p.server.testForgeRetryScidInTp = true
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil { p.closed(c) != null })
             val r = p.closed(c)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x08L, r.code, "TRANSPORT_PARAMETER_ERROR")
-        } finally {
-            p.close()
         }
     }
 
@@ -574,7 +544,7 @@ class RetryTest {
                 }
                 ; true
             }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             val s = p.server.connections().single()
@@ -583,8 +553,6 @@ class RetryTest {
             p.now += 11.seconds
             assertEquals(s, p.feed(p.server, withToken, p.clientAddr), "and still after the token's lifetime")
             assertEquals(0, p.stateless(p.server).size, "no INVALID_TOKEN close")
-        } finally {
-            p.close()
         }
     }
 
@@ -615,26 +583,22 @@ class RetryTest {
             }
             true
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             assertTrue(before.isNotEmpty() && after.isNotEmpty(), "Initials before $before and after $after the Retry")
             assertTrue(after.first() > before.max(), "packet numbers go on after the Retry: before $before, after $after")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun retryNotCountedAsCongestion() {
         val p = EndpointPair { admission = ConnectionAdmission.AlwaysRetry }
-        try {
+        p.use { _ ->
             val c = p.connect()
             val cwnd0 = c.stats.cwnd
             assertTrue(p.runUntil { c.retryReceivedForTest })
             assertEquals(cwnd0, c.stats.cwnd, "RFC 9002 section 6.3: discarding the first flight is not a loss")
             assertEquals(0L, c.stats.lostPackets)
-        } finally {
-            p.close()
         }
     }
 
@@ -647,14 +611,12 @@ class RetryTest {
             }
             true
         }
-        try {
+        p.use { _ ->
             val c = p.connect(quic = io.kuicksilver.quic.quicConfig { })
             c.initialToken = ByteArray(50) { 0x03 } // type 0x03: neither a Retry nor a NEW_TOKEN token of ours
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             assertTrue(s.addressValidatedByHandshakeForTest, "the address was validated by the Handshake packet, not by the token")
-        } finally {
-            p.close()
         }
     }
 }

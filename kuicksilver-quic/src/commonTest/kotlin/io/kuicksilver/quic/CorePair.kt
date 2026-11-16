@@ -101,7 +101,7 @@ internal class CorePair(
     /** The endpoints' stateless reset keys (owned by the test, as an endpoint owns its own); null: random tokens. */
     clientResetKey: io.kuicksilver.tls.ResetKey? = null,
     private val serverResetKey: io.kuicksilver.tls.ResetKey? = null,
-) {
+) : AutoCloseable {
     private val buffers = BufferWatch.opened()
     var now: TimeMark = TimeMark(1_000_000_000L)
     val random = Random(seed)
@@ -280,9 +280,11 @@ internal class CorePair(
      * Frees the cores' native resources (TLS sessions, keys) too: a connection still open at the end would keep them.
      * Then checks that nothing leaked: every object the cores got from the crypto provider is closed (on the JVM and
      * Native alike, also for [NullCryptoProvider], whose objects stand for native ones), and no [PacketBuffer] the
-     * test allocated while the pair was open is left open ([BufferWatch]). A second close checks nothing more.
+     * test allocated while the pair was open is left open ([BufferWatch]). A second close checks nothing more. Close it
+     * with `use { }`, so that a failure of the test is not hidden by the leak it left: a leak found then is added to it
+     * as suppressed.
      */
-    fun close() {
+    override fun close() {
         if (closed) return
         closed = true
         batch.close()
@@ -296,20 +298,30 @@ internal class CorePair(
     private var closed = false
 }
 
+/** The thread running the caller (a key compared for identity only). */
+internal expect fun fixtureThread(): Any
+
 /**
  * The [PacketBuffer]s a test allocates on a thread while a fixture (CorePair, EndpointPair) is open are all closed when
  * it closes: the thread's count after its close is the count before it was built. Judged for a fixture during whose
  * life no other fixture was built or closed (fixtures left open by earlier tests do not count: they are not used); when
  * two overlap, what each holds at the other's close cannot be told apart, and only their crypto objects are judged
- * ([LeakTrackingCrypto]). The count is per thread ([packetBuffersOpenOnThisThread]): a fixture is built and closed on one
- * thread, as the sans-IO tests do.
+ * ([LeakTrackingCrypto]). The count is per thread ([packetBuffersOpenOnThisThread]): a fixture closed on another thread
+ * than the one that built it fails its close, saying so (the counts of two threads cannot be compared).
  */
 internal object BufferWatch {
     private var events = 0L
     private var warm = false
 
+    /** What [closed] compares: the fixture's place among the builds and closes, the count, the thread. */
+    class Opened(
+        val event: Long,
+        val buffers: Long,
+        val thread: Any,
+    )
+
     /** Called first in a fixture's construction: what [closed] compares. */
-    fun opened(): Pair<Long, Long> {
+    fun opened(): Opened {
         if (!warm) {
             warm = true
             // what a process makes once and keeps (a core's shared scratch buffer) is made before the first count
@@ -324,18 +336,24 @@ internal object BufferWatch {
                     null,
                 ).release()
         }
-        return ++events to packetBuffersOpenOnThisThread()
+        return Opened(++events, packetBuffersOpenOnThisThread(), fixtureThread())
     }
 
     /** Called once the fixture freed all it holds: fails when buffers allocated meanwhile are still open. */
     fun closed(
         what: String,
-        opened: Pair<Long, Long>,
+        opened: Opened,
     ) {
-        val alone = events == opened.first
+        val alone = events == opened.event
         events++
+        if (fixtureThread() != opened.thread) {
+            throw AssertionError(
+                "$what: closed on another thread than the one that built it; its PacketBuffers are counted per thread, " +
+                    "so build and close it on one thread",
+            )
+        }
         if (!alone) return
-        val left = packetBuffersOpenOnThisThread() - opened.second
+        val left = packetBuffersOpenOnThisThread() - opened.buffers
         if (left != 0L) throw AssertionError("$what: $left PacketBuffer(s) left open on this thread since the fixture was built")
     }
 }

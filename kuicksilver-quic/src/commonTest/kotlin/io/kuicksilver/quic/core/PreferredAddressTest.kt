@@ -49,7 +49,7 @@ class PreferredAddressTest {
 
     @Test fun clientMovesAfterConfirmationAndValidation() {
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect()
             var early = false
             var nonProbingEarly = false
@@ -75,8 +75,6 @@ class PreferredAddressTest {
                 "data flows on the preferred path",
             )
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -89,22 +87,20 @@ class PreferredAddressTest {
      */
     @Test fun negative_thePreferredPathGetsTheSocketsDplpmtudAndEcn() {
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect()
             c.setPathCapabilities(PathId.Initial, io.kuicksilver.quic.IoCapabilities(true, true, 1, false, true, 1))
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred address is probed")
             val pp = pathTo(c, v4)!!
             assertTrue(pp.pmtud != null, "DPLPMTUD on the preferred path")
             assertEquals(io.kuicksilver.quic.EcnState.Testing, pp.ecn.state, "ECN validation on the preferred path")
-        } finally {
-            p.close()
         }
     }
 
     /** The same for the preferred address probed again from the socket of an application's migration (RFC 9000 section 9.6.3). */
     @Test fun negative_thePreferredPathFromAMigrationGetsItsSocketsDplpmtudAndEcn() {
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             p.dropToPreferred = true // the first probe stays pending
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null && c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
@@ -117,8 +113,6 @@ class PreferredAddressTest {
             assertTrue(carried != null, "the preferred address is probed from the new socket")
             assertTrue(carried.pmtud != null, "DPLPMTUD on the preferred path of the new socket")
             assertEquals(io.kuicksilver.quic.EcnState.Testing, carried.ecn.state)
-        } finally {
-            p.close()
         }
     }
 
@@ -134,7 +128,7 @@ class PreferredAddressTest {
             it.setPathCapabilities(PathId.Initial, full)
             it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, io.kuicksilver.quic.IoCapabilities.Portable)
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             c.setPathCapabilities(PathId.Initial, full)
             assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
@@ -143,8 +137,6 @@ class PreferredAddressTest {
             assertNull(there.pmtud, "no DPLPMTUD on a socket without DF")
             assertEquals(io.kuicksilver.quic.EcnState.Disabled, there.ecn.state, "no ECN on a socket that does not mark")
             assertTrue(s.paths.all.any { it.socket == PathId.Initial } || s.paths.active === there)
-        } finally {
-            p.close()
         }
     }
 
@@ -162,7 +154,7 @@ class PreferredAddressTest {
             it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, full, v6 = false)
             it.setSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
         }
-        try {
+        p.use { _ ->
             val c = p.connect()
             c.setPathCapabilities(PathId.Initial, full)
             assertTrue(p.runUntil(10.seconds) { c.movedToPreferred }, "the client moved")
@@ -172,8 +164,6 @@ class PreferredAddressTest {
             s.updateSocketCapabilities(io.kuicksilver.quic.PREFERRED_SOCKET, portable, v6 = true)
             assertTrue(there.pmtud != null, "a loss of the IPv6 socket leaves the IPv4 path alone")
             assertTrue(there.ecn.state != io.kuicksilver.quic.EcnState.Disabled, "ECN on the IPv4 preferred socket")
-        } finally {
-            p.close()
         }
     }
 
@@ -185,7 +175,7 @@ class PreferredAddressTest {
      */
     @Test fun negative_theMoveToThePreferredAddressNeverTakesTheIdUsedTowardTheOriginalOne() {
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             p.dropToPreferred = true // the probe goes out, its answer is the test's
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4)?.let { it.challenge != 0L } == true })
@@ -202,8 +192,6 @@ class PreferredAddressTest {
                     .ConnectionId(ByteArray(8) { 0x71 }),
                 c.remoteCid,
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -234,7 +222,7 @@ class PreferredAddressTest {
         p.clientSocketSources[newSocket] = newSource
         p.clientListens += newSource
         p.dropToPreferred = true // the probes go out, the carried one's answer is the test's
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
             val id = c.addPath(p.serverAddr, p.now, newSocket)
@@ -260,8 +248,6 @@ class PreferredAddressTest {
                     .ConnectionId(ByteArray(8) { 0x71 }),
                 c.remoteCid,
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -272,7 +258,7 @@ class PreferredAddressTest {
      */
     @Test fun negative_aCarriedProbeAnsweredAfterARetirePriorToWaitsForAnUnusedId() {
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             p.dropToPreferred = true
             val c = p.connect()
             assertTrue(
@@ -298,22 +284,18 @@ class PreferredAddressTest {
             assertTrue(c.preferredMoveWaiting === carried, "the move waits for an ID")
             newConnectionId(c, 21, 0, 0x71)
             assertTrue(c.paths.active.isRemote(v4) && c.remoteCid != inUse, "moves once an unused ID arrives")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun sameFamilyOnly() {
         // an IPv4 connection and only an IPv6 preferred address: the client stays where it is
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(null, InetSocketAddress("fd00::3", 4433)))
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             p.runUntil(3.seconds) { false }
             assertEquals(1, c.pathCountForTest)
             assertTrue(p.changes(c).isEmpty())
-        } finally {
-            p.close()
         }
     }
 
@@ -321,7 +303,7 @@ class PreferredAddressTest {
         // RFC 9000 section 9.6.1: a client that cannot validate the preferred address MUST go on sending to the original one
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
         p.dropToPreferred = true
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             assertTrue(
@@ -336,8 +318,6 @@ class PreferredAddressTest {
             c.writeStream(id, ByteArray(5000), 0, 5000, true)
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the connection lives on")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -354,14 +334,12 @@ class PreferredAddressTest {
                     serverPreferred = PreferredAddress(target, null),
                     serverAddr = InetSocketAddress("203.0.113.2", 443),
                 )
-            try {
+            p.use { _ ->
                 val c = p.connect()
                 assertTrue(p.confirmed(c), "$target: ${p.closed(c)}")
                 p.runUntil(2.seconds) { false }
                 assertEquals(1, c.pathCountForTest, "$target: not followed")
                 assertTrue(p.toServerSockets.none { it == io.kuicksilver.quic.PREFERRED_SOCKET }, "$target: nothing sent there")
-            } finally {
-                p.close()
             }
         }
     }
@@ -412,14 +390,12 @@ class PreferredAddressTest {
             InetSocketAddress("0.0.0.0", 4433),
         )) {
             val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(target, null, check = false))
-            try {
+            p.use { _ ->
                 val c = p.connect()
                 assertTrue(p.confirmed(c), "$target: ${p.closed(c)}")
                 p.runUntil(2.seconds) { false }
                 assertEquals(1, c.pathCountForTest, "$target: not followed")
                 assertTrue(p.changes(c).isEmpty(), target.toString())
-            } finally {
-                p.close()
             }
         }
     }
@@ -432,14 +408,12 @@ class PreferredAddressTest {
                 crypto = KslQuicCrypto,
                 serverPreferred = PreferredAddress(InetSocketAddress("10.0.0.3", 123), null, check = false),
             )
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             p.runUntil(2.seconds) { false }
             assertEquals(1, c.pathCountForTest)
             assertTrue(p.toServerSockets.none { it == io.kuicksilver.quic.PREFERRED_SOCKET })
-        } finally {
-            p.close()
         }
     }
 
@@ -447,7 +421,7 @@ class PreferredAddressTest {
         // RFC 9000 sections 9.6.2 and 21.5.3: until the preferred path is validated only probing packets go there, so an
         // unvalidated preferred address (one the server's attacker chose) gets nothing an application sent
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             val id = c.openStream(true)
@@ -462,8 +436,6 @@ class PreferredAddressTest {
                 },
             )
             assertTrue(!violated)
-        } finally {
-            p.close()
         }
     }
 
@@ -475,7 +447,7 @@ class PreferredAddressTest {
                 serverPreferred = PreferredAddress(v4, null),
                 serverQuic = quicConfig { allowMigration = false },
             )
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { c.state == io.kuicksilver.quic.ConnectionState.Confirmed })
             assertTrue(c.peerTp!!.disableActiveMigration)
@@ -485,8 +457,6 @@ class PreferredAddressTest {
             assertTrue(p.runUntil(10.seconds) { p.changes(c).any { it.reason == PathChangeReason.PreferredAddress } }, "${p.events[c]}")
             val id = c.addPath(InetSocketAddress("10.0.0.3", 4433), p.now, PathId.Initial).also { c.closePath(it) }
             assertTrue(id != PathId.Initial, "after the move addPath is allowed")
-        } finally {
-            p.close()
         }
     }
 
@@ -495,7 +465,7 @@ class PreferredAddressTest {
         // closed and not tried again (ngtcp2 refuses the application instead)
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
         p.dropToPreferred = true
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
             val mine = InetSocketAddress("10.0.0.2", 443)
@@ -505,8 +475,6 @@ class PreferredAddressTest {
             assertNull(pathTo(c, v4), "and not tried again")
             assertTrue(p.changes(c).none { it.reason == PathChangeReason.PreferredAddress })
             c.closePath(id)
-        } finally {
-            p.close()
         }
     }
 
@@ -524,7 +492,7 @@ class PreferredAddressTest {
         p.clientSocketSources[newSocket] = newSource
         p.clientListens += newSource
         p.dropToPreferred = true // the first probe, from the old socket, gets no answer
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
             val id = c.addPath(p.serverAddr, p.now, newSocket)
@@ -549,8 +517,6 @@ class PreferredAddressTest {
             c.writeStream(sid, ByteArray(5000), 0, 5000, true)
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "data flows there")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -562,7 +528,7 @@ class PreferredAddressTest {
         p.clientSocketSources[newSocket] = newSource
         p.clientListens += newSource
         p.dropToPreferred = true
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { pathTo(c, v4) != null }, "the preferred probe started")
             val id = c.addPath(p.serverAddr, p.now, newSocket)
@@ -580,8 +546,6 @@ class PreferredAddressTest {
             c.writeStream(sid, ByteArray(5000), 0, 5000, true)
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "data flows there")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -593,7 +557,7 @@ class PreferredAddressTest {
         // was dropped as an unknown packet
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
         p.dropToPreferred = true
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             assertTrue(p.runUntil(5.seconds) { pathTo(c, v4)?.state == PathState.Validating }, "the preferred probe started")
@@ -611,8 +575,6 @@ class PreferredAddressTest {
             p.client.processPending(p.now)
             p.drain(c)
             assertIs<QuicException.ConnectionLost.StatelessReset>(p.closed(c), "${p.events[c]}")
-        } finally {
-            p.close()
         }
     }
 
@@ -672,7 +634,7 @@ class PreferredAddressTest {
                 serverQuic = io.kuicksilver.quic.quicConfig { this.qlog = sink },
                 serverPreferred = PreferredAddress(v4, null),
             )
-        try {
+        p.use { _ ->
             val (c, s, held) = moveHoldingOriginal(p)
             // the IDs kept from Stateless Resets on the original address: short-header ones only, the client's one there marked
             val cidLength = s.config.connectionIdLength
@@ -698,8 +660,6 @@ class PreferredAddressTest {
             assertTrue(s.paths.all.none { it.socket == PathId.Initial }, "no path on the original socket: ${s.paths.all}")
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the data arrives")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -709,7 +669,7 @@ class PreferredAddressTest {
         // connection left comes after that check. Null crypto (header protection the identity, no AEAD over the header) lets the test
         // set the bits the client "sent"
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p)
             val d = held.first().copyOf()
             d[0] = (d[0].toInt() or 0x08).toByte()
@@ -718,8 +678,6 @@ class PreferredAddressTest {
             val r = p.closed(s)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "${p.events[s]}")
             assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, r.code, "$r")
-        } finally {
-            p.close()
         }
     }
 
@@ -729,7 +687,7 @@ class PreferredAddressTest {
         // unknown short header, which a Stateless Reset may answer (a MAY, section 10.3). From the original address it would be one
         // more datagram the moved connection makes leave there: none is sent
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val (c, _, held) = moveHoldingOriginal(p)
             val seq0 = held.first().copyOfRange(1, 1 + c.peerTp!!.preferredAddressCid!!.length)
             val seq0Id =
@@ -743,8 +701,6 @@ class PreferredAddressTest {
             p.runUntil(1.seconds) { false }
             assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -752,7 +708,7 @@ class PreferredAddressTest {
         // as above, for the other way an ID stops routing: the moved connection is gone (closed and removed), its IDs with it. A
         // client packet delayed on the original address after that gets no Stateless Reset from there either
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p)
             s.close(0, "", p.now)
             p.remove(p.server, s)
@@ -765,8 +721,6 @@ class PreferredAddressTest {
             assertTrue(s.leftAddressToken > 0L)
             p.runUntil(1.seconds) { false }
             assertEquals(0, p.serverSentFrom.drop(sentBefore).count { it == p.serverAddr }, "nothing leaves the original address")
-        } finally {
-            p.close()
         }
     }
 
@@ -787,7 +741,7 @@ class PreferredAddressTest {
             EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null)) {
                 admission = ConnectionAdmission.AlwaysRetry
             }
-        try {
+        p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p)
             val oldPathId =
                 io.kuicksilver.quic.wire
@@ -799,8 +753,6 @@ class PreferredAddressTest {
             p.remove(p.server, s)
             assertTrue(noResetFor(p, held), "no Stateless Reset queued")
             assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
-        } finally {
-            p.close()
         }
     }
 
@@ -808,7 +760,7 @@ class PreferredAddressTest {
         // the IDs a moved connection leaves behind are kept for its idle timeout from when they leave, by the endpoint's clock: the
         // connection's own clock stopped at its last event, which may lie well before its removal
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p)
             val ttl = s.timers.effectiveIdle(s.config.maxIdleTimeout, s.peerIdleMs, s.pto())
             val coreNow = s.now
@@ -818,8 +770,6 @@ class PreferredAddressTest {
             p.remove(p.server, s)
             p.now = coreNow + ttl + 5.seconds // past the connection's clock + ttl, before the endpoint's
             assertTrue(noResetFor(p, held), "still remembered")
-        } finally {
-            p.close()
         }
     }
 
@@ -827,7 +777,7 @@ class PreferredAddressTest {
         // neither side sets an idle timeout (the connection may last for ever): an ID is kept max(3 x PTO, 30 s), then forgotten
         val none = io.kuicksilver.quic.quicConfig { maxIdleTimeout = kotlin.time.Duration.ZERO }
         val p = EndpointPair(crypto = KslQuicCrypto, serverQuic = none, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val (_, s, held) = moveHoldingOriginal(p, none)
             assertTrue(!s.timers.effectiveIdle(s.config.maxIdleTimeout, s.peerIdleMs, s.pto()).isFinite(), "no idle timeout")
             val keep = maxOf(s.pto() * 3, 30.seconds)
@@ -839,8 +789,6 @@ class PreferredAddressTest {
             assertTrue(noResetFor(p, held), "kept until the fallback ends")
             p.now = removedAt + keep
             assertTrue(!noResetFor(p, held), "forgotten after it: an unknown ID again")
-        } finally {
-            p.close()
         }
     }
 
@@ -849,7 +797,7 @@ class PreferredAddressTest {
         // path's first; the ID it carried is the one in use there (what a later move to the preferred address leaves behind as the
         // client's ID on the original address), not the one of the path it left
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
             assertTrue(p.confirmed(c))
             assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
@@ -862,8 +810,6 @@ class PreferredAddressTest {
             s.onPathPacket(PathId.Initial, moved, s.largestNonProbingPn + 1, nonProbing = true, datagramBytes = 1200)
             assertTrue(s.path.isRemote(moved), "migrated")
             assertEquals(other, s.activeDcidSeq, "the ID of the packet that moved it")
-        } finally {
-            p.close()
         }
     }
 
@@ -873,7 +819,7 @@ class PreferredAddressTest {
         // original address since (a client whose own validation of the preferred address failed carries on there, section 9.6.1)
         // makes that packet stale, and the move with it: the server must stay where the client is, not drop its packets there
         val p = EndpointPair(serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect(io.kuicksilver.quic.quicConfig { followPreferredAddress = false })
             assertTrue(p.confirmed(c))
             assertTrue(p.runUntil(1.seconds) { c.stats.bytesInFlight == 0L })
@@ -896,8 +842,6 @@ class PreferredAddressTest {
             assertTrue(!s.leftOriginalAddress)
             // the ID of the client's the path reserved was sent there: retired (sections 5.1.2, 9.5), not kept by a path not in use
             assertNull(pp.peerCid, "the reserved ID is given back")
-        } finally {
-            p.close()
         }
     }
 
@@ -905,7 +849,7 @@ class PreferredAddressTest {
         // RFC 9000 section 9.6.2: "The server SHOULD drop newer packets for this connection that are received on the old IP address";
         // one with a new largest packet number used to move the connection back there, a migration to an address the client gave up
         val p = EndpointPair(crypto = KslQuicCrypto, serverPreferred = PreferredAddress(v4, null))
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(10.seconds) { movedServer(p) != null }, "the server moved to its preferred address")
             val s = movedServer(p)!!
@@ -932,8 +876,6 @@ class PreferredAddressTest {
             assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.path.socket, "the connection stays on the preferred address")
             assertTrue(p.runUntil(5.seconds) { c.stats.bytesInFlight == 0L && !c.streams.hasStreamData() }, "the data arrives again")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 }

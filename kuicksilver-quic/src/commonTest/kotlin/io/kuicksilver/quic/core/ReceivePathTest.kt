@@ -71,7 +71,7 @@ class ReceivePathTest {
                     }
                 }
             }
-        try {
+        p.use { _ ->
             assertTrue(
                 p.runUntil {
                     maxBuffered = maxOf(maxBuffered, p.client.stats.undecryptableBuffered)
@@ -83,8 +83,6 @@ class ReceivePathTest {
             assertTrue(maxBuffered >= 1, "Handshake packets were buffered until the keys arrived")
             assertEquals(0L, p.client.stats.datagramsDropped, "dropped")
             assertEquals(0L, p.client.stats.lostPackets, "lost")
-        } finally {
-            p.close()
         }
     }
 
@@ -116,7 +114,7 @@ class ReceivePathTest {
                 buf.close()
             }
         }
-        try {
+        p.use { _ ->
             p.runUntil(limit = 300.milliseconds) { held != null }
             val d = held!!
             val s = p.server!!
@@ -158,8 +156,6 @@ class ReceivePathTest {
                 s.stats.packetsReceived - before + held,
                 "the packet with another DCID is skipped, the rest processed (or held: $held)",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -179,7 +175,7 @@ class ReceivePathTest {
             )
         for ((frame, expected) in cases) {
             val p = CorePair()
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake())
                 p.client.testInjectFrames += 3 to frame
                 p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
@@ -187,8 +183,6 @@ class ReceivePathTest {
                 assertIs<QuicException.ConnectionLost.TransportClosed>(r)
                 assertEquals(expected.first, r.code, "error code for frame 0x${frame[0].toString(16)}")
                 assertEquals(expected.second, r.frameType, "Frame Type for frame 0x${frame[0].toString(16)}")
-            } finally {
-                p.close()
             }
         }
     }
@@ -222,7 +216,7 @@ class ReceivePathTest {
                     }
                 }
             }
-        try {
+        p.use { _ ->
             assertTrue(
                 p.runUntil {
                     maxEct0 =
@@ -239,14 +233,12 @@ class ReceivePathTest {
                 "client=${p.closedReason(p.clientEvents)}",
             )
             assertTrue(maxEct0 >= 1, "the replayed Handshake packet counted as ECT(0): $maxEct0")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun undecryptableBufferCap32() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             val junk = ByteArray(1200) { 0x5a }
             junk[0] = 0xe0.toByte()
             junk[1] = 0
@@ -270,38 +262,32 @@ class ReceivePathTest {
             }
             assertEquals(32, p.client.stats.undecryptableBuffered)
             assertEquals(1L, p.client.stats.datagramsDropped)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun initialKeysDiscardedOnFirstHandshakePacket() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil { p.client.hasHandshakeKeys })
             p.runUntil(limit = 50.milliseconds) { false }
             assertFalse(p.client.hasInitialKeys, "client drops Initial keys after sending its first Handshake packet")
             assertFalse(p.server!!.hasInitialKeys, "server drops them after receiving one")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun handshakeKeysDiscardedAfterWholePacket() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(p.runUntil { p.client.state == ConnectionState.Confirmed })
             assertFalse(p.client.hasHandshakeKeys)
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_handshakeDoneFromClient() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectHandshakeDone = true
             p.runUntil(limit = 200.milliseconds) {
@@ -311,8 +297,6 @@ class ReceivePathTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0aL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -323,7 +307,7 @@ class ReceivePathTest {
             if (!isLong(b)) captured += b
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(p.runUntil { captured.isNotEmpty() })
             val dup = captured.first()
@@ -346,14 +330,12 @@ class ReceivePathTest {
             assertEquals(before, p.client.stats.packetsReceived, "a replayed packet is discarded after AEAD")
             assertEquals(1L, p.client.stats.duplicatesDropped)
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun datagramFrameWithoutSupportIsProtocolViolation() {
         val p = CorePair(serverQuic = io.kuicksilver.quic.quicConfig { maxDatagramFrameSize = 0 })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectDatagramFrame =
                 true
@@ -361,8 +343,6 @@ class ReceivePathTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0aL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -390,12 +370,10 @@ class ReceivePathTest {
                 if (!isLong(b)) cleared += (b[0].toInt() and 0x40 == 0)
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             traffic(p, 40)
             assertTrue(cleared.size > 20 && cleared.none { it }, "the server did not advertise grease_quic_bit: $cleared")
-        } finally {
-            p.close()
         }
         val cleared2 = ArrayList<Boolean>()
         val q = CorePair(crypto = ksl)
@@ -404,12 +382,10 @@ class ReceivePathTest {
                 if (!isLong(b)) cleared2 += (b[0].toInt() and 0x40 == 0)
                 true
             }
-        try {
+        q.use { _ ->
             assertTrue(q.handshake())
             traffic(q, 40)
             assertTrue(cleared2.any { it } && cleared2.any { !it }, "random fixed bit when advertised: $cleared2")
-        } finally {
-            q.close()
         }
     }
 
@@ -430,7 +406,7 @@ class ReceivePathTest {
             if (!isLong(b)) toClient += b[0].toInt() and 0x20 != 0
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val id = p.client.openStream(true)
             var sent = 0
@@ -443,8 +419,6 @@ class ReceivePathTest {
             }
             assertTrue(toServer.size > 20 && toServer.any { it } && toServer.any { !it }, "client: $toServer")
             assertTrue(toClient.size > 10 && toClient.any { it } && toClient.any { !it }, "server: $toClient")
-        } finally {
-            p.close()
         }
     }
 
@@ -490,7 +464,7 @@ class ReceivePathTest {
             check(b, 8)
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val id = p.client.openStream(true)
             var sent = 0
@@ -502,15 +476,13 @@ class ReceivePathTest {
                 false
             }
             assertTrue(coalesced >= 2 && datagrams > 20, "$coalesced coalesced of $datagrams datagrams")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun clientIgnoresPreferredAddress() {
         val p = CorePair(serverTls = CoreFixtures.server(), crypto = ksl)
         p.onServerCreated = { it.testAdvertisePreferredAddress = true }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(PathId.Initial, p.client.stats.currentPath)
             assertNull(p.closedReason(p.clientEvents))
@@ -520,8 +492,6 @@ class ReceivePathTest {
             assertTrue(1L in p.client.cids.peerSeqsForTest(), "peer IDs ${p.client.cids.peerSeqsForTest()}")
             assertNull(p.closedReason(p.clientEvents))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -564,15 +534,13 @@ class ReceivePathTest {
             }
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "the handshake completes with the first server; the stranger's packets are ignored")
             assertTrue(injected)
             assertTrue(
                 p.client.stats.datagramsDropped >= 1,
                 "the second instance's datagrams were dropped: ${p.client.stats.datagramsDropped}",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -586,7 +554,7 @@ class ReceivePathTest {
      */
     @Test fun ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             // msquic's case: the server has half the ClientHello (the second datagram is lost) and acknowledges it with packet
             // number 0; that answer is lost here and replaced by the same ACK-only packet sent from the client's own DCID
             p.filterToServer = { i, _ -> i != 1 }
@@ -605,8 +573,6 @@ class ReceivePathTest {
             assertEquals(1L, p.client.duplicatesDropped, "a copy of the provisional packet is a duplicate")
             assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
             assertEquals(p.server!!.localCid, p.client.remoteCid)
-        } finally {
-            p.close()
         }
     }
 
@@ -617,7 +583,7 @@ class ReceivePathTest {
      */
     @Test fun provisionalInitialWithPingIsAcknowledged() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.filterToServer = { i, _ -> i != 1 } // as above: the server acknowledges half the ClientHello with packet number 0
             p.filterToClient = { i, _ -> i > 0 }
             p.step()
@@ -633,8 +599,6 @@ class ReceivePathTest {
             assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
             assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
             assertEquals(p.server!!.localCid, p.client.remoteCid)
-        } finally {
-            p.close()
         }
     }
 
@@ -646,7 +610,7 @@ class ReceivePathTest {
      */
     @Test fun negative_ackOnlyInitialFromAnotherScidFixesIt() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.filterToClient = { _, _ -> false } // nothing of the real server yet
             p.step()
             val init = p.lastClientInitial!!
@@ -688,8 +652,6 @@ class ReceivePathTest {
             p.runUntil(500.milliseconds) { false }
             assertFalse(p.client.hasHandshakeKeys, "the real server's ServerHello, from another SCID, is discarded")
             assertTrue(p.client.datagramsDropped > dropped)
-        } finally {
-            p.close()
         }
     }
 
@@ -753,7 +715,7 @@ class ReceivePathTest {
     /** RFC 9000 sections 17.2 and 17.3.1: reserved bits that are non-zero after removing header protection are a PROTOCOL_VIOLATION, in long and short headers. */
     @Test fun negative_reservedBitsSet() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             // Null crypto: header protection is the identity, so the test sets the bits the peer "sent"
             assertTrue(p.handshake())
             p.runUntil(100.milliseconds) { false }
@@ -765,11 +727,9 @@ class ReceivePathTest {
             p.client.writeStream(id, ByteArray(10), 0, 10, true)
             assertTrue(p.runUntil(1000.milliseconds) { p.closedReason(p.serverEvents) != null })
             assertProtocolViolation(p.serverEvents, "server (short header)")
-        } finally {
-            p.close()
         }
         val q = CorePair()
-        try {
+        q.use { _ ->
             var done = false
             q.filterToClient =
                 { _, b ->
@@ -781,8 +741,6 @@ class ReceivePathTest {
                 }
             assertTrue(q.runUntil(1000.milliseconds) { q.closedReason(q.clientEvents) != null })
             assertProtocolViolation(q.clientEvents, "client (long header)")
-        } finally {
-            q.close()
         }
     }
 
@@ -793,7 +751,7 @@ class ReceivePathTest {
      */
     @Test fun negative_reservedBitsOnADuplicateAreAProtocolViolation() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(100.milliseconds) { false }
             var copy: ByteArray? = null
@@ -817,15 +775,13 @@ class ReceivePathTest {
             p.drainEvents(server, p.serverEvents)
             assertEquals(duplicates, server.stats.duplicatesDropped, "not dropped as a duplicate")
             assertProtocolViolation(p.serverEvents, "server (duplicate)")
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 17.2.2: a server Initial with a non-zero Token Length is discarded by the client; the retransmitted one completes the handshake. */
     @Test fun negative_serverInitialWithToken() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             var tampered: ByteArray? = null
             p.filterToClient =
                 { i, b ->
@@ -847,15 +803,13 @@ class ReceivePathTest {
             feed(p.client, tampered, CoreFixtures.serverAddr, p.now)
             assertFalse(p.client.anyPeerPacket, "the Initial with a token was discarded")
             assertTrue(p.handshake(), "the server's retransmission completes the handshake")
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 17.2: a long-header packet with the fixed bit cleared is discarded unless we allowed it with grease_quic_bit. */
     @Test fun negative_longHeaderWithoutFixedBit() {
         val p = CorePair(clientQuic = quicConfig { greaseQuicBit = false })
-        try {
+        p.use { _ ->
             var tampered: ByteArray? = null
             p.filterToClient =
                 { i, b ->
@@ -870,8 +824,6 @@ class ReceivePathTest {
             feed(p.client, tampered, CoreFixtures.serverAddr, p.now)
             assertFalse(p.client.anyPeerPacket, "discarded")
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 
@@ -911,7 +863,7 @@ class ReceivePathTest {
      */
     @Test fun negative_coalescedInitialInSmallDatagramIsDiscarded() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.step()
             val s = p.server!!
             val dcid = s.localCid.toByteArray()
@@ -930,8 +882,6 @@ class ReceivePathTest {
             val big = lead + nullLongPacket(0, dcid, scid, 51, bigPayload)
             feed(s, big, CoreFixtures.clientAddr, p.now)
             assertTrue(ack.isDuplicate(51), "the Initial in a ${big.size}-byte datagram was processed")
-        } finally {
-            p.close()
         }
     }
 
@@ -944,7 +894,7 @@ class ReceivePathTest {
      */
     @Test fun resetCheckFollowsTheFirstPacketOfTheDatagram() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.step()
             val s = p.server!!
             val dcid = s.localCid.toByteArray()
@@ -961,8 +911,6 @@ class ReceivePathTest {
             val ack = s.loss.space(SpaceId.Initial).ack
             assertTrue(ack.isDuplicate(61), "the second packet was processed")
             assertEquals(before + 1, s.invalidResets, "the first packet did not open: the datagram is checked")
-        } finally {
-            p.close()
         }
     }
 
@@ -974,7 +922,7 @@ class ReceivePathTest {
      */
     @Test fun aDuplicateOrADiscardedSpaceLeadingTheDatagramIsNoInvalidReset() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.step()
             val s = p.server!!
             val dcid = s.localCid.toByteArray()
@@ -994,15 +942,13 @@ class ReceivePathTest {
             assertEquals(before, s.invalidResets, "a packet of a discarded space is ours: no invalid reset")
             feed(s, ByteArray(60) { 0x40 }, CoreFixtures.clientAddr, p.now) // a short header nobody can open
             assertEquals(before + 1, s.invalidResets, "an undecryptable first packet still counts")
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 9: a client discards packets from a server address it does not know: no processing, and a PATH_CHALLENGE from there opens no path. */
     @Test fun negative_clientDropsPacketFromUnknownServerAddress() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(100.milliseconds) { false }
             val s = p.server!!
@@ -1020,8 +966,6 @@ class ReceivePathTest {
             assertEquals(0, p.client.paths.responses, "no PATH_RESPONSE queued")
             feed(p.client, d, CoreFixtures.serverAddr, p.now)
             assertEquals(received + 1, p.client.stats.packetsReceived, "the same datagram from the server's address is processed")
-        } finally {
-            p.close()
         }
     }
 }

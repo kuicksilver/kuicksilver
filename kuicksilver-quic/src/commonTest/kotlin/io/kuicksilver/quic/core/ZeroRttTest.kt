@@ -180,12 +180,10 @@ class ZeroRttTest {
         // the client's first flight with [extra] CRYPTO bytes added to the ClientHello: the long-header packets of each datagram
         fun firstFlight(extra: Int): List<Pair<Int, List<Pair<PacketType?, Int>>>> {
             val (p, _) = resumed(ticket())
-            try {
+            p.use { _ ->
                 p.client.testInjectCrypto = Triple(0, 20_000L, extra)
                 p.poll(p.client, p.toServer, CoreFixtures.clientAddr, toServer = true)
                 return p.toServer.map { d -> d.bytes.size to longHeaderPackets(d.bytes) }
-            } finally {
-                p.close()
             }
         }
         // where the last Initial ends when it has room for the 0-RTT packet behind it (the Length field is not protected)
@@ -280,26 +278,22 @@ class ZeroRttTest {
 
     @Test fun earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept() {
         val (p, id) = resetEarlyUni(ticket())
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(true, p.client.earlyDataAccepted)
             assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.ofStream(id).isNotEmpty() })
             assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_earlyStreamResetBeforeTheAnswerReportsNothingOnReject() {
         val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(false, p.client.earlyDataAccepted)
             p.runUntil(limit = 1.seconds) { false }
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
             assertEquals(0, p.client.streams.sizesForTest()[5], "nothing held after the answer")
-        } finally {
-            p.close()
         }
     }
 
@@ -328,7 +322,7 @@ class ZeroRttTest {
 
     @Test fun heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance() {
         val (p, id) = resetEarlyUni(ticket())
-        try {
+        p.use { _ ->
             assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.handshake())
             assertEquals(true, p.client.earlyDataAccepted)
@@ -338,8 +332,6 @@ class ZeroRttTest {
             assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
             assertNothingHeld(p)
             assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
@@ -385,7 +377,7 @@ class ZeroRttTest {
                     c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
                 },
             )
-        try {
+        p.use { _ ->
             val toClient = ArrayList<ByteArray>()
             p.filterToClient = { _, bytes ->
                 toClient += bytes
@@ -429,14 +421,12 @@ class ZeroRttTest {
                     .sum(),
                 "the reset was acknowledged",
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedByARejection() {
         val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(9)))
-        try {
+        p.use { _ ->
             assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.handshake())
             assertEquals(false, p.client.earlyDataAccepted)
@@ -444,22 +434,18 @@ class ZeroRttTest {
             p.runUntil(limit = 1.seconds) { false }
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
             assertNothingHeld(p)
-        } finally {
-            p.close()
         }
     }
 
     /** Accepted with lower limits: the connection fails before what was held stands; it is dropped once, never reported. */
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheAcceptanceFails() {
         val (p, id) = resetEarlyUni(t2Lowered())
-        try {
+        p.use { _ ->
             assertEquals(listOf("size 5"), heldOf(p, id))
             assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
             assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertNothingHeld(p)
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
@@ -469,15 +455,13 @@ class ZeroRttTest {
      */
     @Test fun negative_heldFinalSizeOfA0RttStreamIsDroppedWhenTheConnectionEndsBeforeTheAnswer() {
         val (p, id) = resetEarlyUni(ticket())
-        try {
+        p.use { _ ->
             assertEquals(listOf("size 5"), heldOf(p, id))
             p.client.close(0, "end", p.now)
             assertNothingHeld(p)
             p.runUntil(limit = 2.seconds) { false }
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
             assertNothingHeld(p)
-        } finally {
-            p.close()
         }
     }
 
@@ -506,7 +490,7 @@ class ZeroRttTest {
                     c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
                 },
             )
-        try {
+        p.use { _ ->
             val toClient = ArrayList<ByteArray>()
             p.filterToClient = { _, bytes ->
                 toClient += bytes
@@ -551,8 +535,6 @@ class ZeroRttTest {
             assertIs<QuicException.ConnectionLost.StatelessReset>(p.closedReason(p.clientEvents))
             assertNothingHeld(p)
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
@@ -560,49 +542,41 @@ class ZeroRttTest {
     @Test fun earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept() {
         val withAt = quicConfig { resetStreamAt = true }
         val (p, id) = resetEarlyUni(ticket(serverQuic = withAt, clientQuic = withAt), early(withAt), withAt, withAt, reliable = 0)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(true, p.client.earlyDataAccepted)
             assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
             assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
     /** Accepted with lower limits: the connection fails, and nothing of the 0-RTT stream is reported. */
     @Test fun negative_earlyStreamOfAnAcceptedThenFailedConnectionReportsNothing() {
         val (p, id) = resetEarlyUni(t2Lowered())
-        try {
+        p.use { _ ->
             p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null }
             assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
     /** Required mode and a rejection: the connection closes, nothing of the stream is reported. */
     @Test fun negative_earlyStreamOfARequiredRejectionReportsNothing() {
         val (p, id) = resetEarlyUni(ticket(), serverEarly = early(app = byteArrayOf(3)), mode = EarlyDataState.Required)
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
             assertEquals(emptyList(), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
     /** Across a compatible version upgrade (RFC 9369) the held size and end come once, in order. */
     @Test fun earlyStreamResetAcrossAVersionUpgradeIsReportedOnce() {
         val (p, id) = resetEarlyUni(ticket(), early(v2v1), v2v1, v1v2)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
             assertEquals(VersionProfile.V2, p.client.version)
             assertTrue(p.runUntil(limit = 2.seconds) { "finished" in p.clientEvents.ofStream(id) })
             assertEquals(listOf("size 5", "finished"), p.clientEvents.ofStream(id))
-        } finally {
-            p.close()
         }
     }
 
@@ -645,7 +619,7 @@ class ZeroRttTest {
     /** The receiving half ends after the answer (the server's reply read to its FIN): both sizes, then the end. */
     @Test fun earlyBidiResetThenAnsweredReportsBothSizesBeforeItsEnd() {
         val (p, id) = resetEarlyBidi(ticket(), stop = false)
-        try {
+        p.use { _ ->
             var answered = false
             assertTrue(
                 p.runUntil(limit = 3.seconds) {
@@ -663,15 +637,13 @@ class ZeroRttTest {
             assertEquals("finished", got.last(), "$got")
             assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
             assertEquals(listOf("received 2"), got.filter { it.startsWith("received") })
-        } finally {
-            p.close()
         }
     }
 
     /** Its receiving half stopped before the answer: on accept the sizes, then the end; nothing raised before. */
     @Test fun earlyBidiResetAndStoppedReportsAfterTheAccept() {
         val (p, id) = resetEarlyBidi(ticket(), stop = true)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(true, p.client.earlyDataAccepted)
             assertTrue(p.runUntil(limit = 3.seconds) { "finished" in p.clientEvents.bidiOf(id) })
@@ -679,22 +651,18 @@ class ZeroRttTest {
             assertEquals("finished", got.last())
             assertEquals(listOf("sent 5"), got.filter { it.startsWith("sent") })
             assertEquals(1, got.count { it.startsWith("received") })
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_earlyBidiResetBeforeARejectionReportsNothing() {
         for (stop in listOf(false, true)) {
             val (p, id) = resetEarlyBidi(ticket(), serverEarly = early(app = byteArrayOf(9)), stop = stop)
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake())
                 assertEquals(false, p.client.earlyDataAccepted)
                 p.runUntil(limit = 1.seconds) { false }
                 assertEquals(emptyList(), p.clientEvents.bidiOf(id), "stop=$stop")
                 assertEquals(0, p.client.streams.sizesForTest()[5])
-            } finally {
-                p.close()
             }
         }
     }
@@ -790,7 +758,7 @@ class ZeroRttTest {
             }
             true
         }
-        try {
+        p.use { _ ->
             var got = ""
             assertTrue(
                 p.runUntil(limit = 5.seconds) {
@@ -802,8 +770,6 @@ class ZeroRttTest {
             assertTrue(zeroRttPackets in 1..4, "0-RTT packets sent: $zeroRttPackets")
             assertEquals(zeroRttPackets.toLong(), p.client.zeroRttPacketsSealed)
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -814,7 +780,7 @@ class ZeroRttTest {
      */
     @Test fun negative_ackOfARejectedZeroRttPacketIsProtocolViolation() {
         val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val c = p.client
             assertEquals(false, c.earlyDataAccepted)
@@ -835,8 +801,6 @@ class ZeroRttTest {
             assertEquals(io.kuicksilver.quic.TransportError.PROTOCOL_VIOLATION, e.code)
             p.runUntil(limit = 1.seconds) { false }
             assertNull(p.closedReason(p.clientEvents), "an honest server never acknowledges them")
-        } finally {
-            p.close()
         }
         // end to end: the server's 1-RTT packet carries an ACK frame of the rejected 0-RTT packet numbers
         val (e, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
@@ -1002,7 +966,7 @@ class ZeroRttTest {
         tp.initialMaxData = 2000
         t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
         val (p, _) = resumed(t, request = "x")
-        try {
+        p.use { _ ->
             val c = p.client
             p.filterToServer = { _, _ -> false }
             p.step() // the client drives TLS: ClientHello and the 0-RTT key
@@ -1014,8 +978,6 @@ class ZeroRttTest {
             ConnectionHandshakeSink(c).onPeerTransportParameters(TransportParametersCodec.encode(tp, TlsRole.Server, 27), c.version.version)
             assertTrue(c.writeKeys[1] != null && c.writeKeys[3] == null, "still sending 0-RTT")
             assertEquals(2000L, c.connSend.maxLimit, "0-RTT uses only the remembered limit")
-        } finally {
-            p.close()
         }
         val (q, _) = resumed(t2(), request = "x")
         try {
@@ -1039,7 +1001,7 @@ class ZeroRttTest {
         val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
         assertEquals(false, tp.resetStreamAt, "the ticket's server did not offer reset_stream_at")
         val (p, id) = resumed(t, request = "x", clientQuic = withAt)
-        try {
+        p.use { _ ->
             val c = p.client
             p.filterToServer = { _, _ -> false }
             p.step()
@@ -1053,8 +1015,6 @@ class ZeroRttTest {
             c.streams.resetAt(id, 3, 0)
             val kinds = generateSequence { c.streams.takeControlFrame() }.map { it.kind }.toList()
             assertTrue(io.kuicksilver.quic.stream.ControlKind.ResetStream in kinds, "a plain RESET_STREAM: $kinds")
-        } finally {
-            p.close()
         }
         val remembered = ticket(serverQuic = withAt, clientQuic = withAt)
         val (q, _) = resumed(remembered, request = "x", clientQuic = withAt, serverQuic = withAt, serverEarly = early(withAt))
@@ -1086,15 +1046,13 @@ class ZeroRttTest {
     @Test fun zeroRttStaysInTheOriginalVersionAcrossAnUpgrade() {
         val t = ticket() // a v1 server: a v1 ticket
         val (p, id) = resumed(t, clientQuic = v1v2, serverQuic = v2v1, serverEarly = early(v2v1))
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
             assertEquals(VersionProfile.V2, p.server!!.version, "upgraded to v2")
             assertEquals(VersionProfile.V2, p.client.version)
             assertEquals(true, p.client.earlyDataAccepted)
             assertTrue(p.server!!.streamReceivedEarly(id), "the request arrived in 0-RTT")
             assertEquals("GET /index.html", streamText(p.server!!, id))
-        } finally {
-            p.close()
         }
     }
 
@@ -1122,7 +1080,7 @@ class ZeroRttTest {
                 true
             }
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
             assertTrue(vn && p.client.zeroRttPacketsSealed > 0, "0-RTT went out before the Version Negotiation")
             assertEquals(VersionProfile.V2, p.client.version)
@@ -1140,8 +1098,6 @@ class ZeroRttTest {
             p.runUntil(limit = 1.seconds) { false }
             assertNull(p.closedReason(p.clientEvents))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -1179,12 +1135,10 @@ class ZeroRttTest {
                     serverEarly = early(v2v1),
                     clientSetup = { c -> took = c.useTicket(t) },
                 )
-            try {
+            p.use { _ ->
                 assertEquals(used, took, "a v2 ticket for a connection starting in ${start.versions.first()}")
                 assertTrue(p.handshake())
                 assertEquals(used, p.client.earlyDataAccepted == true, "0-RTT only with the ticket of our version")
-            } finally {
-                p.close()
             }
         }
     }
@@ -1200,12 +1154,10 @@ class ZeroRttTest {
                 clientEarly = EarlyDataState.Allowed,
                 serverEarly = early(),
             )
-        try {
+        p.use { _ ->
             p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null }
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
-        } finally {
-            p.close()
         }
     }
 
@@ -1387,33 +1339,27 @@ class ZeroRttTest {
 
     @Test fun keyUpdatesAfterAcceptedZeroRtt() {
         val (p, _) = resumed(ticket())
-        try {
+        p.use { _ ->
             keyUpdatesAfter(p)
             assertEquals(true, p.client.earlyDataAccepted)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun keyUpdatesAfterRejectedZeroRtt() {
         val (p, _) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
-        try {
+        p.use { _ ->
             keyUpdatesAfter(p)
             assertEquals(false, p.client.earlyDataAccepted)
-        } finally {
-            p.close()
         }
     }
 
     /** Lost before the answer: no 1-RTT key, so no key phase and nothing of it left. */
     @Test fun noKeyPhaseWhenTheConnectionEndsBeforeTheZeroRttAnswer() {
         val (p, _) = resumed(ticket())
-        try {
+        p.use { _ ->
             p.client.close(0, "end", p.now)
             p.runUntil(limit = 2.seconds) { false }
             assertNull(p.client.keyPhaseForTest)
-        } finally {
-            p.close()
         }
     }
 }

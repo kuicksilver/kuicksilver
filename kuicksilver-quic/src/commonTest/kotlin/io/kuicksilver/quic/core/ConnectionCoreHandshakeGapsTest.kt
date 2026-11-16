@@ -49,7 +49,7 @@ class ConnectionCoreHandshakeGapsTest {
      */
     @Test fun initialPtoAlsoResendsTheHandshakeFlight() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.filterToServer = { i, _ -> i == 0 } // the client's first Initial only: nothing the server sends is ever acknowledged
             p.runUntil(20.milliseconds) { false }
             val s = p.server!!
@@ -57,8 +57,6 @@ class ConnectionCoreHandshakeGapsTest {
             untilFirstPto(p, s)
             assertEquals(1, s.probePending[SpaceId.Handshake.ordinal], "the Handshake space is probed too")
             assertTrue(s.cryptoStreams.send[2].hasPending, "with the Handshake flight's CRYPTO data, not a bare PING")
-        } finally {
-            p.close()
         }
     }
 
@@ -68,7 +66,7 @@ class ConnectionCoreHandshakeGapsTest {
      */
     @Test fun negative_handshakePtoProbesNoSpaceWithoutDataInFlight() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } })
             p.filterToServer = { _, _ -> false }
             p.filterToClient = { _, _ -> false }
@@ -79,8 +77,6 @@ class ConnectionCoreHandshakeGapsTest {
             val appInFlight = c.loss.space(SpaceId.Application).ackElicitingInFlight
             val expected = if (appInFlight > 0) 1 else 0
             assertEquals(expected, c.probePending[SpaceId.Application.ordinal], "1-RTT ack-eliciting in flight: $appInFlight")
-        } finally {
-            p.close()
         }
     }
 
@@ -128,13 +124,11 @@ class ConnectionCoreHandshakeGapsTest {
      */
     @Test fun negative_retryResetsLossStateWithoutDeclaringTheFirstFlightLost() {
         val p = EndpointPair { admission = ConnectionAdmission.AlwaysRetry }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             p.runUntil(500.milliseconds) { false }
             assertEquals(0L, c.stats.lostPackets, "the Initial packets the Retry answered are not losses")
-        } finally {
-            p.close()
         }
     }
 
@@ -150,7 +144,7 @@ class ConnectionCoreHandshakeGapsTest {
                 clientQuic = quicConfig { limits = QuicLimits(confidentialityLimitAesGcm = 24) },
                 crypto = ksl,
             )
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val id = p.client.openStream(true)
             val buf = ByteArray(16384)
@@ -168,15 +162,13 @@ class ConnectionCoreHandshakeGapsTest {
                 "200 kB (well over 24 packets) delivered: read $read",
             )
             assertEquals(0L, p.client.stats.keyUpdates, "no key update was needed")
-        } finally {
-            p.close()
         }
     }
 
     /** The first [ConnectionCore.NEW_TOKENS_KEPT] NEW_TOKEN frames of a connection are kept and cost nothing; the next one is a glitch. */
     @Test fun newTokensUpToTheKeptCountAreAllKept() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val c = p.client
             val glitches = c.stats.glitchTokensSpent
@@ -190,8 +182,6 @@ class ConnectionCoreHandshakeGapsTest {
             } finally {
                 token.close()
             }
-        } finally {
-            p.close()
         }
     }
 
@@ -202,15 +192,13 @@ class ConnectionCoreHandshakeGapsTest {
      */
     @Test fun negative_versionNegotiationAfterAServerPacketIsIgnored() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             var allowed = 0
             p.filterToClient = { _, _ -> allowed++ < 1 } // the server's first datagram only: the handshake cannot finish
             assertTrue(p.runUntil(200.milliseconds) { p.client.anyPeerPacket })
             assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, p.client.state)
             p.client.onVersionNegotiation(intArrayOf(0x1a2a3a4a))
             assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, p.client.state, "the Version Negotiation packet was discarded")
-        } finally {
-            p.close()
         }
     }
 }

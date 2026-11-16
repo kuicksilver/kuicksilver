@@ -23,7 +23,7 @@ class FrameDispatcherGapsTest {
      */
     @Test fun negative_repeatedStreamsBlockedAtTheSameLimitSpendsATokenEach() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(300.milliseconds) { false }
             val before = p.server!!.stats.glitchTokensSpent
@@ -32,8 +32,6 @@ class FrameDispatcherGapsTest {
             p.runUntil(300.milliseconds) { false }
             assertEquals(2L, p.server!!.stats.glitchTokensSpent - before, "the second and third repeat the limit 0")
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -45,7 +43,7 @@ class FrameDispatcherGapsTest {
     @Test fun negative_datagramWithLengthFieldCountsTheFieldAgainstTheLimit() {
         for ((payload, ok) in listOf(97 to true, 98 to false)) {
             val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake())
                 p.runUntil(100.milliseconds) { false }
                 val s = p.server!!
@@ -68,8 +66,6 @@ class FrameDispatcherGapsTest {
                 } else {
                     assertEquals(0x0aL, assertIs<QuicException.ConnectionLost.TransportClosed>(reason).code)
                 }
-            } finally {
-                p.close()
             }
         }
     }

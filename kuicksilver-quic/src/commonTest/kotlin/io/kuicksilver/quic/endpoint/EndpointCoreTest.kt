@@ -221,7 +221,7 @@ class EndpointCoreTest {
     @Test fun negative_newServerIdNeverOneAnotherConnectionRoutes() {
         val sr = ScriptedRandom(Random(5))
         val p = EndpointPair(serverRandom = sr)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             val s = p.server.connections().single()
@@ -240,8 +240,6 @@ class EndpointCoreTest {
             repeat(io.kuicksilver.quic.core.ConnectionIdManager.UNIQUE_DRAWS) { sr.next += taken }
             assertNull(p.server.issueUnique(), "every draw collided: no ID (the Initial is dropped)")
             assertSame(s, p.server.connections().single(), "the connection that owns the ID keeps it")
-        } finally {
-            p.close()
         }
     }
 
@@ -952,7 +950,7 @@ class EndpointCoreTest {
         val sr = RecordingRandom(5)
         val cr = RecordingRandom(6)
         val p = EndpointPair(serverRandom = sr, clientRandom = cr)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             repeat(10) { p.step() }
@@ -988,8 +986,6 @@ class EndpointCoreTest {
             val challenged = s.paths.all.filter { it.challenge != 0L }
             assertTrue(challenged.isNotEmpty(), "the migration started a validation")
             for (path in challenged) assertTrue(path.challenge in sr.longs, "PATH_CHALLENGE data of $path")
-        } finally {
-            p.close()
         }
     }
 
@@ -999,7 +995,7 @@ class EndpointCoreTest {
 
     @Test fun serverAdvertisesPreferredAddressWithSequenceOneCid() {
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
@@ -1012,8 +1008,6 @@ class EndpointCoreTest {
             val seq1 = assertNotNull(s.cids.localForTest(1), "the server's sequence 1")
             assertEquals(seq1.cid, tp.preferredAddressCid)
             assertTrue(seq1.token.contentEquals(tp.preferredAddressToken!!), "its reset token")
-        } finally {
-            p.close()
         }
     }
 
@@ -1039,7 +1033,7 @@ class EndpointCoreTest {
     @Test fun negative_initialOnPreferredSocketIsDropped() {
         // a new connection never starts on the preferred socket, and nothing there answers statelessly (RFC 9000 section 9.6)
         val p = EndpointPair(serverPreferred = preferred)
-        try {
+        p.use { _ ->
             val c = p.connect()
             val b = PacketBatch(4)
             try {
@@ -1060,8 +1054,6 @@ class EndpointCoreTest {
             p.server.processPending(p.now)
             assertEquals(0L, p.server.stats.connectionsCreated)
             assertEquals(0, p.stateless(p.server).size, "no stateless answer")
-        } finally {
-            p.close()
         }
     }
 
@@ -1069,7 +1061,7 @@ class EndpointCoreTest {
         // RFC 9000 section 9.6.1: the server sends non-probing packets from its preferred address only after it validated the
         // client's address there; until then they keep leaving the original socket
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
-        try {
+        p.use { _ ->
             val c = p.connect(quicConfig { followPreferredAddress = false }) // moved by hand, step by step
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
@@ -1104,8 +1096,6 @@ class EndpointCoreTest {
             p.runUntil(2.seconds) { false }
             assertTrue(p.serverSentFrom.drop(from).isNotEmpty() && p.serverSentFrom.drop(from).all { it == preferred.ipv4 })
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
@@ -1115,7 +1105,7 @@ class EndpointCoreTest {
         val noMigration = quicConfig { allowMigration = false }
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred, serverQuic = noMigration)
         val captured = ArrayList<ByteArray>()
-        try {
+        p.use { _ ->
             val c = p.connect(quicConfig { followPreferredAddress = false })
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
@@ -1149,8 +1139,6 @@ class EndpointCoreTest {
             assertEquals(paths, s.pathCountForTest, "another IP on the preferred socket: dropped")
             feed(captured[0], p.clientAddr)
             assertEquals(paths + 1, s.pathCountForTest, "the client's own address on the preferred socket: a new path")
-        } finally {
-            p.close()
         }
     }
 

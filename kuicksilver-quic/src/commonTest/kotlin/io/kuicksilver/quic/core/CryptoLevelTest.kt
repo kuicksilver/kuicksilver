@@ -31,23 +31,19 @@ class CryptoLevelTest {
      */
     @Test fun negative_initialBytesTlsLeftUnreadCloseTheConnectionOnceItReadsHandshake() {
         val p = CorePair(crypto = UnreadAtInitial(ksl))
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil(5.seconds) { p.closedReason(p.clientEvents) != null })
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(0x0aL, r.code, "PROTOCOL_VIOLATION")
             assertTrue(r.message!!.contains("previous encryption level"), r.message)
-        } finally {
-            p.close()
         }
     }
 
     /** The control: the same pair without unread bytes completes the handshake. */
     @Test fun theSameHandshakeWithNothingUnreadCompletes() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 

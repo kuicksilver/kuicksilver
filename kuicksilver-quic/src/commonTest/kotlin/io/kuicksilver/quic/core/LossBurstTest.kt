@@ -35,7 +35,7 @@ class LossBurstTest {
 
     private fun burst(crypto: QuicCrypto) {
         val p = CorePair(crypto = crypto)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(
                 p.runUntil(limit = 2.seconds) {
@@ -101,8 +101,6 @@ class LossBurstTest {
             assertTrue(done)
             assertEquals(size, read)
             assertTrue(got.contentEquals(data))
-        } finally {
-            p.close()
         }
     }
 }

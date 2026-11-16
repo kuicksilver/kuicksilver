@@ -13,7 +13,7 @@ class ConnectionIdRegistryTest {
     @Test fun aKeyAddedFromTheIdIsFoundInsideAPacket() {
         // add keys from the ID's heap copy, lookup hashes the packet's bytes where its DCID sits (1 in a short header, 6 in a long one)
         val p = CorePair()
-        try {
+        p.use { _ ->
             val r = ConnectionIdRegistry(0x1234L, 0x5678L)
             for (len in 0..20) {
                 val id = ByteArray(len) { (it * 13 + len).toByte() }
@@ -29,8 +29,6 @@ class ConnectionIdRegistryTest {
                     }
                 }
             }
-        } finally {
-            p.close()
         }
     }
 

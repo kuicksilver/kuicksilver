@@ -209,7 +209,7 @@ class TokenStoreTest {
                         if (allow) AdmissionDecision.Allow else AdmissionDecision.Retry
                     }
             }
-        try {
+        p.use { _ ->
             val first = p.connect()
             assertTrue(p.confirmed(first), "${p.closed(first)}")
             val s = p.server.connections().single()
@@ -236,8 +236,6 @@ class TokenStoreTest {
             for (i in firstRetryToken until seen.size) {
                 assertEquals(0x01, seen[i]!![0].toInt(), "after the Retry every Initial carries the Retry token")
             }
-        } finally {
-            p.close()
         }
     }
 
@@ -290,7 +288,7 @@ class TokenStoreTest {
         // a server that floods NEW_TOKEN frames or sends one too large: the client keeps eight per connection, at most 1024 bytes
         // each, and every frame past the eighth spends a glitch token (RFC 9000 section 21.9)
         val p = EndpointPair(crypto = KslQuicCrypto)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
@@ -311,8 +309,6 @@ class TokenStoreTest {
                 c.glitchCounts[7] - glitchesBefore >= 90,
                 "every NEW_TOKEN past the eighth spends a glitch token: ${c.glitchCounts[7]}",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -339,7 +335,7 @@ class TokenStoreTest {
     @Test fun negative_newTokenFromClientIsProtocolViolation() {
         // RFC 9000 section 19.7: "Servers MUST treat receipt of a NEW_TOKEN frame as a connection error of type PROTOCOL_VIOLATION"
         val p = EndpointPair(crypto = KslQuicCrypto)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
@@ -347,8 +343,6 @@ class TokenStoreTest {
             assertTrue(p.runUntil { p.closed(s) != null })
             val r = kotlin.test.assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed>(p.closed(s))
             assertEquals(0x0aL, r.code, "PROTOCOL_VIOLATION")
-        } finally {
-            p.close()
         }
     }
 

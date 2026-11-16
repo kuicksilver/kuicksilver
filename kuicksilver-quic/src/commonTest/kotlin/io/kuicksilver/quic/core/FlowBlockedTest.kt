@@ -50,7 +50,7 @@ class FlowBlockedTest {
         size: Int,
     ): Upload {
         val p = CorePair(seed = seed)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(200.milliseconds) { false }
             val rnd = Random(seed * 7 + 3)
@@ -95,8 +95,6 @@ class FlowBlockedTest {
                 }
             progress()
             return Upload(done, stall, stallPtos, p.client.streams.blockedEpoch)
-        } finally {
-            p.close()
         }
     }
 
@@ -141,7 +139,7 @@ class FlowBlockedTest {
         // download (interop run 20261015-005204, quiche->kuicksilver:transfer: 1130 reports in 2.1 s, about one per 2 ms):
         // when an unanswered repeat spent a glitch token, our client closed every quiche download after ~1070 of them.
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(300.milliseconds) { false }
             var maxData = 0
@@ -155,8 +153,6 @@ class FlowBlockedTest {
             assertNull(p.closedReason(p.serverEvents), "the server stays open")
             assertEquals(0L, p.server!!.stats.glitchTokensSpent, "an unanswered report is free")
             assertTrue(maxData <= 3, "MAX_DATA answers: $maxData")
-        } finally {
-            p.close()
         }
     }
 }

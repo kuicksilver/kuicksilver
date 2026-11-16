@@ -70,13 +70,11 @@ class ConnectionCoreTimersGapsTest {
      */
     @Test fun idleTimerFiresAtItsDeadline() {
         val p = CorePair(serverQuic = quicConfig { maxIdleTimeout = 2.seconds })
-        try {
+        p.use { _ ->
             assertTrue(runExact(p) { bothConfirmed(p) })
             assertTrue(runExact(p) { p.client.state == ConnectionState.Closed && p.server!!.state == ConnectionState.Closed })
             val c = assertIs<QuicException.ConnectionLost.Timeout>(p.closedReason(p.clientEvents))
             assertEquals(TimeoutKind.Idle, c.kind)
-        } finally {
-            p.close()
         }
     }
 
@@ -90,7 +88,7 @@ class ConnectionCoreTimersGapsTest {
                 clientQuic = quicConfig { keepAlive = 500.milliseconds },
                 serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
             )
-        try {
+        p.use { _ ->
             assertTrue(runExact(p) { bothConfirmed(p) })
             val start = p.now
             assertTrue(runExact(p) { p.now > start + 5.seconds }, "keep-alive holds the connection")
@@ -105,15 +103,13 @@ class ConnectionCoreTimersGapsTest {
             )
             p.client.close(1, "", p.now)
             assertTrue(runExact(p) { p.client.state == ConnectionState.Closed && p.server!!.state == ConnectionState.Closed })
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 10.2: a closing connection waits only for its closing period; loss and ACK timers of its spaces are over. */
     @Test fun negative_closingConnectionArmsOnlyTheClosePeriod() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil { bothConfirmed(p) }
             p.filterToServer = { _, _ -> false }
@@ -128,8 +124,6 @@ class ConnectionCoreTimersGapsTest {
                 deadline != null && deadline >= p.now + pto * 3 - 1.milliseconds,
                 "close period ${deadline?.let { it - p.now }}, PTO $pto",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -137,25 +131,21 @@ class ConnectionCoreTimersGapsTest {
     @Test fun handshakeTimeoutFiresAtItsDeadline() {
         val p = CorePair()
         p.filterToClient = { _, _ -> false }
-        try {
+        p.use { _ ->
             assertTrue(runExact(p) { p.client.state == ConnectionState.Closed })
             assertEquals(TimeoutKind.Handshake, assertIs<QuicException.ConnectionLost.Timeout>(p.closedReason(p.clientEvents)).kind)
-        } finally {
-            p.close()
         }
     }
 
     /** QuicEndpointConfig.maxConnectionLifetime: the connection closes with NO_ERROR at exactly its lifetime deadline. */
     @Test fun lifetimeDeadlineFiresAtItsDeadline() {
         val p = CorePair(clientQuic = quicConfig { keepAlive = 200.milliseconds })
-        try {
+        p.use { _ ->
             assertTrue(runExact(p) { bothConfirmed(p) })
             p.client.lifetimeDeadline = p.now + 1.seconds
             assertTrue(runExact(p) { p.client.state != ConnectionState.Confirmed })
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(0L, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -171,7 +161,7 @@ class ConnectionCoreTimersGapsTest {
         p.clientEcnReceive = true
         val c = p.connect()
         c.setPathCapabilities(PathId.Initial, IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             assertTrue(p.confirmed(c))
             c.setPathCapabilities(PathId.Initial, ecn)
             val reported = ArrayList<PathId>()
@@ -182,8 +172,6 @@ class ConnectionCoreTimersGapsTest {
             assertTrue(p.runUntil(5.seconds) { c.stats.ptoCount >= 1 })
             assertEquals(EcnState.Failed, c.stats.ecnState, "no ACK at all: the PTO ends the test")
             assertEquals(listOf(PathId.Initial), reported, "the runtime hears of the failure once")
-        } finally {
-            p.close()
         }
     }
 
@@ -215,13 +203,11 @@ class ConnectionCoreTimersGapsTest {
      */
     @Test fun lostMaxDataOnlyPacketQueuesMaxDataAgain() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             val s = quietServer(p)
             val pk = maxDataOnlyPacket(s)
             ConnectionLossListener(s).onLost(SpaceId.Application, pk)
             assertTrue(s.streams.hasControlFrames(), "MAX_DATA queued again")
-        } finally {
-            p.close()
         }
     }
 
@@ -232,13 +218,11 @@ class ConnectionCoreTimersGapsTest {
      */
     @Test fun ptoProbeOfAMaxDataOnlyPacketCarriesMaxData() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             val s = quietServer(p)
             maxDataOnlyPacket(s)
             s.requeueForProbe(SpaceId.Application, 1)
             assertTrue(s.streams.hasControlFrames(), "the probe carries MAX_DATA")
-        } finally {
-            p.close()
         }
     }
 
@@ -246,22 +230,20 @@ class ConnectionCoreTimersGapsTest {
     @Test fun blockedRepeatTimerFiresAtItsDeadlines() {
         val p =
             CorePair(serverQuic = quicConfig { initialConnectionWindow = 4000 })
-        try {
+        p.use { _ ->
             assertTrue(runExact(p) { bothConfirmed(p) })
             val id = p.client.openStream(true)
             p.client.writeStream(id, ByteArray(20_000), 0, 20_000, false) // the server never reads: blocked at 4000 bytes
             val start = p.now
             assertTrue(runExact(p) { p.now > start + 3.seconds })
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 13.3: "NEW_TOKEN frames are retransmitted if the packet containing them is lost" (the current token only). */
     @Test fun lostNewTokenIsSentAgain() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             val s = quietServer(p)
             s.newToken = ByteArray(16) { 7 }
             s.newTokenSeq = 1
@@ -292,15 +274,13 @@ class ConnectionCoreTimersGapsTest {
             older.frames.idValue[0] = 0
             ConnectionLossListener(s).onAcked(SpaceId.Application, older)
             assertTrue(s.newToken != null, "token 1 is still unacknowledged")
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9221 section 5: a lost DATAGRAM is reported to the sender, also the one with id 0. */
     @Test fun lossOfDatagramIdZeroIsReported() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             val s = quietServer(p)
             val lost = ArrayList<Long>()
             s.datagramSender =
@@ -320,8 +300,6 @@ class ConnectionCoreTimersGapsTest {
             pk.frames.dgId[1] = -1 // not the application's: not reported
             ConnectionLossListener(s).onLost(SpaceId.Application, pk)
             assertEquals(listOf(0L), lost)
-        } finally {
-            p.close()
         }
     }
 
@@ -336,7 +314,7 @@ class ConnectionCoreTimersGapsTest {
         p.clientEcnReceive = true
         val c = p.connect()
         c.setPathCapabilities(PathId.Initial, IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             assertTrue(p.confirmed(c))
             c.setPathCapabilities(PathId.Initial, ecn)
             val reported = ArrayList<PathId>()
@@ -351,8 +329,6 @@ class ConnectionCoreTimersGapsTest {
                 },
             )
             assertEquals(listOf(PathId.Initial), reported)
-        } finally {
-            p.close()
         }
     }
 }

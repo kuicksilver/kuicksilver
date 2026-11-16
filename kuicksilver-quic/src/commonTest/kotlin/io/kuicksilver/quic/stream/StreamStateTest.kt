@@ -701,7 +701,7 @@ class StreamStateTest {
     @Test fun lostMaxStreamsDoesNotDeadlockLongLivedStreams() {
         // maxBidiStreams = 2: one stream closes, one stays open; the MAX_STREAMS(3) that would let the client open a third is lost
         val p = io.kuicksilver.quic.CorePair(serverQuic = io.kuicksilver.quic.quicConfig { maxBidiStreams = 2 })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(200.milliseconds) { false }
             val c = p.client
@@ -750,8 +750,6 @@ class StreamStateTest {
                 "the client opens a third stream within 1 s of the loss (took ${p.now - t0})",
             )
             assertEquals(8L, third)
-        } finally {
-            p.close()
         }
     }
 }

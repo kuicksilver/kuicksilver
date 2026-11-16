@@ -23,7 +23,7 @@ class ConnectionCoreGapsTest {
      */
     @Test fun negative_drainingConnectionSendsNothingAndIgnoresALocalClose() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.server!!.close(7, "bye", p.now)
             assertTrue(p.runUntil(1000.milliseconds) { p.closedReason(p.clientEvents) != null })
@@ -41,65 +41,55 @@ class ConnectionCoreGapsTest {
             p.drainEvents(p.client, p.clientEvents)
             assertEquals(1, p.clientEvents.count { it is ConnectionEvent.Closed })
             assertEquals(7L, assertIs<QuicException.ConnectionLost.ApplicationClosed>(p.closedReason(p.clientEvents)).code)
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 10.2: "The closing and draining connection states ... SHOULD persist for at least three times the current PTO". */
     @Test fun closingStateEndsInTheFuture() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.close(0, "", p.now)
             assertEquals(ConnectionState.Closing, p.client.state)
             val until = assertNotNull(p.client.timers.closeDeadline)
             assertTrue(until > p.now + 3.milliseconds, "closing until $until, now ${p.now}")
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 20.1: only codes 0x0100-0x01ff carry a TLS alert ("CRYPTO_ERROR"); a PROTOCOL_VIOLATION from the peer has no TLS cause. */
     @Test fun negative_peerTransportCloseOutsideTheCryptoRangeHasNoTlsCause() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectFrames += ONE_RTT to byteArrayOf(0x1c, 0x0a, 0x00, 0x00) // CONNECTION_CLOSE PROTOCOL_VIOLATION, no reason
             assertTrue(p.runUntil(1000.milliseconds) { p.closedReason(p.serverEvents) != null })
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.serverEvents))
             assertEquals(0x0aL, r.code)
             assertNull(r.cause)
-        } finally {
-            p.close()
         }
     }
 
     /** A peer's reason phrase of exactly 1024 bytes is kept whole (the cut is only above 1 KiB). */
     @Test fun peerReasonOfExactly1024BytesIsKept() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val frame = byteArrayOf(0x1d, 0x05, 0x44, 0x00) + ByteArray(1024) { 'r'.code.toByte() } // application close, code 5
             p.client.testInjectFrames += ONE_RTT to frame
             assertTrue(p.runUntil(1000.milliseconds) { p.closedReason(p.serverEvents) != null })
             val r = assertIs<QuicException.ConnectionLost.ApplicationClosed>(p.closedReason(p.serverEvents))
             assertEquals(1024, r.reason.length)
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 19.19: the Error Code is a variable-length integer; 2^62 cannot be encoded and is refused up front. */
     @Test fun negative_closeRefusesAnErrorCodeAbove2Pow62Minus1() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertFailsWith<IllegalArgumentException> { p.client.close(1L shl 62, "", p.now) }
             p.client.close((1L shl 62) - 1, "", p.now)
             assertEquals(ConnectionState.Closing, p.client.state)
-        } finally {
-            p.close()
         }
     }
 

@@ -32,7 +32,7 @@ class RefusedPacketReplayTest {
     @Test fun negative_aReplayedRefusedPacketIsNotProcessedTwice() {
         // one reassembly range per stream: a second hole refuses the packet that would open it
         val p = CorePair(serverQuic = quicConfig { limits = QuicLimits(reassemblyRangesPerStream = 1) })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(
                 p.runUntil(2.seconds) { p.client.state == ConnectionState.Confirmed && p.server!!.state == ConnectionState.Confirmed },
@@ -85,8 +85,6 @@ class RefusedPacketReplayTest {
             )
             assertTrue(got.contentEquals(data))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 }

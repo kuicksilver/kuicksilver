@@ -96,7 +96,7 @@ class DatagramCoreTest {
         streamPriority: StreamPriority,
     ): Long {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val id = p.client.openStream(bidi = false, streamPriority)
             assertEquals(3000, p.client.writeStream(id, ByteArray(3000) { 1 }, 0, 3000, fin = true))
@@ -104,8 +104,6 @@ class DatagramCoreTest {
             p.client.datagramSender = s
             assertTrue(p.runUntil(2.seconds) { !s.pending }, "the datagram went")
             return s.streamSentAtDatagram
-        } finally {
-            p.close()
         }
     }
 
@@ -165,21 +163,17 @@ class DatagramCoreTest {
     @Test fun payloadLimitFromMtuAndPeer() {
         // min(peer max_datagram_frame_size, MTU - short header (1 + 8 + 4) - tag 16) minus the frame header (type + length varint) minus 32 bytes kept for a short ACK next to it
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(1200 - 29 - 3 - 32, p.client.maxDatagramPayload)
             assertEquals(1136, p.server!!.maxDatagramPayload)
-        } finally {
-            p.close()
         }
         val q = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 500 })
-        try {
+        q.use { _ ->
             assertTrue(q.handshake())
             // the peer's limit binds, not the packet: the whole 500-byte frame is allowed (type, 2-byte Length, 497 bytes), and
             // it still leaves far more than 32 bytes of the packet for an ACK
             assertEquals(497, q.client.maxDatagramPayload)
-        } finally {
-            q.close()
         }
     }
 
@@ -192,7 +186,7 @@ class DatagramCoreTest {
     @Test fun aSmallPeerLimitStillCarriesDatagrams() {
         for ((limit, payload) in listOf(2L to 0, 3L to 1, 10L to 8, 34L to 32, 66L to 63, 67L to 64)) {
             val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = limit })
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake())
                 assertEquals(payload, p.client.maxDatagramPayload, "limit $limit")
                 val s = Sender()
@@ -201,8 +195,6 @@ class DatagramCoreTest {
                 assertTrue(p.runUntil(2.seconds) { s.acked.isNotEmpty() }, "limit $limit: the datagram was acknowledged")
                 assertEquals(listOf(List(payload) { 9.toByte() }), readAll(p.server!!).map { it.toList() })
                 assertNull(p.server!!.closedReason, "limit $limit: the server took the frame")
-            } finally {
-                p.close()
             }
         }
     }
@@ -210,7 +202,7 @@ class DatagramCoreTest {
     /** A limit of 1 leaves no room for a DATAGRAM frame with a Length field (the only one this sender writes): nothing is sent. */
     @Test fun aPeerLimitOfOneByteTakesNoDatagram() {
         val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 1 })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(0, p.client.maxDatagramPayload)
             val s = Sender()
@@ -219,25 +211,21 @@ class DatagramCoreTest {
             p.runUntil(500.milliseconds) { false }
             assertEquals(0, s.transmits, "the sender is never asked")
             assertNull(p.server!!.closedReason)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun peerWithoutSupportGivesZero() {
         val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 0 })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(0, p.client.maxDatagramPayload)
             assertTrue(p.server!!.maxDatagramPayload > 0)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun onTransmitCalledAtPacketAssembly() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val s = Sender()
             s.queue += ByteArray(300) { 7 } to 1L
@@ -254,14 +242,12 @@ class DatagramCoreTest {
             assertEquals(1, s.writes)
             assertTrue(s.transmits >= 1)
             assertEquals(-1, p.server!!.readDatagram(ByteArray(10), 0), "queue empty")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun ackedCallback() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val s = Sender()
             s.queue += ByteArray(10) to 42L
@@ -269,14 +255,12 @@ class DatagramCoreTest {
             assertTrue(p.runUntil(2.seconds) { s.acked.isNotEmpty() })
             assertEquals(listOf(42L), s.acked)
             assertTrue(s.lost.isEmpty())
-        } finally {
-            p.close()
         }
     }
 
     @Test fun datagramNeverRetransmitted() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val s = Sender()
             s.queue += ByteArray(10) { 9 } to 5L
@@ -295,14 +279,12 @@ class DatagramCoreTest {
             p.runUntil(1.seconds) { false }
             assertTrue(readAll(p.server!!).isEmpty(), "nothing was resent (RFC 9221 section 5)")
             assertEquals(1, s.writes)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun datagramsRespectCongestionWindow() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val id = p.client.openStream(true)
             p.client.writeStream(id, ByteArray(200_000), 0, 200_000, false)
@@ -314,40 +296,34 @@ class DatagramCoreTest {
             p.client.datagramSender = s
             assertTrue(p.runUntil(5.seconds) { s.writes == 50 })
             assertEquals(0, violations, "onTransmit never runs while the window is full")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_datagramInHandshakeLevel() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.client.testInjectDatagramInHandshake = true
             assertTrue(p.runUntil(2.seconds) { p.closedReason(p.serverEvents) != null })
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.serverEvents))
             assertEquals(0x0aL, r.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun datagramAboveAdvertisedSizeIsProtocolViolation() {
         // RFC 9221 section 3: a DATAGRAM frame larger than our max_datagram_frame_size is PROTOCOL_VIOLATION
         val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectDatagramBytes = 500
             assertTrue(p.runUntil(2.seconds) { p.closedReason(p.serverEvents) != null })
             val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.serverEvents))
             assertEquals(0x0aL, r.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun receiveQueueDropsOldestAt128() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val s = Sender()
             repeat(200) { i ->
@@ -365,15 +341,13 @@ class DatagramCoreTest {
                 199,
                 got[127][0].toInt() and 0xff or ((got[127][1].toInt() and 0xff) shl 8),
             )
-        } finally {
-            p.close()
         }
     }
 
     /** A datagram of exactly `maxDatagramPayload` must still go out while ACKs are being sent, without an ACK-only storm. */
     @Test fun maxSizeDatagramDeliveredWhileAcking() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val sid = p.server!!.openStream(true)
             p.server!!.writeStream(sid, ByteArray(20_000), 0, 20_000, false)
@@ -396,8 +370,6 @@ class DatagramCoreTest {
                 p.client.stats.packetsSent - sentBefore < 200,
                 "no ACK-only storm: ${p.client.stats.packetsSent - sentBefore} packets",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -405,7 +377,7 @@ class DatagramCoreTest {
     @Test fun typeWithoutLengthAtExactMax() {
         for ((payload, ok) in listOf(99 to true, 100 to false)) {
             val p = CorePair(serverQuic = quicConfig { maxDatagramFrameSize = 100 })
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake())
                 p.runUntil(100.milliseconds) { false }
                 val s = p.server!!
@@ -439,8 +411,6 @@ class DatagramCoreTest {
                         ).code,
                     )
                 }
-            } finally {
-                p.close()
             }
         }
     }

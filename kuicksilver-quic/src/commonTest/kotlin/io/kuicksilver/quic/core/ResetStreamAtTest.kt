@@ -67,7 +67,7 @@ class ResetStreamAtTest {
     /** Section 3: the bytes below the Reliable Size arrive whatever is lost; then the reset, with its code. */
     @Test fun resetAtDeliversReliablePrefix() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val loss = Random(7)
             p.filterToServer = { _, _ -> loss.nextInt(10) != 0 } // 10% loss both ways
@@ -84,15 +84,13 @@ class ResetStreamAtTest {
             assertEquals(7L, got.resetCode)
             // the sending half retires once the reliable bytes are acknowledged
             assertTrue(p.runUntil(limit = 30.seconds) { p.clientEvents.any { it is ConnectionEvent.StreamFinished && it.id == id } })
-        } finally {
-            p.close()
         }
     }
 
     /** A Reliable Size above what was written keeps every written byte. */
     @Test fun reliableSizeIsCutToWhatWasWritten() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             p.client.writeStream(id, ByteArray(10) { it.toByte() }, 0, 10, fin = false)
@@ -100,15 +98,13 @@ class ResetStreamAtTest {
             val got = p.readAll(id)
             assertContentEquals(ByteArray(10) { it.toByte() }, got.bytes)
             assertEquals(3L, got.resetCode)
-        } finally {
-            p.close()
         }
     }
 
     /** Without the peer's transport parameter it is a plain RESET_STREAM (the peer would not know the frame). */
     @Test fun fallsBackToResetStreamWithoutPeerSupport() {
         val p = CorePair(clientQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             p.client.writeStream(id, ByteArray(100) { 1 }, 0, 100, fin = false)
@@ -117,15 +113,13 @@ class ResetStreamAtTest {
             assertEquals(9L, got.resetCode)
             assertNull(p.closedReason(p.serverEvents))
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
     /** The frame from a peer we did not offer the extension to is an unknown frame: FRAME_ENCODING_ERROR. */
     @Test fun negative_resetStreamAtWithoutNegotiationIsFrameEncodingError() {
         val p = CorePair(clientQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             p.client.streams.forceResetStreamAtForTest = true
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
@@ -134,15 +128,13 @@ class ResetStreamAtTest {
             assertTrue(p.runUntil { p.closedReason(p.clientEvents) != null })
             val reason = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(TransportError.FRAME_ENCODING_ERROR, reason.code)
-        } finally {
-            p.close()
         }
     }
 
     /** Section 4: a Reliable Size above the Final Size closes the connection with FRAME_ENCODING_ERROR. */
     @Test fun negative_resetStreamAtReliableSizeAboveFinalIsError() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             p.client.streams.tamperResetStreamAtForTest = { it.c = it.b + 1 } // reliable = final + 1
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
@@ -151,15 +143,13 @@ class ResetStreamAtTest {
             assertTrue(p.runUntil { p.closedReason(p.clientEvents) != null })
             val reason = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(TransportError.FRAME_ENCODING_ERROR, reason.code)
-        } finally {
-            p.close()
         }
     }
 
     /** A later RESET_STREAM (here from the peer's STOP_SENDING) ends the reliable delivery: the stream is reset outright. */
     @Test fun stopSendingAfterResetAtEndsTheStream() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             p.client.writeStream(id, ByteArray(200_000), 0, 200_000, fin = false)
@@ -168,8 +158,6 @@ class ResetStreamAtTest {
             p.server!!.stopSending(id, 6)
             assertTrue(p.runUntil(limit = 30.seconds) { p.clientEvents.any { it is ConnectionEvent.StreamFinished && it.id == id } })
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -182,7 +170,7 @@ class ResetStreamAtTest {
     @Test fun laterResetKeepsTheResetStreamAtCode() {
         for (viaStopSending in listOf(true, false)) {
             val p = CorePair(clientQuic = on, serverQuic = on)
-            try {
+            p.use { _ ->
                 p.established()
                 val id = p.client.openStream(bidi = false, StreamPriority.Default)
                 p.filterToClient = { _, _ -> false }
@@ -198,8 +186,6 @@ class ResetStreamAtTest {
                     p.client.streams.releaseControlFrame(c)
                 }
                 assertEquals(listOf(4L), codes, "via STOP_SENDING: $viaStopSending")
-            } finally {
-                p.close()
             }
         }
     }
@@ -210,7 +196,7 @@ class ResetStreamAtTest {
      */
     @Test fun ackOfBytesPastTheReliableSizeKeepsTheBufferExact() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             p.filterToClient = { _, _ -> false } // the server's ACKs are held back
@@ -229,8 +215,6 @@ class ResetStreamAtTest {
             assertNull(violation)
             assertNull(p.client.streams.invariantViolationForTest())
             assertEquals(0L, p.client.streams.sendBufferedBytes)
-        } finally {
-            p.close()
         }
     }
 
@@ -248,7 +232,7 @@ class ResetStreamAtTest {
                         initialStreamWindow = 16_384
                     },
             )
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             val data = ByteArray(100_000) { (it * 3).toByte() }
@@ -260,15 +244,13 @@ class ResetStreamAtTest {
             assertTrue(got.bytes.size >= 60_000, "${got.bytes.size} bytes")
             assertContentEquals(data.copyOf(got.bytes.size), got.bytes)
             assertEquals(5L, got.resetCode)
-        } finally {
-            p.close()
         }
     }
 
     /** draft-11 section 5.2: a later reset with another code is STREAM_STATE_ERROR. */
     @Test fun negative_resetCodeChangeIsStreamStateError() {
         val p = CorePair(clientQuic = on, serverQuic = on)
-        try {
+        p.use { _ ->
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
             p.client.writeStream(id, ByteArray(100), 0, 100, fin = false)
@@ -280,8 +262,6 @@ class ResetStreamAtTest {
             assertTrue(p.runUntil { p.closedReason(p.clientEvents) != null })
             val reason = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
             assertEquals(TransportError.STREAM_STATE_ERROR, reason.code)
-        } finally {
-            p.close()
         }
     }
 }

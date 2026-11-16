@@ -75,7 +75,7 @@ class PacketReceiveFuzzTest {
         if (data.isEmpty()) return
         KslLoader.ensureLoaded()
         val p = CorePair()
-        try {
+        p.use { _ ->
             check(p.handshake()) { "Null-crypto handshake did not complete" }
             val flags = data[0].toInt()
             val toServer = flags and 1 == 0
@@ -114,8 +114,6 @@ class PacketReceiveFuzzTest {
             }
             closedReported(p.client, p.clientEvents)
             p.server?.let { closedReported(it, p.serverEvents) }
-        } finally {
-            p.close()
         }
     }
 

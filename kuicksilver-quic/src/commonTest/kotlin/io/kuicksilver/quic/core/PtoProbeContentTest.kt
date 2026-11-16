@@ -24,7 +24,7 @@ import kotlin.time.Duration.Companion.seconds
 class PtoProbeContentTest {
     @Test fun probesResendDataBehindPingOnlyPackets() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(300.milliseconds) { false }
             val server = p.server!!
@@ -58,8 +58,6 @@ class PtoProbeContentTest {
                     read == data.size
                 }
             assertTrue(done, "the client got $read of ${data.size} bytes; STREAM frames that reached it: $streamFrames")
-        } finally {
-            p.close()
         }
     }
 }

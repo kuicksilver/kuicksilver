@@ -38,15 +38,13 @@ class EarlyMigrationTest {
 
     private fun firstFlightCids(crypto: QuicCrypto) {
         val p = EndpointPair(crypto = crypto)
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil { c.state == ConnectionState.Confirmed }, "confirmed")
             // RFC 9000 section 5.1.1: the server issues up to the client's active_connection_id_limit (4 by default) at once, so the
             // client holds them by the time HANDSHAKE_DONE confirms the handshake and a migration becomes possible
             assertEquals(4, c.cids.peerCount, "the server's IDs arrived with its first 1-RTT flight (${crypto::class.simpleName})")
             assertTrue(c.cids.hasSparePeer())
-        } finally {
-            p.close()
         }
     }
 
@@ -68,7 +66,7 @@ class EarlyMigrationTest {
 
     @Test fun migrationRightAfterHandshakeCompletesOnceTheConnectionIdArrives() {
         val (p, c) = heldPair()
-        try {
+        p.use { _ ->
             val s = p.server()
             val probes = ArrayList<ByteArray>()
             p.filterToServer =
@@ -99,14 +97,12 @@ class EarlyMigrationTest {
             assertEquals(other, s.remoteAddressForTest, "the server follows the client to the new address")
             assertNull(p.closed(c))
             assertNull(p.closed(s))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun probeWithoutSpareConnectionIdFailsWithNoSpareConnectionId() {
         val (p, c) = heldPair()
-        try {
+        p.use { _ ->
             val id = c.addPath(p.serverAddr, p.now)
             p.clientSocketSources[id] = other
             p.clientListens += other
@@ -116,8 +112,6 @@ class EarlyMigrationTest {
             assertEquals(PathFailureReason.NoSpareConnectionId, failed.reason)
             assertNull(p.closed(c), "the connection stays on its path")
             assertEquals(io.kuicksilver.quic.PathId.Initial, c.path.id)
-        } finally {
-            p.close()
         }
     }
 }

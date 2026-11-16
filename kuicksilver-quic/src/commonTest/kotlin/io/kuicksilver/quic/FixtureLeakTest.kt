@@ -15,6 +15,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -99,5 +100,27 @@ class FixtureLeakTest {
         s.close(0, "", p.now)
         p.remove(p.server, s)
         p.close()
+    }
+
+    /** Closed with use { }, a fixture's leak found after the test failed is added to that failure, which stays the error. */
+    @Test fun negative_aLeakAfterAFailureIsSuppressedAndTheFailureStays() {
+        val original = IllegalStateException("the test's own failure")
+        var key: io.kuicksilver.tls.ResetKey? = null
+        val e =
+            assertFailsWith<IllegalStateException> {
+                CorePair(crypto = KslQuicCrypto).use { p ->
+                    key = p.leaks.newResetKey()
+                    throw original
+                }
+            }
+        try {
+            assertSame(original, e)
+            assertTrue(
+                e.suppressedExceptions.any { it is AssertionError && "reset key" in it.message.orEmpty() },
+                "${e.suppressedExceptions}",
+            )
+        } finally {
+            key?.close()
+        }
     }
 }

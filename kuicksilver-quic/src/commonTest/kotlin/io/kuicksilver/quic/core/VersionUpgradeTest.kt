@@ -45,7 +45,7 @@ class VersionUpgradeTest {
                 headerVersion(b).takeIf { it >= 0 }?.let { serverVersions += it }
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(VersionProfile.V2, p.client.version)
             assertEquals(VersionProfile.V2, p.server!!.version)
@@ -56,8 +56,6 @@ class VersionUpgradeTest {
                     },
                 "every server long-header packet is v2: $serverVersions",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -75,45 +73,37 @@ class VersionUpgradeTest {
                 headerVersion(b).takeIf { it >= 0 }?.let { clientVersions += it }
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(VersionProfile.V1.version, clientVersions.first(), "the first flight is v1")
             assertEquals(VersionProfile.V2, p.client.version)
             assertEquals(VersionProfile.V2, p.server!!.version)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun clientStartingInV2() {
         val p = CorePair(clientQuic = v2v1, serverQuic = v2v1, crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(VersionProfile.V2, p.client.version)
             assertEquals(VersionProfile.V2, p.server!!.version)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun v1OnlyServerKeepsV1() {
         val p = CorePair(clientQuic = v1v2, crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(VersionProfile.V1, p.client.version)
             assertEquals(VersionProfile.V1, p.server!!.version)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun serverOrderV1V2StaysV1() {
         val p = CorePair(clientQuic = v1v2, serverQuic = v1v2, crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(VersionProfile.V1, p.client.version)
-        } finally {
-            p.close()
         }
     }
 
@@ -125,25 +115,21 @@ class VersionUpgradeTest {
                 headerVersion(b).takeIf { it >= 0 }?.let { versions += it }
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertEquals(setOf(1), versions)
             assertEquals(VersionProfile.V1, p.server!!.version)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun versionInformationCheckedOnBothSides() {
         val p = CorePair(clientQuic = v1v2, serverQuic = v2v1, crypto = ksl)
         p.client.testForgeChosenVersion = true
-        try {
+        p.use { _ ->
             assertFalse(p.handshake())
             val s = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(s)
             assertEquals(0x11L, s.code)
-        } finally {
-            p.close()
         }
     }
 }

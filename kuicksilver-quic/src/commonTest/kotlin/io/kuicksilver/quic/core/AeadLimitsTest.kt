@@ -95,7 +95,7 @@ class AeadLimitsTest {
                 if (captured == null && isShort(b)) captured = b.copyOf()
                 true
             }
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p))
                 assertTrue(send(p, 32 shl 10))
                 val c = captured!!
@@ -110,8 +110,6 @@ class AeadLimitsTest {
                 } else {
                     assertNull(r, "one below the limit: alive")
                 }
-            } finally {
-                p.close()
             }
         }
     }
@@ -126,7 +124,7 @@ class AeadLimitsTest {
             toClient++
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(send(p, 32 shl 10))
             repeat(10) { feedClient(p, forged(captured!!)) }
@@ -141,8 +139,6 @@ class AeadLimitsTest {
             assertTrue(toClient > sentBefore, "the server kept sending")
             assertEquals(received, p.client.stats.packetsReceived, "nothing processed after AEAD_LIMIT_REACHED")
             assertEquals(failures, p.client.stats.authenticationFailures, "nothing even decrypted")
-        } finally {
-            p.close()
         }
     }
 
@@ -162,7 +158,7 @@ class AeadLimitsTest {
             if (captured == null && isShort(b)) captured = b.copyOf()
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(send(p, 16 shl 10))
             repeat(5) { feedClient(p, forged(captured!!)) }
@@ -170,8 +166,6 @@ class AeadLimitsTest {
             val r = p.closedReason(p.clientEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0fL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -182,7 +176,7 @@ class AeadLimitsTest {
      */
     @Test fun initialAeadFailuresCount() {
         val p = CorePair(serverQuic = quicConfig { limits = QuicLimits(integrityLimitAesGcm = 5) }, crypto = ksl)
-        try {
+        p.use { _ ->
             p.step()
             val initial = p.lastClientInitial!! // the server exists and still holds Initial keys
             repeat(3) { feedServer(p, forged(initial)) }
@@ -193,21 +187,17 @@ class AeadLimitsTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "closed at the limit: $r")
             assertEquals(0x0fL, r.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun confidentialityLimitTriggersAutomaticUpdate() {
         val p = CorePair(clientQuic = quicConfig { limits = QuicLimits(confidentialityLimitAesGcm = 800) }, crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(send(p, 2 shl 20), "transfer continues across the automatic update")
             assertTrue(p.client.stats.keyUpdates >= 1, "updated at 7/8 of the limit: ${p.client.stats}")
             assertNull(p.closedReason(p.clientEvents))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -231,7 +221,7 @@ class AeadLimitsTest {
                     },
                 crypto = ksl,
             )
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(p.client.initiateKeyUpdate(p.now))
             var sealed = 0
@@ -251,8 +241,6 @@ class AeadLimitsTest {
             p.runUntil(limit = 10.seconds) { false } // the closing period, with the server's retransmissions arriving
             assertTrue(afterClose >= 1, "the CONNECTION_CLOSE went out under the key")
             assertTrue(sealed <= 24, "at most the limit under one key, the CONNECTION_CLOSE copies included: $sealed")
-        } finally {
-            p.close()
         }
     }
 }

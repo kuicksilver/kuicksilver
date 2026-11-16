@@ -111,15 +111,13 @@ class ReviewKeyPhaseAttackTest {
 
     private fun closeCode(vararg frames: ByteArray): Long? {
         val p = CorePair(crypto = NullCryptoProvider)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             for (f in frames) p.client.testInjectFrames.addLast(3 to f)
             p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }
             val r = p.closedReason(p.serverEvents) ?: return null
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$r")
             return r.code
-        } finally {
-            p.close()
         }
     }
 

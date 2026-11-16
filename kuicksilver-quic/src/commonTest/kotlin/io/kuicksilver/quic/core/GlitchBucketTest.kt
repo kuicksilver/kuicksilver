@@ -50,7 +50,7 @@ class GlitchBucketTest {
     @Test fun negative_glitchBucketCloses() {
         // 1001 NEW_CONNECTION_ID frames repeating a known sequence number within one second: the server closes with PROTOCOL_VIOLATION (0x0a) "excessive peer activity"
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { false }
             p.client.testInjectRepeatNewCid = 1001
@@ -60,15 +60,13 @@ class GlitchBucketTest {
             assertEquals(Initiator.Local, r.initiator)
             assertTrue(r.reason.startsWith("excessive peer activity"), r.reason)
             assertTrue(p.server!!.stats.glitchTokensSpent >= 1001L)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun slowMisbehaviourWithinRefillSurvives() {
         // 1000 duplicate NEW_CONNECTION_ID frames spread over 31 s stay under the 33/s refill: the connection lives
         val p = CorePair(clientQuic = quicConfig { maxIdleTimeout = 60.seconds }, serverQuic = quicConfig { maxIdleTimeout = 60.seconds })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { false }
             repeat(1000) {
@@ -80,29 +78,25 @@ class GlitchBucketTest {
             assertNull(p.closedReason(p.serverEvents))
             assertTrue(p.server!!.state == ConnectionState.Confirmed)
             assertTrue(p.server!!.stats.glitchTokensSpent in 990L..1000L, "spent ${p.server!!.stats.glitchTokensSpent}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun disabledNeverCloses() {
         val p = CorePair(serverQuic = quicConfig { glitchProtection = false })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { false }
             p.client.testInjectRepeatNewCid = 3000
             p.runUntil(limit = 2.seconds) { p.client.testInjectRepeatNewCid == 0 }
             assertNull(p.closedReason(p.serverEvents))
             assertEquals(0L, p.server!!.stats.glitchTokensSpent)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun duplicateNewConnectionIdAndRetireSpend() {
         // a NEW_CONNECTION_ID repeating a known sequence and every RETIRE_CONNECTION_ID cost a token (the peer makes us work for nothing)
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { false }
             assertEquals(0L, p.server!!.stats.glitchTokensSpent, "the client's own NEW_CONNECTION_IDs after the handshake are not glitches")
@@ -111,43 +105,37 @@ class GlitchBucketTest {
             p.runUntil(limit = 300.milliseconds) { false }
             assertEquals(2L, p.server!!.stats.glitchTokensSpent, "sequence 1 sent again twice: two duplicates")
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun noOpWindowUpdatesSpendNothing() {
         // a MAX_DATA that raises nothing is what a retransmission or a reordered update looks like (quic-go sends MAX_STREAMS per packet until acknowledged): never a glitch
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectMaxData = 2000
             p.runUntil(limit = 2.seconds) { p.client.testInjectMaxData == 0 }
             p.runUntil(limit = 300.milliseconds) { false }
             assertEquals(0L, p.server!!.stats.glitchTokensSpent)
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun honestHandshakeAndIdleSpendNothing() {
         val p = CorePair(clientQuic = quicConfig { keepAlive = 1.seconds })
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 5.seconds) { false }
             assertEquals(0L, p.server!!.stats.glitchTokensSpent, "keep-alive PINGs once per second are not glitches")
             assertEquals(0L, p.client.stats.glitchTokensSpent)
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9000 section 10.3 / 12.2: short-header packets that fail decryption are discarded silently — anyone who sees a connection ID could otherwise close the connection with a thousand forged datagrams. */
     @Test fun negative_forgedShortHeadersFromStrangerSpendNothing() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val s = p.server!!
             val cid = s.localCid.toByteArray()
@@ -168,15 +156,13 @@ class GlitchBucketTest {
             assertEquals(ConnectionState.Confirmed, s.state)
             assertNull(p.closedReason(p.serverEvents))
             assertEquals(0L, s.stats.glitchTokensSpent, "forged packets spend nothing")
-        } finally {
-            p.close()
         }
     }
 
     /** A PTO fires two probes (RFC 9002 section 6.2.4); with nothing to retransmit both are PING (+ ACK) and arrive together. An honest pair is free, a third PING-only packet within one RTT is a glitch (found by testing.GlitchHonestTransferTest once ACK ranges shrank). */
     @Test fun ptoPairOfPingOnlyPacketsIsNotAGlitch() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(300.milliseconds) { false }
             val s = p.server!!
@@ -203,8 +189,6 @@ class GlitchBucketTest {
             assertEquals(0L, s.stats.glitchTokensSpent, "the PTO pair is free")
             deliver(pings[2])
             assertEquals(1L, s.stats.glitchTokensSpent, "a third PING-only packet within one RTT costs a token")
-        } finally {
-            p.close()
         }
     }
 }

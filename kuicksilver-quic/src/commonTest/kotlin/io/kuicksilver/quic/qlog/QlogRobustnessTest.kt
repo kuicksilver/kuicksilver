@@ -82,19 +82,17 @@ class QlogRobustnessTest {
     @Test fun aSinkThatCannotOpenLeavesTheConnectionAlone() {
         val sink = CountingSink(failOpen = true)
         val p = EndpointPair(serverQuic = quicConfig { qlog = sink })
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "handshake completes without a trace")
             assertNull(p.closed(c))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun aTraceThatCannotWriteLeavesTheConnectionAlone() {
         val sink = CountingSink(failWrite = true)
         val p = EndpointPair(serverQuic = quicConfig { qlog = sink })
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "handshake completes")
             assertNull(p.closed(c))
@@ -106,8 +104,6 @@ class QlogRobustnessTest {
                 "the server connection was not failed by its trace",
             )
             assertEquals(sink.opened, sink.closed, "a failing trace is closed and tracing stops")
-        } finally {
-            p.close()
         }
     }
 }

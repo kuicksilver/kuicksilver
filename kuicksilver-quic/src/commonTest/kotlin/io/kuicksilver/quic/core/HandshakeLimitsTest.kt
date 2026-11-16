@@ -52,11 +52,9 @@ class HandshakeLimitsTest {
             if (!p.server!!.addressValidated && sent > 3 * received) violated = true
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(!violated, "server sent $sent after receiving $received before validation")
-        } finally {
-            p.close()
         }
     }
 
@@ -92,7 +90,7 @@ class HandshakeLimitsTest {
             if (!p.server!!.addressValidated && sent > 3 * received) violated = true
             true
         }
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil { p.sentToClient > 0 && p.toClient.isEmpty() }, "the server answered the half ClientHello")
             assertTrue(firstToClient in 1..100, "its first datagram is an ACK-only Initial: $firstToClient bytes")
             assertTrue(p.client.rtt.hasSample, "the client took its ACK")
@@ -102,14 +100,12 @@ class HandshakeLimitsTest {
             assertEquals(dropped, p.client.stats.datagramsDropped, "no server datagram was discarded for its SCID")
             assertTrue(maxGap < 5.seconds, "the client's Initials reach the server within its handshake idle timeout: $maxGap")
             assertTrue(!violated, "server sent $sent after receiving $received before validation")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_amplificationCountsDiscarded() {
         val p = CorePair(serverTls = bigServer(), crypto = ksl)
-        try {
+        p.use { _ ->
             p.step() // the first Initial made the server
             val s = p.server!!
             val before = s.stats.bytesReceived
@@ -121,14 +117,12 @@ class HandshakeLimitsTest {
                 b.close()
             }
             assertEquals(before + 700, s.stats.bytesReceived, "undecodable bytes still count toward the budget")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_duplicateDatagramCountedOnce() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.step()
             val s = p.server!!
             val before = s.stats.bytesReceived
@@ -147,8 +141,6 @@ class HandshakeLimitsTest {
                 s.stats.bytesReceived,
                 "no double counting from the undecryptable buffer: ${first?.bytes?.size}",
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -156,21 +148,19 @@ class HandshakeLimitsTest {
         val p = CorePair(crypto = ksl)
         // once the client could send Handshake packets, drop everything from it
         p.filterToServer = { _, _ -> !p.client.hasHandshakeKeys || p.server!!.addressValidated }
-        try {
+        p.use { _ ->
             p.step()
             assertTrue(!p.server!!.addressValidated, "Initial packets do not validate the address")
             p.runUntil(limit = 2000.milliseconds) { false }
             assertTrue(!p.server!!.addressValidated, "without a Handshake packet the address stays unvalidated")
             p.filterToServer = { _, _ -> true }
             assertTrue(p.runUntil { p.server!!.addressValidated })
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_cryptoBufferLimit() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             p.step()
             p.client.testInjectCrypto = Triple(2, 70_000L, 10)
             p.runUntil(limit = 300.milliseconds) {
@@ -180,14 +170,12 @@ class HandshakeLimitsTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0dL, r.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_cryptoHighOffset() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectCrypto = Triple(3, 1L shl 40, 10)
             p.runUntil(limit = 300.milliseconds) {
@@ -198,14 +186,12 @@ class HandshakeLimitsTest {
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0dL, r.code)
             assertTrue(p.server!!.stats.memoryCeiling < (1L shl 40))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_cryptoPostHandshakeCap() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectCrypto = Triple(3, 1L, 70_000) // a gap at 0: TLS can read none of it
             p.runUntil(limit = 500.milliseconds) {
@@ -215,8 +201,6 @@ class HandshakeLimitsTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0dL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -248,7 +232,7 @@ class HandshakeLimitsTest {
     /** RFC 9001 section 4.1.3: once the server reads Handshake, Initial CRYPTO past what it received is a PROTOCOL_VIOLATION, not buffered. */
     @Test fun negative_cryptoPastEndOfPreviousLevel() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.filterToClient = { _, _ -> false } // the client stays in Initial and keeps sending there
             p.step()
             p.step()
@@ -260,22 +244,18 @@ class HandshakeLimitsTest {
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0aL, r.code)
             assertEquals(0L, s.handshakeBufferBytes)
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9001 section 4.1.3: Initial data still waiting for a gap when TLS moves to Handshake will never be consumed. */
     @Test fun negative_cryptoGapAtKeyChange() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.client.testInjectCrypto = Triple(0, 3000L, 10)
             p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0aL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -315,20 +295,18 @@ class HandshakeLimitsTest {
                 crypto = ksl,
             )
         p.autoVerify = false
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil(limit = 500.milliseconds) { p.clientEvents.any { it is ConnectionEvent.VerifyRequested } })
             val c = p.client
             assertEquals(0L, c.cryptoStreams.bufferedBytes)
             val tls = c.handshakeBufferBytes - c.receiver.bufferedBytes
             assertTrue(tls > 0, "the paused TLS holds the server's Handshake flight: $tls")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun serverDropsInitialBelow1200() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.step()
             val s = p.server!!
             val short = p.lastClientInitial!!.copyOf(1100)
@@ -341,15 +319,13 @@ class HandshakeLimitsTest {
             }
             assertEquals(before, s.stats.packetsReceived)
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9002 section 6.2.2.1: a server that spent its 3x budget and cannot send arms no PTO until the client sends again; the client's next datagram re-arms it. */
     @Test fun ptoNotArmedWhileAmplificationBlocked() {
         val p = CorePair(serverTls = bigServer(), crypto = ksl)
-        try {
+        p.use { _ ->
             // only the client's first flight (a two-datagram ClientHello) arrives: the server's large flight exhausts its budget
             p.filterToServer = { i, _ -> i <= 1 }
             p.runUntil(3.seconds) { false }
@@ -364,8 +340,6 @@ class HandshakeLimitsTest {
                 true
             }
             assertTrue(p.handshake(), "the client's retransmission unblocks the server and the handshake completes")
-        } finally {
-            p.close()
         }
     }
 
@@ -390,7 +364,7 @@ class HandshakeLimitsTest {
             if (!p.server!!.addressValidated && sent > 3 * received) violated = true
             true
         }
-        try {
+        p.use { _ ->
             p.runUntil(10.seconds) { false }
             val s = p.server!!
             assertTrue(!s.addressValidated, "the address stays unvalidated")
@@ -399,8 +373,6 @@ class HandshakeLimitsTest {
             // an Initial probe needs a 1200-byte datagram (RFC 9000 section 14.1): what is left below that is never sent as one
             assertTrue(s.amplification.budget() < 1200, "the probes spent the budget: ${s.amplification.budget()} left of ${3 * received}")
             assertEquals(TimeMark.NEVER, s.loss.timeout(), "no PTO armed once the budget cannot carry a probe (RFC 9002 section 6.2.2.1)")
-        } finally {
-            p.close()
         }
     }
 
@@ -429,7 +401,7 @@ class HandshakeLimitsTest {
                 }
                 true
             }
-            try {
+            p.use { _ ->
                 p.step() // the ClientHello makes the server
                 p.step() // the server answers it
                 val s = p.server!!
@@ -452,8 +424,6 @@ class HandshakeLimitsTest {
                 )
                 assertTrue(sent <= 3 * (received + 400), "extra $extra: server sent $sent after receiving ${received + 400}")
                 assertEquals(emptyList(), undersized, "extra $extra: ack-eliciting Initial datagrams below 1200 bytes")
-            } finally {
-                p.close()
             }
         }
     }

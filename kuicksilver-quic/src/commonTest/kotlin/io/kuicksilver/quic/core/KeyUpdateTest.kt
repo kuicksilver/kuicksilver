@@ -111,7 +111,7 @@ class KeyUpdateTest {
     @Test fun localUpdateFollowedByPeer() {
         for (crypto in listOf<QuicCrypto>(NullCryptoProvider, ksl)) {
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p))
                 assertTrue(p.client.initiateKeyUpdate(p.now), "client may update once confirmed and acknowledged")
                 assertTrue(echo(p, 1 shl 20), "echo after the update with $crypto")
@@ -121,62 +121,52 @@ class KeyUpdateTest {
                 assertEquals(true, p.server!!.keyPhaseForTest!!.phase)
                 assertNull(p.closedReason(p.clientEvents))
                 assertNull(p.closedReason(p.serverEvents))
-            } finally {
-                p.close()
             }
         }
     }
 
     @Test fun peerInitiatedUpdateUpdatesOurWriteKeys() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(p.server!!.initiateKeyUpdate(p.now))
             assertTrue(echo(p, 256 shl 10))
             assertEquals(true, p.client.keyPhaseForTest!!.phase, "the client's write keys moved to phase 1")
             assertEquals(1L, p.client.stats.keyUpdates)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun kslUpdateAes128Aes256ChaCha() {
         for (suite in listOf(CipherSuites.AES_128_GCM, CipherSuites.AES_256_GCM, CipherSuites.CHACHA20_POLY1305)) {
             val p = CorePair(clientTls = CoreFixtures.client { cipherSuites = CipherSuites(listOf(suite)) }, crypto = ksl)
-            try {
+            p.use { _ ->
                 assertTrue(confirmed(p), suite)
                 assertTrue(p.client.initiateKeyUpdate(p.now))
                 assertTrue(echo(p, 256 shl 10), suite)
                 assertEquals(1L, p.server!!.stats.keyUpdates, suite)
                 assertNull(p.closedReason(p.serverEvents), suite)
-            } finally {
-                p.close()
             }
         }
     }
 
     @Test fun cannotInitiateBeforeConfirmed() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertFalse(p.client.initiateKeyUpdate(p.now))
             p.runUntil { p.client.hasHandshakeKeys }
             assertFalse(p.client.initiateKeyUpdate(p.now), "not before the handshake is confirmed")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun cannotInitiateAgainBeforeAckOfCurrentPhase() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(p.client.initiateKeyUpdate(p.now))
             assertFalse(p.client.initiateKeyUpdate(p.now), "no packet of the new phase acknowledged yet")
             assertTrue(echo(p, 64 shl 10))
             assertTrue(p.runUntil(limit = 5.seconds) { p.client.initiateKeyUpdate(p.now) }, "after an ACK of the current phase")
             assertEquals(2L, p.client.stats.keyUpdates)
-        } finally {
-            p.close()
         }
     }
 
@@ -186,7 +176,7 @@ class KeyUpdateTest {
      */
     @Test fun ownUpdateKeepsOldReadKeyUntilNewPhaseArrives() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             p.filterToServer = { _, _ -> false } // the server never sees a packet of the new phase
             assertTrue(p.client.initiateKeyUpdate(p.now))
@@ -198,15 +188,13 @@ class KeyUpdateTest {
             val buf = ByteArray(200)
             assertTrue(p.runUntil(limit = 1.seconds) { p.client.readStream(id, buf, 0, buf.size) > 0 }, "old-phase data still decrypts")
             assertEquals(failuresBefore, p.client.stats.authenticationFailures)
-        } finally {
-            p.close()
         }
     }
 
     /** RFC 9001 section 6.5: the next update waits 3 x PTO after the acknowledgment that confirmed the previous one. */
     @Test fun nextUpdateWaitsThreePtoAfterConfirmingAck() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(p.client.initiateKeyUpdate(p.now))
             val kp = p.client.keyPhaseForTest!!
@@ -216,8 +204,6 @@ class KeyUpdateTest {
             assertFalse(p.client.initiateKeyUpdate(p.now), "not right after the confirming ACK")
             assertTrue(p.runUntil(limit = 5.seconds) { p.now >= kp.confirmedAt + p.client.pto() * 3 })
             assertTrue(p.client.initiateKeyUpdate(p.now), "3 x PTO later")
-        } finally {
-            p.close()
         }
     }
 
@@ -266,7 +252,7 @@ class KeyUpdateTest {
                 if (captured == null && isShort(b)) captured = b.copyOf()
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(echo(p, 32 shl 10))
             val c = captured!!
@@ -278,8 +264,6 @@ class KeyUpdateTest {
             assertEquals(before, p.server!!.stats.packetsReceived)
             assertTrue(echo(p, 32 shl 10))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -292,7 +276,7 @@ class KeyUpdateTest {
                 if (isShort(b) && old.size < 4) old += b.copyOf()
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(echo(p, 32 shl 10))
             assertTrue(old.size >= 2, "captured phase-0 datagrams")
@@ -314,8 +298,6 @@ class KeyUpdateTest {
             assertTrue(echo(p, 32 shl 10))
             assertEquals(2L, p.server!!.stats.keyUpdates)
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -328,7 +310,7 @@ class KeyUpdateTest {
                 if (early == null && isShort(b)) early = b.copyOf()
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(echo(p, 16 shl 10))
             assertTrue(p.client.initiateKeyUpdate(p.now))
@@ -346,8 +328,6 @@ class KeyUpdateTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0eL, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -385,7 +365,7 @@ class KeyUpdateTest {
                 buf.close()
             }
         }
-        try {
+        p.use { _ ->
             var updated = false
             assertTrue(
                 p.runUntil(limit = 5.seconds) {
@@ -399,8 +379,6 @@ class KeyUpdateTest {
             assertNull(p.closedReason(p.clientEvents))
             assertNull(p.closedReason(p.serverEvents))
             assertTrue(echo(p, 4096), "the connection carries data in phase 1")
-        } finally {
-            p.close()
         }
     }
 
@@ -423,15 +401,13 @@ class KeyUpdateTest {
                     true
                 }
             }
-        try {
+        p.use { _ ->
             assertTrue(confirmed(p))
             assertTrue(p.client.initiateKeyUpdate(p.now))
             echo(p, 16 shl 10, limit = 3000)
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r, "server saw: $r")
             assertEquals(0x0eL, r.code)
-        } finally {
-            p.close()
         }
     }
 }

@@ -38,7 +38,7 @@ class LateDatagramTest {
     @Test fun datagramLatePastTheDecodeWindowIsDropped() {
         for (crypto in listOf<QuicCrypto>(NullCryptoProvider, ksl)) {
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertTrue(p.handshake(), "$crypto: handshake")
                 assertTrue(
                     p.runUntil(limit = 2.seconds) {
@@ -108,8 +108,6 @@ class LateDatagramTest {
                 assertTrue(delivered, "$crypto: the held datagram was delivered late")
                 assertNull(p.closedReason(p.serverEvents), "$crypto: server")
                 assertNull(p.closedReason(p.clientEvents), "$crypto: client")
-            } finally {
-                p.close()
             }
         }
     }

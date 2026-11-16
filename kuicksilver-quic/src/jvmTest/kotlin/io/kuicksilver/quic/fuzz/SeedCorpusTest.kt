@@ -257,7 +257,7 @@ class SeedCorpusTest {
         val c2s = ArrayList<ByteArray>()
         val s2c = ArrayList<ByteArray>()
         val p = CorePair()
-        try {
+        p.use { _ ->
             check(p.handshake())
             p.filterToServer = { _, b ->
                 c2s += b
@@ -280,8 +280,6 @@ class SeedCorpusTest {
                 p.step()
                 p.advance(5.milliseconds)
             }
-        } finally {
-            p.close()
         }
         check(c2s.isNotEmpty() && s2c.isNotEmpty()) { "post-handshake capture empty" }
         return Handshake(c2s, s2c)

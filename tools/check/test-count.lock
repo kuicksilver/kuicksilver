@@ -3343,6 +3343,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.aPairThatEnd
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.aRemovedConnectionReleasedThroughThePairCloses
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aBufferLeftOpenFailsThePairsClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aKeyLeftOpenFailsThePairsClose
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aLeakAfterAFailureIsSuppressedAndTheFailureStays
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aPairLeftOpenEarlierDoesNotHideALeak
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aRemovedConnectionNotReleasedFailsTheEndpointsClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.overlappingPairsCloseInEitherOrder
@@ -5005,6 +5006,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.versionInformationLengthNotMultipleOf4Rejected
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.wire.VersionInformationTest.versionInformationRoundTrip
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.DatagramApiAllocationTest.trySendNeverSuspendsOrAllocatesPerCall
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.FixtureThreadTest.negative_aCorePairClosedOnAnotherThreadSaysSo
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.FixtureThreadTest.negative_anEndpointPairClosedOnAnotherThreadSaysSo
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.admissionAndLoopsSamples
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.configSample
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.GuideSamplesTest.connectEchoAndServerAcceptSamples

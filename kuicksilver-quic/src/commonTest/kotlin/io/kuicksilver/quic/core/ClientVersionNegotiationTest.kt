@@ -42,12 +42,10 @@ class ClientVersionNegotiationTest {
                 true
             }
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 2.seconds) { false }
             assertEquals(0L, p.client.stats.bytesInFlight, "the first flight of the abandoned version is not counted forever")
-        } finally {
-            p.close()
         }
     }
 
@@ -87,15 +85,13 @@ class ClientVersionNegotiationTest {
     @Test fun vnWithoutOurVersionFails() {
         val p = CorePair(crypto = ksl)
         p.filterToServer = { _, _ -> false }
-        try {
+        p.use { _ ->
             p.step()
             feed(p, vn(p.lastClientInitial!!, 0x0a0a0a0a, 0x1a2a3a4a))
             val r = p.closedReason(p.clientEvents)
             assertIs<QuicException.ConnectionLost.VersionNegotiation>(r)
             assertEquals(listOf(0x0a0a0a0a, 0x1a2a3a4a), r.offered)
             assertEquals(listOf(1), r.supported)
-        } finally {
-            p.close()
         }
     }
 
@@ -111,38 +107,32 @@ class ClientVersionNegotiationTest {
                 true
             }
         }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "client=${p.closedReason(p.clientEvents)} server=${p.closedReason(p.serverEvents)}")
             assertEquals(VersionProfile.V1, p.client.version)
             assertEquals(VersionProfile.V1, p.server!!.version)
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_vnListsOwnVersion() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             p.step()
             feed(p, vn(p.lastClientInitial!!, 0x00000001, 0x0a0a0a0a))
             assertNull(p.closedReason(p.clientEvents))
             assertEquals(VersionProfile.V1, p.client.version)
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 
     @Test fun negative_versionNegotiationAfterInitial() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.runUntil { p.client.hasHandshakeKeys })
             feed(p, vn(p.lastClientInitial!!, 0x0a0a0a0a))
             assertNull(p.closedReason(p.clientEvents))
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 
@@ -168,12 +158,10 @@ class ClientVersionNegotiationTest {
                     }
                 }
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "client=${p.closedReason(p.clientEvents)}")
             assertEquals(VersionProfile.V1, p.client.version)
             assertNull(p.closedReason(p.clientEvents))
-        } finally {
-            p.close()
         }
     }
 
@@ -185,7 +173,7 @@ class ClientVersionNegotiationTest {
     @Test fun negative_versionNegotiationAfterRetryIgnored() {
         val p = CorePair(crypto = ksl)
         p.filterToServer = { _, _ -> false }
-        try {
+        p.use { _ ->
             p.step()
             val first = p.lastClientInitial!!
             p.client.onRetry(
@@ -196,8 +184,6 @@ class ClientVersionNegotiationTest {
             feed(p, vn(first, 0x0a0a0a0a))
             assertNull(p.closedReason(p.clientEvents), "the Version Negotiation after a Retry is discarded")
             assertNull(p.client.receivedVnVersions)
-        } finally {
-            p.close()
         }
     }
 }

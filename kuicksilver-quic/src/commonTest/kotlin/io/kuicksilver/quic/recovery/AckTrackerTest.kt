@@ -152,7 +152,7 @@ class AckTrackerTest {
     /** Once the peer acknowledged packets carrying our ACKs, the ranges below them are not reported again (RFC 9000 section 13.2.4); a lossy phase must not leave dozens of stale ranges in every later ACK. */
     @Test fun acknowledgedAckFramesRetireOldRanges() {
         val p = io.kuicksilver.quic.CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             var lossy = true
             p.filterToServer = { i, _ -> !(lossy && i % 5 == 3) } // every fifth client datagram is lost: the server sees many gaps
@@ -194,8 +194,6 @@ class AckTrackerTest {
                 p.server!!.stats.ackRanges <= 2,
                 "after the client acknowledged the server's ACKs only recent ranges remain: ${p.server!!.stats.ackRanges}",
             )
-        } finally {
-            p.close()
         }
     }
 

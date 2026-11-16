@@ -30,12 +30,10 @@ class AppLimitedTest {
 
     private fun withCore(block: (ConnectionCore, ConnectionLossListener) -> Unit) {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val c: ConnectionCore = p.connect()
             assertTrue(p.confirmed(c))
             block(c, ConnectionLossListener(c))
-        } finally {
-            p.close()
         }
     }
 

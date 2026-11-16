@@ -50,7 +50,7 @@ class BufferedAckRttTest {
 
     @Test fun anAckHeldForItsKeysIsSampledAtItsArrival() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             // the client's datagram with its Finished (Handshake) and a 1-RTT packet acknowledging the server's 0.5-RTT packets
             var found: Dgram? = null
             for (i in 0 until 50) {
@@ -77,8 +77,6 @@ class BufferedAckRttTest {
             assertTrue(s.receiver.bufferedCount == 0, "the held packet was processed")
             assertTrue(s.rtt.hasSample)
             assertTrue(s.rtt.latest < 200.milliseconds, "the wait for the handshake is not part of the RTT: ${s.rtt.latest}")
-        } finally {
-            p.close()
         }
     }
 }

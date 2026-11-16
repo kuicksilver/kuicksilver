@@ -228,7 +228,7 @@ class StatelessResetTest {
                         keepAlive = 100.milliseconds
                     },
             )
-        try {
+        p.use { _ ->
             val sizes = ArrayList<Int>()
             p.filterToServer = { _, bytes ->
                 if (bytes[0].toInt() and 0x80 == 0) sizes += bytes.size // short header only (nothing coalesced behind it)
@@ -238,8 +238,6 @@ class StatelessResetTest {
             p.runUntil(limit = 2_000.milliseconds) { false } // ACKs, PING-only keep-alives, NEW_CONNECTION_IDs
             assertTrue(sizes.size >= 3, "short-header datagrams sent: $sizes")
             assertTrue(sizes.all { it >= 20 + 22 }, "every short-header packet is at least 42 bytes: $sizes")
-        } finally {
-            p.close()
         }
     }
 
@@ -262,7 +260,7 @@ class StatelessResetTest {
                         maxConnectionWindow = 12_000_000
                     },
             )
-        try {
+        p.use { _ ->
             val sizes = ArrayList<Int>()
             p.filterToServer = { _, bytes ->
                 if (bytes[0].toInt() and 0x80 == 0) sizes += bytes.size
@@ -298,8 +296,6 @@ class StatelessResetTest {
             assertTrue(sizes.all { it >= 20 + 22 }, "every short-header packet is at least 42 bytes: ${sizes.filter { it < 42 }}")
             p.runUntil(limit = 2_000.milliseconds) { false } // the last ACK-only packets went out; nothing ack-eliciting follows
             assertEquals(0L, c.stats.bytesInFlight, "no ACK-only packet stays in flight with a peer that never acknowledges it")
-        } finally {
-            p.close()
         }
     }
 
@@ -490,7 +486,7 @@ class StatelessResetTest {
                 serverPreferred =
                     io.kuicksilver.quic.PreferredAddress(InetSocketAddress("10.0.0.3", 4433), null),
             )
-        try {
+        p.use { _ ->
             val c =
                 p.connect(
                     io.kuicksilver.quic.QuicConfig
@@ -528,8 +524,6 @@ class StatelessResetTest {
             } finally {
                 restarted.close()
             }
-        } finally {
-            p.close()
         }
     }
 
@@ -676,7 +670,7 @@ class StatelessResetTest {
     @Test fun negative_aResetToThePreferredAddressIsRecognised() {
         val pref = InetSocketAddress("10.0.0.3", 4433)
         val p = EndpointPair(serverPreferred = io.kuicksilver.quic.PreferredAddress(pref, null))
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             repeat(20) { p.step() }
@@ -693,8 +687,6 @@ class StatelessResetTest {
                 b.close()
             }
             assertEquals(ConnectionState.Draining, s.state)
-        } finally {
-            p.close()
         }
     }
 

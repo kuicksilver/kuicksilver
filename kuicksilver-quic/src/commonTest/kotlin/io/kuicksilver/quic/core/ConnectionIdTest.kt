@@ -41,7 +41,7 @@ class ConnectionIdTest {
 
     @Test fun issuesMinOfPeerLimitAndEight() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { p.server!!.peerCidCount >= 4 && p.client.peerCidCount >= 4 }
             assertEquals(4, p.server!!.peerCidCount, "peer limit 4 -> 4 connection IDs in total")
@@ -49,8 +49,6 @@ class ConnectionIdTest {
             val m = manager()
             m.setPeerLimit(100)
             assertEquals(8, m.localCount, "never more than 8")
-        } finally {
-            p.close()
         }
     }
 
@@ -204,7 +202,7 @@ class ConnectionIdTest {
                         .apply { activeConnectionIdLimit = 20 }
                         .build(),
             )
-        try {
+        p.use { _ ->
             val m = p.client.cids
             m.adoptInitialPeerCid(ConnectionId(ByteArray(8) { 0x7f }))
             for (seq in 1L..19L) newCid(m, seq)
@@ -212,8 +210,6 @@ class ConnectionIdTest {
             for (seq in 21L..39L) newCid(m, seq)
             newCid(m, 40, retire = 40) // 20..39 retired: 40 outstanding, none acknowledged
             assertEquals(40, m.takeRetireFrames().size)
-        } finally {
-            p.close()
         }
     }
 
@@ -279,7 +275,7 @@ class ConnectionIdTest {
         val e = assertFailsWith<QuicWireException> { newCid(m, 4) }
         assertEquals(0x09L, e.code)
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.client.testInjectNewCids = 5
             p.runUntil(limit = 300.milliseconds) {
@@ -289,8 +285,6 @@ class ConnectionIdTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x09L, r.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -312,15 +306,13 @@ class ConnectionIdTest {
         assertEquals(1, m.peerCount)
         assertNull(m.takeRetireFrames().firstOrNull())
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 300.milliseconds) { p.client.peerCidCount >= 4 }
             p.client.testRetirePriorTo = true
             p.runUntil(limit = 300.milliseconds) { p.client.retiredByPeer > 0 }
             assertTrue(p.client.retiredByPeer >= 1, "the server retired our old IDs and we replaced them")
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 

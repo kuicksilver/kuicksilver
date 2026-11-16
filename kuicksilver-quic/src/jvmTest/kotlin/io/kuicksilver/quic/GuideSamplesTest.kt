@@ -335,7 +335,7 @@ class GuideSamplesTest {
 
     @Test fun keyUpdateCoreSample() {
         val p = CorePair(crypto = KslQuicCrypto)
-        try {
+        p.use { _ ->
             assertTrue(
                 p.handshake() &&
                     p.runUntil(limit = 2.seconds) {
@@ -348,8 +348,6 @@ class GuideSamplesTest {
             // guide:quic:key-update
             if (core.initiateKeyUpdate(now)) println("key phase ${core.stats.keyUpdates}") // false while RFC 9001 section 6.1 forbids it
             assertEquals(1L, core.stats.keyUpdates)
-        } finally {
-            p.close()
         }
     }
 

@@ -1153,14 +1153,12 @@ internal object Tickets {
                 serverEarly = ServerEarlyData.of(quic, serverTls.alpn, null, ZeroRttReplayRegister(Random(3))),
                 seed = 11,
             )
-        try {
+        p.use { _ ->
             check(p.handshake()) { "origin handshake: ${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}" }
             p.runUntil(limit = 2.seconds) { p.clientEvents.count { it is ConnectionEvent.SessionTicket } >= 2 }
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             check(tickets.isNotEmpty() && tickets.all { it.remembered != null }) { "no ticket with remembered parameters" }
             return tickets
-        } finally {
-            p.close()
         }
     }
 }

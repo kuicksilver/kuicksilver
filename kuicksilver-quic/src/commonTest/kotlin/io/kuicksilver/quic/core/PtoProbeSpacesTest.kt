@@ -98,14 +98,12 @@ class PtoProbeSpacesTest {
                 clientEarly = EarlyDataState.Allowed,
                 serverEarly = ServerEarlyData.of(QuicConfig.Default, CoreFixtures.server().alpn, null, ZeroRttReplayRegister(Random(5))),
             )
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             tickets.dropLast(1).forEach { it.close() }
             return tickets.last()
-        } finally {
-            p.close()
         }
     }
 

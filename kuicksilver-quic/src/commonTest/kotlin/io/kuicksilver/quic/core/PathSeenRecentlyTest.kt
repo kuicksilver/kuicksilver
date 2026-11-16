@@ -55,7 +55,7 @@ class PathSeenRecentlyTest {
      */
     @Test fun negative_aRevertToAnAddressHeardJustNowSkipsItsValidation() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = serverOf(p)
             val failed = s.paths.active
             val a = InetSocketAddress("10.0.0.8", 40008)
@@ -71,8 +71,6 @@ class PathSeenRecentlyTest {
             assertEquals(PathState.Validated, k.state, "seen recently: not validated again")
             assertFalse(k.challengePending, "the abandoned validation's challenge is not sent on a validated path")
             assertEquals(TimeMark.NEVER, k.challengeDeadline)
-        } finally {
-            p.close()
         }
     }
 
@@ -82,7 +80,7 @@ class PathSeenRecentlyTest {
      */
     @Test fun negative_anAddressValidatedJustNowWithNoPacketSinceCountsAsSeenRecently() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = serverOf(p)
             val failed = s.paths.active
             val q = addValidated(s, PREFERRED_SOCKET, failed.remote)
@@ -95,8 +93,6 @@ class PathSeenRecentlyTest {
             assertSame(failed, s.paths.active)
             assertEquals(PathState.Validated, failed.state, "validated just now: taken as validated")
             assertFalse(failed.challengePending)
-        } finally {
-            p.close()
         }
     }
 }

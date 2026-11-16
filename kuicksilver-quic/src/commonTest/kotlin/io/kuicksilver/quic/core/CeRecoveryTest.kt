@@ -49,7 +49,7 @@ class CeRecoveryTest {
         for ((name, factory) in controllers()) {
             val p = EndpointPair()
             val c = p.connect(quicConfig { congestionController = factory })
-            try {
+            p.use { _ ->
                 assertTrue(p.confirmed(c))
                 val cc = c.path.cc
                 val t1 = p.now
@@ -62,8 +62,6 @@ class CeRecoveryTest {
                 ce(c, t1 + 40.milliseconds, t1 + 10.milliseconds)
                 assertTrue(cc.cwnd < afterLoss, "$name: a CE for a packet sent after the recovery began reduces: ${cc.cwnd} vs $afterLoss")
                 assertEquals(events + 1, c.stats.ecnCeEvents, "$name: one congestion event")
-            } finally {
-                p.close()
             }
         }
     }
@@ -76,7 +74,7 @@ class CeRecoveryTest {
         for ((name, factory) in controllers()) {
             val p = EndpointPair()
             val c = p.connect(quicConfig { congestionController = factory })
-            try {
+            p.use { _ ->
                 assertTrue(p.confirmed(c))
                 val cc = c.path.cc
                 val t0 = p.now
@@ -89,8 +87,6 @@ class CeRecoveryTest {
                 ce(c, t0 + 200.milliseconds, t0 - 1.milliseconds) // sent before the old recovery start: no recovery period now
                 assertTrue(cc.cwnd < grown, "$name: the CE after persistent congestion reduces: ${cc.cwnd} vs $grown")
                 assertEquals(events + 1, c.stats.ecnCeEvents, "$name: one congestion event")
-            } finally {
-                p.close()
             }
         }
     }
@@ -168,7 +164,7 @@ class CeRecoveryTest {
                 val rnd = Random(seed)
                 val p = EndpointPair()
                 val c = p.connect(quicConfig { congestionController = factory })
-                try {
+                p.use { _ ->
                     assertTrue(p.confirmed(c))
                     val other = c.addPath(InetSocketAddress("10.0.0.2", 443), p.now, PathId(7))
                     val ids = listOf(c.path.id, other)
@@ -227,8 +223,6 @@ class CeRecoveryTest {
                             "$at: CE congestion events",
                         )
                     }
-                } finally {
-                    p.close()
                 }
             }
         }

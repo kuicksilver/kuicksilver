@@ -170,7 +170,7 @@ class NativeLeakTest {
             val before = nativeConnectionObjects()
             val crypto = LeakTrackingCrypto(ksl, failNext = failAt)
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 // as the endpoint loop does: what a core throws fails it (failInternal); here both cores, whichever threw
                 var failed = false
                 while (!failed && p.now < io.kuicksilver.quic.TimeMark(1_000_000_000L) + 3.seconds) {
@@ -186,8 +186,6 @@ class NativeLeakTest {
                 assertTrue(failed, "failing at next() call $failAt: the derivation was reached")
                 assertTrue(p.runUntil(limit = 1.seconds) { p.bothClosed() }, "failing at $failAt: ${p.client.state} ${p.server?.state}")
                 assertEquals(emptyList(), crypto.live, "failing at next() call $failAt")
-            } finally {
-                p.close()
             }
             assertEquals(before, nativeConnectionObjects(), "failing at $failAt")
         }
@@ -515,11 +513,9 @@ class NativeLeakTest {
                     failInitialProtectors = if (failing == "initial keys") 2 else Int.MAX_VALUE,
                 )
             val p = CorePair(crypto = crypto)
-            try {
+            p.use { _ ->
                 assertFailsWith<IllegalStateException>(failing) { p.step() }
                 assertTrue(crypto.live.none { "Server" in it }, "$failing: ${crypto.live}")
-            } finally {
-                p.close()
             }
             assertEquals(emptyList(), crypto.live, failing)
             assertEquals(before, nativeConnectionObjects(), failing)
@@ -566,14 +562,12 @@ class NativeLeakTest {
     /** A full handshake (plain ksl, not counted) that leaves the client a ticket for 0-RTT. */
     private fun ticket(): QuicSessionTicket {
         val p = CorePair(crypto = ksl, clientEarly = EarlyDataState.Allowed, serverEarly = early())
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             tickets.dropLast(1).forEach { it.close() }
             return tickets.last()
-        } finally {
-            p.close()
         }
     }
 

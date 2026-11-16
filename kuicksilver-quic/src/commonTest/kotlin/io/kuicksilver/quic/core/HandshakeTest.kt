@@ -240,15 +240,13 @@ class HandshakeTest {
     @Test fun clientFirstDestinationConnectionIdIsAtLeast8Bytes() {
         for (len in listOf(4, 8, 20)) {
             val p = CorePair(clientQuic = io.kuicksilver.quic.quicConfig { connectionIdLength = len })
-            try {
+            p.use { _ ->
                 p.step()
                 val d = p.lastClientInitial!!
                 val dcidLen = d[5].toInt() and 0xff
                 assertTrue(dcidLen >= 8, "connectionIdLength $len: first DCID of $dcidLen bytes")
                 assertEquals(len, d[6 + dcidLen].toInt() and 0xff, "the SCID has the configured length")
                 assertTrue(p.handshake(), "connectionIdLength $len")
-            } finally {
-                p.close()
             }
         }
     }
@@ -256,13 +254,11 @@ class HandshakeTest {
     /** RFC 9001 section 8.4: a server treats a ClientHello with a non-empty legacy_session_id as a PROTOCOL_VIOLATION. */
     @Test fun negative_clientHelloWithLegacySessionIdIsProtocolViolation() {
         val p = CorePair(crypto = WithLegacySessionId(ksl))
-        try {
+        p.use { _ ->
             p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null }
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0aL, r.code, r.reason)
-        } finally {
-            p.close()
         }
     }
 
@@ -271,7 +267,7 @@ class HandshakeTest {
         for (role in listOf(TlsRole.Server, TlsRole.Client)) {
             // the session of [role] never reports the peer's transport parameters, as if the extension were absent
             val p = CorePair(crypto = WithoutPeerTransportParameters(ksl, role))
-            try {
+            p.use { _ ->
                 p.runUntil(limit = 2.seconds) {
                     (if (role == TlsRole.Server) p.closedReason(p.serverEvents) else p.closedReason(p.clientEvents)) != null
                 }
@@ -280,35 +276,29 @@ class HandshakeTest {
                 assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$role")
                 assertEquals(0x16dL, r.code, "$role")
                 assertFalse(events.any { it is ConnectionEvent.HandshakeCompleted }, "$role")
-            } finally {
-                p.close()
             }
         }
     }
 
     @Test fun nullHandshakeCompletesBothSides() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(p.runUntil { p.client.state == ConnectionState.Confirmed })
             assertEquals(ConnectionState.Confirmed, p.server!!.state)
             assertEquals("hq-interop", p.client.negotiatedAlpn)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun kslHandshakeAlpnHqInterop() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake(), "client=${p.closedReason(p.clientEvents)} server=${p.closedReason(p.serverEvents)}")
             assertEquals("hq-interop", p.client.negotiatedAlpn)
             assertEquals(1, p.client.peerCertificates.size)
             assertEquals(Certificate(TestCerts.server), p.client.peerCertificates[0])
             assertTrue(p.runUntil { p.client.state == ConnectionState.Confirmed && p.server!!.state == ConnectionState.Confirmed })
             assertContentEquals(p.client.exportKeyingMaterial("test", null, 16), p.server!!.exportKeyingMaterial("test", null, 16))
-        } finally {
-            p.close()
         }
     }
 
@@ -320,11 +310,9 @@ class HandshakeTest {
                 if (b[0].toInt() and 0xf0 == 0xc0) sizes += b.size
                 true
             }
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(sizes.isNotEmpty() && sizes.all { it >= 1200 }, "$sizes")
-        } finally {
-            p.close()
         }
     }
 
@@ -345,11 +333,9 @@ class HandshakeTest {
                 if (b.size < 1200 && nullDatagramHasAckElicitingInitial(b)) short += "Handshake CRYPTO $len: ${b.size} bytes"
                 true
             }
-            try {
+            p.use { _ ->
                 p.step() // the ClientHello makes the server
                 p.step() // the server answers it
-            } finally {
-                p.close()
             }
         }
         assertTrue(short.isEmpty(), short.joinToString())
@@ -364,7 +350,7 @@ class HandshakeTest {
         val short = ArrayList<String>()
         for (len in 1..1150) {
             val p = CorePair()
-            try {
+            p.use { _ ->
                 p.step() // the ClientHello makes the server
                 p.step() // the server's first flight is queued for the client
                 p.client.testInjectCrypto = Triple(0, 10_000L, len)
@@ -373,8 +359,6 @@ class HandshakeTest {
                     true
                 }
                 p.step()
-            } finally {
-                p.close()
             }
         }
         assertTrue(short.isEmpty(), short.joinToString())
@@ -387,32 +371,28 @@ class HandshakeTest {
             if (i == 0 || i == 1) initials++
             true
         }
-        try {
+        p.use { _ ->
             p.step()
             assertTrue(p.toServer.size >= 2 || initials >= 2, "ClientHello with X25519MLKEM768 needs two Initial packets")
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 
     @Test fun transportParametersCidAuthentication() {
         val p = CorePair(crypto = ksl)
         p.client.testForgeInitialSourceCid = true
-        try {
+        p.use { _ ->
             assertFalse(p.handshake())
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x08L, r.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun tlsFailureMapsToCryptoError() {
         val p =
             CorePair(clientTls = CoreFixtures.client(trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.otherCa)))), crypto = ksl)
-        try {
+        p.use { _ ->
             assertFalse(p.handshake())
             val r = p.closedReason(p.clientEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
@@ -425,14 +405,12 @@ class HandshakeTest {
             assertEquals(Initiator.Peer, s.initiator)
             assertIs<TlsException.AlertReceived>(s.cause)
             assertEquals(48, (s.cause as TlsException.AlertReceived).code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun alpnMismatchCloses0x0178() {
         val p = CorePair(clientTls = CoreFixtures.client(alpn = "h3"), serverTls = CoreFixtures.server(alpn = "hq-interop"), crypto = ksl)
-        try {
+        p.use { _ ->
             assertFalse(p.handshake())
             val s = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(s)
@@ -440,8 +418,6 @@ class HandshakeTest {
             val c = p.closedReason(p.clientEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(c)
             assertEquals(0x0178L, c.code)
-        } finally {
-            p.close()
         }
     }
 
@@ -465,7 +441,7 @@ class HandshakeTest {
             )
         p.autoVerify =
             false
-        try {
+        p.use { _ ->
             p.runUntil(limit = 500.milliseconds()) { p.clientEvents.any { it is ConnectionEvent.VerifyRequested } }
             val req = p.clientEvents.filterIsInstance<ConnectionEvent.VerifyRequested>().single()
             assertEquals(1, req.chain.size)
@@ -474,26 +450,22 @@ class HandshakeTest {
             p.client.resumeVerify(kotlinx.coroutines.runBlocking { req.session.verifyPeer(req.chain) })
             assertEquals(1, asked)
             assertTrue(p.handshake())
-        } finally {
-            p.close()
         }
     }
 
     @Test fun postHandshakeWantReadIsNotAnError() {
         val p = CorePair(crypto = ksl)
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             p.runUntil(limit = 200.milliseconds()) { false }
             assertNull(p.closedReason(p.clientEvents))
             assertNull(p.closedReason(p.serverEvents))
-        } finally {
-            p.close()
         }
     }
 
     @Test fun streamEchoOneMiB() {
         val p = CorePair()
-        try {
+        p.use { _ ->
             assertTrue(p.handshake())
             val data = ByteArray(1 shl 20) { (it * 31).toByte() }
             val id = p.client.openStream(bidi = true, StreamPriority.Default)
@@ -551,8 +523,6 @@ class HandshakeTest {
                 "echoed $echoedLen of ${data.size}, server read $serverRead",
             )
             assertContentEquals(data, echoed)
-        } finally {
-            p.close()
         }
     }
 

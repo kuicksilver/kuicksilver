@@ -66,7 +66,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_theMirrorEndsWithTheClientsHandshakeKeys() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val k = mirrored(s)
             s.handshakeMirrorDue = true
@@ -79,11 +79,9 @@ class HandshakeRebindGapsTest {
             assertNull(s.handshakeCandidate, "the client has its keys: no flight is mirrored any more")
             assertFalse(k in s.paths.all)
             assertNull(s.handshakeRebindFrom)
-        } finally {
-            p.close()
         }
         val q = EndpointPair()
-        try {
+        q.use { _ ->
             val s = midHandshake(q)
             val k = mirrored(s)
             s.handshakeMirrorSent = true
@@ -94,8 +92,6 @@ class HandshakeRebindGapsTest {
             assertSame(k, s.handshakeCandidate, "the client may have read the flight there")
             assertEquals(PathState.Validating, k.state, "validated with a challenge of its own")
             assertTrue(k.challengePending)
-        } finally {
-            q.close()
         }
     }
 
@@ -107,7 +103,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_theCandidateAnsweringFirstTakesThePathBack() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val old = a.remote
@@ -136,15 +132,13 @@ class HandshakeRebindGapsTest {
             assertNull(s.handshakeCandidate)
             assertFalse(k in s.paths.all)
             assertTrue(s.handshakeMovesFrozen)
-        } finally {
-            p.close()
         }
     }
 
     /** The active address that already answered its own challenge keeps the path: a later answer of the candidate only ends it. */
     @Test fun negative_aValidatedActiveAddressIsNotTakenByTheCandidate() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.onHandshakeAddressChange(PathId.Initial, other, 1200, datagram = 100, initial = false, newest = true)
@@ -157,8 +151,6 @@ class HandshakeRebindGapsTest {
             assertTrue(a.isRemote(other), "the active address stays")
             assertNull(s.handshakeCandidate, "the candidate ends")
             assertFalse(k in s.paths.all)
-        } finally {
-            p.close()
         }
     }
 
@@ -168,7 +160,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_droppingTheCandidateAfterConfirmationValidatesTheActiveAddress() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val k = mirrored(s)
             val a = s.paths.active
@@ -180,8 +172,6 @@ class HandshakeRebindGapsTest {
             assertSame(a, s.paths.lastValidated)
             assertFalse(a.amplification.validated, "the path state only: RFC 9000 section 8.1's limit still needs a proof")
             assertTrue(a.amplification.budget() < Long.MAX_VALUE)
-        } finally {
-            p.close()
         }
     }
 
@@ -197,7 +187,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aRestoreToAnAddressNothingReachedLeavesItUnvalidated() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val old = a.remote
@@ -216,8 +206,6 @@ class HandshakeRebindGapsTest {
             assertNull(s.handshakeFallback)
             assertEquals(PathState.Unknown, a.state, "validated by the client's Handshake packet or acknowledgements from here on")
             assertFalse(a.amplification.validated, "three times what arrived, no more (section 8.1)")
-        } finally {
-            p.close()
         }
     }
 
@@ -228,7 +216,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aRestoreToAnAddressTheClientWasReachedAtConfirmsIt() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val old = a.remote
@@ -242,8 +230,6 @@ class HandshakeRebindGapsTest {
             assertNotNull(s.handshakeCandidate, "the other address is still being validated")
             assertEquals(PathState.Validating, a.state)
             assertTrue(a.handshakeValidated, "settled as validated at its deadline if unanswered")
-        } finally {
-            p.close()
         }
     }
 
@@ -266,7 +252,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_theRevertAtTheDeadlineRestoresTheValidatedAddress() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val t0 = s.now
             val a = movedFromValidated(s)
@@ -279,8 +265,6 @@ class HandshakeRebindGapsTest {
             assertTrue(s.handshakeMovesFrozen, "no further handshake-time move")
             assertFalse(a.challengePending)
             assertNull(s.handshakeCandidate)
-        } finally {
-            p.close()
         }
     }
 
@@ -290,7 +274,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aRestoreAfterTheCandidatesDeadlineStartsAFreshValidation() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = movedFromValidated(s)
             val fb = assertNotNull(s.handshakeFallback)
@@ -300,8 +284,6 @@ class HandshakeRebindGapsTest {
             assertEquals(PathState.Validating, a.state)
             assertTrue(a.challengeDeadline > s.now, "a validation period from now")
             assertTrue(a.handshakeValidated)
-        } finally {
-            p.close()
         }
     }
 
@@ -311,7 +293,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aRevertDuringTheHandshakeDoesNotTakeTheFlightAsProof() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.handshakeFlightTo = a.remote
@@ -325,15 +307,13 @@ class HandshakeRebindGapsTest {
             assertFalse(fb.reached)
             assertFalse(a.amplification.validated)
             assertEquals(PathState.Unknown, a.state)
-        } finally {
-            p.close()
         }
     }
 
     /** An address a handshake-time move took the path to keeps its fallback: dropping the candidate after confirmation settles nothing there. */
     @Test fun negative_droppingTheCandidateLeavesAnUnprovenMoveToItsFallback() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.onHandshakeDatagramDone(other) // moved with the completing datagram: unvalidated, the fallback pending
@@ -343,8 +323,6 @@ class HandshakeRebindGapsTest {
             s.dropHandshakeCandidate()
             assertEquals(PathState.Unknown, a.state, "the fallback decides (revert at its deadline)")
             assertFalse(a.amplification.validated)
-        } finally {
-            p.close()
         }
     }
 
@@ -354,7 +332,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aMoveBackToTheCandidatesIpStartsCongestionOver() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val old = a.remote
@@ -376,8 +354,6 @@ class HandshakeRebindGapsTest {
             assertEquals(1200, restarted.current)
             assertTrue(a.cc !== cc, "a fresh congestion controller")
             assertTrue(a.rtt !== rtt, "a fresh RTT estimator")
-        } finally {
-            p.close()
         }
     }
 
@@ -387,7 +363,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aThirdAddressSharingAPortIsNotARebindAddress() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val old = a.remote
@@ -398,15 +374,13 @@ class HandshakeRebindGapsTest {
             s.handshakePacketFrom(old, 102) // back: the candidate takes the third address the path leaves
             assertTrue(a.isRemote(old))
             assertNull(s.handshakeCandidate, "the third address is dropped")
-        } finally {
-            p.close()
         }
     }
 
     /** The active address answering its own challenge decides for it: the candidate goes and no handshake-time move follows. */
     @Test fun negative_theActiveAddressAnsweringFirstFreezesTheMoves() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.handshakePacketFrom(other, 100)
@@ -417,15 +391,13 @@ class HandshakeRebindGapsTest {
             assertTrue(s.handshakeMovesFrozen)
             s.handshakePacketFrom(InetSocketAddress("10.0.0.1", 40004), 101)
             assertTrue(a.isRemote(other), "frozen: the address stays until the handshake completes")
-        } finally {
-            p.close()
         }
     }
 
     /** A move whose new address became validated for amplification is not undone at the deadline (RFC 9000 section 9.3.2 needs a failed validation). */
     @Test fun negative_aValidatedMoveIsNotReverted() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.handshakePacketFrom(other, 100)
@@ -435,8 +407,6 @@ class HandshakeRebindGapsTest {
             s.revertHandshakeMove(fb)
             assertTrue(a.isRemote(other))
             assertFalse(s.handshakeMovesFrozen)
-        } finally {
-            p.close()
         }
     }
 
@@ -446,7 +416,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_anAddressValidatedForAmplificationIsChallengedWhenLeft() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             assertEquals(PathState.Unknown, a.state)
@@ -456,8 +426,6 @@ class HandshakeRebindGapsTest {
             assertEquals(PathState.Validating, k.state)
             assertTrue(k.challengePending)
             assertFalse(k.handshakeValidated)
-        } finally {
-            p.close()
         }
     }
 
@@ -467,7 +435,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aMoveBackKeepsTheValidationUnderWayThere() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = movedFromValidated(s)
             val k = assertNotNull(s.handshakeCandidate)
@@ -479,15 +447,13 @@ class HandshakeRebindGapsTest {
             assertTrue(a.isRemote(old))
             assertEquals(PathState.Validating, a.state)
             assertTrue(a.answers(d), "the challenge sent to this address still counts")
-        } finally {
-            p.close()
         }
     }
 
     /** Handshake-time moves are for the handshake only: once it completed, a late datagram's completion moves nothing (RFC 9000 section 9). */
     @Test fun negative_noHandshakeMoveAfterTheHandshake() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             repeat(5) { p.step() }
@@ -495,8 +461,6 @@ class HandshakeRebindGapsTest {
             val before = s.paths.active.remote
             s.onHandshakeDatagramDone(other)
             assertEquals(before, s.paths.active.remote)
-        } finally {
-            p.close()
         }
     }
 
@@ -507,7 +471,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_theCompletingDatagramsMoveAndTheFlightRule() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             val d = s.newChallengeData(a)
@@ -522,11 +486,9 @@ class HandshakeRebindGapsTest {
             s.handshakeFlightElsewhere = false
             s.onInitialPathValidated(a.remote)
             assertTrue(a.amplification.validated)
-        } finally {
-            p.close()
         }
         val q = EndpointPair()
-        try {
+        q.use { _ ->
             val s = midHandshake(q)
             val a = s.paths.active
             s.handshakeFlightTo = null
@@ -536,15 +498,13 @@ class HandshakeRebindGapsTest {
             val k = mirrored(s)
             s.onHandshakeFlightSent(k)
             assertTrue(s.handshakeFlightElsewhere, "the flight went to a second address too")
-        } finally {
-            q.close()
         }
     }
 
     /** Bytes received from the address a move left are counted once per datagram (RFC 9000 section 8.1 counts datagrams' bytes). */
     @Test fun negative_theFallbackCreditsEachDatagramOnce() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             s.handshakePacketFrom(other, 100)
             val fb = assertNotNull(s.handshakeFallback)
@@ -552,8 +512,6 @@ class HandshakeRebindGapsTest {
             fb.credit(5, 100)
             fb.credit(6, 50)
             assertEquals(150L, fb.receivedSince)
-        } finally {
-            p.close()
         }
     }
 
@@ -564,7 +522,7 @@ class HandshakeRebindGapsTest {
      */
     @Test fun negative_aReachedAddressIsConfirmedThenSettled() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val s = midHandshake(p)
             val a = s.paths.active
             s.onHandshakeDatagramDone(other) // the move with the completing datagram: unvalidated, no challenge
@@ -578,8 +536,6 @@ class HandshakeRebindGapsTest {
             assertFalse(a.challengePending)
             p.drain(s)
             assertTrue(p.events[s]!!.any { it is io.kuicksilver.quic.ConnectionEvent.PathValidated && it.path == a.id })
-        } finally {
-            p.close()
         }
     }
 }

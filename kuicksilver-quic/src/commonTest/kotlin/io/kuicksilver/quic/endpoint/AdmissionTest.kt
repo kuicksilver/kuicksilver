@@ -104,7 +104,7 @@ class AdmissionTest {
             "the 257th attempt sees 256 in flight",
         )
         val p = EndpointPair { admission = ConnectionAdmission.default(maxInflightHandshakes = 2) }
-        try {
+        p.use { _ ->
             repeat(2) { p.feed(p.server, firstInitial(p), addr(it)) }
             assertEquals(2, p.server.connectionCount)
             assertEquals(0, p.stateless(p.server).size)
@@ -114,8 +114,6 @@ class AdmissionTest {
             assertEquals(1, out.size)
             assertEquals(PacketType.Retry, packetType(out[0]))
             assertEquals(1L, p.server.stats.retriesSent)
-        } finally {
-            p.close()
         }
     }
 
@@ -131,7 +129,7 @@ class AdmissionTest {
     @Test fun defaultUnderLoadAdmitsRetryTokenAndNewTokenHolders() {
         // maxInflightHandshakes = 0: every unvalidated client gets a Retry; the one that answers it, and one with a NEW_TOKEN, get in
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.default(maxInflightHandshakes = 0) }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c), "the Retry-token holder connects: ${p.closed(c)}")
             assertEquals(0L, p.server.stats.admissionContractViolations, "no Retry asked of a client that answered one")
@@ -144,8 +142,6 @@ class AdmissionTest {
             assertTrue(p.confirmed(c2), "the NEW_TOKEN holder connects: ${p.closed(c2)}")
             assertEquals(retries, p.server.stats.retriesSent, "without a Retry")
             assertEquals(1L, p.server.stats.newTokensAccepted)
-        } finally {
-            p.close()
         }
     }
 
@@ -155,7 +151,7 @@ class AdmissionTest {
         // the endpoint reports the handshake buffers of its unfinished handshakes: a Handshake packet buffered before its keys counts
         val rec = Recording()
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = rec }
-        try {
+        p.use { _ ->
             p.feed(p.server, firstInitial(p), addr(1))
             val s = p.server.connections().single()
             val hs = ByteArray(300) { 0x33 }
@@ -175,8 +171,6 @@ class AdmissionTest {
             p.feed(p.server, firstInitial(p), addr(2))
             assertEquals(s.handshakeBufferBytes, rec.attempts.last().handshakeBufferBytes)
             assertEquals(1, rec.attempts.last().inflightHandshakes)
-        } finally {
-            p.close()
         }
     }
 
@@ -184,7 +178,7 @@ class AdmissionTest {
     @Test fun negative_initialQueueCap() {
         // at most 1024 Initials wait for admit; the rest are dropped and counted
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             val initial = firstInitial(p)
             for (i in 0 until 1100) {
                 val d = initial.copyOf()
@@ -195,15 +189,13 @@ class AdmissionTest {
             assertEquals(1024, p.server.pendingInitials)
             assertEquals(76L, p.server.stats.initialsDropped)
             assertEquals(0, p.server.connectionCount)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun secondInitialOfAQueuedFlightReachesTheNewConnection() {
         // a flight of two Initial datagrams is queued whole; processPending creates the connection from the first and routes the second to it
         val p = EndpointPair(crypto = KslQuicCrypto)
-        try {
+        p.use { _ ->
             val c = p.connect()
             val b = PacketBatch(4)
             val flight = ArrayList<ByteArray>()
@@ -229,8 +221,6 @@ class AdmissionTest {
                     .single()
                     .stats.packetsReceived,
             )
-        } finally {
-            p.close()
         }
     }
 
@@ -238,7 +228,7 @@ class AdmissionTest {
         // only the cheap checks run before admit: a 1199-byte Initial and a 7-byte DCID never reach it
         val rec = Recording()
         val p = EndpointPair { admission = rec }
-        try {
+        p.use { _ ->
             val initial = firstInitial(p)
             assertNull(p.feed(p.server, initial.copyOf(1199), addr(1)))
             val short = initial.copyOf()
@@ -254,8 +244,6 @@ class AdmissionTest {
             assertEquals(0, a.connections)
             assertEquals(0, a.connectionsFromAddress)
             assertFalse(a.addressValidated)
-        } finally {
-            p.close()
         }
     }
 
@@ -263,7 +251,7 @@ class AdmissionTest {
     @Test fun negative_admitRetryForValidatedAttemptRejected() {
         // fail closed: a Retry decision for an attempt that already carries a valid token is a contract violation (quinn CVE-2024-45311); neither a second Retry nor a connection
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission { AdmissionDecision.Retry } }
-        try {
+        p.use { _ ->
             var retries = 0
             p.filterToClient = { _, b ->
                 if (packetType(b) == PacketType.Retry) retries++
@@ -275,8 +263,6 @@ class AdmissionTest {
             assertEquals(0, p.server.connectionCount)
             assertTrue(retries <= 2, "no Retry answers the token-bearing Initial: $retries")
             assertTrue(c.state == ConnectionState.Handshaking)
-        } finally {
-            p.close()
         }
     }
 
@@ -284,7 +270,7 @@ class AdmissionTest {
         // a token we did not mint (not a Retry token) validates nothing: the attempt is unvalidated and the amplification limit stays
         val rec = Recording()
         val p = EndpointPair { admission = rec }
-        try {
+        p.use { _ ->
             val c = p.connect()
             c.initialToken = ByteArray(50) { 0x7f }
             val b = PacketBatch(4)
@@ -306,8 +292,6 @@ class AdmissionTest {
                 out.close()
             }
             assertTrue(sent in 1..(3L * initial.size), "amplification limit holds for an unvalidated address: $sent")
-        } finally {
-            p.close()
         }
     }
 
@@ -315,7 +299,7 @@ class AdmissionTest {
         // RFC 9000 section 5.2.2: a server that will not take the connection answers with an Initial CONNECTION_CLOSE
         // (quic-go sendConnectionRefused) instead of leaving the client to its handshake timeout
         val p = EndpointPair { acceptQueue = 2 }
-        try {
+        p.use { _ ->
             repeat(3) { p.feed(p.server, firstInitial(p), addr(it)) }
             assertEquals(2, p.server.connectionCount)
             assertEquals(0L, p.server.stats.initialsDropped)
@@ -323,8 +307,6 @@ class AdmissionTest {
             val answers = p.stateless(p.server)
             assertEquals(1, answers.size)
             assertEquals(PacketType.Initial, packetType(answers.single()))
-        } finally {
-            p.close()
         }
     }
 
@@ -332,7 +314,7 @@ class AdmissionTest {
         // a handshaken connection waits for accept(): the next client learns CONNECTION_REFUSED from its first Initial, no
         // connection (and so no TLS handshake) is created for it, and its connect fails at once, not at the handshake timeout
         val p = EndpointPair(crypto = KslQuicCrypto) { acceptQueue = 1 }
-        try {
+        p.use { _ ->
             val first = p.connect()
             assertTrue(p.confirmed(first))
             val created = p.server.stats.connectionsCreated
@@ -347,8 +329,6 @@ class AdmissionTest {
             assertEquals(0, serverCores)
             assertTrue(p.server.acceptQueueRefusals >= 1, "every datagram of its first flight is refused alike")
             assertNull(p.closed(first), "the waiting connection is untouched")
-        } finally {
-            p.close()
         }
     }
 
@@ -361,7 +341,7 @@ class AdmissionTest {
                 statelessPerAddressPerSecond = 2
                 statelessTotalPerSecond = 3
             }
-        try {
+        p.use { _ ->
             p.server.acceptBacklog = { 1 }
             val received = HashMap<Int, Long>()
             for (i in 0 until 8) {
@@ -380,8 +360,6 @@ class AdmissionTest {
                 "each answer is under a third of a minimum Initial: ${answers.map { it.size }}",
             )
             assertTrue(sent <= 3L * received.values.sum(), "amplification: $sent for ${received.values.sum()}")
-        } finally {
-            p.close()
         }
     }
 
@@ -392,7 +370,7 @@ class AdmissionTest {
                 admission = rec
                 maxConnectionsPerIp = 2
             }
-        try {
+        p.use { _ ->
             val ip = InetSocketAddress("10.9.9.9", 1)
             val same = (0 until 3).map { InetSocketAddress("10.9.9.9", 1000 + it) }
             assertNotNull(p.feed(p.server, firstInitial(p), same[0]))
@@ -408,14 +386,12 @@ class AdmissionTest {
                 p.remove(p.server, it)
             }
             assertNotNull(p.feed(p.server, firstInitial(p), ip), "a removed connection frees its IP slot")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun maxConnectionLifetimeClosesWithNoError() {
         val p = EndpointPair(crypto = KslQuicCrypto) { maxConnectionLifetime = 3.seconds }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.confirmed(c))
             val s = p.server.connections().single()
@@ -426,8 +402,6 @@ class AdmissionTest {
             val lifetime =
                 p.now - s.createdAtForTest
             assertTrue(lifetime >= 3.seconds && lifetime < 4.seconds, "closed at the lifetime, not the idle timer: $lifetime")
-        } finally {
-            p.close()
         }
     }
 
@@ -436,21 +410,17 @@ class AdmissionTest {
         for (port in intArrayOf(53, 123, 1900, 5353, 11211)) {
             val rec = Recording()
             val p = EndpointPair { admission = rec }
-            try {
+            p.use { _ ->
                 assertNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.0.0.5", port)))
                 assertEquals(0, rec.attempts.size)
                 assertEquals(0, p.stateless(p.server).size)
                 assertEquals(0, p.server.connectionCount)
                 assertEquals(1L, p.server.stats.initialsDropped)
-            } finally {
-                p.close()
             }
         }
         val p = EndpointPair { rejectInitialFromReflectivePorts = false }
-        try {
+        p.use { _ ->
             assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.0.0.5", 53)), "the option opens the ports")
-        } finally {
-            p.close()
         }
     }
 
@@ -460,32 +430,28 @@ class AdmissionTest {
                 admission =
                     ConnectionAdmission { AdmissionDecision.Close(TransportError.CONNECTION_REFUSED) }
             }
-        try {
+        p.use { _ ->
             val c = p.connect()
             assertTrue(p.runUntil(2.seconds) { p.closed(c) != null })
             assertEquals(0, p.server.connectionCount)
             val lost = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closed(c))
             assertEquals(TransportError.CONNECTION_REFUSED, lost.code)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun dropDecisionIsSilent() {
         val p = EndpointPair { admission = ConnectionAdmission { AdmissionDecision.Drop } }
-        try {
+        p.use { _ ->
             assertNull(p.feed(p.server, firstInitial(p), addr(1)))
             assertEquals(0, p.stateless(p.server).size)
             assertEquals(1L, p.server.stats.initialsDropped)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun alwaysRetryUsedByInteropRetryCase() {
         // the interop `retry` case runs the server with ConnectionAdmission.AlwaysRetry: one Retry, then a validated handshake
         val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.AlwaysRetry }
-        try {
+        p.use { _ ->
             var retries = 0
             p.filterToClient = { _, b ->
                 if (packetType(b) == PacketType.Retry) retries++
@@ -502,14 +468,12 @@ class AdmissionTest {
                     .single()
                     .validatedByToken,
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun statsSnapshotCountsStatelessAnswers() {
         val p = EndpointPair { statelessPerAddressPerSecond = 1 }
-        try {
+        p.use { _ ->
             val initial = firstInitial(p)
             val vn = initial.copyOf()
             vn[1] = 0x1a
@@ -522,8 +486,6 @@ class AdmissionTest {
             assertEquals(1L, st.versionNegotiations)
             assertEquals(1L, st.statelessRateLimited)
             assertEquals(1, p.stateless(p.server).size)
-        } finally {
-            p.close()
         }
     }
 
@@ -543,14 +505,12 @@ class AdmissionTest {
 
     @Test fun processPendingHonoursMax() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             repeat(5) { p.feedNoAdmit(p.server, firstInitial(p), addr(it)) }
             assertEquals(2, p.server.processPending(p.now, max = 2))
             assertEquals(3, p.server.pendingInitials)
             assertEquals(3, p.server.processPending(p.now))
             assertEquals(5, p.server.connectionCount)
-        } finally {
-            p.close()
         }
     }
 }

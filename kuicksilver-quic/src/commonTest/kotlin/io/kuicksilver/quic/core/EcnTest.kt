@@ -76,7 +76,7 @@ class EcnTest {
 
     @Test fun validationSucceedsOnCleanPath() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertEquals(EcnState.Capable, c.stats.ecnState)
             assertEquals(
@@ -90,15 +90,13 @@ class EcnTest {
                 p.clientEcnSent.count { it == Ecn.Ect0 } > 100,
                 "data packets carry ECT(0): ${p.clientEcnSent.groupingBy { it }.eachCount()}",
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun ackEcnCountsReported() {
         // RFC 9000 section 13.4.1: the receiver counts ECT(0) marks of processed packets and reports them in ACK_ECN
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c)
             val s = p.server.connections().single()
             val counts = s.ecnReceivedForTest()
@@ -110,15 +108,13 @@ class EcnTest {
             assertEquals(0L, counts[1])
             assertEquals(0L, counts[2])
             assertTrue(c.ecnPeerCountsForTest()[0] >= counts[0] - 2, "the client learned the counts through ACK_ECN")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun ceMarkTriggersOneCongestionEventPerRecovery() {
         val rnd = Random(3)
         val (p, c) = pair { ecnToServer = { e -> if (e == Ecn.Ect0 && rnd.nextDouble() < 0.05) Ecn.Ce else e } }
-        try {
+        p.use { _ ->
             val t0 = p.now
             transfer(p, c, 400_000)
             val s = p.server.connections().single()
@@ -131,8 +127,6 @@ class EcnTest {
                 "at most one congestion event per recovery period: ${c.stats.ecnCeEvents} in $rtts RTTs",
             )
             assertTrue(c.stats.cwnd < 400_000L, "the window did not grow unchecked: ${c.stats.cwnd}")
-        } finally {
-            p.close()
         }
     }
 
@@ -164,7 +158,7 @@ class EcnTest {
                     }
                 }
             }
-        try {
+        p.use { _ ->
             transfer(p, c, 2_000_000) // the pair acknowledges once per 10 ms step: a long transfer for enough ACK datagrams
             assertTrue(reordered > 10, "ACK datagrams were reordered: $reordered of ${p.sentToClient}")
             assertEquals(EcnState.Capable, c.stats.ecnState, "the sender keeps ECN across reordered ACKs")
@@ -175,15 +169,13 @@ class EcnTest {
                     .single()
                     .stats.ecnState,
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun validationFailsOnBleaching() {
         // a network that clears the ECN bits: the peer reports no counts for packets we marked → Failed, and nothing is marked afterwards (section 13.4.2)
         val (p, c) = pair { ecnToServer = { Ecn.NotEct } }
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertEquals(EcnState.Failed, c.stats.ecnState)
             val afterFailure = p.clientEcnSent.drop(p.clientEcnSent.indexOfLast { it == Ecn.Ect0 } + 1)
@@ -192,18 +184,14 @@ class EcnTest {
                 p.clientEcnSent.count { it == Ecn.Ect0 } <= 10,
                 "only the test packets were marked: ${p.clientEcnSent.count { it == Ecn.Ect0 }}",
             )
-        } finally {
-            p.close()
         }
     }
 
     @Test fun validationFailsWhenPeerReportsNoCounts() {
         val (p, c) = pair(serverCaps = sendOnly)
-        try {
+        p.use { _ ->
             transfer(p, c)
             assertEquals(EcnState.Failed, c.stats.ecnState, "a peer that cannot read marks never reports counts")
-        } finally {
-            p.close()
         }
     }
 
@@ -211,7 +199,7 @@ class EcnTest {
         // an ECN black hole: every marked datagram vanishes (appendix A.4). ECN starts after the handshake so the ten test packets are data packets
         var dropped = 0
         val (p, c) = pair(clientCaps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             c.setPathCapabilities(PathId.Initial, ecnCaps)
             p.filterToServer =
                 { i, _ ->
@@ -228,15 +216,13 @@ class EcnTest {
             val after =
                 p.clientEcnSent.drop(p.clientEcnSent.indexOfLast { it == Ecn.Ect0 } + 1)
             ; assertTrue(after.size >= 5 && after.all { it == Ecn.NotEct }, "no marks after failure: ${p.clientEcnSent}")
-        } finally {
-            p.close()
         }
     }
 
     @Test fun ecnIgnoredFromUnprocessedDatagram() {
         // RFC 9000 section 21.10: a datagram whose packets could not be processed must not move the counts
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c, 20_000)
             val s = p.server.connections().single()
             val before = s.ecnReceivedForTest().copyOf()
@@ -246,25 +232,21 @@ class EcnTest {
             p.feedEcn(p.server, junk, p.clientAddr, Ecn.Ce)
             assertEquals(before.toList(), s.ecnReceivedForTest().toList(), "a CE on an undecryptable datagram counts nothing")
             assertEquals(0L, s.stats.ecnCeReceived)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun noMarkingWithoutCapability() {
         val (p, c) = pair(clientCaps = IoCapabilities.Portable, serverCaps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             transfer(p, c, 50_000)
             assertTrue(p.clientEcnSent.all { it == Ecn.NotEct })
             assertEquals(EcnState.Disabled, c.stats.ecnState)
-        } finally {
-            p.close()
         }
     }
 
     @Test fun newPathRestartsValidation() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             transfer(p, c, 50_000)
             val s = p.server.connections().single()
             assertEquals(EcnState.Capable, s.stats.ecnState)
@@ -281,8 +263,6 @@ class EcnTest {
             )
             transfer(p, c, 100_000)
             assertEquals(EcnState.Capable, s.stats.ecnState)
-        } finally {
-            p.close()
         }
     }
 
@@ -293,7 +273,7 @@ class EcnTest {
      */
     @Test fun handshakeTimeMoveToAnotherIpRestartsValidation() {
         val p = EndpointPair()
-        try {
+        p.use { _ ->
             p.serverEcnReceive = true
             p.clientEcnReceive = true
             p.onServerCreated = { it.setPathCapabilities(PathId.Initial, ecnCaps) }
@@ -335,8 +315,6 @@ class EcnTest {
             assertTrue(p.runUntil(10.seconds) { s.stats.bytesInFlight == 0L && s.paths.active.ecn.state == EcnState.Capable })
             assertTrue(s.lostPackets > 0 || s.stats.lostPackets > 0, "the packets to the old address were declared lost")
             assertTrue(p.now > since)
-        } finally {
-            p.close()
         }
     }
 
@@ -347,7 +325,7 @@ class EcnTest {
      */
     @Test fun ceReportsAreGatedPerPathAndOnlyWithValidCounts() {
         val (p, c) = pair()
-        try {
+        p.use { _ ->
             val other = c.addPath(InetSocketAddress("10.0.0.2", 443), p.now, PathId(7))
             val listener = ConnectionLossListener(c)
             val sentEarlier = p.now - 50.milliseconds
@@ -360,8 +338,6 @@ class EcnTest {
             assertEquals(before + 2, c.stats.ecnCeEvents, "the other path's controller reacts to its own report")
             listener.onEcnAck(io.kuicksilver.quic.recovery.SpaceId.Application, true, true, 1, true, p.now, sentEarlier, c.path.id.value)
             assertEquals(before + 2, c.stats.ecnCeEvents, "one per recovery period of the path")
-        } finally {
-            p.close()
         }
     }
 
@@ -370,7 +346,7 @@ class EcnTest {
         // ECT(0) by default; otherwise, the endpoint sends unmarked packets.' After the ten test packets the path is "unknown" until
         // an ACK validates the counts: a black hole that eats marked datagrams then costs ten packets, not everything until a PTO
         val (p, c) = pair(clientCaps = IoCapabilities.Portable)
-        try {
+        p.use { _ ->
             transfer(p, c, 1_000_000) // a window wider than the ten test packets
             c.setPathCapabilities(PathId.Initial, ecnCaps)
             p.filterToServer = { i, _ -> p.clientEcnSentAt(i) != Ecn.Ect0 }
@@ -378,8 +354,6 @@ class EcnTest {
             val marked = p.clientEcnSent.count { it == Ecn.Ect0 }
             assertTrue(marked in 10..12, "the ten test packets (and an ACK-only packet or two between them) were marked: $marked")
             assertEquals(EcnState.Failed, c.stats.ecnState, "the ten test packets were all declared lost (appendix A.4)")
-        } finally {
-            p.close()
         }
     }
 
@@ -388,7 +362,7 @@ class EcnTest {
         // (CE) codepoint in the IP header". One small ack-eliciting packet otherwise waits for max_ack_delay (25 ms, three steps)
         var ce = false
         val (p, c) = pair { ecnToServer = { e -> if (ce && e == Ecn.Ect0) Ecn.Ce else e } }
-        try {
+        p.use { _ ->
             transfer(p, c, 50_000)
             assertEquals(EcnState.Capable, c.stats.ecnState)
 
@@ -407,8 +381,6 @@ class EcnTest {
             assertTrue(stepsToAck() > 1, "control: an unmarked lone packet waits for the delayed ACK")
             ce = true
             assertEquals(1, stepsToAck(), "a CE-marked packet is acknowledged in the round it arrived")
-        } finally {
-            p.close()
         }
     }
 }
