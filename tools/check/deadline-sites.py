@@ -19,7 +19,9 @@ in that function (one more fails until it is judged and the count raised); reaso
   onTimeout                        the select clause kotlinx.coroutines.selects.onTimeout, by name or alias
   timer                            a coroutine started with launch or async whose block begins with delay(...), or
                                    calls delay(...) and after it cancel(...) or cancelAndJoin(...): a hand-written
-                                   deadline that acts on other work when it fires
+                                   deadline that acts on other work when it fires. The block is the trailing lambda
+                                   (after type arguments, arguments nested to any depth and a label, `launch t@{ }`) or
+                                   a lambda passed inside the parentheses (`launch(block = { })`)
   select-cancel                    a select { } block that calls cancel(...) or cancelAndJoin(...): work raced against
                                    something else (a timer) and cancelled when it loses
 Verdicts:
@@ -34,10 +36,14 @@ Verdicts:
                      repeated, a test harness bound whose timeout fails the run anyway)
   select-atomic      a select clause: the select takes either one clause or the timeout, never both, and the losing
                      clause takes nothing (a channel element stays in the channel)
+  drops-result       known wrong, to be fixed: the caller's next step depends on the result the deadline can drop;
+                     the reason says what goes wrong. The question for every other verdict is the same: does the
+                     caller's next step depend on the block's result? If it does, the result must be kept
 An entry naming a site that is gone (fewer sites than its count) is a finding too. Comments and string literals are left
 out; code inside a string template counts.
 
-The kotlinx forms are resolved exactly from the file's imports (a bare name counts only where an import or star import
+The kotlinx forms are resolved exactly from the file's imports (read without comments; spaces around the dots of an
+import, as Kotlin allows, are taken out) (a bare name counts only where an import or star import
 brings kotlinx's function in; an unqualified onTimeout without one is the file's own). The timer and select-cancel forms
 are syntactic. Not seen: a deadline through another library (Ktor's HttpTimeout, a socket option); a call through a
 project helper (only the helper's own definition is a site: completedWithin, withinWtDeadline); a timer whose block
@@ -56,34 +62,77 @@ import kotlin_scan as ks  # noqa: E402
 
 ALLOW = "tools/check/deadline-sites.allow"
 FORMS = ("withTimeout", "withTimeoutOrNull", "onTimeout", "timer", "select-cancel")
-VERDICTS = ("pure-wait", "completedWithin", "made-flag", "side-effect-free", "select-atomic")
+VERDICTS = ("pure-wait", "completedWithin", "made-flag", "side-effect-free", "select-atomic", "drops-result")
 MAIN_KT = re.compile(r"^(?:.+/)?src/(?:[A-Za-z0-9]*Main|main)/.*\.kt$")
-_NAME = r"(\w+|`[^`\n]+`)"
-IMPORT = re.compile(r"^[ \t]*import[ \t]+(kotlinx\.coroutines(?:\.time)?\.(withTimeout|withTimeoutOrNull)|"
-                    r"kotlinx\.coroutines\.selects\.(onTimeout))(?:[ \t]+as[ \t]+" + _NAME + r")?[ \t]*;?[ \t]*$", re.M)
-STAR = re.compile(r"^[ \t]*import[ \t]+kotlinx\.coroutines(\.time|\.selects)?\.\*[ \t]*;?[ \t]*$", re.M)
-ANY_IMPORT = re.compile(r"^[ \t]*import[ \t].*$", re.M)
+IMPORT_LINE = re.compile(r"^[ \t]*import[ \t]+(.*?)[ \t]*;?[ \t]*$", re.M)
+TIMEOUTS = {"kotlinx.coroutines.withTimeout": "withTimeout", "kotlinx.coroutines.withTimeoutOrNull": "withTimeoutOrNull",
+            "kotlinx.coroutines.time.withTimeout": "withTimeout",
+            "kotlinx.coroutines.time.withTimeoutOrNull": "withTimeoutOrNull",
+            "kotlinx.coroutines.selects.onTimeout": "onTimeout"}
+STARS = {"kotlinx.coroutines.*": ("withTimeout", "withTimeoutOrNull"),
+         "kotlinx.coroutines.time.*": ("withTimeout", "withTimeoutOrNull"), "kotlinx.coroutines.selects.*": ("onTimeout",)}
 QUALIFIED = re.compile(r"\bkotlinx\s*\.\s*coroutines\s*\.\s*(?:time\s*\.\s*)?(withTimeout(?:OrNull)?)\b"
                        r"|\bkotlinx\s*\.\s*coroutines\s*\.\s*selects\s*\.\s*(onTimeout)\b")
-STARTER = re.compile(r"(?<![\w$])(?:launch|async)\s*(?:<[^<>(){}]*>\s*)?(?:\([^(){}]*(?:\([^(){}]*\)[^(){}]*)*\)\s*)?\{")
+BUILDER = re.compile(r"(?<![\w$`])(?<!fun )(launch|async|select)(?![\w$`])")
+LABEL = re.compile(r"\s*(?:[A-Za-z_]\w*@)?\s*\{")
 DELAY = re.compile(r"(?<![\w$.])(?:kotlinx\s*\.\s*coroutines\s*\.\s*)?delay\s*\(")
 CANCEL = re.compile(r"(?<![\w$])(?:cancel|cancelAndJoin)\s*\(")  # also job.cancel(...), this.cancel()
-SELECT = re.compile(r"(?<![\w$.])select\s*(?:<[^<>(){}]*>\s*)?\{")
 
 
-def names_of(text):
-    """{bare name: form} of the kotlinx timeout functions this file can call unqualified."""
+def names_of(code):
+    """{bare name: form} of the kotlinx timeout functions a file (blanked: comments left out) can call unqualified:
+    imported by name (spaces around the dots allowed, as Kotlin allows them), under an alias, or by a star import."""
     names = {}
-    for m in IMPORT.finditer(text):
-        form = m.group(2) or m.group(3)
-        names[(m.group(4) or form).strip("`")] = form
-    for m in STAR.finditer(text):
-        if m.group(1) == ".selects":
-            names.setdefault("onTimeout", "onTimeout")
-        else:
-            names.setdefault("withTimeout", "withTimeout")
-            names.setdefault("withTimeoutOrNull", "withTimeoutOrNull")
+    for m in IMPORT_LINE.finditer(code):
+        parts = re.split(r"\s+as\s+", m.group(1), maxsplit=1)
+        path = re.sub(r"\s+", "", parts[0])
+        if path in TIMEOUTS:
+            names[(parts[1].strip() if len(parts) > 1 else path.rsplit(".", 1)[1]).strip("`")] = TIMEOUTS[path]
+        for f in STARS.get(path, ()):
+            names.setdefault(f, f)
     return names
+
+
+def skip_ws(code, i):
+    while i < len(code) and code[i] in " \t\r\n":
+        i += 1
+    return i
+
+
+def lambdas(code, m):
+    """The bodies (start, end) of the lambdas a launch, async or select call at m takes: the trailing one (after type
+    arguments, arguments and a label, `launch t@{ }`) and, for launch and async, one passed inside the parentheses
+    (`launch(block = { })`), at any depth of nesting of the other arguments."""
+    i = skip_ws(code, m.end())
+    if i < len(code) and code[i] == "<":
+        depth = 0
+        while i < len(code):
+            depth += {"<": 1, ">": -1}.get(code[i], 0)
+            i += 1
+            if depth == 0:
+                break
+        i = skip_ws(code, i)
+    out = []
+    if i < len(code) and code[i] == "(":
+        end = ks._skip_group(code, i)
+        j = i + 1
+        while j < end - 1:  # the lambdas at the top level of the argument list
+            ch = code[j]
+            if ch == "(":
+                j = ks._skip_group(code, j)
+                continue
+            if ch == "{":
+                k = ks._skip_group(code, j)
+                out.append((j + 1, k - 1))
+                j = k
+                continue
+            j += 1
+        i = end
+    t = LABEL.match(code, i)
+    if t:
+        k = ks._skip_group(code, t.end() - 1)
+        out.append((t.end(), k - 1))
+    return out
 
 
 def enclosing(code, bodies, index, pos):
@@ -100,24 +149,29 @@ def enclosing(code, bodies, index, pos):
 def sites_of(text):
     """[(line, form, function)] of one Kotlin source."""
     code = ks.blank(text, templates=True)
-    code = ANY_IMPORT.sub(lambda m: " " * len(m.group(0)), code)  # an import names, it does not call
+    names = names_of(ks.blank(text))
+    code = IMPORT_LINE.sub(lambda m: " " * len(m.group(0)), code)  # an import names, it does not call
     found = []
     for m in QUALIFIED.finditer(code):
         found.append((m.start(), m.group(1) or m.group(2)))
-    for name, form in names_of(text).items():
+    for name, form in names.items():
         # the name as written, or in backticks (any name may be; one with a space must be)
         alt = re.escape("`" + name + "`") + (("|(?<![\\w$.`@])(?<!fun )" + re.escape(name) + r"(?![\w$])")
                                             if re.fullmatch(r"\w+", name) else "")
         for m in re.finditer(alt, code):
             found.append((m.start(), form))
-    for m in STARTER.finditer(code):
-        body = code[m.end():ks._skip_group(code, m.end() - 1)]
-        d = DELAY.search(body)
-        if d and (not body[:d.start()].strip() or CANCEL.search(body, d.end())):
-            found.append((m.start(), "timer"))
-    for m in SELECT.finditer(code):
-        if CANCEL.search(code[m.end():ks._skip_group(code, m.end() - 1)]):
-            found.append((m.start(), "select-cancel"))
+    for m in BUILDER.finditer(code):
+        for start, end in lambdas(code, m):
+            body = code[start:end]
+            if m.group(1) == "select":
+                if CANCEL.search(body):
+                    found.append((m.start(), "select-cancel"))
+                    break
+                continue
+            d = DELAY.search(body)
+            if d and (not body[:d.start()].strip() or CANCEL.search(body, d.end())):
+                found.append((m.start(), "timer"))
+                break
     if not found:
         return []
     bodies = ks.function_bodies(code)

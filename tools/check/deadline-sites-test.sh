@@ -5,12 +5,15 @@
 # comment, a string, a `return@withTimeoutOrNull` label, a member `x.withTimeout(...)`, the sans-IO core's
 # `core.onTimeout(now)`, an unimported `onTimeout` of the file's own, a launch without delay, test sources); a judged
 # site; a site in a lambda judged under the function that holds it. Fail, each named with its form and function: an
-# unjudged withTimeout, withTimeoutOrNull, fully qualified call (also across lines and kotlinx.coroutines.time's), import
-# alias (plain and backticked), type arguments, a comment inside the qualified name, star import, reference (::withTimeout), call inside a string template, select onTimeout
-# (imported, aliased, star-imported), a launch timer that delays then cancels, an async timer that begins with delay, a
-# select that cancels; a site in an expression body, a property initializer (<init>) and top-level code (<top>); a second
-# site in a judged function; a site moved to another function (and the old entry is stale); an entry without a reason,
-# with an unknown form or verdict, a count of 0, or twice for one function and form. JVM and sample main sets count.
+# unjudged withTimeout, withTimeoutOrNull, fully qualified call (also across lines and kotlinx.coroutines.time's),
+# import alias (plain and backticked, also with a comment after the import, and spaces around its dots), type arguments,
+# a comment inside the qualified name, star import, reference (::withTimeout), call inside a string template, select
+# onTimeout (imported, aliased, star-imported), a launch timer that delays then cancels (also labelled, `t@{`, with
+# arguments nested two deep, through `this.launch`, or passed as `launch(block = { })`), an async timer that begins with
+# delay, a select that cancels (also labelled); a site in an expression body, a property initializer (<init>) and top-
+# level code (<top>); a second site in a judged function; a site moved to another function (and the old entry is stale);
+# an entry without a reason, with an unknown form or verdict, a count of 0, or twice for one function and form. JVM and
+# sample main sets count.
 # Usage: deadline-sites-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,6 +92,40 @@ case_ 1 "a fully qualified call with a comment inside" "$A:2 | withTimeout in f 
 case_ 1 "a sample's main source set counts too" "samples/s/src/main/kotlin/S.kt:2 | withTimeout in s |" "samples/s/src/main/kotlin/S.kt" \
 'import kotlinx.coroutines.withTimeout
 suspend fun s() = withTimeout(1) { }'
+case_ 1 "an import with a comment after it" "$A:3 | withTimeoutOrNull in f |" "$A" \
+'import kotlinx.coroutines.withTimeoutOrNull // a bounded read
+import kotlinx.coroutines.delay /* and a block comment */
+suspend fun f() = withTimeoutOrNull(5) { delay(1) }'
+case_ 1 "an aliased import with a block comment after it" "$A:2 | withTimeoutOrNull in b |" "$A" \
+'import kotlinx.coroutines.withTimeoutOrNull as bounded /* alias */
+suspend fun b() = bounded(5) { 1 }'
+case_ 1 "an import with spaces around its dots" "$A:2 | withTimeoutOrNull in k |" "$A" \
+'import kotlinx.coroutines . withTimeoutOrNull
+suspend fun k() = withTimeoutOrNull(5) { 1 }'
+case_ 1 "a labelled launch timer" "$A:2 | timer in c |" "$A" \
+'import kotlinx.coroutines.*
+fun CoroutineScope.c(j: Job) = launch t@{ delay(5); j.cancel() }'
+case_ 1 "a launch timer whose arguments nest two deep" "$A:2 | timer in d |" "$A" \
+'import kotlinx.coroutines.*
+fun CoroutineScope.d(j: Job) = launch(context = Dispatchers.Default + CoroutineName(name("x"))) { delay(5); j.cancel() }
+fun name(s: String) = s'
+case_ 1 "a timer passed as launch(block = { })" "$A:2 | timer in f |" "$A" \
+'import kotlinx.coroutines.*
+fun CoroutineScope.f(j: Job) = launch(block = { delay(5); j.cancel() })'
+case_ 1 "a timer started through this.launch" "$A:2 | timer in f3 |" "$A" \
+'import kotlinx.coroutines.*
+fun CoroutineScope.f3(j: Job) = this.launch {
+    delay(5)
+    j.cancel()
+}'
+case_ 1 "a labelled select that cancels" "$A:4 | select-cancel in e |" "$A" \
+'import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.select
+suspend fun e(t: Job, w: Deferred<Int>) =
+    select<Int?> s@{ w.onAwait { it }; t.onJoin { w.cancel(); null } }'
+case_ 0 "a function named launch is no builder" "0 site(s)" "$A" \
+'fun launch(x: Int) = x
+fun g() = launch(1)'
 case_ 1 "an import alias" "$A:3 | withTimeoutOrNull in f |" "$A" \
 'import kotlinx.coroutines.withTimeoutOrNull as bounded
 suspend fun f() {
