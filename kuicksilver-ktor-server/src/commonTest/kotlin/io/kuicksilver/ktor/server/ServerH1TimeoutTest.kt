@@ -273,7 +273,7 @@ class ServerH1TimeoutTest {
     /**
      * Connections cut because their clients do not read release their sockets, on a plain and on a TLS connector, and
      * `connectionClosed` comes only after that. Before, the abort of a TLS connection cancelled the raw socket's job
-     * before the raw socket was closed, so it never closed its descriptor (review of bb8fcb4a: 9 of 16 TLS sockets still
+     * before the raw socket was closed, so it never closed its descriptor (review of 8121231e0: 9 of 16 TLS sockets still
      * open after their `connectionClosed`).
      */
     @Test fun negative_abortedConnectionsReleaseTheirSockets() =

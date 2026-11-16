@@ -38,7 +38,7 @@ class H1PipelineFailedResponseTest {
     }
 
     /**
-     * The failed response wrote nothing, so the connection ends cleanly (KTOR-10037, as upstream Ktor since 516fe19e4): the
+     * The failed response wrote nothing, so the connection ends cleanly (KTOR-10037, as upstream Ktor since ktor@516fe19e4): the
      * response before it arrives whole, then the end of the stream, not a failure that could take it with it (RFC 9112
      * section 9.6: close in stages); the one after it is never sent, so it cannot stand in for the failed one.
      */
