@@ -32,6 +32,8 @@ import kotlin.time.Duration
 internal class HeadLimitedInput(
     private val source: ByteReadChannel,
     private val maxHeadBytes: Int,
+    /** Test hook: runs once a wait for body bytes under the body deadline returned, still inside the deadline. */
+    private val bodyContentForTest: (suspend () -> Unit)? = null,
 ) : ByteReadChannel {
     /** The connection's input this reads from (tests tell their connection's hooks apart by it). */
     internal val sourceForTest: ByteReadChannel get() = source
@@ -125,7 +127,14 @@ internal class HeadLimitedInput(
                 }
             if (arrived != null) return arrived
         }
-        return withTimeoutOrNull(timeout) { source.awaitContent() } ?: run {
+        // set as the wait returns: body bytes that arrived as the deadline fires are read, though withTimeoutOrNull drops
+        // what the wait returned when its timeout lands after it
+        var arrived: Boolean? = null
+        withTimeoutOrNull(timeout) {
+            arrived = source.awaitContent()
+            bodyContentForTest?.invoke()
+        }
+        return arrived ?: run {
             bodyTimedOut?.complete()
             throw RequestBodyTimeout(timeout)
         }

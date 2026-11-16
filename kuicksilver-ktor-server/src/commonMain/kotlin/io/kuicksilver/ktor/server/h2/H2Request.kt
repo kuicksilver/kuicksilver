@@ -100,13 +100,21 @@ internal class H2ConnectionPoint(
 internal class IdleBoundedBody(
     private val delegate: ByteReadChannel,
     private val idle: Duration,
+    /** Test hook: runs once a wait for content returned, still inside [idle]. */
+    private val contentForTest: (suspend () -> Unit)? = null,
 ) : ByteReadChannel {
     override val closedCause: Throwable? get() = delegate.closedCause
     override val isClosedForRead: Boolean get() = delegate.isClosedForRead
     override val readBuffer: Source get() = delegate.readBuffer
 
     override suspend fun awaitContent(min: Int): Boolean {
-        val r = withTimeoutOrNull(idle) { delegate.awaitContent(min) }
+        // set as the wait returns: content that arrived as the deadline fires is read, though withTimeoutOrNull drops what
+        // the wait returned when its timeout lands after it
+        var r: Boolean? = null
+        withTimeoutOrNull(idle) {
+            r = delegate.awaitContent(min)
+            contentForTest?.invoke()
+        }
         // the stream stays: the call can still answer 408, and releasing it afterwards stops the client (RFC 9113 section 8.1)
         return r ?: throw RequestBodyTimeout(idle)
     }
