@@ -1120,8 +1120,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   kernel even handed the wildcard bind a port such a socket held; the server's replies to the loopback address then went to
   that socket, and the connection failed or timed out. A connection to a loopback server (127.0.0.0/8, ::1) now leaves
   from an endpoint bound to the loopback address of its family, created at its first use and closed with the client;
-  every other destination keeps the shared wildcard endpoint. The sockets that connection migration and `rebind` open for
-  a loopback peer bind the loopback address too.
+  every other destination keeps the shared wildcard endpoint; all of them share the client's session tickets, so a name
+  that resolves to both families (`localhost`) still resumes in 0-RTT over either. The sockets that connection migration
+  and `rebind` open for a loopback peer bind the loopback address too.
 - WebTransport flow control: a stream stopped (`stopSending`, or its input cancelled) right as it was accepted, before
   its reader had run, never gave its bytes back as session credit (draft-ietf-webtrans-http3-16 section 5.6), so a
   session whose window it filled stalled for good. Its bytes now count as consumed as for a stream stopped later.

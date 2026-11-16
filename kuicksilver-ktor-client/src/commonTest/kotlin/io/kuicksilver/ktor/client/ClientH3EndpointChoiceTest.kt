@@ -9,12 +9,19 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The endpoint an HTTP/3 connection leaves from: one bound to the loopback address of its family for a loopback server
@@ -85,5 +92,34 @@ class ClientH3EndpointChoiceTest {
             }
             assertTrue(chosen.isNotEmpty(), "an attempt was made")
             assertTrue(chosen.all { it == "192.0.2.1" to "0.0.0.0" }, "$chosen")
+        }
+
+    /**
+     * A client closed while an endpoint is being bound (between the bind and the pool storing it) keeps no endpoint: the
+     * close, which takes no lock, either finds the endpoint stored or the bind finds the client closed. Before, the bind read
+     * `closed` first and stored after it, so a close in between found nothing and the endpoint stayed open.
+     */
+    @Test fun negative_aCloseDuringTheBindLeavesNoEndpoint() =
+        h3Test {
+            val (server, port) = testServer(host = "127.0.0.1") { routing { get("/") { call.respondText("ok") } } }
+            try {
+                var bound: Http3Endpoint? = null
+                val c = testClient(Http3DiscoveryMode.H3Only)
+                val pool = (c.engine as KuicksilverEngine).h3
+                pool.endpointBoundBeforeStoreForTest = { ep ->
+                    bound = ep
+                    pool.close() // the client closes right now
+                }
+                assertFails { c.get("https://127.0.0.1:$port/") }
+                c.close()
+                val ep = assertNotNull(bound)
+                assertFalse(pool.endpointBoundForTest, "the pool holds no endpoint")
+                val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+                assertFailsWith<QuicException.EndpointClosing>("the endpoint bound during the close is closed") {
+                    withTimeout(5.seconds) { ep.connect(InetSocketAddress("127.0.0.1", 9), tls) }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
         }
 }

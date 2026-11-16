@@ -41,8 +41,10 @@ class KslDatagramIoTest {
      * [open] on the wildcard address at a port no socket holds on 127.0.0.1, so that what these tests send to 127.0.0.1
      * reaches the wildcard socket: on macOS a wildcard bind shares its port with a socket another process holds on
      * 127.0.0.1 (the kernel even hands a wildcard `port = 0` bind such a port), and datagrams to 127.0.0.1 then go to that
-     * socket (tools/check/wildcard-binds.py). The port is taken free on 127.0.0.1 first; a port taken meanwhile is tried
-     * again. A later bind of another process on 127.0.0.1 does not get a port the wildcard socket holds.
+     * socket (tools/check/wildcard-binds.py). The port is taken free on 127.0.0.1 first; a wildcard bind that fails because
+     * the port was taken in between is tried again on a new one. What this cannot rule out: another process binding
+     * 127.0.0.1 at exactly this port by number afterwards (macOS allows that next to a wildcard socket); an ephemeral
+     * (`port = 0`) bind of another process on 127.0.0.1 does not get it.
      */
     private inline fun <T> onUnshadowedWildcard(open: (InetSocketAddress) -> T): T {
         var last: java.io.IOException? = null

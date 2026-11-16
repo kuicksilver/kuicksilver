@@ -8,6 +8,11 @@ import io.ktor.network.sockets.toJavaAddress
 // a java.net.InetSocketAddress resolved its name when it was built; an unresolved one answers null without a lookup
 internal actual fun InetSocketAddress.ipBytesNoDns(): ByteArray? = resolveAddress()
 
+// the text the address was made from (java.net's hostString, no reverse lookup): an IP literal gives its bytes, as written
+// (an IPv4-mapped literal stays 16 bytes, though java.net turned it into an Inet4Address); a name, resolved or not, null
+internal actual fun InetSocketAddress.literalBytesNoDns(): ByteArray? =
+    (toJavaAddress() as? java.net.InetSocketAddress)?.hostString?.let { parseIpLiteral(it) }
+
 // the scope as java.net's own literal (getHostAddress) writes it: the interface name, else the numeric scope ID whenever one
 // was given, an explicit `%0` included (getScopeId() is 0 both for `%0` and for no scope; only the text tells them apart)
 // as ipZoneNoDns's text compares: the interface name when there is one (else none), the scope ID, and for scope 0 with no

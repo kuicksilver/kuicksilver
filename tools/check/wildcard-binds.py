@@ -15,19 +15,26 @@ over loopback binds it to loopback; one that needs the wildcard says why in tool
 
 Scope: the test source sets (src/<name>Test*/), and the harness modules (kuicksilver-bench, kuicksilver-soak,
 kuicksilver-engine-interop) and samples' tests, Kotlin and Java. A file counts only when it talks to loopback: it names
-127.0.0.1, ::1 or localhost, InetAddress.getLoopbackAddress(), or calls rawHttp/slowHttp (ktor-server's fixtures, which
+127.0.0.1, ::1 (also as [::1] in a URL) or localhost, InetAddress.getLoopbackAddress(), or calls rawHttp/slowHttp (ktor-server's fixtures, which
 connect to 127.0.0.1). What is a wildcard bind:
   connector     tlsConnector(...) { }, sslConnector(...) { }, plainConnector { } and Ktor's connector { } whose block
                 sets no `host` (the default is 0.0.0.0), or a call of those without a block; `host = "0.0.0.0"` / "::"
-  literal       InetSocketAddress("0.0.0.0" | "::", ...) passed to a bind or an open (QuicEndpoint.bind,
-                Http3Endpoint.bind, DatagramIo.open, KslDatagramIo.open, bindTcp, aSocket(...).bind, ...), directly or
-                through a local `val`/`var` whose initializer holds such an address, or with its host in a
-                `val`/`var` holding "0.0.0.0" or "::"; java.net.InetSocketAddress(port), which is the wildcard
-  raw           .bind(<port>) or .bind() with no address (Netty's Bootstrap, ktor-network); ServerSocket(port) and
-                ServerSocket(port, backlog) without an address; DatagramSocket() and DatagramSocket(port)
+  literal       a wildcard InetSocketAddress("0.0.0.0" | "::", ...), over any number of lines, as an argument (also a
+                named one, `local = ...`) of a bind or an open (QuicEndpoint.bind, Http3Endpoint.bind, DatagramIo.open,
+                KslDatagramIo.open, bindTcp, aSocket(...).bind, ...), directly or through a `val`/`var` of the same
+                function declared before the use, or with its host in a `val`/`var` holding "0.0.0.0" or "::"; a bare
+                "0.0.0.0" / "::" argument of a bind (Ktor's bind("0.0.0.0", 0), bindTcp(selector, "0.0.0.0", 0));
+                java.net.InetSocketAddress(port), which is the wildcard
+  raw           .bind(port), .bind(port = ...), .bind(), .bind { } and .bind(null) without an address (Netty's
+                Bootstrap, ktor-network's defaults, NIO); ServerSocket(port) and ServerSocket(port, backlog) without an
+                address; DatagramSocket(), DatagramSocket(<int>) and DatagramSocket(<a variable that holds a port>: one
+                declared Int or with an integer initializer, or named like a port); embeddedServer(..., port = ...)
+                without host (Ktor's default 0.0.0.0)
   interop       HqInteropServer.start / H3InteropServer.start without `host =` (kuicksilver-interop's default 0.0.0.0)
 Comments and KDoc are skipped. Known blind spots: an address built elsewhere (a helper in another file, a function
-parameter), a wildcard reached through string templates or concatenation, a bind in a file that reaches loopback only
+parameter), a wildcard reached through string templates or concatenation, a `val` shadowed in a nested lambda or local
+class (names are tracked per function, not per scope), DatagramSocket(x) whose x is neither declared here as a port nor
+named like one (read as an address), a bind function reached through an alias or a reference, a bind in a file that reaches loopback only
 through a helper of another file other than rawHttp/slowHttp, a socket that binds implicitly on its first send (an unbound
 DatagramChannel), library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
 address for a loopback peer themselves, through loopbackLocalFor), and code that is not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
@@ -42,14 +49,15 @@ import sys
 ALLOW = "tools/check/wildcard-binds.allow"
 HARNESS = ("kuicksilver-bench/", "kuicksilver-soak/", "kuicksilver-engine-interop/")
 TEST_SET = re.compile(r"/src/[A-Za-z0-9]*Test[A-Za-z0-9]*/")
-LOOPBACK = re.compile(r'"127\.0\.0\.1"|127\.0\.0\.1[:"/]|"::1"|\blocalhost\b|getLoopbackAddress\s*\(|\b(?:rawHttp|slowHttp)\s*\(')
+LOOPBACK = re.compile(r'"127\.0\.0\.1"|127\.0\.0\.1[:"/]|"::1"|\[::1\]|\blocalhost\b|getLoopbackAddress\s*\(|\b(?:rawHttp|slowHttp)\s*\(')
 WILD = r'"(?:0\.0\.0\.0|::)"'
-WILD_ADDR = re.compile(r"InetSocketAddress\s*\([^;\n]*" + WILD)
+WILD_ADDR = re.compile(r"InetSocketAddress\s*\(")
 BINDERS = r"(?:\bbind|\bopen|bindTcp|bindUdp)"
 CONNECTOR = re.compile(r"\b(tlsConnector|sslConnector|plainConnector|connector)\b(\s*\()?")
-RAW_BIND = re.compile(r"\.bind\s*\(\s*(?:\d+\s*)?\)")
+RAW_BIND = re.compile(r"\.bind\s*(?:\(\s*(?:\d+\s*|null\s*|port\s*=\s*[^,()]+)?\)|\{)")
+EMBEDDED = re.compile(r"\bembeddedServer\s*\(")
 SERVER_SOCKET = re.compile(r"\bServerSocket\s*\(\s*[^,()\s]+\s*(?:,\s*[^,()\s]+\s*)?\)")
-DATAGRAM_SOCKET = re.compile(r"\bDatagramSocket\s*\(\s*(?:\d+\s*)?\)")
+DATAGRAM_SOCKET = re.compile(r"\bDatagramSocket\s*\(\s*([\w.]*)\s*\)")
 JAVA_PORT_ONLY = re.compile(r"\bInetSocketAddress\s*\(\s*[\w.]+\s*\)")  # ktor's takes a host too: this is java.net's, on the wildcard
 INTEROP = re.compile(r"\b(?:HqInteropServer|H3InteropServer)\.start\s*\(")
 HOST_WILD = re.compile(r"\bhost\s*=\s*" + WILD + r'|"-host=(?:0\.0\.0\.0|::)"')
@@ -182,6 +190,18 @@ def call_args(code, open_paren):
     return code[open_paren:j]
 
 
+def wild_address_call(text, code, i, wild_hosts):
+    """Whether the InetSocketAddress( call starting at i (the name) holds a wildcard host literal or a wildcard constant."""
+    m = WILD_ADDR.match(text, i)
+    if not m:
+        return False
+    span = len(call_args(code, m.end() - 1))
+    args = text[m.end() - 1 : m.end() - 1 + span]
+    if re.search(WILD, args):
+        return True
+    return any(re.match(r"\(\s*(?:hostname\s*=\s*)?" + re.escape(h) + r"\b", args) for h in wild_hosts)
+
+
 def findings_in(code):
     """(offset, kind) of every wildcard bind in comment-free code; calls are read with the strings blanked."""
     found = []
@@ -207,19 +227,36 @@ def findings_in(code):
             found.append((m.start(), f"{name} {{ }} without host: it listens on the wildcard address"))
     for m in HOST_WILD.finditer(text):
         found.append((m.start(), "host is the wildcard address"))
-    # wildcard InetSocketAddress handed to a bind or an open, directly or through a local val/var
-    wild_names, wild_hosts = set(), set()
-    for m in re.finditer(r"\b(?:val|var)\s+(\w+)\s*(?::\s*[\w.?<>]+\s*)?=\s*([^\n]*)", text):
-        if re.fullmatch(r"\s*" + WILD + r"\s*", m.group(2)):
-            wild_hosts.add(m.group(1))  # a constant holding the wildcard address
-    for m in re.finditer(r"\b(?:val|var)\s+(\w+)\s*(?::\s*[\w.?<>]+\s*)?=\s*([^\n]*)", text):
-        if WILD_ADDR.search(m.group(2)) or any(re.search(r"InetSocketAddress\s*\(\s*(?:hostname\s*=\s*)?" + h + r"\b", m.group(2)) for h in wild_hosts):
-            wild_names.add(m.group(1))
+    # wildcard InetSocketAddress handed to a bind or an open, directly (also a named argument) or through a local val/var
+    # whose initializer (on any number of lines) is one; a bare wildcard host literal as an argument of a bind (Ktor's
+    # bind("0.0.0.0", 0), bindTcp(selector, "0.0.0.0", 0))
+    wild_names, wild_hosts = {}, set()
+    decl = r"\b(?:val|var)\s+(\w+)\s*(?::\s*[\w.?<>]+\s*)?=\s*"
+    for m in re.finditer(decl + r"(" + WILD + r")\s*$", text, re.M):
+        wild_hosts.add(m.group(1))  # a constant holding the wildcard address
+    for m in re.finditer(decl, text):
+        j = m.end()
+        if WILD_ADDR.match(text, j) and wild_address_call(text, code, j, wild_hosts):
+            wild_names.setdefault(m.group(1), []).append(m.start())
     for m in re.finditer(BINDERS + r"\s*\(", code):
-        args = text[m.end() - 1 : m.end() - 1 + len(call_args(code, m.end() - 1))]
-        first = args[1:].lstrip()
-        via_host = any(re.match(r"InetSocketAddress\s*\(\s*(?:hostname\s*=\s*)?" + h + r"\b", first) for h in wild_hosts)
-        if WILD_ADDR.match(first) or via_host or any(re.match(r"(?:local\s*=\s*)?" + re.escape(w) + r"\b", first) for w in wild_names):
+        if re.search(r"\bfun\s+(?:[\w.<>]+\.)?\w*$", code[max(0, m.start() - 80) : m.start() + 1]):
+            continue  # a definition
+        open_at = m.end() - 1
+        span = len(call_args(code, open_at))
+        args = text[open_at + 1 : open_at + span - 1]
+        hit = False
+        for a in split_args(args):
+            a = re.sub(r"^\w+\s*=\s*", "", a.strip())  # a named argument: its value
+            k = text.find(a, open_at) if a else -1
+            if re.fullmatch(WILD, a):
+                hit = True
+            elif a.startswith("InetSocketAddress") and k >= 0 and wild_address_call(text, code, k, wild_hosts):
+                hit = True
+            elif re.fullmatch(r"\w+", a) and any(
+                d < m.start() and not re.search(r"\bfun\b", code[d : m.start()]) for d in wild_names.get(a, ())
+            ):
+                hit = True  # a use after the declaration, in the same function
+        if hit:
             found.append((m.start(), "bound to the wildcard address"))
     for m in JAVA_PORT_ONLY.finditer(code):
         found.append((m.start(), "java.net.InetSocketAddress(port): the wildcard"))
@@ -228,11 +265,59 @@ def findings_in(code):
     for m in SERVER_SOCKET.finditer(code):
         found.append((m.start(), "ServerSocket without an address: the wildcard"))
     for m in DATAGRAM_SOCKET.finditer(code):
+        arg = m.group(1)
+        if arg and not re.fullmatch(r"\d+", arg) and not looks_like_port(arg, text):
+            continue  # an address held in a variable (DatagramSocket(SocketAddress))
         found.append((m.start(), "DatagramSocket without an address: the wildcard"))
+    for m in EMBEDDED.finditer(code):
+        args = text[m.end() - 1 : m.end() - 1 + len(call_args(code, m.end() - 1))]
+        top = split_args(args[1:-1])
+        if any(re.match(r"port\s*=", a) for a in top) and not any(re.match(r"host\s*=", a) for a in top):
+            found.append((m.start(), "embeddedServer(..., port = ...) without host: its default is 0.0.0.0"))
     for m in INTEROP.finditer(code):
         if not re.search(r"\bhost\s*=", text[m.end() - 1 : m.end() - 1 + len(call_args(code, m.end() - 1))]):
             found.append((m.start(), "interop server without host: its default is 0.0.0.0"))
     return found
+
+
+def split_args(args):
+    """The top-level arguments of an argument list's text (brackets and string literals respected)."""
+    out, depth, cur, in_str, i = [], 0, [], False, 0
+    while i < len(args):
+        c = args[i]
+        if in_str:
+            cur.append(c)
+            if c == "\\" and i + 1 < len(args):
+                cur.append(args[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            cur.append(c)
+        elif c in "([{":
+            depth += 1
+            cur.append(c)
+        elif c in ")]}":
+            depth -= 1
+            cur.append(c)
+        elif c == "," and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    out.append("".join(cur))
+    return [a.strip() for a in out if a.strip()]
+
+
+def looks_like_port(name, text):
+    """Whether the variable [name] holds a port: an Int declaration, an integer initializer, or a name that says so."""
+    last = name.split(".")[-1]
+    if re.search(r"port", last, re.I):
+        return True
+    return re.search(r"\b(?:val|var)\s+" + re.escape(last) + r"\s*(?::\s*Int\b|=\s*\d+\s*$)", text, re.M) is not None
 
 
 def load_allow(root):

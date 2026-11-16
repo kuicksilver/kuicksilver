@@ -240,7 +240,7 @@ internal fun boundInterfaceOf(
 /**
  * Keeps this client connection on the system's default network (iOS, macOS): a started [NetworkMigrator] over [nwPathUpdates]
  * that opens each new socket with [DatagramIo.Companion.open] bound to the new path's interface (at [local]: by default
- * [rebindLocal], the loopback address of a loopback server's family, else the wildcard address of the server's family, any
+ * `rebindLocal`, the loopback address of a loopback server's family, else the wildcard address of the server's family, any
  * port). The path when this is called is taken as the one the connection is
  * on (an unbound socket follows the default route). It also replaces a socket iOS reclaimed while the app was suspended
  * ([PathEvent.SocketLost]). Collect [NetworkMigrator.events] right after this call to see every event; [NetworkMigrator.close]

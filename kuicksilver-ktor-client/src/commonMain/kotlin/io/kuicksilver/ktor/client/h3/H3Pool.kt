@@ -74,6 +74,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.loopbackLocalFor
+import io.kuicksilver.quic.unmappedLiteral
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -289,22 +290,24 @@ internal class H3Pool(
     private val connectionIdLength: Int =
         resolveConnectionIdLength(config.quic.connectionIdLength, config.http3.endpoint.connectionIdLength)
 
-    /** The engine's endpoint with its logger, connection listener and [connectionIdLength]. */
+    /**
+     * The session tickets of every endpoint of this pool (the wildcard one and the loopback ones): a name that resolves to
+     * both ::1 and 127.0.0.1 (`localhost`) resumes, with 0-RTT, whichever family its next connection takes. Closed by
+     * [closeSessions] after the endpoints.
+     */
+    private val tickets = io.kuicksilver.tls.SessionCache()
+
+    /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
-        config.http3.endpoint.let { e ->
-            if (config.logger == null && config.http3.connectionListener == null && e.connectionIdLength == connectionIdLength) {
-                e
-            } else {
-                e
-                    .toBuilder()
-                    .apply {
-                        config.logger?.let { logger = it }
-                        config.http3.connectionListener?.let { listener = it }
-                        connectionIdLength = this@H3Pool.connectionIdLength
-                    }.build()
-            }
-        }
+        config.http3.endpoint
+            .toBuilder()
+            .apply {
+                config.logger?.let { logger = it }
+                config.http3.connectionListener?.let { listener = it }
+                connectionIdLength = this@H3Pool.connectionIdLength
+                sessionCache = tickets
+            }.build()
 
     /** The engine's QUIC settings with its qlog sink and [connectionIdLength]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -350,6 +353,9 @@ internal class H3Pool(
 
     /** Test hook (this pool's): runs with each destination of a connection attempt and the endpoint chosen for it. */
     internal var endpointChosenForTest: ((InetSocketAddress, Http3Endpoint) -> Unit)? = null
+
+    /** Test hook (this pool's): runs with a newly bound endpoint before the pool stores it. */
+    internal var endpointBoundBeforeStoreForTest: ((Http3Endpoint) -> Unit)? = null
     private val connections = HashMap<String, H3Entry>()
 
     /** [quic] with its handshake timeout cut to [connectTimeoutMillis] when that is shorter (a 0-RTT connect returns early). */
@@ -388,12 +394,14 @@ internal class H3Pool(
     private fun ensureOpen() = check(!closed) { "the client is closed" }
 
     /**
-     * The endpoint a connection to [remote] (an address literal) leaves from: the one bound to the loopback address of its
-     * family for a loopback destination (127.0.0.0/8, ::1), else the shared one on the wildcard address. Each is bound once,
-     * at its first use, and closed with the pool. One destination always gets the same endpoint, so its session tickets
-     * (0-RTT), Alt-Svc entries and pooled connections are those of before.
+     * The endpoint a connection to [remote] (an address literal) leaves from, and the address it connects to: the one bound
+     * to the loopback address of its family for a loopback destination (127.0.0.0/8 and its IPv4-mapped form, sent to as
+     * IPv4; ::1), else the shared one on the wildcard address and [remote] as it is. Each is bound once,
+     * at its first use, and closed with the pool. The endpoints share the pool's [tickets], so a session ticket resumes
+     * whichever endpoint the next connection to that server leaves from; Alt-Svc entries, the address race and the pooled
+     * connections do not depend on the endpoint.
      */
-    private suspend fun endpointFor(remote: InetSocketAddress): Http3Endpoint {
+    private suspend fun endpointFor(remote: InetSocketAddress): Pair<Http3Endpoint, InetSocketAddress> {
         val local = loopbackLocalFor(remote)
         val v6 = local?.ipLiteral() == "::1"
         val chosen =
@@ -406,20 +414,28 @@ internal class H3Pool(
                         else -> loopback4
                     }
                 bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also {
-                    // a close that ran during the bind did not see this endpoint: it goes now
-                    if (closed) {
-                        it.close()
-                        throw IllegalStateException("the client is closed")
-                    }
+                    endpointBoundBeforeStoreForTest?.invoke(it)
+                    // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
+                    // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
                     when {
                         local == null -> endpoint = it
                         v6 -> loopback6 = it
                         else -> loopback4 = it
                     }
+                    if (closed) {
+                        it.close()
+                        when {
+                            local == null -> endpoint = null
+                            v6 -> loopback6 = null
+                            else -> loopback4 = null
+                        }
+                        throw IllegalStateException("the client is closed")
+                    }
                 }
             }
         endpointChosenForTest?.invoke(remote, chosen)
-        return chosen
+        // an IPv4-mapped loopback address (`::ffff:127.0.0.1`) is sent to as IPv4 from the IPv4 loopback endpoint
+        return chosen to if (local != null && !v6) remote.unmappedLiteral() else remote
     }
 
     /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
@@ -747,7 +763,11 @@ internal class H3Pool(
         try {
             withTimeout(left) {
                 extraConnectForTest?.invoke()
-                made = raceQuic(originHost, port, dns, failures) { remote -> endpointFor(remote).connect(remote, tls, q, wtSettings) }
+                made =
+                    raceQuic(originHost, port, dns, failures) { remote ->
+                        val (ep, to) = endpointFor(remote)
+                        ep.connect(to, tls, q, wtSettings)
+                    }
             }
         } catch (e: TimeoutCancellationException) {
             if (made == null) {
@@ -803,6 +823,9 @@ internal class H3Pool(
     fun refuseWebTransport() {
         refusingWebTransport = true
     }
+
+    /** Drops the pool's session tickets: the engine's cleanup calls it after [close]. */
+    suspend fun closeSessions() = tickets.close()
 
     fun close() {
         refusingWebTransport = true
@@ -1112,8 +1135,8 @@ internal class H3Pool(
                     made =
                         raceQuic(t.host, t.port, dns, failures, { won, a ->
                             attempts.update { it + (won to Destination.of(a)) }
-                        }) { remote ->
-                            val ep = endpointFor(remote)
+                        }) { destination ->
+                            val (ep, remote) = endpointFor(destination)
                             if (wt) {
                                 // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
                                 ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
