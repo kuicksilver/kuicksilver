@@ -700,6 +700,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS over TCP, client: TLS 1.3 handshakes no longer use middlebox compatibility mode (RFC 9846 appendix E.4, optional).
+  The ClientHello carries an empty `legacy_session_id` (section 4.2.2: "Otherwise, it MUST be set as a zero-length
+  list") instead of a random 32-byte one, and the client sends no dummy `change_cipher_spec` before its second flight
+  (also none after a HelloRetryRequest). This is what lets the client protect its alerts after the ServerHello (see
+  Fixed). A client that resumes a TLS 1.2 session ID still sends that ID. Servers keep the mode and answer a client's
+  non-empty session ID with `change_cipher_spec`; QUIC never used it. A network whose middlebox drops TLS 1.3 handshakes
+  that do not look like TLS 1.2 resumption can now fail TLS-over-TCP connections it let through before; there is no
+  setting to turn the mode back on ([TLS guide](docs/guide/tls.md#middleboxes)).
 - Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
   (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
   was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
