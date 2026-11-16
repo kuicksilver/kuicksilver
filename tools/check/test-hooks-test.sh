@@ -2,14 +2,16 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/check/test-hooks.py on a scratch repository. Pass: a global hook set and reset in a finally
-# after it, set in @BeforeTest and reset in @AfterTest (also org.junit's @After), a top-level hook set bare, a companion's
-# hook through `Owner.Companion`, a Long hook reset to `0` for `0L`, an instance hook of the same name as a global one
-# set through an instance, a per-instance hook never reset (a constructor's `var` too), a setter function
-# (`set...ForTest(x)`) reset by its call with null, comments and strings. Fail: a set never reset; a reset in a
-# finally of another function, in @AfterTest of another class, in a finally before the set; a reset to another value; a
-# `+=`; the reset of another object's hook of the same name; a set inside `with(Owner) { }`; a set of an object's hook
-# whose name an instance property shares; a hook in a nested object; a setter called without its null call; a global hook
-# without an initial value.
+# after it, set in @BeforeTest and reset in @AfterTest (also org.junit's @After), a top-level hook set bare, a
+# companion's hook through `Owner.Companion`, a Long hook reset to `0` for `0L`, an instance hook of the same name as a
+# global one set through an instance (also through `it` of an instance's scope function), a per-instance hook never
+# reset (a constructor's `var` too), a setter function (`set...ForTest(x)`) reset by its call with null, comments and
+# strings. Fail: a set never reset; a reset in a finally of another function, in @AfterTest of another class, in a
+# finally before the set, after `if (...)` on its line or the line before; a reset to another value; `+=`, postfix `++`,
+# prefix `--`; a property reference's set (`Obj::hook.set(x)`, `(::hook).set { }`); the reset of another object's hook
+# of the same name; a set inside `with(Owner) { }`, through `it` in `Owner.also { }` and `this` in `Owner.run { }`; a
+# set of an object's hook whose name an instance property shares; a hook in a nested object; a setter called without its
+# null call; a global hook without an initial value.
 # Usage: test-hooks-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -180,7 +182,7 @@ case_ 1 "a reset to another value" "$t/A.kt:7 | topHookForTest |" \
         }
     }
 }'
-case_ 1 "a += is a set" "$t/A.kt:7 | skewForTest | a global hook set (+=/-=)" \
+case_ 1 "a += is a set" "$t/A.kt:7 | skewForTest | a global hook set (+=, -=, ++ or --)" \
 'class A {
     @Test fun t() {
         skewForTest += 5
@@ -193,7 +195,70 @@ case_ 1 "another object's reset of a hook of the same name" "$t/A.kt:7 | Other.s
         try { } finally { Another.sharedForTest = null }
     }
 }'
-case_ 1 "a set inside with(Owner)" "$t/A.kt:7 | objHookForTest |" \
+case_ 1 "a postfix ++ is a set" "$t/A.kt:7 | skewForTest | a global hook set (+=, -=, ++ or --)" \
+'class A {
+    @Test fun t() {
+        skewForTest++
+    }
+}'
+case_ 1 "a prefix -- through the owner is a set" "$t/A.kt:7 | Obj.objHookForTest |" \
+'class A {
+    @Test fun t() {
+        --Obj.objHookForTest
+    }
+}'
+case_ 1 "a property reference's set" "$t/A.kt:7 | Obj.objHookForTest | a global hook set (3)" \
+'class A {
+    @Test fun t() {
+        Obj::objHookForTest.set(3)
+    }
+}'
+case_ 1 "a parenthesized property reference's set with a lambda" "$t/A.kt:7 | topHookForTest |" \
+'class A {
+    @Test fun t() {
+        (::topHookForTest).set { }
+    }
+}'
+case_ 1 "a set through it in Owner.also" "$t/A.kt:7 | DupOwner.dupForTest |" \
+'class A {
+    @Test fun t() {
+        DupOwner.also { it.dupForTest = 1 }
+    }
+}'
+case_ 1 "a set through this in Owner.run" "$t/A.kt:7 | DupOwner.dupForTest |" \
+'class A {
+    @Test fun t() {
+        DupOwner.run { this.dupForTest = 1 }
+    }
+}'
+case_ 1 "a reset on some paths of its finally does not count" "$t/A.kt:8 | Obj.objHookForTest |" \
+'class A {
+    @Test fun t(flag: Boolean) {
+        try {
+            Obj.objHookForTest = 1
+        } finally {
+            if (flag) Obj.objHookForTest = null
+        }
+    }
+}'
+case_ 1 "a reset after an if on the line before does not count" "$t/A.kt:8 | Obj.objHookForTest |" \
+'class A {
+    @Test fun t(flag: Boolean) {
+        try {
+            Obj.objHookForTest = 1
+        } finally {
+            if (flag)
+                Obj.objHookForTest = null
+        }
+    }
+}'
+case_ 0 "an instance hook set through it of an instance" "0 finding(s)" \
+'class A {
+    @Test fun t() {
+        WithSame().also { it.dupForTest = 1 }
+    }
+}'
+case_ 1 "a set inside with(Owner)" "$t/A.kt:7 | Obj.objHookForTest |" \
 'class A {
     @Test fun t() {
         with(Obj) { objHookForTest = 5 }
