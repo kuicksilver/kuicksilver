@@ -7,6 +7,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.native.packetBuffersOpenOnThisThread
 import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.release
@@ -92,7 +93,7 @@ internal class CorePair(
     private val serverTls: TlsConfig = CoreFixtures.server(),
     clientQuic: QuicConfig = QuicConfig.Default,
     private val serverQuic: QuicConfig = QuicConfig.Default,
-    private val crypto: QuicCrypto = NullCryptoProvider,
+    crypto: QuicCrypto = NullCryptoProvider,
     seed: Long = 1,
     clientEarly: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
     private val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = null,
@@ -101,8 +102,17 @@ internal class CorePair(
     clientResetKey: io.kuicksilver.tls.ResetKey? = null,
     private val serverResetKey: io.kuicksilver.tls.ResetKey? = null,
 ) {
+    private val buffers = BufferWatch.opened()
     var now: TimeMark = TimeMark(1_000_000_000L)
     val random = Random(seed)
+
+    /**
+     * Counts every native-backed object the cores get from [crypto] ([LeakTrackingCrypto]); [close] fails when one is
+     * left open after the cores were released. A test's own [LeakTrackingCrypto] is used as it is.
+     */
+    val leaks: LeakTrackingCrypto = crypto as? LeakTrackingCrypto ?: LeakTrackingCrypto(crypto)
+    private val crypto: QuicCrypto = leaks
+
     val client: ConnectionCore =
         ConnectionCore
             .client(
@@ -266,11 +276,67 @@ internal class CorePair(
     fun closedReason(events: List<ConnectionEvent>): QuicException.ConnectionLost? =
         events.filterIsInstance<ConnectionEvent.Closed>().firstOrNull()?.reason
 
-    /** Frees the cores' native resources (TLS sessions, keys) too: a connection still open at the end would keep them. */
+    /**
+     * Frees the cores' native resources (TLS sessions, keys) too: a connection still open at the end would keep them.
+     * Then checks that nothing leaked: every object the cores got from the crypto provider is closed (on the JVM and
+     * Native alike, also for [NullCryptoProvider], whose objects stand for native ones), and no [PacketBuffer] the
+     * test allocated while the pair was open is left open ([BufferWatch]). A second close checks nothing more.
+     */
     fun close() {
+        if (closed) return
+        closed = true
         batch.close()
         client.release()
         server?.release()
+        val live = leaks.live
+        if (live.isNotEmpty()) throw AssertionError("native objects left open after the cores were released: $live")
+        BufferWatch.closed("CorePair", buffers)
+    }
+
+    private var closed = false
+}
+
+/**
+ * The [PacketBuffer]s a test allocates on a thread while a fixture (CorePair, EndpointPair) is open are all closed when
+ * it closes: the thread's count after its close is the count before it was built. Judged for a fixture during whose
+ * life no other fixture was built or closed (fixtures left open by earlier tests do not count: they are not used); when
+ * two overlap, what each holds at the other's close cannot be told apart, and only their crypto objects are judged
+ * ([LeakTrackingCrypto]). The count is per thread ([packetBuffersOpenOnThisThread]): a fixture is built and closed on one
+ * thread, as the sans-IO tests do.
+ */
+internal object BufferWatch {
+    private var events = 0L
+    private var warm = false
+
+    /** Called first in a fixture's construction: what [closed] compares. */
+    fun opened(): Pair<Long, Long> {
+        if (!warm) {
+            warm = true
+            // what a process makes once and keeps (a core's shared scratch buffer) is made before the first count
+            ConnectionCore
+                .client(
+                    QuicConfig.Default,
+                    CoreFixtures.client(),
+                    NullCryptoProvider,
+                    CoreFixtures.serverAddr,
+                    Random(1),
+                    TimeMark(1),
+                    null,
+                ).release()
+        }
+        return ++events to packetBuffersOpenOnThisThread()
+    }
+
+    /** Called once the fixture freed all it holds: fails when buffers allocated meanwhile are still open. */
+    fun closed(
+        what: String,
+        opened: Pair<Long, Long>,
+    ) {
+        val alone = events == opened.first
+        events++
+        if (!alone) return
+        val left = packetBuffersOpenOnThisThread() - opened.second
+        if (left != 0L) throw AssertionError("$what: $left PacketBuffer(s) left open on this thread since the fixture was built")
     }
 }
 

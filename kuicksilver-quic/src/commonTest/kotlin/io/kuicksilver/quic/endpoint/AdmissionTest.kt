@@ -405,7 +405,7 @@ class AdmissionTest {
             assertNotNull(p.feed(p.server, firstInitial(p), InetSocketAddress("10.9.9.10", 1)), "another IP is not affected")
             p.server.connections().first { it.remoteAddressForTest == same[0] }.let {
                 it.close(0, "", p.now)
-                p.server.remove(it)
+                p.remove(p.server, it)
             }
             assertNotNull(p.feed(p.server, firstInitial(p), ip), "a removed connection frees its IP slot")
         } finally {

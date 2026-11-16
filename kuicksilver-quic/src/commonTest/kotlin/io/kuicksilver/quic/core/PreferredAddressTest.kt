@@ -755,7 +755,7 @@ class PreferredAddressTest {
         try {
             val (_, s, held) = moveHoldingOriginal(p)
             s.close(0, "", p.now)
-            p.server.remove(s)
+            p.remove(p.server, s)
             assertEquals(0, p.server.connectionCount)
             val sentBefore = p.serverSent.size
             for (d in held) assertNull(p.feed(p.server, d, p.clientAddr))
@@ -796,7 +796,7 @@ class PreferredAddressTest {
             assertEquals(oldPathId, s.leftAddressPrimary, "the client's ID on the original path")
             assertTrue(oldPathId in s.leftAddressCids, "${s.leftAddressCids}")
             s.close(0, "", p.now)
-            p.server.remove(s)
+            p.remove(p.server, s)
             assertTrue(noResetFor(p, held), "no Stateless Reset queued")
             assertTrue(p.server.resetsWithheldLeftAddress > 0, "counted as withheld")
         } finally {
@@ -815,7 +815,7 @@ class PreferredAddressTest {
             p.now = coreNow + 20.seconds // the connection idle meanwhile; the endpoint goes on
             p.server.processPending(p.now)
             s.close(0, "", coreNow)
-            p.server.remove(s)
+            p.remove(p.server, s)
             p.now = coreNow + ttl + 5.seconds // past the connection's clock + ttl, before the endpoint's
             assertTrue(noResetFor(p, held), "still remembered")
         } finally {
@@ -834,7 +834,7 @@ class PreferredAddressTest {
             p.server.processPending(p.now)
             val removedAt = p.now
             s.close(0, "", p.now)
-            p.server.remove(s)
+            p.remove(p.server, s)
             p.now = removedAt + keep - 1.seconds
             assertTrue(noResetFor(p, held), "kept until the fallback ends")
             p.now = removedAt + keep

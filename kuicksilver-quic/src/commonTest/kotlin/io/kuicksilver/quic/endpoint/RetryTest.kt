@@ -44,12 +44,16 @@ import kotlin.time.Duration.Companion.seconds
 class RetryTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private fun isInitial(b: ByteArray) =
-        b[0].toInt() and 0x80 != 0 &&
-            PacketHeaderView().let { v ->
-                PacketHeaderCodec.parse(PacketBuffer.of(b).also { }, 0, b.size, 8, v) &&
-                    v.type == PacketType.Initial
-            }
+    private fun isInitial(b: ByteArray): Boolean {
+        if (b[0].toInt() and 0x80 == 0) return false
+        val v = PacketHeaderView()
+        val buf = PacketBuffer.of(b)
+        try {
+            return PacketHeaderCodec.parse(buf, 0, b.size, 8, v) && v.type == PacketType.Initial
+        } finally {
+            buf.close()
+        }
+    }
 
     private fun isRetry(b: ByteArray): Boolean {
         val v = PacketHeaderView()

@@ -8,12 +8,14 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.native.toByteArray
+import io.kuicksilver.quic.BufferWatch
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
+import io.kuicksilver.quic.LeakTrackingCrypto
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
@@ -23,6 +25,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.core.release
 import io.kuicksilver.tls.QuicCrypto
 import kotlinx.coroutines.runBlocking
 import kotlin.random.Random
@@ -48,7 +51,15 @@ internal class EndpointPair(
     val serverAddr: InetSocketAddress = InetSocketAddress("10.0.0.2", 443),
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
 ) {
+    private val buffers = BufferWatch.opened()
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
+
+    /**
+     * Counts every native-backed object both endpoints get from the crypto provider ([LeakTrackingCrypto]): their
+     * connections' sessions and keys, token, reset and load-balancer keys; [close] fails when one is left open after the
+     * endpoints closed. A test's own [LeakTrackingCrypto] is used as it is.
+     */
+    val leaks: LeakTrackingCrypto = crypto as? LeakTrackingCrypto ?: LeakTrackingCrypto(crypto)
 
     /** Datagrams to the preferred address are lost (it does not answer). */
     var dropToPreferred: Boolean = false
@@ -67,14 +78,14 @@ internal class EndpointPair(
                                 this.newTokenLifetime = newTokenLifetime
                                 preferredAddress = serverPreferred
                             }.build()
-                    ; this.crypto = crypto
+                    ; this.crypto = leaks
                     configure()
                 }.build(),
             serverRandom,
             loopIndex,
             sharedTokens,
         )
-    val client: EndpointCore = EndpointCore(QuicEndpointConfig.Builder().apply { this.crypto = crypto }.build(), clientRandom)
+    val client: EndpointCore = EndpointCore(QuicEndpointConfig.Builder().apply { this.crypto = leaks }.build(), clientRandom)
     val events: HashMap<ConnectionCore, MutableList<ConnectionEvent>> = HashMap()
     val batch: PacketBatch = PacketBatch(16)
 
@@ -359,15 +370,40 @@ internal class EndpointPair(
         return if (ep.connectionCount > before) ep.connections().last() else null
     }
 
+    /**
+     * Takes [c] out of [ep] as the endpoint loop does with a closed connection (its IDs, its slot), and frees its native
+     * state as the loop's runtime does after it: [EndpointCore.remove] alone leaves the connection's TLS session and keys
+     * to whoever removed it.
+     */
+    fun remove(
+        ep: EndpointCore,
+        c: ConnectionCore,
+    ) {
+        ep.remove(c)
+        c.release()
+    }
+
     fun stateless(ep: EndpointCore): List<ByteArray> {
         batch.clear()
         val n = ep.pollStateless(batch)
         return List(n) { batch.buffer(it).toByteArray(batch.length(it)) }
     }
 
+    /**
+     * Closes both endpoints (their connections and keys), then checks that nothing leaked: every object they got from the
+     * crypto provider is closed, and no [io.kuicksilver.native.PacketBuffer] the fixtures allocated on this thread is left
+     * open ([BufferWatch]). A second close checks nothing more.
+     */
     fun close() {
+        if (closed) return
+        closed = true
         batch.close()
         client.close()
         server.close()
+        val live = leaks.live
+        if (live.isNotEmpty()) throw AssertionError("native objects left open after the endpoints closed: $live")
+        BufferWatch.closed("EndpointPair", buffers)
     }
+
+    private var closed = false
 }
