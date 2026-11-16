@@ -12,7 +12,7 @@
 # arguments nested two deep, through `this.launch`, or passed as `launch(block = { })`), an async timer that begins with
 # delay, a select that cancels (also labelled); a site in an expression body, a property initializer (<init>) and top-
 # level code (<top>); a second site in a judged function; a site moved to another function (and the old entry is stale);
-# an entry without a reason, with an unknown form or verdict, a count of 0, or twice for one function and form. JVM and
+# an entry without a reason, with an unknown form or verdict (drops-result too), a count of 0, or twice for one function and form. JVM and
 # sample main sets count.
 # Usage: deadline-sites-test.sh
 set -uo pipefail
@@ -233,6 +233,7 @@ bad_entry() { # <what> <pattern> <entry>
 }
 bad_entry "an entry without a reason" "| allow | the entry needs" "$A | f | withTimeoutOrNull | 1 | pure-wait |"
 bad_entry "an entry with an unknown verdict" "verdict 'fine' is none of" "$A | f | withTimeoutOrNull | 1 | fine | awaits a Deferred that keeps its value"
+bad_entry "drops-result is no verdict any more (such a site is fixed)" "verdict 'drops-result' is none of" "$A | f | withTimeoutOrNull | 1 | drops-result | the caller acts on a result the deadline drops"
 bad_entry "an entry with an unknown form" "form 'withDeadline' is none of" "$A | f | withDeadline | 1 | pure-wait | awaits a Deferred that keeps its value"
 bad_entry "an entry with a count of 0" "| allow | the entry needs" "$A | f | withTimeoutOrNull | 0 | pure-wait | awaits a Deferred that keeps its value"
 printf '%s | f | withTimeoutOrNull | 1 | pure-wait | awaits a Deferred that keeps its value\n%s | f | withTimeoutOrNull | 1 | made-flag | the same site judged a second time\n' "$A" "$A" > "$r/tools/check/deadline-sites.allow"

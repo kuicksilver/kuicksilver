@@ -36,9 +36,9 @@ Verdicts:
                      repeated, a test harness bound whose timeout fails the run anyway)
   select-atomic      a select clause: the select takes either one clause or the timeout, never both, and the losing
                      clause takes nothing (a channel element stays in the channel)
-  drops-result       known wrong, to be fixed: the caller's next step depends on the result the deadline can drop;
-                     the reason says what goes wrong. The question for every other verdict is the same: does the
-                     caller's next step depend on the block's result? If it does, the result must be kept
+The question behind every verdict: does the caller's next step depend on the block's result? If it does, the result is
+kept (completedWithin, made-flag), or the entry says why both branches end alike. A site that drops a result its caller
+acts on has no verdict: it is fixed.
 An entry naming a site that is gone (fewer sites than its count) is a finding too. Comments and string literals are left
 out; code inside a string template counts.
 
@@ -62,7 +62,7 @@ import kotlin_scan as ks  # noqa: E402
 
 ALLOW = "tools/check/deadline-sites.allow"
 FORMS = ("withTimeout", "withTimeoutOrNull", "onTimeout", "timer", "select-cancel")
-VERDICTS = ("pure-wait", "completedWithin", "made-flag", "side-effect-free", "select-atomic", "drops-result")
+VERDICTS = ("pure-wait", "completedWithin", "made-flag", "side-effect-free", "select-atomic")
 MAIN_KT = re.compile(r"^(?:.+/)?src/(?:[A-Za-z0-9]*Main|main)/.*\.kt$")
 IMPORT_LINE = re.compile(r"^[ \t]*import[ \t]+(.*?)[ \t]*;?[ \t]*$", re.M)
 TIMEOUTS = {"kotlinx.coroutines.withTimeout": "withTimeout", "kotlinx.coroutines.withTimeoutOrNull": "withTimeoutOrNull",
