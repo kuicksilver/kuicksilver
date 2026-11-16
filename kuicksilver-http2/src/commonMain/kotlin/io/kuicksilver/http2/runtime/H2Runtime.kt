@@ -28,13 +28,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
@@ -1149,14 +1147,23 @@ internal class H2Runtime(
         wait: suspend () -> Unit,
     ) {
         if (stallMillis == null) return wait()
-        try {
-            withTimeout(stallMillis) { wait() }
-        } catch (e: TimeoutCancellationException) {
+        // set as the wait returns: a window (or a written frame) taken as the bound fires is progress, though
+        // withTimeoutOrNull drops what the block returned when its timeout lands after it
+        var moved = false
+        withTimeoutOrNull(stallMillis) {
+            wait()
+            moved = true
+            stallWaitedForTest?.invoke()
+        }
+        if (!moved) {
             val err = stallError()
             abandon(s, err)
             throw err
         }
     }
+
+    /** Test hook: runs once a wait under the send-stall bound saw progress, still inside the bound. */
+    internal var stallWaitedForTest: (suspend () -> Unit)? = null
 
     /** The content [s] holds: taken off the stream and credited to the peer (the application is reading it). */
     fun pull(s: StreamRt): List<ByteArray> {
