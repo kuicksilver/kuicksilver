@@ -143,6 +143,9 @@ internal class EndpointLoop private constructor(
     internal val readHop: kotlin.coroutines.CoroutineContext = dispatcher + LoopDispatcher.Batched
 
     internal val wake = Channel<Unit>(Channel.CONFLATED)
+
+    /** Late timer wake-ups that let the loop's queued work run first ([timerLoop]); loop dispatcher only. */
+    internal var lateTimerYieldsForTest = 0L
     internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()

@@ -8,7 +8,7 @@
 // is internal to ktor-server-cio), without its `onClose` hook; a deadline and a size limit for every request head (408,
 // 431), an idle timeout that ends the whole connection, not only its output, and a deadline on response writes that
 // make no progress.
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.ktor.server.h1
 
@@ -36,6 +36,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.connectionOptions
 import io.kuicksilver.ktor.network.fieldListElements
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -154,6 +155,19 @@ internal fun sendStallTimeout(idle: Duration): Duration = maxOf(idle, MIN_SEND_S
 
 /** How long input after a refused head is read and dropped, so the client sees the refusal rather than a reset. */
 private val LINGER = 2.seconds
+
+/** Test hook: runs once a request head was parsed, still inside its deadline; it gets the connection's input. */
+@kotlin.concurrent.Volatile
+internal var headParsedForTest: (suspend (ByteReadChannel) -> Unit)? = null
+
+/** Test hook: runs once a flush of a response returned, still inside the send-stall deadline; it gets the output. */
+@kotlin.concurrent.Volatile
+internal var responseFlushedForTest: (suspend (ByteWriteChannel) -> Unit)? = null
+
+/** Test hook: runs once the writer took the next response off its channel, still inside the idle timeout; it gets the
+ * connection's output. */
+@kotlin.concurrent.Volatile
+internal var pipelineResponseTakenForTest: (suspend (ByteWriteChannel) -> Unit)? = null
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
@@ -968,6 +982,9 @@ private suspend fun readRequestHeadInTime(
         return parseRequest(input)
     }
     var started = false
+    // a head parsed as the deadline fires (the deadline cancels this scope from another thread after parseRequest returned,
+    // before the scope completed) is the request, never a 408 for a head that arrived whole
+    val parsed = kotlin.concurrent.atomics.AtomicReference<Request?>(null)
     try {
         return coroutineScope {
             val head = coroutineContext.job
@@ -982,13 +999,18 @@ private suspend fun readRequestHeadInTime(
                 if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
                 started = input.skipEmptyLines()
                 if (started) input.checkRequestHead()
-                parseRequest(input)
+                // no suspension point between the return and the store
+                parseRequest(input)?.also {
+                    parsed.store(it)
+                    headParsedForTest?.invoke(input.sourceForTest)
+                }
             } finally {
                 deadline.cancel()
             }
         }
     } catch (e: CancellationException) {
         currentCoroutineContext().ensureActive() // the connection itself was cancelled: not a deadline
+        parsed.load()?.let { return it }
         if (e is HeadDeadline) throw RequestHeadTimeout(started)
         throw e
     }
@@ -1040,7 +1062,9 @@ private suspend fun pipelineWriterLoop(
     onEnd: (String) -> Unit,
 ) {
     while (true) {
-        val next = withTimeoutOrNull(timeout) { channel.receiveCatching() }
+        // completedWithin: a response taken off the channel as the idle timeout fires is written, never dropped (its
+        // request was read and handled; dropped, its channel was neither written nor cancelled)
+        val next = completedWithin(timeout) { channel.receiveCatching().also { pipelineResponseTakenForTest?.invoke(connection.output) } }
         if (next == null) {
             // idle: the reader is waiting for a head that does not come, so the whole connection ends, not only this side
             onEnd("HTTP/1.1 connection idle for $timeout")
@@ -1094,7 +1118,12 @@ private suspend fun ByteReadChannel.copyToClient(
     try {
         while (!isClosedForRead) {
             if (readBuffer.transferTo(output.writeBuffer) > 0) sent = true
-            withTimeoutOrNull(stall) { output.flush() } ?: throw ClientNotReading(stall)
+            // completedWithin: a flush the socket took as the stall deadline fired is progress, not a client that stopped
+            completedWithin(stall) {
+                output.flush()
+                responseFlushedForTest?.invoke(output)
+                true
+            } ?: throw ClientNotReading(stall)
             awaitContent()
         }
         // a response whose handler failed is "closed for read" too, also before this copy reached it (it waited behind

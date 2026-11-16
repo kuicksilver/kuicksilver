@@ -1463,6 +1463,9 @@ internal class H2Runtime(
         }
     }
 
+    /** Test hook: runs once a health check's PING was answered (or the connection ended), still inside its bound. */
+    internal var healthAnsweredForTest: (suspend () -> Unit)? = null
+
     /** The PING of [checkHealth], by the caller that owns [shared]. */
     private suspend fun runHealthCheck(
         shared: CompletableDeferred<Boolean?>,
@@ -1478,11 +1481,12 @@ internal class H2Runtime(
         val ok =
             try {
                 withTimeoutOrNull(timeoutMillis) {
-                    kotlinx.coroutines.selects.select {
-                        acked.onAwait { true }
-                        closed.onAwait { false }
-                    }
-                } ?: false
+                    kotlinx.coroutines.selects
+                        .select {
+                            acked.onAwait { true }
+                            closed.onAwait { false }
+                        }.also { healthAnsweredForTest?.invoke() }
+                } ?: acked.isCompleted // an acknowledgement read as the bound fired (the timeout landed after it) is an answer
             } catch (e: CancellationException) {
                 // the caller went away: the others get no verdict (null), not a "dead" that would retire a healthy
                 // connection, and one of them checks again

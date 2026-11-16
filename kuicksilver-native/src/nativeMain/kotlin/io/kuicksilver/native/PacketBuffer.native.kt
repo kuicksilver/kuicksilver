@@ -77,7 +77,10 @@ public actual class PacketBuffer private constructor(
     }
 
     actual override fun close() {
-        ptr?.let { nativeHeap.free(it.rawValue) }
+        ptr?.let {
+            nativeHeap.free(it.rawValue)
+            countPacketBuffer(-1)
+        }
         ptr = null
     }
 
@@ -94,6 +97,6 @@ public actual class PacketBuffer private constructor(
                     },
                 ),
                 capacity,
-            )
+            ).also { countPacketBuffer(1) }
     }
 }

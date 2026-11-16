@@ -59,4 +59,19 @@ class PacketBufferTest {
         assertFailsWith<IllegalStateException> { b[4] }
         assertFailsWith<IllegalStateException> { b[-1] = 1 }
     }
+
+    /** The per-thread count of open buffers: +1 per allocation, -1 per first close, a second close changes nothing. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_openBuffersAreCounted() {
+        val before = packetBuffersOpenOnThisThread()
+        val a = PacketBuffer.allocate(16)
+        val b = PacketBuffer.of(byteArrayOf(1, 2, 3))
+        assertEquals(before + 2, packetBuffersOpenOnThisThread())
+        a.close()
+        a.close()
+        assertEquals(before + 1, packetBuffersOpenOnThisThread(), "closing twice counts once")
+        b.close()
+        assertEquals(before, packetBuffersOpenOnThisThread())
+    }
 }

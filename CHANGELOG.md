@@ -1131,6 +1131,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a path whose socket capabilities change to no DF (`setPathCapabilities`) went on sending datagrams of the
   size its path MTU search had reached, which the network may then fragment; it goes back to 1200 bytes (RFC 9000
   section 14: "UDP datagrams MUST NOT be fragmented at the IP layer").
+- A step done as its deadline fired was reported as not done: `withTimeoutOrNull` drops a block's result when the timeout,
+  which fires on another thread, lands after the block returned and before the timeout's scope completed. Each site whose
+  block has an effect now keeps the result once the block returned: a WebTransport close capsule and FIN were followed by
+  a RESET_STREAM that could discard the capsule, and a WT_DRAIN_SESSION that went out failed `drain()`; a WebTransport
+  CONNECT answered then was reported as timed out and its session left open; an address-validation token taken from the
+  `QuicTokenStore` was lost (the next connection needed a Retry); a request body read to its end for an HTTP/1.0 server
+  failed the request; an HTTP/3 WebSocket whose CONNECT was answered threw `ConnectTimeoutException` and left the stream
+  open; the HTTP/1.1 server answered a request head parsed at its deadline with 408, dropped a response its writer
+  took off the queue at the idle timeout, and ended a reading client's connection when a flush returned as the send-stall
+  deadline fired; an HTTP/2 health PING answered at its bound retired a healthy connection; a TLS handshake completed at
+  its deadline failed as timed out; the other address family's answer at the end of the Resolution Delay (RFC 8305
+  section 3) was taken off its queue and dropped.
+- QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
+  as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
+  yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC
+  9000 section 10.1: the idle timer restarts when a packet is "received and processed"), as quic-go does with its queued
+  packets. Datagrams still in the operating system's socket buffer are not read before the timers.
+- QUIC: native memory was not freed on some error paths: the 1-RTT write key that arrived with a peer's missing
+  transport parameters (RFC 9001 section 8.2), the TLS session of a connection whose construction failed (client and
+  server, including a reset token that failed for its first connection ID), the first derived key of a key phase whose
+  second derivation failed, and the TLS session of a server whose OCSP staple could not be set.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the

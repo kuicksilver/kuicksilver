@@ -97,6 +97,9 @@ internal class CorePair(
     clientEarly: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
     private val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = null,
     clientSetup: (ConnectionCore) -> Unit = {},
+    /** The endpoints' stateless reset keys (owned by the test, as an endpoint owns its own); null: random tokens. */
+    clientResetKey: io.kuicksilver.tls.ResetKey? = null,
+    private val serverResetKey: io.kuicksilver.tls.ResetKey? = null,
 ) {
     var now: TimeMark = TimeMark(1_000_000_000L)
     val random = Random(seed)
@@ -109,7 +112,7 @@ internal class CorePair(
                 CoreFixtures.serverAddr,
                 Random(seed + 1),
                 now,
-                null,
+                clientResetKey,
                 clientEarly,
             ).also(clientSetup)
     var server: ConnectionCore? = null
@@ -200,7 +203,7 @@ internal class CorePair(
                     b,
                     d.bytes.size,
                     null,
-                    null,
+                    serverResetKey,
                     originalDcid = serverAfterRetry?.first,
                     retryScid = serverAfterRetry?.second,
                     early = serverEarly,

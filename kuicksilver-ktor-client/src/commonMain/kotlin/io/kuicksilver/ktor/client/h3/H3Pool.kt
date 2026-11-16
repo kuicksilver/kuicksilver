@@ -71,6 +71,7 @@ import io.kuicksilver.quic.MigrationRefusedException
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -270,6 +271,9 @@ internal class H3Pool(
      * server's reset meanwhile is answered with a reset ("server reset").
      */
     internal var webSocketClosingForTest: ((String) -> Unit)? = null
+
+    /** Test hook: runs once a WebSocket's CONNECT was answered, still inside the connect timeout. */
+    internal var webSocketConnectedForTest: (suspend () -> Unit)? = null
 
     /**
      * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
@@ -1580,21 +1584,22 @@ internal class H3Pool(
         val held = webSocketConnecting.acquire(keys)
         // the answer must come within the connect timeout, as over HTTP/1.1: a server that never answers holds the host's
         // other WebSockets back for at most that long (cancelling the CONNECT resets its stream)
+        // completedWithin: a CONNECT answered as the deadline fires is a stream that exists on both sides, kept and used
+        // (dropped, it stayed open with nobody to end it)
         val stream =
             try {
-                withTimeout(millis) {
-                    conn.connect(
-                        http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
-                            this.headers = headers
-                            priority = data.priority
-                        },
-                        "websocket",
-                    )
-                }
-            } catch (e: TimeoutCancellationException) {
-                throw io.ktor.client.network.sockets.ConnectTimeoutException(
+                completedWithin(millis.milliseconds) {
+                    conn
+                        .connect(
+                            http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
+                                this.headers = headers
+                                priority = data.priority
+                            },
+                            "websocket",
+                        ).also { webSocketConnectedForTest?.invoke() }
+                } ?: throw io.ktor.client.network.sockets.ConnectTimeoutException(
                     "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
-                    e,
+                    null,
                 )
             } finally {
                 held.release()

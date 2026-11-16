@@ -35,7 +35,13 @@ internal class KeyPhase(
     var write: PacketProtector = write
         private set
     private var nextRead: PacketProtector = read.next()
-    private var nextWrite: PacketProtector = write.next()
+    private var nextWrite: PacketProtector =
+        try {
+            write.next()
+        } catch (t: Throwable) {
+            nextRead.close() // the key phase is not built: read and write stay with the connection, which closes them
+            throw t
+        }
     private var previous: PacketProtector? = null
 
     /** When the previous generation's read key is dropped; [TimeMark.NEVER] when there is none or no new-phase packet arrived yet. */

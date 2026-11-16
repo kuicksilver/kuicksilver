@@ -57,10 +57,12 @@ public actual class PacketBuffer private constructor(
     }
 
     actual override fun close() {
+        if (buffer != null) countPacketBuffer(-1)
         buffer = null
     }
 
     public actual companion object {
-        public actual fun allocate(capacity: Int): PacketBuffer = PacketBuffer(ByteBuffer.allocateDirect(capacity))
+        public actual fun allocate(capacity: Int): PacketBuffer =
+            PacketBuffer(ByteBuffer.allocateDirect(capacity)).also { countPacketBuffer(1) }
     }
 }

@@ -35,6 +35,7 @@ import io.kuicksilver.http3.runtime.drains
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
@@ -90,6 +91,16 @@ internal class WtSessionImpl(
 
     /** The connection's dispatcher, where [flow] lives (a test hook). */
     internal val dispatcherForTest get() = h3.dispatcher
+
+    /** How long ending the CONNECT stream and writing WT_DRAIN_SESSION may take ([CLOSE_TIMEOUT]; a test shortens it). */
+    internal var closeTimeout: Duration = CLOSE_TIMEOUT
+
+    /** Test hook: runs once a capsule write that [closeTimeout] bounds is done, still inside its deadline. */
+    internal var closeWrittenForTest: (suspend () -> Unit)? = null
+
+    /** RESET_STREAM sent by [endConnect] because the close did not get out within [closeTimeout] (a test reads it). */
+    internal var connectResetsForTest = 0
+        private set
 
     /** Flow control is on for this session (section 5.1): both sides declared it, and the draft has it. */
     private val flowEnabled = WtFlow.enabled(h3, version)
@@ -401,8 +412,10 @@ internal class WtSessionImpl(
      * once raced the peer's reading of our capsule: Chrome then reported a lost connection instead of the close code.
      */
     private suspend fun endConnect(closeCapsule: ByteArray?) {
+        // completedWithin: a capsule and FIN written as the deadline fires are not followed by a RESET_STREAM, which could
+        // discard the close capsule the peer has not read yet (RFC 9000 section 3.1)
         val written =
-            withTimeoutOrNull(CLOSE_TIMEOUT) {
+            completedWithin(closeTimeout) {
                 try {
                     closeCapsule?.let { capsules.send(Capsule(WtCloseCapsule.TYPE, it)) }
                     capsules.close()
@@ -411,11 +424,15 @@ internal class WtSessionImpl(
                 } catch (_: Throwable) {
                     // the stream was reset or the connection closed: nothing more to end
                 }
+                closeWrittenForTest?.invoke()
                 true
             }
-        if (written == null) runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
+        if (written == null) {
+            connectResetsForTest++
+            runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
+        }
         // the peer's FIN answers a close (ours or its own capsule's): once it came there is nothing to stop
-        withTimeoutOrNull(CLOSE_TIMEOUT) { watchers.firstOrNull()?.join() }
+        withTimeoutOrNull(closeTimeout) { watchers.firstOrNull()?.join() }
         if (peerFinished) return
         runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
     }
@@ -432,7 +449,7 @@ internal class WtSessionImpl(
         if (!closedInfo.isCompleted) {
             val reader = watchers.firstOrNull()
             h3.scope.launch {
-                withTimeoutOrNull(CLOSE_TIMEOUT) { reader?.join() }
+                withTimeoutOrNull(closeTimeout) { reader?.join() }
                 terminate(WebTransportCloseInfo(0, "", WebTransportException.SessionClosed("the CONNECT stream ended")), End.Over)
             }
         }
@@ -642,9 +659,15 @@ internal class WtSessionImpl(
     override suspend fun drain() {
         if (closedInfo.isCompleted) throw sessionClosed()
         drainFlow.value = true // this side winds down too
-        val sent = withTimeoutOrNull(CLOSE_TIMEOUT) { capsules.send(Capsule(WT_DRAIN_SESSION, ByteArray(0))) }
+        // completedWithin: a capsule written as the deadline fires is not reported as unwritten (and the session reset)
+        val sent =
+            completedWithin(closeTimeout) {
+                capsules.send(Capsule(WT_DRAIN_SESSION, ByteArray(0)))
+                closeWrittenForTest?.invoke()
+                true
+            }
         if (sent == null) {
-            val e = WebTransportException.Timeout("WT_DRAIN_SESSION not written within $CLOSE_TIMEOUT: the session was reset")
+            val e = WebTransportException.Timeout("WT_DRAIN_SESSION not written within $closeTimeout: the session was reset")
             terminate(WebTransportCloseInfo(0, "", e), End.Failed)
             throw e
         }

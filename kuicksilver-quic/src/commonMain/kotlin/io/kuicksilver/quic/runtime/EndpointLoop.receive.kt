@@ -194,6 +194,14 @@ private suspend fun EndpointLoop.timerTicks() {
                 onTimeout(wait) {}
             }
         }
+        // a wake-up later than a due deadline (the loop was held up: a GC pause, a stopped VM, a loaded host) lets what is
+        // queued on the loop run first: datagrams received meanwhile are processed before the timers they restart (RFC 9000
+        // section 10.1: the idle timer restarts "when a packet from its peer is received and processed successfully"), as
+        // quic-go handles its queued packets before its timers. On time, nothing waits here.
+        if (timers.peek()?.let { now() - it.heapDeadline >= LATE_TIMER } == true) {
+            lateTimerYieldsForTest++
+            yield()
+        }
         val now = now()
         while (true) {
             val c = timers.peek() ?: break
@@ -209,3 +217,6 @@ private suspend fun EndpointLoop.timerTicks() {
         flush(signalTimer = false) // the timer loop re-reads the heap itself; signalling itself here would spin
     }
 }
+
+/** A timer wake-up this late lets the loop's queued work (received datagrams) run before the due timers fire. */
+private val LATE_TIMER: Duration = Duration.parse("1ms")

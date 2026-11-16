@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package io.kuicksilver.http3.runtime
 
@@ -215,7 +219,8 @@ internal class H3Session(
 
     /**
      * [block], or null when [wtDeadline] (measured by [wtTimer]) passed first; [block] is then cancelled, and this returns
-     * once its cancellation finished (a CONNECT in flight is reset by it).
+     * once its cancellation finished (a CONNECT in flight is reset by it). A block that completed all the same (after the
+     * deadline was chosen, before its cancellation) gives its result: a CONNECT answered by then is a session that exists.
      */
     suspend fun <T : Any> withinWtDeadline(block: suspend () -> T): T? =
         coroutineScope {
@@ -228,7 +233,9 @@ internal class H3Session(
                 }
                 timer.onJoin {
                     work.cancel()
-                    null
+                    work.join()
+                    // completed before the cancellation reached it: the cancel did nothing, and the result stands
+                    if (work.isCancelled) null else work.getCompleted()
                 }
             }
         }

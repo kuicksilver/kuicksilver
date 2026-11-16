@@ -12,6 +12,7 @@ import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.runtime.EndpointLoop.Companion.TOKEN_STORE_TIMEOUT
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -84,13 +85,11 @@ internal suspend fun EndpointLoop.takeToken(
     key: String,
 ): ByteArray? =
     try {
-        var done = false
-        val token =
-            withTimeoutOrNull(TOKEN_STORE_TIMEOUT) {
-                store.take(key).also { done = true }
-            }
-        if (!done) tokenStoreSlow("take", key)
-        token?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
+        // completedWithin: take removes the token from the store, so one it returned as the deadline fired is kept (boxed:
+        // null is a store without a token, a missing box the deadline)
+        val taken = completedWithin(TOKEN_STORE_TIMEOUT) { listOf(store.take(key)) }
+        if (taken == null) tokenStoreSlow("take", key)
+        taken?.single()?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
     } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive() // the caller's cancellation goes on
         observer.logger.emit(LogLevel.Warn, e) { "token store take failed for $key; connecting without a token" }
