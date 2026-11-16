@@ -42,8 +42,9 @@ public interface CongestionController {
     )
 
     /**
-     * The peer reported new ECN-CE marks for packets up to one sent at [sentTime]: a congestion event, once per recovery period (RFC 9002
-     * section 7.1).
+     * The peer reported new ECN-CE marks for packets up to one sent at [sentTime] (RFC 9002 section 7.1). Called for every such report
+     * of this path: like [onLoss], the controller reduces at most once per recovery period, which losses and CE reports share, judged
+     * by [sentTime] (appendix B.6 InCongestionRecovery).
      */
     public fun onEcnCe(
         now: TimeMark,

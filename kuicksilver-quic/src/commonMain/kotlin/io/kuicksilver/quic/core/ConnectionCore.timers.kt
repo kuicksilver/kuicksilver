@@ -244,8 +244,8 @@ internal class ConnectionLossListener(
                 if (f.flags and SentFrames.PMTU_PROBE !=
                     0
                 ) {
-                    m.onProbeAcked(p.size, core.now)
-                    if (p.size > path.mtu) core.setMtu(path, p.size)
+                    m.onProbeAcked(p.size, p.pn, core.now)
+                    if (m.current != path.mtu) core.setMtu(path, m.current)
                 } else if (m.onPacketAcked(p.size, p.pn)) {
                     core.setMtu(path, m.current) // a black-hole verdict the late ACK disproved
                 }
@@ -294,12 +294,7 @@ internal class ConnectionLossListener(
             val m = path.pmtud ?: continue
             if (!m.hasLostProbes) continue
             for (r in 0 until ack.rangeCount) {
-                while (true) {
-                    val size = m.takeLostProbeIn(ack.smallest(r), ack.largest(r))
-                    if (size == 0) break
-                    m.onProbeAcked(size, now)
-                    if (size > path.mtu) core.setMtu(path, size)
-                }
+                if (m.ackLostProbesIn(ack.smallest(r), ack.largest(r), now) && m.current != path.mtu) core.setMtu(path, m.current)
             }
         }
     }
@@ -451,17 +446,26 @@ internal class ConnectionLossListener(
         p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
         // counts that fail validation (RFC 9000 section 13.4.2.1) are no CE report to act on: the path stops marking instead
-        val ce = ceGrew && countsValid
-        if (ce && p.cc is io.kuicksilver.quic.Bbr) {
-            core.ecnCeEvents++
-            p.cc.onEcnCe(now, largestSentTime)
-        } // BBR treats CE like loss, once per round of its own path: every report counts
-        else if (ce &&
-            (p.ceRecoveryStart == TimeMark.NEVER || largestSentTime > p.ceRecoveryStart)
-        ) {
-            p.ceRecoveryStart = now
-            core.ecnCeEvents++
-            p.cc.onEcnCe(now, largestSentTime)
-        } // one congestion event per recovery period of the path's own controller (RFC 9002 section 7.1; RFC 9000 section 9.4)
+        if (!ceGrew || !countsValid) return
+        // every report goes to the path's own controller (RFC 9000 section 9.4), which alone decides whether it is a new congestion
+        // event: its one recovery period is shared with losses and ended by persistent congestion (RFC 9002 appendix B.6-B.8)
+        if (!inCongestionRecovery(p.cc, largestSentTime)) core.ecnCeEvents++
+        p.cc.onEcnCe(now, largestSentTime)
     }
 }
+
+/**
+ * RFC 9002 appendix B.5 InCongestionRecovery of the controllers that keep a recovery period (NewReno, CUBIC): a congestion signal
+ * about a packet sent at [sentTime] falls in the current one and changes nothing. False for BBR, which takes every CE report, and for
+ * other controllers, whose recovery the core does not know: there the controller still decides, the core only counts the report.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+private fun inCongestionRecovery(
+    cc: io.kuicksilver.quic.CongestionController,
+    sentTime: TimeMark,
+): Boolean =
+    when (cc) {
+        is io.kuicksilver.quic.NewReno -> cc.inCongestionRecovery(sentTime)
+        is io.kuicksilver.quic.Cubic -> cc.inCongestionRecovery(sentTime)
+        else -> false
+    }

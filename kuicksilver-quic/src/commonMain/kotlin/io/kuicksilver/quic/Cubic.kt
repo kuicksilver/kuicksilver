@@ -201,11 +201,14 @@ public class Cubic(
         if (wEst > cwnd) cwnd = wEst.toLong()
     }
 
+    /** RFC 9002 appendix B.5 InCongestionRecovery: [sentTime] is not after the start of the current recovery period. */
+    internal fun inCongestionRecovery(sentTime: TimeMark): Boolean = recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart
+
     private fun congestionEvent(
         now: TimeMark,
         sentTime: TimeMark,
     ) {
-        if (recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart) return
+        if (inCongestionRecovery(sentTime)) return
         recoveryStart = now
         cwndPrior = cwnd
         alpha = ALPHA

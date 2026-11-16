@@ -22,7 +22,6 @@ import io.kuicksilver.quic.core.PacketBuilder
 import io.kuicksilver.quic.core.PacketReceiver
 import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
-import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
 import io.kuicksilver.quic.core.abandonPreferredProbe
 import io.kuicksilver.quic.core.afterInput
@@ -45,6 +44,7 @@ import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
+import io.kuicksilver.quic.core.newPmtud
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probePreferredFrom
 import io.kuicksilver.quic.core.pto
@@ -282,7 +282,10 @@ public class ConnectionCore internal constructor(
         p.caps = caps
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
         p.pmtud =
-            if (caps.df && config.pmtud) Pmtud(upperBound = pmtudUpperBound()) else null
+            if (caps.df && config.pmtud) newPmtud(p.mtu) else null
+        // RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer"; without DF (or without DPLPMTUD to watch the
+        // size) only the 1200 bytes every QUIC path carries are safe
+        if (p.pmtud == null) setMtu(p, 1200)
     }
 
     internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps

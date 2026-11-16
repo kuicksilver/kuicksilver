@@ -170,9 +170,6 @@ internal class Path(
     /** When [ecn] started over for a new address (null: with the path): packets sent before went to the old one and feed it nothing. */
     var ecnSince: TimeMark? = null
 
-    /** When our last congestion event for an ECN-CE report on this path started (RFC 9002 section 7.1: one per recovery period). */
-    var ceRecoveryStart: TimeMark = TimeMark.NEVER
-
     /** DPLPMTUD of this path; null without `df` on the socket or with `QuicConfig.pmtud = false` (then the MTU stays 1200). */
     var pmtud: Pmtud? = null
     var ecnFailureReported: Boolean = false

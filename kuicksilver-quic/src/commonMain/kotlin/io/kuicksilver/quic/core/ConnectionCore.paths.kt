@@ -55,7 +55,10 @@ internal fun ConnectionCore.setMtu(
  * already at least 1200: true when it passes as a hint for the active path's DPLPMTUD. It must be about the active path (the socket
  * it came on and the destination it quotes), quote the start of one of our packets there (a short header with the peer ID that path
  * uses, or a long header with our ID as source), and claim a size this path did send something larger than. ICMP is spoofable:
- * even then it only settles probes or asks for confirmation ([Pmtud.onPtb]).
+ * even then it only settles probes or drops the size to 1200 provisionally, until a probe of the old size settles it ([Pmtud.onPtb]).
+ * A quote that matched no connection ID bytes (zero-length IDs) rests on the address and port alone, which RFC 9000 section 14.2.1
+ * does not count as validation ("when possible, connection IDs"): such a message is ignored, neither lowering the size in use nor
+ * capping the search.
  */
 internal fun ConnectionCore.acceptPacketTooBig(
     quote: ByteArray,
@@ -69,9 +72,11 @@ internal fun ConnectionCore.acceptPacketTooBig(
     val m = p.pmtud ?: return false
     if (p.socket != socket || !p.isRemote(to) || p.largestSent <= payload) return false
     val first = quote[0].toInt() and 0xff
+    var idBytes = 0
     val ours =
         if (first and 0x80 == 0) {
             val d = dcidFor(p) ?: return false
+            idBytes = d.length
             // at least one byte past the ID: with a zero-length peer ID the first byte alone would do, which any datagram matches
             len >= 1 + d.length + 1 && d.contentEquals(quote, 1, d.length)
         } else {
@@ -80,13 +85,21 @@ internal fun ConnectionCore.acceptPacketTooBig(
             val dl = quote[5].toInt() and 0xff
             if (len < 7 + dl) return false
             val sl = quote[6 + dl].toInt() and 0xff
+            idBytes = dl + sl
             len >= 7 + dl + sl && remoteCid.length == dl && remoteCid.contentEquals(quote, 6, dl) && localCid.length == sl &&
                 localCid.contentEquals(quote, 7 + dl, sl)
         }
-    if (!ours) return false
-    m.onPtb(payload, now)
+    if (!ours || idBytes == 0) return false
+    if (m.onPtb(payload, now)) setMtu(p, m.current)
     return true
 }
+
+/**
+ * A new DPLPMTUD search for a path now at [start] bytes. Probes already sent, by a search it replaces, are not its own: their late
+ * acknowledgments concern the old address or the old capabilities and must not raise the new search's size.
+ */
+internal fun ConnectionCore.newPmtud(start: Int): Pmtud =
+    Pmtud(upperBound = pmtudUpperBound(), start = start, sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
 
 /** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */
 internal fun ConnectionCore.onEmsgsize(size: Int) {
@@ -133,7 +146,7 @@ internal fun ConnectionCore.checkPmtuBlackHoles() {
         val p = paths.all[i]
         val m =
             p.pmtud ?: continue
-        if (m.takeBlackHole(now)) setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
+        if (m.takeBlackHole(now)) setMtu(p, m.current) // 1200
     }
 }
 
@@ -300,9 +313,8 @@ private fun ConnectionCore.resetForNewIp(
         io.kuicksilver.quic.recovery
             .RttEstimator(config.newPathInitialRtt)
     if (p === paths.active) loss.rtt = p.rtt
-    p.ceRecoveryStart = TimeMark.NEVER
     setMtu(p, 1200)
-    if (p.pmtud != null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = 1200)
+    if (p.pmtud != null) p.pmtud = newPmtud(1200)
     // RFC 9000 section 13.4.2: "an endpoint validates the ECN counts for each network path"; what the old address showed says nothing
     // about the new one (a bleaching middlebox there, or none)
     p.ecn = EcnValidator().also { if (p.caps.ecnSend) it.enable() }
@@ -579,7 +591,7 @@ private fun ConnectionCore.initPathOnSocket(
 ) {
     p.caps = socketCaps[socketKey(p.socket, p.remote)] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
-    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
+    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = newPmtud(p.mtu)
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */

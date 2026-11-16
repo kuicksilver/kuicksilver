@@ -30,8 +30,8 @@ import kotlin.time.Duration
  * @property undecryptableBuffered Packets held now until the keys to decrypt them arrive (RFC 9001 section 5.7).
  * @property reassemblyRanges Out-of-order ranges held now across the receive buffers of all streams.
  * @property pathBytesReceived Bytes received on [currentPath][ConnectionStats.currentPath] alone; see [pathBytesSent][ConnectionStats.pathBytesSent].
- * @property ecnCeEvents Congestion events the peer's CE reports caused on our sending, at most one per recovery period; see
- *   [ecnCeReceived][ConnectionStats.ecnCeReceived].
+ * @property ecnCeEvents Congestion events the peer's CE reports caused on our sending: with NewReno and CUBIC only reports outside the
+ *   recovery period that losses and CE reports share, with other controllers every report; see [ecnCeReceived][ConnectionStats.ecnCeReceived].
  */
 public class ConnectionStats internal constructor(
     public val minRtt: Duration,

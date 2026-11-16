@@ -24,10 +24,15 @@ import kotlin.time.Duration.Companion.seconds
  * congestion window"), but their loss is not a congestion signal (section 14.4).
  *
  * ICMP Packet Too Big and a local EMSGSIZE are hints, never facts (RFC 8899 section 4.6, RFC 9000 section 14.2.1; threat-model
- * 3.16): the caller validates the message first ([onPtb]). A size reported above [current] only ends the probes above it at once;
- * one below [current] starts a confirmation (probes of [current]): an acknowledged one forgets the hint, [maxProbes] lost ones lower
- * [current] to the reported size (never below the base, no pause), and a black hole detected meanwhile falls to that size instead of
- * the base, also without the pause. Nothing else of this class trusts ICMP.
+ * 3.16): the caller validates the message first ([onPtb]). A size reported above [current] only ends the probes above it at once.
+ * One below [current] drops [current] to the base at once (RFC 8899 section 4.6.2: "The PLPMTU SHOULD be set to BASE_PLPMTU"), but
+ * provisionally (RFC 9000 section 14.2.1: "Any reduction ... MAY be provisional"): one probe of the old size goes first, and its
+ * acknowledgment restores the old size and search state; once loss detection fails it, the search starts from the base with the
+ * reported size as its first point ("can be used to initialize a search algorithm"). A probe of the old size acknowledged at any time
+ * after such a drop suspends Packet Too Big processing for [ptbSuspend] (RFC 8899 section 8: "a PL sender could therefore suspend
+ * processing of PTB messages (e.g., in a robustness mode after detecting that subsequent probes actually confirm that a size larger
+ * than the PTB_SIZE is supported by a path)"), so forged messages cost about one probe round trip at the base per [ptbSuspend] (the probe goes once the congestion window has room). Only probes sent after the drop count: one sent before it is about the path before the PTB. The
+ * black-hole detector never relies on a Packet Too Big. Nothing else of this class trusts ICMP.
  */
 internal class Pmtud(
     private val base: Int = 1200,
@@ -40,8 +45,15 @@ internal class Pmtud(
     private val probeTimer: Duration = PROBE_TIMER,
     /** The earliest a probe may fail after it was sent, whatever loss detection says (RFC 8899 section 5.1.1: at least 1 s). */
     private val minProbeTimer: Duration = MIN_PROBE_TIMER,
+    /** How long Packet Too Big messages are ignored after a probe disproved one (RFC 8899 section 8 robustness mode). */
+    private val ptbSuspend: Duration = research,
     /** The size in use at the start: the base, or the MTU a NAT-rebound path inherited (black-hole detection covers it, RFC 8899 section 4.3). */
     start: Int = base,
+    /**
+     * The largest packet number sent before this instance (-1: none): probes up to it were another instance's, sent by a search this
+     * one replaced (to an address the path no longer has, or before its capabilities changed), and their acknowledgments change nothing.
+     */
+    sentAfterPn: Long = -1L,
 ) {
     var upperBound: Int = upperBound
         private set
@@ -87,25 +99,46 @@ internal class Pmtud(
     private var undoResearchAt: TimeMark = TimeMark.NEVER
     private var undoAfterPn = -1L
 
-    /** A PTB below [current] being confirmed: the payload it reported (0: none), and the confirmation probes lost so far. */
-    private var confirmPtb = 0
-    private var confirmLosses = 0
+    /**
+     * A validated PTB below the size in use dropped [current] to the base provisionally: the size before it (0: none) and the search
+     * state that an acknowledged probe of it restores. [confirming]: the probe in flight is that probe.
+     */
+    private var ptbFrom = 0
+    private var ptbLow = 0
+    private var ptbHigh = 0
+    private var ptbSearchDone = false
+    private var ptbResearchAt: TimeMark = TimeMark.NEVER
     private var confirming = false
 
+    /** The PTB's size on the step grid: the first point of the search after the drop (0: none). */
+    private var ptbHint = 0
+
+    /** The size before a drop that stands (the probe of it failed): a late acknowledgment of a probe that large still disproves the PTB. */
+    private var ptbDisproveSize = 0
+
+    /** The largest probe packet number sent so far, and that number when the last PTB drop happened: probes up to it were sent before. */
+    private var lastProbePn = sentAfterPn
+    private var ptbAfterPn = sentAfterPn
+
+    /** Until when Packet Too Big messages are not processed (RFC 8899 section 8 robustness mode); [TimeMark.NEVER]: they are. */
+    private var ptbSuspendedUntil: TimeMark = TimeMark.NEVER
+
     internal val probeInFlightForTest: Int get() = if (probeInFlight) probeSize else 0
-    internal val confirmingForTest: Int get() = confirmPtb
+    internal val confirmingForTest: Int get() = ptbFrom
+    internal val ptbSuspendedForTest: Boolean get() = ptbSuspendedUntil != TimeMark.NEVER
     internal val pausedForTest: Boolean get() = pausedUntil != TimeMark.NEVER
 
     /**
      * A validated Packet Too Big reporting [payload] bytes of UDP payload (already at least the base: the caller drops smaller
      * ones). At or above [current]: the probes above it are settled at once (RFC 8899 section 4.6.2), the one in flight included.
-     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked]) or fail at their PROBE_TIMER.
+     * Below [current] (RFC 8899 section 4.6.2 "BASE_PLPMTU <= PL_PTB_SIZE < PLPMTU"): [current] drops to the base provisionally and
+     * a search starts at [payload]; not while Packet Too Big processing is suspended. True when [current] changed.
      */
     fun onPtb(
         payload: Int,
         now: TimeMark,
-    ) {
-        if (payload < base) return
+    ): Boolean {
+        if (payload < base) return false
         // payload == current: the size in use passes by the message's own account, so it only caps the search; a probe in flight that
         // is not larger than payload is unaffected (the message concerned another, larger datagram)
         if (payload >= current) {
@@ -116,9 +149,39 @@ internal class Pmtud(
                 probeLosses = 0
             }
             if (high - low < step && high <= current) finish(now)
-            return
+            return false
         }
-        if (confirmPtb == 0 || payload < confirmPtb) confirmPtb = payload
+        if (ptbSuspendedUntil != TimeMark.NEVER) {
+            if (now < ptbSuspendedUntil) return false
+            ptbSuspendedUntil = TimeMark.NEVER
+        }
+        // "This could be an indication of a black hole. The PLPMTU SHOULD be set to BASE_PLPMTU": provisional (RFC 9000 section 14.2.1)
+        // until the probe of the old size fails; a black-hole verdict from before says nothing about the size the PTB disputes
+        ptbFrom = current
+        ptbLow = low
+        ptbHigh = high
+        ptbSearchDone = searchDone
+        ptbResearchAt = researchAt
+        ptbDisproveSize = 0
+        ptbHint = base + (payload - base) / step * step
+        // probes sent up to now went out before the drop: their acknowledgments, late or not, are about the path before the PTB
+        // (RFC 8899 section 8 trusts "subsequent probes"), so they neither overturn it nor raise the size
+        ptbAfterPn = lastProbePn
+        for (i in 0 until SENT_PROBES) sentLost[i] = false
+        lostProbes = 0
+        undoCurrent = 0
+        bigLost = 0
+        firstBigLostPn = -1L
+        current = base
+        low = base
+        high = minOf(upperBound, ptbFrom)
+        searchDone = false
+        finalProbe = false
+        probeInFlight = false // a probe in flight is settled: its late acknowledgment still counts ([onProbeAcked])
+        probeLosses = 0
+        confirming = false
+        researchAt = TimeMark.NEVER
+        return true
     }
 
     /**
@@ -168,17 +231,27 @@ internal class Pmtud(
         pto: Duration = Duration.ZERO,
     ): Int {
         if (probeInFlight) return 0
-        if (confirmPtb > 0) {
-            // a PTB below the size in use: a probe of that size, before anything else and whatever the search state
+        if (ptbFrom > 0) {
+            // a PTB dropped the size provisionally: a probe of the old size, before anything else and whatever the search state
             confirming = true
-            probeSize = current
+            probeSize = ptbFrom
             startProbe(now, pto)
-            return current
+            return ptbFrom
         }
         if (searchDone) return 0
         if (pausedUntil != TimeMark.NEVER) {
             if (now < pausedUntil) return 0
             pausedUntil = TimeMark.NEVER
+        }
+        if (ptbHint > 0) {
+            // RFC 8899 section 4.6.2: "The PL_PTB_SIZE reported in the PTB message can be used to initialize a search algorithm"
+            val hint = ptbHint
+            ptbHint = 0
+            if (hint > low && hint <= high) {
+                probeSize = hint
+                startProbe(now, pto)
+                return hint
+            }
         }
         val size =
             if (high - low >=
@@ -208,23 +281,45 @@ internal class Pmtud(
         probeDeadline = now + maxOf(probeTimer, pto * 3)
     }
 
+    /** The probe sent as packet [pn] of [size] bytes was acknowledged at [now]; one sent before the last PTB drop changes nothing. */
     fun onProbeAcked(
         size: Int,
+        pn: Long,
         now: TimeMark,
     ) {
-        if (confirming && size == probeSize) {
-            // the size in use still gets through: the PTB was wrong (or stale)
-            confirming = false
-            probeInFlight = false
-            confirmPtb = 0
-            confirmLosses = 0
-            return
+        if (pn <= ptbAfterPn) return
+        val disputed = if (ptbFrom > 0) ptbFrom else ptbDisproveSize
+        if (disputed > 0 && size >= disputed) {
+            // the size the PTB disputed gets through: the PTB was wrong (forged or stale); PTBs are not processed for a while
+            ptbSuspendedUntil = now + ptbSuspend
+            ptbDisproveSize = 0
+            ptbHint = 0
+            if (ptbFrom > 0) {
+                current = ptbFrom
+                low = ptbLow
+                high = maxOf(ptbHigh, size)
+                searchDone = ptbSearchDone
+                researchAt = ptbResearchAt
+                ptbFrom = 0
+                confirming = false
+                probeInFlight = false
+                probeLosses = 0
+                finalProbe = false
+                if (size > current) current = size
+                low = maxOf(low, size)
+                if (high - low < step && high <= current && !searchDone) finish(now)
+                return
+            }
         }
         if (size > high) high = size // an ACK outweighs any hint that said this size could not pass
         if (probeInFlight && size != probeSize) {
-            // the ACK of a probe a hint already settled: it proves its size, the probe in flight stays in flight
+            // the ACK of a probe a hint already settled: it proves its size, the probe in flight stays in flight unless it is no larger
             if (size > current) current = size
             low = maxOf(low, size)
+            if (probeSize <= current) {
+                probeInFlight = false
+                probeLosses = 0
+            }
             return
         }
         probeInFlight = false
@@ -243,6 +338,7 @@ internal class Pmtud(
         size: Int,
     ) {
         if (probeInFlight && size == probeSize) probePn = pn
+        if (pn > lastProbePn) lastProbePn = pn
         if (sentLost[sentNext]) lostProbes--
         sentPn[sentNext] = pn
         sentSize[sentNext] = size
@@ -292,42 +388,52 @@ internal class Pmtud(
     }
 
     /**
-     * The PROBE_TIMER of the probe in flight expired before it was acknowledged (RFC 8899 section 5.2: "When a probe packet is sent and
-     * not acknowledged within the period of the PROBE_TIMER, the PROBE_COUNT is incremented"); true when [current] changed (a
-     * confirmed PTB lowered it).
+     * Each probe declared lost whose packet number is in [smallest]..[largest] is acknowledged after all ([takeLostProbeIn],
+     * [onProbeAcked]); false when there was none.
      */
-    private fun onProbeTimerExpired(now: TimeMark): Boolean {
+    fun ackLostProbesIn(
+        smallest: Long,
+        largest: Long,
+        now: TimeMark,
+    ): Boolean {
+        var any = false
+        while (hasLostProbes) {
+            var pn = -1L
+            for (i in 0 until SENT_PROBES) if (sentLost[i] && sentPn[i] in smallest..largest) pn = sentPn[i]
+            if (pn < 0) break
+            onProbeAcked(takeLostProbeIn(pn, pn), pn, now)
+            any = true
+        }
+        return any
+    }
+
+    /**
+     * The PROBE_TIMER of the probe in flight expired before it was acknowledged (RFC 8899 section 5.2: "When a probe packet is sent and
+     * not acknowledged within the period of the PROBE_TIMER, the PROBE_COUNT is incremented").
+     */
+    private fun onProbeTimerExpired(now: TimeMark) {
         val size = probeSize
         probeDeadline = TimeMark.NEVER
         if (confirming) {
+            // the probe of the size before the PTB failed: the drop stands (RFC 9000 section 14.2.1: provisional "until QUIC's loss
+            // detection algorithm determines that the quoted packet has actually been lost") and the search goes on from the base, its
+            // range still up to the old size; a late acknowledgment of that probe still disproves the PTB
             probeInFlight = false
             confirming = false
-            if (++confirmLosses < maxProbes) return false
-            // maxProbes probes of the size in use lost after a PTB: the path carries no more than the PTB said (RFC 8899 section
-            // 4.6.2); to its size, a multiple of the step above the base, and the search goes on from there without a pause
-            val to = maxOf(base, base + (confirmPtb - base) / step * step)
-            confirmPtb = 0
-            confirmLosses = 0
-            if (to >= current) return false
-            current = to
-            low = to
-            high = maxOf(to, minOf(high, to + step - 1).coerceAtMost(upperBound))
-            searchDone = false
-            finalProbe = false
-            probeLosses = 0
-            return true
+            ptbDisproveSize = ptbFrom
+            ptbFrom = 0
+            return
         }
         probeInFlight = false
         probeLosses++
-        if (probeLosses < maxProbes) return false
+        if (probeLosses < maxProbes) return
         probeLosses = 0
         if (finalProbe) {
             finish(now)
-            return false
+            return
         }
         high = size - 1
         if (high - low < step && high <= current) finish(now)
-        return false
     }
 
     /**
@@ -370,12 +476,15 @@ internal class Pmtud(
         return undone
     }
 
-    /** A regular packet [pn] of [size] bytes was lost; counted unless a later full-size packet already arrived. */
+    /**
+     * A regular packet [pn] of [size] bytes was lost; counted unless a later full-size packet already arrived. A packet larger than
+     * [current] was sent before a drop and says nothing about the size in use.
+     */
     fun onPacketLost(
         size: Int,
         pn: Long,
     ) {
-        if (size <= base || pn < largestBigAckedPn) return
+        if (size <= base || size > current || pn < largestBigAckedPn) return
         if (bigLost == 0 || pn < firstBigLostPn) firstBigLostPn = pn
         bigLost++
     }
@@ -402,33 +511,8 @@ internal class Pmtud(
         // late full-size packet only after the packets the verdict rested on), so it raises nothing ([takeLostProbeIn])
         for (i in 0 until SENT_PROBES) sentLost[i] = false
         lostProbes = 0
-        // a validated Packet Too Big under confirmation tells where the path stands: fall to its size, not the base, and without the
-        // pause; a black hole there too falls to the base next time (the hint is used once)
-        val hinted = if (confirmPtb >= base) base + (confirmPtb - base) / step * step else 0
-        if (hinted > base && hinted < current) {
-            if (undoCurrent == 0 || current > undoCurrent) {
-                undoCurrent = current
-                undoLow = low
-                undoHigh = high
-                undoSearchDone = searchDone
-                undoResearchAt = researchAt
-                undoAfterPn = disprovedAfterPn
-            }
-            bigLost = 0
-            firstBigLostPn = -1L
-            confirmPtb = 0
-            confirmLosses = 0
-            confirming = false
-            current = hinted
-            low = hinted
-            high = minOf(upperBound, maxOf(hinted, undoCurrent - 1))
-            searchDone = false
-            probeInFlight = false
-            probeLosses = 0
-            finalProbe = false
-            researchAt = TimeMark.NEVER
-            return
-        }
+        ptbHint = 0
+        ptbDisproveSize = 0
         if (current > base) {
             undoCurrent = current
             undoLow = low
@@ -439,8 +523,6 @@ internal class Pmtud(
         }
         bigLost = 0
         firstBigLostPn = -1L
-        confirmPtb = 0
-        confirmLosses = 0
         confirming = false
         current = base
         low = base
@@ -460,9 +542,9 @@ internal class Pmtud(
         return if (probeInFlight && probeDeadline < t) probeDeadline else t
     }
 
-    /** Runs the timers due at [now]; true when [current] changed (a confirmed PTB lowered it). */
-    fun onTimeout(now: TimeMark): Boolean {
-        val changed = probeInFlight && probeDeadline <= now && onProbeTimerExpired(now)
+    /** Runs the timers due at [now]; they never change [current]. */
+    fun onTimeout(now: TimeMark) {
+        if (probeInFlight && probeDeadline <= now) onProbeTimerExpired(now)
         // also on a path that is no longer active: its deadline must not stay in the past
         if (pausedUntil != TimeMark.NEVER && pausedUntil <= now) pausedUntil = TimeMark.NEVER
         if (searchDone && researchAt != TimeMark.NEVER &&
@@ -474,7 +556,6 @@ internal class Pmtud(
             high = upperBound
             researchAt = TimeMark.NEVER
         }
-        return changed
     }
 
     private fun finish(now: TimeMark) {

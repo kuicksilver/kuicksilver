@@ -455,7 +455,9 @@ the missing half throws `IllegalStateException`.
 Every path runs CUBIC with HyStart++ (RFC 9438, RFC 9406) by default; NewReno stays available through
 `quicConfig { congestionController = { NewReno() } }`, and any `CongestionController` implementation can be plugged in.
 The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes and RTT samples (`onRttSample`), and
-answers with the window, the pacing rate and the burst size. A connection that migrates to a new IP starts the new path
+answers with the window, the pacing rate and the burst size. Every ECN-CE report reaches `onEcnCe`, and like `onLoss`
+the controller reduces at most once per recovery period, which losses and CE reports share (RFC 9002 appendix B.6): a
+custom controller applies that check itself. A connection that migrates to a new IP starts the new path
 from the initial window; a NAT rebinding keeps the state.
 
 #### Choosing a congestion controller
@@ -533,11 +535,15 @@ ICMP helps only as a hint (`pmtudIcmpHints`, experimental, on by default; RFC 88
 accelerated socket reads ICMP Packet Too Big messages, and every accelerated socket reports a send the kernel refused as
 too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the connection's own packets on its active path
 and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
-`ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries; one
-below it never lowers the MTU by itself: the connection sends probes of its current size, keeps it when one is
-acknowledged, and moves down to the reported size (without the minute's pause) only when three are lost, or when the
-black-hole detector fires meanwhile, which then falls to the reported size instead of 1200. EMSGSIZE on a
-probe settles that size at once. ICMP is easy to forge, so nothing else trusts it.
+`ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries. One
+below it drops the MTU to 1200 at once, provisionally: a probe of the old size follows, and when it is acknowledged the
+old size comes back and further Packet Too Big messages are ignored for ten minutes (only a probe sent after the drop
+counts); when it is lost the search starts again from 1200, trying the reported size first (without the minute's
+black-hole pause). EMSGSIZE on a probe settles that size at once. ICMP is easy to forge, so nothing else trusts it: a
+forged message costs about one probe round trip at 1200 bytes every ten minutes (the probe goes once the congestion
+window has room for it), and with zero-length connection IDs, where the quote proves only the address and port, a
+Packet Too Big is ignored altogether. A congestion window still at its initial value when the size drops stays at the
+smaller initial window after a restore: an MTU change never raises the window in bytes (RFC 8899 section 3 item 7).
 
 | Platform | Hints |
 |---|---|
@@ -551,7 +557,7 @@ Each path validates ECN before relying on it (RFC 9000 section 13.4): the first 
 ACK_ECN counts must appear, never shrink and cover every newly acknowledged marked packet, and the path must not lose all
 ten test packets. A path that fails never marks again; a new path validates afresh. Received marks are counted per packet
 number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
-event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
+event per recovery period, the same recovery period a loss starts. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
 Android, Apple, and Windows where `IP_ECN` is accepted, probed when the socket opens) marks and reads per datagram, and two of them validate both directions
 (`Capable`). Because the portable socket
@@ -5289,7 +5295,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `allowMigrationToLoopback` | `Boolean` | `false` |  | 0.2.0 | server: accept a move to a loopback or link-local address from a connection that did not start on one |
 | `pmtud` | `Boolean` | `true` |  | 0.2.0 | DPLPMTUD (RFC 8899) on sockets that set DF; `false` keeps 1200 bytes |
 | `followPreferredAddress` (*experimental*) | `Boolean` | `true` |  | 0.3.0 | client: move to the server's preferred address after the handshake, once the path there is validated ([Migration and paths](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#migration-and-paths)) |
-| `pmtudIcmpHints` (*experimental*) | `Boolean` | `true` |  | 0.3.0 | validated ICMP Packet Too Big (Linux, Android) and EMSGSIZE speed up DPLPMTUD as hints, never lowering the MTU without lost probes ([Path MTU](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#path-mtu)) |
+| `pmtudIcmpHints` (*experimental*) | `Boolean` | `true` |  | 0.3.0 | validated ICMP Packet Too Big (Linux, Android) and EMSGSIZE speed up DPLPMTUD as hints; a lower size drops the MTU to 1200 only until a probe of the old size is acknowledged ([Path MTU](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#path-mtu)) |
 | `maxDatagramFrameSize` | `Long` | 65 535 | 0..65 535 | 0.2.0 | our `max_datagram_frame_size` (RFC 9221); 0 turns datagrams off |
 | `resetStreamAt` (*experimental*) | `Boolean` | `false` |  | 0.3.0 | advertise `reset_stream_at`: `QuicStream.resetAt` keeps a stream's first bytes when the peer advertised it too ([quic.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#reliable-stream-reset-experimental)) |
 | `datagramReceiveQueue` | `Int` | 128 | at least 1 | 0.2.0 | received datagrams held for the application; a full queue drops the oldest |

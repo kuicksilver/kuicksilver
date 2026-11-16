@@ -494,9 +494,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
   and at most 64 a second per endpoint are looked at (`EndpointStats.ptbAccepted`, `ptbIgnored`). It ends larger probes
-  at once; one below the size in use only triggers confirmation probes, and the MTU drops to the reported size only when
-  three of them are lost, or when the black-hole detector fires meanwhile, which then falls to the reported size instead
-  of 1200 and does not pause. EMSGSIZE on a probe settles that size at once.
+  at once. One below the size in use drops the MTU to 1200 at once (RFC 8899 section 4.6.2: "The PLPMTU SHOULD be set to
+  BASE_PLPMTU"), provisionally (RFC 9000 section 14.2.1): a probe of the old size follows, and its acknowledgment
+  restores that size and suspends Packet Too Big processing for 600 s (RFC 8899 section 8); only a probe sent after the
+  drop counts. Forged messages therefore cost about one probe round trip at 1200 bytes per 600 s (the probe goes once
+  the congestion window has room for it); when that probe is lost, the search starts from 1200 with the reported size
+  first, without the black-hole pause. A congestion window still at its initial value when the size drops is lowered
+  with it and not raised again on a restore (RFC 8899 section 3 item 7: an MTU update "MUST NOT increase the
+  congestion window measured in bytes"). With zero-length connection IDs the quote proves only the address and port,
+  so such a message is ignored: it neither lowers the size in use nor caps the search. A search started over (new
+  socket capabilities, a new IP) ignores acknowledgments of the probes the search it replaced had sent. EMSGSIZE on a probe settles that size at once.
 - Native (`ksl` ABI 7): on Linux and Android the accelerated UDP socket reads the ICMP error queue (`IP_RECVERR` /
   `IPV6_RECVERR`, set with DF) and keeps ICMP Packet Too Big messages, with the quoted start of the datagram and its
   destination, as hints for path MTU discovery (`ksl_udp_take_ptb`); every platform counts sends lost to `EMSGSIZE`
@@ -740,6 +747,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   non-empty session ID with `change_cipher_spec`; QUIC never used it. A network whose middlebox drops TLS 1.3 handshakes
   that do not look like TLS 1.2 resumption can now fail TLS-over-TCP connections it let through before; there is no
   setting to turn the mode back on ([TLS guide](docs/guide/tls.md#middleboxes)).
+- QUIC: `CongestionController.onEcnCe` is now called for every valid ECN-CE report of the path, not once per recovery
+  period the core kept for CE reports alone (RFC 9002 section 7.3.2 and appendix B.6: losses and CE reports share one
+  recovery period, which only the controller knows). Migration: a custom controller must apply its own recovery-period
+  check in `onEcnCe`, judged by `sentTime` against the start of its current recovery period, as it already does in
+  `onLoss`; NewReno, CUBIC and BBR do.
 - Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
   (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
   was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
@@ -1116,6 +1128,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   compatibility mode (appendix E.4, optional): the hello carries no compatibility session ID, no dummy
   `change_cipher_spec` is sent, and every alert after the ServerHello is protected under the client handshake key. Servers
   keep the mode (they must answer a client's session ID with `change_cipher_spec`); QUIC never used it.
+- QUIC: a path whose socket capabilities change to no DF (`setPathCapabilities`) went on sending datagrams of the
+  size its path MTU search had reached, which the network may then fragment; it goes back to 1200 bytes (RFC 9000
+  section 14: "UDP datagrams MUST NOT be fragmented at the IP layer").
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the
@@ -1651,7 +1666,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   DPLPMTUD over but kept the old address's ECN validation; it now starts over too (RFC 9000 section 13.4.2: per network
   path), and losses and acknowledgments of packets sent to the old address no longer count toward it. The one-congestion-event-per-recovery-period rule for CE reports was kept for the whole connection, so a CE
   report on a second path in the first path's recovery period was ignored; it is now per path, as each path has its
-  own controller. A CE increase in ECN counts that fail validation is no longer acted on.
+  own controller. A CE increase in ECN counts that fail validation is no longer acted on. The core no longer keeps a
+  recovery start of its own for CE reports: it set one on every report even when the controller ignored it, so after a
+  loss had started recovery, or after persistent congestion, a CE report for a packet sent later was dropped and NewReno
+  and CUBIC never reduced (RFC 9002 section 7.3.2 and appendix B.6: losses and CE share one recovery period). Every
+  valid CE report now reaches the path's controller, which decides; a custom `CongestionController` gets every report
+  and applies its own recovery period, as for `onLoss`. `ConnectionStats.ecnCeEvents` counts only the reports NewReno
+  or CUBIC took as a new congestion event (every report with other controllers).
 - QUIC client: a migration (`migrate`, `addPath`) from a new socket while the server's preferred address was still
   being validated closed that validation for good. The preferred address is now validated again from the new socket,
   concurrently with the original address (RFC 9000 section 9.6.3 SHOULD); when it succeeds the application's new path
