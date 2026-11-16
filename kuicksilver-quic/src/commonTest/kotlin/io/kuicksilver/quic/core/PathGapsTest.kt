@@ -7,6 +7,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.of
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.NewReno
 import io.kuicksilver.quic.PathId
@@ -1048,5 +1049,82 @@ class PathGapsTest {
         assertSame(timed, ps.fallback(except))
         timed.state = PathState.Failed
         assertSame(unknown, ps.fallback(except), "still validated: taken when no other is")
+    }
+
+    /** The long-header packets at the start of datagram [d] (Initial, Handshake), without any 1-RTT packet coalesced after them. */
+    private fun longHeaderPrefix(d: ByteArray): ByteArray {
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+        val b =
+            io.kuicksilver.native.PacketBuffer
+                .of(d)
+        try {
+            var off = 0
+            while (off < d.size && d[off].toInt() and 0x80 != 0 &&
+                io.kuicksilver.quic.wire.PacketHeaderCodec
+                    .parse(b, off, d.size, 8, hv)
+            ) {
+                off = hv.packetEnd
+            }
+            return d.copyOf(off)
+        } finally {
+            b.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 9.5 MAY ("it MAY continue to use the current connection ID with the new remote address while still sending from
+     * the same local address") rests on knowing which of our IDs the client uses on the active path. A client whose Finished came in a
+     * datagram without a 1-RTT packet, and whose first 1-RTT packets come from a new port (a NAT rebinding), with no spare ID of its
+     * own given yet: its Handshake packets showed the ID it uses, so the server follows the rebinding with the current ID.
+     */
+    @Test fun negative_aRebindBeforeAnyOneRttPacketOnTheActivePathStillSwitches() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            c.cids.holdNewCidsForTest = true // no spare ID of the client's reaches the server
+            var s: ConnectionCore? = null
+            val end = p.now + 10.seconds
+            while (p.now < end && s?.state != io.kuicksilver.quic.ConnectionState.Confirmed) {
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                val out = List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for (d in out) {
+                    val longOnly = longHeaderPrefix(d) // every 1-RTT packet of the handshake is lost
+                    if (longOnly.isEmpty()) continue
+                    if (s == null) s = p.feed(p.server, longOnly, p.clientAddr) else p.feedNoAdmit(p.server, longOnly, p.clientAddr)
+                }
+                val srv = s ?: continue
+                while (true) {
+                    p.batch.clear()
+                    val m = srv.poll(p.batch, p.now)
+                    if (m == 0) break
+                    for (i in 0 until m) p.feedNoAdmit(p.client, p.batch.buffer(i).toByteArray(p.batch.length(i)), p.serverAddr)
+                }
+                p.drain(c)
+                p.drain(srv)
+                if (n == 0) {
+                    p.now = maxOf(p.now + 1.milliseconds, minOf(c.nextTimeoutOrNever(), srv.nextTimeoutOrNever()))
+                    if (c.nextTimeoutOrNever() <= p.now) c.onTimeout(p.now)
+                    if (srv.nextTimeoutOrNever() <= p.now) srv.onTimeout(p.now)
+                }
+            }
+            val srv = assertNotNull(s)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, srv.state)
+            assertFalse(srv.cids.hasSparePeerForTest, "no spare ID of the client's")
+            val id = srv.remoteCid
+            val moved = InetSocketAddress(p.clientAddr.hostname, p.clientAddr.port + 2)
+            val sid = c.openStream(true)
+            c.writeStream(sid, ByteArray(100), 0, 100, false)
+            p.batch.clear()
+            val n = c.poll(p.batch, p.now)
+            assertTrue(n > 0)
+            for (i in 0 until n) p.feedNoAdmit(p.server, p.batch.buffer(i).toByteArray(p.batch.length(i)), moved)
+            assertTrue(srv.paths.active.isRemote(moved), "the server follows the rebinding")
+            assertEquals(id, srv.remoteCid, "with the current ID: the client used it from there")
+        } finally {
+            p.close()
+        }
     }
 }

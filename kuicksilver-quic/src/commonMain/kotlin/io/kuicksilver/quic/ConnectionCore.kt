@@ -182,7 +182,10 @@ public class ConnectionCore internal constructor(
     /** The sequence number of our ID that the 1-RTT packet being processed carries (-1: none of them, or not known yet). */
     internal var rxDcidSeq = -1L
 
-    /** Our ID the peer's packets on the active path carry, by sequence number (-1 until the first 1-RTT packet). */
+    /**
+     * Our ID the peer's packets on the active path carry, by sequence number (-1 until known: a 1-RTT packet there sets it, and the
+     * client's Handshake packets there do until then).
+     */
     internal var activeDcidSeq = -1L
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0

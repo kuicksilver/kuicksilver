@@ -442,6 +442,17 @@ internal class PacketReceiver(
         // which of our IDs the peer used: a server answers a new address with its current ID only if that did not change (RFC 9000
         // section 9.5)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server) c.rxDcidSeq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
+        // until the first 1-RTT packet on the active path shows it, the client's Handshake packets there tell which of our IDs it uses:
+        // a client whose Finished came without a 1-RTT packet and that rebinds before sending one is still followed with that ID
+        if (type == PacketType.Handshake && c.role == TlsRole.Server && c.activeDcidSeq < 0 && c.path.isRemote(from) &&
+            socket == c.path.socket
+        ) {
+            val seq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
+            if (seq >= 0) {
+                c.activeDcidSeq = seq
+                c.path.lastRxDcidSeq = seq
+            }
+        }
         // RFC 9000 section 10.2.1: a closing endpoint "retains only enough information to generate a packet containing a
         // CONNECTION_CLOSE frame and to identify packets as belonging to the connection": the packet is authenticated (above) and
         // scanned for the peer's CONNECTION_CLOSE (section 10.2.2: draining); nothing else in it is acted on

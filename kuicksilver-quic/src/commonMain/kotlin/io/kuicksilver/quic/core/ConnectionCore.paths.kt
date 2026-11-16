@@ -1684,8 +1684,10 @@ internal fun ConnectionCore.finishPathResponses() {
  * began on, restored after an unvalidated move ([restoreHandshakeAddress]); an address a move took the path to keeps its fallback
  * until then and is not settled here. That is what confirmHandshake settles when no candidate is open. The path state only names
  * that address as validated for section 9.3.2's revert; RFC 9000 section 8.1's anti-amplification limit stays bound to
- * [AmplificationLimit.validated], which only a proof for that address sets, so nothing here lets an unproven address receive more
- * than three times what it sent.
+ * [AmplificationLimit.validated], which this function never sets, so it lets no unproven address receive more than three times what
+ * it sent. Other code lifts the limit for a path it takes as validated: [revertTo] for the last validated peer address and
+ * [keepActiveOnValidatedAddress] for an address validated on another path; that rests on the validation of that address, not on this
+ * settlement.
  */
 internal fun ConnectionCore.dropHandshakeCandidate() {
     val k = handshakeCandidate ?: return
