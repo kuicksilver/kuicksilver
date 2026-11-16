@@ -20,7 +20,10 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readFully
+import io.ktor.utils.io.toByteArray
 import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -313,35 +316,88 @@ internal abstract class HttpPairSuite(
 
     /**
      * Graceful stop with a request in flight (RFC 9113 section 6.8 and RFC 9114 section 5.2: GOAWAY lets streams already
-     * accepted complete; HTTP/1.1: the response in progress completes, RFC 9112 section 9.6): the held response is
-     * released only once the server is stopping, and the client receives all of it.
+     * accepted complete; HTTP/1.1: the response in progress completes, RFC 9112 section 9.6): the stop starts once the
+     * response's first piece reached the client, the rest is released only once the server is stopping, and the client
+     * receives all of it.
+     *
+     * Ktor's Netty engine does not always finish such a response: now and then it sends nothing more and closes the
+     * connection without close_notify at the end of its grace period, or resets the stream (OkHttp, the JDK's client and
+     * ours all see it, about one run in thirty on a loaded host). Against Netty an attempt the server cut short that way
+     * is tried again on a new server, up to [NETTY_STOP_ATTEMPTS] times, and one must complete; any other end of the call,
+     * a wrong body or a hang fails at once. Every other server must complete the first attempt.
      */
     @Test open fun gracefulStopCompletesTheRequestInFlight() =
         interopTest {
-            val s = start()
-            val c = newClient()
-            try {
-                assertEquals("hello", c.get(s.url("/hello")).bodyAsText())
-                val id = UUID.randomUUID().toString()
-                val hold = s.probe.hold(id)
+            val attempts = if (serverEngine == ServerEngine.Netty) NETTY_STOP_ATTEMPTS else 1
+            val cutShort = ArrayList<Throwable>()
+            repeat(attempts) {
+                val e = gracefulStopAttempt() ?: return@interopTest
+                assertTrue(serverEngine == ServerEngine.Netty && cutShortByTheServer(e), "the call ended with $e")
+                cutShort += e
+            }
+            throw AssertionError("Netty cut the response short in all $attempts attempts: $cutShort")
+        }
+
+    /** One graceful stop with a request in flight; null when the client received the whole response, else why not. */
+    private suspend fun gracefulStopAttempt(): Throwable? {
+        val s = start()
+        val c = newClient()
+        try {
+            assertEquals("hello", c.get(s.url("/hello")).bodyAsText())
+            val id = UUID.randomUUID().toString()
+            val hold = s.probe.hold(id)
+            val failure =
                 coroutineScope {
-                    val call = async { c.get(s.url("/hold/$id")).bodyAsText() }
+                    // the response is in flight once its head and first piece reached the client: the stop starts only
+                    // then, not as soon as the handler started (Ktor's Netty engine may not have sent any of the
+                    // response yet, and an HTTP/1.1 call cut short before its head is retried on a new connection that
+                    // the stopped server refuses)
+                    val firstPiece = CompletableDeferred<Unit>()
+                    val call =
+                        async {
+                            runCatching {
+                                c.prepareGet(s.url("/hold/$id")).execute { r ->
+                                    val ch = r.bodyAsChannel()
+                                    val first = ByteArray("first;".length)
+                                    ch.readFully(first)
+                                    firstPiece.complete(Unit)
+                                    (first + ch.toByteArray()).decodeToString()
+                                }
+                            }
+                        }
                     hold.entered.await()
+                    kotlinx.coroutines.selects.select {
+                        firstPiece.onAwait {}
+                        call.onAwait { r -> throw AssertionError("the call ended before the first piece arrived: $r") }
+                    }
                     // Ktor's Netty and CIO engines wait out the whole grace period (Netty's quiet period): a short one
                     val stop = launch { s.stop(3_000, 6_000) }
                     s.probe.stopping.await()
                     hold.release.complete(Unit)
-                    assertEquals("first;second", call.await())
+                    val r = call.await()
+                    r.getOrNull()?.let { assertEquals("first;second", it) }
                     // ours ends once its last call has: no wait for idle clients; Ktor's Netty and CIO engines wait out
                     // the grace period (3 s)
                     withTimeout(if (serverEngine == ServerEngine.Kuicksilver) 1.seconds else 5.seconds) { stop.join() }
+                    r.exceptionOrNull()
                 }
-                val after = runCatching { c.get(s.url("/hello")) }
-                assertTrue(after.isFailure, "a request after the stop got ${after.getOrNull()?.status}")
-            } finally {
-                c.close()
-                s.close()
-            }
+            val after = runCatching { c.get(s.url("/hello")) }
+            assertTrue(after.isFailure, "a request after the stop got ${after.getOrNull()?.status}")
+            return failure
+        } finally {
+            c.close()
+            s.close()
+        }
+    }
+
+    /**
+     * The server ended the response early: the connection closed without close_notify (our TLS reports truncation, RFC
+     * 8446 section 6.1), or the server reset the stream (a reset our client made itself is never retried).
+     */
+    private fun cutShortByTheServer(e: Throwable): Boolean =
+        generateSequence(e) { it.cause }.any {
+            (it is io.kuicksilver.tls.TlsException.Protocol && "truncation" in it.message.orEmpty()) ||
+                (it is io.kuicksilver.http2.runtime.Http2Exception.StreamReset && it.byPeer)
         }
 
     /** A server whose certificate does not chain to the client's anchors is refused: the call fails in TLS, no response. */
@@ -366,3 +422,6 @@ internal abstract class HttpPairSuite(
             }
         }
 }
+
+/** How many graceful stops a Netty pair may try before one must complete (see gracefulStopCompletesTheRequestInFlight). */
+private const val NETTY_STOP_ATTEMPTS = 3
