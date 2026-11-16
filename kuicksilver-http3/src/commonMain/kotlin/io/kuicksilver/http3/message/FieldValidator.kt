@@ -381,7 +381,7 @@ internal object PseudoHeaders {
             // the explicit priority is the signal: a `priority` header would tell the server something else than we schedule
             for (f in r.headers.fields) if (f.first != "priority") out += f
             // a CONNECT says even RFC 9218's defaults (section 4.2: i=?0): the caller chose them for a tunnel, and a server
-            // may give an unsignalled tunnel a default of its own (an incremental one, before this library's 0.3.0)
+            // may give an unsignalled tunnel a default of its own (an incremental one, as h2o does)
             (PriorityField.format(p) ?: if (r.method == "CONNECT") "i=?0" else null)?.let { out += "priority" to it }
         }
         return out
