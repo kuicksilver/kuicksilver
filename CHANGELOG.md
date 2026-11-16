@@ -732,6 +732,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3 client: after an accepted 0-RTT, a server whose SETTINGS change or omit the remembered non-zero
   `SETTINGS_QPACK_MAX_TABLE_CAPACITY` ends the connection with `QPACK_DECODER_STREAM_ERROR` (RFC 9204 section 3.2.3,
   the text for this setting) instead of `H3_SETTINGS_ERROR` (RFC 9114 section 7.2.4.2, for settings in general).
+- TLS over TCP, client: TLS 1.3 handshakes no longer use middlebox compatibility mode (RFC 9846 appendix E.4, optional).
+  The ClientHello carries an empty `legacy_session_id` (section 4.2.2: "Otherwise, it MUST be set as a zero-length
+  list") instead of a random 32-byte one, and the client sends no dummy `change_cipher_spec` before its second flight
+  (also none after a HelloRetryRequest). This is what lets the client protect its alerts after the ServerHello (see
+  Fixed). A client that resumes a TLS 1.2 session ID still sends that ID. Servers keep the mode and answer a client's
+  non-empty session ID with `change_cipher_spec`; QUIC never used it. A network whose middlebox drops TLS 1.3 handshakes
+  that do not look like TLS 1.2 resumption can now fail TLS-over-TCP connections it let through before; there is no
+  setting to turn the mode back on ([TLS guide](docs/guide/tls.md#middleboxes)).
 - Ktor client: the CONNECT that opens a tunnel through an HTTP proxy no longer carries `Proxy-Connection: Keep-Alive`
   (RFC 9112 appendix C.2.2: "clients are encouraged not to send the Proxy-Connection header field in any requests"). It
   was there for HTTP/1.0 proxies; a CONNECT tunnel does not depend on keep-alive.
@@ -1097,6 +1105,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - WebTransport flow control: a stream slot given back by an open that was given up while it waited for the
   connection's stream credit did not wake the opens waiting for a slot, so they waited with one free until the peer
   raised its limit, if ever. They now take it at once.
+- TLS over TCP, client: an alert sent after the ServerHello (a refused server certificate, name or pin, a malformed
+  server flight) went out in the clear, because OpenSSL's middlebox compatibility mode moves a client to its handshake key
+  only right before its second flight. RFC 9846 appendix A.1: clients "SHOULD first rekey to the handshake keys if
+  possible". A server already reading under that key could not take it: a JDK (Netty) server failed with "Insufficient
+  buffer remaining for AEAD cipher fragment (2)" instead of reporting the client's alert. Clients now run without the
+  compatibility mode (appendix E.4, optional): the hello carries no compatibility session ID, no dummy
+  `change_cipher_spec` is sent, and every alert after the ServerHello is protected under the client handshake key. Servers
+  keep the mode (they must answer a client's session ID with `change_cipher_spec`); QUIC never used it.
 - HTTP/3: a loaded host closed connections to healthy peers with `H3_GENERAL_PROTOCOL_ERROR` ("control and QPACK
   streams not open after 3s"). The 3 s deadline meant for a peer that does not allow the three unidirectional streams
   HTTP/3 needs (RFC 9114 section 6.2) also covered opening and writing them, so a host that took that long to schedule the

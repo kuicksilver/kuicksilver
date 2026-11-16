@@ -1673,6 +1673,19 @@ bound the connection yourself (an idle or stall timeout) where a client may neve
 
 The same works on the server side with `Socket.tlsServer(config)` after `ServerSocket.accept()`.
 
+#### Middleboxes
+
+A TLS 1.3 client over TCP (`Socket.tls`, `TlsConnection.client`, the Ktor client's HTTP/1.1 and HTTP/2) runs without
+middlebox compatibility mode (RFC 9846 appendix E.4): its ClientHello has an empty session ID and it sends no dummy
+`change_cipher_spec`. That way it switches to the handshake keys with the ServerHello, and an alert it sends after that
+(a refused certificate, name or pin) is encrypted, as RFC 9846 appendix A.1 asks; in compatibility mode the alert went
+out in the clear and a server reading under the handshake keys (the JDK's, for one) could not read it. The cost: a
+firewall or inspection box that lets TLS 1.3 through only when it looks like a TLS 1.2 session resumption can drop these
+handshakes (a reset or a timeout right after the ClientHello or ServerHello). The field measurements behind appendix
+E.4 date from 2017; such boxes are rare now, and there is no setting to turn the mode back on. On such a network,
+update or bypass the box, or use HTTP/3 (QUIC never uses the mode). Servers are not affected: a ksl server keeps the
+mode and answers a client that sends a session ID with `change_cipher_spec`, as appendix E.4 requires.
+
 #### Resumption and trust
 
 A resumed handshake carries no certificates, so the client checks the chain it cached from the full handshake again

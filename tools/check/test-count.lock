@@ -5391,6 +5391,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.rejec
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.wildcardOneLabel
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.objectReasonsPrintTheirName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.verifyMessageNamesTheReason
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.ClientAlertJdkServerTest.negative_aJdkServerReadsTheAlertOfAClientThatRefusesItsCertificate
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KeylogFileNoNioTest.negative_keylogFileWithoutNioIsRefused
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.answerForms
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.fakeServerAnswerParses

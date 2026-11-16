@@ -433,6 +433,17 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
+    /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
+       keys. If clients need to send such alerts, they SHOULD first rekey to the handshake keys if possible." In middlebox
+       compatibility mode (appendix E.4, optional; OpenSSL's default) an OpenSSL 3.5 client moves to its handshake key only right
+       before its second flight (statem_clnt.c), so the alert for a refused certificate, name or pin, or a malformed server flight,
+       went out in the clear while the server already read under that key (appendix A.2); a JDK server then failed on the record
+       ("Insufficient buffer remaining for AEAD cipher fragment (2)") instead of reporting the alert. Without the mode the client
+       takes its handshake key with the ServerHello and every later alert is protected. A client sends no compatibility session ID
+       and no dummy change_cipher_spec then; QUIC has the mode off anyway (RFC 9001 section 8.4). A server keeps it: it MUST answer
+       a client's non-empty session ID with change_cipher_spec (appendix E.4). */
+    if (role == KSL_CLIENT)
+        SSL_CTX_clear_options(c->ctx, SSL_OP_ENABLE_MIDDLEBOX_COMPAT);
     const char *list12 = role == KSL_SERVER ? TLS12_PROFILE_SERVER : TLS12_PROFILE_CLIENT;
     SSL_CTX_set_cipher_list(c->ctx, list12);
     SSL_CTX_set_ciphersuites(c->ctx, TLS13_DEFAULT);
