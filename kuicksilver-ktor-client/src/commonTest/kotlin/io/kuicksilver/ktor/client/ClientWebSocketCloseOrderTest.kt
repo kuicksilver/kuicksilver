@@ -834,6 +834,158 @@ class ClientWebSocketCloseOrderTest {
 
     @Test fun negative_h3ServerStopSendingWhileTheFinIsHeldIsAnsweredWithReset() =
         h3Close(clientFirst = true, serverEnds = true, serverStops = true)
+
+    /*
+     * The server's end read as T2 fires (the timeout lands on another thread after the wait for it returned, before the
+     * timeout's scope completed) is the server's end, not T2: a hook that runs once the end was read returns only after
+     * T2 cancelled the wait. A run whose end did not come before T2 (a cold or loaded JVM) does not reach the race and is
+     * repeated with T2 doubled; only a run that reached it is judged. JVM only: the hook holds a thread while the timeout
+     * fires on another.
+     */
+
+    /** Holds the thread of a wait for the server's end until its deadline cancelled the wait; [reached] says it got there. */
+    private suspend fun holdUntilCancelled(reached: BooleanArray) {
+        kotlinx.coroutines.yield() // returns through a resumption, as the wait does; throws once the deadline fired
+        reached[0] = true
+        val job = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!
+        val giveUp =
+            kotlin.time.TimeSource.Monotonic
+                .markNow() + 30.seconds
+        while (!job.isCancelled && giveUp.hasNotPassedNow()) {
+            // the deadline fires on another thread meanwhile
+        }
+    }
+
+    /** Runs [attempt] with T2 doubling until a run reaches the race, then expects [expected] from the closing hook. */
+    private fun raceAtT2(
+        expected: String,
+        attempt: suspend (closeWait: Long, reached: BooleanArray) -> String,
+    ) = clientTest {
+        if (io.kuicksilver.ktor.client.contract.contractPlatform != "jvm") return@clientTest
+        var closeWait = 1_000L
+        repeat(4) {
+            val reached = BooleanArray(1)
+            val outcome = attempt(closeWait, reached)
+            if (reached[0]) {
+                assertEquals(expected, outcome, "the server's end read as T2 fired")
+                return@clientTest
+            }
+            closeWait *= 2
+        }
+        kotlin.test.fail("no run reached the race")
+    }
+
+    /** HTTP/1.1: the server's FIN read as T2 fires is "server closed" (over TLS its FIN is then read after close_notify). */
+    @Test fun negative_aServerCloseReadAsT2FiresIsTheServersClose() =
+        raceAtT2("server closed") { closeWait, reached ->
+            val hook = Events()
+            var outcome = ""
+            rawServer(false, serve = { conn ->
+                readClientFrames(conn.input)
+                conn.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                conn.output.flush()
+                conn.watchEnd()
+                hook.await("waiting")
+                conn.close()
+            }) { port ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    engine(c).h1.webSocketClosingForTest = { hook += it }
+                    engine(c).h1.webSocketServerEndForTest = { holdUntilCancelled(reached) }
+                    engine(c).h1.webSocketCloseWaitMillis = closeWait
+                    c.webSocketSession("ws://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                    outcome = withTimeout(30.seconds) { hook.all.first { l -> l.any { it != "waiting" } } }.first { it != "waiting" }
+                }
+            }
+            outcome
+        }
+
+    /** HTTP/2: the server's END_STREAM read as T2 fires is "server ended". */
+    @Test fun negative_anH2ServerEndReadAsT2FiresIsTheServersEnd() =
+        raceAtT2("server ended") { closeWait, reached ->
+            val hook = Events()
+            var outcome = ""
+            tlsH2WithSilentUdp(
+                enableConnectProtocol = true,
+                onRequest = { _, r ->
+                    if (r.method != "CONNECT") return@tlsH2WithSilentUdp ok(r)
+                    r.respond(200)
+                    val out = ByteChannel()
+                    val sender = launch { runCatching { r.sendBody(out, end = true) } }
+                    readClientFrames(r.body)
+                    out.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                    out.flush()
+                    hook.await("waiting")
+                    out.flushAndClose()
+                    sender.join()
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            ) { port, _ ->
+                testClient(block = { install(WebSockets) }).use { c ->
+                    engine(c).h1.h2WebSocketClosingForTest = { hook += it }
+                    engine(c).h1.h2WebSocketServerEndForTest = { holdUntilCancelled(reached) }
+                    engine(c).h1.webSocketCloseWaitMillis = closeWait
+                    c.get("https://127.0.0.1:$port/")
+                    c.webSocketSession("wss://127.0.0.1:$port/ws").close(CloseReason(4000, "client bye"))
+                    outcome = withTimeout(30.seconds) { hook.all.first { l -> l.any { it != "waiting" } } }.first { it != "waiting" }
+                }
+            }
+            outcome
+        }
+
+    /**
+     * HTTP/3: the server's reset read as T2 fires is "server reset", answered with RESET_STREAM (RFC 9220 section 3: "RST
+     * exceptions are represented with a stream error ... of type H3_REQUEST_CANCELLED"), not taken for T2 and answered
+     * with a FIN.
+     */
+    @Test fun negative_anH3ServerResetReadAsT2FiresIsAnsweredWithReset() =
+        raceAtT2("server reset") { closeWait, reached ->
+            if (!quicServerSupported()) return@raceAtT2 "server reset".also { reached[0] = true }
+            val hook = Events()
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(
+                                        tlsConfig(TlsRole.Server) {
+                                            alpn = listOf("h3")
+                                            identity = ClientFixtures.identity()
+                                        },
+                                    ).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            try {
+                coroutineScope {
+                    val served =
+                        launch {
+                            val s = ep.accept().acceptRequest().acceptConnect()
+                            readClientFrames(s.input)
+                            s.output.writeFully(byteArrayOf(0x88.toByte(), 2, 0x03, 0xE8.toByte()))
+                            s.output.flush()
+                            hook.await("waiting")
+                            s.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+                            kotlinx.coroutines.awaitCancellation()
+                        }
+                    try {
+                        testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                            engine(c).h3.webSocketClosingForTest = { hook += it }
+                            engine(c).h3.webSocketServerEndForTest = { holdUntilCancelled(reached) }
+                            engine(c).h3.webSocketCloseWaitMillis = closeWait
+                            c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws").close(CloseReason(4000, "client bye"))
+                            withTimeout(30.seconds) { hook.all.first { l -> l.any { it != "waiting" } } }.first { it != "waiting" }
+                        }
+                    } finally {
+                        served.cancel()
+                    }
+                }
+            } finally {
+                ep.close()
+            }
+        }
 }
 
 /** How long the slow servers above hold their close once the client waits for it: a behaviour under test, not a wait. */

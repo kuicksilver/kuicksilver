@@ -23,6 +23,7 @@ import io.kuicksilver.ktor.server.h2.H2AltSvc
 import io.kuicksilver.ktor.server.h2.H2Call
 import io.kuicksilver.ktor.server.h2.WebSocketOverH2
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -150,7 +151,12 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             h2Live.add(c)
             events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_2_0, remote) }
             // RFC 9113 section 3.4: the client preface, within the request-head deadline (as the first request head on HTTP/1.1)
-            val preface = withTimeoutOrNull(prefaceWithin) { runCatching { c.awaitPreface() }.isSuccess }
+            // a preface read as the deadline fires is the preface (withTimeoutOrNull drops what the wait returned when its
+            // timeout lands after it, and the connection was ended with GOAWAY)
+            val preface =
+                completedWithin(prefaceWithin) {
+                    runCatching { c.awaitPreface() }.isSuccess.also { configuration.h2PrefaceForTest?.invoke() }
+                }
             if (preface != true) {
                 // section 9.1: GOAWAY before the close (no stream was taken: its last stream is 0); a client that does not
                 // even read it is cut off after the send-stall deadline

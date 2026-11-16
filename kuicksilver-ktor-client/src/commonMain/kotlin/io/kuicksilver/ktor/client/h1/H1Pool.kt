@@ -58,6 +58,7 @@ import io.kuicksilver.ktor.network.openDeliveringReadChannel
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -167,13 +168,14 @@ internal class H1Connection(
     suspend fun closeAfterWebSocket(
         waitMillis: Long,
         inputDone: Job,
+        serverClosedForTest: (suspend () -> Unit)? = null,
         onEvent: (String) -> Unit = {},
     ) {
         if (!claimClose()) return
         try {
             // in a coroutine of its own, which [close] cancels (abortClaimedClose): the end handler that runs this goes on
             coroutineScope {
-                val work = launch { closeInOrder(waitMillis, inputDone, onEvent) }
+                val work = launch { closeInOrder(waitMillis, inputDone, serverClosedForTest, onEvent) }
                 lingering = work
                 if (abortRequested) work.cancel()
                 work.join()
@@ -198,6 +200,7 @@ internal class H1Connection(
     private suspend fun closeInOrder(
         waitMillis: Long,
         inputDone: Job,
+        serverClosedForTest: (suspend () -> Unit)?,
         onEvent: (String) -> Unit,
     ) {
         val deadline =
@@ -208,10 +211,12 @@ internal class H1Connection(
         try {
             // the server's close of its side: its plaintext ends (close_notify, or its transport's end), or its FIN
             onEvent("waiting")
+            // a close read as T2 fires is the server's close: dropped, the server's FIN was not read over TLS
             val serverClosed =
-                withTimeoutOrNull(left()) {
+                completedWithin(left().milliseconds) {
                     inputDone.join()
                     drainToEnd(input)
+                    serverClosedForTest?.invoke()
                     true
                 } == true
             onEvent(if (serverClosed) "server closed" else "T2")
@@ -318,6 +323,9 @@ internal class H1Pool(
      * side ("waiting"), then saw that close ("server closed") or gave up at T2 ("T2").
      */
     internal var webSocketClosingForTest: ((String) -> Unit)? = null
+
+    /** Test hook: runs once a WebSocket's connection read the server's close (HTTP/1.1), still inside T2. */
+    internal var webSocketServerEndForTest: (suspend () -> Unit)? = null
 
     /** Tests: the connection a WebSocket session was handed over. */
     internal var webSocketConnectionForTest: ((H1Connection) -> Unit)? = null
@@ -510,6 +518,9 @@ internal class H1Pool(
 
     /** Tests: an HTTP/2 WebSocket waits for the server's END_STREAM ("waiting"); its own goes after it ("server ended") or at T2 ("T2"). */
     internal var h2WebSocketClosingForTest: ((String) -> Unit)? = null
+
+    /** Test hook: runs once an HTTP/2 WebSocket read the server's end of its stream, still inside T2. */
+    internal var h2WebSocketServerEndForTest: (suspend () -> Unit)? = null
 
     /**
      * A WebSocket's wait for its own Close to be written once its call ended after that Close was queued (any protocol),
@@ -958,6 +969,7 @@ internal class H1Pool(
                                 config.webSocketMaxMessageSize,
                                 h2WebSocketOutputForTest,
                                 { h2WebSocketClosingForTest?.invoke(it) },
+                                h2WebSocketServerEndForTest,
                                 released,
                             )
                         }
@@ -1182,6 +1194,7 @@ internal class H1Pool(
                                                             conn.closeAfterWebSocket(
                                                                 ws.lifetime.remainingTransportWaitMillis(),
                                                                 ws.inputDone,
+                                                                webSocketServerEndForTest,
                                                             ) { webSocketClosingForTest?.invoke(it) }
                                                         }
 

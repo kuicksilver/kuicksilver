@@ -1654,7 +1654,10 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocke
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.h3ClientClosesServerFinFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.h3ServerClosesServerFinFirst
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_aCloseOfTheConnectionAbortsTheWaitForTheServer
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_aServerCloseReadAsT2FiresIsTheServersClose
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_aTlsSessionWhoseServerNeverAnswersEndsWithCloseNotify
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_anH2ServerEndReadAsT2FiresIsTheServersEnd
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_anH3ServerResetReadAsT2FiresIsAnsweredWithReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_anIdleCancelledPlainSessionClosesCleanly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_anIdleCancelledTlsSessionClosesCleanly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientWebSocketCloseOrderTest.negative_anUnwrittenCloseOverTlsIsBoundedByTheCloseWait
@@ -2241,6 +2244,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.lar
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.negative_tls12RenegotiationIsAProtocolError
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.tls12ServerGetsH2
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H3WebSocketConnectRaceTest.negative_aConnectAnsweredAsTheTimeoutFiresIsUsed
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.InactivityRaceTest.negative_aTickSeenAsTheTimeoutFiresIsProgress
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked
@@ -3240,6 +3244,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDead
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDeadlineRaceTest.negative_aHeadParsedAsItsDeadlineFiresIsTheRequest
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDeadlineRaceTest.negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.ClientSignalConcurrencyTest.observedOrderIsMonotonic
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDeadlineRaceTest.negative_aPrefaceReadAsItsDeadlineFiresIsThePreface
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.NativeServerH3Test.h3ServedAndAdvertisedOnNative
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.contentRoundTrips
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.descriptorIsCloseOnExec

@@ -1145,6 +1145,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 3) was taken off its queue and dropped.
 - HTTP/3: a HEADERS frame read whole as its `maxHeaderBlockTime` fired failed its stream with `H3_REQUEST_CANCELLED`
   (the same `withTimeoutOrNull` race); the section is now kept once it was read.
+- The same race at the end of a WebSocket: the server's end of the transport read as T2 fired was taken for T2. Over
+  HTTP/3 a server's reset was then answered with a FIN instead of `RESET_STREAM` with `H3_REQUEST_CANCELLED` (RFC 9220
+  section 3), over HTTP/2 a reset stream got `END_STREAM` and one more close wait, and over HTTP/1.1 with TLS the server's
+  FIN was not read before the close. A data tick seen as the socket inactivity timeout fired no longer cuts the exchange,
+  and the Ktor server no longer ends an HTTP/2 connection with GOAWAY for a client preface read as its deadline fired.
 - QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
   as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC

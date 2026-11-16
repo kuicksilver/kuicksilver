@@ -37,12 +37,14 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /** The upgrade token of RFC 8441 section 5 (`:protocol`). */
 private const val WEBSOCKET = "websocket"
@@ -84,6 +86,8 @@ internal suspend fun h2WebSocket(
     onOutput: (H2StreamOutput) -> Unit = {},
     /** Tests: the stream waits for the server's END_STREAM ("waiting"); ours is about to go after it ("server ended") or at T2 ("T2"). */
     webSocketClosingForTest: (String) -> Unit = {},
+    /** Tests: runs once the server's end (its END_STREAM or reset) was read, still inside T2. */
+    serverEndForTest: (suspend () -> Unit)? = null,
     onReleased: (kept: Boolean) -> Unit,
 ): HttpResponseData {
     val requestTime = GMTDate()
@@ -203,11 +207,12 @@ internal suspend fun h2WebSocket(
             try {
                 // T2: the server's END_STREAM (what it still sends after its Close is read and dropped), then ours
                 webSocketClosingForTest("waiting")
+                // an end read as T2 fires is the end: dropped, a reset stream got END_STREAM and a further close wait
                 val serverEnded =
-                    withTimeoutOrNull(lifetime.remainingTransportWaitMillis()) {
+                    completedWithin(lifetime.remainingTransportWaitMillis().milliseconds) {
                         serverClosing.await()
                         discardToEnd(stream.body)
-                        stream.awaitServerEnd()
+                        stream.awaitServerEnd().also { serverEndForTest?.invoke() }
                     }
                 if (serverEnded != false) {
                     webSocketClosingForTest(if (serverEnded == true) "server ended" else "T2")

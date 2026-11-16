@@ -272,6 +272,9 @@ internal class H3Pool(
      */
     internal var webSocketClosingForTest: ((String) -> Unit)? = null
 
+    /** Test hook: runs once a WebSocket read the server's end of the stream (its FIN or reset), still inside T2. */
+    internal var webSocketServerEndForTest: (suspend () -> Unit)? = null
+
     /** Test hook: runs once a WebSocket's CONNECT was answered, still inside the connect timeout. */
     internal var webSocketConnectedForTest: (suspend () -> Unit)? = null
 
@@ -1627,11 +1630,11 @@ internal class H3Pool(
                     webSocketClosingForTest?.invoke("waiting")
                     // true: the server's FIN; false: the server reset its direction, an abort (RFC 9220 section 3: "RST
                     // exceptions are represented with a stream error"), which gets no clean FIN after it but a reset, as
-                    // over HTTP/2; null: T2 passed
+                    // over HTTP/2; null: T2 passed. An end read as T2 fires is the end: dropped, a reset was answered with a FIN
                     val serverEnded =
-                        withTimeoutOrNull(lifetime.remainingTransportWaitMillis()) {
+                        completedWithin(lifetime.remainingTransportWaitMillis().milliseconds) {
                             inputDone.join()
-                            discardToEnd(stream.input)
+                            discardToEnd(stream.input).also { webSocketServerEndForTest?.invoke() }
                         }
                     webSocketClosingForTest?.invoke(
                         when (serverEnded) {

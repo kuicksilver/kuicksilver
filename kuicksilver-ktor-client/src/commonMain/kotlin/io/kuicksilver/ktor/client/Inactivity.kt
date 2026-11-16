@@ -34,6 +34,12 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 internal class Activity {
     private val ticks = MutableStateFlow(0L)
 
+    /** Tests: the watchdogs waiting for a tick now. */
+    internal val watchingForTest get() = ticks.subscriptionCount
+
+    /** Test hook: runs in the watchdog once it saw a tick, still inside the inactivity timeout. */
+    internal var tickSeenForTest: (suspend () -> Unit)? = null
+
     /** Data moved. */
     fun tick() {
         ticks.update { it + 1 }
@@ -61,7 +67,13 @@ internal class Activity {
                 val watchdog =
                     launch {
                         var seen = ticks.value
-                        while (true) seen = withTimeoutOrNull(millis) { ticks.first { it != seen } } ?: break
+                        while (true) {
+                            // a tick seen as the timeout fires is progress (withTimeoutOrNull drops what the wait returned
+                            // when the timeout lands after it): the count is read again before the timeout counts
+                            seen = withTimeoutOrNull(millis) { ticks.first { it != seen }.also { tickSeenForTest?.invoke() } }
+                                ?: ticks.value.takeIf { it != seen }
+                                ?: break
+                        }
                         if (!settled.compareAndSet(false, true)) return@launch // the block ended first
                         val inactive = Inactive(millis)
                         expired = inactive

@@ -425,6 +425,9 @@ public class KuicksilverApplicationEngine(
         /** Tests drive the HTTP/2 connections' clock (monotonic nanoseconds: reset budgets, protocol deadlines) with this. */
         internal var h2ClockForTest: (() -> Long)? = null
 
+        /** Test hook: runs once an HTTP/2 connection's client preface was read, still inside its deadline. */
+        internal var h2PrefaceForTest: (suspend () -> Unit)? = null
+
         /**
          * Tests run each HTTP/2 request stream's release at the end of its handling through this, with the handler's
          * cancellation in flight (null for none); null releases it.
