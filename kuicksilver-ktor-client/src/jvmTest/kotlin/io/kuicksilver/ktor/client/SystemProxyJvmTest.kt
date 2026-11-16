@@ -51,7 +51,7 @@ class SystemProxyJvmTest {
                         assertEquals("CONNECT server.test:$port HTTP/1.1", head().first())
                         assertEquals(URI("https://server.test:$port/"), asked.single())
                         // loopback never asks the selector
-                        runCatching { c.get("https://127.0.0.1:1/") }
+                        Tripwire().use { loopback -> runCatching { c.get("https://127.0.0.1:${loopback.port}/") } }
                         assertEquals(1, asked.size)
                     }
                 }

@@ -78,14 +78,17 @@ class ClientConnectDeadlineRaceTest {
     /** RFC 9460 section 9.5: an upgrade decided from records read as the connect timeout fires is the 307. */
     @Test fun negative_anUpgradeDecidedAsTheConnectTimeoutFiresIsThe307() =
         race { millis ->
-            testClient(Http3DiscoveryMode.Auto, engine = {
-                resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
-                connectTimeout = millis.milliseconds
-                http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, null, "h2")) } }
-            }, block = { followRedirects = false }).use { c ->
-                engine(c).httpsResolvedForTest = { hold() }
-                // before: not upgraded, the request went to port 80 of 127.0.0.1, where nothing listens
-                assertEquals(307, c.get("http://server.test/").status.value)
+            Tripwire().use { origin ->
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
+                    connectTimeout = millis.milliseconds
+                    http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, null, "h2")) } }
+                }, block = { followRedirects = false }).use { c ->
+                    engine(c).httpsResolvedForTest = { hold() }
+                    // before: not upgraded, the request went to the plain origin
+                    assertEquals(307, c.get("http://server.test:${origin.port}/").status.value)
+                    assertEquals(0, origin.hits.get(), "the plain origin was not asked")
+                }
             }
         }
 
@@ -94,14 +97,17 @@ class ClientConnectDeadlineRaceTest {
         race { millis ->
             val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("ok") } } }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = {
-                    resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
-                    connectTimeout = millis.milliseconds
-                    // the origin's port 1 has nothing; the record's endpoint is the server
-                    http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, port, "http/1.1")) } }
-                }).use { c ->
-                    engine(c).httpsResolvedForTest = { hold() }
-                    assertEquals("ok", c.get("https://server.test:1/").bodyAsText())
+                Tripwire().use { origin ->
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
+                        connectTimeout = millis.milliseconds
+                        // the origin's own port is a tripwire; the record's endpoint is the server
+                        http3 { httpsRecords = HttpsRecordsForTest { n -> listOf(rec(n, port, "http/1.1")) } }
+                    }).use { c ->
+                        engine(c).httpsResolvedForTest = { hold() }
+                        assertEquals("ok", c.get("https://server.test:${origin.port}/").bodyAsText())
+                        assertEquals(0, origin.hits.get(), "the origin's own port was not tried")
+                    }
                 }
             } finally {
                 server.stop(100, 500)
