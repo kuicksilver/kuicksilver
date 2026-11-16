@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # Contributing to Kuicksilver
 
 Thank you for helping. Kuicksilver is a network security component, so the bar for changes is high and the process is
-explicit: an issue first for anything that changes behaviour or API, tests that fail before the fix, and a sign-off on
-every commit. This document says how to build, test and propose changes; [docs/process.md](docs/process.md) describes
+explicit: an issue first for anything that changes behaviour or API, and tests that fail before the fix.
+This document says how to build, test and propose changes; [docs/process.md](docs/process.md) describes
 every stage a change goes through before it reaches a release. By participating you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
 
@@ -347,13 +347,10 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
 3. **Keep pull requests focused**: one concern per pull request, one logical change per commit.
 4. Add an entry to [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for any user-visible change.
 
-## Developer Certificate of Origin
+## License of contributions
 
-Every commit must be signed off: `git commit -s` adds
-`Signed-off-by: Your Name <you@example.com>`, which certifies the [Developer Certificate of Origin 1.1](https://developercertificate.org/)
-— that you wrote the change or otherwise have the right to submit it under the project's license. Use your real name or
-the name you are publicly known by. Only a human signs off; a tool never adds `Signed-off-by` on your behalf. A pull
-request with an unsigned commit cannot be merged (`git commit --amend -s` or `git rebase --signoff` fixes it).
+Contributions are accepted under the project's license: by submitting a change you agree that it is licensed under
+Apache-2.0, as section 5 of the license states, and that you have the right to submit it. No sign-off line is required.
 
 ## AI assistance
 
@@ -363,7 +360,7 @@ The maintainers use AI coding tools in this project, and contributors may too, u
   wrote it" is not an answer in review. Be ready to explain any part of the change.
 - **Disclose it.** If an AI tool generated a meaningful part of a commit, add a trailer naming the tool (and model when
   you know it): `Assisted-by: <tool>[:<model>]`, for example `Assisted-by: Claude Code`. Do not use `Co-authored-by:`
-  for a tool. `Signed-off-by:` is yours alone.
+  for a tool.
 - **Write issues and review comments in your own words.** Summaries are fine; walls of generated text are not.
 - **Never paste non-public vulnerability details** (reports, exploits, embargoed advisories) into third-party AI
   services.

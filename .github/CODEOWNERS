@@ -1,22 +1,21 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Placeholder team: replace with the real maintainers' GitHub team before the first public push.
 # Later rules win; keep the security-sensitive paths last so they always request the maintainers' review.
 
-*                                   @kuicksilver-maintainers
+*                                   @kinchpik
 
 # Native code, the OpenSSL pin and the build of OpenSSL
-/kuicksilver-native/                @kuicksilver-maintainers
-/gradle/openssl.toml                @kuicksilver-maintainers
-/gradle/openssl-next.toml           @kuicksilver-maintainers
-/tools/openssl/                     @kuicksilver-maintainers
-/tools/prefix/                      @kuicksilver-maintainers
+/kuicksilver-native/                @kinchpik
+/gradle/openssl.toml                @kinchpik
+/gradle/openssl-next.toml           @kinchpik
+/tools/openssl/                     @kinchpik
+/tools/prefix/                      @kinchpik
 
 # Trust, TLS and the public security documents
-/kuicksilver-tls/                   @kuicksilver-maintainers
-/SECURITY.md                        @kuicksilver-maintainers
-/docs/spec/threat-model.md          @kuicksilver-maintainers
+/kuicksilver-tls/                   @kinchpik
+/SECURITY.md                        @kinchpik
+/docs/spec/threat-model.md          @kinchpik
 
 # CI and release configuration
-/.github/                           @kuicksilver-maintainers
-/build-logic/                       @kuicksilver-maintainers
+/.github/                           @kinchpik
+/build-logic/                       @kinchpik
