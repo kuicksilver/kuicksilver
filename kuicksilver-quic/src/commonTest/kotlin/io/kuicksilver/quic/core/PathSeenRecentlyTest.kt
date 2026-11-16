@@ -60,6 +60,8 @@ class PathSeenRecentlyTest {
             val failed = s.paths.active
             val a = InetSocketAddress("10.0.0.8", 40008)
             addValidated(s, PREFERRED_SOCKET, a)
+            // hand-built: onPathFailed is called on the handshake path, which is Validated and runs no validation (a real failure
+            // comes from a validation deadline); k stands for a path the client's packets just reached, its own validation under way
             val k = s.paths.add(failed.socket, a, s.config.congestionController(), s.config.newPathInitialRtt, evict = false)!!
             k.local = failed.local
             s.startValidation(k)
@@ -85,6 +87,8 @@ class PathSeenRecentlyTest {
             val failed = s.paths.active
             val q = addValidated(s, PREFERRED_SOCKET, failed.remote)
             q.peerProbed = true
+            // hand-built: a Validated path with no packet recorded on it (lastReceivedAt unknown); a path validated by a PATH_RESPONSE
+            // has received that packet, so this isolates the comparison of an unknown time with a known one
             q.lastReceivedAt = TimeMark.NEVER
             s.startValidation(failed)
             s.onPathFailed(failed)

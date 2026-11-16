@@ -71,9 +71,10 @@ class CidGapsTest {
     }
 
     /**
-     * RFC 9000 section 5.1.1: the `preferred_address` ID has sequence number 1 and counts against our active_connection_id_limit
-     * (section 5.1.1: "An endpoint MUST NOT provide more connection IDs than the peer's limit" read from our side: we keep at most
-     * our own limit); it is adopted once.
+     * RFC 9000 section 5.1.1: "If the preferred_address transport parameter is sent, the sequence number of the supplied connection
+     * ID is 1"; section 18.2: active_connection_id_limit is "the maximum number of connection IDs from the peer that an endpoint is
+     * willing to store. This value includes ... that received in the preferred_address transport parameter". It is adopted once,
+     * and only within our limit.
      */
     @Test fun negative_preferredAddressCidIsAdoptedOnceWithinTheLimit() {
         val m = manager(limit = 2)
@@ -82,6 +83,8 @@ class CidGapsTest {
         assertEquals(listOf(0L, 1L), m.peerSeqsForTest(), "two of two")
         m.adoptPreferredAddressCid(cid(3), ByteArray(16) { 3 })
         assertEquals(listOf(0L, 1L), m.peerSeqsForTest(), "sequence 1 is known already")
+        // hand-built: the transport parameters arrive before any NEW_CONNECTION_ID, so a connection never reaches this order; it pins
+        // that the adoption itself respects the limit whatever was stored before
         val full = manager(limit = 2)
         full.adoptInitialPeerCid(cid(1))
         newCid(full, 2)

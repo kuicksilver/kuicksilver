@@ -289,8 +289,9 @@ class PathGapsTest {
 
     /**
      * RFC 9000 section 8.2.3: "Path validation succeeds when a PATH_RESPONSE frame is received that contains the data that was sent
-     * in a previous PATH_CHALLENGE frame" of this validation: a validation started over (a new address, a revalidation) is not
-     * completed by the answer to a challenge of the one before.
+     * in a previous PATH_CHALLENGE frame." The RFC does not say whether a challenge of a validation that was started over still counts;
+     * we take the stricter reading, a choice the RFC does not require: only the current validation's challenges are answered, so the
+     * answer to one sent before the restart (a new address, a revalidation) does not complete it.
      */
     @Test fun negative_aRestartedValidationIgnoresTheEarlierChallengesAnswer() {
         val (p, c) = connected()
