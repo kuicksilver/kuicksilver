@@ -662,7 +662,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.LimitsTest.trailer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.badElementIdIsIdError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.clientRejectsPriorityUpdate
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.clientUpdatePriorityReachesServer
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.connectTunnelDefaultsToIncremental
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.connectWithoutASignalGetsTheDefaults
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.criticalStreamsGoBeforeAnUrgentResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.earlyPriorityUpdateForReorderedStreamApplies
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.earlyPriorityUpdateRemembered
@@ -670,7 +670,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.heade
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.headerFieldDrivesClientScheduling
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.invalidPriorityUpdateValueMeansDefaults
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.longPriorityUpdateApplied
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negative_garbledConnectFieldStaysTunnel
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negative_garbledConnectFieldGetsTheDefaults
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negative_garbledResponseFieldKeepsClientUpdates
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negative_longPriorityUpdateBeyondStreamLimitIsIdError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negative_longPriorityUpdateForNonRequestStreamIsIdError
@@ -678,8 +678,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.negat
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.priorityFieldLinesAreCombined
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.priorityUpdateBeyondStreamLimitIsIdError
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.priorityUpdateOverridesHeader
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.responseFieldKeepsTunnelIncremental
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.responseFieldMergesIntoServerScheduling
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.responseFieldMergesIntoTheTunnelsDefaults
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.serverPriorityWins
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.PriorityTest.tunnelGetsShareBehindUrgentResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.QpackDynamicTest.aDatagramForAWholeRequestWithBlockedHeadersIsDropped
@@ -919,7 +919,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrder
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrderTest.negative_sequentialReaderOfStreamsLargerThanTheLimitNeverStalls
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrderTest.negative_sequentialReaderUnderATightLimitNeverStalls
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrderTest.negative_streamResetWhileWaitingPassesItsPlaceOn
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrderTest.unsignalledSessionIsIncremental
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditOrderTest.unsignalledSessionIsInOrder
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditQueueTest.creditGoesToWaitingStreamsInTheOrderTheyWereMade
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditQueueTest.incrementalSessionStarvesNoWaitingStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.webtransport.WtCreditQueueTest.negative_endLeavesNothingWaitingOrKept

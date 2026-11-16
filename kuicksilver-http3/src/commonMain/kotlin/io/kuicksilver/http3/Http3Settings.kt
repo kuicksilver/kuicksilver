@@ -162,14 +162,12 @@ public class Http3Settings private constructor(
          * input, a reset or stopped stream's by its final size.
          *
          * How our sender shares a session's credit follows the session's RFC 9218 `incremental` parameter. Non-incremental
-         * (`i=?0`): in the order the streams were opened, a stream waiting for credit, or writing what it was given,
+         * (`i=?0`, the default): in the order the streams were opened, a stream waiting for credit, or writing what it was given,
          * served before every stream opened after it; streams written one after another then reach a peer that reads
-         * them one after another in that order, but a stream that keeps writing holds the later ones. Incremental (`i`):
-         * the grants led by the streams that ask in turn, none starved, no order; this library's default for a CONNECT without a
-         * priority signal (a tunnel: RFC 9218 section 10.1, "servers SHOULD allocate some amount of bandwidths to streams
-         * acting as tunnels"), not RFC 9218's own default, which is non-incremental (section 4.2). Each side chooses for
-         * its own sending: the client by its request's priority, the server by the client's signal unless its
-         * `acceptWebTransport` answer carries a `priority` field. Section 5
+         * them one after another in that order, but a stream that keeps writing holds the later ones. Incremental (`i`, signalled with `priority: i`):
+         * the grants led by the streams that ask in turn, none starved, no order. A session without a signal is
+         * non-incremental (RFC 9218 section 4.2). Each side chooses for its own sending: the client by its request's
+         * priority, the server by the client's signal unless its `acceptWebTransport` answer carries a `priority` field. Section 5
          * sets no order, so a peer of another implementation may serve its streams in any order: unless the order is
          * ours, read the streams concurrently, or keep this above what the peer sends at once, as a reader that takes them
          * strictly one after another can wait on a stream with no credit while the credit sits unread in later ones, and

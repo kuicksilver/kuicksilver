@@ -47,11 +47,10 @@ public class Http3Request private constructor(
 
     /**
      * Sent as the `priority` field (RFC 9218 section 5) when not the default u=3, i=false (on a CONNECT always, as `i=?0`
-     * for the defaults: a server takes a CONNECT without the field as an unsignalled tunnel), and used for our own
+     * for the defaults: a server may give a CONNECT without the field a tunnel default of its own), and used for our own
      * scheduling of the request stream; it replaces any `priority` field among [headers], so the server's signal and our
      * scheduling agree. Without it a `priority` field among [headers] is sent as given and schedules the stream too (when
-     * it parses); without either a CONNECT (a tunnel) is scheduled incremental (sections 10.1, 11), any other request
-     * with the defaults.
+     * it parses); without either a request, a CONNECT included, is scheduled with the defaults (section 4).
      */
     public val priority: StreamPriority? = b.priority
 

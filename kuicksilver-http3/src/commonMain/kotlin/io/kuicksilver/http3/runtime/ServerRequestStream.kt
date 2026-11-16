@@ -350,11 +350,6 @@ internal class ServerRequestImpl(
 
     private val priorityField = parsed.regular.priorityFieldValue()
 
-    /**
-     * The client gave a signal: a valid `priority` field (one that fails to parse is not present, RFC 8941 section 4.2) or
-     * a PRIORITY_UPDATE that came first.
-     */
-    private val signalled = earlyPriority != null || PriorityField.isSignal(priorityField)
     private val priorityFlow = MutableStateFlow(earlyPriority ?: PriorityField.parse(priorityField))
     private var serverPriority: StreamPriority? = null
     internal val stream: QuicStream get() = st
@@ -441,8 +436,8 @@ internal class ServerRequestImpl(
     }
 
     init {
-        // a tunnel without a signal shares bandwidth (RFC 9218 sections 10.1, 11); the client's signal itself stays the default
-        st.priority = if (!signalled && method == "CONNECT") TUNNEL_PRIORITY else priorityFlow.value
+        // the client's signal, else RFC 9218's defaults (section 4), a CONNECT too
+        st.priority = priorityFlow.value
         // whatever its priority, a tunnel gets "some amount of bandwidths" behind more urgent streams (section 10.1)
         if (method == "CONNECT") st.markTunnel()
         session.activeServerRequests[st.id] = this
@@ -611,8 +606,8 @@ internal class ServerRequestImpl(
             responseStarted = true
             tunnel = method == "CONNECT" && status in 200..299
             // an explicit priority wins; else the response's own `priority` field merged into the stream's current schedule
-            // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, or for an
-            // unsignalled tunnel its incremental default (sections 10.1, 11), which a field like `u=1` then keeps
+            // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, else the
+            // defaults
             // (a field that fails to parse is no choice of the server's: RFC 8941 section 4.2, "as if the field were not present")
             val field = headers.priorityFieldValue()
             (priority ?: field?.takeIf { PriorityField.isSignal(it) }?.let { PriorityField.merge(st.priority, it) })?.let {

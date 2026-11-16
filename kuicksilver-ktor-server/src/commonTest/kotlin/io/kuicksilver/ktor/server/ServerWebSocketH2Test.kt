@@ -145,8 +145,8 @@ class ServerWebSocketH2Test {
 
     /**
      * RFC 9218 section 10.1 with RFC 8441: an HTTP/2 WebSocket is an Extended CONNECT stream (`:method` CONNECT, while Ktor
-     * sees a GET), so the server schedules it as a tunnel: incremental by default (sections 10.1, 11) and with one frame in
-     * 16 even behind more urgent streams. This checks that the engine schedules it so (a tunnel, u=3, incremental) and
+     * sees a GET), so the server schedules it as a tunnel: RFC 9218's defaults without a signal (section 4: u=3, i=?0) and
+     * one frame in 16 even behind more urgent streams. This checks that the engine schedules it so (a tunnel, u=3, i=?0) and
      * that its answer comes next to a u=0 response that does not end by itself (it streams until the test has the answer),
      * which then ends in order. It does not pin the share: the urgent stream is not queued at every moment, so the answer
      * can pass without it; `PriorityTest.tunnelGetsShareBehindMoreUrgentResponse` pins the share.
@@ -197,7 +197,7 @@ class ServerWebSocketH2Test {
                 h2(port, settings = windows) { c ->
                     val ws = c.connect()
                     assertEquals(200, ws.response().status)
-                    assertEquals(Triple(true, 3, true), withTimeout(10.seconds) { scheduled.await() }, "(tunnel, urgency, incremental)")
+                    assertEquals(Triple(true, 3, false), withTimeout(10.seconds) { scheduled.await() }, "(tunnel, urgency, incremental)")
                     coroutineScopeWithJob { scope ->
                         val (session, _) = scope.session(ws)
                         assertTrue(c.tryReserve())

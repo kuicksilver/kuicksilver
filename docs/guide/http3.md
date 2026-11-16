@@ -249,10 +249,11 @@ schedules its own request stream with the same signal, whether it came as `Http3
 header. The server acts on the client's signal: `Http3ServerRequest.priority` follows the field and later updates, and
 the response stream is scheduled with it unless the server picks its own, with `respond(status, headers, priority)` or
 with a `priority` field in the response headers, which is merged into the stream's current priority (a parameter it
-leaves out keeps that value: the client's, or an unsignalled tunnel's incremental default; RFC 9218 section 8, as h2o
-does); the server's choice then stays. A CONNECT tunnel without a
-signal is scheduled incremental on both sides (sections 10.1, 11), so a long-lived WebSocket shares bandwidth with the
-responses next to it instead of holding them back; its client's signal itself still reads as the default. The
+leaves out keeps that value, the client's or the defaults; RFC 9218 section 8, as h2o does); the server's choice then
+stays. A CONNECT tunnel without a signal gets RFC 9218's defaults on both sides like any request (section 4: u=3, and
+section 4.2, "The default value of the incremental parameter is false (0)"); a client that wants it to share bandwidth
+with the incremental streams of its urgency signals `priority: i` (section 11: "A client that issues multiple CONNECT
+requests can set the incremental parameter to true"). The
 transport scheduler serves eight urgency levels in order and shares a level round-robin between incremental streams;
 within a level the incremental and the non-incremental streams take turns frame by frame, and a CONNECT tunnel gets one
 frame in 16 even behind more urgent streams (sections 10, 10.1); the control and QPACK streams always go first. A PRIORITY_UPDATE that arrives before its stream is remembered (up to 32
@@ -395,14 +396,15 @@ The mode is chosen per direction: each side shares the credit for its own sendin
 stream's priority.
 
 - The client's sending follows the session request's priority: `Http3Request.priority`, else a `priority` field among
-  its headers, else the tunnel default below. The server's sending follows the client's signal, the `priority` field
+  its headers, else RFC 9218's defaults (non-incremental). The server's sending follows the client's signal, the `priority` field
   of the CONNECT request and later PRIORITY_UPDATEs, unless the server overrides it with a `priority` field in its
   `acceptWebTransport` answer; that field changes only the server's sending. A priority set on the request
   (`Http3Request.priority`) always goes out as a `priority` field on a CONNECT, RFC 9218's defaults included
-  (`StreamPriority(3, incremental = false)` is sent as `i=?0`), so the server does not take it for an unsignalled
-  tunnel; an ordinary request at the defaults still sends no field. A `priority` field among the request's headers
+  (`StreamPriority(3, incremental = false)` is sent as `i=?0`), so a server with a tunnel default of its own does not
+  apply it; an ordinary request at the defaults still sends no field. A `priority` field among the request's headers
   does the same.
-- Non-incremental (`i=?0`): in order. The streams are served in
+- Non-incremental (`i=?0`, the default, as for any request without a signal, RFC 9218 section 4.2): in order. The
+  streams are served in
   the order the session handed them to the application (`openUni` or `openBidi` returned; for the peer's bidirectional
   streams, `acceptBidi`): while a stream waits for credit, or writes what it was just given, no stream opened after it
   gets any. A stream that asks for more than there is gets what there is at once (one frame's worth, never a wait for
@@ -412,12 +414,8 @@ stream's priority.
   never waits on a stream that got no credit while credit sits in a later one. The cost: a stream that keeps writing
   holds every later stream of the session for as long as it writes, and when the peer raises the limit in small steps
   the later streams wait; mark the session incremental to share.
-- Incremental (`i`): shared. This is the default of a CONNECT without a priority signal, on both sides, and it is this
-  library's choice, modelled on h2o, not RFC 9218's: the RFC's default is non-incremental (section 4.2, "The default
-  value of the incremental parameter is false (0)"), but a CONNECT stream is a tunnel, and section 10.1 says "servers
-  SHOULD allocate some amount of bandwidths to streams acting as tunnels" (section 11: "A client that issues multiple
-  CONNECT requests can set the incremental parameter to true"), so every tunnel, a WebTransport session among them,
-  is scheduled incremental unless a signal says otherwise. Each grant starts one stream further along the ring of the
+- Incremental (`i`, `priority: i` among the CONNECT's headers or `StreamPriority(u, incremental = true)`, or the
+  server's own `priority: i` answer for its sending): shared. Each grant starts one stream further along the ring of the
   streams that wait for credit or are writing, and serves them in order from there, so of n streams that keep asking
   each leads, and gets credit, within n grants, and a busy stream never holds the others; the order between streams is
   not kept. A grant is not split evenly: the stream it starts with gets what it asks first, so a stream the peer does

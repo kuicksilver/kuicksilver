@@ -379,8 +379,8 @@ class PriorityTest {
             }
         }
 
-    /** A CONNECT whose `priority` field fails to parse carries no signal: it is scheduled as a tunnel on both sides. */
-    @Test fun negative_garbledConnectFieldStaysTunnel() =
+    /** A CONNECT whose `priority` field fails to parse carries no signal: it gets RFC 9218's defaults on both sides. */
+    @Test fun negative_garbledConnectFieldGetsTheDefaults() =
         h3Test {
             H3Pair.open(serverSettings = http3Settings { enableConnectProtocol = true }).useScoped { p ->
                 val accepted = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
@@ -391,10 +391,10 @@ class PriorityTest {
                 }
                 val garbled = http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("priority" to "U=1") }
                 val tunnel = p.client.connect(garbled, "echo")
-                assertEquals(StreamPriority(3, true), tunnel.priority)
+                assertEquals(StreamPriority.Default, tunnel.priority)
                 val r = withTimeout(5.seconds) { accepted.await() }
                 assertEquals(StreamPriority.Default, r.priority.value)
-                assertEquals(StreamPriority(3, true), (r as ServerRequestImpl).stream.priority)
+                assertEquals(StreamPriority.Default, (r as ServerRequestImpl).stream.priority)
             }
         }
 
@@ -502,24 +502,31 @@ class PriorityTest {
             }
         }
 
-    /** RFC 9218 sections 10.1, 11: a tunnel without a signal shares bandwidth (incremental) on both sides. */
-    @Test fun connectTunnelDefaultsToIncremental() =
+    /**
+     * RFC 9218 section 4: a CONNECT without a signal gets the defaults on both sides, u=3 and "The default value of the
+     * incremental parameter is false (0)" (section 4.2), like any request; its share behind more urgent streams (section
+     * 10.1) is the scheduler's tunnel turn ([tunnelGetsShareBehindUrgentResponse]). A client opts into sharing with `i`
+     * (section 11: "A client that issues multiple CONNECT requests can set the incremental parameter to true"), and a
+     * `u=2` signal keeps i=?0.
+     */
+    @Test fun connectWithoutASignalGetsTheDefaults() =
         h3Test {
             H3Pair.open(serverSettings = io.kuicksilver.http3.http3Settings { enableConnectProtocol = true }).useScoped { p ->
                 val plain = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
                 val explicit = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                val shared = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
                 launch {
-                    for (d in listOf(plain, explicit)) {
+                    for (d in listOf(plain, explicit, shared)) {
                         val r = p.server.acceptRequest()
                         r.acceptConnect()
                         d.complete(r)
                     }
                 }
                 val tunnel = p.client.connect(connectReq(), "echo")
-                assertEquals(StreamPriority(3, true), tunnel.priority)
+                assertEquals(StreamPriority.Default, tunnel.priority)
                 val r = withTimeout(5.seconds) { plain.await() }
-                assertEquals(StreamPriority.Default, r.priority.value) // the client's signal is not rewritten
-                assertEquals(StreamPriority(3, true), (r as ServerRequestImpl).stream.priority)
+                assertEquals(StreamPriority.Default, r.priority.value)
+                assertEquals(StreamPriority.Default, (r as ServerRequestImpl).stream.priority)
                 val u2 =
                     p.client.connect(
                         http3Request("CONNECT", "server.test", "/chat") {
@@ -531,11 +538,22 @@ class PriorityTest {
                     )
                 assertEquals(StreamPriority(2, false), u2.priority)
                 assertEquals(StreamPriority(2, false), (withTimeout(5.seconds) { explicit.await() } as ServerRequestImpl).stream.priority)
+                val sharing =
+                    p.client.connect(
+                        http3Request("CONNECT", "server.test", "/chat") {
+                            headers =
+                                io.kuicksilver.http3.Http3Headers
+                                    .of("priority" to "i")
+                        },
+                        "echo",
+                    )
+                assertEquals(StreamPriority(3, true), sharing.priority)
+                assertEquals(StreamPriority(3, true), (withTimeout(5.seconds) { shared.await() } as ServerRequestImpl).stream.priority)
             }
         }
 
-    /** A response field on an unsignalled tunnel merges into its local schedule: `u=1` keeps the incremental default. */
-    @Test fun responseFieldKeepsTunnelIncremental() =
+    /** A response field on an unsignalled tunnel merges into its local schedule (RFC 9218 section 8): `u=1` keeps i=?0. */
+    @Test fun responseFieldMergesIntoTheTunnelsDefaults() =
         h3Test {
             H3Pair.open(serverSettings = io.kuicksilver.http3.http3Settings { enableConnectProtocol = true }).useScoped { p ->
                 val accepted = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
@@ -549,7 +567,7 @@ class PriorityTest {
                 }
                 p.client.connect(connectReq(), "echo")
                 val r = withTimeout(5.seconds) { accepted.await() }
-                assertEquals(StreamPriority(1, true), (r as ServerRequestImpl).stream.priority)
+                assertEquals(StreamPriority(1, false), (r as ServerRequestImpl).stream.priority)
             }
         }
 }

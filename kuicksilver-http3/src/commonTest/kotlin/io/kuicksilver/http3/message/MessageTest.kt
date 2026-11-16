@@ -411,8 +411,9 @@ class PseudoHeadersTest {
     /**
      * A CONNECT (a tunnel, or an Extended CONNECT such as a WebTransport session) whose caller set the priority explicitly
      * always carries the field, even RFC 9218's defaults (section 4.2, "The default value of the incremental parameter is
-     * false (0)"): a server without the field takes the CONNECT as unsignalled, and ours schedules an unsignalled tunnel
-     * incremental (section 10.1), so the caller's u=3, i=?0 would be lost. An ordinary request at the defaults sends none.
+     * false (0)"): a server may give a CONNECT without the field a tunnel default of its own (ours did, incremental,
+     * before 0.3.0 settled on the RFC's defaults), so the caller's u=3, i=?0 would be lost. An ordinary request at the
+     * defaults sends none.
      */
     @Test fun negative_explicitDefaultPriorityOnAConnectIsSent() {
         fun field(r: io.kuicksilver.http3.Http3Request) = PseudoHeaders.buildRequest(r).filter { it.first == "priority" }.map { it.second }

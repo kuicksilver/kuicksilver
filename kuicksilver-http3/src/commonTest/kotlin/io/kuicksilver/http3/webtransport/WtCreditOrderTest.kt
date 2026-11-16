@@ -10,6 +10,7 @@ import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.http3Request
@@ -259,32 +260,25 @@ class WtCreditOrderTest {
         }
 
     /**
-     * An unsignalled WebTransport CONNECT is a tunnel, scheduled incremental (RFC 9218 sections 10.1, 11): its session
-     * shares the credit between its streams, on both sides, unless the application asks for `i=?0`.
+     * An unsignalled WebTransport CONNECT gets RFC 9218's defaults on both sides (section 4.2, "The default value of the
+     * incremental parameter is false (0)"): its session's credit goes in open order. A `priority: i` signal makes it
+     * incremental on both sides; an explicit `StreamPriority(3, false)` is sent as `i=?0` and reaches the server.
      */
-    @Test fun unsignalledSessionIsIncremental() =
+    @Test fun unsignalledSessionIsInOrder() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
-                val (client, server) = pair(p)
-                assertTrue(withContext(p.client.session.dispatcher) { (client as WtSessionImpl).incrementalForTest })
-                assertTrue(withContext(p.server.session.dispatcher) { (server as WtSessionImpl).incrementalForTest })
-                val (c2, s2) = pair(p, incremental = false)
-                assertFalse(withContext(p.client.session.dispatcher) { (c2 as WtSessionImpl).incrementalForTest })
-                assertFalse(withContext(p.server.session.dispatcher) { (s2 as WtSessionImpl).incrementalForTest })
-                // the client's explicit priority i=?0 at u=3 reaches the server (a CONNECT always writes the field), and so
-                // does a `priority: i=?0` header
-                for ((viaHeader, serverIncremental) in listOf(false to false, true to false)) {
+                for ((label, request) in listOf<Pair<String, Http3Request.Builder.() -> Unit>>(
+                    "unsignalled" to {},
+                    "explicit i=?0" to { priority = StreamPriority(3, false) },
+                    "field i" to { headers = Http3Headers(listOf("priority" to "i")) },
+                )) {
                     val accepted = CompletableDeferred<WebTransportSession>()
                     launch { accepted.complete(p.server.acceptRequest().acceptWebTransport()) }
-                    val c =
-                        p.client.webTransport(
-                            http3Request("CONNECT", "server.test", "/wt") {
-                                if (viaHeader) headers = Http3Headers(listOf("priority" to "i=?0")) else priority = StreamPriority(3, false)
-                            },
-                        )
+                    val c = p.client.webTransport(http3Request("CONNECT", "server.test", "/wt") { request() })
                     val s = withTimeout(5.seconds) { accepted.await() }
-                    assertFalse(withContext(p.client.session.dispatcher) { (c as WtSessionImpl).incrementalForTest })
-                    assertEquals(serverIncremental, withContext(p.server.session.dispatcher) { (s as WtSessionImpl).incrementalForTest })
+                    val expected = label == "field i"
+                    assertEquals(expected, withContext(p.client.session.dispatcher) { (c as WtSessionImpl).incrementalForTest }, label)
+                    assertEquals(expected, withContext(p.server.session.dispatcher) { (s as WtSessionImpl).incrementalForTest }, label)
                 }
             }
         }
