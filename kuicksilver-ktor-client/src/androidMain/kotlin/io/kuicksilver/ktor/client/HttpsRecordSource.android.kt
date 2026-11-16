@@ -15,7 +15,6 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.time.Duration
@@ -33,8 +32,9 @@ internal actual suspend fun platformHttpsQuery(
     if (Build.VERSION.SDK_INT < 29) {
         null
     } else {
-        withTimeoutOrNull(timeout) {
-            val answer = rawQuery(name, DnsMessage.TYPE_HTTPS) ?: return@withTimeoutOrNull null
+        // keptWithin: an answer that came as the timeout fires is the answer
+        keptWithin(timeout) {
+            val answer = rawQuery(name, DnsMessage.TYPE_HTTPS) ?: return@keptWithin null
             // read here, not in the callback: the read checks this coroutine, so the timeout stops it however long the answer
             val context = currentCoroutineContext()
             httpsRecordsOf(KslDnsAnswer.Message(answer), name) { context.ensureActive() }
@@ -60,8 +60,9 @@ internal actual suspend fun platformAddressQuery(
     if (Build.VERSION.SDK_INT < 29) {
         null
     } else {
-        withTimeoutOrNull(timeout) {
-            val answer = rawQuery(name, type) ?: return@withTimeoutOrNull null
+        // keptWithin: an answer that came as the timeout fires is the answer
+        keptWithin(timeout) {
+            val answer = rawQuery(name, type) ?: return@keptWithin null
             try {
                 addressRecordsOf(answer, name, type)
             } catch (_: io.kuicksilver.ktor.client.dns.DnsException) {

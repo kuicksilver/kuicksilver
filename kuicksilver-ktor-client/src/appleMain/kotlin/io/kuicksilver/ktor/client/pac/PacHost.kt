@@ -21,7 +21,6 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import platform.darwin.inet_ntop
 import platform.darwin.inet_pton
 import platform.posix.AF_INET
@@ -43,6 +42,7 @@ import platform.posix.sockaddr_in6
 import platform.posix.socket
 import platform.posix.socklen_tVar
 import kotlin.concurrent.AtomicReference
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * What a PAC script may learn of the host, through the four native functions of [PacContext]: name resolution and the
@@ -207,7 +207,11 @@ internal object PacDns {
         val host = PacHost.current
         val lookup = GlobalScope.async(lookups) { host.resolve(name, ipv4Only) }
         val answer =
-            runBlocking { withTimeoutOrNull(remaining) { lookup.await() } }
+            // keptWithin: a lookup that answered as the bound fires is the answer, not an empty one
+            runBlocking {
+                io.kuicksilver.ktor.client
+                    .keptWithin(remaining.milliseconds) { lookup.await() }
+            }
                 ?: emptyList<String>().also { lookup.cancel() }
         PacRun.answers[name to ipv4Only] = answer
         return answer

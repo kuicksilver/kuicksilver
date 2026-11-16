@@ -134,6 +134,8 @@ internal fun runWinPac(
  */
 internal class BoundedPac(
     private val timeoutMillis: Long,
+    /** Test hook: runs once a call answered, still inside its bound. */
+    private val answeredForTest: (suspend () -> Unit)? = null,
 ) {
     /** Calls started and not ended, and of those the ones that overran their bound. */
     private val inFlight = MutableStateFlow(0)
@@ -165,7 +167,13 @@ internal class BoundedPac(
         }
         var answered = false
         try {
-            val answer = withTimeoutOrNull(timeoutMillis) { call.await() }
+            withTimeoutOrNull(timeoutMillis) {
+                call.await()
+                answeredForTest?.invoke()
+            }
+            // the call keeps its answer: one that came as the bound fires is the answer (withTimeoutOrNull dropped it)
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            val answer = if (call.isCompleted && call.getCompletionExceptionOrNull() == null) call.getCompleted() else null
             answered = answer != null
             return answer ?: WinPacAnswer.Failed
         } finally {

@@ -774,6 +774,8 @@ internal class ProxyRouting(
     private val logger: KuicksilverLogger,
     /** Where a completed call's entry is removed from [inFlight] (tests hold it back to reach the race in [callFor]). */
     private val cleanup: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
+    /** Test hook: runs once a lookup answered, still inside the connect timeout. */
+    private val answeredForTest: (suspend () -> Unit)? = null,
     private val clock: () -> Long = monotonicMillis(),
 ) {
     private val lock = Mutex()
@@ -822,16 +824,19 @@ internal class ProxyRouting(
      * outside the request, shared by every request to the same route while it is in flight, so a hung one holds one
      * thread per route; at most [MAX_ROUTES] run at once and further routes queue for a slot within the same timeout.
      */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private suspend fun resolve(
         resolver: ProxyResolver,
         key: String,
         url: Url,
     ): ResolvedProxy? {
         val timeout = config.connectTimeout
-        // boxed: null is an answer (direct), a missing box the timeout; waiting for a free slot counts against it too
+        // boxed: null is an answer (direct), a missing box the timeout; waiting for a free slot counts against it too.
+        // completedWithin: an answer that came as the timeout fires is the answer, not a ProxyException
         val answer =
-            kotlinx.coroutines.withTimeoutOrNull(timeout) { listOf(callFor(resolver, key, url).await()) }
+            io.kuicksilver.tls.completedWithin(timeout) {
+                listOf(callFor(resolver, key, url).await()).also { answeredForTest?.invoke() }
+            }
                 ?: throw ProxyException("the proxy lookup for ${url.host} took longer than the connect timeout ($timeout)", null)
         return answer.single()
     }

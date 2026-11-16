@@ -16,7 +16,9 @@ import kotlin.time.Duration
  * gives null for a result that already happened: bytes consumed, an item dequeued, a stream opened, a capsule written.
  *
  * What the block did before a cancellation that stopped it is not covered: a block whose steps hand over ownership must
- * keep what it took when it is cancelled half-way (see `HandOffQueue` in kuicksilver-http3).
+ * keep what it took when it is cancelled half-way (see `HandOffQueue` in kuicksilver-http3). Nor is a block that ends in a
+ * `coroutineScope` (or another scope builder): a timeout that lands as the scope completes makes the scope throw instead
+ * of returning, so such a block sets its result inside the scope, as the work ends (a variable written there).
  */
 @InternalKuicksilverApi
 public suspend fun <T : Any> completedWithin(

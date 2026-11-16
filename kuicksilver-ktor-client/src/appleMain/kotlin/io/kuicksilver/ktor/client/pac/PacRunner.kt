@@ -24,8 +24,8 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicLong
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Runs PAC scripts on one thread of their own, each in its [PacContext] (kept per script source, at most [MAX_CONTEXTS],
@@ -137,7 +137,10 @@ internal object PacRunner {
             } finally {
                 queued.update { it - 1 }
             }
-            answer = withTimeoutOrNull(limitMillis) { call.await() }
+            // keptWithin: a run that answered as the limit fires is the answer, not a failure
+            answer =
+                io.kuicksilver.ktor.client
+                    .keptWithin(limitMillis.milliseconds) { call.await() }
             return answer?.getOrNull()
         } finally {
             if (answer == null) {

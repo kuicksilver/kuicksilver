@@ -2205,6 +2205,15 @@ kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.k
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.rawQuicEchoToTheHost
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.noProxyIsDirect
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.guide.both.GuideBothEnginesTest.bothEnginesSample
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_aConnectionObtainedAsTheConnectTimeoutFiresIsUsed
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_aWebSocketsAddressesResolvedAsTheConnectTimeoutFiresAreUsed
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_anH3ConnectionMadeAsTheConnectTimeoutFiresIsUsed
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_anUpgradeDecidedAsTheConnectTimeoutFiresIsThe307
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_recordsReadAsTheConnectTimeoutFiresAreTheResolution
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeadlineRaceTest.negative_aProxyAnswerThatCameAsTheTimeoutFiresIsTheAnswer
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeadlineRaceTest.negative_aWindowsPacAnswerThatCameAsTheBoundFiresIsTheAnswer
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeadlineRaceTest.negative_anHttpsRecordAnswerThatCameAsTheTimeoutFiresIsTheAnswer
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeadlineRaceTest.negative_responseDataThatArrivedAsTheSocketTimeoutFiresIsRead
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.ktorClientWithKuicksilverServerExtensionH1
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.ktorClientWithKuicksilverServerExtensionH3
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientDeflateKtorTest.ktorDeflateExtensionRoundTripH1
@@ -2250,6 +2259,8 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.neg
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.tls12ServerGetsH2
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H3WebSocketConnectRaceTest.negative_aConnectAnsweredAsTheTimeoutFiresIsUsed
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.InactivityRaceTest.negative_aTickSeenAsTheTimeoutFiresIsProgress
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KeptWithinTest.aBlockThatGivesNullOrRunsOutGivesNull
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KeptWithinTest.negative_anAnswerReturnedAsTheTimeoutFiresIsKept
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked

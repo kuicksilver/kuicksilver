@@ -227,6 +227,9 @@ internal class HttpsRecords(
     /** Called once a lookup's answer is settled (stored or not), with the name (tests). */
     internal var settledForTest: ((String) -> Unit)? = null
 
+    /** Test hook: runs once a lookup answered, still inside [queryTimeout]. */
+    internal var answeredForTest: (suspend () -> Unit)? = null
+
     /** Forgets every answer and drops the answers of lookups still running: they belong to the old network. */
     suspend fun onNetworkChanged() =
         lock.withLock {
@@ -276,7 +279,12 @@ internal class HttpsRecords(
         scope.async {
             var answer: DnsAnswer? = null
             try {
-                answer = withTimeoutOrNull(queryTimeout) { lookup(name) }
+                // set as the lookup returns: an answer that came as the timeout fires is stored and given out, though
+                // withTimeoutOrNull drops what the block returned when its timeout lands after it
+                withTimeoutOrNull(queryTimeout) {
+                    answer = lookup(name)
+                    answeredForTest?.invoke()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

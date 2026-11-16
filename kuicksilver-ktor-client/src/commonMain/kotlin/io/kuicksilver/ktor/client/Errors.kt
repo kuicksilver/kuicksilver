@@ -12,8 +12,7 @@ import io.ktor.utils.io.availableForRead
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Source
 
 /** Connect timeout of a request: `HttpTimeout`'s, else the engine's. */
@@ -56,6 +55,8 @@ internal class SocketTimeoutChannel(
     private val delegate: ByteReadChannel,
     private val millis: Long,
     private val request: HttpRequestData,
+    /** Test hook: runs once a wait for data returned, still inside the socket timeout. */
+    private val contentForTest: (suspend () -> Unit)? = null,
 ) : ByteReadChannel {
     override val closedCause: Throwable? get() = delegate.closedCause
     override val isClosedForRead: Boolean get() = delegate.isClosedForRead
@@ -63,13 +64,17 @@ internal class SocketTimeoutChannel(
 
     override suspend fun awaitContent(min: Int): Boolean {
         if (delegate.availableForRead >= min) return true
-        return try {
-            withTimeout(millis) { delegate.awaitContent(min) }
-        } catch (e: TimeoutCancellationException) {
-            val timeout = SocketTimeoutException(request, e)
-            delegate.cancel(timeout)
-            throw timeout
+        // set as the wait returns: data that arrived as the timeout fires is read, though withTimeoutOrNull drops what the
+        // wait returned when its timeout lands after it
+        var arrived: Boolean? = null
+        withTimeoutOrNull(millis) {
+            arrived = delegate.awaitContent(min)
+            contentForTest?.invoke()
         }
+        arrived?.let { return it }
+        val timeout = SocketTimeoutException(request, null)
+        delegate.cancel(timeout)
+        throw timeout
     }
 
     override fun cancel(cause: Throwable?) {

@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.client.pac
 import io.kuicksilver.ktor.client.CfProxy
 import io.kuicksilver.ktor.client.PAC_TIMEOUT_MILLIS
 import io.kuicksilver.ktor.client.PacOutcome
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.milliseconds
 
 /** How long one run of `FindProxyForURL` may take. */
 internal const val PAC_EVAL_TIMEOUT_MILLIS: Long = 2_000
@@ -21,7 +21,8 @@ internal suspend fun evaluatePac(
     target: String,
     host: String,
 ): PacOutcome =
-    withTimeoutOrNull(PAC_TIMEOUT_MILLIS) {
+    // keptWithin: an answer had as the bound fires is the answer, not Failed
+    io.kuicksilver.ktor.client.keptWithin(PAC_TIMEOUT_MILLIS.milliseconds) {
         val deadline = PacRunner.now() + PAC_TIMEOUT_MILLIS
         val (key, script) =
             when {
@@ -30,18 +31,18 @@ internal suspend fun evaluatePac(
                 }
 
                 entry.wpad -> {
-                    wpadScript(deadline) ?: return@withTimeoutOrNull PacOutcome.NoWpad
+                    wpadScript(deadline) ?: return@keptWithin PacOutcome.NoWpad
                 }
 
                 entry.pacUrl != null -> {
-                    entry.pacUrl to (PacScripts.script(entry.pacUrl, PAC_TIMEOUT_MILLIS) ?: return@withTimeoutOrNull PacOutcome.Failed)
+                    entry.pacUrl to (PacScripts.script(entry.pacUrl, PAC_TIMEOUT_MILLIS) ?: return@keptWithin PacOutcome.Failed)
                 }
 
                 else -> {
-                    return@withTimeoutOrNull PacOutcome.Failed
+                    return@keptWithin PacOutcome.Failed
                 }
             }
-        val answer = PacRunner.findProxy(key, script, target, host, PAC_EVAL_TIMEOUT_MILLIS) ?: return@withTimeoutOrNull PacOutcome.Failed
+        val answer = PacRunner.findProxy(key, script, target, host, PAC_EVAL_TIMEOUT_MILLIS) ?: return@keptWithin PacOutcome.Failed
         val proxies = parsePacResult(answer)
         if (proxies.isEmpty()) PacOutcome.Failed else PacOutcome.Answer(proxies)
     } ?: PacOutcome.Failed

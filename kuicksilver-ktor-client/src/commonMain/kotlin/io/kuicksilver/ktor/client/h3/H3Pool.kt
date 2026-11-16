@@ -1007,6 +1007,12 @@ internal class H3Pool(
     /** Test hook: runs in the caller that sets up a connection, before it connects. */
     internal var beforeSetupForTest: (suspend () -> Unit)? = null
 
+    /** Test hook: runs once a setup's race made its connection, still inside the connect timeout. */
+    internal var setupMadeForTest: (suspend () -> Unit)? = null
+
+    /** A setup whose race made no connection within the connect timeout. */
+    private class SetupTimedOut : Exception("no QUIC connection within the connect timeout")
+
     /** Test hook: callers that waited for a setup another caller started. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
@@ -1050,7 +1056,9 @@ internal class H3Pool(
             val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Destination>>())
             try {
                 beforeSetupForTest?.invoke()
-                withTimeout(data.connectTimeoutMillis(config)) {
+                // a connection the race made as the connect timeout fires is the connection: made is set as the race
+                // returns, though withTimeoutOrNull drops the block's end when its timeout lands after it
+                withTimeoutOrNull(data.connectTimeoutMillis(config)) {
                     // every address of the request's resolution, raced (RFC 8305), each as a literal the endpoint does not
                     // look up again
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -1081,8 +1089,9 @@ internal class H3Pool(
                                     )
                             }
                         }
+                    setupMadeForTest?.invoke()
                 }
-                val c = made!!
+                val c = made ?: throw SetupTimedOut()
                 e.connectedTo = attempts.load().firstOrNull { it.first === c }?.second
                 e.idleSince.store(clock())
                 // RFC 9114 section 3.3: a setup of the same origin to the same address that finished meanwhile (both ran
@@ -1110,9 +1119,8 @@ internal class H3Pool(
                 followNetwork(c, data)
                 followPreferredAddress(e, c)
             } catch (
-                x: TimeoutCancellationException,
+                x: SetupTimedOut,
             ) {
-                made?.close()
                 d.completeExceptionally(ConnectTimeoutException(data, x).withAttempts(failures))
                 forget(t, e)
             } catch (

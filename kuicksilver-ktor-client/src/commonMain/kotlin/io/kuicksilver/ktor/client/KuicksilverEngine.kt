@@ -902,6 +902,9 @@ internal class KuicksilverEngine(
     /** Called once the HTTP/3 setup that lost a race is settled: QUIC confirmed, the alternative marked broken, or neither (tests). */
     internal var raceLoserSettledForTest: (() -> Unit)? = null
 
+    /** Test hook: runs once a request's HTTPS records were resolved (or its upgrade decided), still in the connect timeout. */
+    internal var httpsResolvedForTest: (suspend () -> Unit)? = null
+
     /** The cached alternatives for the origin of [url] (tests). */
     internal suspend fun altSvcSnapshot(url: io.ktor.http.Url): List<AltSvcEntry> =
         altSvcLock.withLock { config.http3.altSvcStore.get(originKey(url)) }
@@ -1010,7 +1013,11 @@ internal class KuicksilverEngine(
      * NOT): nothing is remembered beyond the records' TTL. Null to go on over http (no records, or a failed lookup over
      * plain DNS); a failed lookup over protected DNS abandons the request (section 3.1).
      */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, InternalAPI::class)
+    @OptIn(
+        io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+        InternalAPI::class,
+        io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    )
     private suspend fun httpsUpgrade(
         records: HttpsRecords,
         data: HttpRequestData,
@@ -1028,32 +1035,45 @@ internal class KuicksilverEngine(
         val secure = config.http3.httpsRecords.isSecure()
         // waited for as before an https request: while the origin's addresses resolve and the extra wait after them
         // (section 5.1), all of it for a secure source (section 3.1); an answer that comes later is cached for the next
-        val upgrade =
-            withTimeoutOrNull(config.connectTimeout) {
-                coroutineScope {
-                    val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false)) }
-                    val addresses = records.background { lookupQuietly(dns, url.host, url.port) }
-                    select {
-                        query.onJoin {}
-                        addresses.onJoin {}
-                    }
-                    if (secure) {
-                        query.join()
-                    } else if (!query.isCompleted) {
-                        withTimeoutOrNull(config.http3.httpsRecordExtraWait) { query.join() }
-                    }
-                    val answer =
-                        if (query.isCompleted && !query.isCancelled) {
-                            query.getCompleted()
-                        } else if (secure) {
-                            null
-                        } else {
-                            false
-                        }
-                    query.cancel()
-                    answer
+        // set inside the scope, as it is made: a decision made as the connect timeout fires is the decision (the timeout
+        // dropped it, also when it landed while the scope completed, and a secure source's request failed); boxed, as the
+        // decision itself may be null
+        var decided: List<Boolean?>? = null
+        withTimeoutOrNull(config.connectTimeout) {
+            coroutineScope {
+                val query = async { records.upgradesToHttps(https.host, https.port, supportedAlpn(webSocket = false)) }
+                val addresses = records.background { lookupQuietly(dns, url.host, url.port) }
+                select {
+                    query.onJoin {}
+                    addresses.onJoin {}
                 }
-            } ?: if (secure) null else false
+                if (secure) {
+                    query.join()
+                } else if (!query.isCompleted) {
+                    withTimeoutOrNull(config.http3.httpsRecordExtraWait) { query.join() }
+                }
+                val answer =
+                    if (query.isCompleted && !query.isCancelled) {
+                        query.getCompleted()
+                    } else if (secure) {
+                        null
+                    } else {
+                        false
+                    }
+                query.cancel()
+                decided = listOf(answer)
+                httpsResolvedForTest?.invoke()
+            }
+        }
+        val made = decided
+        val upgrade =
+            if (made != null) {
+                made[0]
+            } else if (secure) {
+                null
+            } else {
+                false
+            }
         if (upgrade == null && secure) {
             throw kotlinx.io.IOException(
                 "the HTTPS records of ${https.host} could not be resolved over the secure DNS source before an http request: " +
@@ -1357,7 +1377,10 @@ internal class KuicksilverEngine(
                 progress.endpoint?.let { HttpsResolution.Endpoints(listOf(it)) }
                     ?: HttpsResolution.None
             }
-        return withTimeoutOrNull(config.connectTimeout) {
+        // set inside the scope, as they are read: resolutions read as the connect timeout fires are the resolutions, not a
+        // cut (the timeout dropped them, also when it landed while the scope completed)
+        var resolved: Pair<HttpsResolution, HttpsResolution>? = null
+        withTimeoutOrNull(config.connectTimeout) {
             coroutineScope {
                 val originJob = async { records.resolve(url.host, url.port, supported, originProgress, prefetch) }
                 val altJob =
@@ -1391,9 +1414,11 @@ internal class KuicksilverEngine(
                 val result = outcome(originJob, originProgress) to (altJob?.let { outcome(it, altProgress) } ?: HttpsResolution.None)
                 originJob.cancel()
                 altJob?.cancel()
-                result
+                resolved = result
+                httpsResolvedForTest?.invoke()
             }
-        } ?: (cut(originProgress) to (if (altAuthority == null) HttpsResolution.None else cut(altProgress)))
+        }
+        return resolved ?: (cut(originProgress) to (if (altAuthority == null) HttpsResolution.None else cut(altProgress)))
     }
 
     /** [dns]'s answer for [name], within the connect timeout; a failure stays in [dns] for the connection that needs it. */

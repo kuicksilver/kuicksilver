@@ -40,13 +40,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.readByteArray
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fread
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The most bytes a PAC script may have; a larger one is refused (Chromium's limit is 1 MiB too). */
@@ -134,7 +134,9 @@ internal object PacScripts {
                                 try {
                                     val script =
                                         try {
-                                            withTimeoutOrNull(timeoutMillis) { download(url) }
+                                            // keptWithin: a download that ended as the bound fires is the script
+                                            io.kuicksilver.ktor.client
+                                                .keptWithin(timeoutMillis.milliseconds) { download(url) }
                                         } catch (e: CancellationException) {
                                             throw e
                                         } catch (e: Throwable) {
@@ -155,7 +157,10 @@ internal object PacScripts {
         waiting.update { it + 1 }
         var timedOut = false
         try {
-            val answer = withTimeoutOrNull(timeoutMillis) { flight.job.await() }
+            // keptWithin: a shared download that ended as the bound fires gives its script
+            val answer =
+                io.kuicksilver.ktor.client
+                    .keptWithin(timeoutMillis.milliseconds) { flight.job.await() }
             if (answer == null && !flight.job.isCompleted) timedOut = true
             return answer
         } catch (e: CancellationException) {

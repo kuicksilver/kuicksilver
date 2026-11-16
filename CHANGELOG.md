@@ -1159,6 +1159,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: `KslDns.query` reported no answer for a lookup that answered as its timeout fired.
 - Ktor server: request body bytes that arrived as the body deadline (HTTP/1.1) or the idle deadline (HTTP/2) fired failed
   the read with `RequestBodyTimeout` (408).
+- Ktor client: what a request had as one of its deadlines fired was dropped: response data that arrived as the socket
+  timeout fired (`SocketTimeoutException`), a proxy answer as the connect timeout fired (`ProxyException`), a Windows PAC
+  answer, HTTPS records and the RFC 9460 section 9.5 upgrade decided from them (a secure source's request failed, a plain
+  one was not upgraded), an HTTP/1.1 connection or stream obtained as the connect timeout fired
+  (`ConnectTimeoutException`), a WebSocket's resolved addresses, an HTTP/3 connection made then (closed and failed), and
+  on Android and Apple the DNS answers of the system resolver, the PAC evaluation, its host lookups, script runs and
+  downloads. Each is now kept once it was had.
 - QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
   as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC
