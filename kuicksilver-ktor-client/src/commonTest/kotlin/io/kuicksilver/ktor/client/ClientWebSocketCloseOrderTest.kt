@@ -481,8 +481,11 @@ class ClientWebSocketCloseOrderTest {
 
     /**
      * A session cancelled with its call before it queued its Close, its writer idle between frames with everything sent:
-     * the connection is closed cleanly (RFC 6455 section 7.1.1: the client SHOULD close cleanly; over TLS close_notify,
-     * RFC 9846 section 6.1), not reset. The server reads whole frames, then the end.
+     * the session still closes with one Close frame, 1001 Going Away (RFC 6455 sections 7.1.7 and 7.3: an established
+     * connection is closed with the closing handshake; section 7.4.1), and the connection is then closed cleanly (section
+     * 7.1.1; over TLS close_notify, RFC 9846 section 6.1), not reset. The server reads whole frames, the Close, then the
+     * end. Before, the session was cut without a Close, or (as Ktor's answer to the cancellation, about once in 400 runs
+     * on a loaded host) sent a Close 1000.
      */
     @Test fun negative_anIdleCancelledPlainSessionClosesCleanly() = idleCancelledSessionClosesCleanly(tls = false)
 
@@ -508,8 +511,8 @@ class ClientWebSocketCloseOrderTest {
                     session.call.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
                     val frames = withTimeout(20.seconds) { read.await() }
                     assertTrue(
-                        frames.dropLast(1).all { it == "binary 10" } && frames.last() == "end",
-                        "whole frames, then the end: $frames",
+                        frames.dropLast(1).all { it == "binary 10" } && frames.last() == "close 1001 ",
+                        "whole frames, then one Close 1001: $frames",
                     )
                     val events = withTimeout(20.seconds) { ended.await() }
                     assertFalse("client RST" in events, "a clean close, not a reset: $events")

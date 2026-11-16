@@ -3287,9 +3287,9 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   fails it as an HTTP/1.1 answer without 101 does. The frames go within the server's flow-control windows (a send stall
   is bounded by the socket timeout) and come in through the stream's own window. A session that ends in order sends its
   END_STREAM only after the server's (at most 5 s after both Closes, then anyway; the stream is reset with CANCEL only
-  when the server's END_STREAM has not come 5 s after that); a handshake refused here, or a call that failed or was
-  cancelled before the session queued its Close, resets the stream with CANCEL (one cancelled after it, as Ktor's
-  `webSocketSession()` always is, first writes that Close: see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
+  when the server's END_STREAM has not come 5 s after that); a handshake refused here resets the stream with CANCEL, and a call that failed or
+  was cancelled once the session was open closes it with a Close (1001 Going Away, or the application's own code) as one
+  cancelled after its Close does (see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
 
 #### Connection pool
@@ -3408,7 +3408,9 @@ closes its side cleanly), and over HTTP/2 and HTTP/3 5 s more for the server's E
 (then the stream is reset). The session's end handlers are cut off two close waits after the session ended, whatever
 they still wait for. The pools close after that, as for any request (at most about 3 s more). The connection, its pool slot and the engine's
 `close()` wait for the session, not for the call: `client.close()` right after `close(reason)` still sends the Close
-before the pools close. A call that ends before the session queued its Close ends the session at once. A coroutine of
+before the pools close. A call that fails or is cancelled before the session queued its Close still closes it with the
+closing handshake (RFC 6455 sections 7.1.7 and 7.3): one Close, 1001 Going Away (or the application's own code when it sends
+one, as from a `finally`), bounded by the same close wait; only a call that ends during the handshake ends it at once. A coroutine of
 the session that fails is reported to the event listener (`webSocketFailed`).
 
 #### Discovery and Alt-Svc

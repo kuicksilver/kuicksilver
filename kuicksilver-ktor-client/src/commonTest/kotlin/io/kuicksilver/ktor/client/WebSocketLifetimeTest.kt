@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
+import io.ktor.websocket.readReason
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -56,6 +57,8 @@ class WebSocketLifetimeTest {
     private class Setup(
         closeWait: Long = 60_000,
         val listener: Failures = Failures(),
+        /** Whether the session was made ([WebSocketLifetime.watch]): false for a handshake still under way. */
+        watched: Boolean = true,
     ) {
         val call = Job()
 
@@ -75,7 +78,14 @@ class WebSocketLifetimeTest {
         val release = CompletableDeferred<Unit>()
         val writer = kotlinx.coroutines.CoroutineScope(lifetime.context).launch { release.await() }
         val raw = NullSession(lifetime.context)
-        val session = lifetime.watch(raw)
+        val session = if (watched) lifetime.watch(raw) else raw
+
+        /** The Close frames that reached the session's own outgoing channel, as codes. */
+        fun closesSent(): List<Short?> =
+            generateSequence { raw.outgoing.tryReceive().getOrNull() }
+                .filterIsInstance<Frame.Close>()
+                .map { it.readReason()?.code }
+                .toList()
 
         init {
             lifetime.invokeOnEnd { ended.complete(it) }
@@ -95,25 +105,45 @@ class WebSocketLifetimeTest {
             }
         }
 
-    @Test fun negative_aCallCancelledBeforeTheOwnCloseCancelsTheSessionAtOnce(): Unit =
+    /**
+     * A call cancelled before the session queued its own Close: the established session still closes with one Close
+     * frame, 1001 Going Away (RFC 6455 sections 7.1.7 and 7.3), and its coroutines go on within the close wait to write it
+     * and read the server's; the session ends in order. Before, it was cancelled at once, without a Close.
+     */
+    @Test fun negative_aCallCancelledBeforeTheOwnCloseClosesTheSessionWith1001(): Unit =
         runBlocking {
             withTimeout(10.seconds) {
                 val s = Setup()
                 s.call.cancel(CancellationException("the application gave up"))
+                s.call.join()
+                assertTrue(s.lifetime.ownCloseQueued, "the session's Close")
+                assertEquals(listOf<Short?>(1001), s.closesSent(), "one Close, Going Away")
+                assertTrue(s.writer.isActive, "the writer goes on to write it")
+                s.release.complete(Unit)
                 s.writer.join()
-                assertTrue(s.writer.isCancelled, "the session's writer is cancelled with the call")
+                assertNull(s.ended.await(), "the session ended in order")
+            }
+        }
+
+    /** A handshake still under way ([WebSocketLifetime.watch] not called): there is no session to close, it is cancelled. */
+    @Test fun aCallCancelledBeforeTheSessionWasMadeCancelsItAtOnce(): Unit =
+        runBlocking {
+            withTimeout(10.seconds) {
+                val s = Setup(watched = false)
+                s.call.cancel(CancellationException("the application gave up"))
+                s.writer.join()
+                assertTrue(s.writer.isCancelled, "the session's coroutines are cancelled with the call")
                 assertIs<CancellationException>(s.ended.await())
+                assertEquals(emptyList(), s.closesSent())
             }
         }
 
     /**
-     * Ktor's session answers its call's cancellation by closing its outgoing channel, and its outgoing processor then
-     * sends a Close 1000 of its own: that Close comes after the cancellation began, so it is no own Close of the session.
-     * It is not sent, and the session is cancelled at once as for any call cancelled before its own Close. Before, it
-     * counted as the own Close whenever it came before the cancellation completed: the session went on and the server got
-     * a Close 1000 (or, cut by the cancellation, a reset) from a session the application had cancelled.
+     * Ktor's session answers its call's cancellation by closing its outgoing channel, and its processor then sends a Close
+     * 1000 without a reason: whichever comes first, it or the lifetime's own, exactly one Close goes out, and it is 1001
+     * Going Away. Before, that Close went out as 1000 when it came first (about once in 400 runs on a loaded host).
      */
-    @Test fun negative_aCloseSentBecauseTheCallIsCancelledIsNoOwnClose(): Unit =
+    @Test fun negative_aCloseKtorSendsBecauseTheCallIsCancelledGoesOutOnceAs1001(): Unit =
         runBlocking {
             withTimeout(10.seconds) {
                 val s = Setup()
@@ -130,17 +160,32 @@ class WebSocketLifetimeTest {
                     }
                 s.call.cancel(CancellationException("the application gave up"))
                 processor.join()
-                assertFalse(s.lifetime.ownCloseQueued, "a Close sent after the call's cancellation is no own Close")
-                assertFalse(s.lifetime.cutByCloseWait, "cancelled by its call, not cut by the close wait")
-                assertTrue(
-                    s.raw.outgoing
-                        .tryReceive()
-                        .isFailure,
-                    "and it is not sent",
-                )
-                s.writer.join()
-                assertTrue(s.writer.isCancelled, "the session's writer is cancelled with the call")
-                assertIs<CancellationException>(s.ended.await())
+                s.call.join()
+                assertEquals(listOf<Short?>(1001), s.closesSent(), "one Close, Going Away")
+                assertFalse(s.lifetime.cutByCloseWait)
+            }
+        }
+
+    /** The application's own Close from a `finally` of a cancelled call keeps its code; nothing is sent after it. */
+    @Test fun negative_anApplicationsCloseFromAFinallyKeepsItsCode(): Unit =
+        runBlocking {
+            withTimeout(10.seconds) {
+                val s = Setup()
+                val app =
+                    kotlinx.coroutines.CoroutineScope(s.call).launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        try {
+                            kotlinx.coroutines.awaitCancellation()
+                        } finally {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                s.session.outgoing.send(Frame.Close(io.ktor.websocket.CloseReason(4000, "bye")))
+                                s.session.outgoing.send(Frame.Close(io.ktor.websocket.CloseReason(1000, ""))) // a second
+                            }
+                        }
+                    }
+                s.call.cancel(CancellationException("the application gave up"))
+                app.join()
+                s.call.join()
+                assertEquals(listOf<Short?>(4000), s.closesSent(), "the application's Close, once")
             }
         }
 

@@ -1150,11 +1150,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 3), over HTTP/2 a reset stream got `END_STREAM` and one more close wait, and over HTTP/1.1 with TLS the server's
   FIN was not read before the close. A data tick seen as the socket inactivity timeout fired no longer cuts the exchange,
   and the Ktor server no longer ends an HTTP/2 connection with GOAWAY for a client preface read as its deadline fired.
-- A client WebSocket over HTTP/1.1 cancelled with its call while idle could end with a Close 1000 it never asked for, or
-  with a reset that cut its last frame off: Ktor's session answers the cancellation with a Close, which was taken for the
-  session's own, and a frame not yet taken by the socket's writer (a loaded host) made the connection reset. That Close is
-  no longer sent, and whole frames still queued go out before the FIN; only a session the close wait cut is reset with
-  data queued.
+- A client WebSocket whose call failed or was cancelled before it sent its own Close ended without the closing handshake
+  (RFC 6455 sections 7.1.7 and 7.3): cancelled at once, or, depending on timing, with the Close 1000 Ktor's session sends
+  in answer to the cancellation; over HTTP/1.1 a frame not yet taken by the socket's writer (a loaded host) also made the
+  connection reset. Such a session now sends one Close, 1001 Going Away (or the application's own code when it sends one,
+  as from a `finally`), waits the close wait for the server's, and ends its transport in order; whole frames still queued
+  go out before the FIN, and only a session the close wait cut is reset with data queued.
 - HTTP/2: a request or response body whose peer opened its window as the send-stall bound fired failed as stalled.
 - TLS: `KslDns.query` reported no answer for a lookup that answered as its timeout fired.
 - Ktor server: request body bytes that arrived as the body deadline (HTTP/1.1) or the idle deadline (HTTP/2) fired failed

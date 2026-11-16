@@ -32,6 +32,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.EmptyCoroutineContext
@@ -277,8 +278,12 @@ class H2ReleaseFailureTest {
             runCurrent()
             assertEquals(HttpStatusCode.SwitchingProtocols, response.await().statusCode)
             f.armed = true
-            call.cancel() // reset at once, from the completion handler
+            // the session sends its Close 1001 and waits the close wait for the server's (RFC 6455 section 7.1.7), which
+            // never comes: then it is cut and the stream reset, and the release that fails is logged
+            call.cancel()
             runCurrent()
+            assertEquals(0, f.released.size, "held for the close wait")
+            advanceUntilIdle()
             f.assertReleasedOnce()
             f.assertWarned()
         }

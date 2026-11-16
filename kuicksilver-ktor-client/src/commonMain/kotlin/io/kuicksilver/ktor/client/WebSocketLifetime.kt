@@ -6,8 +6,10 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.HttpRequestData
 import io.ktor.util.AttributeKey
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
+import io.ktor.websocket.readReason
 import io.kuicksilver.ktor.client.h1.SpinLock
 import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.CancellationException
@@ -81,7 +83,10 @@ internal val WebSocketLifetimeKey: AttributeKey<WebSocketLifetime> = AttributeKe
  *   never answers, or never takes the Close) is cancelled, whichever way its call ended (RFC 6455 section 7.1.1: the
  *   client may close "in abnormal cases"), and its transport is ended at once (reset when its writer had not finished:
  *   what it had queued never leaves after the close wait);
- * - a call that ends with a cause before that cancels the session at once, as before;
+ * - a call that ends with a cause before that closes the session the same way (RFC 6455 sections 7.1.7 and 7.3: an
+ *   established connection ends with the closing handshake): one Close, 1001 Going Away, or the application's own code
+ *   when it sends one meanwhile (Ktor's own answer to the cancellation, a Close 1000 without a reason, goes out as 1001),
+ *   never a second Close; a call that ends before the session was made (the handshake) cancels it at once;
  * - the engine's cleanup after `client.close()` waits for the session's end (the engine's in-flight job of the call is
  *   held until every [invokeOnEnd] handler has run), so a lingering session is not cut by the pools closing under it.
  *
@@ -181,8 +186,10 @@ internal class WebSocketLifetime(
             job.join()
         }
         callJob.invokeOnCompletion { cause ->
-            // the call failed after the session's Close was queued: the Close goes out, within the close wait (T1, [watch])
-            if (cause != null && !ownClose.load()) job.cancel(CancellationException("the call ended before the session's Close", cause))
+            // the call failed after the session's Close was queued: the Close goes out, within the close wait (T1, [watch]).
+            // One that failed before: an established session still closes with a Close frame (RFC 6455 sections 7.1.7 and
+            // 7.3), 1001 Going Away, within the close wait; one not established yet (no [watch]) is cancelled at once
+            if (cause != null && !ownClose.load()) closeForEndedCall(cause)
             job.invokeOnCompletion { sessionCause ->
                 end(
                     when {
@@ -206,19 +213,47 @@ internal class WebSocketLifetime(
         session: WebSocketSession,
         onClose: () -> Unit = {},
     ): WebSocketSession {
+        ownCloseHook = onClose
+        watched.store(session)
         job.complete()
-        return OwnCloseWatch(session) {
-            // a Close sent once the call is being cancelled answers that cancellation (Ktor's session closes its outgoing
-            // channel when its call is cancelled, and its processor then sends a Close 1000): no own Close, and not sent;
-            // the session is cancelled with the call
-            if (callJob.isCancelled && !ownClose.load()) return@OwnCloseWatch false
-            if (ownClose.compareAndSet(false, true)) {
-                ownCloseAt.store(TimeSource.Monotonic.markNow())
-                boundByCloseWait()
-            }
-            onClose()
-            true
+        return OwnCloseWatch(session, ::claimClose)
+    }
+
+    /** The session as [watch] got it (its own outgoing channel, under the watch); null before. */
+    private val watched = AtomicReference<WebSocketSession?>(null)
+
+    @kotlin.concurrent.Volatile private var ownCloseHook: () -> Unit = {}
+
+    /**
+     * The session's one Close (RFC 6455 section 5.5.1: after it nothing more is sent), as [close] goes out: null for a
+     * Close after the first, which is not sent. A Close sent once the call is cancelled whose code is 1000 without a reason
+     * is Ktor's own answer to that cancellation (its session closes its outgoing channel, and its processor sends a normal
+     * Close): it goes out as 1001 Going Away, as the session's end through a cancelled call is (section 7.4.1); any other
+     * code, the application's own (a `close()` in a `finally`), is sent as it is.
+     */
+    private fun claimClose(close: Frame.Close): Frame.Close? {
+        if (!ownClose.compareAndSet(false, true)) return null
+        ownCloseAt.store(TimeSource.Monotonic.markNow())
+        boundByCloseWait()
+        ownCloseHook()
+        val reason = close.readReason()
+        val normalWithoutReason = reason != null && reason.code == CloseReason.Codes.NORMAL.code && reason.message.isEmpty()
+        return if (callJob.isCancelled && normalWithoutReason) Frame.Close(CloseReason(CloseReason.Codes.GOING_AWAY, "")) else close
+    }
+
+    /**
+     * The call ended with [cause] before the session queued its own Close. An established session ([watch]) sends one,
+     * 1001 Going Away, and has the close wait (T1) for it and the server's, as after any own Close; the transport then
+     * ends in order. A Close the session (Ktor's, or the application's) sent meanwhile is that one. A session not
+     * established yet, or whose outgoing channel no longer takes the Close, is cancelled at once.
+     */
+    private fun closeForEndedCall(cause: Throwable) {
+        val session = watched.load()
+        if (session != null) {
+            val close = claimClose(Frame.Close(CloseReason(CloseReason.Codes.GOING_AWAY, ""))) ?: return // one is queued
+            if (session.outgoing.trySend(close).isSuccess) return
         }
+        job.cancel(CancellationException("the call ended before the session's Close", cause))
     }
 
     /**
@@ -338,35 +373,37 @@ internal class WebSocketLifetime(
 }
 
 /**
- * [raw] with [onClose] run when the session sends its own Close (see [WebSocketLifetime.watch]); a Close [onClose] refuses
- * (false) is dropped, as if sent.
+ * [raw] with every Close the session sends passed through [onClose] (see [WebSocketLifetime.watch]): what it gives is sent
+ * in its place, and a Close it refuses (null) is dropped, as if sent.
  */
 private class OwnCloseWatch(
     private val raw: WebSocketSession,
-    private val onClose: () -> Boolean,
+    private val onClose: (Frame.Close) -> Frame.Close?,
 ) : WebSocketSession by raw {
     override val outgoing: SendChannel<Frame> =
         object : SendChannel<Frame> by raw.outgoing {
             override suspend fun send(element: Frame) {
-                if (element is Frame.Close && !onClose()) return
-                raw.outgoing.send(element)
+                raw.outgoing.send(if (element is Frame.Close) onClose(element) ?: return else element)
             }
 
             override fun trySend(element: Frame): ChannelResult<Unit> {
                 // dropped: the success a channel that takes everything gives (ChannelResult's constructors are internal)
-                if (element is Frame.Close && !onClose()) {
-                    return kotlinx.coroutines.channels
-                        .Channel<Frame>(1)
-                        .trySend(element)
-                }
-                return raw.outgoing.trySend(element)
+                val frame =
+                    if (element is Frame.Close) {
+                        onClose(element) ?: return kotlinx.coroutines.channels
+                            .Channel<Frame>(1)
+                            .trySend(element)
+                    } else {
+                        element
+                    }
+                return raw.outgoing.trySend(frame)
             }
 
             @Deprecated("Use trySend", level = DeprecationLevel.ERROR)
             @Suppress("DEPRECATION_ERROR", "OVERRIDE_DEPRECATION")
             override fun offer(element: Frame): Boolean {
-                if (element is Frame.Close && !onClose()) return true
-                return raw.outgoing.offer(element)
+                val frame = if (element is Frame.Close) onClose(element) ?: return true else element
+                return raw.outgoing.offer(frame)
             }
         }
 
