@@ -5585,6 +5585,7 @@ kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.ClientAlertJdkServerTest.negative
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.aBlockStillWaitingGivesNull
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KeylogFileNoNioTest.negative_keylogFileWithoutNioIsRefused
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsRaceTest.negative_anAnswerThatCameAsTheTimeoutFiresIsTheAnswer
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.answerForms
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.fakeServerAnswerParses
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.liveCloudflareHasH3

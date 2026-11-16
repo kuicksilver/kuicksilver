@@ -72,6 +72,15 @@ public object KslDns {
         type: Int,
         timeout: Duration,
         server: ByteArray? = null,
+    ): KslDnsAnswer? = query(name, type, timeout, server, answeredForTest = null)
+
+    /** [query], with a test hook that runs once the lookup answered, still inside [timeout]. */
+    internal suspend fun query(
+        name: String,
+        type: Int,
+        timeout: Duration,
+        server: ByteArray?,
+        answeredForTest: (suspend () -> Unit)?,
     ): KslDnsAnswer? {
         val ms = timeout.inWholeMilliseconds.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
         val call = queryForTest ?: { n, t, s, m -> KslLoader.ensureLoaded().let { Ksl.dnsQuery(n, t, s, m) } }
@@ -89,7 +98,15 @@ public object KslDns {
                     slots.release()
                 }
             }
-        val raw = withTimeoutOrNull(timeout) { lookup.await() } ?: return null
+        // an answer that came as the timeout fires is the answer: the lookup keeps it, though withTimeoutOrNull drops what
+        // the wait returned when its timeout lands after it
+        withTimeoutOrNull(timeout) {
+            lookup.await()
+            answeredForTest?.invoke()
+        }
+        if (!lookup.isCompleted || lookup.isCancelled) return null
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        val raw = lookup.getCompleted() ?: return null
         return decode(raw)
     }
 

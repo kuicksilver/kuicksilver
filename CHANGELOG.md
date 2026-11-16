@@ -1156,6 +1156,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no longer sent, and whole frames still queued go out before the FIN; only a session the close wait cut is reset with
   data queued.
 - HTTP/2: a request or response body whose peer opened its window as the send-stall bound fired failed as stalled.
+- TLS: `KslDns.query` reported no answer for a lookup that answered as its timeout fired.
 - QUIC: a connection whose loop was held up past its idle deadline (a GC pause, a stopped VM, a loaded host) was closed
   as idle even when the loop had already received its peer's packet, from before the deadline, and only not processed it
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC
