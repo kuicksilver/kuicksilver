@@ -72,7 +72,7 @@ class WtCreditQueueTest {
 
                 suspend fun check(step: Int) {
                     settle()
-                    for ((i, t) in takes.entries.toList()) {
+                    for ((i, t) in takes.toList()) { // pairs: a native entry is a live view of the map
                         if (t.isCompleted) {
                             taken += runCatching { t.await() }.getOrDefault(0)
                             takes.remove(i)
