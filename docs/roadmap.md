@@ -168,7 +168,7 @@ what the peers really do, and is delivered whole or not at all.
 - Certificate selection by SNI for QUIC and HTTP/3 (today `sniSelector` works on TCP only, and HTTP/3 does not start with
   it).
 - h2c (HTTP/2 with prior knowledge over cleartext TCP), opt-in on the client and the server, for deployments behind
-  TLS-terminating proxies, service meshes and gRPC; it reverses ADR-0017's "no h2c"
+  TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
   ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)).
 - Connection coalescing across origins for HTTP/2 and HTTP/3: the address matches and the certificate covers the name,
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
