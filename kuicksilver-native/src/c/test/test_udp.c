@@ -238,6 +238,70 @@ static int recv1(ksl_udp *u, int timeout_ms) {
         return -1;
     return got ? (int)lens[0] : 0;
 }
+/* One datagram of [len] bytes with mark [ecn] from u to [to] (v's address), sent again up to four times when none arrived within
+   2 s: right after many sockets close, Darwin's loopback drops datagrams under a UDP flood (plain sockets lose them alike). The
+   mark of the first one received goes to *mark; the number received (0 or 1) is returned */
+static uint32_t ping1_resent(ksl_udp *u, ksl_udp *v, const uint8_t to[KSL_UDP_ADDR_LEN], uint32_t len, uint8_t ecn,
+                             uint8_t *mark) {
+    uint8_t *buf = malloc(len), *rbuf = malloc(1500);
+    memset(buf, 0x5a, len);
+    uint8_t *bufs[1] = {buf}, *rb[1] = {rbuf};
+    uint32_t lens[1] = {len}, caps[1] = {1500}, rl[1], got = 0;
+    uint8_t ecns[1] = {ecn}, ra[KSL_UDP_ADDR_LEN], re[1];
+    for (int attempt = 0; attempt < 5 && !got; attempt++) {
+        uint32_t sent = 0;
+        CHECK(ksl_udp_send(u, bufs, lens, to, ecns, 1, &sent) == KSL_OK && sent == 1, "send");
+        int64_t end = mono_ms() + 2000;
+        while (!got && mono_ms() < end) {
+            int r = ksl_udp_recv(v, rb, caps, rl, ra, re, 1, &got, 200);
+            CHECK(r == KSL_OK || r == KSL_WANT_READ, "recv");
+        }
+        if (!got)
+            printf("    note: a datagram lost on loopback; sent again\n");
+    }
+    if (got) {
+        CHECK(rl[0] == len && rbuf[0] == 0x5a && rbuf[len - 1] == 0x5a, "the datagram arrives intact");
+        *mark = re[0];
+    }
+    free(buf);
+    free(rbuf);
+    return got;
+}
+/* Sends [empties] empty datagrams and then "q" from the plain socket s to [to], u's address, and tells whether the whole burst is
+   in u's receive queue: 1 when it is (Darwin counts the queued datagrams, SO_NUMRCVPKT, waited for up to 5 s), 0 when it never
+   got there (loopback drops datagrams under a UDP flood, every sendto successful: what did arrive is read off the socket, so the
+   caller can send the burst again), -1 when this host cannot count (Linux: the caller's own deadline covers late delivery) */
+static int queue_burst(ksl_udp *u, int s, const struct sockaddr_in *to, int empties) {
+    for (int i = 0; i < empties; i++)
+        (void)sendto(s, "", 0, 0, (const struct sockaddr *)to, sizeof *to);
+    (void)sendto(s, "q", 1, 0, (const struct sockaddr *)to, sizeof *to);
+#ifdef SO_NUMRCVPKT
+    uint8_t fd8[4];
+    size_t n = 0;
+    if (ksl_udp_get(u, KSL_UDP_GET_FD, fd8, 4, &n) != KSL_OK || n != 4)
+        return -1;
+    int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
+    int64_t until = mono_ms() + 5000;
+    for (;;) {
+        int queued = 0;
+        socklen_t ql = sizeof queued;
+        if (getsockopt(fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &ql) != 0)
+            return -1;
+        if (queued >= empties + 1)
+            return 1;
+        if (mono_ms() >= until)
+            break;
+        usleep(5000);
+    }
+    char b[8];
+    while (recv(fd, b, sizeof b, MSG_DONTWAIT) >= 0) {
+    }
+    return 0;
+#else
+    (void)u;
+    return -1;
+#endif
+}
 #ifdef __linux__
 static uint16_t csum16(const uint8_t *p, size_t n) {
     uint32_t s = 0;
@@ -1189,28 +1253,54 @@ void run_udp(void) {
             CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO");
         }
 #endif
-        /* udp_truncated_datagram_dropped: a 1400-byte datagram into a 1000-byte slot is dropped, not truncated */
+        /* udp_truncated_datagram_dropped: a 1400-byte datagram into a 1000-byte slot is dropped, not truncated. A 100-byte marker
+           follows it from the same socket, and the receive goes on until the marker: every datagram handed out before it must be the
+           marker itself. A receive that only waited for a timeout passed when the big one had not arrived yet (a loaded host delivers
+           loopback late), and left it queued for the next test on that socket; a receiver of its own keeps a late one from leaking */
         {
-            uint8_t *bufs[1];
-            uint32_t lens[1] = {1400};
-            uint8_t addrs[KSL_UDP_ADDR_LEN];
-            uint8_t ecns[1] = {0};
-            bufs[0] = malloc(1400);
-            memset(bufs[0], 7, 1400);
-            memcpy(addrs, lb, KSL_UDP_ADDR_LEN);
-            uint32_t sent = 0;
-            CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent");
-            uint8_t *rb[1];
-            uint32_t rc[1] = {1000};
-            uint32_t rl[1];
-            uint8_t ra[KSL_UDP_ADDR_LEN];
-            uint8_t re[1];
-            uint32_t got = 0;
-            rb[0] = malloc(1000);
-            int r = ksl_udp_recv(b, rb, rc, rl, ra, re, 1, &got, 300);
-            CHECK((r == KSL_OK && got == 0) || r == KSL_WANT_READ, "truncated datagram dropped");
-            free(bufs[0]);
-            free(rb[0]);
+            uint8_t lt[KSL_UDP_ADDR_LEN];
+            ksl_udp *t = open_lo(0, lt);
+            CHECK(t != NULL, "truncation receiver");
+            if (t) {
+                uint8_t *bufs[2];
+                uint32_t lens[2] = {1400, 100};
+                uint8_t addrs[2 * KSL_UDP_ADDR_LEN];
+                uint8_t ecns[2] = {0, 0};
+                bufs[0] = malloc(1400);
+                memset(bufs[0], 7, 1400);
+                bufs[1] = malloc(100);
+                memset(bufs[1], 8, 100);
+                memcpy(addrs, lt, KSL_UDP_ADDR_LEN);
+                memcpy(addrs + KSL_UDP_ADDR_LEN, lt, KSL_UDP_ADDR_LEN);
+                uint32_t sent = 0;
+                CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2,
+                      "big one and marker sent");
+                uint8_t *rb[1];
+                uint32_t rc[1] = {1000};
+                uint32_t rl[1];
+                uint8_t ra[KSL_UDP_ADDR_LEN];
+                uint8_t re[1];
+                rb[0] = malloc(1000);
+                int marker = 0, other = 0;
+                int64_t end = mono_ms() + 5000;
+                while (!marker && !other && mono_ms() < end) {
+                    uint32_t got = 0;
+                    int r = ksl_udp_recv(t, rb, rc, rl, ra, re, 1, &got, 200);
+                    CHECK(r == KSL_OK || r == KSL_WANT_READ, "recv");
+                    if (r != KSL_OK || !got)
+                        continue;
+                    if (rl[0] == 100 && rb[0][0] == 8 && rb[0][99] == 8)
+                        marker = 1;
+                    else
+                        other = 1;
+                }
+                CHECK(!other, "truncated datagram dropped: nothing but the marker handed out");
+                CHECK(marker, "the marker behind the dropped datagram arrives");
+                free(bufs[0]);
+                free(bufs[1]);
+                free(rb[0]);
+                ksl_udp_close(t);
+            }
         }
         /* udp_gso_join_fits_an_ipv4_datagram: 60 x 1092 = 65520 bytes fit the 64 KiB scratch, but an IPv4 datagram carries at
            most 65507 bytes of UDP payload (65535 - 20 - 8; Linux __ip_append_data answers EMSGSIZE), and EMSGSIZE for segments of
@@ -1246,7 +1336,11 @@ void run_udp(void) {
         }
         /* udp_concurrent_send_recv_same_socket: one thread sends GSO batches on b while another receives trains on b (the loop and the
            receiver of KslDatagramIo); every received segment must be intact — the multi-loop test caught the server handing its own
-           outgoing Initials back to itself when send and receive shared one scratch buffer */
+           outgoing Initials back to itself when send and receive shared one scratch buffer. Intact is checked byte for byte: segment
+           i of round r is 1200 bytes of 0x40 + i with r in bytes 1 and 2, from c's address, of a round already sent. Loss is not
+           corruption: loopback drops whole trains under a UDP flood (Darwin, seen with plain sendto/recv sockets too, every sendto
+           successful), so a missing segment is counted and reported, and only a run where most of the trains never arrived fails,
+           as a check that saw too little traffic to mean anything */
         {
             uint8_t lc[KSL_UDP_ADDR_LEN];
             ksl_udp *c = open_lo(KSL_UDP_GSO | KSL_UDP_GRO, lc);
@@ -1261,7 +1355,6 @@ void run_udp(void) {
                 uint8_t te[8];
                 for (uint32_t i = 0; i < 8; i++) {
                     tb[i] = malloc(1200);
-                    memset(tb[i], 0x40 + (int)i, 1200);
                     tl[i] = 1200;
                     memcpy(ta + i * KSL_UDP_ADDR_LEN, lb, KSL_UDP_ADDR_LEN);
                     te[i] = 0;
@@ -1281,8 +1374,13 @@ void run_udp(void) {
                     dc[i] = 1500;
                 }
                 int ok = 1;
-                uint32_t rounds = 0, corrupted = 0;
+                uint32_t rounds = 0, corrupted = 0, intact = 0;
                 for (int round = 0; round < 300 && ok; round++) {
+                    for (uint32_t i = 0; i < 8; i++) {
+                        memset(tb[i], 0x40 + (int)i, 1200);
+                        tb[i][1] = (uint8_t)round;
+                        tb[i][2] = (uint8_t)(round >> 8);
+                    }
                     uint32_t sent = 0;
                     if (ksl_udp_send(c, tb, tl, ta, te, 8, &sent) != KSL_OK || sent != 8) {
                         ok = 0;
@@ -1294,13 +1392,18 @@ void run_udp(void) {
                         if (r != KSL_OK)
                             continue;
                         for (uint32_t i = 0; i < got; i++) {
-                            if (rl[i] != 1200 || rb[i][0] != rb[i][1199] || rb[i][0] < 0x40 || rb[i][0] > 0x47)
+                            const uint8_t *p = rb[i];
+                            int good = rl[i] == 1200 && p[0] >= 0x40 && p[0] <= 0x47 && (p[1] | p[2] << 8) <= round &&
+                                       !memcmp(ra + i * KSL_UDP_ADDR_LEN, lc, KSL_UDP_ADDR_LEN);
+                            for (uint32_t k = 3; good && k < 1200; k++)
+                                good = p[k] == p[0];
+                            if (good)
+                                intact++;
+                            else
                                 corrupted++;
                         }
                         total += got;
                     }
-                    if (total != 8)
-                        corrupted++;
                     rounds++;
                     uint32_t d = 0;
                     ksl_udp_recv(a, db, dc, dl, da, de, 8, &d,
@@ -1308,8 +1411,14 @@ void run_udp(void) {
                 }
                 __atomic_store_n(&sa.stop, 1, __ATOMIC_RELEASE);
                 pthread_join(t, NULL);
-                CHECK(ok && rounds == 300, "300 rounds of trains received");
+                CHECK(ok && rounds == 300, "300 rounds of trains sent");
                 CHECK(corrupted == 0, "no segment corrupted by the concurrent sender");
+                if (corrupted)
+                    printf("    %u of %u segments corrupted\n", corrupted, 8 * rounds);
+                if (intact + corrupted < 8 * rounds)
+                    printf("    note: %u of %u segments lost on loopback\n", 8 * rounds - intact - corrupted,
+                           8 * rounds);
+                CHECK(intact >= 4 * rounds, "most segments arrived: the check saw the traffic it is about");
                 for (uint32_t i = 0; i < 8; i++) {
                     free(tb[i]);
                     free(rb[i]);
@@ -1736,7 +1845,8 @@ void run_udp(void) {
                 v4(to4, port_of(lw));
                 CHECK((caps_of(w, NULL) & KSL_UDP_ECN) && (caps_of(w, NULL) & KSL_UDP_DF),
                       "ECN and DF on the AF_INET fallback");
-                CHECK(ping(a, w, to4, 1, 100, 2, re, NULL, NULL) == 1 && re[0] == 2,
+                /* resent when lost: the 4000 sockets of the test before were closed just now (see ping1_resent) */
+                CHECK(ping1_resent(a, w, to4, 100, 2, re) == 1 && re[0] == 2,
                       "the fallback receives IPv4 with its mark");
                 ksl_udp_close(w);
             }
@@ -1875,16 +1985,18 @@ void run_udp(void) {
 #ifdef __APPLE__
                 to.sin_len = sizeof to;
 #endif
-                for (int i = 0; i < 100; i++)
-                    (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
-                (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
+                /* where the host counts the queue (Darwin), the burst is known to be queued whole before the first call, and a burst
+                   loopback lost part of is sent again: a datagram missing then is ksl's loss, not the host's. Where it cannot count, a
+                   burst not queued yet answers KSL_WANT_READ with nothing as well (weak there: Darwin's FIONREAD counts address records
+                   too). What the bound must never do, lose the real datagram behind a run of 63, 64 or 127, is checked on every host */
+                int whole = 0;
+                for (int attempt = 0; attempt < 5 && (whole = queue_burst(r, s, &to, 100)) == 0; attempt++)
+                    printf("    note: loopback lost part of a burst of 101 datagrams; sent again\n");
+                CHECK(whole != 0, "a burst of 101 datagrams queued whole within five attempts");
                 uint8_t buf[64];
                 uint8_t *bufs[1] = {buf};
                 uint32_t caps[1] = {sizeof buf}, lens[1], got = 0;
                 uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
-                /* weak where loopback is slow: a burst not queued yet answers KSL_WANT_READ with nothing as well, and the test cannot
-               see the queue (Darwin's FIONREAD counts address records too). What the bound must never do, lose the real datagram
-               behind a run of 63, 64 or 127, is checked below on every host */
                 CHECK(ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0) == KSL_WANT_READ && got == 0,
                       "timeout 0: a run of 64 dropped datagrams ends the call");
                 int64_t end = mono_ms() + 5000;
@@ -1893,14 +2005,14 @@ void run_udp(void) {
                 CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q',
                       "the datagram behind the dropped run is received by a later call");
                 /* the bound never costs a datagram it already took (review): 63 empty ones and a real one, then 64 and 127 empty ones
-               and a real one, each read only with timeout 0 as BatchReceiver starts every batch */
+                   and a real one, each read only with timeout 0 as BatchReceiver starts every batch */
                 const int runs[3] = {63, 64, 127};
                 for (int k = 0; k < 3; k++) {
-                    for (int i = 0; i < runs[k]; i++)
-                        (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
-                    (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
-                    /* timeout-0 calls, 5 ms apart, up to a 5 s deadline: a loaded runner (ASan, CI) may deliver the burst late, and a
-                 call that finds part of it must still never drop the real datagram */
+                    for (int attempt = 0; attempt < 5 && (whole = queue_burst(r, s, &to, runs[k])) == 0; attempt++)
+                        printf("    note: loopback lost part of a burst of %d datagrams; sent again\n", runs[k] + 1);
+                    CHECK(whole != 0, "the burst queued whole within five attempts");
+                    /* timeout-0 calls, 5 ms apart, up to a 5 s deadline: where the queue cannot be counted a loaded runner (ASan, CI)
+                       may deliver the burst late, and a call that finds part of it must still never drop the real datagram */
                     got = 0;
                     buf[0] = 0;
                     int tries = 0;
@@ -1914,13 +2026,16 @@ void run_udp(void) {
                     }
                     CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q',
                           "timeout 0: the real datagram behind a dropped run is never lost");
-                    /* with the whole burst queued at the first call it comes out there; whether it was queued is the host's timing,
-                 so this is a diagnostic only */
-                    if (runs[k] == 63 && got == 1 && tries != 1)
+                    /* with the burst queued whole, the call that meets the "q" is known: 63 dropped ones and the "q" in one call,
+                       64 or 127 end the first call at the bound and the second one hands the "q" out */
+                    if (whole == 1)
+                        CHECK(tries == (runs[k] < 64 ? 1 : 2),
+                              "a whole burst: the real datagram comes out at its call");
+                    if (whole != 1 && runs[k] == 63 && got == 1 && tries != 1)
                         printf("    note: the datagram behind 63 empty ones came out at call %d (burst queued late)\n",
                                tries);
                     if (got != 1 || buf[0] != 'q')
-                        printf("    lost the datagram behind %d empty ones\n", runs[k]);
+                        printf("    lost the datagram behind %d empty ones (call %d)\n", runs[k], tries);
                 }
             }
             if (s >= 0)
