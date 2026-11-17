@@ -1,6 +1,6 @@
 # Kuicksilver — threat model
 
-Date: 2026-10-02; as of 0.2.x (2026-10-21). Status: current document, updated with each change it describes; revised after a cross-check against RFC 9000 §21, RFC 9001/9002/9114/9204/9308/8899 and the CVEs of quinn, quic-go, quiche, ngtcp2, msquic, s2n-quic, OpenSSL, Netty, picoquic, quicly. Related: docs/architecture.md, the resource limits in docs/guide/quic.md ("Glitch protection", "Admission and endpoint limits").
+Date: 2026-10-02; as of 0.2.x (2026-10-21). Status: current document, updated with each change it describes; revised after a cross-check against RFC 9000 §21, RFC 9001/9002/9114/9204/9308/8899 and the CVEs of quinn, quic-go, quiche, ngtcp2, msquic, s2n-quic, OpenSSL, Netty, picoquic, quicly. Related: docs/architecture.md, the resource limits in docs/guide/quic.md ("Glitch protection", "Admission and endpoint limits"). Trust boundaries are in [section 6](#6-trust-boundaries), the threats mapped to CWE in [section 7](#7-weaknesses-by-cwe), and the assurance case in [section 8](#assurance-case) (added 2026-11-18).
 
 ## 1. Assets
 
@@ -22,7 +22,7 @@ Date: 2026-10-02; as of 0.2.x (2026-10-21). Status: current document, updated wi
 - **Local attacker with access to process memory/a dump** (limited: JVM heap dump, crash report).
 - **Malicious dependency/artifact** (supply chain).
 
-Out of scope: OS/kernel compromise, hardware side-channel attacks on AEAD (we rely on OpenSSL), an attacker with root on the host.
+Out of scope: OS/kernel compromise, hardware side-channel attacks on AEAD (we rely on OpenSSL), an attacker with root on the host. Where each attacker enters: the trust boundaries of [section 6](#6-trust-boundaries).
 
 ## 3. Threats and mitigations
 
@@ -822,3 +822,131 @@ Pre-release status (2026-10-08): items 4–8 are fully covered in `kuicksilver-q
 Interop as an external negative control: the full QUIC Interop Runner matrix against six implementations found and closed five defects (PTO without Handshake data, the socket family for IPv6, HelloRetryRequest to X25519 clients, counting no-op MAX_STREAMS in the glitch bucket, handling a foreign SCID per RFC 9000 §7.2) — see `interop.md`, "Interop matrix (pre-release, QUIC Interop Runner 740c05a, 2026-10-08)".
 
 Item 9 (HTTP/3) is covered as stated above.
+
+## <a id="6-trust-boundaries"></a>6. Trust boundaries
+
+A trust boundary is where data or control passes between parts that trust each other differently. Every threat of
+section 3 enters at one of these five; the last column names the threats that cross it. "Trusted" means relied on for
+correctness, not assumed to be free of bugs.
+
+| Boundary | What crosses it | Trusted on the inner side | Not trusted | Controls (where they live) | Threats |
+|---|---|---|---|---|---|
+| **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.24 |
+| **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md` | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20 |
+| **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | buffers without an explicit length: every buffer crossing into C carries one, and `ksl` uses no `strlen` on them (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15 |
+| **B4. Library ↔ operating system** | sockets (GSO/GRO, `recvmsg` ancillary data), the system resolver, the platform certificate verifiers, files (the extracted native library, the key log, qlog, the Alt-Svc store) | the kernel and the platform verifier (their compromise is out of scope, section 2) | file system locations other users can write; the resolver's answers (they come from the network, B1); what a platform API returns about an address | `KslLoader` extracts into a private directory and checks the library's SHA-256 before loading it (`kuicksilver-native/src/jvmMain/kotlin/io/kuicksilver/native/KslLoader.jvm.kt`); the key log refuses a symbolic link and is created with mode 0600 (`kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/KeylogFile.kt` and its platform files); GRO segments keep their own address (3.12); a stalled resolver holds a bounded number of threads (3.21.1) | 3.7, 3.11, 3.12, 3.16, 3.19, 3.21, 3.21.1, 3.24 |
+| **B5. Build and supply chain ↔ published artifacts** | the OpenSSL tarball, Gradle plugins and dependencies, toolchains, the release machine, CI runners | the pinned toolchains and the maintainer's release machine (SLSA Build Level 1, `docs/release.md`) | anything downloaded until its signature or hash is checked; a build directory or cache left by an earlier build; CI artifacts | the OpenSSL tarball's PGP signature and SHA-256 (`tools/openssl/fetch.sh`, `gradle/openssl.toml`); Gradle dependency verification (`gradle/verification-metadata.xml`); a release rebuilds every OpenSSL from the verified tarball and checks every shipped binary (`tools/release/local-release.sh`, `tools/check/native-release.sh`); the double build from two paths (`tools/check/double-build.sh`); signatures, SBOM and provenance, verified by `tools/verify/verify-release.sh` | 3.11 |
+
+## <a id="7-weaknesses-by-cwe"></a>7. Weaknesses by CWE
+
+The threats of section 3 mapped to the nearest [CWE](https://cwe.mitre.org/) weaknesses, so that a reader who checks a
+list such as the CWE Top 25 can find where each class is handled. Several sections map to the same CWE where the same
+weakness appears in different protocols.
+
+| Section | Threat | CWE |
+|---|---|---|
+| 3.1 | amplification | CWE-406 |
+| 3.2 | resource exhaustion | CWE-400, CWE-770, CWE-789 |
+| 3.3 | forged Retry and tokens | CWE-345, CWE-294 |
+| 3.4 | forged stateless reset, reset oracle | CWE-345, CWE-208 |
+| 3.5 | tracking by connection ID | CWE-200 |
+| 3.6 | certificate substitution, MITM | CWE-295, CWE-297 |
+| 3.6a | revoked certificates | CWE-299 |
+| 3.7 | key leakage | CWE-316, CWE-226, CWE-532 |
+| 3.8 | 0-RTT replay | CWE-294 |
+| 3.9 | version and protocol downgrade | CWE-757 |
+| 3.10 | parsing errors and memory | CWE-20, CWE-125, CWE-787, CWE-190, CWE-835 |
+| 3.11 | supply chain; the native library's work directory | CWE-494, CWE-1357, CWE-1395; CWE-59, CWE-379 |
+| 3.12 | accelerated UDP: segments of different senders | CWE-940 |
+| 3.13 | optimistic ACK; predictable connection IDs and packet numbers | CWE-345, CWE-338 |
+| 3.14 | request forgery through the client | CWE-441, CWE-918 |
+| 3.15 | header protection timing, AEAD limits | CWE-208, CWE-324 |
+| 3.16 | forged ICMP Packet Too Big | CWE-940 |
+| 3.17 | HTTP/3 and QPACK: field injection, unbounded sections, decompression | CWE-113, CWE-770, CWE-409 |
+| 3.18 | fallback to TCP, cross-protocol confusion | CWE-757, CWE-436 |
+| 3.19 | Kotlin/Native bind and connect addresses | CWE-1327, CWE-941 |
+| 3.20 | HTTP/1.1 smuggling and splitting; proxy credentials | CWE-444, CWE-113; CWE-522 |
+| 3.20.1 | WebSocket handshake and framing | CWE-20, CWE-345 |
+| 3.20.2 | WebSocket compression side channel and bombs | CWE-203, CWE-409 |
+| 3.20.3 | proxy auto-configuration scripts | CWE-829 |
+| 3.21, 3.21.1 | slow TCP peers, a stalled resolver | CWE-400 |
+| 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
+| 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
+| 3.24 | forged NAT64 prefix | CWE-345 |
+
+Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
+CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and
+path traversal (CWE-434, CWE-22): it opens only the files the application names (certificates and keys, key log, qlog,
+Alt-Svc store) and the native library it extracts itself (3.11); deserialization of untrusted data (CWE-502): no object deserialization of
+peer data, every format is parsed by hand against its grammar.
+
+## <a id="assurance-case"></a>8. Assurance case
+
+The claim: **for the threats of section 3, from the attackers of section 2, across the boundaries of section 6, the
+published Kuicksilver artifacts meet the security requirements of the RFCs they implement, and the artifacts are what
+their source says.** The argument has five parts; each names evidence in this repository that can be checked, and the
+last says where the claim stops.
+
+**8.1 The requirements are identified.** The threats come from the security sections of the RFCs implemented (RFC 9000
+§21, RFC 9001 §9, RFC 9114 §10, RFC 9204 §7, RFC 9113 §10, RFC 7541 §7, RFC 9112 §11, RFC 6455 §10, RFC 9308) and from
+the published CVEs of other QUIC and HTTP stacks (the list in the header of this document); every MUST and SHOULD is in a
+row (one per requirement or topic) of [rfc-compliance.md](rfc-compliance.md), whose ✅ rows must name tests that exist
+(`tools/check/rfc-tests.py`).
+
+**8.2 Secure design principles are applied** (Saltzer and Schroeder):
+
+| Principle | Where it shows |
+|---|---|
+| Economy of mechanism | a thin native layer and one C shim (ADR-0001, ADR-0003); a sans-IO core with no threads or sockets of its own (ADR-0004, checked by `tools/check/sans-io.sh`); OpenSSL reduced to what TLS 1.3 and 1.2 need (`tools/openssl/configure-flags.txt`) |
+| Fail-safe defaults | certificate and host name verification on for every trust configuration; 0-RTT off unless both sides opt in (ADR-0015); key logging only through an explicit API, and OpenSSL built without its own key log (`tools/check/keylog-disabled.sh`); a peer input that fails a check closes the connection or drops the packet, never falls back silently |
+| Complete mediation | every datagram passes the endpoint's checks before any connection state (`EndpointCore.kt`); every full handshake checks the chain, the name and, where configured, the pin and revocation (3.6, 3.6a) |
+| Open design | the source, the threat model and the review records are public; the protections are those of the RFCs, with no secret mechanism |
+| Separation of privilege | a pin only adds to a validated chain, it never replaces it (ADR-0011); a stateless reset needs a token from a key separate from connection ID generation (3.4) |
+| Least privilege | the native libraries export only their entry points (`tools/check/exports.sh`), with hidden visibility and an export map; the extracted library's directory is private to the user (`KslLoader.jvm.kt`); the hosted `build` workflow publishes, signs and reads no secret, and pull requests from forks run with read-only rights (`docs/process.md`, stage 6) |
+| Least common mechanism | buffers are not shared between connections (section 1); each loop has its own reset key and answers resets only for its own connection IDs (3.4) |
+| Psychological acceptability | the safe choice is the default and needs no configuration; the unsafe ones carry `@DelicateKuicksilverApi` and say why |
+
+Defence in depth adds to these: every peer-driven resource has a limit (3.2) and a peer that is legal but wasteful
+is closed by the glitch budget; the C code is a second line behind Kotlin's bounds checks (B3).
+
+**8.3 Common implementation weaknesses are countered.** Section 7 maps each threat to its CWE classes. Memory safety:
+almost all code is Kotlin; the C shim is small, checked with clang-format and `-Wall -Wextra -Werror`, and runs under
+ASan and UBSan (`tools/c-test.sh`) and ThreadSanitizer (`KSL_TSAN=1 tools/c-test.sh`). Every security check has a
+`negative_*` test that fails when the check is removed (section 5). CodeQL scans the C shim and the Kotlin JVM code on
+pushes and pull requests to `main` and `release/**` and weekly (`.github/workflows/codeql.yml`), and Kotlin compiler
+warnings are errors
+(`build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts`).
+
+**8.4 The implementation is verified, and the verification is itself checked.**
+- **Fuzzing.** Jazzer targets for the TLS, QUIC, HTTP/3, QPACK, HTTP/2, HPACK, HTTP/1.1, WebSocket and HTTPS record
+  parsers, stateful fuzzers of QUIC and HTTP/2 connections, and a libFuzzer harness of the `ksl` parsers
+  (`tools/fuzz/campaign.sh`), weekly in CI (`.github/workflows/fuzz.yml`); the committed
+  corpora replay as regression tests in the gate.
+- **Planted bugs.** Each recorded fuzz reproducer has a plant that puts its bug back (`tools/fuzz/reproducers.txt`,
+  `tools/fuzz/plants/`), and `tools/fuzz/reproducers-verify.sh` applies each plant in turn: every live reproducer must
+  fail again with its recorded failure and every guard test must fail;
+  `tools/fuzz/planted-check.sh` and `tools/fuzz/h3-planted-check.sh` do the same for planted HTTP/1.1 and HTTP/3 bugs.
+  This is targeted mutation testing of the security checks; no general mutation-testing tool runs in the gate.
+- **Gates.** The local release gate (`tools/ci/local-matrix.sh`) runs every module's tests on every target, the C tests
+  under the sanitizers, the negative controls, the repository checks of `tools/check/` and the double build, and for a
+  release the interop matrix against six QUIC implementations; hosted CI runs the same step names on pushes and pull
+  requests to `main` and `release/**`, the interop matrix weekly (`.github/workflows/build.yml`).
+- **RFC tables.** [rfc-compliance.md](rfc-compliance.md) and its details per section, checked by
+  `tools/check/rfc-table.sh` and `tools/check/rfc-tests.py`.
+- **Soak.** `kuicksilver-soak` runs the whole stack for hours and fails on any resource that grows (3.2).
+
+**8.5 The artifacts are what the source says.** A release rebuilds every OpenSSL from the verified tarball, checks every
+shipped native binary for the pinned OpenSSL, sanitizer symbols, debug sections and exports
+(`tools/check/native-release.sh`), refuses any home-directory path in an artifact (`tools/check/build-paths.py`), and
+signs every artifact, with an SBOM and a provenance statement ([docs/release.md](../release.md)). The native libraries
+built on a Mac are reproducible: `tools/check/double-build.sh` builds them twice from two paths in every gate, and
+`tools/verify/verify-release.sh` rebuilds them from the tag and compares them byte for byte
+([docs/verifying.md](../verifying.md)).
+
+**8.6 Where the claim stops.** Section 4 lists what is not protected against. The provenance is SLSA Build Level 1:
+the same person and machine build, describe and sign. The Linux and Windows JNI libraries and the Kotlin outputs are
+not yet reproducible ([docs/verifying.md](../verifying.md#which-native-libraries-are-reproducible)). The published
+native code is built with hidden visibility, PIC and a non-executable stack; the build scripts add no stack protector
+or `_FORTIFY_SOURCE` of their own (what a toolchain enables by default applies, and the Kotlin/Native Linux builds pass
+`-U_FORTIFY_SOURCE`). Reviews are by the
+project's one maintainer ([GOVERNANCE.md](../../GOVERNANCE.md)), not independent.
