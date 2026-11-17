@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
+  `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
+  flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
+  Gradle tasks rebuild when they change. OpenSSL gets them as `Configure` options: before, its `Configure` read them from
+  the environment in place of the target's own flags, while the build cache and `configure-target.txt` ignored them, so
+  a build with them could be served from the cache of one without. Releases, the double build and
+  `tools/verify/verify-release.sh` build with them unset. `docs/guide/building.md` describes it;
+  `tools/check/native-flags-test.sh` checks it in the gate's reproducibility step.
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
   (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session

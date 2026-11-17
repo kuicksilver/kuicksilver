@@ -4,6 +4,10 @@
 # Builds the JVM native library for one classifier from ksl + ksl_jni + static OpenSSL, exporting only JNI_OnLoad*.
 # Usage: build-jni.sh <osx-aarch_64|osx-x86_64|linux-x86_64|linux-aarch_64|windows-x86_64> [out dir]
 # Output: <out>/<classifier>/libksl_<abi>_<os>_<arch>.<ext> and <out>/resources/META-INF/native/{lib..., manifest.sha256}
+# The builder's CPPFLAGS and CFLAGS come after the project's compile flags and LDFLAGS after its link flags, so they add to
+# them (a later flag wins where two conflict). CC is the compiler on macOS (default clang) and Linux (default gcc); the
+# Windows library is cross-built with x86_64-w64-mingw32-gcc whatever CC says. A release and the reproducibility checks
+# build with all four unset (docs/guide/building.md).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cls="${1:?classifier}"; out="${2:-$root/kuicksilver-native/build/jni}"
 abi=$(sed -n 's/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p' "$root/kuicksilver-native/src/c/ksl.h")
@@ -18,23 +22,24 @@ esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built" >&2; exit 2; }
 lib="libksl_${abi}_${os}_${arch}.${ext}"; dir="$out/$cls"; mkdir -p "$dir" "$out/resources/META-INF/native"
 src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/c/ksl_tickets.c $root/kuicksilver-native/src/c/ksl_trust_cache.c $root/kuicksilver-native/src/c/ksl_dns.c $root/kuicksilver-native/src/c/ksl_net.c $root/kuicksilver-native/src/c/ksl_ocsp.c $root/kuicksilver-native/src/jni/ksl_jni.c"
+user_cflags="${CPPFLAGS:-} ${CFLAGS:-}"; user_ldflags="${LDFLAGS:-}"
 cflags="-std=c11 -O2 -ffile-prefix-map=$root=. -fvisibility=hidden -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-misleading-indentation -I$O/include -I$root/kuicksilver-native/src/c"
 case "$os" in
   osx)
     JH="${JAVA_HOME:-$(/usr/libexec/java_home)}"; printf '_JNI_OnLoad\n_JNI_OnLoad_ksl\n' > "$dir/exports.txt"
-    clang $cflags -arch "$([ "$arch" = aarch_64 ] && echo arm64 || echo x86_64)" -mmacosx-version-min=11.0 -I"$JH/include" -I"$JH/include/darwin" \
-      -dynamiclib -Wl,-exported_symbols_list,"$dir/exports.txt" -Wl,-install_name,@rpath/$lib $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -o "$dir/$lib"
+    ${CC:-clang} $cflags -arch "$([ "$arch" = aarch_64 ] && echo arm64 || echo x86_64)" -mmacosx-version-min=11.0 -I"$JH/include" -I"$JH/include/darwin" $user_cflags \
+      -dynamiclib -Wl,-exported_symbols_list,"$dir/exports.txt" -Wl,-install_name,@rpath/$lib $user_ldflags $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -o "$dir/$lib"
     strip -x "$dir/$lib" ;;
   linux)
     JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$dir/exports.map"
-    ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
-      $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
+    ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" $user_cflags -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
+      $user_ldflags $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
     strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"
     # reproducible PE: no link timestamp (strip below likewise), and the linker's default image base instead of one hashed from the output path
     # (the loader relocates the dll anyway: --dynamicbase is the default)
-    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -ldnsapi -o "$dir/$lib"
+    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" $user_cflags -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base $user_ldflags "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -ldnsapi -o "$dir/$lib"
     SOURCE_DATE_EPOCH=0 x86_64-w64-mingw32-strip "$dir/$lib" ;;   # strip stamps the PE header with the current time otherwise
 esac
 find "$out/resources/META-INF/native" -name 'libksl_*' ! -name "libksl_${abi}_*" -delete   # a shared output directory never ships a stale ABI

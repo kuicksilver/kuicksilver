@@ -58,11 +58,14 @@ val opensslFetch = tasks.register<Exec>("opensslFetch") {
         gradle.taskGraph.allTasks.any { task -> buildTasks[task.path]?.let { prebuiltState(it) != null } ?: false }
     }
 }
+// The builder's flags, which tools/openssl/build.sh adds to its own (docs/guide/building.md): inputs, so a change reruns the build.
+val builderFlags = listOf("CPPFLAGS", "CFLAGS", "LDFLAGS").associateWith { providers.environmentVariable(it).orElse("") }
 opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), pinFile)
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
+        builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         outputs.dir(root.resolve("build/openssl/$t"))
         if (prebuilt) {
             onlyIf("kuicksilver.openssl.prebuilt: build/openssl/$t is not current") { _ -> prebuiltState(t) != null }

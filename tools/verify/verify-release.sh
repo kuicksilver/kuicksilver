@@ -404,6 +404,9 @@ elif [ "$tag_ok" = 1 ]; then
   for v in LLVM_OBJCOPY LLVM_NM LLVM_OBJDUMP LLVM_READELF; do   # tools/check/llvm-tool.sh would take them over the NDK's
     [ -z "${!v:-}" ] || { echo "     note: $v=${!v} is ignored: the rebuild uses the pinned NDK's tool"; unset "$v"; }
   done
+  for v in CC CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS; do   # the build scripts would add them to the release's own flags
+    [ -z "${!v:-}" ] || { echo "     note: $v=${!v} is ignored: the rebuild uses the release's compiler and flags"; unset "$v"; }
+  done
   src="$work/src"; rm -rf "$src"; mkdir -p "$src"
   git -C "$repo" archive "v$version" tools gradle kuicksilver-native/src | tar -x -C "$src"
   ndk_pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$src/gradle/toolchains.toml" 2>/dev/null || true)

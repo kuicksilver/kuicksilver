@@ -111,7 +111,7 @@ refuses to start if either fails. What the steps cover:
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |
 | Release checks | the negative controls of `tools/check/native-release.sh`, of `tools/check/build-paths.py` (no home-directory path in an artifact), of `tools/release/local-release.sh` and of `tools/verify/verify-release.sh`; the refusals of the gate's own step selection (`tools/ci/local-matrix-test.sh`); OpenSSL built without key logging |
-| Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared |
+| Reproducibility | `tools/check/double-build.sh macos-arm64`: OpenSSL, `libksl` and the JNI library built twice from two paths and compared; `tools/check/native-flags-test.sh`: a builder's `CC`, `CPPFLAGS`, `CFLAGS` and `LDFLAGS` are added after the project's flags and never reach a release or the double build ([building.md](guide/building.md#your-compiler-and-flags)) |
 | Interop | the JVM and Kotlin/Native interop images against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in the QUIC Interop Runner, with the cells of [`tools/interop/required.json`](../tools/interop/required.json) required green (`--with-interop`; hours) |
 
 A full run (not a dry run) writes a gate record, `build/ci/gate/<commit>.stamp`, with `selection=all`, each step's

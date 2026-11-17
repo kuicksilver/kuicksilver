@@ -40,6 +40,8 @@ renamed with a `ksl_ossl_` prefix (`tools/prefix`, ADR-0007) so that another Ope
 
 You rarely call these scripts by hand: the Gradle tasks (`opensslBuild<Target>`, `buildJniHost`, `buildAndroidJni`,
 `buildKslA<Target>`) run them on demand. Outputs land in `build/openssl/<target>` and `build/openssl-prefixed/<target>`.
+The scripts add your `CPPFLAGS`, `CFLAGS` and `LDFLAGS` (and, where the compiler is the host's, `CC`) to their own; releases
+are built without them ([Building from source](docs/guide/building.md#your-compiler-and-flags)).
 Never edit the pin without also updating the SHA-256 (and the key fingerprint if the signer changed), and never
 disable the signature check.
 

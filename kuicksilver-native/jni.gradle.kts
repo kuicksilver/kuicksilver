@@ -11,10 +11,13 @@ val hostClassifier = run {
     "$o-$a"
 }
 val jniOut = layout.buildDirectory.dir("jni")
+// The builder's compiler and flags, which the build scripts add to their own (docs/guide/building.md): inputs, so a change reruns the build.
+val builderEnv = listOf("CC", "CPPFLAGS", "CFLAGS", "LDFLAGS").associateWith { providers.environmentVariable(it).orElse("") }
 val buildJniHost = tasks.register<Exec>("buildJniHost") {
     group = "native"; description = "Builds libksl for the host JVM classifier ($hostClassifier)"
     dependsOn("opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64"))
     inputs.files(fileTree("src/c"), fileTree("src/jni"), root.resolve("tools/build-jni.sh"))
+    builderEnv.forEach { (name, value) -> inputs.property("env.$name", value) }
     // the OpenSSL it links: provenance.txt names the tarball and the SHA-256 of both archives, so another pin or a rebuilt OpenSSL reruns the build
     val hostOpenssl = when (hostClassifier) { "osx-aarch_64" -> "macos-arm64"; "osx-x86_64" -> "macos-x64"; "linux-aarch_64" -> "linux-arm64"; "linux-x86_64" -> "linux-x64"; else -> "mingw-x64" }
     inputs.files(root.resolve("build/openssl/$hostOpenssl/provenance.txt"))
@@ -42,6 +45,7 @@ val buildAndroidJni = tasks.register<AndroidJniTask>("buildAndroidJni") {
     group = "native"; description = "Builds libksl.so for ${androidAbis.joinToString()}"
     dependsOn(listOf("opensslBuildAndroidArm64", "opensslBuildAndroidX86_64") + (if (androidArmv7) listOf("opensslBuildAndroidArm") else emptyList()))
     script.set(root.resolve("tools/build-android-so.sh")); sources.from(fileTree("src/c"), fileTree("src/jni")); abis.set(androidAbis); outDir.set(file("src/androidMain/jniLibs"))
+    builderEnv.forEach { (name, value) -> inputs.property("env.$name", value) }
 }
 tasks.matching { it.name.startsWith("compileAndroid") || it.name.contains("mergeAndroid") || it.name.contains("JniLib") }.configureEach { dependsOn(buildAndroidJni) }
 

@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Builds libksl.so for one Android ABI with the NDK clang: ksl + JNI + static OpenSSL, JNI_OnLoad* only, 16 KiB pages.
 # Usage: build-android-so.sh <arm64-v8a|x86_64|armeabi-v7a> [out dir]   (NDK from ANDROID_NDK_ROOT, else the SDK's ndk/<pin of gradle/toolchains.toml>, else its newest ndk/)
+# The builder's CPPFLAGS and CFLAGS come after the project's compile flags and LDFLAGS after its link flags, so they add to
+# them (a later flag wins where two conflict); the compiler is always the NDK's clang (CC is not used). A release and the
+# reproducibility checks build with them unset (docs/guide/building.md).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; abi="${1:?abi}"; out="${2:-$root/kuicksilver-native/src/androidMain/jniLibs}"
 pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
@@ -21,8 +24,8 @@ O="$root/build/openssl/$ossl"; [ -d "$O/lib" ] || { echo "OpenSSL for $ossl not 
 mkdir -p "$out/$abi" "$root/build/android-jni"; map="$root/build/android-jni/exports.map"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$map"
 src=$(ls "$root"/kuicksilver-native/src/c/ksl_*.c) 
 "$T/clang" --target="$target" -std=c11 -Os -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation \
-  -I"$O/include" -I"$root/kuicksilver-native/src/c" -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
-  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack \
+  -I"$O/include" -I"$root/kuicksilver-native/src/c" ${CPPFLAGS:-} ${CFLAGS:-} -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack ${LDFLAGS:-} \
   $src "$root/kuicksilver-native/src/jni/ksl_jni.c" "$O/lib/libssl.a" "$O/lib/libcrypto.a" -llog -o "$out/$abi/libksl.so"
 "$T/llvm-strip" "$out/$abi/libksl.so"
 echo "$out/$abi/libksl.so ($(wc -c < "$out/$abi/libksl.so" | tr -d ' ') bytes)"

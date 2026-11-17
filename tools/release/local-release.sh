@@ -72,6 +72,9 @@
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
 set -euo pipefail
 started=$(date +%s); given="$*"
+# The native build scripts add a builder's CC, CPPFLAGS, CFLAGS and LDFLAGS to their own (docs/guide/building.md); a release
+# is built with the project's flags only, so that it is what the reproducibility checks rebuild.
+unset CC CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 

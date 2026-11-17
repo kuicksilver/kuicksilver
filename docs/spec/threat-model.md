@@ -948,5 +948,6 @@ the same person and machine build, describe and sign. The Linux and Windows JNI 
 not yet reproducible ([docs/verifying.md](../verifying.md#which-native-libraries-are-reproducible)). The published
 native code is built with hidden visibility, PIC and a non-executable stack; the build scripts add no stack protector
 or `_FORTIFY_SOURCE` of their own (what a toolchain enables by default applies, and the Kotlin/Native Linux builds pass
-`-U_FORTIFY_SOURCE`). Reviews are by the
+`-U_FORTIFY_SOURCE`); a builder can add them with `CFLAGS` and `LDFLAGS`, which a release never uses
+([building.md](../guide/building.md#your-compiler-and-flags)). Reviews are by the
 project's one maintainer ([GOVERNANCE.md](../../GOVERNANCE.md)), not independent.
