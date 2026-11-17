@@ -312,7 +312,7 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [kuicksilver.github.io/kuicksilver](https://kuicksilver.github.io/kuicksilver/) — the guide and the API reference
   (Dokka) of every release, from 0.3.0 on.
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
-- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, and what later releases bring.
+- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, what later releases bring, and what is not planned.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [deploying the HTTP/3 server](docs/guide/deployment.md), [iOS](docs/guide/ios.md),
   [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)

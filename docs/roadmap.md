@@ -96,9 +96,11 @@ Known limits of 0.2.0, stated on purpose:
 
 ## After 0.2.0
 
-The 0.3.0 scope was decided on 2026-10-21, with a release planned for December 2026; what comes after it is a
-proposal, not a commitment. The order may change with user feedback, and every item still follows the release bar (each
-bug fixed with a test before a release).
+The 0.3.0 scope was decided on 2026-10-21 and widened on 2026-11-16 to feature parity with the established QUIC and
+HTTP stacks in other languages (quic-go, quiche, OkHttp, Netty, Cronet). Releases are planned, not dated: a release
+ships when its gate passes ([process.md](process.md)). What comes after 0.3.0 is a proposal, not a commitment; the order
+may change with user feedback, and every item still follows the release bar (each bug fixed with a test before a
+release). The [Not planned](#not-planned) list says what the project will not do, and why.
 
 ### 0.2.x — patch releases
 
@@ -119,12 +121,12 @@ bug fixed with a test before a release).
 Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 ([Device checklist](guide/ios.md#device-checklist)), and the server CPU work below.
 
-### 0.3.0 — client and server completeness (planned for December 2026)
+### 0.3.0 — client and server completeness, feature parity (planned)
 
 - WebTransport over HTTP/3 (draft-ietf-webtrans-http3), experimental.
 - HTTP/2 (RFC 9113, HPACK RFC 7541) in a new module `kuicksilver-http2` (ADR-0017): the client offers `h2` next to
-  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441, done in both engines); no h2c, no
-  server push.
+  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441, done in both engines); no
+  server push, h2c under [Feature parity](#feature-parity-decided-2026-11-16).
 - RFC 9460 HTTPS records as a source of h3, off by default (done: `http3 { httpsRecords }`).
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
@@ -158,6 +160,71 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
     64 KiB are one scratch per endpoint loop (0.3.0); what is left is listed in
     [docs/benchmarks.md](benchmarks.md#memory-p5-2026-11-06).
 
-### Later
+#### Feature parity (decided 2026-11-16)
 
-- Multipath.
+Each item starts with a check of the RFC or draft it implements (every MUST and SHOULD, prerequisites included) and of
+what the peers really do, and is delivered whole or not at all.
+
+- Certificate selection by SNI for QUIC and HTTP/3 (today `sniSelector` works on TCP only, and HTTP/3 does not start with
+  it).
+- h2c (HTTP/2 with prior knowledge over cleartext TCP), opt-in on the client and the server, for deployments behind
+  TLS-terminating proxies, service meshes and gRPC; it reverses ADR-0017's "no h2c"
+  ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)).
+- Connection coalescing across origins for HTTP/2 and HTTP/3: the address matches and the certificate covers the name,
+  with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
+- CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
+  HTTP/3 through a MASQUE proxy.
+- PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources.
+- A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
+- HTTPS proxies (TLS to the proxy).
+- ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
+- TLS certificate compression (RFC 8879) through OpenSSL 3.5, which keeps a server's first flight within QUIC's
+  amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)).
+- Configurable key exchange groups.
+- qlog: HTTP/3 events, checked against qvis.
+- h3spec and the Autobahn WebSocket suite in the gate.
+- Multipath QUIC (draft-ietf-quic-multipath), experimental and opt-in; the state of the draft is checked before the
+  work starts ([multipath](spec/rfc/draft-ietf-quic-multipath.md#multipath)).
+- TLS Encrypted Client Hello (ECH). Whether the pinned OpenSSL 3.5 LTS can provide it is checked first; if it cannot,
+  the OpenSSL version or the TLS backend is decided separately, in an ADR.
+
+### After 0.3.0, until 1.0
+
+Fixes and hardening only: no new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
+
+### After 1.0
+
+Proposals, in no fixed order:
+
+- CONNECT-IP (RFC 9484).
+- A built-in DNS-over-HTTPS client.
+- Happy Eyeballs version 3.
+- brotli and zstd content coding.
+- Certificate Transparency checks.
+- Micrometer and OpenTelemetry modules.
+- Unix domain sockets.
+- Restarting a server without dropping connections.
+- The ORIGIN frame.
+- Kotlin/Native for Linux with musl, Windows on arm64, tvOS and watchOS.
+
+### Not planned
+
+Decided against, with the reason; a change of mind needs a new decision (an ADR, see [GOVERNANCE.md](../GOVERNANCE.md)).
+
+- **Server push, on HTTP/2 and HTTP/3.** Browsers have dropped HTTP/2 push and none implements HTTP/3 push, and 103 Early Hints does its job
+  without pushing bytes the client may already have; the client refuses it and the server never pushes
+  ([RFC 9113 §8.4](spec/rfc/9113.md#s8-4-server-push), [RFC 9114 §4.6](spec/rfc/9114.md#s4-6-server-push)).
+- **WebTransport over HTTP/2.** WebTransport is served over HTTP/3; where UDP is blocked, WebSocket (over HTTP/1.1 or
+  HTTP/2) is the fallback a client already has, and a second WebTransport transport would double the surface for a
+  rare case.
+- **SOCKS4, and the GSSAPI method of SOCKS5.** SOCKS4 has no IPv6, no host names (only the SOCKS4a extension) and no
+  authentication; GSSAPI would need a Kerberos stack on every platform ([RFC 1928 §3](spec/rfc/1928-1929.md#s3-gssapi)).
+- **TLS early data over TCP.** 0-RTT exists for QUIC and HTTP/3, where the replay protections of ADR-0015 apply
+  (single-use tickets, a replay register, safe-method gating with 425); over TCP the gain is smaller and the same
+  protections would have to be built a second time.
+- **Raw public keys (RFC 7250) and external pre-shared keys.** Trust is an X.509 chain with the host name always
+  checked (ADR-0011); a second trust model would weaken that rule for uses the web does not have.
+- **A Kotlin/Native target for Intel Macs (`macosX64`).** Intel Macs are served by the JVM and its `osx-x86_64` JNI
+  library ([stability.md](stability.md)).
+- **JavaScript and WebAssembly targets.** Browsers give a library neither UDP sockets nor its own TLS, and the
+  transport depends on the native OpenSSL through `ksl` (ADR-0001, ADR-0002).
