@@ -90,25 +90,22 @@ public class KuicksilverTlsConnector private constructor(
             clientAuth = this@KuicksilverTlsConnector.clientAuth
             this@KuicksilverTlsConnector.trust?.let { trust = it }
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
-            sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) withoutAlpn(it) else it }
+            sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) forHttp3(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
             if (!quic) versions = this@KuicksilverTlsConnector.versions
         }
 
     /**
-     * [selector] for the HTTP/3 side: each answer's identity, client certificates, trust and staple, never its ALPN list.
-     * HTTP/3 is `h3` (RFC 9114 section 3.2); an override's ALPN list is for the TCP side (`h2`, `http/1.1`).
+     * [selector] for the HTTP/3 side. An answer without an ALPN list keeps the connector's (`h3`); one whose list names `h3`
+     * gets `h3` (the rest of the list is for TCP); one whose list leaves `h3` out keeps that list, which a client of HTTP/3
+     * shares nothing with, so its QUIC handshake ends with `no_application_protocol` (RFC 7301 section 3.2; CRYPTO_ERROR
+     * 0x178): the operator restricted that name to the protocols listed.
      */
-    private fun withoutAlpn(selector: suspend (ClientHelloInfo) -> ServerTlsOverride?): suspend (ClientHelloInfo) -> ServerTlsOverride? =
+    private fun forHttp3(selector: suspend (ClientHelloInfo) -> ServerTlsOverride?): suspend (ClientHelloInfo) -> ServerTlsOverride? =
         { hello ->
             selector(hello)?.let { o ->
-                if (o.alpn ==
-                    null
-                ) {
-                    o
-                } else {
-                    ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling)
-                }
+                val alpn = o.alpn
+                if (alpn == null || "h3" !in alpn) o else ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling)
             }
         }
 
@@ -163,8 +160,11 @@ public class KuicksilverTlsConnector private constructor(
          * Picks an identity per SNI name (`TlsConfig.Builder.sniSelector`), on TCP and HTTP/3 connections alike: one
          * selector answers both, so a name gets the same certificate, client-certificate policy and staple over HTTP/1.1,
          * HTTP/2 and HTTP/3, and the `Alt-Svc` the TCP side advertises leads to a QUIC endpoint that presents the same
-         * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake; an answer's `alpn` applies to
-         * TCP only (HTTP/3 stays `h3`). Null with SNI present refuses the handshake (`unrecognized_name`); null for a
+         * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake. An answer's `alpn` restricts
+         * the name: without one the name gets every protocol of the connector; with one, TCP negotiates from it, and HTTP/3
+         * is served (and advertised with `Alt-Svc` on that name's TCP responses) only when it lists `h3`, else the QUIC
+         * handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
+         * so that its handshakes share one TLS context. Null with SNI present refuses the handshake (`unrecognized_name`); null for a
          * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen
          * for (else 421, RFC 9110 section 7.4). Null by default.
          */

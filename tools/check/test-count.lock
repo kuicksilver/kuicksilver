@@ -2892,7 +2892,9 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerQuicLimi
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerQuicLoadBalancerTest.negative_updateWithoutQuicLoadBalancer
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerQuicLoadBalancerTest.requestsServedAcrossAConfigurationChange
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.eachNameGetsItsIdentityOverHttp3AndAltSvcLeadsThere
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.negative_aNameRestrictedToTcpIsNeitherServedNorAdvertisedOverHttp3
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.negative_unknownNameRefusedOverHttp3
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.zeroRttRequestsAreCheckedAgainstTheNameTheirIdentityWasChosenFor
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.certificateKeyTypeIsRead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.h2OverTls12WhenHttp2On
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_defaultConnectorRefusesTls12WithProtocolVersion
@@ -5409,6 +5411,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aReloadedIdentityR
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aServerWithoutDefaultIdentityServesItsNames
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.drivingAPausedSessionKeepsItPaused
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.equalAnswersShareTheChosenIdentitysContext
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_aHotSetOfAnswersSurvivesManyOthers
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_answersNeverEvictTheBaseConfigurationsContexts
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_noSniWithoutDefaultIdentityEndsWithMissingExtension
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_overrideClientAuthAndPinsAreInEffect
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_overrideUnfitForQuicEndsWithInternalError

@@ -171,6 +171,7 @@ Peer)`, and the server counts it in `handshakesFailedTls`.
 | Raw `QuicEndpoint` against an HTTP/3 server | `no_application_protocol`, or the server closes with "ALPN h3 required" | the client's `TlsConfig.alpn` must list `h3`; an `alpn` that is empty is refused when the config is built |
 | Server accepts the connection but closes it at once with "ALPN h3 required" | `Http3Endpoint.accept` only keeps connections that negotiated `h3` | your client offered another protocol; use `Http3Endpoint.connect` or add `h3` |
 | `Http3Endpoint.connect` fails with `"the server chose ALPN \"<alpn>\", not \"h3\""` | the HTTP/3 session ends with `GENERAL_PROTOCOL_ERROR` when the server picked another protocol | the server's `TlsConfig.alpn` lists it ahead of `h3` for this client; the order is the server's preference |
+| HTTP/3 to one name of a Kuicksilver server with an `sniSelector` | `no_application_protocol` for that name only, and no `Alt-Svc` on its TCP responses | the selector's answer for the name sets `alpn` without `h3`: the name is restricted to the protocols listed. Add `h3` to the list, or leave `alpn` out |
 | Over TCP (Ktor client) | HTTP/1.1 where HTTP/2 was expected | the server did not pick `h2`: it is not offered by the server (`http2 = false` on the Kuicksilver server), or `http2 { enabled = false }` on the client |
 
 ### The handshake fails with `unrecognized_name`, `missing_extension` or `internal_error` (server with an `sniSelector`)

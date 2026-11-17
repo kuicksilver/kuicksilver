@@ -1517,7 +1517,9 @@ under another name than its own.
 The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
 trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
 for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
-reload. Up to 64 answers are kept per configuration.
+reload. Hand out the same `TrustConfig` and `OcspStapling` objects for a name: a new object per call is a new answer
+and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
+their contexts are counted apart from the configuration's own, so many answers never push those out.
 
 ### Trust
 
@@ -3009,7 +3011,12 @@ waits, and a handshake that times out meanwhile cancels it. On QUIC it runs for 
 the client's address is validated (as RFC 9001 section 4.3 notes, a server that parses the ClientHello to decide can
 require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
 to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
-(`defaultIdentity`). An answer's `alpn` applies to TCP only; HTTP/3 always negotiates `h3`. A selector
+(`defaultIdentity`). An answer's `alpn` restricts its name: without one the name gets every protocol of the connector;
+with one TCP negotiates from that list, and the name is served over HTTP/3, and advertised with `Alt-Svc` on its TCP
+responses, only when the list names `h3` (`listOf("h3", "h2", "http/1.1")`); otherwise its QUIC handshake ends with
+`no_application_protocol` (CRYPTO_ERROR 0x178, RFC 7301 section 3.2) and its TCP responses carry no `Alt-Svc` (RFC 7838
+section 2.1: an alternative must serve the origin). Return the same `TrustConfig` and `OcspStapling` objects for a name,
+so that its handshakes share one TLS context. A selector
 that throws ends that handshake (on QUIC with `internal_error`; the exception's text is not sent to the client).
 
 Session tickets resume only under the name and the certificate they were issued under: a client that comes back with a
@@ -5707,7 +5714,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
 | `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's `alpn` applies to TCP only) ([Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-per-name-sni)) |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's `alpn` without `h3` keeps that name off HTTP/3 and out of `Alt-Svc`) ([Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-per-name-sni)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
@@ -5936,6 +5943,7 @@ Peer)`, and the server counts it in `handshakesFailedTls`.
 | Raw `QuicEndpoint` against an HTTP/3 server | `no_application_protocol`, or the server closes with "ALPN h3 required" | the client's `TlsConfig.alpn` must list `h3`; an `alpn` that is empty is refused when the config is built |
 | Server accepts the connection but closes it at once with "ALPN h3 required" | `Http3Endpoint.accept` only keeps connections that negotiated `h3` | your client offered another protocol; use `Http3Endpoint.connect` or add `h3` |
 | `Http3Endpoint.connect` fails with `"the server chose ALPN \"<alpn>\", not \"h3\""` | the HTTP/3 session ends with `GENERAL_PROTOCOL_ERROR` when the server picked another protocol | the server's `TlsConfig.alpn` lists it ahead of `h3` for this client; the order is the server's preference |
+| HTTP/3 to one name of a Kuicksilver server with an `sniSelector` | `no_application_protocol` for that name only, and no `Alt-Svc` on its TCP responses | the selector's answer for the name sets `alpn` without `h3`: the name is restricted to the protocols listed. Add `h3` to the list, or leave `alpn` out |
 | Over TCP (Ktor client) | HTTP/1.1 where HTTP/2 was expected | the server did not pick `h2`: it is not offered by the server (`http2 = false` on the Kuicksilver server), or `http2 { enabled = false }` on the client |
 
 #### The handshake fails with `unrecognized_name`, `missing_extension` or `internal_error` (server with an `sniSelector`)

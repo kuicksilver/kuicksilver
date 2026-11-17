@@ -310,6 +310,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 val peer: List<Certificate>
                                 val own: List<Certificate>
                                 var sni: SniChoice? = null
+                                var h3ForName = true // the sniSelector's answer for this connection's name allows HTTP/3
                                 val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
@@ -342,7 +343,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     sock = t
                                     peer = t.peerCertificates
                                     own = t.localCertificates
-                                    if (l.tls.sniSelector != null) sni = SniChoice(t.sniSelectedFor)
+                                    if (l.tls.sniSelector != null) {
+                                        sni = SniChoice(t.sniSelectedFor)
+                                        h3ForName = t.sniSelectedAlpn?.let { "h3" in it } ?: true
+                                    }
                                 } else {
                                     sock = client
                                     peer = emptyList()
@@ -351,7 +355,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name, or over a plain
                                 // connection, gets 421
                                 val authorityCheck = AuthorityCheck(own, l.trustedGateway, sni)
-                                val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
+                                // RFC 7838 section 2.1: an alternative must serve the origin; a name whose answer lists ALPN without
+                                // h3 is refused over HTTP/3, so its connections advertise none (requests are for that name, 421 else)
+                                val altSvc = if (l.tls != null && configuration.altSvc && h3ForName) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(
                                         sock,

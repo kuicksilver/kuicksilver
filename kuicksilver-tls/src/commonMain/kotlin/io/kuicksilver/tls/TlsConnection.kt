@@ -134,6 +134,16 @@ public class TlsConnection private constructor(
     @InternalKuicksilverApi
     public val sniSelectedFor: String? get() = selectedFor
 
+    @Volatile private var selectedAlpn: List<String>? = null
+
+    /**
+     * A server whose [TlsConfig.sniSelector] chose this connection's settings: the ALPN list its answer set
+     * ([ServerTlsOverride.alpn]), null when it set none or no selector ran. The server engine advertises HTTP/3 on the
+     * connection only when this is null or names `h3` (RFC 7838: an alternative must serve the origin).
+     */
+    @InternalKuicksilverApi
+    public val sniSelectedAlpn: List<String>? get() = selectedAlpn
+
     /**
      * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
      * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
@@ -356,6 +366,7 @@ public class TlsConnection private constructor(
                 val override = verdict.override
                 val o = KslContext.acquire(config.overrideConfigs.of(config, override), quic = false)
                 overrideCtx = o
+                selectedAlpn = override.alpn?.toList()
                 lock.withLock {
                     // the override's identity staples its own response, never the default identity's
                     if (config.ocspStapling != null || override.ocspStapling != null) {

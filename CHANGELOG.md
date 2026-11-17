@@ -24,12 +24,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   failing selector with `internal_error` (0x150, its text kept off the wire). Session tickets and their 0-RTT are only
   accepted under the name and the certificate they were issued under; an override with client certificates gets neither
   tickets nor 0-RTT. Over HTTP/3 a request must be for the name its connection's identity was chosen for (421 otherwise,
-  as on HTTP/1.1 and HTTP/2), and an answer's `alpn` applies to TCP only (HTTP/3 stays `h3`). Retry and address
+  as on HTTP/1.1 and HTTP/2). An answer's `alpn` restricts its name: listing `h3` (with the TCP protocols) keeps HTTP/3,
+  leaving it out refuses the name's QUIC handshake (`no_application_protocol`, 0x178) and drops `Alt-Svc` from its TCP
+  responses (RFC 7838 section 2.1); without `alpn` the name gets every protocol. Retry and address
   validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
   [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni). The context of a chosen identity is built
   once per answer (same identity, trust and staple objects, equal ALPN and client-certificate settings) and shared by
   later handshakes, over TCP too: a QUIC handshake through a selector costs about 2% more than one without (it rebuilt
-  the context, about 60 µs, each time); a reloaded identity still reaches the next handshake.
+  the context, about 60 µs, each time); a reloaded identity still reaches the next handshake. Up to 64 answers are
+  kept, least recently used first out, and their contexts are counted apart from the base configuration's, which they
+  never evict.
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
   (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session

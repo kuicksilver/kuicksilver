@@ -702,7 +702,12 @@ waits, and a handshake that times out meanwhile cancels it. On QUIC it runs for 
 the client's address is validated (as RFC 9001 section 4.3 notes, a server that parses the ClientHello to decide can
 require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
 to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
-(`defaultIdentity`). An answer's `alpn` applies to TCP only; HTTP/3 always negotiates `h3`. A selector
+(`defaultIdentity`). An answer's `alpn` restricts its name: without one the name gets every protocol of the connector;
+with one TCP negotiates from that list, and the name is served over HTTP/3, and advertised with `Alt-Svc` on its TCP
+responses, only when the list names `h3` (`listOf("h3", "h2", "http/1.1")`); otherwise its QUIC handshake ends with
+`no_application_protocol` (CRYPTO_ERROR 0x178, RFC 7301 section 3.2) and its TCP responses carry no `Alt-Svc` (RFC 7838
+section 2.1: an alternative must serve the origin). Return the same `TrustConfig` and `OcspStapling` objects for a name,
+so that its handshakes share one TLS context. A selector
 that throws ends that handshake (on QUIC with `internal_error`; the exception's text is not sent to the client).
 
 Session tickets resume only under the name and the certificate they were issued under: a client that comes back with a
