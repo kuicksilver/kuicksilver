@@ -338,7 +338,9 @@ public interface QuicTlsSession : AutoCloseable {
 
     /**
      * Client: resume [ticket] (it is consumed and closed by this session); call before the first [drive]. False when TLS
-     * refused it, or when the check below failed (the handshake then is a full one).
+     * refused it, when it was issued under another server name than this session's (RFC 9846 section 4.7.1: clients "SHOULD
+     * only resume if the SNI value matches the one used in the original session"; DNS names compare case-insensitively), or
+     * when the check below failed (the handshake then is a full one).
      *
      * What is verified again (ADR-0011: a resumed handshake carries no Certificate, so its trust comes from the chain cached
      * with the ticket). With the OpenSSL verifier ([TrustConfig.AnchoredCa], and [TrustConfig.Platform] on Linux, also under

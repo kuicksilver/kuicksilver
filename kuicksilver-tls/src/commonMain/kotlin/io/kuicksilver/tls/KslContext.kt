@@ -113,8 +113,7 @@ internal class KslContext private constructor(
         while (true) {
             val now = clientCaSnapshot(config) ?: return null
             if (sameBundle(now, verifiedUnder)) return null
-            // a context of its own, never registered: an SNI override's configuration is a copy per connection, and a rare
-            // recheck must not push the shared contexts out of their registry
+            // a context of its own, never registered: a rare recheck must not push the shared contexts out of their registry
             val lease =
                 try {
                     create(config, quic, quicTickets, earlyData)
@@ -224,8 +223,9 @@ internal class KslContext private constructor(
          * everything that differs per connection lives in the session (`ksl_ssl`); the process ticket keys are looked up per
          * ticket, so they rotate under a shared context. A `TrustConfig.ReloadableCa` is read once per handshake as well: the
          * context also carries the client CA bundle, so contexts are shared per identity snapshot and bundle, and the first
-         * handshake after a reload builds one with the new bundle. Anything else (a client, an SNI override, a server without an
-         * identity) gets a context of its own ([create]).
+         * handshake after a reload builds one with the new bundle. An SNI override shares one the same way: its configuration is
+         * the one [OverrideConfigs] keeps for that answer. Anything else (a client, a server without an identity) gets a context
+         * of its own ([create]).
          *
          * @throws IllegalStateException when the identity is closed.
          */

@@ -123,6 +123,7 @@ struct ksl_ssl {
         update_requested_pending; /* the bound was reached: no more KeyUpdates of ours; our update_requested awaits the peer's KeyUpdate */
     uint64_t fed,
         update_requested_at; /* ciphertext bytes fed (ksl_tcp_feed); how many had been when our update_requested was written */
+    int nst_early_data; /* client: the NewSessionTicket just read carried early_data (ksl_msg_cb), for new_session_cb */
     int server_hello_ems,
         ems_refused; /* client: the ServerHello carried extended_master_secret; the handshake was refused for its lack (RFC 7627 section 5.2) */
     uint64_t records_sent,

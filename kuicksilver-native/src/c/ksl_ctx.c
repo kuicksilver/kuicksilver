@@ -359,6 +359,9 @@ static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **o
    first). */
 static int new_session_cb(SSL *ssl, SSL_SESSION *sess) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    /* a ticket without early_data allows no 0-RTT, whatever the session it renewed allowed (ksl_msg_cb) */
+    if (s && !s->nst_early_data && SSL_version(ssl) >= TLS1_3_VERSION)
+        SSL_SESSION_set_max_early_data(sess, 0);
     if (!s || s->mode != KSL_MODE_TCP || !SSL_SESSION_is_resumable(sess))
         return 0;
     if (s->new_sessions_n == KSL_CLIENT_TICKETS) {

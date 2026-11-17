@@ -1182,10 +1182,12 @@ static void test_ticket_bound_to_server_name(void) {
     CHECK(sess != NULL, "a.test issued a ticket");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
-    /* the ticket of a.test offered with the server name b.test */
+    /* the ticket of a.test offered with the server name b.test: ksl's client refuses that (RFC 9846 section 4.7.1), another client
+       may do it, so the session goes in through OpenSSL directly */
     c = tcp_client(cc, "b.test");
     s = ksl_ssl_new(base, KSL_MODE_TCP);
-    ksl_ssl_set_session(c, sess);
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "ksl's client does not offer a.test's ticket to b.test");
+    SSL_set_session(ksl_ssl_raw_for_test(c), (SSL_SESSION *)sess);
     CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK, "handshake with b.test");
     CHECK(ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0,
           "negative: a.test's ticket does not resume under b.test (RFC 6066 section 3)");
@@ -1226,7 +1228,8 @@ static void test_ticket_bound_to_server_name(void) {
     /* no server name at all is a different name too */
     c = tcp_client(cc, NULL);
     s = ksl_ssl_new(a, KSL_MODE_TCP);
-    ksl_ssl_set_session(c, sess);
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "ksl's client does not offer a.test's ticket without SNI");
+    SSL_set_session(ksl_ssl_raw_for_test(c), (SSL_SESSION *)sess);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK &&
               reused == 0,
           "negative: a.test's ticket does not resume without SNI");

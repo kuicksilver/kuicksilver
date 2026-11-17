@@ -5386,6 +5386,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.clientHelloS
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.contextMismatchRejectsEarlyDataButResumes
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.negative_0rttReplayRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.negative_earlyDataVerdictAfterFailedHandshake
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.negative_renewedTicketWithoutEarlyDataCarriesNo0Rtt
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.negative_resumeRechecksCachedChain
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.negative_zeroRttUnderAnotherCipherSuiteRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicEarlyDataTest.noTicketsWithoutEarlyDataOption
@@ -5404,8 +5405,10 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.resumeVerify
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.sniSelectorIsAcceptedForQuic
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.splitServerHelloWantRead
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.unknownCaFailsWithVerifyAndAlert48
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aReloadedIdentityReachesTheNextHandshake
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aServerWithoutDefaultIdentityServesItsNames
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.drivingAPausedSessionKeepsItPaused
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.equalAnswersShareTheChosenIdentitysContext
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_noSniWithoutDefaultIdentityEndsWithMissingExtension
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_overrideClientAuthAndPinsAreInEffect
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_overrideUnfitForQuicEndsWithInternalError
@@ -5414,7 +5417,8 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_randomSel
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_resumeSniMisuse
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_selectionsThatAreNeverAppliedLeakNoContext
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_selectorFailureEndsWithInternalError
-kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_ticketIsNotResumedUnderAnotherName
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_theAnswerCacheIsBounded
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_ticketIsNotOfferedUnderAnotherName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_ticketOfOneIdentityIsNotResumedUnderAnother
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.negative_unknownNameEndsWithUnrecognizedName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.noSniUsesTheDefaultIdentity

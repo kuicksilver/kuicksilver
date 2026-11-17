@@ -267,7 +267,6 @@ class QuicSniTest {
         client: TlsConfig,
         server: TlsConfig,
         ticket: QuicSessionTicket? = null,
-        zeroRtt: Boolean = true,
     ): Outcome {
         val c = KslQuicCrypto.newSession(client, earlyData = true)
         val s = KslQuicCrypto.newSession(server, earlyData = true)
@@ -275,7 +274,7 @@ class QuicSniTest {
         assertTrue(s.enableEarlyData(byteArrayOf(7), admission))
         if (ticket != null) {
             assertTrue(c.resume(ticket), "the client offers the ticket")
-            if (zeroRtt) assertTrue(c.enableEarlyData(null, null), "the ticket allows 0-RTT")
+            assertTrue(c.enableEarlyData(null, null), "the ticket allows 0-RTT")
         }
         val tickets = ArrayList<QuicSessionTicket>()
         c.setTransportParameters(Fixtures.tp)
@@ -330,30 +329,33 @@ class QuicSniTest {
     }
 
     /**
-     * RFC 6066 section 3: a server "MUST NOT accept the request to resume the session if the server_name extension contains a
-     * different name". The selector serves both names with the same certificate, so only the name tells the sessions apart.
+     * RFC 9846 section 4.7.1: clients "SHOULD only resume if the SNI value matches the one used in the original session". A
+     * ticket of server.test is not offered to proxy.internal, also when the selector serves both with the same certificate, so
+     * no 0-RTT is tried under the other name either (OpenSSL's client would fail that handshake). The server side, a ticket
+     * another client offers under another name, is C `negative_session_of_another_server_name_is_not_offered`.
      */
-    @Test fun negative_ticketIsNotResumedUnderAnotherName() {
+    @Test fun negative_ticketIsNotOfferedUnderAnotherName() {
         val selector = byName("server.test" to a, "proxy.internal" to a)
         val ticket = firstTicket(Fixtures.client(), server(selector = selector))
-        // SNI proxy.internal, the certificate still checked as server.test's: a client that offers server.test's ticket there
-        // (without 0-RTT: OpenSSL's client refuses early data under another SNI, "inconsistent early data sni")
-        val client = Fixtures.client(name = "proxy.internal", trust = TrustConfig.ExpectedName("server.test", testCaTrust))
-        val o = earlyHandshake(client, server(selector = selector), ticket, zeroRtt = false)
+        val c =
+            KslQuicCrypto.newSession(
+                Fixtures.client(name = "proxy.internal", trust = TrustConfig.ExpectedName("server.test", testCaTrust)),
+                earlyData = true,
+            )
         try {
-            assertTrue(o.pump.cs.done && o.pump.ss.done, "${(o.pump.cs.last as? DriveResult.Failed)?.exception} / ${o.pump.ss.last}")
-            assertEquals("proxy.internal", o.pump.s.sniSelectedFor)
-            assertFalse((o.pump.s as KslQuicTlsSession).sessionReusedForTest, "not resumed under another name")
+            assertFalse(c.resume(ticket), "another name's ticket is refused")
+            assertTrue(ticket.closed, "and released")
+            assertFalse(c.enableEarlyData(null, null), "so no 0-RTT")
         } finally {
-            o.close()
+            c.close()
         }
-        // control: the same ticket path under the name it was issued for resumes
+        val upper = KslQuicCrypto.newSession(Fixtures.client(name = "SERVER.Test"), earlyData = true)
         val again = firstTicket(Fixtures.client(), server(selector = selector))
-        val r = earlyHandshake(Fixtures.client(), server(selector = selector), again)
         try {
-            assertTrue((r.pump.s as KslQuicTlsSession).sessionReusedForTest)
+            assertTrue(upper.resume(again), "control: the same name in another case (normalized to lower case)")
+            assertTrue(upper.enableEarlyData(null, null))
         } finally {
-            r.close()
+            upper.close()
         }
     }
 
@@ -380,6 +382,59 @@ class QuicSniTest {
             assertEquals(Certificate(TestCerts.client), r.pump.s.peerCertificates[0], "the full handshake verified the client")
         } finally {
             r.close()
+        }
+    }
+
+    // ---- the chosen identity's context, shared across handshakes (OverrideConfigs) ----
+
+    private fun overrideContext(p: Pump): KslContext? = (p.s as KslQuicTlsSession).overrideContextForTest
+
+    /** Equal answers share one native context; another ALPN list is another configuration and another context. */
+    @Test fun equalAnswersShareTheChosenIdentitysContext() {
+        val config = server { h -> ServerTlsOverride(a, alpn = if (h.alpn.size > 1) listOf("hq-interop") else null) }
+        val first = handshake(Fixtures.client(), config)
+        val second = handshake(Fixtures.client(), config)
+        val other = handshake(Fixtures.client { alpn = listOf("h3", "hq-interop") }, config)
+        try {
+            assertTrue(first.ss.done && second.ss.done && other.ss.done)
+            val shared = overrideContext(first)
+            assertTrue(shared != null && shared === overrideContext(second), "a new ServerTlsOverride with the same identity: one context")
+            assertTrue(overrideContext(other) !== shared, "another ALPN list: another context")
+            assertEquals(2, config.overrideConfigs.size)
+        } finally {
+            first.close()
+            second.close()
+            other.close()
+        }
+    }
+
+    /** A reloaded identity reaches the next handshake through the shared context: the registry keys its contexts by snapshot. */
+    @Test fun aReloadedIdentityReachesTheNextHandshake() {
+        val r = TlsIdentity.reloadable(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()))
+        val config = server { ServerTlsOverride(r) }
+        val before = handshake(Fixtures.client(), config)
+        r.reload(aOtherKey)
+        val after = handshake(Fixtures.client(), config)
+        try {
+            assertEquals(leaf(a), before.c.peerCertificates[0])
+            assertEquals(leaf(aOtherKey), after.c.peerCertificates[0], "the new certificate after the reload")
+            assertTrue(overrideContext(before) !== overrideContext(after))
+        } finally {
+            before.close()
+            after.close()
+            r.close()
+        }
+    }
+
+    /** A selector that makes a new identity for every handshake keeps no more than [OverrideConfigs.MAX] configurations alive. */
+    @Test fun negative_theAnswerCacheIsBounded() {
+        val config = server { ServerTlsOverride(TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())) }
+        val (s, w) = paused(config)
+        try {
+            repeat(OverrideConfigs.MAX + 10) { runBlocking { s.selectSni(w.clientHello) }.close() }
+            assertTrue(config.overrideConfigs.size <= OverrideConfigs.MAX, "${config.overrideConfigs.size}")
+        } finally {
+            s.close()
         }
     }
 
@@ -424,6 +479,7 @@ class QuicSniTest {
         } finally {
             plain.close()
         }
+        runBlocking { s.selectSni(w.clientHello) }.close() // the chosen identity's shared context, kept by its registry
         val before = liveContexts()
         try {
             val selection = runBlocking { s.selectSni(w.clientHello) }
@@ -443,6 +499,10 @@ class QuicSniTest {
     @Test fun negative_selectionsThatAreNeverAppliedLeakNoContext() {
         val config = server(selector = byName("server.test" to a))
         KslQuicCrypto.newSession(config).close() // the identity's shared base context, kept by its registry
+        paused(config).let { (s, w) ->
+            runBlocking { s.selectSni(w.clientHello) }.close() // and the chosen identity's, kept the same way
+            s.close()
+        }
         val before = liveContexts()
         repeat(20) {
             val (s, w) = paused(config)

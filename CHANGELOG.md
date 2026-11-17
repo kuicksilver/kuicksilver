@@ -26,7 +26,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tickets nor 0-RTT. Over HTTP/3 a request must be for the name its connection's identity was chosen for (421 otherwise,
   as on HTTP/1.1 and HTTP/2), and an answer's `alpn` applies to TCP only (HTTP/3 stays `h3`). Retry and address
   validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
-  [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni).
+  [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni). The context of a chosen identity is built
+  once per answer (same identity, trust and staple objects, equal ALPN and client-certificate settings) and shared by
+  later handshakes, over TCP too: a QUIC handshake through a selector costs about 2% more than one without (it rebuilt
+  the context, about 60 µs, each time); a reloaded identity still reaches the next handshake.
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
   (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
@@ -1135,6 +1138,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 ### Fixed
+
+- QUIC client: a ticket renewed without the `early_data` extension (a resumption on a server that no longer accepts 0-RTT)
+  carried the 0-RTT allowance of the ticket it renewed, so the next connection offered 0-RTT the server had withdrawn.
+  OpenSSL's client copies the old session for each NewSessionTicket and only overwrites `max_early_data` from an
+  extension present; `ksl` now clears it for a ticket without one (RFC 9846 section 4.6.1: the client may send early data
+  "when using this ticket" up to its `max_early_data_size`; RFC 9001 section 4.6.1). A value other than 0xffffffff is
+  still a PROTOCOL_VIOLATION.
+- TLS and QUIC clients no longer resume a session issued under another server name (RFC 9846 section 4.7.1: clients
+  "SHOULD only resume if the SNI value matches the one used in the original session"; DNS names compare
+  case-insensitively): `QuicTlsSession.resume` returns false and the handshake is a full one. The session cache never
+  offered one, but a ticket handed to `resume` for another name with 0-RTT failed the handshake in OpenSSL ("inconsistent
+  early data sni"); a name that differs only in case resumes without 0-RTT for the same reason.
 
 - WebTransport flow control: a stream stopped (`stopSending`, or its input cancelled) right as it was accepted, before
   its reader had run, never gave its bytes back as session credit (draft-ietf-webtrans-http3-16 section 5.6), so a

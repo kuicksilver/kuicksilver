@@ -278,6 +278,9 @@ internal class KslQuicTlsSession(
 
     private fun s(): Long = ssl.also { if (it == 0L) throw IllegalStateException("session closed") }
 
+    /** The context of the identity an sniSelector chose, null before or without one (tests). */
+    internal val overrideContextForTest: KslContext? get() = overrideLease?.ctx
+
     /** The context this session was built from (tests). */
     internal val context: KslContext get() = ctx
 
@@ -573,9 +576,9 @@ internal class KslQuicTlsSession(
         return try {
             when (val verdict = config.sniVerdict(clientHello, selector(clientHello))) {
                 is SniVerdict.Override -> {
-                    val o = config.withOverride(verdict.override)
+                    val o = config.overrideConfigs.of(config, verdict.override)
                     val plain = o.clientAuth == ClientAuth.None
-                    val lease = KslContext.create(o, quic = true, ctx.quicTickets && plain, ctx.earlyData && plain)
+                    val lease = KslContext.acquire(o, quic = true, ctx.quicTickets && plain, ctx.earlyData && plain)
                     SniSelection(this, clientHello.serverName, lease, verdict.override, 0, null)
                 }
 

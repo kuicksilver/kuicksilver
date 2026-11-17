@@ -1511,7 +1511,13 @@ and one with client certificates gets neither tickets nor 0-RTT, as a QUIC serve
 
 Session tickets are bound to the server name and to the certificate they were issued under: a ticket resumes, and its
 0-RTT is accepted, only when the same name selects the same certificate again (RFC 6066 section 3, RFC 9846 section
-4.7.1). Otherwise the handshake is a full one and issues a new ticket.
+4.7.1). Otherwise the handshake is a full one and issues a new ticket. A Kuicksilver client does not even offer a ticket
+under another name than its own.
+
+The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
+trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
+for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
+reload. Up to 64 answers are kept per configuration.
 
 ### Trust
 

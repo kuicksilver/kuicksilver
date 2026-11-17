@@ -108,6 +108,34 @@ class QuicEarlyDataTest {
         }
     }
 
+    /**
+     * RFC 9846 section 4.6.1: a ticket's max_early_data_size is what the client may send "when using this ticket". A 0-RTT
+     * ticket resumed on a server that no longer allows early data is renewed without the extension, and the renewed ticket
+     * carries no 0-RTT (OpenSSL's client kept the old ticket's value, so the next connection offered 0-RTT the server had
+     * withdrawn).
+     */
+    @Test fun negative_renewedTicketWithoutEarlyDataCarriesNo0Rtt() {
+        val ticket = firstTicket({ KslQuicCrypto.newSession(Fixtures.server(), earlyData = true) })
+        val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+        assertTrue(c.resume(ticket))
+        val s = KslQuicCrypto.newSessionForTest(Fixtures.server(), ticketsWithoutEarlyData = true)
+        val r = handshake(c, s)
+        try {
+            assertTrue((r.pump.s as KslQuicTlsSession).sessionReusedForTest, "resumed")
+            val renewed = tickets(r)
+            assertEquals(1, renewed.size, "a resumption issues one fresh ticket")
+            val next = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+            try {
+                assertTrue(next.resume(renewed[0]))
+                assertFalse(next.enableEarlyData(null, null), "the renewed ticket allows no 0-RTT")
+            } finally {
+                next.close()
+            }
+        } finally {
+            r.pump.close()
+        }
+    }
+
     @Test fun zeroRttAcceptedOnResumption() {
         val ticket = firstTicket({ KslQuicCrypto.newSession(Fixtures.server(), earlyData = true) })
         val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)

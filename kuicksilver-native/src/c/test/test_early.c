@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* 0-RTT (ABI 6): server early-data option, early context bound into tickets, the transport's per-hello verdict, status getter. */
 #include "test_common.h"
+#include <openssl/ssl.h>
 
 static const uint8_t TICKET_KEY[80] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0x11, 0x22, 0x33};
 static int set_str(ksl_ssl *s, int what, const char *v) {
@@ -469,14 +470,114 @@ static void test_negative_sni_override_without_early_data(void) {
               st2.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0,
           "resumed, 0-RTT rejected by the override without early data");
     CHECK(under_n.tickets > 0 && under_n.with_early_data == 0, "its tickets carry no early_data extension");
+    ksl_session *next = ksl_ssl_get1_session(c);
     ksl_ssl_free(c);
     ksl_ssl_free(s);
+    /* RFC 9846 section 4.6.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when
+       using this ticket": a ticket without the extension allows none, also one renewed on a resumption of a ticket that did */
+    c = qclient(cc);
+    ksl_ssl_set_session(c, next);
+    CHECK(next != NULL && ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_ERROR,
+          "the renewed ticket without early_data allows no 0-RTT (OpenSSL's client kept the old ticket's value)");
+    ksl_ssl_free(c);
+    ksl_session_free(next);
     sni_choice = NULL;
     ksl_session_free(sess);
     ksl_ctx_free(cc);
     ksl_ctx_free(base);
     ksl_ctx_free(a);
     ksl_ctx_free(n);
+    END();
+}
+
+/* The same without SNI overrides: a server that stopped accepting early data renews a 0-RTT ticket without early_data, and the
+   client offers no 0-RTT with the renewed one (RFC 9846 section 4.6.1, RFC 9001 section 4.6.1: "To indicate that the server does
+   not accept 0-RTT data, the early_data extension is omitted from the NewSessionTicket") */
+static void test_negative_renewed_ticket_without_early_data(void) {
+    SECTION("negative_quic_renewed_ticket_without_early_data_refuses_0rtt");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *e = early_server_ctx(1), *n = early_server_ctx(0);
+    ksl_session *sess = first_session(cc, e, "cfg-1");
+    ksl_ssl *c = qclient(cc), *s = qserver(n, NULL);
+    ksl_ssl_set_session(c, sess);
+    track ct = {0}, st = {0};
+    pump_early(c, s, &ct, &st);
+    ksl_session *next = ksl_ssl_get1_session(c);
+    CHECK(reused(c) == 1 && next != NULL && next != sess, "resumed on the server without early data, a renewed ticket");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    c = qclient(cc);
+    uint8_t one = 1;
+    ksl_ssl_set_session(c, next);
+    CHECK(ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_ERROR, "no 0-RTT with the renewed ticket");
+    CHECK(early_status(c) == 0, "status none");
+    ksl_ssl_free(c);
+    c = qclient(cc);
+    ksl_ssl_set_session(c, sess);
+    CHECK(ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_OK, "control: the original ticket still allows it");
+    ksl_ssl_free(c);
+    ksl_session_free(next);
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(e);
+    ksl_ctx_free(n);
+    END();
+}
+
+/* RFC 9846 section 4.7.1: clients "SHOULD only resume if the SNI value matches the one used in the original session", and early
+   data under another name is refused by OpenSSL's client mid-handshake ("inconsistent early data sni"): ksl_ssl_set_session takes
+   only a session of the name set with KSL_SET_SNI (DNS names compare case-insensitively; no name only with no name) */
+static ksl_ssl *qclient_named(ksl_ctx *c, const char *sni, const char *verify) {
+    ksl_ssl *s = ksl_ssl_new(c, KSL_MODE_QUIC);
+    if (sni)
+        set_str(s, KSL_SET_SNI, sni);
+    set_str(s, KSL_SET_VERIFY_NAME, verify);
+    ksl_quic_set_transport_params(s, TP, sizeof TP);
+    return s;
+}
+static void test_negative_session_of_another_name(void) {
+    SECTION("negative_session_of_another_server_name_is_not_offered");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
+    ksl_session *sess = first_session(cc, sc, "cfg-1");
+    ksl_ssl *c = qclient_named(cc, "proxy.internal", "server.test");
+    CHECK(sess != NULL && ksl_ssl_set_session(c, sess) == KSL_ERROR && last_code(c, NULL) == KSL_E_BAD_ARG,
+          "a session of server.test is refused for proxy.internal");
+    uint8_t one = 1;
+    CHECK(ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_ERROR, "and no 0-RTT without it");
+    ksl_ssl_free(c);
+    c = qclient_named(cc, NULL, "server.test");
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_ERROR, "nor without a name");
+    ksl_ssl_free(c);
+    /* a client that offers it anyway (OpenSSL directly, without early data): the QUIC server does not resume it (RFC 6066 3) */
+    {
+        ksl_ssl *raw = qclient_named(cc, "proxy.internal", "server.test"), *srv = qserver(sc, "cfg-1");
+        SSL_set_session(ksl_ssl_raw_for_test(raw), (SSL_SESSION *)sess);
+        track rt = {0}, rs = {0};
+        pump_early(raw, srv, &rt, &rs);
+        CHECK(rt.done && rs.done && reused(raw) == 0 && reused(srv) == 0,
+              "negative: the QUIC server runs a full handshake for another name's ticket");
+        ksl_ssl_free(raw);
+        ksl_ssl_free(srv);
+    }
+    c = qclient_named(cc, "SERVER.Test", "server.test");
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_OK,
+          "the same name in another case resumes (DNS names are case-insensitive)");
+    CHECK(ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_ERROR && last_code(c, NULL) == KSL_E_NOT_SUPPORTED,
+          "but offers no 0-RTT: OpenSSL compares the bytes and would fail the handshake");
+    ksl_ssl_free(c);
+    c = qclient(cc);
+    CHECK(ksl_ssl_set_session(c, sess) == KSL_OK && ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_OK,
+          "control: the name itself resumes with 0-RTT");
+    track ct = {0}, st = {0};
+    ksl_ssl *s = qserver(sc, "cfg-1");
+    ksl_ssl_set(s, KSL_SET_EARLY_DATA, &one, 1);
+    pump_early(c, s, &ct, &st);
+    CHECK(ct.done && st.done && reused(c) == 1 && early_status(c) == 2,
+          "and the handshake resumes with 0-RTT accepted");
+    ksl_ssl_free(s);
+    ksl_ssl_free(c);
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
     END();
 }
 
@@ -627,4 +728,6 @@ void run_early(void) {
     test_sni_override_keeps_early_data();
     test_negative_sni_ticket_other_identity();
     test_negative_sni_override_without_early_data();
+    test_negative_renewed_ticket_without_early_data();
+    test_negative_session_of_another_name();
 }

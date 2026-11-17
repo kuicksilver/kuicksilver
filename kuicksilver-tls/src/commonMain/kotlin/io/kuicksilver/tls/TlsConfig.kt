@@ -183,6 +183,9 @@ public class TlsConfig private constructor(
     /** The OCSP response a server staples; see [Builder.ocspStapling]. */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
 ) {
+    /** The configurations [withOverride] made for this server's selector answers, reused across handshakes (see [OverrideConfigs]). */
+    internal val overrideConfigs: OverrideConfigs = OverrideConfigs()
+
     /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
     @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {

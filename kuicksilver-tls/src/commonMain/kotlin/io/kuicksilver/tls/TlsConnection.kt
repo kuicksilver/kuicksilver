@@ -354,7 +354,7 @@ public class TlsConnection private constructor(
         when (val verdict = config.sniVerdict(info, selector(info))) {
             is SniVerdict.Override -> {
                 val override = verdict.override
-                val o = KslContext.create(config.withOverride(override), quic = false)
+                val o = KslContext.acquire(config.overrideConfigs.of(config, override), quic = false)
                 overrideCtx = o
                 lock.withLock {
                     // the override's identity staples its own response, never the default identity's

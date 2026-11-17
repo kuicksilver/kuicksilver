@@ -94,3 +94,54 @@ internal fun TlsConfig.sniVerdict(
 internal const val ALERT_UNRECOGNIZED_NAME = 112
 internal const val ALERT_MISSING_EXTENSION = 109
 internal const val ALERT_INTERNAL_ERROR = 80
+
+/**
+ * The server configurations a base configuration's selector answers lead to, kept so that the next handshake with the same
+ * answer gets the same [TlsConfig] object and so the native context its identity's registry already holds
+ * ([KslContext.acquire], [SharedServerContexts]): building one cost about 60 µs, an eighth of a QUIC handshake. An answer is
+ * the same when it names the same identity, trust and staple objects and equal ALPN and client-certificate settings; a
+ * `TlsIdentity.Reloadable` stays one key, and the registry gives each of its snapshots its own context, so a reload reaches
+ * the next handshake as without the cache. At most [MAX] answers are kept (a selector that makes a new identity per call
+ * would otherwise keep them all alive): past that the cache starts over.
+ */
+internal class OverrideConfigs {
+    private class Key(
+        val identity: TlsIdentity,
+        val alpn: List<String>?,
+        val clientAuth: ClientAuth?,
+        val trust: TrustConfig?,
+        val ocsp: Any?,
+    ) {
+        override fun equals(other: Any?): Boolean =
+            other is Key && other.identity === identity && other.alpn == alpn && other.clientAuth == clientAuth &&
+                other.trust === trust && other.ocsp === ocsp
+
+        override fun hashCode(): Int = ((identity.hashCode() * 31 + (alpn?.hashCode() ?: 0)) * 31 + (clientAuth?.hashCode() ?: 0)) * 31
+    }
+
+    private val map = AtomicReference<Map<Key, TlsConfig>>(emptyMap())
+
+    /** Entries kept now (tests). */
+    val size: Int get() = map.load().size
+
+    /** [base] with [o] applied ([TlsConfig.withOverride]), the one made before for an equal answer. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun of(
+        base: TlsConfig,
+        o: ServerTlsOverride,
+    ): TlsConfig {
+        val key = Key(o.identity, o.alpn?.toList(), o.clientAuth, o.trust, o.ocspStapling)
+        map.load()[key]?.let { return it }
+        val made = base.withOverride(o) // throws for an override build() would refuse: nothing is kept then
+        while (true) {
+            val m = map.load()
+            m[key]?.let { return it }
+            val next = if (m.size >= MAX) mapOf(key to made) else m + (key to made)
+            if (map.compareAndSet(m, next)) return made
+        }
+    }
+
+    companion object {
+        const val MAX = 64
+    }
+}
