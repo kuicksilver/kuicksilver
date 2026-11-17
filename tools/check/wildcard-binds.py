@@ -26,15 +26,20 @@ connect to 127.0.0.1). What is a wildcard bind:
                 "0.0.0.0" / "::" argument of a bind (Ktor's bind("0.0.0.0", 0), bindTcp(selector, "0.0.0.0", 0));
                 java.net.InetSocketAddress(port), which is the wildcard
   raw           .bind(port), .bind(port = ...), .bind(), .bind { } and .bind(null) without an address (Netty's
-                Bootstrap, ktor-network's defaults, NIO); ServerSocket(port) and ServerSocket(port, backlog) without an
-                address; DatagramSocket(), DatagramSocket(<int>) and DatagramSocket(<a variable that holds a port>: one
-                declared Int or with an integer initializer, or named like a port); embeddedServer(..., port = ...)
+                Bootstrap, ktor-network's defaults, NIO), also a null first argument (NIO's bind(null, backlog)) or a
+                named null address (bind(localAddress = null), local = null, address = null); ServerSocket(port),
+                ServerSocket(port, backlog) and ServerSocket(port, backlog, null) without an address; DatagramSocket(),
+                DatagramSocket(<int>), DatagramSocket(<a variable that holds a port>: one declared Int or with an integer
+                initializer, or named like a port) and DatagramSocket(port, null); embeddedServer(..., port = ...) and
+                embeddedServer(factory, <port>) (the port by position: an integer or a variable that holds a port)
                 without host (Ktor's default 0.0.0.0)
   interop       HqInteropServer.start / H3InteropServer.start without `host =` (kuicksilver-interop's default 0.0.0.0)
 Comments and KDoc are skipped. Known blind spots: an address built elsewhere (a helper in another file, a function
 parameter), a wildcard reached through string templates or concatenation, a `val` shadowed in a nested lambda or local
 class (names are tracked per function, not per scope), DatagramSocket(x) whose x is neither declared here as a port nor
-named like one (read as an address), a bind function reached through an alias or a reference, a bind in a file that reaches loopback only
+named like one (read as an address), a null address held in a variable (bind(addr), DatagramSocket(0, addr),
+ServerSocket(0, 50, addr) with addr = null), embeddedServer(factory, x) whose x is neither declared here as a port nor
+named like one, a bind function reached through an alias or a reference, a bind in a file that reaches loopback only
 through a helper of another file other than rawHttp/slowHttp, a socket that binds implicitly on its first send (an unbound
 DatagramChannel), library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
 address for a loopback peer themselves, through loopbackLocalFor), and code that is not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
@@ -54,10 +59,12 @@ WILD = r'"(?:0\.0\.0\.0|::)"'
 WILD_ADDR = re.compile(r"InetSocketAddress\s*\(")
 BINDERS = r"(?:\bbind|\bopen|bindTcp|bindUdp)"
 CONNECTOR = re.compile(r"\b(tlsConnector|sslConnector|plainConnector|connector)\b(\s*\()?")
-RAW_BIND = re.compile(r"\.bind\s*(?:\(\s*(?:\d+\s*|null\s*|port\s*=\s*[^,()]+)?\)|\{)")
+RAW_BIND = re.compile(r"\.bind\s*(?:\(\s*(?:\d+\s*|port\s*=\s*[^,()]+)?\)|\{)")
+BIND_CALL = re.compile(r"\.bind\s*\(")
+NULL_ADDRESS = re.compile(r"(?:(?:localAddress|local|address)\s*=\s*)?null")
 EMBEDDED = re.compile(r"\bembeddedServer\s*\(")
-SERVER_SOCKET = re.compile(r"\bServerSocket\s*\(\s*[^,()\s]+\s*(?:,\s*[^,()\s]+\s*)?\)")
-DATAGRAM_SOCKET = re.compile(r"\bDatagramSocket\s*\(\s*([\w.]*)\s*\)")
+SERVER_SOCKET = re.compile(r"\bServerSocket\s*\(\s*[^,()\s]+\s*(?:,\s*[^,()\s]+\s*)?(?:,\s*null\s*)?\)")
+DATAGRAM_SOCKET = re.compile(r"\bDatagramSocket\s*\(\s*([\w.]*)\s*(,\s*null\s*)?\)")
 JAVA_PORT_ONLY = re.compile(r"\bInetSocketAddress\s*\(\s*[\w.]+\s*\)")  # ktor's takes a host too: this is java.net's, on the wildcard
 INTEROP = re.compile(r"\b(?:HqInteropServer|H3InteropServer)\.start\s*\(")
 HOST_WILD = re.compile(r"\bhost\s*=\s*" + WILD + r'|"-host=(?:0\.0\.0\.0|::)"')
@@ -262,11 +269,16 @@ def findings_in(code):
         found.append((m.start(), "java.net.InetSocketAddress(port): the wildcard"))
     for m in RAW_BIND.finditer(code):
         found.append((m.start(), "bind without an address: the wildcard"))
+    for m in BIND_CALL.finditer(code):
+        top = split_args(text[m.end() : m.end() - 1 + len(call_args(code, m.end() - 1)) - 1])
+        # a null address: the first argument, or a named one (NIO's bind(null), ktor-network's bind(localAddress = null))
+        if any(NULL_ADDRESS.fullmatch(a) and (k == 0 or "=" in a) for k, a in enumerate(top)):
+            found.append((m.start(), "bind without an address: the wildcard"))
     for m in SERVER_SOCKET.finditer(code):
         found.append((m.start(), "ServerSocket without an address: the wildcard"))
     for m in DATAGRAM_SOCKET.finditer(code):
         arg = m.group(1)
-        if arg and not re.fullmatch(r"\d+", arg) and not looks_like_port(arg, text):
+        if arg and not m.group(2) and not re.fullmatch(r"\d+", arg) and not looks_like_port(arg, text):
             continue  # an address held in a variable (DatagramSocket(SocketAddress))
         found.append((m.start(), "DatagramSocket without an address: the wildcard"))
     for m in EMBEDDED.finditer(code):
@@ -274,6 +286,14 @@ def findings_in(code):
         top = split_args(args[1:-1])
         if any(re.match(r"port\s*=", a) for a in top) and not any(re.match(r"host\s*=", a) for a in top):
             found.append((m.start(), "embeddedServer(..., port = ...) without host: its default is 0.0.0.0"))
+        # the port by position (embeddedServer(Netty, 0)): the host is the third positional argument or a named one
+        pos = [a for a in top if not re.match(r"\w+\s*=(?!=)", a)]
+        if (
+            len(pos) == 2
+            and (re.fullmatch(r"\d+", pos[1]) or (re.fullmatch(r"[\w.]+", pos[1]) and looks_like_port(pos[1], text)))
+            and not any(re.match(r"host\s*=", a) for a in top)
+        ):
+            found.append((m.start(), "embeddedServer(factory, port) without host: its default is 0.0.0.0"))
     for m in INTEROP.finditer(code):
         if not re.search(r"\bhost\s*=", text[m.end() - 1 : m.end() - 1 + len(call_args(code, m.end() - 1))]):
             found.append((m.start(), "interop server without host: its default is 0.0.0.0"))

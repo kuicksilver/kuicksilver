@@ -7,10 +7,12 @@
 # and a bare .bind(), ServerSocket(port) and ServerSocket(port, backlog), DatagramSocket() and DatagramSocket(port), an
 # interop server without host, the same in a Java file, in a harness module's main sources and in an androidDeviceTest
 # set; Ktor's bind("0.0.0.0", 0), bind(port = 0) and bind { }, a named local = wildcard argument, DatagramSocket(a port
-# variable), NIO bind(null), embeddedServer(Netty, port = 0) without host, bindTcp(selector, "0.0.0.0", 0), a wildcard
+# variable), NIO bind(null) and bind(null, backlog), bind(localAddress = null), DatagramSocket(0, null),
+# ServerSocket(0, 50, null), embeddedServer(Netty, port = 0) and embeddedServer(Netty, 0) (also a port variable) without host, bindTcp(selector, "0.0.0.0", 0), a wildcard
 # val written over several lines, a file whose only loopback mention is [::1]; an allowlist entry that matches nothing
 # (stale), one without a reason. Pass: the same binds on 127.0.0.1 or ::1,
-# a host set inside a nested block, a wildcard bind in a file that never talks to loopback, a main source set, binds named
+# a host set inside a nested block, embeddedServer(Netty, 0, "127.0.0.1"), embeddedServer(Netty, environment), a null
+# that is not the address, a wildcard bind in a file that never talks to loopback, a main source set, binds named
 # in comments, KDoc and strings, the function definitions, another function named connector(...), a judged line.
 # Usage: wildcard-binds-test.sh
 set -uo pipefail
@@ -58,6 +60,12 @@ class Bad {
     fun y() = java.nio.channels.DatagramChannel.open().bind(null)                                         // BAD-nio-null
     fun z() = embeddedServer(Netty, port = 0) { }                                                         // BAD-embedded
     fun bt() = bindTcp(selector, "0.0.0.0", 0)                                                            // BAD-bindtcp
+    fun ln() = aSocket(selector).udp().bind(localAddress = null)                                          // BAD-named-null
+    fun nb() = java.nio.channels.ServerSocketChannel.open().bind(null, 50)                                // BAD-null-backlog
+    fun dn() = java.net.DatagramSocket(0, null)                                                           // BAD-ds-null
+    fun sn() = java.net.ServerSocket(0, 50, null)                                                         // BAD-ss-null
+    fun ep() = embeddedServer(Netty, 0) { }                                                               // BAD-embedded-pos
+    fun ev(serverPort: Int) = embeddedServer(Netty, serverPort, module = { })                             // BAD-embedded-var
     suspend fun ml() {
         val far =
             InetSocketAddress(
@@ -123,6 +131,13 @@ class Good {
     fun l() = bindTcp(selector, "127.0.0.1", 0)
     fun m() = embeddedServer(Netty, port = 0, host = "127.0.0.1") { }
     fun m2() = embeddedServer(Kuicksilver, configure = { connector { host = "127.0.0.1"; port = 0 } }) { }
+    fun m3() = embeddedServer(Netty, 0, "127.0.0.1") { }
+    fun m4() = embeddedServer(Netty, 0, host = "::1") { }
+    fun m5() = embeddedServer(Netty, environment)
+    fun o1() = aSocket(selector).udp().bind(localAddress = InetSocketAddress("127.0.0.1", 0))
+    fun o2() = java.nio.channels.ServerSocketChannel.open().bind(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    fun o3() = java.net.DatagramSocket(0, java.net.InetAddress.getLoopbackAddress())
+    fun o4() = Bootstrap().bind(InetSocketAddress("127.0.0.1", 0)).addListener(null)
     val address = java.net.InetSocketAddress("127.0.0.1", 0)
     fun n() = java.net.DatagramSocket(address)
     suspend fun before(local: InetSocketAddress) = QuicEndpoint.bind(local) // a parameter, not the val below
@@ -159,7 +174,8 @@ expect() { # a finding on the line carrying the marker
 }
 for m in BAD-tls-block BAD-tls-noblock BAD-plain BAD-ktor BAD-ssl BAD-host4 BAD-host6 BAD-quic BAD-open6 BAD-netty BAD-bare \
   BAD-ss1 BAD-ss2 BAD-ds0 BAD-ds1 BAD-interop BAD-const BAD-javaport BAD-ktor-host BAD-ktor-port BAD-ktor-lambda BAD-named \
-  BAD-ds-var BAD-nio-null BAD-embedded BAD-bindtcp BAD-multiline; do expect "$t/Bad.kt" "$m"; done
+  BAD-ds-var BAD-nio-null BAD-embedded BAD-bindtcp BAD-multiline BAD-named-null BAD-null-backlog BAD-ds-null BAD-ss-null \
+  BAD-embedded-pos BAD-embedded-var; do expect "$t/Bad.kt" "$m"; done
 line=$(grep -n "Http3Endpoint.bind(wild" "$r/$t/Bad.kt" | cut -d: -f1)
 grep -q "^$t/Bad.kt:$line: " <<< "$out" || { echo "FAIL: no finding for a wildcard through a local val"; rc=1; }
 expect "kuicksilver-x/src/jvmTest/java/x/BadJava.java" BAD-java

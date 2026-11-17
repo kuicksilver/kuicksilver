@@ -95,9 +95,10 @@ class ClientH3EndpointChoiceTest {
         }
 
     /**
-     * A client closed while an endpoint is being bound (between the bind and the pool storing it) keeps no endpoint: the
-     * close, which takes no lock, either finds the endpoint stored or the bind finds the client closed. Before, the bind read
-     * `closed` first and stored after it, so a close in between found nothing and the endpoint stayed open.
+     * A client closed while an endpoint is being bound keeps no endpoint: the close, which takes no lock, either finds the
+     * endpoint stored or the bind finds the client closed. The close lands in the bind's last window (after the store, before
+     * it reads `closed`). Before, the bind read `closed` first and stored after it, so a close in that window (between the
+     * read and the store) found nothing and the endpoint stayed open.
      */
     @Test fun negative_aCloseDuringTheBindLeavesNoEndpoint() =
         h3Test {
@@ -106,7 +107,7 @@ class ClientH3EndpointChoiceTest {
                 var bound: Http3Endpoint? = null
                 val c = testClient(Http3DiscoveryMode.H3Only)
                 val pool = (c.engine as KuicksilverEngine).h3
-                pool.endpointBoundBeforeStoreForTest = { ep ->
+                pool.endpointStoredBeforeCheckForTest = { ep ->
                     bound = ep
                     pool.close() // the client closes right now
                 }

@@ -354,8 +354,8 @@ internal class H3Pool(
     /** Test hook (this pool's): runs with each destination of a connection attempt and the endpoint chosen for it. */
     internal var endpointChosenForTest: ((InetSocketAddress, Http3Endpoint) -> Unit)? = null
 
-    /** Test hook (this pool's): runs with a newly bound endpoint before the pool stores it. */
-    internal var endpointBoundBeforeStoreForTest: ((Http3Endpoint) -> Unit)? = null
+    /** Test hook (this pool's): runs with a newly bound endpoint after the pool stores it and before it reads `closed`. */
+    internal var endpointStoredBeforeCheckForTest: ((Http3Endpoint) -> Unit)? = null
     private val connections = HashMap<String, H3Entry>()
 
     /** [quic] with its handshake timeout cut to [connectTimeoutMillis] when that is shorter (a 0-RTT connect returns early). */
@@ -414,7 +414,6 @@ internal class H3Pool(
                         else -> loopback4
                     }
                 bound ?: Http3Endpoint.bind(local ?: InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also {
-                    endpointBoundBeforeStoreForTest?.invoke(it)
                     // stored first, then [closed] read: [close] (which takes no lock) sets [closed] and then reads the fields,
                     // so either it sees this endpoint and closes it, or this sees [closed] and closes it here
                     when {
@@ -422,6 +421,7 @@ internal class H3Pool(
                         v6 -> loopback6 = it
                         else -> loopback4 = it
                     }
+                    endpointStoredBeforeCheckForTest?.invoke(it)
                     if (closed) {
                         it.close()
                         when {
