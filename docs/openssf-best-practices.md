@@ -17,7 +17,7 @@ answer against the repository when updating the entry; this file is not kept in 
 | `description_good` | MUST | Met | [README.md](../README.md): what Kuicksilver is (QUIC, HTTP/3 and TLS for Kotlin Multiplatform, Ktor engines) and the problem it solves |
 | `interact` | MUST | Met | README: Maven Central coordinates, quick start; [CONTRIBUTING.md](../CONTRIBUTING.md); GitHub issues with templates ([`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE/config.yml)) |
 | `contribution` | MUST | Met | [CONTRIBUTING.md, Proposing a change](../CONTRIBUTING.md#proposing-a-change) |
-| `contribution_requirements` | SHOULD | Met | CONTRIBUTING: style, tests first, the [pull request checklist](../CONTRIBUTING.md#pull-request-checklist), the Developer Certificate of Origin |
+| `contribution_requirements` | SHOULD | Met | CONTRIBUTING: style, tests first, the [pull request checklist](../CONTRIBUTING.md#pull-request-checklist), the [license of contributions](../CONTRIBUTING.md#license-of-contributions) (Apache-2.0 section 5, no sign-off; until 2026-11 the Developer Certificate of Origin) |
 | `floss_license` | MUST | Met | Apache-2.0 ([LICENSE](../LICENSE)); the bundled OpenSSL is Apache-2.0 too ([NOTICE](../NOTICE)) |
 | `floss_license_osi` | SUGGESTED | Met | Apache-2.0 is OSI-approved |
 | `license_location` | MUST | Met | `LICENSE` at the repository root |
