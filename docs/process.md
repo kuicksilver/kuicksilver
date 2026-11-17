@@ -207,7 +207,9 @@ reads Kotlin and Java syntax, file by file: an address built in another file or 
 string template or a constant of another file, a file that reaches loopback only through another file's helper (other than `rawHttp`/`slowHttp`), a null
 address held in a variable (`DatagramSocket(0, addr)` with `addr = null`), a port by position held in a variable neither
 declared as an `Int` nor named like a port (`embeddedServer(Netty, p)`), and scripts or external peers are not seen; library code is out of its scope (the ktor-client HTTP/3 pool and
-`QuicConnection.rebind` pick the loopback address for a loopback peer themselves).
+`QuicConnection.rebind` pick the loopback address for a loopback peer themselves). It also reports two false findings, to judge in
+`wildcard-binds.allow`: a `.bind(null, x)` of something that is not a socket, and `embeddedServer(factory, x)` whose `x`
+is named like a port but is not an `Int` (read as the port by position).
 
 **Merging the locks.** `test-count.lock` has one sorted line per test, so two branches that add tests to different
 classes merge without a conflict. On a conflict in any lock (`test-count.lock`, `test-sleeps.lock`, `rfc-tests.lock`),

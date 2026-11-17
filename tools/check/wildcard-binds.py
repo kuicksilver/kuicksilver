@@ -43,6 +43,9 @@ named like one, a bind function reached through an alias or a reference, a bind 
 through a helper of another file other than rawHttp/slowHttp, a socket that binds implicitly on its first send (an unbound
 DatagramChannel), library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
 address for a loopback peer themselves, through loopbackLocalFor), and code that is not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
+Two false findings to judge in the allowlist: a .bind(null, x) of something that is not a socket (any .bind call with a
+null first argument is read as a socket bound to no address), and embeddedServer(factory, x) whose x is named like a port
+but is not an Int (read as the port by position).
 
 Usage: wildcard-binds.py [root]   exit 0: no finding; exit 1: findings listed
 """

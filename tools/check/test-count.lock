@@ -1481,6 +1481,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Connec
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.sameOriginSharesOneConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv4LoopbackServerIsReachedFromLoopback
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv6LoopbackServerIsReachedFromLoopback
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aCloseBeforeTheStoreLeavesNoEndpoint
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aCloseDuringTheBindLeavesNoEndpoint
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aServerElsewhereIsReachedFromTheWildcard
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointCloseTest.closeClosesEveryEndpoint

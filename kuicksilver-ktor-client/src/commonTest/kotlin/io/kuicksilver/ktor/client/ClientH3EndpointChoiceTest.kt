@@ -95,32 +95,58 @@ class ClientH3EndpointChoiceTest {
         }
 
     /**
+     * Closes the client while the endpoint for [host] is being bound, at the step [stored] names (before the pool stores it,
+     * or after the store and before it reads `closed`), and checks that the pool keeps no endpoint and the one bound is
+     * closed. False when the endpoint could not be bound (no IPv6 loopback here).
+     */
+    private suspend fun closeDuringTheBind(
+        host: String,
+        stored: Boolean,
+    ): Boolean {
+        var bound: Http3Endpoint? = null
+        val c = testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds })
+        val pool = (c.engine as KuicksilverEngine).h3
+        pool.endpointBindStepForTest = { ep, step ->
+            if (step == stored) {
+                bound = ep
+                pool.close() // the client closes right now
+            }
+        }
+        val case = "$host, closed ${if (stored) "after" else "before"} the store"
+        runCatching { c.get("https://$host:9/") }
+        c.close()
+        val ep = bound ?: return false
+        assertFalse(pool.endpointBoundForTest, "$case: the pool holds no endpoint")
+        val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+        assertFailsWith<QuicException.EndpointClosing>("$case: the endpoint bound during the close is closed") {
+            withTimeout(5.seconds) { ep.connect(InetSocketAddress("127.0.0.1", 9), tls) }
+        }
+        return true
+    }
+
+    /**
      * A client closed while an endpoint is being bound keeps no endpoint: the close, which takes no lock, either finds the
-     * endpoint stored or the bind finds the client closed. The close lands in the bind's last window (after the store, before
-     * it reads `closed`). Before, the bind read `closed` first and stored after it, so a close in that window (between the
-     * read and the store) found nothing and the endpoint stayed open.
+     * endpoint stored or the bind finds the client closed. Here the close lands after the store, before the bind reads
+     * `closed`, and finds the endpoint. Each endpoint the pool keeps: the wildcard one, 127.0.0.1 and ::1 (where there is an
+     * IPv6 loopback).
      */
     @Test fun negative_aCloseDuringTheBindLeavesNoEndpoint() =
         h3Test {
-            val (server, port) = testServer(host = "127.0.0.1") { routing { get("/") { call.respondText("ok") } } }
-            try {
-                var bound: Http3Endpoint? = null
-                val c = testClient(Http3DiscoveryMode.H3Only)
-                val pool = (c.engine as KuicksilverEngine).h3
-                pool.endpointStoredBeforeCheckForTest = { ep ->
-                    bound = ep
-                    pool.close() // the client closes right now
-                }
-                assertFails { c.get("https://127.0.0.1:$port/") }
-                c.close()
-                val ep = assertNotNull(bound)
-                assertFalse(pool.endpointBoundForTest, "the pool holds no endpoint")
-                val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
-                assertFailsWith<QuicException.EndpointClosing>("the endpoint bound during the close is closed") {
-                    withTimeout(5.seconds) { ep.connect(InetSocketAddress("127.0.0.1", 9), tls) }
-                }
-            } finally {
-                server.stop(100, 500)
-            }
+            assertTrue(closeDuringTheBind("192.0.2.1", stored = true), "the wildcard endpoint is bound")
+            assertTrue(closeDuringTheBind("127.0.0.1", stored = true), "the IPv4 loopback endpoint is bound")
+            if (!closeDuringTheBind("[::1]", stored = true)) println("the ::1 case skipped: needs an IPv6 loopback")
+        }
+
+    /**
+     * A close that lands after the bind passed its first `closed` check and before the store finds nothing: the bind sees
+     * `closed` after storing, closes the endpoint and clears the field it stored it in, for each endpoint the pool keeps.
+     * Before, the bind read `closed` first and stored after it, so a close between the read and the store found nothing and
+     * the endpoint stayed open.
+     */
+    @Test fun negative_aCloseBeforeTheStoreLeavesNoEndpoint() =
+        h3Test {
+            assertTrue(closeDuringTheBind("192.0.2.1", stored = false), "the wildcard endpoint is bound")
+            assertTrue(closeDuringTheBind("127.0.0.1", stored = false), "the IPv4 loopback endpoint is bound")
+            if (!closeDuringTheBind("[::1]", stored = false)) println("the ::1 case skipped: needs an IPv6 loopback")
         }
 }
