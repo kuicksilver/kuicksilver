@@ -868,7 +868,7 @@ weakness appears in different protocols.
 | 3.20 | HTTP/1.1 smuggling and splitting; proxy credentials | CWE-444, CWE-113; CWE-522 |
 | 3.20.1 | WebSocket handshake and framing | CWE-20, CWE-345 |
 | 3.20.2 | WebSocket compression side channel and bombs | CWE-203, CWE-409 |
-| 3.20.3 | proxy auto-configuration scripts | CWE-829 |
+| 3.20.3 | proxy auto-configuration scripts | CWE-829, CWE-94 |
 | 3.21, 3.21.1 | slow TCP peers, a stalled resolver | CWE-400 |
 | 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
@@ -895,7 +895,7 @@ The other classes of the CWE Top 25:
 | CWE-287 improper authentication, CWE-306 missing authentication for a critical function | yes: the peer is authenticated by its certificate | 3.6, 3.6a (server and client certificates, CWE-295 above), 3.3 and 3.4 (Retry and reset tokens authenticated by keys only `ksl` holds) |
 | CWE-862 missing authorization, CWE-863 incorrect authorization | in part: which requests a peer may make is the application's decision | the library's own decisions of that kind: early data only for requests that are safe methods and allowed by the application, and the server's policy for the others, such as `425 Too Early` (3.8), 421 for a host the connection's certificate does not name (RFC 9110 §7.4), proxy credentials only to the proxy that asked (3.20) |
 | CWE-798 hard-coded credentials | no | no key, password or token is built in: ticket, token and reset keys are generated at run time (section 1); the certificates and keys under test sources are test fixtures, out of scope ([SECURITY.md](../../SECURITY.md#scope)) |
-| CWE-94 code injection | only through proxy auto-configuration | a PAC script is code from the network, run by the platform, not by the library (3.20.3, CWE-829 above); nothing else is evaluated |
+| CWE-94 code injection | yes, on Apple platforms: a proxy auto-configuration script is code from the network | since 0.3.0 the engine runs PAC scripts itself on JavaScriptCore, each in a bare context with only ECMAScript's built-ins, the PAC utility functions and four read-only lookups (no network, file, timer, module or process API), a 2 s run limit, a 1 MiB size cap and no context shared between scripts (3.20.3, CWE-829 above); nothing else is evaluated |
 | CWE-77 command injection | no | the library starts no processes and builds no command lines |
 | CWE-269 improper privilege management | no | the library neither gains nor drops privileges; what it writes is created private to the user (the native library's directory, the key log; 3.7, 3.11) |
 
