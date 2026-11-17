@@ -374,6 +374,14 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     if (s->sni_pending == 1)
         return SSL_CLIENT_HELLO_RETRY;
     s->sni_pending = 3;
+    /* RFC 9846 section 9.2: missing_extension (109) for a ClientHello without server_name. OpenSSL maps an alert sent before the
+       version is chosen with the TLS 1.2 table, where missing_extension becomes handshake_failure (tls1_alert_code): it is sent
+       from server_name_cb instead, which runs once the extensions are parsed and the version is chosen, before the server's
+       first flight (a TLS 1.2 handshake still gets handshake_failure: TLS 1.2 has no missing_extension) */
+    if (s->sni_decision_alert == SSL_AD_MISSING_EXTENSION) {
+        s->sni_late_alert = SSL_AD_MISSING_EXTENSION;
+        return SSL_CLIENT_HELLO_SUCCESS;
+    }
     if (s->sni_decision_alert) {
         *al = s->sni_decision_alert;
         return SSL_CLIENT_HELLO_ERROR;

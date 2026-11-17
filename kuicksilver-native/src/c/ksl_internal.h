@@ -102,8 +102,8 @@ struct ksl_ssl {
     /* server: when the session being resumed was authenticated (its full handshake, epoch seconds), carried into renewed tickets */
     int64_t auth_time;
     int skip_ticket; /* server: ticket_gen_cb found no time left for a ticket; ticket_cb then issues none */
-    /* server SNI pause */
-    int sni_pending, sni_decision_alert;
+    /* server SNI pause; sni_late_alert: a refusal sent once the version is chosen (server_name_cb), for an alert TLS 1.3 alone has */
+    int sni_pending, sni_decision_alert, sni_late_alert;
     ksl_ctx *sni_override;
     /* KSL_OPT_NUM_TICKETS 0: set by ksl_ssl_new_session_ticket, the only way such a session gets a ticket (after the pin verdict) */
     int ticket_authorized;

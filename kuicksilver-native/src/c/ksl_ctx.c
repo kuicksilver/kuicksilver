@@ -315,6 +315,11 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
 static int server_name_cb(SSL *ssl, int *al, void *arg) {
     (void)arg;
     ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    /* the SNI decision's refusal that waited for the version (ksl_client_hello_cb) */
+    if (s && s->sni_late_alert) {
+        *al = s->sni_late_alert;
+        return SSL_TLSEXT_ERR_ALERT_FATAL;
+    }
     if (s && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION &&
         (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_extended_master_secret, NULL, NULL) != 1 ||
          (SSL_get_options(ssl) & SSL_OP_NO_EXTENDED_MASTER_SECRET))) {
@@ -389,13 +394,30 @@ void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
 /* SSL_new copies these settings from the SSL_CTX into the session, and SSL_set_SSL_CTX moves only the certificate and the session id
    context: an SNI override (ksl_client_hello_cb) applies the rest itself, so that every setting of the override is in effect (ticket
    count, version range, options, verify mode and parameters, suites, groups, early data). The ALPN select, ticket key, keylog and
-   verify callbacks are read from the current or the session context and look up the session's owner. */
+   verify callbacks are read from the current or the session context and look up the session's owner.
+   A QUIC session keeps what SSL_set_quic_tls_cbs made of it (ossl_quic_tls_configure): TLS 1.3 at least (RFC 9001 section 4.2:
+   "An endpoint MUST terminate the connection if a version of TLS older than 1.3 is negotiated") and middlebox compatibility
+   mode off (RFC 9001 section 8.4: "QUIC also provides no means to carry a change_cipher_spec record"; a server context keeps
+   the mode on for TCP, and OpenSSL's QUIC record layer fails the handshake when a server under it writes one). Its
+   max_early_data is not the context's either: SSL_set_quic_tls_early_data_enabled set 0xffffffff on the session
+   (ksl_ssl_new). RFC 9001 section 4.6.1: "Servers MUST NOT send the early_data extension with a
+   max_early_data_size field set to any value other than 0xffffffff", and "To indicate that the server does not accept 0-RTT
+   data, the early_data extension is omitted from the NewSessionTicket": an override that accepts early data keeps the
+   sentinel, one that does not (an override with client certificates) gets 0, so its tickets carry no early_data and its
+   handshake accepts no 0-RTT (final_early_data refuses with max_early_data 0). */
 int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
     SSL_CTX *x = o->ctx;
+    ksl_ssl *ks = SSL_get_ex_data(ssl, 1);
+    int quic = ks && ks->mode == KSL_MODE_QUIC;
     ERR_clear_error();
     SSL_clear_options(ssl, SSL_get_options(ssl) & ~SSL_CTX_get_options(x));
     SSL_set_options(ssl, SSL_CTX_get_options(x));
-    if (SSL_set_min_proto_version(ssl, SSL_CTX_get_min_proto_version(x)) != 1 ||
+    if (quic)
+        SSL_clear_options(ssl, SSL_OP_ENABLE_MIDDLEBOX_COMPAT);
+    long min = SSL_CTX_get_min_proto_version(x);
+    if (quic && (min == 0 || min < TLS1_3_VERSION))
+        min = TLS1_3_VERSION;
+    if (SSL_set_min_proto_version(ssl, (int)min) != 1 ||
         SSL_set_max_proto_version(ssl, SSL_CTX_get_max_proto_version(x)) != 1)
         return 0;
     if (SSL_set_num_tickets(ssl, SSL_CTX_get_num_tickets(x)) != 1)
@@ -411,8 +433,11 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
         return 0;
     if (SSL_set_session_id_context(ssl, o->sid_ctx, (unsigned)o->sid_ctx_len) != 1)
         return 0;
-    if (SSL_set_max_early_data(ssl, SSL_CTX_get_max_early_data(x)) != 1 ||
-        SSL_set_recv_max_early_data(ssl, SSL_CTX_get_recv_max_early_data(x)) != 1)
+    if (quic) {
+        if (SSL_set_max_early_data(ssl, o->early_data ? 0xffffffffu : 0) != 1)
+            return 0;
+    } else if (SSL_set_max_early_data(ssl, SSL_CTX_get_max_early_data(x)) != 1 ||
+               SSL_set_recv_max_early_data(ssl, SSL_CTX_get_recv_max_early_data(x)) != 1)
         return 0;
     SSL_set_allow_early_data_cb(ssl, o->early_data ? allow_early_data_cb : NULL, NULL);
     return 1;

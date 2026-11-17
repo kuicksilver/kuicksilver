@@ -34,15 +34,22 @@ static ksl_ssl *qserver(ksl_ctx *c, const char *early_ctx) {
 typedef struct {
     int levels[2][4];
     int done;
-} track; /* levels[direction][level]: KEY events seen */
+} track;                    /* levels[direction][level]: KEY events seen */
+static ksl_ctx *sni_choice; /* the override pump_early answers a server's SNI pause with (NULL: the base context) */
 static void pump_early(ksl_ssl *c, ksl_ssl *s, track *ct, track *st) {
     ksl_ssl *who[2] = {c, s}, *peer[2] = {s, c};
     track *t[2] = {ct, st};
     for (int round = 0; round < 40; round++) {
         int progressed = 0;
         for (int k = 0; k < 2; k++) {
-            if (ksl_drive(who[k]) == KSL_ERROR)
+            int r = ksl_drive(who[k]);
+            if (r == KSL_ERROR)
                 return;
+            if (r == KSL_WANT_SNI) {
+                if (ksl_ssl_sni_resume(who[k], sni_choice, 0) != KSL_OK)
+                    return;
+                progressed = 1;
+            }
             ksl_event ev;
             while (ksl_quic_next_event(who[k], &ev)) {
                 progressed = 1;
@@ -342,6 +349,137 @@ static void test_early_option_server_only(void) {
     END();
 }
 
+/* ---- SNI overrides on QUIC: 0-RTT under the chosen identity (RFC 9001 section 4.6.1), tickets bound to it ---- */
+/* a server context of `cert`: the shared ticket keys, two tickets, early data when asked, the SNI pause when asked */
+static ksl_ctx *sni_server_ctx(const char *cert, int early, int pause) {
+    ksl_ctx *c = server_ctx(cert);
+    ksl_ctx_set_ticket_keys(c, TICKET_KEY, 1);
+    ksl_ctx_set_option(c, KSL_OPT_NUM_TICKETS, 2);
+    if (early)
+        ksl_ctx_set_option(c, KSL_OPT_EARLY_DATA, 1);
+    if (pause)
+        ksl_ctx_set_option(c, KSL_OPT_SNI_PAUSE, 1);
+    ksl_ctx_freeze(c);
+    return c;
+}
+static void test_sni_override_keeps_early_data(void) {
+    SECTION("quic_sni_override_keeps_early_data");
+    /* the base identity (another CA) would fail the client: a completed handshake proves the override's certificate was sent */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *base = sni_server_ctx("server-other-ca", 1, 1),
+            *a = sni_server_ctx("server", 1, 0);
+    sni_choice = a;
+    ksl_session *sess = first_session(cc, base, "cfg-1");
+    CHECK(sess != NULL, "the override's handshake completes and leaves a ticket");
+    int rc;
+    uint8_t cst, sst, re;
+    track ct = {0}, st = {0};
+    resume(cc, base, sess, "cfg-1", 1, &rc, &cst, &sst, &ct, &st, &re);
+    CHECK(rc == KSL_OK, "the override's ticket allows 0-RTT (max_early_data_size 0xffffffff)");
+    CHECK(cst == 2 && sst == 2 && st.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 1,
+          "0-RTT accepted under the same override");
+    CHECK(ct.done && st.done && re == 1, "the resumed handshake completes");
+    sni_choice = NULL;
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(base);
+    ksl_ctx_free(a);
+    END();
+}
+static void test_negative_sni_ticket_other_identity(void) {
+    SECTION("negative_quic_sni_ticket_not_resumed_under_another_identity");
+    /* RFC 9846 section 4.7.1: a ticket resumes only under the leaf it was issued under. Same name, same ticket keys, same session
+       context: only the identity the selector chose differs */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *base = sni_server_ctx("server-other-ca", 1, 1),
+            *a = sni_server_ctx("server", 1, 0), *b = sni_server_ctx("server-other-key", 1, 0);
+    sni_choice = a;
+    ksl_session *sess = first_session(cc, base, "cfg-1");
+    CHECK(sess != NULL, "a ticket issued under identity A");
+    sni_choice = b;
+    int rc;
+    uint8_t cst, sst, re;
+    track ct = {0}, st = {0};
+    resume(cc, base, sess, "cfg-1", 1, &rc, &cst, &sst, &ct, &st, &re);
+    CHECK(rc == KSL_OK, "the client offers A's ticket with 0-RTT");
+    CHECK(re == 0 && cst == 1 && sst == 1 && st.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0,
+          "under identity B: no resumption, 0-RTT rejected, no 0-RTT read key");
+    CHECK(ct.done && st.done, "a full handshake with B's certificate completes");
+    sni_choice = NULL;
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(base);
+    ksl_ctx_free(a);
+    ksl_ctx_free(b);
+    END();
+}
+/* NewSessionTickets the client read, and how many of them carried early_data (RFC 9846 section 4.6.1: lifetime, age_add, nonce,
+   ticket, then the extensions) */
+typedef struct {
+    int tickets, with_early_data;
+} nst_seen;
+static void count_nst(int write_p, int version, int content_type, const void *buf, size_t len, struct ssl_st *ssl,
+                      void *arg) {
+    (void)version;
+    (void)ssl;
+    const uint8_t *m = buf;
+    nst_seen *n = arg;
+    if (write_p || content_type != 22 || len < 4 + 9 || m[0] != 4)
+        return;
+    n->tickets++;
+    size_t off = 4 + 8;
+    off += 1 + m[off];
+    if (off + 2 > len)
+        return;
+    off += 2 + (((size_t)m[off] << 8) | m[off + 1]);
+    if (off + 2 > len)
+        return;
+    size_t end = off + 2 + (((size_t)m[off] << 8) | m[off + 1]);
+    for (off += 2; off + 4 <= end && end <= len; off += 4 + (((size_t)m[off + 2] << 8) | m[off + 3]))
+        if (((m[off] << 8) | m[off + 1]) == 42)
+            n->with_early_data++;
+}
+static void test_negative_sni_override_without_early_data(void) {
+    SECTION("negative_quic_sni_override_without_early_data_refuses_0rtt");
+    /* the same identity, but an override that accepts no early data (as one with client certificates): the ticket still resumes,
+       0-RTT is rejected, and the tickets it issues carry no early_data (RFC 9001 section 4.6.1: "To indicate that the server does
+       not accept 0-RTT data, the early_data extension is omitted from the NewSessionTicket") */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *base = sni_server_ctx("server-other-ca", 1, 1),
+            *a = sni_server_ctx("server", 1, 0), *n = sni_server_ctx("server", 0, 0);
+    sni_choice = a;
+    nst_seen under_a = {0, 0}, under_n = {0, 0};
+    ksl_ssl *c = qclient(cc), *s = qserver(base, "cfg-1");
+    ksl_ssl_msg_observer_for_test(c, count_nst, &under_a);
+    track ct = {0}, st = {0};
+    pump_early(c, s, &ct, &st);
+    ksl_session *sess = ksl_ssl_get1_session(c);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    CHECK(sess != NULL && under_a.tickets > 0 && under_a.with_early_data == under_a.tickets,
+          "control: the early-data override's tickets carry early_data");
+    sni_choice = n;
+    c = qclient(cc);
+    s = qserver(base, "cfg-1");
+    ksl_ssl_msg_observer_for_test(c, count_nst, &under_n);
+    uint8_t one = 1;
+    ksl_ssl_set_session(c, sess);
+    CHECK(ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_OK, "A's ticket allows 0-RTT");
+    ksl_ssl_set(s, KSL_SET_EARLY_DATA, &one, 1);
+    track ct2 = {0}, st2 = {0};
+    pump_early(c, s, &ct2, &st2);
+    CHECK(reused(c) == 1 && early_status(c) == 1 && early_status(s) == 1 &&
+              st2.levels[KSL_DIR_READ][KSL_LEVEL_EARLY] == 0,
+          "resumed, 0-RTT rejected by the override without early data");
+    CHECK(under_n.tickets > 0 && under_n.with_early_data == 0, "its tickets carry no early_data extension");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    sni_choice = NULL;
+    ksl_session_free(sess);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(base);
+    ksl_ctx_free(a);
+    ksl_ctx_free(n);
+    END();
+}
+
 /* ---- RFC 9369 sections 4.1 and 5: 0-RTT keys in the original version, tickets bound to their version ---- */
 #define V2 0x6b3343cfu
 static void be32(uint8_t *o, uint32_t v) {
@@ -486,4 +624,7 @@ void run_early(void) {
     test_early_option_server_only();
     test_early_key_in_original_version();
     test_ticket_bound_to_version();
+    test_sni_override_keeps_early_data();
+    test_negative_sni_ticket_other_identity();
+    test_negative_sni_override_without_early_data();
 }

@@ -849,6 +849,15 @@ static void test_sni_pause(void) {
           "without SNI the default identity is offered (client: unknown_ca)");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
+    /* missing_extension (RFC 9846 section 9.2), sent once TLS 1.3 is chosen: before that OpenSSL would map it to handshake_failure */
+    c = tcp_client(cc, NULL);
+    s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    sni_arg e = {NULL, 109, 0, {0}};
+    r = tcp_pump(c, s, on_sni, &e);
+    last_code(c, &alert);
+    CHECK(r == KSL_ERROR && alert == (109 | 0x100), "client receives alert missing_extension(109)");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
     ksl_ctx_free(proxy);
