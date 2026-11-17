@@ -16,7 +16,8 @@
 #      and the other variables of tools/clean-build-env.sh in the environment, it still builds identical copies. The
 #      helper itself: every variable it lists is unset, and local-release.sh and verify-release.sh call it before they
 #      build (a line-order check; local-release-test.sh runs the release's own case).
-# Parts 2 and 3 need a macOS host and build/openssl/macos-arm64; elsewhere they are reported as skipped.
+# Part 2 also builds the Android library with and without KSL_KEEP_DEBUG=1 when an NDK and build/openssl/android-arm64
+# are there. Parts 2 and 3 need a macOS host and build/openssl/macos-arm64; elsewhere they are reported as skipped.
 # Usage: tools/check/native-flags-test.sh
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -213,6 +214,20 @@ else
   check "build-jni: the library still exports only its entry points" "$([ $rc = 0 ] && echo 0 || echo 1)" "$out"
   out=$(LDFLAGS="-Wl,-ksl-no-such-linker-flag" bash "$tree/tools/build-jni.sh" osx-aarch_64 "$tmp/jni-bad" 2>&1); rc=$?
   check "negative_jniHonoursLdflags" "$([ $rc != 0 ] && grep -q 'ksl-no-such-linker-flag' <<< "$out" && echo 0 || echo 1)" "exit $rc"
+
+  # KSL_KEEP_DEBUG=1 (local builds): the Android library keeps its symbol table and, with -g, its debug information
+  readelf=$( (ls -d "${ANDROID_NDK_ROOT:-/nonexistent}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf "$HOME"/Library/Android/sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/llvm-readelf 2>/dev/null || true) | tail -1)
+  if [ -n "$readelf" ] && [ -f "$root/build/openssl/android-arm64/lib/libcrypto.a" ]; then
+    cp -R "$root/build/openssl/android-arm64" "$tree/build/openssl/"
+    out=$(KSL_KEEP_DEBUG=1 CFLAGS=-g bash "$tree/tools/build-android-so.sh" arm64-v8a "$tmp/android-keep" 2>&1); rc=$?
+    check "KSL_KEEP_DEBUG=1: the Android library keeps .symtab and .debug_info" \
+      "$([ $rc = 0 ] && [ "$("$readelf" -S "$tmp/android-keep/arm64-v8a/libksl.so" | grep -cE '\.debug_info|\.symtab')" = 2 ] && echo 0 || echo 1)" "exit $rc"
+    out=$(CFLAGS=-g bash "$tree/tools/build-android-so.sh" arm64-v8a "$tmp/android-strip" 2>&1); rc=$?
+    check "negative_androidStrippedWithoutKeepDebug" \
+      "$([ $rc = 0 ] && [ "$("$readelf" -S "$tmp/android-strip/arm64-v8a/libksl.so" | grep -cE '\.debug_info|\.symtab')" = 0 ] && echo 0 || echo 1)" "exit $rc"
+  else
+    echo "SKIPPED KSL_KEEP_DEBUG on Android (no NDK llvm-readelf or no build/openssl/android-arm64)"
+  fi
 
   # ------------------------------------------------------------------------------------- 3. tools/check/double-build.sh
   # the environment a builder may have: each of these reaches clang on its own (the controls show it), the double build

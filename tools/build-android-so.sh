@@ -5,7 +5,8 @@
 # Usage: build-android-so.sh <arm64-v8a|x86_64|armeabi-v7a> [out dir]   (NDK from ANDROID_NDK_ROOT, else the SDK's ndk/<pin of gradle/toolchains.toml>, else its newest ndk/)
 # The builder's CPPFLAGS and CFLAGS come after the project's compile flags and LDFLAGS after its link flags, so they add to
 # them (a later flag wins where two conflict); the compiler is always the NDK's clang (CC is not used). A release and the
-# reproducibility checks build with them unset (docs/guide/building.md).
+# reproducibility checks build with them unset (docs/guide/building.md). KSL_KEEP_DEBUG=1: the library is not stripped
+# (symbols and, with CFLAGS=-g, debug information stay), for a local build; a release never sets it.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; abi="${1:?abi}"; out="${2:-$root/kuicksilver-native/src/androidMain/jniLibs}"
 pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
@@ -28,5 +29,5 @@ src=$(ls "$root"/kuicksilver-native/src/c/ksl_*.c)
   -I"$O/include" -I"$root/kuicksilver-native/src/c" ${user_cflags[@]+"${user_cflags[@]}"} -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
   -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack ${user_ldflags[@]+"${user_ldflags[@]}"} \
   $src "$root/kuicksilver-native/src/jni/ksl_jni.c" "$O/lib/libssl.a" "$O/lib/libcrypto.a" -llog -o "$out/$abi/libksl.so"
-"$T/llvm-strip" "$out/$abi/libksl.so"
+[ "${KSL_KEEP_DEBUG:-0}" = 1 ] || "$T/llvm-strip" "$out/$abi/libksl.so"
 echo "$out/$abi/libksl.so ($(wc -c < "$out/$abi/libksl.so" | tr -d ' ') bytes)"

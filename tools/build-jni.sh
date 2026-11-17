@@ -8,6 +8,8 @@
 # them (a later flag wins where two conflict). CC is the compiler on macOS (default clang) and Linux (default gcc); the
 # Windows library is cross-built with x86_64-w64-mingw32-gcc whatever CC says. A release and the reproducibility checks
 # build with all four unset (docs/guide/building.md).
+# KSL_KEEP_DEBUG=1: the library is not stripped, so its symbols (and, with CFLAGS=-g, its debug information) stay, for a
+# local build to debug or profile; a release never sets it (tools/clean-build-env.sh) and refuses debug sections.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cls="${1:?classifier}"; out="${2:-$root/kuicksilver-native/build/jni}"
 abi=$(sed -n 's/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p' "$root/kuicksilver-native/src/c/ksl.h")
@@ -30,18 +32,18 @@ case "$os" in
     JH="${JAVA_HOME:-$(/usr/libexec/java_home)}"; printf '_JNI_OnLoad\n_JNI_OnLoad_ksl\n' > "$dir/exports.txt"
     ${CC:-clang} $cflags -arch "$([ "$arch" = aarch_64 ] && echo arm64 || echo x86_64)" -mmacosx-version-min=11.0 -I"$JH/include" -I"$JH/include/darwin" ${user_cflags[@]+"${user_cflags[@]}"} \
       -dynamiclib -Wl,-exported_symbols_list,"$dir/exports.txt" -Wl,-install_name,@rpath/$lib ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -o "$dir/$lib"
-    strip -x "$dir/$lib" ;;
+    [ "${KSL_KEEP_DEBUG:-0}" = 1 ] || strip -x "$dir/$lib" ;;
   linux)
     JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$dir/exports.map"
     ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" ${user_cflags[@]+"${user_cflags[@]}"} -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
       ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
-    strip --strip-unneeded "$dir/$lib" ;;
+    [ "${KSL_KEEP_DEBUG:-0}" = 1 ] || strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"
     # reproducible PE: no link timestamp (strip below likewise), and the linker's default image base instead of one hashed from the output path
     # (the loader relocates the dll anyway: --dynamicbase is the default)
     x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" ${user_cflags[@]+"${user_cflags[@]}"} -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base ${user_ldflags[@]+"${user_ldflags[@]}"} "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -ldnsapi -o "$dir/$lib"
-    SOURCE_DATE_EPOCH=0 x86_64-w64-mingw32-strip "$dir/$lib" ;;   # strip stamps the PE header with the current time otherwise
+    [ "${KSL_KEEP_DEBUG:-0}" = 1 ] || SOURCE_DATE_EPOCH=0 x86_64-w64-mingw32-strip "$dir/$lib" ;;   # strip stamps the PE header with the current time otherwise
 esac
 find "$out/resources/META-INF/native" -name 'libksl_*' ! -name "libksl_${abi}_*" -delete   # a shared output directory never ships a stale ABI
 cp "$dir/$lib" "$out/resources/META-INF/native/$lib"

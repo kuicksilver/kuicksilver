@@ -63,7 +63,14 @@ What else to know:
   `builder-flags-sha256=<hash>`, that stands for all of them and, for macOS, `CC`, paths included; that word and the
   build cache's key change with any of them, so a build with other flags or another compiler is never taken from the
   cache or reused. The Docker builds get the same three variables.
-- **Gradle.** `CC`, `CPPFLAGS`, `CFLAGS` and `LDFLAGS` are inputs of the native tasks: changing one rebuilds what it
+- **Debug symbols.** The JNI library and the Android `libksl.so` are stripped, as the release checks require. For a local
+  build you want to debug or profile, `KSL_KEEP_DEBUG=1` skips the strip, and `CFLAGS=-g` adds debug information:
+  `KSL_KEEP_DEBUG=1 CFLAGS=-g ./gradlew --max-workers=2 :kuicksilver-native:buildJniHost`. On Linux, Windows and Android
+  the library then keeps its symbol table and its debug sections; on macOS the linker leaves no local symbols to strip,
+  and clang writes the debug information next to the library as `libksl_*.dylib.dSYM`. A release never keeps them: it
+  unsets `KSL_KEEP_DEBUG` like the variables above, and `tools/check/native-release.sh` refuses a library with debug
+  sections. The static archives (`libksl.a`, OpenSSL) are never stripped.
+- **Gradle.** `CC`, `CPPFLAGS`, `CFLAGS`, `LDFLAGS` and `KSL_KEEP_DEBUG` are inputs of the native tasks: changing one rebuilds what it
   affects. With `-Pkuicksilver.openssl.prebuilt=true` an existing OpenSSL build is reused only when it was configured
   with the flags you have now; otherwise the build stops and says the directory is stale.
 - **Reproducibility.** The published artifacts are built with the project's own compiler, flags and paths only: the

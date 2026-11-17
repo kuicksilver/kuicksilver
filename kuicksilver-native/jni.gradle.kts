@@ -12,7 +12,7 @@ val hostClassifier = run {
 }
 val jniOut = layout.buildDirectory.dir("jni")
 // The builder's compiler and flags, which the build scripts add to their own (docs/guide/building.md): inputs, so a change reruns the build.
-val builderEnv = listOf("CC", "CPPFLAGS", "CFLAGS", "LDFLAGS").associateWith { providers.environmentVariable(it).orElse("") }
+val builderEnv = listOf("CC", "CPPFLAGS", "CFLAGS", "LDFLAGS", "KSL_KEEP_DEBUG").associateWith { providers.environmentVariable(it).orElse("") }
 val buildJniHost = tasks.register<Exec>("buildJniHost") {
     group = "native"; description = "Builds libksl for the host JVM classifier ($hostClassifier)"
     dependsOn("opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64"))
