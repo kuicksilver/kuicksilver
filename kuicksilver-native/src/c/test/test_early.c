@@ -581,6 +581,96 @@ static void test_negative_session_of_another_name(void) {
     END();
 }
 
+/* ksl_nst_has_early_data, the NewSessionTicket scan behind the renewed-ticket fix: every read stays inside the message (ASan),
+   malformed messages answer 0. Message: type 4, u24 body length, lifetime, age_add, nonce<1>, ticket<2>, extensions<2>. */
+int ksl_nst_has_early_data(const uint8_t *m, size_t len);
+static size_t nst(uint8_t *out, const uint8_t *exts, size_t exts_len) {
+    size_t n = 4;
+    memset(out + n, 7, 8); /* lifetime, age_add */
+    n += 8;
+    out[n++] = 2; /* nonce */
+    out[n++] = 0xaa;
+    out[n++] = 0xbb;
+    out[n++] = 0; /* ticket, 3 bytes */
+    out[n++] = 3;
+    out[n++] = 1;
+    out[n++] = 2;
+    out[n++] = 3;
+    out[n++] = (uint8_t)(exts_len >> 8);
+    out[n++] = (uint8_t)exts_len;
+    memcpy(out + n, exts, exts_len);
+    n += exts_len;
+    out[0] = 4;
+    out[1] = (uint8_t)((n - 4) >> 16);
+    out[2] = (uint8_t)((n - 4) >> 8);
+    out[3] = (uint8_t)(n - 4);
+    return n;
+}
+static void test_nst_parser(void) {
+    SECTION("negative_new_session_ticket_scan_bounds");
+    static const uint8_t EARLY[] = {0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
+    static const uint8_t OTHER[] = {0xfa, 0xfa, 0x00, 0x00};
+    static const uint8_t TWICE[] = {0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff,
+                                    0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
+    static const uint8_t OVERRUN[] = {0x00, 0x2a, 0x00, 0x09, 0xff, 0xff, 0xff, 0xff}; /* claims 9 bytes, has 4 */
+    static const uint8_t HALF_HEADER[] = {0xfa, 0xfa, 0x00, 0x00, 0x00, 0x2a};         /* the second header cut */
+    uint8_t *m = malloc(4 + 17 + 65535);
+    size_t n = nst(m, EARLY, sizeof EARLY);
+    CHECK(ksl_nst_has_early_data(m, n) == 1, "a ticket with early_data");
+    int out_of_range = 0;
+    for (size_t k = 0; k < n; k++) {
+        uint8_t *cut = malloc(k ? k : 1); /* its own allocation: ASan sees any read past k */
+        memcpy(cut, m, k);
+        out_of_range |= ksl_nst_has_early_data(cut, k) != 0;
+        free(cut);
+    }
+    CHECK(!out_of_range, "every truncation (the header still claiming the whole body) answers 0");
+    m[3] = (uint8_t)(m[3] + 1);
+    CHECK(ksl_nst_has_early_data(m, n) == 0, "a body length past the message answers 0");
+    CHECK(ksl_nst_has_early_data(m, nst(m, NULL, 0)) == 0, "no extensions");
+    CHECK(ksl_nst_has_early_data(m, nst(m, OTHER, sizeof OTHER)) == 0, "another extension only");
+    CHECK(ksl_nst_has_early_data(m, nst(m, TWICE, sizeof TWICE)) == 1,
+          "early_data twice (OpenSSL refuses the message)");
+    CHECK(ksl_nst_has_early_data(m, nst(m, OVERRUN, sizeof OVERRUN)) == 0, "an extension past its block answers 0");
+    CHECK(ksl_nst_has_early_data(m, nst(m, HALF_HEADER, sizeof HALF_HEADER)) == 0, "a cut extension header answers 0");
+    n = nst(m, EARLY, sizeof EARLY);
+    m[n - sizeof EARLY - 1] = (uint8_t)(sizeof EARLY + 20); /* the extensions block claims more than the body has */
+    CHECK(ksl_nst_has_early_data(m, n) == 0, "an extensions block past the body answers 0");
+    uint8_t zero[4] = {4, 0, 0, 0};
+    CHECK(ksl_nst_has_early_data(zero, 4) == 0 && ksl_nst_has_early_data(NULL, 0) == 0, "an empty body and no message");
+    /* the largest extensions block: an unknown extension filling it, early_data last */
+    uint8_t *big = malloc(65533);
+    size_t filler = 65533 - sizeof EARLY - 4;
+    big[0] = 0xfa;
+    big[1] = 0xfa;
+    big[2] = (uint8_t)(filler >> 8);
+    big[3] = (uint8_t)filler;
+    memset(big + 4, 0x5a, filler);
+    memcpy(big + 4 + filler, EARLY, sizeof EARLY);
+    CHECK(ksl_nst_has_early_data(m, nst(m, big, 65533)) == 1, "early_data after a 64 KiB extension");
+    free(big);
+    /* random byte flips of a valid message: any answer, but always 0 or 1 and never a read out of bounds */
+    uint32_t x = 2463534242u;
+    int bad = 0;
+    for (int i = 0; i < 20000; i++) {
+        n = nst(m, TWICE, sizeof TWICE);
+        for (int f = 0; f < 3; f++) {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            m[x % n] = (uint8_t)(x >> 8);
+        }
+        uint8_t *copy = malloc(n);
+        memcpy(copy, m, n);
+        int r = ksl_nst_has_early_data(copy, n);
+        bad |= r != 0 && r != 1;
+        free(copy);
+    }
+    CHECK(!bad, "random flips answer 0 or 1");
+    free(m);
+    END();
+}
+
 /* ---- RFC 9369 sections 4.1 and 5: 0-RTT keys in the original version, tickets bound to their version ---- */
 #define V2 0x6b3343cfu
 static void be32(uint8_t *o, uint32_t v) {
@@ -730,4 +820,5 @@ void run_early(void) {
     test_negative_sni_override_without_early_data();
     test_negative_renewed_ticket_without_early_data();
     test_negative_session_of_another_name();
+    test_nst_parser();
 }

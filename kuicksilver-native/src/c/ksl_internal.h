@@ -191,6 +191,7 @@ int ksl_chain_security(int level,
                        STACK_OF(X509) *
                            chain); /* ksl_verify.c: X509_V_OK or the X509 error of the first weak key or signature */
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
+int ksl_nst_has_early_data(const uint8_t *m, size_t len); /* ksl_ssl.c, also the fuzz harness's mode 0xfe */
 int ksl_client_hello_sni(SSL *ssl, const unsigned char **name,
                          size_t *len); /* during the ClientHello: its host_name, if any */
 /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed 2^48-1" */

@@ -659,6 +659,36 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
     }
     return 0;
 }
+/* Whether the NewSessionTicket message m[0, len) (handshake header included) carries early_data. Layout (RFC 9846 section 4.6.1):
+   lifetime(4) age_add(4) nonce<0..255> ticket<1..2^16-1> extensions<0..2^16-2>, each extension type(2) length(2) data. Every read
+   stays inside len and inside the body length the header declares; an extension counts only when it lies whole inside the
+   extensions block. A malformed message answers 0 (no early data) and is left to OpenSSL, which refuses it. */
+int ksl_nst_has_early_data(const uint8_t *m, size_t len) {
+    if (!m || len < 4 || m[0] != SSL3_MT_NEWSESSION_TICKET)
+        return 0;
+    size_t body = ((size_t)m[1] << 16) | ((size_t)m[2] << 8) | m[3], end = 4 + body, off = 4 + 8;
+    if (end > len || off + 1 > end)
+        return 0;
+    off += 1 + (size_t)m[off]; /* nonce */
+    if (off + 2 > end)
+        return 0;
+    off += 2 + (((size_t)m[off] << 8) | m[off + 1]); /* ticket */
+    if (off + 2 > end)
+        return 0;
+    size_t ext_end = off + 2 + (((size_t)m[off] << 8) | m[off + 1]);
+    if (ext_end > end)
+        return 0;
+    int found = 0;
+    for (off += 2; off + 4 <= ext_end;) {
+        size_t type = ((size_t)m[off] << 8) | m[off + 1], l = ((size_t)m[off + 2] << 8) | m[off + 3];
+        if (off + 4 + l > ext_end)
+            return 0;
+        if (type == TLSEXT_TYPE_early_data)
+            found = 1;
+        off += 4 + l;
+    }
+    return off == ext_end && found;
+}
 /* A client's message callback during the handshake, called with each message before OpenSSL processes it. ServerHello:
    - notes whether it carried extended_master_secret, which ksl_cert_verify_cb needs before Finished (SSL_get_extms_support answers
      only after the handshake);
@@ -735,23 +765,10 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
        ticket's value, and a QUIC client offered 0-RTT the server had withdrawn (RFC 9001 section 4.6.1: "To indicate that the
        server does not accept 0-RTT data, the early_data extension is omitted from the NewSessionTicket"). This callback sees each
        ticket before OpenSSL processes it and notes whether it carries the extension; new_session_cb then clears the value of a
-       session from a ticket without it. Layout (section 4.6.1): lifetime(4) age_add(4) nonce<0..255> ticket<1..2^16-1>
-       extensions<0..2^16-2>. A malformed message is left to OpenSSL, which refuses it. */
-    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 4 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
-        s->owner->role == KSL_CLIENT) {
-        size_t off = 4 + 8, end = len;
-        s->nst_early_data = 0;
-        if (off < end)
-            off += 1 + (size_t)m[off];
-        if (off + 2 <= end)
-            off += 2 + (((size_t)m[off] << 8) | m[off + 1]);
-        if (off + 2 <= end) {
-            size_t ext_end = off + 2 + (((size_t)m[off] << 8) | m[off + 1]);
-            for (off += 2; off + 4 <= ext_end && ext_end <= end; off += 4 + (((size_t)m[off + 2] << 8) | m[off + 3]))
-                if (((m[off] << 8) | m[off + 1]) == TLSEXT_TYPE_early_data)
-                    s->nst_early_data = 1;
-        }
-    }
+       session from a ticket without it (ksl_nst_has_early_data). */
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
+        s->owner->role == KSL_CLIENT)
+        s->nst_early_data = ksl_nst_has_early_data(m, len);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

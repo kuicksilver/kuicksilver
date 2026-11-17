@@ -15,6 +15,8 @@
      7  `[ctx][ClientHello]`: a resumption ClientHello (pre_shared_key with a ticket, early_data) to a server whose ticket
         keys came from ksl_ctx_set_ticket_keys (0), a registered set (1) or the generated keys (2): ticket decryption and
         the 0-RTT verdict on a fuzzed ticket
+     0xfe  (the whole byte, not modulo 8: no older input starts with it) a NewSessionTicket message for the client's scan of
+        its early_data extension (ksl_nst_has_early_data), which reads the message before OpenSSL checks it
    Every session is driven until it wants more input; every event is drained and every key freed. */
 #define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
 #define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
@@ -50,6 +52,7 @@ static uint8_t TICKET_KEYS[80];
 static ksl_ctx *server_ctx, *server_sni_ctx, *server_early_ctx, *client_ctx, *server_registered_ctx, *server_default_ctx;
 
 extern int64_t (*ksl_ticket_clock)(void);
+int ksl_nst_has_early_data(const uint8_t *m, size_t len);
 static int64_t fake_now = 1000000;
 static int64_t fake_clock(void) { return fake_now; }
 
@@ -206,6 +209,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     init();
     if (size < 1) return 0;
     const uint8_t *rest = data + 1; size_t n = size - 1;
+    if (data[0] == 0xfe) {
+        uint8_t *copy = malloc(n ? n : 1); memcpy(copy, rest, n); /* its own allocation: ASan sees a read past n */
+        int r = ksl_nst_has_early_data(copy, n); free(copy);
+        if (r != 0 && r != 1) abort();
+        return 0;
+    }
     switch (data[0] % 8) {
     case 0: {
         size_t hl; uint8_t *hello = client_hello(rest, n, &hl, NULL);
@@ -283,5 +292,9 @@ int ksl_fuzz_write_seeds(const char *dir) {
     prog[pl++] = 1; prog[pl++] = 0x7f;
     prog[pl++] = 3;
     PUT("ticket-keys-program", 6, prog, pl);
+    /* mode 0xfe: a NewSessionTicket with a nonce, a ticket and early_data 0xffffffff */
+    static const uint8_t NST[] = {4, 0, 0, 0x1a, 0, 0, 0x1c, 0x20, 1, 2, 3, 4, 2, 0xaa, 0xbb, 0, 3, 1, 2, 3, 0, 8,
+                                  0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
+    PUT("new-session-ticket", 0xfe, NST, sizeof NST);
     return 0;
 }
