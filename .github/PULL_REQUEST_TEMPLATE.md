@@ -14,9 +14,10 @@ Security fixes are not proposed here: report them privately (SECURITY.md).
 
 ## Checklist
 
-- [ ] Every commit is signed off (`git commit -s`, Developer Certificate of Origin).
+- [ ] I have the right to submit this change under Apache-2.0 (CONTRIBUTING.md, License of contributions).
 - [ ] AI assistance, if any, is disclosed with an `Assisted-by: <tool>[:<model>]` trailer, and I understand every line.
-- [ ] Tests added or changed; a test failed before the fix; security checks have a `negative_*` control.
+- [ ] Tests (CONTRIBUTING.md, Tests): new functionality has automated tests; a bug fix has a regression test that failed
+      before the fix; security checks have a `negative_*` control.
 - [ ] Public API changed: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` dump diff is part of this PR
       (or: no public API change).
 - [ ] `checkSpdxHeaders`, `checkLayerDependencies` and the architecture checks pass; new files carry the SPDX header.
