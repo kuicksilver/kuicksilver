@@ -50,10 +50,10 @@ case "$*" in
 esac
 EOF
 chmod +x "$src/Configure" "$stub/make"
-ossl() { # <out dir> [VAR=value ...]: tools/openssl/build.sh linux-x64 against the stubs; prints its output
+ossl() { # <out dir> [VAR=value ...]: tools/openssl/build.sh ${OT:-linux-x64} against the stubs; prints its output
   local out="$1"; shift
   env PATH="$stub:$PATH" KSL_OPENSSL_WORK="$work" KSL_OPENSSL_OUT="$out" KSL_FLAGS_TEST_LOG="$log" "$@" \
-    bash "$root/tools/openssl/build.sh" linux-x64 2>&1
+    bash "$root/tools/openssl/build.sh" "${OT:-linux-x64}" 2>&1
 }
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
 F_CPP="-DKSL_FLAGS_PROBE_CPP=1"; F_C="-fstack-protector-strong"; F_LD="-Wl,-z,relro"
@@ -75,7 +75,8 @@ check "openssl: Configure gets CPPFLAGS, CFLAGS and LDFLAGS after the project's 
 check "negative_configureEnvironmentHasNoBuilderFlags" \
   "$([ -s "$log.env" ] && ! grep -qE '^(CPPFLAGS|CFLAGS|CXXFLAGS|LDFLAGS|LDLIBS)=' "$log.env" && echo 0 || echo 1)" "$(grep -E '^(CPPFLAGS|CFLAGS|LDFLAGS)=' "$log.env")"
 t2=$(portable < "$tmp/o2/linux-x64/configure-target.txt")
-check "openssl: configure-target.txt names the builder's flags" "$([ "$t2" = "linux-x86_64 -Os $F_CPP $F_C $F_LD" ] && echo 0 || echo 1)" "$t2"
+check "openssl: configure-target.txt names the builder's flags and the word that stands for them" \
+  "$(grep -qE "^linux-x86_64 -Os $F_CPP $F_C $F_LD builder-flags-sha256=[0-9a-f]{16}\$" <<< "$t2" && echo 0 || echo 1)" "$t2"
 check "openssl: provenance.txt names them" "$(grep -qxF "target $t2" "$tmp/o2/linux-x64/provenance.txt" && echo 0 || echo 1)"
 pt=$(CPPFLAGS="$F_CPP" CFLAGS="$F_C" LDFLAGS="$F_LD" bash "$root/tools/openssl/build.sh" --print-target linux-x64)
 check "openssl: --print-target says what was configured, with the flags" "$([ "$pt" = "$t2" ] && echo 0 || echo 1)" "'$pt' vs '$t2'"
@@ -102,6 +103,40 @@ refuse "negative_configureRpathRefused" LDFLAGS "-rpath /x" "'-rpath' is an opti
 refuse "negative_percentEscapeRefused" CFLAGS "-DX=%41" "'-DX=%41' is an option of OpenSSL's Configure"
 refuse "negative_bareWordRefused" CFLAGS "enable-fips" "'enable-fips' does not start with '-' or '/'"
 refuse "negative_loneDashRefused" LDFLAGS "-" "'-' does not start with '-' or '/'"
+refuse "negative_configureNoFeatureRefused" CFLAGS "-O2 -no-ec" "'-no-ec' is an option of OpenSSL's Configure"
+refuse "negative_configureNoTls13Refused" CPPFLAGS "-no-tls1_3" "'-no-tls1_3' is an option of OpenSSL's Configure"
+refuse "negative_configureDoubleDashSharedRefused" LDFLAGS "--shared" "'--shared' is an option of OpenSSL's Configure"
+refuse "negative_configureSharedRefused" LDFLAGS "-shared" "'-shared' is an option of OpenSSL's Configure"
+pt=$(CFLAGS="-no-integrated-as" bash "$root/tools/openssl/build.sh" --print-target linux-x64 2>&1); rc=$?
+check "openssl: -no-integrated-as is a compiler flag (Configure leaves it alone) and is accepted" "$([ $rc = 0 ] && grep -q -- '-no-integrated-as' <<< "$pt" && echo 0 || echo 1)" "$pt"
+
+# globs: a word with * stays that word, also where it is a path a directory matches
+mkdir -p "$tmp/globdir-match"
+rm -f "$log".*; out=$(ossl "$tmp/o-glob" CFLAGS="-I $tmp/globdir*"); rc=$?
+check "negative_configureFlagNotGlobExpanded" "$([ $rc = 0 ] && [ "$(pos "$log.args" "$tmp/globdir*")" -gt 0 ] && [ "$(pos "$log.args" "$tmp/globdir-match")" = -1 ] && echo 0 || echo 1)" "$out"
+
+# flags that hold a path: the comparison drops such words, the builder-flags word does not
+pa=$(CFLAGS="-I/opt/ksl-a" bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+pb=$(CFLAGS="-I /opt/ksl-b" bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+pc=$(CFLAGS="-I /opt/ksl-c" bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+check "negative_pathOnlyFlagsChangePrintTarget" "$([ "$pa" != "$t1" ] && [ "$pb" != "$t1" ] && [ "$pb" != "$pc" ] && [ "$pa" != "$pb" ] && echo 0 || echo 1)" "'$pa' '$pb' '$pc' vs '$t1'"
+out=$(ossl "$tmp/o-pa" CFLAGS="-I/opt/ksl-a")
+check "openssl: a build with a path-only flag names it in configure-target.txt as --print-target does" \
+  "$([ "$(portable < "$tmp/o-pa/linux-x64/configure-target.txt")" = "$pa" ] && echo 0 || echo 1)" "$(cat "$tmp/o-pa/linux-x64/configure-target.txt")"
+out=$(ossl "$tmp/o-pd" CFLAGS="-I/opt/ksl-d")
+check "negative_pathOnlyFlagsNotReusedFromCache" "$(grep -q '^built linux-x64' <<< "$out" && echo 0 || echo 1)" "$out"
+
+# CC: part of the builder-flags word for macOS; dropped for Android, iOS and mingw, which have their own compiler
+m1=$(CC=/opt/ksl/cc-one bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
+m2=$(CC=/opt/ksl/cc-two bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
+m0=$(bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
+check "negative_macosCcChangesPrintTarget" "$([ "$m1" != "$m2" ] && [ "$m1" != "$m0" ] && echo 0 || echo 1)" "'$m1' '$m2' '$m0'"
+a1=$(CC=/opt/ksl/cc-one bash "$root/tools/openssl/build.sh" --print-target android-arm64)
+a0=$(bash "$root/tools/openssl/build.sh" --print-target android-arm64)
+check "openssl: CC does not change Android's configure line" "$([ "$a1" = "$a0" ] && echo 0 || echo 1)" "'$a1' vs '$a0'"
+ndk="$tmp/fake-ndk"; mkdir -p "$ndk/toolchains/llvm/prebuilt/host/bin"
+rm -f "$log".*; out=$(OT=android-arm64 ossl "$tmp/o-android" ANDROID_NDK_ROOT="$ndk" CC=/opt/ksl/not-the-ndk-clang); rc=$?
+check "negative_androidIgnoresBuilderCc" "$([ -s "$log.args" ] && ! grep -q '^CC=' "$log.args" && echo 0 || echo 1)" "exit $rc: $(grep '^CC=' "$log.args" 2>/dev/null) $out"
 
 # -------------------------------------------------------------------- 2. tools/build-ksl-a.sh and tools/build-jni.sh (macOS)
 O="$root/build/openssl/macos-arm64"
@@ -135,6 +170,15 @@ else
     out=$(env "$v=-include /nonexistent/ksl-flags-probe.h" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
     check "negative_kslArchiveHonours$v" "$([ $rc != 0 ] && grep -q 'ksl-flags-probe.h' <<< "$out" && echo 0 || echo 1)" "exit $rc"
   done
+
+  out=$(CC="clang*" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+  check "negative_kslArchiveCcGlobRefused" "$([ $rc = 2 ] && grep -q 'glob character' <<< "$out" && echo 0 || echo 1)" "exit $rc: $out"
+  out=$(CC="cl[a]ng" bash "$tree/tools/build-jni.sh" osx-aarch_64 "$tmp/jni-glob" 2>&1); rc=$?
+  check "negative_jniCcGlobRefused" "$([ $rc = 2 ] && grep -q 'glob character' <<< "$out" && echo 0 || echo 1)" "exit $rc: $out"
+  rm -f "$cclog"; mkdir -p "$tmp/globinc-match"
+  out=$(CC="$wrap" CFLAGS="-I $tmp/globinc*" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+  invocations "$cclog" "$tmp/glob-inv" >/dev/null
+  check "negative_kslArchiveFlagNotGlobExpanded" "$([ $rc = 0 ] && [ "$(pos "$tmp/glob-inv/1" "$tmp/globinc*")" -gt 0 ] && [ "$(pos "$tmp/glob-inv/1" "$tmp/globinc-match")" = -1 ] && echo 0 || echo 1)" "exit $rc"
 
   rm -f "$cclog"; map="$tmp/jni.map"
   out=$(CC="$wrap" CPPFLAGS="$F_CPP" CFLAGS="-DKSL_FLAGS_PROBE=1" LDFLAGS="-Wl,-map,$map" bash "$tree/tools/build-jni.sh" osx-aarch_64 "$tmp/jni" 2>&1); rc=$?

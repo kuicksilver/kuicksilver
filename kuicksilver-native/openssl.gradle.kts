@@ -66,6 +66,8 @@ opensslTargets.forEach { t ->
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), pinFile)
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
+        // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own
+        if (t.startsWith("macos-")) inputs.property("env.CC", providers.environmentVariable("CC").orElse(""))
         outputs.dir(root.resolve("build/openssl/$t"))
         if (prebuilt) {
             onlyIf("kuicksilver.openssl.prebuilt: build/openssl/$t is not current") { _ -> prebuiltState(t) != null }

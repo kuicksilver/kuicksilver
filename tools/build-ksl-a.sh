@@ -10,7 +10,8 @@
 # (docs/guide/building.md).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; target="${1:?target}"
-host_cc="${CC:-clang}"; user_cflags="${CPPFLAGS:-} ${CFLAGS:-}"
+host_cc="${CC:-clang}"; read -r -a user_cflags <<< "${CPPFLAGS:-} ${CFLAGS:-}"   # word by word, never glob-expanded
+case "$host_cc" in *[*?[]*) echo "CC='$host_cc': a glob character is refused (CC is split into words, not quoted)" >&2; exit 2 ;; esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "build OpenSSL for $target first" >&2; exit 2; }
 kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"; llvm=$( (ls -d "$kdeps"/llvm-*-essentials-* "$kdeps"/llvm-*-dev-* 2>/dev/null || true) | sort -V | tail -1)   # essentials on macOS hosts, dev on Linux x64 hosts
 case "$target" in
@@ -25,7 +26,7 @@ case "$target" in
 esac
 work="$root/build/ksl/$target"; rm -rf "$work"; mkdir -p "$work"
 for f in "$root"/kuicksilver-native/src/c/ksl_*.c; do
-  $CC -std=c11 -O2 -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -I"$O/include" -I"$root/kuicksilver-native/src/c" $user_cflags -c "$f" -o "$work/$(basename "${f%.c}").o"
+  $CC -std=c11 -O2 -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -I"$O/include" -I"$root/kuicksilver-native/src/c" ${user_cflags[@]+"${user_cflags[@]}"} -c "$f" -o "$work/$(basename "${f%.c}").o"
 done
 export ZERO_AR_DATE=1; rm -f "$O/lib/libksl.a"; $AR qc "$O/lib/libksl.a" "$work"/*.o; $AR s "$O/lib/libksl.a" 2>/dev/null || true
 echo "$O/lib/libksl.a"

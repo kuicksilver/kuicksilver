@@ -19,7 +19,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
   Gradle tasks rebuild when they change. OpenSSL gets them as `Configure` options: before, its `Configure` read them from
   the environment in place of the target's own flags, while the build cache and `configure-target.txt` ignored them, so
-  a build with them could be served from the cache of one without. Releases, the double build and
+  a build with them could be served from the cache of one without. Words `Configure` would read as its own options
+  (`--prefix=`, `-no-<feature>`, `-shared`, ...) are refused, no flag is glob-expanded, and one word in
+  `configure-target.txt` stands for all the flags (paths included) and, for macOS, `CC`, so a prebuilt OpenSSL is reused
+  only with the same ones; Android, iOS and mingw builds of OpenSSL ignore `CC`. Releases, the double build and
   `tools/verify/verify-release.sh` build with them unset. `docs/guide/building.md` describes it;
   `tools/check/native-flags-test.sh` checks it in the gate's reproducibility step.
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
