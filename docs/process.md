@@ -49,7 +49,8 @@ Findings are fixed in their own commits, with a failing test where the finding i
 and the fix is reviewed again.
 
 What is not in place: reviews are not yet recorded on GitHub pull requests (changes are integrated locally, stage 5),
-and there is no second maintainer. `.github/CODEOWNERS` still names a placeholder team.
+and there is no second maintainer: roles, decisions and the access continuity plan are in
+[GOVERNANCE.md](../GOVERNANCE.md). `.github/CODEOWNERS` names the maintainer for every path.
 
 ## 3. Where the RFC leaves a choice: reference stacks
 

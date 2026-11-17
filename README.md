@@ -338,7 +338,7 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
   has the answers given in the OpenSSF Best Practices questionnaire (passing).
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
-  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [GOVERNANCE.md](GOVERNANCE.md) (roles, decisions, access continuity).
 
 A note on the name `ksl`: it is this project's C shim between Kotlin and OpenSSL (`kuicksilver-native/src/c/ksl.h`).
 It is unrelated to `fuzz/ksl.cc` in ngtcp2, which is a data structure of that project.
