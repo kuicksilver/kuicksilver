@@ -199,7 +199,9 @@ SNI; the ALPN offer; the signature schemes) while the handshake is paused, and r
 `ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
 
 - an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
-  for that connection (`localCertificates` reports the chosen chain);
+  for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
+  identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of `h3` alone serves the name over QUIC only, and its
+  TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2);
 - null for a ClientHello with a server name: the handshake ends with `unrecognized_name` (112), the fatal choice RFC 6066
   section 3 offers for a name the server does not recognize;
 - null for a ClientHello without one: the configuration's own `identity`; a configuration without one ends the handshake

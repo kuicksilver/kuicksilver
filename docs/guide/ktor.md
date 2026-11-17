@@ -703,8 +703,10 @@ the client's address is validated (as RFC 9001 section 4.3 notes, a server that 
 require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
 to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
 (`defaultIdentity`). An answer's `alpn` restricts its name: without one the name gets every protocol of the connector;
-with one TCP negotiates from that list, and the name is served over HTTP/3, and advertised with `Alt-Svc` on its TCP
-responses, only when the list names `h3` (`listOf("h3", "h2", "http/1.1")`); otherwise its QUIC handshake ends with
+with one TCP negotiates from that list without `h3` (which identifies HTTP/3 over QUIC only, RFC 9114 section 3.1; a list
+of `h3` alone serves the name over HTTP/3 only, and its TCP handshake ends with `no_application_protocol`), and the name is
+served over HTTP/3, and advertised with `Alt-Svc` on its TCP responses, only when the list names `h3`
+(`listOf("h3", "h2", "http/1.1")`); otherwise its QUIC handshake ends with
 `no_application_protocol` (CRYPTO_ERROR 0x178, RFC 7301 section 3.2) and its TCP responses carry no `Alt-Svc` (RFC 7838
 section 2.1: an alternative must serve the origin). Return the same `TrustConfig` and `OcspStapling` objects for a name,
 so that its handshakes share one TLS context. A selector

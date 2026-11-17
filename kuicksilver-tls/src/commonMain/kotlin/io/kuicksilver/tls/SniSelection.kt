@@ -90,10 +90,35 @@ internal fun TlsConfig.sniVerdict(
         else -> SniVerdict.Default
     }
 
-/** TLS alerts of the SNI decision (RFC 9846 section 6). */
+/**
+ * [sniVerdict] for a TLS-over-TCP handshake. RFC 9114 section 3.1: `h3` identifies HTTP/3 over QUIC, so TLS over TCP never
+ * negotiates it: an override's ALPN list goes to the handshake without it. A list that names nothing else serves its name over
+ * QUIC only, and the TCP handshake ends with `no_application_protocol` (RFC 7301 section 3.2), whatever the client offers;
+ * an empty list stays "no ALPN" as in [TlsConfig.alpn].
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun TlsConfig.sniVerdictOverTcp(
+    hello: ClientHelloInfo,
+    override: ServerTlsOverride?,
+): SniVerdict {
+    val verdict = sniVerdict(hello, override)
+    if (verdict !is SniVerdict.Override) return verdict
+    val o = verdict.override
+    val alpn = o.alpn?.toList() ?: return verdict // copy first: the list checked is the one used
+    if (ALPN_H3 !in alpn) return SniVerdict.Override(ServerTlsOverride(o.identity, alpn, o.clientAuth, o.trust, o.ocspStapling))
+    val tcp = alpn.filter { it != ALPN_H3 }
+    if (tcp.isEmpty()) return SniVerdict.Refuse(ALERT_NO_APPLICATION_PROTOCOL, "no_application_protocol: the name is served over QUIC only")
+    return SniVerdict.Override(ServerTlsOverride(o.identity, tcp, o.clientAuth, o.trust, o.ocspStapling))
+}
+
+/** The ALPN protocol ID of HTTP/3 (RFC 9114 section 3.1), defined for QUIC only. */
+internal const val ALPN_H3 = "h3"
+
+/** TLS alerts of the SNI decision (RFC 9846 section 6; RFC 7301 section 3.2). */
 internal const val ALERT_UNRECOGNIZED_NAME = 112
 internal const val ALERT_MISSING_EXTENSION = 109
 internal const val ALERT_INTERNAL_ERROR = 80
+internal const val ALERT_NO_APPLICATION_PROTOCOL = 120
 
 /**
  * The server configurations a base configuration's selector answers lead to, kept so that the next handshake with the same

@@ -451,7 +451,9 @@ public class ClientHelloInfo internal constructor(
  * What a server's selector may override for one connection. `null` from the selector with a presented SNI is fatal (`unrecognized_name`).
  *
  * @property identity the chain and key presented on this connection instead of [TlsConfig.identity].
- * @property alpn replaces [TlsConfig.alpn] for this connection; null keeps it.
+ * @property alpn replaces [TlsConfig.alpn] for this connection; null keeps it. Over TCP the list goes without `h3`, which
+ *   identifies HTTP/3 over QUIC only (RFC 9114 section 3.1): one of `h3` alone ends a TCP handshake with
+ *   `no_application_protocol` (RFC 7301 section 3.2), the name being served over QUIC only.
  * @property clientAuth replaces [TlsConfig.clientAuth] for this connection; null keeps it.
  * @property trust replaces [TlsConfig.trust] for client certificates on this connection; null keeps it. The override passes
  *   the checks of [TlsConfig.Builder.build]: with client certificates the trust must be AnchoredCa or ReloadableCa (optionally inside Pinned)

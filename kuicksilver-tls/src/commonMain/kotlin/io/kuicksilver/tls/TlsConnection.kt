@@ -138,7 +138,8 @@ public class TlsConnection private constructor(
 
     /**
      * A server whose [TlsConfig.sniSelector] chose this connection's settings: the ALPN list its answer set
-     * ([ServerTlsOverride.alpn]), null when it set none or no selector ran. The server engine advertises HTTP/3 on the
+     * ([ServerTlsOverride.alpn]) as it set it, `h3` included (the handshake went without it), null when it set none or no
+     * selector ran. The server engine advertises HTTP/3 on the
      * connection only when this is null or names `h3` (RFC 7838: an alternative must serve the origin).
      */
     @InternalKuicksilverApi
@@ -361,12 +362,13 @@ public class TlsConnection private constructor(
         val ch = Ksl.sslClientHello(s())
         val info = ClientHelloInfo(ch.serverName, parseAlpn(ch.alpnWire), parseU16List(ch.signatureAlgorithmsWire))
         selectedFor = ch.serverName
-        when (val verdict = config.sniVerdict(info, selector(info))) {
+        val answer = selector(info)
+        when (val verdict = config.sniVerdictOverTcp(info, answer)) {
             is SniVerdict.Override -> {
-                val override = verdict.override
+                val override = verdict.override // the answer, without h3 in its ALPN list
                 val o = KslContext.acquire(config.overrideConfigs.of(config, override), quic = false)
                 overrideCtx = o
-                selectedAlpn = override.alpn?.toList()
+                selectedAlpn = answer?.alpn?.toList()
                 lock.withLock {
                     // the override's identity staples its own response, never the default identity's
                     if (config.ocspStapling != null || override.ocspStapling != null) {
@@ -376,7 +378,7 @@ public class TlsConnection private constructor(
                 }
             }
 
-            // unrecognized_name, or missing_extension without a default identity
+            // unrecognized_name, missing_extension without a default identity, or no_application_protocol for a name served over QUIC only
             is SniVerdict.Refuse -> {
                 lock.withLock { Ksl.sslSniResume(s(), 0L, verdict.alert) }
             }

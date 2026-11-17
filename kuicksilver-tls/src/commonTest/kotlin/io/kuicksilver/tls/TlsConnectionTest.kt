@@ -795,6 +795,55 @@ class TlsServerTest {
     }
 
     /**
+     * RFC 9114 section 3.1: `h3` identifies HTTP/3 over QUIC, so TLS over TCP never negotiates it from an override's list,
+     * even listed first (the server's order decides, RFC 7301 section 3.2); the connection reports the answer's list as set.
+     */
+    @Test fun negative_anOverrideNeverNegotiatesH3OverTcp(): Unit =
+        runBlocking {
+            val server = TcpFixtures.server { sniSelector = { ServerTlsOverride(serverIdentity, alpn = listOf("h3", "h3", "x1")) } }
+            val (cd, sd) = connect(TcpFixtures.client { alpn = listOf("h3", "x1") }, server)
+            val c = withTimeout(10.seconds) { cd.await() }
+            val s = withTimeout(10.seconds) { sd.await() }
+            try {
+                assertEquals("x1", c.negotiatedAlpn)
+                assertEquals("x1", s.negotiatedAlpn)
+                assertEquals(listOf("h3", "h3", "x1"), s.sniSelectedAlpn)
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /** An override of `h3` alone serves its name over QUIC only: over TCP the handshake ends with `no_application_protocol`. */
+    @Test fun negative_anH3OnlyOverrideEndsATcpHandshakeWithNoApplicationProtocol() {
+        for (offer in listOf(listOf("h3"), listOf("x1"), emptyList())) {
+            val server = TcpFixtures.server { sniSelector = { ServerTlsOverride(serverIdentity, alpn = listOf("h3")) } }
+            val (cd, sd) = connect(TcpFixtures.client { alpn = offer }, server)
+            runBlocking {
+                val e = assertFailsWith<TlsException.AlertReceived>("offer $offer") { withTimeout(10.seconds) { cd.await() } }
+                assertEquals(120, e.code, "offer $offer")
+                assertFailsWith<TlsException>("offer $offer") { withTimeout(10.seconds) { sd.await() } }
+            }
+        }
+    }
+
+    /** An empty override list keeps meaning "no ALPN" over TCP, as an empty [TlsConfig.alpn] does. */
+    @Test fun anEmptyOverrideListNegotiatesNoAlpnOverTcp(): Unit =
+        runBlocking {
+            val server = TcpFixtures.server { sniSelector = { ServerTlsOverride(serverIdentity, alpn = emptyList()) } }
+            val (cd, sd) = connect(TcpFixtures.client(), server)
+            val c = withTimeout(10.seconds) { cd.await() }
+            val s = withTimeout(10.seconds) { sd.await() }
+            try {
+                assertEquals(null, c.negotiatedAlpn)
+                assertEquals(null, s.negotiatedAlpn)
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /**
      * RFC 9846 section 9.2: "Servers requiring this extension SHOULD respond to a ClientHello lacking a "server_name" extension
      * by terminating the connection with a "missing_extension" alert": a server with only an sniSelector, whose selector has
      * nothing for a ClientHello without SNI, has no identity to answer it with.

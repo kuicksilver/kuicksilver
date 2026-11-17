@@ -26,7 +26,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tickets nor 0-RTT. Over HTTP/3 a request must be for the name its connection's identity was chosen for (421 otherwise,
   as on HTTP/1.1 and HTTP/2). An answer's `alpn` restricts its name: listing `h3` (with the TCP protocols) keeps HTTP/3,
   leaving it out refuses the name's QUIC handshake (`no_application_protocol`, 0x178) and drops `Alt-Svc` from its TCP
-  responses (RFC 7838 section 2.1); without `alpn` the name gets every protocol. Retry and address
+  responses (RFC 7838 section 2.1); without `alpn` the name gets every protocol. TLS over TCP never negotiates `h3` from
+  an answer's list (RFC 9114 section 3.1): one of `h3` alone ends the name's TCP handshake with `no_application_protocol`
+  (120, RFC 7301 section 3.2). Retry and address
   validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
   [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni). The context of a chosen identity is built
   once per answer (same identity, trust and staple objects, equal ALPN and client-certificate settings) and shared by

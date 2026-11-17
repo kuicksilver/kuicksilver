@@ -161,9 +161,10 @@ public class KuicksilverTlsConnector private constructor(
          * selector answers both, so a name gets the same certificate, client-certificate policy and staple over HTTP/1.1,
          * HTTP/2 and HTTP/3, and the `Alt-Svc` the TCP side advertises leads to a QUIC endpoint that presents the same
          * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake. An answer's `alpn` restricts
-         * the name: without one the name gets every protocol of the connector; with one, TCP negotiates from it, and HTTP/3
-         * is served (and advertised with `Alt-Svc` on that name's TCP responses) only when it lists `h3`, else the QUIC
-         * handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
+         * the name: without one the name gets every protocol of the connector; with one, TCP negotiates from it without
+         * `h3` (QUIC only, RFC 9114 section 3.1: a list of `h3` alone ends the name's TCP handshake with
+         * `no_application_protocol`), and HTTP/3 is served (and advertised with `Alt-Svc` on that name's TCP responses) only
+         * when it lists `h3`, else the QUIC handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
          * so that its handshakes share one TLS context. Null with SNI present refuses the handshake (`unrecognized_name`); null for a
          * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen
          * for (else 421, RFC 9110 section 7.4). Null by default.
