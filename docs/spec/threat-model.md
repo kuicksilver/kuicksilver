@@ -833,7 +833,7 @@ correctness, not assumed to be free of bugs.
 |---|---|---|---|---|---|
 | **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.24 |
 | **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md` | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20 |
-| **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | buffers without an explicit length: every buffer crossing into C carries one, and `ksl` uses no `strlen` on them (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15 |
+| **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | byte buffers without an explicit length: every buffer of data crossing into C carries its length; `strlen` is used only on NUL-terminated strings that OpenSSL or `ksl` produced or that the binding passes as C strings (labels, host names, cipher lists, key log lines), never on bytes from the network (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15 |
 | **B4. Library ↔ operating system** | sockets (GSO/GRO, `recvmsg` ancillary data), the system resolver, the platform certificate verifiers, files (the extracted native library, the key log, qlog, the Alt-Svc store) | the kernel and the platform verifier (their compromise is out of scope, section 2) | file system locations other users can write; the resolver's answers (they come from the network, B1); what a platform API returns about an address | `KslLoader` extracts into a private directory and checks the library's SHA-256 before loading it (`kuicksilver-native/src/jvmMain/kotlin/io/kuicksilver/native/KslLoader.jvm.kt`); the key log refuses a symbolic link and is created with mode 0600 (`kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/KeylogFile.kt` and its platform files); GRO segments keep their own address (3.12); a stalled resolver holds a bounded number of threads (3.21.1) | 3.7, 3.11, 3.12, 3.16, 3.19, 3.21, 3.21.1, 3.24 |
 | **B5. Build and supply chain ↔ published artifacts** | the OpenSSL tarball, Gradle plugins and dependencies, toolchains, the release machine, CI runners | the pinned toolchains and the maintainer's release machine (SLSA Build Level 1, `docs/release.md`) | anything downloaded until its signature or hash is checked; a build directory or cache left by an earlier build; CI artifacts | the OpenSSL tarball's PGP signature and SHA-256 (`tools/openssl/fetch.sh`, `gradle/openssl.toml`); Gradle dependency verification (`gradle/verification-metadata.xml`); a release rebuilds every OpenSSL from the verified tarball and checks every shipped binary (`tools/release/local-release.sh`, `tools/check/native-release.sh`); the double build from two paths (`tools/check/double-build.sh`); signatures, SBOM and provenance, verified by `tools/verify/verify-release.sh` | 3.11 |
 
@@ -849,13 +849,13 @@ weakness appears in different protocols.
 | 3.2 | resource exhaustion | CWE-400, CWE-770, CWE-789 |
 | 3.3 | forged Retry and tokens | CWE-345, CWE-294 |
 | 3.4 | forged stateless reset, reset oracle | CWE-345, CWE-208 |
-| 3.5 | tracking by connection ID | CWE-200 |
+| 3.5 | tracking by connection ID | CWE-359 |
 | 3.6 | certificate substitution, MITM | CWE-295, CWE-297 |
 | 3.6a | revoked certificates | CWE-299 |
 | 3.7 | key leakage | CWE-316, CWE-226, CWE-532 |
 | 3.8 | 0-RTT replay | CWE-294 |
 | 3.9 | version and protocol downgrade | CWE-757 |
-| 3.10 | parsing errors and memory | CWE-20, CWE-125, CWE-787, CWE-190, CWE-835 |
+| 3.10 | parsing errors and memory; the native objects behind `ksl` handles | CWE-20, CWE-125, CWE-787, CWE-190, CWE-835; CWE-416, CWE-476 |
 | 3.11 | supply chain; the native library's work directory | CWE-494, CWE-1357, CWE-1395; CWE-59, CWE-379 |
 | 3.12 | accelerated UDP: segments of different senders | CWE-940 |
 | 3.13 | optimistic ACK; predictable connection IDs and packet numbers | CWE-345, CWE-338 |
@@ -879,6 +879,25 @@ CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and r
 path traversal (CWE-434, CWE-22): it opens only the files the application names (certificates and keys, key log, qlog,
 Alt-Svc store) and the native library it extracts itself (3.11); deserialization of untrusted data (CWE-502): no object deserialization of
 peer data, every format is parsed by hand against its grammar.
+
+The native objects behind `ksl` handles (CWE-416 use after free, CWE-476 NULL pointer dereference): Kotlin holds each one
+as a handle and frees it once; where a native call may still be running when its owner closes it (a receiver inside the
+UDP socket, a handshake completing), the object is freed after that call returns. `ksl` refuses a missing argument with
+`KSL_E_BAD_ARG`.
+Earlier defects of this class are pinned by tests: a socket freed under a waiting receiver (`test_udp.c`, found under
+ASan), a TLS session freed while a completing handshake still used it (`TlsConnectionTest`), sessions on two threads sharing an event
+buffer (`KslSmokeTest`). The C tests run under ASan and UBSan (`tools/c-test.sh`), which report both classes.
+
+The other classes of the CWE Top 25:
+
+| CWE | Applies? | Where |
+|---|---|---|
+| CWE-287 improper authentication, CWE-306 missing authentication for a critical function | yes: the peer is authenticated by its certificate | 3.6, 3.6a (server and client certificates, CWE-295 above), 3.3 and 3.4 (Retry and reset tokens authenticated by keys only `ksl` holds) |
+| CWE-862 missing authorization, CWE-863 incorrect authorization | in part: which requests a peer may make is the application's decision | the library's own decisions of that kind: early data only for requests that are safe methods and allowed by the application, and the server's policy for the others, such as `425 Too Early` (3.8), 421 for a host the connection's certificate does not name (RFC 9110 §7.4), proxy credentials only to the proxy that asked (3.20) |
+| CWE-798 hard-coded credentials | no | no key, password or token is built in: ticket, token and reset keys are generated at run time (section 1); the certificates and keys under test sources are test fixtures, out of scope ([SECURITY.md](../../SECURITY.md#scope)) |
+| CWE-94 code injection | only through proxy auto-configuration | a PAC script is code from the network, run by the platform, not by the library (3.20.3, CWE-829 above); nothing else is evaluated |
+| CWE-77 command injection | no | the library starts no processes and builds no command lines |
+| CWE-269 improper privilege management | no | the library neither gains nor drops privileges; what it writes is created private to the user (the native library's directory, the key log; 3.7, 3.11) |
 
 ## <a id="assurance-case"></a>8. Assurance case
 
