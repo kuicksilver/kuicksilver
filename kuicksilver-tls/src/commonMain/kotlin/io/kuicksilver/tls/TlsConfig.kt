@@ -182,6 +182,8 @@ public class TlsConfig private constructor(
     @property:ExperimentalKuicksilverApi public val revocation: RevocationPolicy,
     /** The OCSP response a server staples; see [Builder.ocspStapling]. */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
+    /** Made by [withOverride] for one sniSelector answer: its contexts are kept apart from the base configuration's ([SharedServerContexts]). */
+    internal val isOverride: Boolean = false,
 ) {
     /** The configurations [withOverride] made for this server's selector answers, reused across handshakes (see [OverrideConfigs]). */
     internal val overrideConfigs: OverrideConfigs = OverrideConfigs()
@@ -207,6 +209,7 @@ public class TlsConfig private constructor(
             genericAlerts,
             revocation,
             o.ocspStapling,
+            isOverride = true,
         )
     }
 

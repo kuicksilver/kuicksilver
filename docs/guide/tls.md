@@ -220,7 +220,9 @@ under another name than its own.
 The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
 trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
 for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
-reload. Up to 64 answers are kept per configuration.
+reload. Hand out the same `TrustConfig` and `OcspStapling` objects for a name: a new object per call is a new answer
+and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
+their contexts are counted apart from the configuration's own, so many answers never push those out.
 
 ## Trust
 

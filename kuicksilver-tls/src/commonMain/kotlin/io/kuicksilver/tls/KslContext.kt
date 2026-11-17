@@ -464,9 +464,11 @@ internal class KslContext private constructor(
  * The server contexts built from one identity snapshot ([TlsIdentity.InMemory.serverContexts]), one per configuration and kind
  * ([KslContext.serves]), each shared by every session of its configuration. The registry holds one reference to each; [close]
  * (the identity's close, which a reload does to the snapshot it replaces) drops them, so a context goes when the identity is
- * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the least recently used
- * one goes first (a process that keeps building new configurations around one identity holds no more), and still serves its
- * sessions. A hit in the older half moves its context to the young end of the list (best effort: a concurrent change wins).
+ * closed and its last session is gone, never while a session uses it. At most [MAX] contexts of the server's own
+ * configurations and [MAX_OVERRIDES] of sniSelector answers ([TlsConfig.isOverride]) are kept, each bound counted on its own,
+ * so that answers never push the configurations' own contexts out: the least recently used one of the same kind goes first (a
+ * process that keeps building new configurations around one identity holds no more), and still serves its sessions. A hit in
+ * the older half moves its context to the young end of the list (best effort: a concurrent change wins).
  */
 internal class SharedServerContexts {
     // null once closed: nothing is kept any more
@@ -505,8 +507,10 @@ internal class SharedServerContexts {
             // a context of an older client CA bundle serves no new handshake: the first context of the current one replaces it
             val stale = if (ca != null) list.filter { it.sameKindAs(made) && !sameBundle(it.trustSnapshot, ca) } else emptyList()
             val grown = list.filter { it !in stale } + made
-            val evicted = if (grown.size > MAX) grown[0] else null
-            if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
+            val kind = made.config.isOverride
+            val ofKind = grown.filter { it.config.isOverride == kind }
+            val evicted = if (ofKind.size > (if (kind) MAX_OVERRIDES else MAX)) ofKind[0] else null
+            if (entries.compareAndSet(list, if (evicted != null) grown.filter { it !== evicted } else grown)) {
                 stale.forEach { it.release() }
                 evicted?.release()
                 return made
@@ -548,9 +552,12 @@ internal class SharedServerContexts {
         entries.exchange(null)?.forEach { it.release() }
     }
 
-    private companion object {
+    internal companion object {
         /** Contexts one identity snapshot keeps: a server rarely has more configurations per identity (QUIC, TCP, a few ports). */
         const val MAX = 8
+
+        /** Contexts of sniSelector answers one identity snapshot keeps, as many as [OverrideConfigs] keeps answers. */
+        const val MAX_OVERRIDES = OverrideConfigs.MAX
     }
 }
 

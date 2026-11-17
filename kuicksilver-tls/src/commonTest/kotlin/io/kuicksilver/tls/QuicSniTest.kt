@@ -438,6 +438,54 @@ class QuicSniTest {
         }
     }
 
+    /**
+     * Least recently used, not all at once: a hot set of answers keeps hitting while more than [OverrideConfigs.MAX] other
+     * answers come and go (the cache used to start over on the 65th answer, and every hot handshake then built its context
+     * again).
+     */
+    @Test fun negative_aHotSetOfAnswersSurvivesManyOthers() {
+        val config = server { null }
+        val hot = List(8) { i -> ServerTlsOverride(a, alpn = listOf("h3", "x$i")) }
+        val first = hot.map { config.overrideConfigs.of(config, it) }
+        var hits = 0
+        var lookups = 0
+        repeat(200) { round ->
+            hot.forEachIndexed { i, o ->
+                lookups++
+                if (config.overrideConfigs.of(config, ServerTlsOverride(o.identity, o.alpn)) === first[i]) hits++
+            }
+            config.overrideConfigs.of(config, ServerTlsOverride(a, alpn = listOf("h3", "cold$round"))) // a new answer each round
+        }
+        assertEquals(lookups, hits, "every hot lookup hit")
+        assertTrue(config.overrideConfigs.size <= OverrideConfigs.MAX)
+    }
+
+    /** Contexts of selector answers never push the server configuration's own contexts out of its identity's registry. */
+    @Test fun negative_answersNeverEvictTheBaseConfigurationsContexts() {
+        val id = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+        // each call a new trust object: a new answer and a new context under the same identity as the base configuration
+        val config = server(default = id) { ServerTlsOverride(id, trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))) }
+        val base = KslQuicCrypto.newSession(config) as KslQuicTlsSession
+        val baseContext = base.context
+        base.close()
+        val (s, w) = paused(config)
+        try {
+            repeat(100) { runBlocking { s.selectSni(w.clientHello) }.close() }
+        } finally {
+            s.close()
+        }
+        val held = id.serverContexts.contextsForTest()
+        assertTrue(baseContext in held, "the base configuration's context is still registered")
+        assertTrue(held.count { it.config.isOverride } <= SharedServerContexts.MAX_OVERRIDES)
+        val again = KslQuicCrypto.newSession(config) as KslQuicTlsSession
+        try {
+            assertTrue(again.context === baseContext, "and the next session shares it")
+        } finally {
+            again.close()
+            id.close()
+        }
+    }
+
     // ---- the pause contract ----
 
     /** A server session driven to its SNI pause; the caller closes it. */
