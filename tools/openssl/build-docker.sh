@@ -20,8 +20,9 @@ docker build -q --platform "$plat" -t "$img" -f "$here/docker/$df.Dockerfile" "$
 [ "$image_only" = 1 ] && { echo "image $img ($plat)"; exit 0; }
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
+# KSL_OPENSSL_BUILD_IMAGE tells build.sh it runs in our image, where the devtoolset CC is the project's compiler;
 # the builder's flags reach build.sh in the container as on the host (build.sh adds them to its own; --print-target on the
 # host must say what the container configured)
 envs=(); for v in CPPFLAGS CFLAGS LDFLAGS; do [ -z "${!v:-}" ] || envs+=(-e "$v=${!v}"); done
 # shellcheck disable=SC2086
-docker run --rm $uflag -e HOME=/tmp --platform "$plat" -v "$root:/w" -w /w -e JOBS="${JOBS:-4}" -e KSL_OPENSSL_FRESH="${KSL_OPENSSL_FRESH:-0}" ${cc:+-e CC="$cc"} ${envs[@]+"${envs[@]}"} "$img" bash tools/openssl/build.sh "$target"
+docker run --rm $uflag -e HOME=/tmp --platform "$plat" -v "$root:/w" -w /w -e JOBS="${JOBS:-4}" -e KSL_OPENSSL_FRESH="${KSL_OPENSSL_FRESH:-0}" ${cc:+-e CC="$cc"} -e KSL_OPENSSL_BUILD_IMAGE="$img" ${envs[@]+"${envs[@]}"} "$img" bash tools/openssl/build.sh "$target"

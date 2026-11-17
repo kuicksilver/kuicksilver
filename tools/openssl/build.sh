@@ -37,11 +37,14 @@ OPT="${OPT:--Os}"
 # something other than a compiler flag: its own options, -no-<feature> (Configure rewrites it to no-<feature>, which would
 # turn a feature off), -shared and --shared (rewritten to enable-shared), -static (it disables static, pic and threads),
 # a word starting /D or /I (read as a define or an include directory, so the argument of `-include /Data/x.h` would
-# become one), a word that is no flag, and %xx (decoded)
+# become one), a word that is no flag, and %xx (decoded); also -D or -U of an OPENSSL_* macro, which would build the
+# libraries with a configuration other than the one their installed opensslconf.h and configuration.h declare
 user_args=(); read -r -a user_words <<< "${CPPFLAGS:-} ${CFLAGS:-} ${LDFLAGS:-}"
 for w in ${user_words[@]+"${user_words[@]}"}; do
   case "$w" in
     -no-integrated-as) user_args+=("$w") ;;
+    -DOPENSSL_*|-UOPENSSL_*|/DOPENSSL_*|/UOPENSSL_*)
+      echo "CPPFLAGS/CFLAGS/LDFLAGS: '$w' sets an OpenSSL configuration macro, which the installed headers would not match; refused (configure-flags.txt decides them)" >&2; exit 2 ;;
     -d|-v|-w|-t|-rpath|-R|-framework|-no-*|-shared|--shared|-static|/D*|/I*|--prefix=*|--api=*|--libdir=*|--openssldir=*|--with-*|--fips-key=*|--banner=*|--cross-compile-prefix=*|--config=*|--strict-warnings|--debug|--release|*%*)
       echo "CPPFLAGS/CFLAGS/LDFLAGS: '$w' is an option of OpenSSL's Configure, not a compiler flag; refused" >&2; exit 2 ;;
     -?*|/*) user_args+=("$w") ;;
@@ -50,13 +53,15 @@ for w in ${user_words[@]+"${user_words[@]}"}; do
 done
 user_flags="${user_args[*]+"${user_args[*]}"}"
 # CC: used for macOS and Linux (passed to Configure). For Linux the project's own compiler is the image's devtoolset gcc,
-# which tools/openssl/build-docker.sh sets (the same path; native-flags-test.sh checks the two agree): only another CC is
-# the builder's. The Kotlin/Native targets set their compiler below; Android, iOS and mingw use their toolchain's own
+# which tools/openssl/build-docker.sh sets (the same path; native-flags-test.sh checks the two agree) together with the
+# marker KSL_OPENSSL_BUILD_IMAGE: only inside our image is that path not a builder's choice. On a bare Linux host the
+# same path (another devtoolset) counts like any other CC. The Kotlin/Native targets set their compiler below; Android, iOS and mingw use their toolchain's own
 # (the NDK's clang, Xcode's, the image's mingw gcc), so a CC from the builder is dropped there.
 project_linux_cc=/opt/rh/devtoolset-10/root/usr/bin/gcc
 case "$target" in
   macos-*) user_cc="${CC:-}" ;;
-  linux-x64|linux-arm64) user_cc="${CC:-}"; [ "$user_cc" != "$project_linux_cc" ] || user_cc="" ;;
+  linux-x64|linux-arm64) user_cc="${CC:-}"
+    [ "$user_cc" != "$project_linux_cc" ] || [ "${KSL_OPENSSL_BUILD_IMAGE:-}" != "kuicksilver-openssl-$target" ] || user_cc="" ;;
   android-*|ios-*|mingw-x64) user_cc=""; unset CC ;;
   *) user_cc="" ;;
 esac

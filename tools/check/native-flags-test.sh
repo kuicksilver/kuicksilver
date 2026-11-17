@@ -111,6 +111,8 @@ refuse "negative_configureNoFeatureRefused" CFLAGS "-O2 -no-ec" "'-no-ec' is an 
 refuse "negative_configureNoTls13Refused" CPPFLAGS "-no-tls1_3" "'-no-tls1_3' is an option of OpenSSL's Configure"
 refuse "negative_configureDoubleDashSharedRefused" LDFLAGS "--shared" "'--shared' is an option of OpenSSL's Configure"
 refuse "negative_configureSharedRefused" LDFLAGS "-shared" "'-shared' is an option of OpenSSL's Configure"
+refuse "negative_opensslMacroDefineRefused" CFLAGS "-DOPENSSL_NO_EC" "'-DOPENSSL_NO_EC' sets an OpenSSL configuration macro"
+refuse "negative_opensslMacroUndefineRefused" CPPFLAGS "-O2 -UOPENSSL_NO_DEPRECATED_3_0" "'-UOPENSSL_NO_DEPRECATED_3_0' sets an OpenSSL configuration macro"
 refuse "negative_configureStaticRefused" LDFLAGS "-static" "'-static' is an option of OpenSSL's Configure"
 refuse "negative_includeArgumentStartingWithDRefused" CFLAGS "-include /Data/ksl-probe.h" "'/Data/ksl-probe.h' is an option of OpenSSL's Configure"
 refuse "negative_pathStartingWithIRefused" CPPFLAGS "-isystem /Includes/x" "'/Includes/x' is an option of OpenSSL's Configure"
@@ -139,9 +141,15 @@ m2=$(CC=/opt/ksl/cc-two bash "$root/tools/openssl/build.sh" --print-target macos
 m0=$(bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
 check "negative_macosCcChangesPrintTarget" "$([ "$m1" != "$m2" ] && [ "$m1" != "$m0" ] && echo 0 || echo 1)" "'$m1' '$m2' '$m0'"
 l1=$(CC=/usr/bin/clang bash "$root/tools/openssl/build.sh" --print-target linux-x64)
-lp=$(CC=/opt/rh/devtoolset-10/root/usr/bin/gcc bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+lp=$(CC=/opt/rh/devtoolset-10/root/usr/bin/gcc KSL_OPENSSL_BUILD_IMAGE=kuicksilver-openssl-linux-x64 bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+lh=$(CC=/opt/rh/devtoolset-10/root/usr/bin/gcc bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+lw=$(CC=/opt/rh/devtoolset-10/root/usr/bin/gcc KSL_OPENSSL_BUILD_IMAGE=kuicksilver-openssl-linux-arm64 bash "$root/tools/openssl/build.sh" --print-target linux-x64)
 check "negative_linuxCcChangesPrintTarget" "$([ "$l1" != "$t1" ] && echo 0 || echo 1)" "'$l1' vs '$t1'"
-check "openssl: the image's own compiler (build-docker.sh) is not a builder's CC" "$([ "$lp" = "$t1" ] && echo 0 || echo 1)" "'$lp' vs '$t1'"
+check "openssl: the image's own compiler, inside the image (build-docker.sh's marker), is not a builder's CC" "$([ "$lp" = "$t1" ] && echo 0 || echo 1)" "'$lp' vs '$t1'"
+check "negative_devtoolsetCcOnBareHostCounts" "$([ "$lh" != "$t1" ] && echo 0 || echo 1)" "'$lh' vs '$t1'"
+check "negative_devtoolsetCcWithAnotherImagesMarkerCounts" "$([ "$lw" != "$t1" ] && echo 0 || echo 1)" "'$lw' vs '$t1'"
+check "openssl: build-docker.sh sets the marker build.sh expects" \
+  "$(grep -q -- '-e KSL_OPENSSL_BUILD_IMAGE="$img"' "$root/tools/openssl/build-docker.sh" && grep -q '^img="kuicksilver-openssl-$df"' "$root/tools/openssl/build-docker.sh" && echo 0 || echo 1)"
 dcc=$(sed -n 's/^  linux-x64) .* cc=\([^ ;]*\) ;;.*/\1/p' "$root/tools/openssl/build-docker.sh"); bcc=$(sed -n 's/^project_linux_cc=//p' "$root/tools/openssl/build.sh")
 check "openssl: build.sh and build-docker.sh name the same Linux compiler" "$([ -n "$dcc" ] && [ "$dcc" = "$bcc" ] && echo 0 || echo 1)" "'$dcc' vs '$bcc'"
 a1=$(CC=/opt/ksl/cc-one bash "$root/tools/openssl/build.sh" --print-target android-arm64)
@@ -160,7 +168,7 @@ out=$( . "$root/tools/clean-build-env.sh"
   for v in "${ksl_build_env_vars[@]}"; do [ -z "${!v+x}" ] || echo "still set: $v"; done
   for v in CC CPPFLAGS CFLAGS LDFLAGS OPT CCC_OVERRIDE_OPTIONS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH AR RANLIB \
            SDKROOT MAKEFLAGS OPENSSL_LOCAL_CONFIG_DIR __CNF_CFLAGS KSL_OPENSSL_PIN KSL_KEEP_DEBUG CROSS_SYSROOT PERL5OPT \
-           PERL5LIB PERLLIB TOOLCHAINS LD_RUN_PATH DYLD_INSERT_LIBRARIES LD_PRELOAD; do
+           PERL5LIB PERLLIB TOOLCHAINS LD_RUN_PATH DYLD_INSERT_LIBRARIES LD_PRELOAD KSL_OPENSSL_BUILD_IMAGE; do
     printf '%s\n' "${ksl_build_env_vars[@]}" | grep -qx "$v" || echo "not in the list: $v"
   done )
 check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"

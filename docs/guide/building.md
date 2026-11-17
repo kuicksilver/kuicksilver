@@ -59,11 +59,13 @@ What else to know:
   `%xx`). It also refuses `-no-<feature>` (other than `-no-integrated-as`), which `Configure` rewrites to `no-<feature>`
   and so would turn a feature off, `-shared` or `--shared`, which it rewrites to `enable-shared`, `-static`, which turns off static, PIC and thread
   support, and a word that starts with `/D` or `/I`, which it reads as a define or an include directory (the argument
-  of `-include /Data/x.h`, say; write such paths another way, for example relative to the source). The script refuses
+  of `-include /Data/x.h`, say; write such paths another way, for example relative to the source). A `-D` or `-U` of an
+  `OPENSSL_*` macro is refused as well: the libraries would no longer match the headers installed with them
+  (`configure-flags.txt` decides those macros). The script refuses
   anything else before it starts. Every script reads your flags word by word and never expands a glob in them. `CXXFLAGS` and `LDLIBS` are not used. Your flags are
   recorded in `build/openssl/<target>/configure-target.txt` and `provenance.txt`, together with one word,
-  `builder-flags-sha256=<hash>`, that stands for all of them and, for macOS and Linux, `CC` (for Linux, a `CC` other
-  than the Docker image's own compiler), paths included; that word and the
+  `builder-flags-sha256=<hash>`, that stands for all of them and, for macOS and Linux, `CC` (for Linux, any `CC` but
+  the Docker image's own compiler inside that image; on a bare Linux host the same path counts too), paths included; that word and the
   build cache's key change with any of them, so a build with other flags or another compiler is never taken from the
   cache or reused. The Docker builds get the same three variables.
 - **Debug symbols.** The JNI library and the Android `libksl.so` are stripped, as the release checks require. For a local

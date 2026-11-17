@@ -22,6 +22,7 @@
 #                         __CNF_LDLIBS OPENSSL_LOCAL_CONFIG_DIR BUILDFILE
 #   make:                 MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
 #   the build scripts:    KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG
+#                         KSL_OPENSSL_BUILD_IMAGE (set by build-docker.sh inside the container only)
 # What selects a toolchain is left alone, as the release checks it against the pins: PATH, DEVELOPER_DIR, ANDROID_NDK_ROOT,
 # KONAN_DEPS, JAVA_HOME. tools/check/native-flags-test.sh checks that a release-like build ignores the variables above.
 ksl_build_env_vars=(
@@ -35,7 +36,7 @@ ksl_build_env_vars=(
   __CNF_CPPDEFINES __CNF_CPPINCLUDES __CNF_CPPFLAGS __CNF_CFLAGS __CNF_CXXFLAGS __CNF_LDFLAGS __CNF_LDLIBS
   OPENSSL_LOCAL_CONFIG_DIR BUILDFILE
   MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES
-  KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG
+  KSL_OPENSSL_PIN KSL_OPENSSL_OUT KSL_OPENSSL_PREFIXED KSL_OPENSSL_WORK KSL_KEEP_DEBUG KSL_OPENSSL_BUILD_IMAGE
 )
 ksl_clean_build_env() { # [note]
   local v
