@@ -484,7 +484,7 @@ if [ -f "$doc" ] && grep -q "includeGroup(\"io.kuicksilver\")" "$doc" && grep -q
     && grep -q "not on Maven Central" "$doc" && grep -qF "kuicksilver-swift\", exact: \"$V\")" "$doc" && cmp -s "$doc" <(unzip -p "$zip" "kuicksilver-$V-maven-repository/README.md") \
     && ! grep -qE '/Users/|/home/' "$doc"; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
-L="github repository: instructions that work (download, signatures, Kotlin Multiplatform)"
+L="github repository: instructions that work (download, signatures and the provenance, Kotlin Multiplatform)"
 # every asset SHA256SUMS lists must come with the documented download, or `shasum -c` fails on the missing ones
 cover=$(python3 -I - "$doc" "$V" <<'PY'
 import fnmatch, re, shlex, sys
@@ -501,6 +501,7 @@ PY
 )
 if [ "$cover" = ok ] && grep -qF "implementation(project.dependencies.platform(\"io.kuicksilver:kuicksilver-bom:$V\"))" "$doc" \
     && grep -q 'sourceSets.commonMain.dependencies' "$doc" && grep -q '^gpg --import kuicksilver-release-key.asc' "$doc" \
+    && grep -qxF "gpg --verify kuicksilver-$V.intoto.jsonl.asc kuicksilver-$V.intoto.jsonl" "$doc" \
     && grep -q 'every artifact,$' "$doc"; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L: $cover"; fi
 L="github repository: the same input gives the same zip"
