@@ -130,12 +130,18 @@ class ClientConnectDeadlineRaceTest {
 
     /**
      * A WebSocket's addresses resolved as the connect timeout fires are its addresses: it goes on to the connection the pool
-     * holds (an earlier request's, taken at once with what is left of the timeout), not a ConnectTimeoutException.
+     * holds, not a ConnectTimeoutException. That connection is an earlier request's HTTP/2 connection, whose server allows
+     * Extended CONNECT (RFC 8441): taken at once, it needs nothing of the timeout, all of which the resolution used. An
+     * HTTP/1.1 WebSocket would not do: its route (`ws://`) never holds an idle connection, so it dials, and a dial within
+     * the 1 ms left succeeded only where loopback connects that fast (macOS, not Linux or Windows).
      */
     @Test fun negative_aWebSocketsAddressesResolvedAsTheConnectTimeoutFiresAreUsed() =
         race { millis ->
             val (server, port) =
-                testServer(plain = true) {
+                testServer(configure = {
+                    http2 = true
+                    http3 = false
+                }) {
                     install(io.ktor.server.websocket.WebSockets)
                     routing {
                         get("/") { call.respondText("ok") }
@@ -147,9 +153,12 @@ class ClientConnectDeadlineRaceTest {
                     connectTimeout = millis.milliseconds
                     resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                 }, block = { install(WebSockets) }).use { c ->
-                    assertEquals("ok", c.get("http://server.test:$port/").bodyAsText()) // a connection in the pool
+                    // an HTTP/2 connection in the pool, its SETTINGS (Extended CONNECT allowed) received
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://server.test:$port/").version)
                     engine(c).h1.remoteHostsForTest = { hold() }
-                    c.webSocket("ws://server.test:$port/ws") {}
+                    c.webSocket("wss://server.test:$port/ws") {
+                        assertEquals(HttpProtocolVersion.HTTP_2_0, call.response.version, "on the pooled HTTP/2 connection")
+                    }
                 }
             } finally {
                 server.stop(100, 500)
