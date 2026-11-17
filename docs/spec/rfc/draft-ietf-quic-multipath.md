@@ -3,19 +3,19 @@ Copyright 2026 The Kuicksilver Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# draft-ietf-quic-multipath — Multipath Extension for QUIC (draft-ietf-quic-multipath)
+# RFC 10069 — Managing Multiple Paths for a QUIC Connection (draft-ietf-quic-multipath)
 
 Details of the rows of the [RFC compliance summary](../rfc-compliance.md) for this document. Each section gives the requirement, how Kuicksilver meets it (with the files), the tests that pin it, its history, notes on peers and the open items. Status: ✅ met · 🔶 feature subset or accepted deviation · ⬜ planned · ❌ not planned; "since" is the release from which the current behaviour holds (history below and in [CHANGELOG.md](../../../CHANGELOG.md)).
 
 ## <a id="multipath"></a>multipath
 
-Status: ⬜ planned for 0.3.0 · [summary](../rfc-compliance.md#quic)
+Status: ⬜ planned, release not decided · [summary](../rfc-compliance.md#quic)
 
-Original row: draft-ietf-quic-multipath.
+Original row: draft-ietf-quic-multipath (published as RFC 10069 in 2026-11; draft-21 is its last draft).
 
 **Requirement.** Multipath.
 
-**Recorded status.** ⬜ planned for 0.3.0, experimental and opt-in (owner decision of 2026-11-16; before 2026-11-16: later, after 0.3.x)
+**Recorded status.** ⬜ planned, experimental and opt-in; whether it ships in 0.3.0 is decided before rc1 (before 2026-11-16: later, after 0.3.x)
 
 **How it is met.**
 
@@ -28,6 +28,5 @@ Original row: draft-ietf-quic-multipath.
 
 - Not implemented: draft-ietf-quic-multipath (draft-21) as a whole — the `initial_max_path_id` transport parameter,
   the PATH_ACK, PATH_ABANDON, PATH_STATUS_BACKUP/AVAILABLE, PATH_NEW_CONNECTION_ID, PATH_RETIRE_CONNECTION_ID,
-  MAX_PATH_ID, PATHS_BLOCKED and PATH_CIDS_BLOCKED frames, per-path packet number spaces and the per-path nonce. Planned
-  for 0.3.0: [roadmap](../../roadmap.md#feature-parity-decided-2026-11-16); the status of the draft is checked before the work
-  starts.
+  MAX_PATH_ID, PATHS_BLOCKED and PATH_CIDS_BLOCKED frames, per-path packet number spaces and the per-path nonce. Planned, the
+  release not decided yet: [roadmap](../../roadmap.md#feature-parity-decided-2026-11-16).

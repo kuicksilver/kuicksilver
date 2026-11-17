@@ -179,14 +179,17 @@ what the peers really do, and is delivered whole or not at all.
 - HTTPS proxies (TLS to the proxy).
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL 3.5, which keeps a server's first flight within QUIC's
-  amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)).
+  amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)). Prerequisite: OpenSSL is built `no-comp`
+  and without zlib, brotli or zstd, and RFC 8879 needs at least one compression algorithm, so the item starts with the
+  decision which library to bundle (brotli, zlib or both), its pin and supply-chain checks, and dropping `no-comp`.
 - Configurable key exchange groups.
 - qlog: HTTP/3 events, checked against qvis.
 - h3spec and the Autobahn WebSocket suite in the gate.
-- Multipath QUIC (draft-ietf-quic-multipath), experimental and opt-in; the state of the draft is checked before the
-  work starts ([multipath](spec/rfc/draft-ietf-quic-multipath.md#multipath)).
-- TLS Encrypted Client Hello (ECH). Whether the pinned OpenSSL 3.5 LTS can provide it is checked first; if it cannot,
-  the OpenSSL version or the TLS backend is decided separately, in an ADR.
+- Multipath QUIC, now RFC 10069 (published 2026-11 from draft-ietf-quic-multipath), experimental and opt-in, with
+  every MUST and SHOULD of the RFC. Whether it ships in 0.3.0 or 0.3.0 waits for it is decided before rc1 (the scope
+  decision is pending) ([multipath](spec/rfc/draft-ietf-quic-multipath.md#multipath)).
+- TLS Encrypted Client Hello (ECH, RFC 9849; its HTTPS record parameter, RFC 9848). The pinned OpenSSL 3.5 LTS has no
+  ECH; OpenSSL has it from 4.0. ECH therefore depends on the decision on the OpenSSL version, an ADR that is pending.
 
 ### After 0.3.0, until 1.0
 

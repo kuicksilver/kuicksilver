@@ -80,7 +80,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9218 | priorities (transport part: the scheduler) | ✅ | 0.3.0 | The stream scheduler orders streams by urgency and the incremental flag, with turns that keep incremental streams and tunnels from starving. | [details](rfc/9218.md#priorities-transport-part-the-scheduler) |
 | draft-ietf-quic-qlog | qlog | ✅ | 0.2.0 | The endpoint writes qlog version 0.3 as JSON-SEQ. | [details](rfc/draft-ietf-quic-qlog.md#qlog) |
 | RFC 9368/9369 | compatible version negotiation, QUIC v2 | ✅ | 0.2.0 | QUIC v2 is opt-in on the wire, with compatible version negotiation and a downgrade check. | [details](rfc/9368-9369.md#compatible-version-negotiation-quic-v2) |
-| draft-ietf-quic-multipath | multipath | ⬜ | 0.3.0 | Multipath QUIC is planned for 0.3.0, experimental and opt-in (roadmap, decision of 2026-11-16). | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
+| RFC 10069 | multipath | ⬜ | — | Multipath QUIC (published from draft-ietf-quic-multipath) is planned, experimental and opt-in; whether it ships in 0.3.0 is decided before rc1 (roadmap). | [details](rfc/draft-ietf-quic-multipath.md#multipath) |
 | draft-ietf-quic-load-balancers | QUIC-LB, draft-21 §3, §5 | ✅ | 0.3.0 | Experimental server connection IDs encode a configured server ID with config rotation, self-encoded length, plaintext, single-pass or four-pass encryption and unroutable IDs. | [details](rfc/draft-ietf-quic-load-balancers.md#quic-lb) |
 
 ## TLS
@@ -104,7 +104,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 7469 | (the idea) — SPKI pins | ✅ | 0.2.0 | SPKI SHA-256 pins are matched against the validated chain. | [details](rfc/7469.md#spki-pins) |
 | RFC 6960 | OCSP responses stapled through `status_request` (RFC 6066 §8) | ✅ | 0.3.0 | A client checks the OCSP response a server staples where ksl verifies the chain, and a server staples a configured response only when it is for its leaf and fresh. | [details](rfc/6960.md#ocsp-stapling) |
 | RFC 6961 | `status_request_v2` (obsoleted by RFC 9846) | ❌ | — | The multiple certificate status extension is deprecated by RFC 9846 and no longer recommended by RFC 9325, so it is never sent. | [details](rfc/6961.md#status-request-v2) |
-| RFC 8879 | certificate compression | ⬜ | 0.3.0 | Certificate compression through OpenSSL 3.5 is planned for 0.3.0 (roadmap, decision of 2026-11-16). | [details](rfc/8879.md#certificate-compression) |
+| RFC 8879 | certificate compression | ⬜ | 0.3.0 | Certificate compression through OpenSSL 3.5 is planned for 0.3.0 (roadmap, decision of 2026-11-16); it needs a compression library in the build, which is `no-comp` today. | [details](rfc/8879.md#certificate-compression) |
 | RFC 7627 | §5.2 — Extended Master Secret required for TLS 1.2 | ✅ | 0.2.1 | A TLS 1.2 peer without Extended Master Secret is refused. | [details](rfc/7627.md#s5-2-ems-required) |
 | RFC 9325 | §3.1.1 — TLS 1.2 supported, TLS 1.3 preferred | ✅ | 0.3.0 | TLS 1.2 is offered over TCP on request on both sides, the Ktor server's connectors included, while TLS 1.3 stays the default, the preferred version and the only one of QUIC (of the TLS 1.2 recommendations, deterministic ECDSA is the §4.2 deviation). | [details](rfc/9325.md#s3-1-1-tls-1-2) |
 | RFC 9325 | §3.5 — TLS 1.2 implementations support Extended Master Secret | ✅ | 0.2.1 | TLS 1.2 is offered only with Extended Master Secret. | [details](rfc/9325.md#s3-5-ems) |
