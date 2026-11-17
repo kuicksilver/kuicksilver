@@ -7028,7 +7028,8 @@ What else to know:
   build (`tools/clean-build-env.sh` lists them: the variables above, `OPT`, clang's and gcc's `CCC_OVERRIDE_OPTIONS`,
   `CPATH`, `C_INCLUDE_PATH`, `LIBRARY_PATH`, `SDKROOT` and the like, `AR` and `RANLIB`, OpenSSL's `__CNF_*` and
   `OPENSSL_LOCAL_CONFIG_DIR`, `MAKEFLAGS`, and the scripts' own `KSL_OPENSSL_*` locations), and the hosted jobs that
-  build the libraries a release reuses fail if one is set. A build with your own flags is therefore not byte-identical to
+  build the libraries a release reuses fail if one is set (the pinned NDK's LLVM tools their setup names, and an
+  `SDKROOT` that is the selected Xcode's macOS SDK, give the same build and pass). A build with your own flags is therefore not byte-identical to
   a release, and comparing it with one ([verifying.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md)) is expected to differ.
 - **Tests.** `tools/check/native-flags-test.sh` checks all of the above (it runs in the gate's reproducibility step).
   The C tests (`tools/c-test.sh`) are a test build with sanitizers: they honour `CC`, and take extra flags as their

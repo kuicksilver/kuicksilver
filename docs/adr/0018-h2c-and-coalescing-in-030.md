@@ -1,6 +1,7 @@
-# ADR-0018. h2c (opt-in) and connection coalescing across origins in 0.3.0
+# ADR-0018. h2c (opt-in) and connection coalescing across origins (opt-in) in 0.3.0
 
-Date: 2026-11-16. Status: accepted (owner decision 2026-11-16, recorded 2026-11-18); not implemented yet. Supersedes in
+Date: 2026-11-16. Status: accepted (owner decision 2026-11-16, recorded 2026-11-18; coalescing off by default, owner
+decision 2026-11-18); not implemented yet. Supersedes in
 part [ADR-0017](0017-http2.md): its decision "No h2c" and its decision "No connection coalescing (RFC 9113 section 9.1.1)
 in 0.3.0". Everything else in ADR-0017 stands.
 
@@ -30,7 +31,8 @@ ADR-0017's own decisions:
   section 3.1 deprecates it). An `https://` request never uses h2c, and a failed TLS handshake never falls back to it.
 - **Every HTTP/2 limit applies to h2c unchanged**: the flood defences, the field section limits and the connection
   limits of ADR-0017 do not depend on TLS.
-- **Coalescing for HTTP/2 and HTTP/3** on the client: a request for origin B may use an open connection to origin A
+- **Coalescing for HTTP/2 and HTTP/3** on the client, **off by default and opt-in** (owner decision 2026-11-18): with it
+  turned on, a request for origin B may use an open connection to origin A
   when the connection's certificate is valid for B's host under B's trust configuration (the name check, and B's pins
   where B has pins, ADR-0011) and B's host resolves to the address the connection is connected to. A 421 answer to a
   coalesced request is retried once on a connection of B's own, as RFC 9110 section 15.5.20 allows. Connections through
@@ -45,11 +47,15 @@ ADR-0017's own decisions:
   not the one meant, request smuggling between an HTTP/1.1 front and an h2c back end).
 - Coalescing makes one connection carry several origins, so a certificate or trust mistake affects all of them: the
   conditions above are checked per request, and every coalescing decision has a `negative_*` test (a certificate that
-  does not cover B, B's pin not matching, another address, a proxy, a different trust configuration).
+  does not cover B, B's pin not matching, another address, a proxy, a different trust configuration, and a client that
+  has not turned coalescing on).
 - The RFC rows [RFC 9113 §3.1, §3.3](../spec/rfc/9113.md#s3-1-h2c) and
   [RFC 9113 §9.1.1](../spec/rfc/9113.md#s9-1-1-connection-reuse) are planned for 0.3.0 and turn ✅ when the work lands.
 - More configuration surface: one client setting (routes with prior knowledge), one server setting (h2c on a plain
-  connector), and a client setting for coalescing; whether coalescing is on by default is decided when the work starts.
+  connector), and a client setting that turns coalescing on. Off by default, a client behaves as before (each origin
+  gets its own connections) unless the application asks for it: an application that does not know about coalescing is
+  not exposed to its trust coupling, and one that wants the saved handshakes opts in. The peers that coalesce by
+  default (browsers, OkHttp) differ here on purpose.
 
 ## Alternatives rejected
 

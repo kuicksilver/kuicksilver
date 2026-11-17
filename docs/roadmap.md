@@ -170,7 +170,7 @@ what the peers really do, and is delivered whole or not at all.
 - h2c (HTTP/2 with prior knowledge over cleartext TCP), opt-in on the client and the server, for deployments behind
   TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
   ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)).
-- Connection coalescing across origins for HTTP/2 and HTTP/3: the address matches and the certificate covers the name,
+- Connection coalescing across origins for HTTP/2 and HTTP/3, off by default and opt-in ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md)): the address matches and the certificate covers the name,
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy.
@@ -178,22 +178,30 @@ what the peers really do, and is delivered whole or not at all.
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
 - HTTPS proxies (TLS to the proxy).
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
-- TLS certificate compression (RFC 8879) through OpenSSL 3.5, which keeps a server's first flight within QUIC's
+- TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)). Prerequisite: OpenSSL is built `no-comp`
   and without zlib, brotli or zstd, and RFC 8879 needs at least one compression algorithm, so the item starts with the
   decision which library to bundle (brotli, zlib or both), its pin and supply-chain checks, and dropping `no-comp`.
 - Configurable key exchange groups.
 - qlog: HTTP/3 events, checked against qvis.
 - h3spec and the Autobahn WebSocket suite in the gate.
-- Multipath QUIC, now RFC 10069 (published 2026-11 from draft-ietf-quic-multipath), experimental and opt-in, with
-  every MUST and SHOULD of the RFC. Whether it ships in 0.3.0 or 0.3.0 waits for it is decided before rc1 (the scope
-  decision is pending) ([multipath](spec/rfc/draft-ietf-quic-multipath.md#multipath)).
-- TLS Encrypted Client Hello (ECH, RFC 9849; its HTTPS record parameter, RFC 9848). The pinned OpenSSL 3.5 LTS has no
-  ECH; OpenSSL has it from 4.0. ECH therefore depends on the decision on the OpenSSL version, an ADR that is pending.
+- OpenSSL 4.1.x instead of the 3.5 LTS, and 4.2 LTS once it is released (planned by OpenSSL for April 2027): the 3.5
+  branch has no ECH ([ADR-0019](adr/0019-openssl-4-and-ech.md), decided 2026-11-18).
+- TLS Encrypted Client Hello ([RFC 9849](spec/rfc/9849.md#ech), and its HTTPS record parameter,
+  [RFC 9848](spec/rfc/9848.md#ech-https-records)), decided 2026-11-18: a client that takes the configuration from the
+  HTTPS record or the application and retries once with the server's retry configurations, GREASE ECH on by default,
+  and a server in shared mode with key rotation and retry configurations; no split mode. The work starts with a spike of
+  ECH through the QUIC TLS callbacks `ksl` uses.
+
+### 0.3.x — multipath QUIC
+
+Multipath QUIC ([RFC 10069](spec/rfc/draft-ietf-quic-multipath.md#multipath), published 2026-11 from
+draft-ietf-quic-multipath) moved from 0.3.0 to a 0.3.x release on 2026-11-18: experimental and off by default, but with
+every MUST and SHOULD of the RFC. It starts with the refactoring to one packet number space per path.
 
 ### After 0.3.0, until 1.0
 
-Fixes and hardening only: no new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
+Fixes and hardening, and multipath QUIC in 0.3.x (above); no other new features after 0.3.0. The public API is frozen before 1.0.0 ([stability.md](stability.md)).
 
 ### After 1.0
 

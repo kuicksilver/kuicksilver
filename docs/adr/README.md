@@ -7,7 +7,7 @@ Documents and identifiers are in English.
 | № | Title | Status |
 |---|---|---|
 | [0001](0001-thin-native-layer.md) | A thin native layer, everything else in Kotlin | accepted |
-| [0002](0002-openssl-first-backend.md) | OpenSSL 3.5 is the first TLS backend, BoringSSL the fallback, the transport depends on the `QuicCrypto` interface | accepted |
+| [0002](0002-openssl-first-backend.md) | OpenSSL 3.5 is the first TLS backend, BoringSSL the fallback, the transport depends on the `QuicCrypto` interface | accepted; the 3.5 pin superseded by 0019 |
 | [0003](0003-ksl-single-c-shim.md) | One narrow C shim `ksl` with a shared header for JNI and cinterop | accepted |
 | [0004](0004-sans-io-core.md) | The QUIC core is sans-IO | accepted |
 | [0005](0005-layer-dependency-direction.md) | Dependency direction `ktor → http3 → quic → tls → native` | accepted |
@@ -23,3 +23,4 @@ Documents and identifiers are in English.
 | [0015](0015-0rtt-implementation.md) | 0-RTT in 0.2.0: ksl ABI 6 early data, a per-server replay register keyed by ticket, configuration-bound tickets, HTTP/3 gating | accepted |
 | [0017](0017-http2.md) | HTTP/2 in 0.3.0: a sans-IO `kuicksilver-http2` module next to `kuicksilver-http3`, no h2c, no server push | accepted; h2c and coalescing superseded by 0018 |
 | [0018](0018-h2c-and-coalescing-in-030.md) | h2c (prior knowledge, opt-in) and connection coalescing across origins in 0.3.0 | accepted, not implemented yet |
+| [0019](0019-openssl-4-and-ech.md) | OpenSSL 4.1.x, then 4.2 LTS, for Encrypted Client Hello in 0.3.0 | accepted, implementation pending |

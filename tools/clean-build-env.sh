@@ -38,11 +38,24 @@ ksl_clean_build_env() { # [note]
     fi
   done
 }
-ksl_build_env_set() { # [prefix to leave out]: the names of the variables above that are set, one line; for the hosted jobs'
-  # guard (their setup sets the LLVM_* tools on purpose)
-  local v out=""
+ksl_build_env_guard() { # the hosted jobs' guard: the names of the variables above that are set, on one line (empty: none),
+  # leaving out the values the workflow sets on purpose, which a build gives the same result with as without:
+  #   LLVM_NM, LLVM_OBJCOPY, LLVM_OBJDUMP, LLVM_READELF naming the pinned NDK's own tool (.github/actions/setup writes them
+  #   to GITHUB_ENV; tools/check/llvm-tool.sh takes that tool from the NDK anyway), and an SDKROOT that is the selected
+  #   Xcode's macOS SDK (the one clang uses without it). The runner images set none of the others.
+  local v t ok out=""
   for v in "${ksl_build_env_vars[@]}"; do
-    if [ -n "${!v+x}" ] && { [ -z "${1:-}" ] || [ "${v#"$1"}" = "$v" ]; }; then out="$out $v"; fi
+    [ -n "${!v+x}" ] || continue
+    ok=0
+    case "$v" in
+      LLVM_NM|LLVM_OBJCOPY|LLVM_OBJDUMP|LLVM_READELF)
+        t=$(printf '%s' "${v#LLVM_}" | tr '[:upper:]' '[:lower:]')
+        if [ -n "${ANDROID_NDK_ROOT:-}" ]; then
+          for c in "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-"$t"; do [ "${!v}" = "$c" ] && ok=1; done
+        fi ;;
+      SDKROOT) [ -n "${!v}" ] && [ "${!v}" = "$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)" ] && ok=1 ;;
+    esac
+    [ "$ok" = 1 ] || out="$out $v"
   done
   echo "${out# }"
 }

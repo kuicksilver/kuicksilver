@@ -154,6 +154,19 @@ out=$( . "$root/tools/clean-build-env.sh"
     printf '%s\n' "${ksl_build_env_vars[@]}" | grep -qx "$v" || echo "not in the list: $v"
   done )
 check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
+# the hosted jobs' guard: a value the workflow sets on purpose passes, anything else is named
+gfake="$tmp/guard-ndk"; mkdir -p "$gfake/toolchains/llvm/prebuilt/host/bin"; touch "$gfake"/toolchains/llvm/prebuilt/host/bin/llvm-{nm,objcopy,objdump,readelf}
+g() { ( . "$root/tools/clean-build-env.sh"; for v in "${ksl_build_env_vars[@]}"; do unset "$v"; done; export "$@"; ksl_build_env_guard ); }
+out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_NM="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-nm" LLVM_OBJCOPY="$gfake/toolchains/llvm/prebuilt/host/bin/llvm-objcopy")
+check "guard: the pinned NDK's LLVM tools (set by the setup action) pass" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
+out=$(g ANDROID_NDK_ROOT="$gfake" LLVM_OBJCOPY=/opt/other/llvm-objcopy)
+check "negative_guardNamesForeignLlvmTool" "$([ "$out" = LLVM_OBJCOPY ] && echo 0 || echo 1)" "$out"
+out=$(g CFLAGS=-O0 CCC_OVERRIDE_OPTIONS=+-O0 SDKROOT=/nonexistent/sdk)
+check "negative_guardNamesBuildVariables" "$([ "$out" = "CFLAGS CCC_OVERRIDE_OPTIONS SDKROOT" ] && echo 0 || echo 1)" "$out"
+if sdk=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null) && [ -n "$sdk" ]; then
+  out=$(g SDKROOT="$sdk")
+  check "guard: SDKROOT equal to the selected Xcode's macOS SDK passes" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
+fi
 first_line() { grep -n -m1 -E "$2" "$1" | cut -d: -f1; }
 c=$(first_line "$root/tools/release/local-release.sh" 'ksl_clean_build_env'); b=$(first_line "$root/tools/release/local-release.sh" '^step ')
 check "local-release.sh clears the build environment before its first step" "$([ -n "$c" ] && [ -n "$b" ] && [ "$c" -lt "$b" ] && echo 0 || echo 1)" "line $c vs $b"
