@@ -5,20 +5,27 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.Datagram
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.aSocket
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -97,31 +104,54 @@ class ClientH3EndpointChoiceTest {
     /**
      * Closes the client while the endpoint for [host] is being bound, at the step [stored] names (before the pool stores it,
      * or after the store and before it reads `closed`), and checks that the pool keeps no endpoint and the one bound is
-     * closed. False when the endpoint could not be bound (no IPv6 loopback here).
+     * closed. Nothing may leave the client: no connection is attempted, and a UDP port this test binds (the loopback
+     * destination, and the target of the closed endpoint's connect) receives nothing but the test's own marker. False when
+     * the endpoint could not be bound (no IPv6 loopback here).
      */
     private suspend fun closeDuringTheBind(
         host: String,
         stored: Boolean,
     ): Boolean {
-        var bound: Http3Endpoint? = null
-        val c = testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds })
-        val pool = (c.engine as KuicksilverEngine).h3
-        pool.endpointBindStepForTest = { ep, step ->
-            if (step == stored) {
-                bound = ep
-                pool.close() // the client closes right now
-            }
-        }
+        val sinkHost = if (host == "[::1]") "::1" else "127.0.0.1"
         val case = "$host, closed ${if (stored) "after" else "before"} the store"
-        runCatching { c.get("https://$host:9/") }
-        c.close()
-        val ep = bound ?: return false
-        assertFalse(pool.endpointBoundForTest, "$case: the pool holds no endpoint")
-        val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
-        assertFailsWith<QuicException.EndpointClosing>("$case: the endpoint bound during the close is closed") {
-            withTimeout(5.seconds) { ep.connect(InetSocketAddress("127.0.0.1", 9), tls) }
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            val sink = runCatching { aSocket(selector).udp().bind(InetSocketAddress(sinkHost, 0)) }.getOrNull() ?: return false
+            sink.use {
+                val sinkAddress = InetSocketAddress(sinkHost, (sink.localAddress as InetSocketAddress).port)
+                // the loopback cases aim at the sink; 192.0.2.1 is never sent to (the bind fails before any connect)
+                val target = if (host == "192.0.2.1") "192.0.2.1:443" else "$host:${sinkAddress.port}"
+                var bound: Http3Endpoint? = null
+                var attempts = 0
+                val c = testClient(Http3DiscoveryMode.H3Only, engine = { connectTimeout = 300.milliseconds })
+                val pool = (c.engine as KuicksilverEngine).h3
+                pool.endpointChosenForTest = { _, _ -> attempts++ }
+                pool.endpointBindStepForTest = { ep, step ->
+                    if (step == stored) {
+                        bound = ep
+                        pool.close() // the client closes right now
+                    }
+                }
+                runCatching { c.get("https://$target/") }
+                c.close()
+                val ep = bound ?: return false
+                assertEquals(0, attempts, "$case: no connection is attempted")
+                assertFalse(pool.endpointBoundForTest, "$case: the pool holds no endpoint")
+                val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
+                assertFailsWith<QuicException.EndpointClosing>("$case: the endpoint bound during the close is closed") {
+                    withTimeout(5.seconds) { ep.connect(sinkAddress, tls) }
+                }
+                // the test's own marker, sent last: a datagram of the client would have been queued at the sink before it
+                aSocket(selector).udp().bind(InetSocketAddress(sinkHost, 0)).use { marker ->
+                    marker.send(Datagram(Buffer().apply { writeByte(42) }, sinkAddress))
+                }
+                val first = withTimeout(5.seconds) { sink.receive() }
+                assertContentEquals(byteArrayOf(42), first.packet.readByteArray(), "$case: the sink received a datagram of the client")
+            }
+            return true
+        } finally {
+            selector.close()
         }
-        return true
     }
 
     /**
