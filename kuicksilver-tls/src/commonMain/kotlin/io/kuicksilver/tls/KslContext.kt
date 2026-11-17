@@ -41,8 +41,10 @@ internal class KslContext private constructor(
      * identity. A server's requests are checked against its leaf (RFC 9110 section 7.4).
      */
     val localChain: List<Certificate>,
-    private val quicTickets: Boolean,
-    private val earlyData: Boolean,
+    /** A QUIC server context that issues session tickets (see [create]). */
+    val quicTickets: Boolean,
+    /** A QUIC server context whose tickets allow 0-RTT and that can accept it (see [create]). */
+    val earlyData: Boolean,
     /**
      * The bundle a `TrustConfig.ReloadableCa` in [config] gave when this context was built (its roots are this context's
      * client-certificate anchors), null for any other trust: a server's handshakes share a context only under the same bundle.

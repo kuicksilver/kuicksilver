@@ -105,8 +105,8 @@ internal class ConnectionRuntime(
 
     @Volatile private var certificates: List<Certificate> = emptyList()
 
-    // known from the start (the identity snapshot a server's session took): a server serves 0-RTT requests before its
-    // handshake completes; immutable, so read here as well as at HandshakeCompleted
+    // known from the start (the identity snapshot a server's session took), replaced once by an sniSelector's choice (selectSni),
+    // before any request: a server serves 0-RTT requests before its handshake completes; read here, there and at HandshakeCompleted
     @Volatile private var ownCertificates: List<Certificate> = core.localCertificates
 
     /** Live stream wrappers (test hook): finished streams leave the map. */
@@ -575,6 +575,11 @@ internal class ConnectionRuntime(
                     loop.scope.launch(Dispatchers.Default) { verify(e) }
                 }
 
+                is ConnectionEvent.SniRequested -> {
+                    sniJob = loop.scope.launch(Dispatchers.Default) { selectSni(e) }
+                    if (finished) sniJob?.cancel() // ended while this event waited: nothing will apply the selection
+                }
+
                 is ConnectionEvent.SessionTicket -> {
                     loop.storeTicket(core.tlsConfig, e.ticket)
                 }
@@ -730,6 +735,43 @@ internal class ConnectionRuntime(
         }
     }
 
+    /** The server's `sniSelector` running for this connection's handshake, cancelled when the connection ends first. */
+    @Volatile private var sniJob: Job? = null
+
+    @Volatile private var sniChosenFor: String? = null
+
+    /**
+     * Runs the server's `sniSelector` off the loop (it may suspend, as over TCP) and applies its choice on the loop. A selection
+     * that arrives after the connection ended (handshake or idle timeout, close) is closed, which frees the context built for
+     * the chosen identity; a selector still running then is cancelled ([failed]).
+     */
+    private suspend fun selectSni(e: ConnectionEvent.SniRequested) {
+        val selection = e.session.selectSni(e.clientHello)
+        try {
+            withContext(loop.dispatcher) {
+                if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining ||
+                    core.state == ConnectionState.Closed
+                ) {
+                    return@withContext
+                }
+                try {
+                    core.resumeSni(selection)
+                    // the chosen identity's chain: a connection accepted with 0-RTT is served before HandshakeCompleted
+                    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                    sniChosenFor = core.sniSelectedFor
+                    ownCertificates = core.localCertificates
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (t: Throwable) {
+                    core.failInternal(t)
+                }
+                loop.flush(core)
+            }
+        } finally {
+            selection.close() // nothing once resumeSni took it over
+        }
+    }
+
     internal fun tick() {
         for (i in 0 until tickers.size) tickers[i].trySend(Unit) // by index: no iterator per flush
     }
@@ -754,6 +796,7 @@ internal class ConnectionRuntime(
     internal fun failed(reason: QuicException.ConnectionLost) {
         if (finished) return
         finished = true
+        sniJob?.cancel()
         val handshakeDone = handshake.isCompleted && !handshake.isCancelled
         // the observer (application callbacks) runs last, once every waiter can see the end: whatever it does, `closed`,
         // the handshake and the streams are complete
@@ -932,6 +975,9 @@ internal class ConnectionRuntime(
     override val stats: ConnectionStats get() = core.stats
     override val peerCertificates: List<Certificate> get() = certificates
     override val localCertificates: List<Certificate> get() = ownCertificates
+
+    /** See `QuicConnection.sniSelectedFor`. */
+    internal val sniSelectedName: String? get() = sniChosenFor
 
     @Volatile private var alpn: String? = null
     override val negotiatedAlpn: String? get() = alpn ?: core.negotiatedAlpn

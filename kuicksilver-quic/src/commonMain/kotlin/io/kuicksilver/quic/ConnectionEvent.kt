@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientHelloInfo
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.QuicTlsSession
 
@@ -40,6 +41,18 @@ public sealed interface ConnectionEvent {
         /** The peer's certificate chain as presented, leaf first. */
         public val chain: List<Certificate>,
         /** The TLS session that verifies [chain][ConnectionEvent.VerifyRequested.chain]. */
+        public val session: QuicTlsSession,
+    ) : ConnectionEvent
+
+    /**
+     * Server: the handshake paused at the ClientHello for the configuration's `sniSelector`: run
+     * `session.selectSni(clientHello)` off the loop and pass the result to [ConnectionCore.resumeSni] (or close it when the
+     * connection ended meanwhile).
+     */
+    public class SniRequested internal constructor(
+        /** What the ClientHello asks for: server name, ALPN offer, signature schemes. */
+        public val clientHello: ClientHelloInfo,
+        /** The TLS session whose handshake is paused. */
         public val session: QuicTlsSession,
     ) : ConnectionEvent
 

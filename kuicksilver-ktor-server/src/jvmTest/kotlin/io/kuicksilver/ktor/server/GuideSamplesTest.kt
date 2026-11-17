@@ -31,6 +31,7 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
@@ -80,6 +81,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:drain-wait" in guide, "marker drain-wait")
         assertTrue("guide:ktor:reload-from-files" in guide, "marker reload-from-files")
         assertTrue("guide:ktor:zero-rtt-replayable" in guide, "marker zero-rtt-replayable")
+        assertTrue("guide:ktor:sni-server" in guide, "marker sni-server")
     }
 
     private object Metrics {
@@ -343,6 +345,99 @@ class GuideSamplesTest {
                     // a name the certificate does not carry, forwarded by the gateway: served
                     val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: public.example\r\nConnection: close\r\n\r\n")
                     assertTrue(r.startsWith("HTTP/1.1 200 "), r)
+                } finally {
+                    server.stopSuspend(100, 500)
+                }
+            }
+        }
+
+    /**
+     * guide:ktor:sni-server, run with the test certificates: `api.example.com` gets the proxy.internal certificate over HTTP/3
+     * (the client checks it under that name), and `admin.example.com` requires a client certificate.
+     */
+    @Test fun sniServerSample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val defaultIdentity = ServerFixtures.identity()
+                val apiIdentity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
+                val adminIdentity = ServerFixtures.identity()
+                val adminCa = TrustConfig.AnchoredCa(listOf(clientCa))
+                val server =
+                    embeddedServer(Kuicksilver, configure = {
+                        // guide:ktor:sni-server
+                        tlsConnector(defaultIdentity) {
+                            port = 0
+                            sniSelector = { hello ->
+                                when (hello.serverName) {
+                                    "api.example.com" -> {
+                                        ServerTlsOverride(apiIdentity)
+                                    }
+
+                                    "admin.example.com" -> {
+                                        ServerTlsOverride(
+                                            adminIdentity,
+                                            clientAuth = ClientAuth.Required,
+                                            trust = adminCa,
+                                        )
+                                    }
+
+                                    else -> {
+                                        null
+                                    } // a name not served here: the handshake ends with unrecognized_name
+                                }
+                            }
+                        }
+                    }) { routing { get("/") { call.respondText("ok") } } }
+                server.startSuspend(wait = false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+
+                    fun client(
+                        name: String,
+                        checkedAs: String,
+                        alpn: String,
+                    ) = io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                        this.alpn = listOf(alpn)
+                        serverName = name
+                        trust = TrustConfig.ExpectedName(checkedAs, TrustConfig.AnchoredCa(listOf(clientCa)))
+                    }
+                    // TCP: the handshake for api.example.com presents the proxy.internal certificate (checked as that name)
+                    val tcp =
+                        rawHttp(
+                            port,
+                            "GET / HTTP/1.1\r\nHost: proxy.internal\r\nConnection: close\r\n\r\n",
+                            client("api.example.com", "proxy.internal", "http/1.1"),
+                        )
+                    assertTrue(tcp.startsWith("HTTP/1.1 421 "), "a request for another name than the SNI one: $tcp")
+                    if (quicServerSupported()) {
+                        val ep =
+                            io.kuicksilver.http3.Http3Endpoint
+                                .bind(
+                                    io.ktor.network.sockets
+                                        .InetSocketAddress("127.0.0.1", 0),
+                                )
+                        try {
+                            val target =
+                                io.ktor.network.sockets
+                                    .InetSocketAddress("127.0.0.1", port)
+                            val h3 = ep.connect(target, client("api.example.com", "proxy.internal", "h3"))
+                            assertEquals(Certificate(TestCerts.proxy), h3.quic.peerCertificates[0], "the same identity over HTTP/3")
+                            h3.close()
+                            assertFails("admin.example.com requires a client certificate over HTTP/3 too") {
+                                ep
+                                    .connect(
+                                        target,
+                                        client("admin.example.com", "server.test", "h3"),
+                                    ).request(io.kuicksilver.http3.http3Request("GET", "admin.example.com", "/"))
+                            }
+                        } finally {
+                            ep.close()
+                        }
+                    }
                 } finally {
                     server.stopSuspend(100, 500)
                 }

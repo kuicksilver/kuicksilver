@@ -191,6 +191,31 @@ clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
 `kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
 
+### Certificate per name (SNI)
+
+A server's `sniSelector` chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
+(`TlsConnection`) and QUIC (`QuicTlsSession`, HTTP/3) alike. It sees a `ClientHelloInfo` (the server name, null without
+SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
+`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
+
+- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
+  for that connection (`localCertificates` reports the chosen chain);
+- null for a ClientHello with a server name: the handshake ends with `unrecognized_name` (112), the fatal choice RFC 6066
+  section 3 offers for a name the server does not recognize;
+- null for a ClientHello without one: the configuration's own `identity`; a configuration without one ends the handshake
+  with `missing_extension` (109, RFC 9846 section 9.2; TLS 1.2 has no such alert and gets `handshake_failure`).
+
+A selector that throws, or an override the configuration's rules refuse, ends that handshake: over TCP with the
+exception, over QUIC with `internal_error` (80) and the exception as the cause of the failure (the CONNECTION_CLOSE reason
+the client reads carries none of its text). Over QUIC the handshake pauses at `DriveResult.WantSni`; the QUIC endpoint runs
+the selector off the connection's loop (`QuicTlsSession.selectSni`, then `resumeSni` on the loop), and a connection that
+ends meanwhile cancels it and frees what it built. A QUIC override needs a non-empty `alpn` like any QUIC configuration,
+and one with client certificates gets neither tickets nor 0-RTT, as a QUIC server with client certificates never does.
+
+Session tickets are bound to the server name and to the certificate they were issued under: a ticket resumes, and its
+0-RTT is accepted, only when the same name selects the same certificate again (RFC 6066 section 3, RFC 9846 section
+4.7.1). Otherwise the handshake is a full one and issues a new ticket.
+
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
@@ -348,7 +373,7 @@ experimental in 0.3.0:
   round trips. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
-  and never the default identity's (TCP; QUIC has no `sniSelector`).
+  and never the default identity's, over TCP and QUIC alike.
 
 ```kotlin
 // guide:tls:revocation

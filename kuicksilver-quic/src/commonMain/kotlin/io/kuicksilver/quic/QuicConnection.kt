@@ -33,7 +33,7 @@ public interface QuicConnection : AutoCloseable {
 
     /**
      * The certificate chain this side presented in the handshake, leaf first (a server's identity snapshot taken for this
-     * connection); empty without one. A server checks the requests it serves against it (RFC 9110 section 7.4).
+     * connection, or the identity its `sniSelector` chose); empty without one. A server checks the requests it serves against it (RFC 9110 section 7.4).
      */
     @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = emptyList()
@@ -191,3 +191,12 @@ public interface QuicConnection : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val isHandshakeComplete: Boolean get() = true
 }
+
+/**
+ * Server: the server_name of the ClientHello the configuration's `sniSelector` chose this connection's identity and settings
+ * for (RFC 6066 section 3; unverified input), null when it carried none, no selector ran, or [this] is not an endpoint's
+ * connection. The server engine holds requests on the connection to that name (RFC 9110 section 7.4).
+ */
+@io.kuicksilver.annotations.InternalKuicksilverApi
+public val QuicConnection.sniSelectedFor: String?
+    get() = (this as? io.kuicksilver.quic.runtime.ConnectionRuntime)?.sniSelectedName

@@ -168,7 +168,7 @@ public class TlsConfig private constructor(
     public val trust: TrustConfig,
     /** Whether a server asks for a client certificate; see [Builder.clientAuth]. */
     public val clientAuth: ClientAuth,
-    /** A server's per-connection identity choice from the ClientHello (TCP only); see [Builder.sniSelector]. */
+    /** A server's per-connection identity choice from the ClientHello (TCP and QUIC); see [Builder.sniSelector]. */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
     /** Session ticket keys and lifetimes of a server (TCP, and QUIC with 0-RTT); see [Builder.sessionTickets]. */
     public val sessionTickets: SessionTicketConfig,
@@ -225,17 +225,10 @@ public class TlsConfig private constructor(
             cipherSuites.suites.firstOrNull { it !in CipherSuites.Default.suites }?.let {
                 throw TlsException.Config("$it is not supported in QUIC (AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305 are)")
             }
-            if (sniSelector !=
-                null
-            ) {
-                throw TlsException.Config(
-                    "sniSelector is not supported for QUIC sessions in v1 (drive() is synchronous); use TlsConnection or a per-identity server",
-                )
-            }
         }
     }
 
-    /** Throws [TlsException.Config] unless this config can drive a QUIC handshake: TLS 1.3 only, a non-empty ALPN list, only the AES-GCM and ChaCha20-Poly1305 suites (no CCM_8, RFC 9001 section 5.3; no CCM), no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1). */
+    /** Throws [TlsException.Config] unless this config can drive a QUIC handshake: TLS 1.3 only, a non-empty ALPN list, only the AES-GCM and ChaCha20-Poly1305 suites (no CCM_8, RFC 9001 section 5.3; no CCM) (RFC 9001 sections 4.2, 5.3, 8.1). */
     @InternalKuicksilverApi
     public fun checkQuicCompatible(): Unit = validateFor(quic = true)
 
@@ -292,9 +285,15 @@ public class TlsConfig private constructor(
         public var clientAuth: ClientAuth = ClientAuth.None
 
         /**
-         * Server, TCP only: called with the ClientHello while the handshake is paused, it chooses this connection's identity
-         * and settings. Null from it with SNI present ends the handshake with `unrecognized_name`; without SNI the default
-         * [identity] is used. Default null; a QUIC session refuses a configuration that has one ([TlsException.Config], v1).
+         * Server, over TCP and QUIC alike: called with the ClientHello while the handshake is paused, it chooses this
+         * connection's identity and settings. Null from it with SNI present ends the handshake with `unrecognized_name` (RFC
+         * 6066 section 3); without SNI the default [identity] is used, and without one either the handshake ends with
+         * `missing_extension` (RFC 9846 section 9.2). A session ticket resumes only under the server name and the certificate
+         * it was issued under, so a ticket of one identity never resumes under another (RFC 6066 section 3, RFC 9846 section
+         * 4.7.1). On QUIC the selector runs off the connection's loop; an override's [ServerTlsOverride.alpn] must still
+         * suit QUIC (non-empty), and one with client certificates gets no 0-RTT and no tickets (0-RTT with client
+         * certificates is not supported). An exception from it, or an override [build] would refuse, ends that handshake
+         * (TCP: with the exception; QUIC: with `internal_error`). Default null.
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 

@@ -98,8 +98,8 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 
 `quicClientConfig(tls) { }` and `quicServerConfig(tls) { }` pair a `TlsConfig` with a `QuicConfig`. `build()` throws
 `IllegalArgumentException` for a `TlsConfig` of the wrong role ("client config needs a client TlsConfig") and
-`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn`, `TLS_AES_128_CCM_8_SHA256`, or an
-`sniSelector`.
+`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn` or `TLS_AES_128_CCM_8_SHA256`. A
+server's `sniSelector` works as over TCP (its overrides must suit QUIC as well: an empty `alpn` there fails that handshake).
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
@@ -170,7 +170,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](tls.md#rotating-the-server-certificate)) |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa` or `ReloadableCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP and QUIC (since 0.3.0) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello; `null` with SNI: `unrecognized_name`, without SNI: the default `identity` (none: `missing_extension`) ([TLS guide](tls.md#certificate-per-name-sni)) |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` |  | 0.2.0 | TLS secrets as RFC 9850 key log lines ([Key logging](tls.md#key-logging)) |
 | `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | 0.2.0 | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
@@ -424,7 +424,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
 | `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's `alpn` applies to TCP only) ([Certificate per name](ktor.md#certificate-per-name-sni)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |

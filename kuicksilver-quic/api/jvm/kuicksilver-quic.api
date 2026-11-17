@@ -117,6 +117,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun readStream (J[BII)I
 	public final fun resetStream (JJ)V
 	public final fun resetStreamAt (JJJ)V
+	public final fun resumeSni (Lio/kuicksilver/tls/SniSelection;)V
 	public final fun resumeVerify (Lio/kuicksilver/tls/VerifyResult;)V
 	public final fun setDatagramSender (Lio/kuicksilver/quic/DatagramSender;)V
 	public final fun setPathCapabilities-pqKNJPU (ILio/kuicksilver/quic/IoCapabilities;)V
@@ -181,6 +182,11 @@ public final class io/kuicksilver/quic/ConnectionEvent$PathValidated : io/kuicks
 
 public final class io/kuicksilver/quic/ConnectionEvent$SessionTicket : io/kuicksilver/quic/ConnectionEvent {
 	public final fun getTicket ()Lio/kuicksilver/tls/QuicSessionTicket;
+}
+
+public final class io/kuicksilver/quic/ConnectionEvent$SniRequested : io/kuicksilver/quic/ConnectionEvent {
+	public final fun getClientHello ()Lio/kuicksilver/tls/ClientHelloInfo;
+	public final fun getSession ()Lio/kuicksilver/tls/QuicTlsSession;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StopSendingReceived : io/kuicksilver/quic/ConnectionEvent {

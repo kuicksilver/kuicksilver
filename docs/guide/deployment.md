@@ -75,7 +75,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 - Map the same number on both sides (`443` outside to `443` inside), so the engine's header is right as it is.
 - Or let the application send its own `Alt-Svc`. The engine never replaces an `Alt-Svc` the application set, so the
   application then also follows the run-time switch `engine.http3Advertising` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)) itself. Use it only on
-  connectors that do serve HTTP/3: not on a plain connector without TLS, not on one with an `sniSelector`, and not when
+  connectors that do serve HTTP/3: not on a plain connector without TLS, and not when
   the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
   above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
@@ -499,8 +499,8 @@ are covered by black-hole detection ([QUIC: Path MTU](quic.md#path-mtu),
 
 - One identity serves both sides: the same chain and key over TCP and over QUIC. The certificate must cover the host
   name clients use for the origin. The alternative in `Alt-Svc` has no host of its own, so the name is the same.
-- A `tlsConnector` with an `sniSelector` serves no HTTP/3 (warning at start): QUIC cannot pick an identity per SNI name
-  yet. Give each name its own connector, or use one certificate for all names.
+- A `tlsConnector` with an `sniSelector` picks each name's identity on TCP and QUIC alike, so the `Alt-Svc` of a name's
+  TCP responses leads to a QUIC handshake that presents that name's certificate ([Ktor: Certificate per name](ktor.md#certificate-per-name-sni)).
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or with
   `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
   `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](ktor.md#certificate-rotation),
@@ -651,12 +651,12 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 
 | Symptom | Check |
 |---|---|
-| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-but-no-http3)) |
+| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; a proxy in front that strips the header ([troubleshooting](troubleshooting.md#the-server-serves-http11-but-no-http3)) |
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
 | `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address: `engine.http3Stats` shows `connectionsRefusedLimits` growing, [QUIC connection limits](#quic-connection-limits)); answers leave from another source address ([reply addresses](#reply-addresses)) |
-| `curl --http3-only` fails with a TLS error | the certificate does not cover the name, or a connector with `sniSelector` (no HTTP/3) |
+| `curl --http3-only` fails with a TLS error | the certificate does not cover the name; with an `sniSelector`, a name it answers `null` for (`unrecognized_name`, CRYPTO_ERROR 0x170) |
 | Client `fallback = HandshakeTimeout`, then `BrokenAlternative` | UDP blocked on the client's network or in front of the server |
 | Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full (`h3Failure` code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener |
 | Client `fallback = TlsFailure` | the certificate on the UDP side, its `h3` ALPN |

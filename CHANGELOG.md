@@ -14,6 +14,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC and HTTP/3 servers pick their certificate per SNI name: `TlsConfig.sniSelector` works over QUIC as over TCP (RFC
+  6066 section 3), and a Ktor `tlsConnector` with an `sniSelector` now serves HTTP/3 and sends `Alt-Svc` (it served
+  HTTP/1.1 only, with a warning). The QUIC handshake pauses at the ClientHello (`DriveResult.WantSni`); the endpoint runs
+  the selector off the connection's loop (`QuicTlsSession.selectSni`, `resumeSni`; `ConnectionEvent.SniRequested` and
+  `ConnectionCore.resumeSni` for sans-IO cores and `Simulator`) and cancels it when the connection ends first. The chosen
+  identity's chain, key, client-certificate policy, trust and OCSP staple answer the handshake
+  (`QuicConnection.localCertificates`); `null` for a name ends it with CRYPTO_ERROR `unrecognized_name` (0x170), a
+  failing selector with `internal_error` (0x150, its text kept off the wire). Session tickets and their 0-RTT are only
+  accepted under the name and the certificate they were issued under; an override with client certificates gets neither
+  tickets nor 0-RTT. Over HTTP/3 a request must be for the name its connection's identity was chosen for (421 otherwise,
+  as on HTTP/1.1 and HTTP/2), and an answer's `alpn` applies to TCP only (HTTP/3 stays `h3`). Retry and address
+  validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
+  [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni).
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
   (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.
 - Ktor client: `KuicksilverEventListener.webSocketFailed(request, cause)`, called when a coroutine of a WebSocket session
@@ -730,6 +743,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   "Prereleases on GitHub only").
 
 ### Changed
+
+- TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
+  with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
+  TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets
+  `handshake_failure` (TLS 1.2 has no such alert).
+- `ksl` C ABI: applying an SNI override to a QUIC session (`ksl_ssl_sni_resume`) keeps what the QUIC TLS layer set on it:
+  TLS 1.3 as the lowest version, middlebox compatibility mode off (RFC 9001 sections 4.2, 8.4: a server context had it on
+  for TCP, and its change_cipher_spec failed the QUIC handshake) and `max_early_data_size` 0xffffffff, or 0 for an override
+  without early data (RFC 9001 section 4.6.1; the context's 0 had taken 0-RTT from every override).
 
 - HTTP/3: a field section waiting for QPACK dynamic-table inserts no longer looks every 50 ms whether its stream or
   connection ended; it wakes on the end itself.

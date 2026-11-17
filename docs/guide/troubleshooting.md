@@ -173,6 +173,17 @@ Peer)`, and the server counts it in `handshakesFailedTls`.
 | `Http3Endpoint.connect` fails with `"the server chose ALPN \"<alpn>\", not \"h3\""` | the HTTP/3 session ends with `GENERAL_PROTOCOL_ERROR` when the server picked another protocol | the server's `TlsConfig.alpn` lists it ahead of `h3` for this client; the order is the server's preference |
 | Over TCP (Ktor client) | HTTP/1.1 where HTTP/2 was expected | the server did not pick `h2`: it is not offered by the server (`http2 = false` on the Kuicksilver server), or `http2 { enabled = false }` on the client |
 
+### The handshake fails with `unrecognized_name`, `missing_extension` or `internal_error` (server with an `sniSelector`)
+
+A server whose `TlsConfig` (or Ktor `tlsConnector`) has an `sniSelector` ends a handshake itself in three cases; a QUIC
+client sees `TransportClosed(initiator = Peer)` with the code, a TCP client `TlsException.AlertReceived`:
+
+| Code (QUIC) | Alert | Cause and fix |
+|---|---|---|
+| 0x0170 | `unrecognized_name` (112) | the selector answered `null` for the ClientHello's server name: it does not serve that name. Add it, or answer with a default identity |
+| 0x016d | `missing_extension` (109) | the ClientHello had no server name (the client connected to an address), the selector answered `null` and the server has no `identity` of its own. Give the server one, answer `serverName == null` too, or connect by name |
+| 0x0150 | `internal_error` (80) | QUIC only: the selector threw, or its override does not suit QUIC (an empty `alpn`). The client reads no detail; the server's failure carries the exception as its cause |
+
 ### Connections are refused or dropped
 
 A server endpoint answers a new client in one of three ways: it accepts, it refuses with CONNECTION_REFUSED (0x2, the
@@ -194,8 +205,7 @@ The Ktor engines have their own limits: the client waits for a free connection b
 ### `QuicClientConfig` or `QuicServerConfig` cannot be built
 
 `TlsException.Config` from `build()` means the `TlsConfig` cannot carry QUIC (RFC 9001 section 4): "QUIC requires TLS
-1.3 only", "QUIC requires a non-empty ALPN list", "TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC", or "sniSelector is
-not supported for QUIC sessions in v1 …". A client without a reference identity fails with "a client needs serverName
+1.3 only", "QUIC requires a non-empty ALPN list" or "TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC". A client without a reference identity fails with "a client needs serverName
 (or ExpectedName) as the reference identifier". `IllegalArgumentException` from a builder names the value out of range,
 for example "keepAlive must be at most 3/4 of maxIdleTimeout", "initialRtt must be positive and at most 10 s" or
 "server QuicConfig.connectionIdLength (<n>) must equal the endpoint's connectionIdLength (<m>) …".
@@ -654,8 +664,6 @@ offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the
 
 The server logs why:
 
-- "HTTP/3 is not served on <host>:<port>: sniSelector is not supported by QUIC in v1": a `tlsConnector` with an
-  `sniSelector`.
 - "HTTP/3 is not served on port <port>: <reason>": the platform cannot run a QUIC server here.
 - "HTTP/3 is not served: no TCP + UDP pair free on one port number after 16 attempts (<cause>)": `port = 0`, and
   neither the UDP twin of a TCP port nor the TCP twin of a UDP port the OS picked was free.
@@ -683,7 +691,7 @@ at debug level with the reason:
 - "421 Misdirected Request for <host>: the sniSelector chose this connection's TLS settings for another name": with an
   `sniSelector`, a request must be for the connection's SNI name, or an address when the client sent no SNI. A client
   that sends one name in TLS and another in `Host` (some test tools, `curl --resolve` set up for another name) gets this;
-  send the same name in both.
+  send the same name in both. The same holds over HTTP/3, whose handshake the same selector chose for.
 - "421 Misdirected Request for <host>: an https request over a plain connection": a plain connector received
   `GET https://… HTTP/1.1`. Send origin-form requests, or terminate TLS here.
 - "421 Misdirected Request for <host>: not a valid host name or address": an internationalised name must arrive as an

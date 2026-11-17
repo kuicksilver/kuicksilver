@@ -221,7 +221,7 @@ val quic = quicConfig {
 ```
 
 QUIC is stricter than TLS over TCP about the `TlsConfig` it accepts (RFC 9001 section 4): TLS 1.3 only, a non-empty
-`alpn` list, no `TLS_AES_128_CCM_8_SHA256`, and no `sniSelector` (not supported for QUIC yet). Building a `QuicClientConfig` or
+`alpn` list, and no `TLS_AES_128_CCM_8_SHA256`. Building a `QuicClientConfig` or
 `QuicServerConfig` from a config that breaks one of these throws `TlsException.Config` right away, not at the first
 `connect`.
 
@@ -334,6 +334,12 @@ val echoed = incoming.acceptStream()
 echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: "")
 echoed.output.flushAndClose()
 ```
+
+A server that serves several names gives its `TlsConfig` an `sniSelector`: each handshake's identity is chosen from its
+ClientHello as over TCP ([TLS: Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-per-name-sni)). The selector runs off the connection's
+loop while that handshake waits; a name it refuses closes the connection with CRYPTO_ERROR `unrecognized_name` (0x170),
+a failing selector with `internal_error` (0x150). `QuicConnection.localCertificates` is the chosen chain. Retry and the
+admission policy act before any TLS session exists, so they are the same with or without a selector.
 
 ### 0-RTT (opt-in, experimental)
 
@@ -1482,6 +1488,31 @@ clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
 `kuicksilver.tls.reloadInterval` ([Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation)).
 
+#### Certificate per name (SNI)
+
+A server's `sniSelector` chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
+(`TlsConnection`) and QUIC (`QuicTlsSession`, HTTP/3) alike. It sees a `ClientHelloInfo` (the server name, null without
+SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
+`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
+
+- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
+  for that connection (`localCertificates` reports the chosen chain);
+- null for a ClientHello with a server name: the handshake ends with `unrecognized_name` (112), the fatal choice RFC 6066
+  section 3 offers for a name the server does not recognize;
+- null for a ClientHello without one: the configuration's own `identity`; a configuration without one ends the handshake
+  with `missing_extension` (109, RFC 9846 section 9.2; TLS 1.2 has no such alert and gets `handshake_failure`).
+
+A selector that throws, or an override the configuration's rules refuse, ends that handshake: over TCP with the
+exception, over QUIC with `internal_error` (80) and the exception as the cause of the failure (the CONNECTION_CLOSE reason
+the client reads carries none of its text). Over QUIC the handshake pauses at `DriveResult.WantSni`; the QUIC endpoint runs
+the selector off the connection's loop (`QuicTlsSession.selectSni`, then `resumeSni` on the loop), and a connection that
+ends meanwhile cancels it and frees what it built. A QUIC override needs a non-empty `alpn` like any QUIC configuration,
+and one with client certificates gets neither tickets nor 0-RTT, as a QUIC server with client certificates never does.
+
+Session tickets are bound to the server name and to the certificate they were issued under: a ticket resumes, and its
+0-RTT is accepted, only when the same name selects the same certificate again (RFC 6066 section 3, RFC 9846 section
+4.7.1). Otherwise the handshake is a full one and issues a new ticket.
+
 ### Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
@@ -1639,7 +1670,7 @@ experimental in 0.3.0:
   round trips. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
-  and never the default identity's (TCP; QUIC has no `sniSelector`).
+  and never the default identity's, over TCP and QUIC alike.
 
 ```kotlin
 // guide:tls:revocation
@@ -2619,8 +2650,8 @@ The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows
 ADR-0006); `udpSocketCount > 1` works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
 one socket routed by connection ID in process on macOS, iOS and Windows ([QUIC: Several loops on one port](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md#several-loops-on-one-port)).
 Where a QUIC server cannot run, the engine logs a warning and serves
-HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
-identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
+HTTP/1.1 only, without `Alt-Svc`. A `tlsConnector` with an `sniSelector` serves HTTP/3 too: the same selector picks the
+identity of each QUIC handshake ([Certificate per name](#certificate-per-name-sni)).
 
 Running it in production (UDP in firewalls, Docker and Kubernetes, load balancers, kernel buffers, checking that clients
 arrive over HTTP/3): [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md).
@@ -2944,6 +2975,42 @@ A plain connector has no certificate at all, so a request whose target is an abs
 (`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
 a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
 port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+
+#### Certificate per name (SNI)
+
+One connector can serve several names, each with its own certificate (RFC 6066 section 3): its `sniSelector` sees the
+ClientHello's server name and answers with the identity, and optionally the client-certificate policy, trust and OCSP
+response, for it:
+
+```kotlin
+// guide:ktor:sni-server
+tlsConnector(defaultIdentity) {
+    port = 443
+    sniSelector = { hello ->
+        when (hello.serverName) {
+            "api.example.com" -> ServerTlsOverride(apiIdentity)
+            "admin.example.com" -> ServerTlsOverride(adminIdentity, clientAuth = ClientAuth.Required, trust = adminCa)
+            else -> null // a name not served here: the handshake ends with unrecognized_name
+        }
+    }
+}
+```
+
+The selector answers for TCP (HTTP/1.1, HTTP/2) and HTTP/3 alike, so a name gets the same certificate and policy on every
+protocol, and the `Alt-Svc` its TCP responses carry leads to a QUIC endpoint that presents it. It is a suspending
+function: it may look the identity up (a cache, a store); on QUIC it runs off the connection's loop while that handshake
+waits, and a handshake that times out meanwhile cancels it. On QUIC it runs for each new connection's ClientHello, before
+the client's address is validated (as RFC 9001 section 4.3 notes, a server that parses the ClientHello to decide can
+require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
+to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
+(`defaultIdentity`). An answer's `alpn` applies to TCP only; HTTP/3 always negotiates `h3`. A selector
+that throws ends that handshake (on QUIC with `internal_error`; the exception's text is not sent to the client).
+
+Session tickets resume only under the name and the certificate they were issued under: a client that comes back with a
+ticket of another name, or after the selector started answering with another certificate, runs one full handshake (no
+0-RTT) and gets a new ticket. A name whose answer asks for client certificates gets no 0-RTT and no tickets on HTTP/3
+(`quicEarlyData` applies to the other names). Requests on a connection must be for the name its identity was chosen for:
+see [Misdirected requests](#misdirected-requests).
 
 #### Certificate rotation
 
@@ -4624,7 +4691,7 @@ load balancer exposes another number, clients would try the wrong port. Two fixe
 - Map the same number on both sides (`443` outside to `443` inside), so the engine's header is right as it is.
 - Or let the application send its own `Alt-Svc`. The engine never replaces an `Alt-Svc` the application set, so the
   application then also follows the run-time switch `engine.http3Advertising` ([Turning HTTP/3 off without a restart](#turning-http3-off-without-a-restart)) itself. Use it only on
-  connectors that do serve HTTP/3: not on a plain connector without TLS, not on one with an `sniSelector`, and not when
+  connectors that do serve HTTP/3: not on a plain connector without TLS, and not when
   the start logged "HTTP/3 is not served ..." (a UDP bind failure, a platform without a QUIC server, `udpSocketCount`
   above 1 without the accelerated socket); there the header would send clients to a port where nothing answers:
 
@@ -5048,8 +5115,8 @@ are covered by black-hole detection ([QUIC: Path MTU](https://github.com/kuicksi
 
 - One identity serves both sides: the same chain and key over TCP and over QUIC. The certificate must cover the host
   name clients use for the origin. The alternative in `Alt-Svc` has no host of its own, so the name is the same.
-- A `tlsConnector` with an `sniSelector` serves no HTTP/3 (warning at start): QUIC cannot pick an identity per SNI name
-  yet. Give each name its own connector, or use one certificate for all names.
+- A `tlsConnector` with an `sniSelector` picks each name's identity on TCP and QUIC alike, so the `Alt-Svc` of a name's
+  TCP responses leads to a QUIC handshake that presents that name's certificate ([Ktor: Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-per-name-sni)).
 - Renewed certificates can be put in place without a restart: a `TlsIdentity.Reloadable` and `reload(...)`, or with
   `EngineMain` the key `kuicksilver.tls.reloadInterval` that watches the PEM files of `kuicksilver.tls.certificateChain` and
   `kuicksilver.tls.privateKey` ([Ktor: Certificate rotation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-rotation),
@@ -5200,12 +5267,12 @@ alternative from an earlier run; HTTP/3 starts from the next call.
 
 | Symptom | Check |
 |---|---|
-| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; an `sniSelector` on the connector; a proxy in front that strips the header ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-server-serves-http11-but-no-http3)) |
+| No `Alt-Svc` in responses | the server log ("HTTP/3 is not served ...": the UDP bind, no QUIC server on the platform, `udpSocketCount` above 1 without the accelerated socket); `http3` and `altSvc` on; a proxy in front that strips the header ([troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md#the-server-serves-http11-but-no-http3)) |
 | `Alt-Svc: clear` | `engine.http3Advertising` is `Clear` or `Drain` |
 | `Alt-Svc` names the wrong port | a port mapping or load balancer with another number: map the same number or send your own header ([Ports and Alt-Svc](#ports-and-alt-svc)) |
 | `curl --http3-only` times out, `tcpdump` shows nothing | UDP is blocked before the server: firewall, security group, `-p .../udp` missing, the Service has no UDP port, the load balancer has no UDP listener |
 | `tcpdump` shows Initials, no answer | the host firewall drops them; the per-IP or stateless rate limit or the admission policy drops them (all clients behind one NAT address: `engine.http3Stats` shows `connectionsRefusedLimits` growing, [QUIC connection limits](#quic-connection-limits)); answers leave from another source address ([reply addresses](#reply-addresses)) |
-| `curl --http3-only` fails with a TLS error | the certificate does not cover the name, or a connector with `sniSelector` (no HTTP/3) |
+| `curl --http3-only` fails with a TLS error | the certificate does not cover the name; with an `sniSelector`, a name it answers `null` for (`unrecognized_name`, CRYPTO_ERROR 0x170) |
 | Client `fallback = HandshakeTimeout`, then `BrokenAlternative` | UDP blocked on the client's network or in front of the server |
 | Client `fallback = Refused` | the server is in `Drain`, stopping, or its accept queue is full (`h3Failure` code 0x2, CONNECTION_REFUSED: transient, the next call tries HTTP/3 again); another code: the server's QUIC listener |
 | Client `fallback = TlsFailure` | the certificate on the UDP side, its `h3` ALPN |
@@ -5308,8 +5375,8 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 
 `quicClientConfig(tls) { }` and `quicServerConfig(tls) { }` pair a `TlsConfig` with a `QuicConfig`. `build()` throws
 `IllegalArgumentException` for a `TlsConfig` of the wrong role ("client config needs a client TlsConfig") and
-`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn`, `TLS_AES_128_CCM_8_SHA256`, or an
-`sniSelector`.
+`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn` or `TLS_AES_128_CCM_8_SHA256`. A
+server's `sniSelector` works as over TCP (its overrides must suit QUIC as well: an empty `alpn` there fails that handshake).
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
@@ -5380,7 +5447,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#rotating-the-server-certificate)) |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa` or `ReloadableCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP and QUIC (since 0.3.0) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello; `null` with SNI: `unrecognized_name`, without SNI: the default `identity` (none: `missing_extension`) ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-per-name-sni)) |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` |  | 0.2.0 | TLS secrets as RFC 9850 key log lines ([Key logging](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-logging)) |
 | `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | 0.2.0 | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
@@ -5634,7 +5701,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
 | `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's `alpn` applies to TCP only) ([Certificate per name](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#certificate-per-name-sni)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
@@ -5865,6 +5932,17 @@ Peer)`, and the server counts it in `handshakesFailedTls`.
 | `Http3Endpoint.connect` fails with `"the server chose ALPN \"<alpn>\", not \"h3\""` | the HTTP/3 session ends with `GENERAL_PROTOCOL_ERROR` when the server picked another protocol | the server's `TlsConfig.alpn` lists it ahead of `h3` for this client; the order is the server's preference |
 | Over TCP (Ktor client) | HTTP/1.1 where HTTP/2 was expected | the server did not pick `h2`: it is not offered by the server (`http2 = false` on the Kuicksilver server), or `http2 { enabled = false }` on the client |
 
+#### The handshake fails with `unrecognized_name`, `missing_extension` or `internal_error` (server with an `sniSelector`)
+
+A server whose `TlsConfig` (or Ktor `tlsConnector`) has an `sniSelector` ends a handshake itself in three cases; a QUIC
+client sees `TransportClosed(initiator = Peer)` with the code, a TCP client `TlsException.AlertReceived`:
+
+| Code (QUIC) | Alert | Cause and fix |
+|---|---|---|
+| 0x0170 | `unrecognized_name` (112) | the selector answered `null` for the ClientHello's server name: it does not serve that name. Add it, or answer with a default identity |
+| 0x016d | `missing_extension` (109) | the ClientHello had no server name (the client connected to an address), the selector answered `null` and the server has no `identity` of its own. Give the server one, answer `serverName == null` too, or connect by name |
+| 0x0150 | `internal_error` (80) | QUIC only: the selector threw, or its override does not suit QUIC (an empty `alpn`). The client reads no detail; the server's failure carries the exception as its cause |
+
 #### Connections are refused or dropped
 
 A server endpoint answers a new client in one of three ways: it accepts, it refuses with CONNECTION_REFUSED (0x2, the
@@ -5886,8 +5964,7 @@ The Ktor engines have their own limits: the client waits for a free connection b
 #### `QuicClientConfig` or `QuicServerConfig` cannot be built
 
 `TlsException.Config` from `build()` means the `TlsConfig` cannot carry QUIC (RFC 9001 section 4): "QUIC requires TLS
-1.3 only", "QUIC requires a non-empty ALPN list", "TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC", or "sniSelector is
-not supported for QUIC sessions in v1 …". A client without a reference identity fails with "a client needs serverName
+1.3 only", "QUIC requires a non-empty ALPN list" or "TLS_AES_128_CCM_8_SHA256 is not allowed in QUIC". A client without a reference identity fails with "a client needs serverName
 (or ExpectedName) as the reference identifier". `IllegalArgumentException` from a builder names the value out of range,
 for example "keepAlive must be at most 3/4 of maxIdleTimeout", "initialRtt must be positive and at most 10 s" or
 "server QuicConfig.connectionIdLength (<n>) must equal the endpoint's connectionIdLength (<m>) …".
@@ -6346,8 +6423,6 @@ offers only `http/1.1` again, as in 0.2; report the server's behaviour (with the
 
 The server logs why:
 
-- "HTTP/3 is not served on <host>:<port>: sniSelector is not supported by QUIC in v1": a `tlsConnector` with an
-  `sniSelector`.
 - "HTTP/3 is not served on port <port>: <reason>": the platform cannot run a QUIC server here.
 - "HTTP/3 is not served: no TCP + UDP pair free on one port number after 16 attempts (<cause>)": `port = 0`, and
   neither the UDP twin of a TCP port nor the TCP twin of a UDP port the OS picked was free.
@@ -6375,7 +6450,7 @@ at debug level with the reason:
 - "421 Misdirected Request for <host>: the sniSelector chose this connection's TLS settings for another name": with an
   `sniSelector`, a request must be for the connection's SNI name, or an address when the client sent no SNI. A client
   that sends one name in TLS and another in `Host` (some test tools, `curl --resolve` set up for another name) gets this;
-  send the same name in both.
+  send the same name in both. The same holds over HTTP/3, whose handshake the same selector chose for.
 - "421 Misdirected Request for <host>: an https request over a plain connection": a plain connector received
   `GET https://… HTTP/1.1`. Send origin-form requests, or terminate TLS here.
 - "421 Misdirected Request for <host>: not a valid host name or address": an internationalised name must arrive as an

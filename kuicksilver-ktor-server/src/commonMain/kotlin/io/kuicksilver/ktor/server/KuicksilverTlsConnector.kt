@@ -46,8 +46,7 @@ public class KuicksilverTlsConnector private constructor(
     /** The TLS 1.3 cipher suites in preference order. */
     public val cipherSuites: CipherSuites,
     /**
-     * Picks an identity per SNI name on TCP connections. QUIC cannot use it in v1, so HTTP/3 is skipped for this
-     * connector with a warning: it serves HTTP/1.1 only and sends no `Alt-Svc`.
+     * Picks an identity per SNI name, on TCP and HTTP/3 (QUIC) connections alike; see [Builder.sniSelector].
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
     /**
@@ -91,9 +90,26 @@ public class KuicksilverTlsConnector private constructor(
             clientAuth = this@KuicksilverTlsConnector.clientAuth
             this@KuicksilverTlsConnector.trust?.let { trust = it }
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
-            sniSelector = this@KuicksilverTlsConnector.sniSelector
+            sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) withoutAlpn(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
             if (!quic) versions = this@KuicksilverTlsConnector.versions
+        }
+
+    /**
+     * [selector] for the HTTP/3 side: each answer's identity, client certificates, trust and staple, never its ALPN list.
+     * HTTP/3 is `h3` (RFC 9114 section 3.2); an override's ALPN list is for the TCP side (`h2`, `http/1.1`).
+     */
+    private fun withoutAlpn(selector: suspend (ClientHelloInfo) -> ServerTlsOverride?): suspend (ClientHelloInfo) -> ServerTlsOverride? =
+        { hello ->
+            selector(hello)?.let { o ->
+                if (o.alpn ==
+                    null
+                ) {
+                    o
+                } else {
+                    ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling)
+                }
+            }
         }
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
@@ -144,8 +160,13 @@ public class KuicksilverTlsConnector private constructor(
         public var cipherSuites: CipherSuites = CipherSuites.Default
 
         /**
-         * Picks an identity per SNI name (TCP connections). HTTP/3 is skipped for this connector with a warning: QUIC
-         * cannot pick an identity per SNI name in v1.
+         * Picks an identity per SNI name (`TlsConfig.Builder.sniSelector`), on TCP and HTTP/3 connections alike: one
+         * selector answers both, so a name gets the same certificate, client-certificate policy and staple over HTTP/1.1,
+         * HTTP/2 and HTTP/3, and the `Alt-Svc` the TCP side advertises leads to a QUIC endpoint that presents the same
+         * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake; an answer's `alpn` applies to
+         * TCP only (HTTP/3 stays `h3`). Null with SNI present refuses the handshake (`unrecognized_name`); null for a
+         * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen
+         * for (else 421, RFC 9110 section 7.4). Null by default.
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 

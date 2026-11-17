@@ -351,9 +351,9 @@ public class TlsConnection private constructor(
         val ch = Ksl.sslClientHello(s())
         val info = ClientHelloInfo(ch.serverName, parseAlpn(ch.alpnWire), parseU16List(ch.signatureAlgorithmsWire))
         selectedFor = ch.serverName
-        val override = selector(info)
-        when {
-            override != null -> {
+        when (val verdict = config.sniVerdict(info, selector(info))) {
+            is SniVerdict.Override -> {
+                val override = verdict.override
                 val o = KslContext.create(config.withOverride(override), quic = false)
                 overrideCtx = o
                 lock.withLock {
@@ -365,14 +365,14 @@ public class TlsConnection private constructor(
                 }
             }
 
-            info.serverName != null -> {
-                lock.withLock { Ksl.sslSniResume(s(), 0L, 112) }
+            // unrecognized_name, or missing_extension without a default identity
+            is SniVerdict.Refuse -> {
+                lock.withLock { Ksl.sslSniResume(s(), 0L, verdict.alert) }
             }
 
-            // unrecognized_name
-            else -> {
+            SniVerdict.Default -> {
                 lock.withLock { Ksl.sslSniResume(s(), 0L, 0) }
-            } // default identity
+            }
         }
     }
 

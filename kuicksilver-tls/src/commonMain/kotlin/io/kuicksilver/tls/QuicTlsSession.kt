@@ -84,6 +84,20 @@ public sealed interface DriveResult {
         ) : DriveResult
 
     /**
+     * Server: the handshake is paused at the ClientHello for [TlsConfig.sniSelector]. Run [QuicTlsSession.selectSni] with
+     * [clientHello][DriveResult.WantSni.clientHello] off the connection loop (the selector may suspend), pass its result to
+     * [QuicTlsSession.resumeSni] on the loop, then call [QuicTlsSession.drive]. Until then [QuicTlsSession.drive] answers
+     * this again; CRYPTO data may still be provided.
+     *
+     * @property clientHello what the ClientHello asks for: its server name, ALPN offer and signature schemes.
+     */
+    public class WantSni
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val clientHello: ClientHelloInfo,
+        ) : DriveResult
+
+    /**
      * Fatal; [alert][DriveResult.Failed.alert] is the TLS alert the transport sends as `CONNECTION_CLOSE 0x0100 + alert` (null when none applies).
      * Every later [QuicTlsSession.drive] returns the same result.
      *
@@ -265,6 +279,29 @@ public interface QuicTlsSession : AutoCloseable {
     /** Runs the configured trust (platform, custom, TOFU, pins) for a [DriveResult.WantVerify]; the caller then passes the result to [resumeVerify]. */
     public suspend fun verifyPeer(chain: List<Certificate>): VerifyResult
 
+    /**
+     * Server, for a [DriveResult.WantSni]: asks [TlsConfig.sniSelector] about [clientHello] and builds the configuration of
+     * the identity it chose. Safe to call off the connection loop: it reads the configuration only, never the handshake.
+     * Never throws for the selector's sake: an exception from it, or an override that does not suit QUIC, becomes a
+     * selection that ends the handshake with `internal_error`. Pass the result to [resumeSni], or [close][SniSelection.close]
+     * it. [IllegalStateException] when the configuration has no `sniSelector`, and from the default: a session that never
+     * answers [DriveResult.WantSni] has nothing to select.
+     */
+    public suspend fun selectSni(clientHello: ClientHelloInfo): SniSelection =
+        throw IllegalStateException("no SNI selection in this session")
+
+    /**
+     * Resumes a handshake paused at [DriveResult.WantSni] with [selection] from this session's [selectSni], then call
+     * [drive]: the chosen identity's chain, key and settings take over this handshake; no override goes on with the default
+     * identity, or ends the handshake with the selection's alert (the next [drive] returns [DriveResult.Failed]). Takes
+     * [selection] over and closes it, also when it throws: [IllegalStateException] when no selection is pending or the
+     * session is closed, [IllegalArgumentException] for a selection another session made.
+     */
+    public fun resumeSni(selection: SniSelection) {
+        selection.close()
+        throw IllegalStateException("no SNI selection pending")
+    }
+
     /** The next queued event, or null when there is none; call until null after each [provide] and [drive]. A failed session has none. */
     public fun nextEvent(): TlsEvent?
 
@@ -272,8 +309,9 @@ public interface QuicTlsSession : AutoCloseable {
     public val peerCertificates: List<Certificate>
 
     /**
-     * The chain this side presents, leaf first: a server's identity snapshot taken for this handshake, a client's certificate;
-     * empty without one. The default (an implementation without certificates) is empty.
+     * The chain this side presents, leaf first: a server's identity snapshot taken for this handshake (the
+     * [TlsConfig.sniSelector] override once [resumeSni] applied it), a client's certificate; empty without one. The default
+     * (an implementation without certificates) is empty.
      */
     @ExperimentalKuicksilverApi
     public val localCertificates: List<Certificate> get() = emptyList()
@@ -477,7 +515,8 @@ public interface LoadBalancerKey : AutoCloseable {
 public interface QuicCrypto {
     /**
      * A new handshake for one QUIC connection; the caller closes it. Throws [TlsException.Config] unless [config] suits QUIC:
-     * TLS 1.3 only, a non-empty ALPN list, only the AES-GCM and ChaCha20-Poly1305 suites and no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1).
+     * TLS 1.3 only, a non-empty ALPN list and only the AES-GCM and ChaCha20-Poly1305 suites (RFC 9001 sections 4.2, 5.3, 8.1).
+     * A server's `sniSelector` pauses the handshake at [DriveResult.WantSni].
      */
     public fun newSession(config: TlsConfig): QuicTlsSession
 

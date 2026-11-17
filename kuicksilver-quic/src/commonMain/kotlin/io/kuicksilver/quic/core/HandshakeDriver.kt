@@ -5,11 +5,13 @@
 package io.kuicksilver.quic.core
 
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.ClientHelloInfo
 import io.kuicksilver.tls.Direction
 import io.kuicksilver.tls.DriveResult
 import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.QuicTlsSession
+import io.kuicksilver.tls.SniSelection
 import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.VerifyResult
@@ -38,6 +40,8 @@ internal interface HandshakeSink {
 
     fun onVerifyRequested(chain: List<Certificate>)
 
+    fun onSniRequested(clientHello: ClientHelloInfo)
+
     fun onTlsFailure(
         exception: TlsException,
         alert: Int?,
@@ -50,6 +54,7 @@ internal class HandshakeDriver(
     private val sink: HandshakeSink,
 ) {
     private var waitingVerify = false
+    private var waitingSni = false
     var failed: Boolean = false
         private set
     var done: Boolean = false
@@ -64,7 +69,7 @@ internal class HandshakeDriver(
     }
 
     fun drive() {
-        if (failed || waitingVerify) return
+        if (failed || waitingVerify || waitingSni) return
         while (true) {
             val r = session.drive()
             dispatch()
@@ -78,6 +83,12 @@ internal class HandshakeDriver(
                 is DriveResult.WantVerify -> {
                     waitingVerify = true
                     sink.onVerifyRequested(r.chain)
+                    return
+                }
+
+                is DriveResult.WantSni -> {
+                    waitingSni = true
+                    sink.onSniRequested(r.clientHello)
                     return
                 }
 
@@ -121,6 +132,17 @@ internal class HandshakeDriver(
         if (!waitingVerify) return
         waitingVerify = false
         session.resumeVerify(result)
+        drive()
+    }
+
+    /** Applies [selection] to the paused handshake and drives on; a selection nobody waits for (any more) is closed. */
+    fun resumeSni(selection: SniSelection) {
+        if (!waitingSni || failed) {
+            selection.close()
+            return
+        }
+        waitingSni = false
+        session.resumeSni(selection)
         drive()
     }
 }

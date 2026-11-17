@@ -96,6 +96,11 @@ public final class io/kuicksilver/tls/DriveResult$WantRead : io/kuicksilver/tls/
 	public static final field INSTANCE Lio/kuicksilver/tls/DriveResult$WantRead;
 }
 
+public final class io/kuicksilver/tls/DriveResult$WantSni : io/kuicksilver/tls/DriveResult {
+	public fun <init> (Lio/kuicksilver/tls/ClientHelloInfo;)V
+	public final fun getClientHello ()Lio/kuicksilver/tls/ClientHelloInfo;
+}
+
 public final class io/kuicksilver/tls/DriveResult$WantVerify : io/kuicksilver/tls/DriveResult {
 	public fun <init> (Ljava/util/List;)V
 	public final fun getChain ()Ljava/util/List;
@@ -282,7 +287,9 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public abstract fun provide (Lio/kuicksilver/tls/EncryptionLevel;[BII)V
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public fun resume (Lio/kuicksilver/tls/QuicSessionTicket;)Z
+	public fun resumeSni (Lio/kuicksilver/tls/SniSelection;)V
 	public abstract fun resumeVerify (Lio/kuicksilver/tls/VerifyResult;)V
+	public fun selectSni (Lio/kuicksilver/tls/ClientHelloInfo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun setQuicVersion (I)V
 	public abstract fun setTransportParameters ([B)V
 	public abstract fun verifyPeer (Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -295,6 +302,8 @@ public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
 	public static fun pendingCryptoBytes (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;)I
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z
+	public static fun resumeSni (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/SniSelection;)V
+	public static fun selectSni (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/ClientHelloInfo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class io/kuicksilver/tls/ResetKey : java/lang/AutoCloseable {
@@ -340,6 +349,11 @@ public final class io/kuicksilver/tls/SignatureAlgorithm : java/lang/Enum {
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/SignatureAlgorithm;
 	public static fun values ()[Lio/kuicksilver/tls/SignatureAlgorithm;
+}
+
+public final class io/kuicksilver/tls/SniSelection : java/lang/AutoCloseable {
+	public fun close ()V
+	public final fun getServerName ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/SpkiSha256 {

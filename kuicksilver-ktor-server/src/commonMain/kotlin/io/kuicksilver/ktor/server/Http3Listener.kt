@@ -25,6 +25,7 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.sniSelectedFor
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -65,8 +66,7 @@ internal class H3Listener(
 }
 
 /**
- * How a TLS connector binds its HTTP/3 endpoint on a given port, or null when it serves no HTTP/3: turned off, or a
- * connector with a `sniSelector` (QUIC cannot pick an identity per SNI name in v1; logged as a warning). [bindTcpAndUdp]
+ * How a TLS connector binds its HTTP/3 endpoint on a given port, or null when it serves no HTTP/3 (turned off). [bindTcpAndUdp]
  * calls it with the port of the TCP socket it just bound, or, on its UDP-first attempts with `port = 0`, with 0 (the OS
  * picks the UDP port and TCP follows).
  */
@@ -77,10 +77,6 @@ internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnect
         require(n >= 3) {
             "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the client opens its control and QPACK streams), not $n"
         }
-    }
-    if (tls.sniSelector != null) {
-        environment.log.warn("HTTP/3 is not served on ${tls.host}:${tls.port}: sniSelector is not supported by QUIC in v1")
-        return null
     }
     return { port -> configuration.http3Bind(InetSocketAddress(tls.host, port), http3EndpointConfig(tls), http3Settings()) }
 }
@@ -198,7 +194,15 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                 CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
                         ) {
                             val peer = conn.quic.peerCertificates
-                            val authorityCheck = AuthorityCheck(conn.quic.localCertificates, tls.trustedGateway)
+
+                            // the identity and policy an sniSelector chose hold for its name only (RFC 9110 section 7.4), as on TCP
+                            @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                            val authorityCheck =
+                                AuthorityCheck(
+                                    conn.quic.localCertificates,
+                                    tls.trustedGateway,
+                                    if (tls.sniSelector != null) SniChoice(conn.quic.sniSelectedFor) else null,
+                                )
                             try {
                                 while (true) {
                                     val req =

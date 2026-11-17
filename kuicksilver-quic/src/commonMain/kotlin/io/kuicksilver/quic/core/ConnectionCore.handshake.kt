@@ -597,6 +597,10 @@ internal class ConnectionHandshakeSink(
         core.events += ConnectionEvent.VerifyRequested(chain, core.handshake.session)
     }
 
+    override fun onSniRequested(clientHello: io.kuicksilver.tls.ClientHelloInfo) {
+        core.events += ConnectionEvent.SniRequested(clientHello, core.handshake.session)
+    }
+
     override fun onTlsFailure(
         exception: TlsException,
         alert: Int?,

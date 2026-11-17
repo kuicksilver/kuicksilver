@@ -794,6 +794,30 @@ class TlsServerTest {
         }
     }
 
+    /**
+     * RFC 9846 section 9.2: "Servers requiring this extension SHOULD respond to a ClientHello lacking a "server_name" extension
+     * by terminating the connection with a "missing_extension" alert": a server with only an sniSelector, whose selector has
+     * nothing for a ClientHello without SNI, has no identity to answer it with.
+     */
+    @Test fun negative_noSniWithoutDefaultIdentityEndsWithMissingExtension() {
+        val server =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("x1")
+                sniSelector = { info -> if (info.serverName == "server.test") ServerTlsOverride(serverIdentity) else null }
+            }
+        val client =
+            tlsConfig(TlsRole.Client) {
+                alpn = listOf("x1")
+                serverName = "127.0.0.1" // IP literal: no SNI
+                trust = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
+            }
+        val (cd, _) = connect(client, server)
+        runBlocking {
+            val e = assertFailsWith<TlsException.AlertReceived> { withTimeout(10.seconds) { cd.await() } }
+            assertEquals(109, e.code)
+        }
+    }
+
     @Test fun noSniUsesDefaultIdentity(): Unit =
         runBlocking {
             val seen = CompletableDeferred<String?>()
