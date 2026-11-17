@@ -47,10 +47,10 @@ public interface QuicStream {
     public var priority: StreamPriority
 
     /**
-     * Abandons sending with RESET_STREAM carrying application error [code] (RFC 9000 section 19.4): [output] fails with
-     * [QuicException.StreamError.Reset] and unsent data is dropped. Returns at once; the loop sends the frame. Once all
-     * data and the FIN were acknowledged there is nothing to abandon (section 3.1: a reset leaves only the "Ready",
-     * "Send", or "Data Sent" states), and no frame goes.
+     * Abandons sending with RESET_STREAM carrying application error [code] (RFC 9000 section 19.4): writes to [output] fail
+     * with `ClosedWriteChannelException`, [QuicException.StreamError.Reset] as the cause, and unsent data is dropped.
+     * Returns at once; the loop sends the frame. Once all data and the FIN were acknowledged there is nothing to abandon
+     * (section 3.1: a reset leaves only the "Ready", "Send", or "Data Sent" states), and no frame goes.
      */
     public fun reset(code: Long)
 

@@ -894,8 +894,8 @@ val client = HttpClient(Kuicksilver) {
   limits.
 - Requests go through a proxy when one applies (by default the platform's proxy settings): TCP only (HTTP/1.1, or HTTP/2
   inside the tunnel), see [Proxies](#proxies).
-- Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
-  `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
+- Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake; the name resolution and the
+  wait for a pool slot share it) fails with Ktor's `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
   packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
   takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however

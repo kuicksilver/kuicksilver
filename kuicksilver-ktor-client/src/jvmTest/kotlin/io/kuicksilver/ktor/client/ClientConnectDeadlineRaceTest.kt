@@ -153,6 +153,10 @@ class ClientConnectDeadlineRaceTest {
                     connectTimeout = millis.milliseconds
                     resolverForTest = { _, p -> listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p)) }
                 }, block = { install(WebSockets) }).use { c ->
+                    // the pooled connection is taken without suspending only while it is not quiet long enough for a health
+                    // PING (h2HealthAfterIdleMillis, 10 s); the hold may last up to its 30 s give-up, and the timeouts double
+                    // up to 8 s, so the PING is off here: a suspending PING would need time the resolution left none of
+                    engine(c).h1.h2HealthAfterIdleMillis = Long.MAX_VALUE
                     // an HTTP/2 connection in the pool, its SETTINGS (Extended CONNECT allowed) received
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("https://server.test:$port/").version)
                     engine(c).h1.remoteHostsForTest = { hold() }
