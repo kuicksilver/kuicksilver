@@ -7030,7 +7030,9 @@ What else to know:
   and the rebuild of `tools/verify/verify-release.sh` first unset every environment variable known to change a native
   build (`tools/clean-build-env.sh` lists them: the variables above, `OPT`, clang's and gcc's `CCC_OVERRIDE_OPTIONS`,
   `CPATH`, `C_INCLUDE_PATH`, `LIBRARY_PATH`, `SDKROOT` and the like, `AR` and `RANLIB`, OpenSSL's `__CNF_*` and
-  `OPENSSL_LOCAL_CONFIG_DIR`, `MAKEFLAGS`, and the scripts' own `KSL_OPENSSL_*` locations), and the hosted jobs that
+  `OPENSSL_LOCAL_CONFIG_DIR`, `CROSS_SYSROOT`, Perl's `PERL5OPT` and `PERL5LIB`, the loaders' `LD_PRELOAD` and
+  `DYLD_INSERT_LIBRARIES`, `LD_RUN_PATH`, `MAKEFLAGS`, and the scripts' own `KSL_OPENSSL_*` locations: the variables we
+  know of; one found later is added there), and the hosted jobs that
   build the libraries a release reuses fail if one is set (the pinned NDK's LLVM tools their setup names, and an
   `SDKROOT` that is the selected Xcode's macOS SDK, give the same build and pass). A build with your own flags is therefore not byte-identical to
   a release, and comparing it with one ([verifying.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md)) is expected to differ.

@@ -159,7 +159,8 @@ out=$( . "$root/tools/clean-build-env.sh"
   ksl_clean_build_env
   for v in "${ksl_build_env_vars[@]}"; do [ -z "${!v+x}" ] || echo "still set: $v"; done
   for v in CC CPPFLAGS CFLAGS LDFLAGS OPT CCC_OVERRIDE_OPTIONS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH AR RANLIB \
-           SDKROOT MAKEFLAGS OPENSSL_LOCAL_CONFIG_DIR __CNF_CFLAGS KSL_OPENSSL_PIN KSL_KEEP_DEBUG; do
+           SDKROOT MAKEFLAGS OPENSSL_LOCAL_CONFIG_DIR __CNF_CFLAGS KSL_OPENSSL_PIN KSL_KEEP_DEBUG CROSS_SYSROOT PERL5OPT \
+           PERL5LIB PERLLIB TOOLCHAINS LD_RUN_PATH DYLD_INSERT_LIBRARIES LD_PRELOAD; do
     printf '%s\n' "${ksl_build_env_vars[@]}" | grep -qx "$v" || echo "not in the list: $v"
   done )
 check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
@@ -176,6 +177,11 @@ if sdk=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null) && [ -n "$sdk" ]; then
   out=$(g SDKROOT="$sdk")
   check "guard: SDKROOT equal to the selected Xcode's macOS SDK passes" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
 fi
+# Perl runs OpenSSL's build: PERL5OPT reaches it (control), and a release-like build has it unset (the helper, then a build)
+out=$(ossl "$tmp/o-perl" KSL_OPENSSL_FRESH=1 PERL5OPT=-MKslNoSuchModule); rc=$?
+check "control: PERL5OPT reaches the OpenSSL build (it fails with it)" "$([ $rc != 0 ] && grep -q KslNoSuchModule <<< "$out" && echo 0 || echo 1)" "exit $rc"
+out=$( export PERL5OPT=-MKslNoSuchModule PERL5LIB=/nonexistent CROSS_SYSROOT=/nonexistent; . "$root/tools/clean-build-env.sh"; ksl_clean_build_env; ossl "$tmp/o-perl-clean" KSL_OPENSSL_FRESH=1); rc=$?
+check "negative_cleanBuildEnvStopsPerl5opt" "$([ $rc = 0 ] && grep -q '^built linux-x64' <<< "$out" && echo 0 || echo 1)" "exit $rc: $out"
 first_line() { grep -n -m1 -E "$2" "$1" | cut -d: -f1; }
 c=$(first_line "$root/tools/release/local-release.sh" 'ksl_clean_build_env'); b=$(first_line "$root/tools/release/local-release.sh" '^step ')
 check "local-release.sh clears the build environment before its first step" "$([ -n "$c" ] && [ -n "$b" ] && [ "$c" -lt "$b" ] && echo 0 || echo 1)" "line $c vs $b"
@@ -264,6 +270,8 @@ else
     LDFLAGS="-Wl,-ksl-no-such-linker-flag" CCC_OVERRIDE_OPTIONS="+-include/nonexistent/ksl-env-probe.h" CPATH="$probe" \
     C_INCLUDE_PATH="$probe" SDKROOT=/nonexistent/sdk LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
     OPT=-O0 MAKEFLAGS=-e KSL_OPENSSL_OUT=/nonexistent KSL_OPENSSL_PREFIXED=/nonexistent KSL_KEEP_DEBUG=1 \
+    LD_RUN_PATH=/nonexistent/rpath TOOLCHAINS=com.ksl.nonexistent PERL5OPT=-MKslNoSuchModule PERL5LIB=/nonexistent \
+    CROSS_SYSROOT=/nonexistent \
     bash "$root/tools/check/double-build.sh" macos-arm64 --skip-openssl 2>&1); rc=$?
   check "negative_doubleBuildIgnoresBuilderFlags" "$([ $rc = 0 ] && grep -q 'byte-identical' <<< "$out" && echo 0 || echo 1)" "exit $rc: $(tail -3 <<< "$out")"
 fi
