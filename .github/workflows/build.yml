@@ -185,6 +185,12 @@ jobs:
             build/openssl-work/src/*.tar.gz
             build/openssl-work/src/*.tar.gz.asc
           key: openssl-docker-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+      - name: 'env: nothing that changes a native build is set'
+        # the libraries built here are those a release reuses (tools/clean-build-env.sh; the setup action sets LLVM_* itself)
+        run: |
+          . tools/clean-build-env.sh
+          set_vars=$(ksl_build_env_set LLVM_)
+          [ -z "$set_vars" ] || { echo "::error::set on this runner: $set_vars (tools/clean-build-env.sh)"; exit 1; }
       - name: 'openssl: fetch and verify'
         run: bash tools/openssl/fetch.sh
       - name: 'openssl: build ${{ matrix.target }}'
@@ -468,6 +474,12 @@ jobs:
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
         with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+      - name: 'env: nothing that changes a native build is set'
+        # the libraries built here are those a release reuses (tools/clean-build-env.sh; the setup action sets LLVM_* itself)
+        run: |
+          . tools/clean-build-env.sh
+          set_vars=$(ksl_build_env_set LLVM_)
+          [ -z "$set_vars" ] || { echo "::error::set on this runner: $set_vars (tools/clean-build-env.sh)"; exit 1; }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
       - name: 'check: spdx, layers, abi'

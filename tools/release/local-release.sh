@@ -72,9 +72,9 @@
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
 set -euo pipefail
 started=$(date +%s); given="$*"
-# The native build scripts add a builder's CC, CPPFLAGS, CFLAGS and LDFLAGS to their own (docs/guide/building.md); a release
-# is built with the project's flags only, so that it is what the reproducibility checks rebuild.
-unset CC CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS
+# A release is built with the project's own compiler, flags and paths only, so that it is what the reproducibility checks
+# rebuild: the variables that would change a native build are unset (tools/clean-build-env.sh, docs/guide/building.md).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tools/clean-build-env.sh"; ksl_clean_build_env note
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 

@@ -11,8 +11,11 @@
 #      invocation: CC is the compiler, every project flag is still there and the builder's come after them (CPPFLAGS and
 #      CFLAGS after -Werror, LDFLAGS after the export list), a flag that cannot compile fails the build, LDFLAGS reach the
 #      linker (a link map is written) and the library still exports only its entry points.
-#   3. tools/check/double-build.sh (macOS) builds with the project's own compiler and flags: with a CC that does not exist
-#      and flags that cannot compile in the environment, it still builds and finds the two builds identical.
+#   3. tools/check/double-build.sh (macOS) builds with the project's own compiler, flags and paths: with a CC that does not
+#      exist, flags that cannot compile, CCC_OVERRIDE_OPTIONS, CPATH, C_INCLUDE_PATH and SDKROOT (each shown to reach clang)
+#      and the other variables of tools/clean-build-env.sh in the environment, it still builds identical copies. The
+#      helper itself: every variable it lists is unset, and local-release.sh and verify-release.sh call it before they
+#      build (a line-order check; local-release-test.sh runs the release's own case).
 # Parts 2 and 3 need a macOS host and build/openssl/macos-arm64; elsewhere they are reported as skipped.
 # Usage: tools/check/native-flags-test.sh
 set -uo pipefail
@@ -138,6 +141,24 @@ ndk="$tmp/fake-ndk"; mkdir -p "$ndk/toolchains/llvm/prebuilt/host/bin"
 rm -f "$log".*; out=$(OT=android-arm64 ossl "$tmp/o-android" ANDROID_NDK_ROOT="$ndk" CC=/opt/ksl/not-the-ndk-clang); rc=$?
 check "negative_androidIgnoresBuilderCc" "$([ -s "$log.args" ] && ! grep -q '^CC=' "$log.args" && echo 0 || echo 1)" "exit $rc: $(grep '^CC=' "$log.args" 2>/dev/null) $out"
 
+# ------------------------------------------------------------------------------------------ tools/clean-build-env.sh
+# the variables the release, the double build and verify-release's rebuild clear: every one listed is unset, the list has
+# those a review proved to reach a build, and each of the three sources the helper before it builds anything
+out=$( . "$root/tools/clean-build-env.sh"
+  for v in "${ksl_build_env_vars[@]}"; do export "$v=probe"; done
+  ksl_clean_build_env
+  for v in "${ksl_build_env_vars[@]}"; do [ -z "${!v+x}" ] || echo "still set: $v"; done
+  for v in CC CPPFLAGS CFLAGS LDFLAGS OPT CCC_OVERRIDE_OPTIONS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH AR RANLIB \
+           SDKROOT MAKEFLAGS OPENSSL_LOCAL_CONFIG_DIR __CNF_CFLAGS KSL_OPENSSL_PIN KSL_KEEP_DEBUG; do
+    printf '%s\n' "${ksl_build_env_vars[@]}" | grep -qx "$v" || echo "not in the list: $v"
+  done )
+check "negative_cleanBuildEnvLeavesNothingSet" "$([ -z "$out" ] && echo 0 || echo 1)" "$out"
+first_line() { grep -n -m1 -E "$2" "$1" | cut -d: -f1; }
+c=$(first_line "$root/tools/release/local-release.sh" 'ksl_clean_build_env'); b=$(first_line "$root/tools/release/local-release.sh" '^step ')
+check "local-release.sh clears the build environment before its first step" "$([ -n "$c" ] && [ -n "$b" ] && [ "$c" -lt "$b" ] && echo 0 || echo 1)" "line $c vs $b"
+c=$(first_line "$root/tools/verify/verify-release.sh" 'ksl_clean_build_env'); b=$(first_line "$root/tools/verify/verify-release.sh" 'tools/openssl/build.sh"')
+check "verify-release.sh clears the build environment before it rebuilds" "$([ -n "$c" ] && [ -n "$b" ] && [ "$c" -lt "$b" ] && echo 0 || echo 1)" "line $c vs $b"
+
 # -------------------------------------------------------------------- 2. tools/build-ksl-a.sh and tools/build-jni.sh (macOS)
 O="$root/build/openssl/macos-arm64"
 if [ "$(uname -s)" != Darwin ] || [ ! -f "$O/lib/libcrypto.a" ]; then
@@ -194,8 +215,19 @@ else
   check "negative_jniHonoursLdflags" "$([ $rc != 0 ] && grep -q 'ksl-no-such-linker-flag' <<< "$out" && echo 0 || echo 1)" "exit $rc"
 
   # ------------------------------------------------------------------------------------- 3. tools/check/double-build.sh
+  # the environment a builder may have: each of these reaches clang on its own (the controls show it), the double build
+  # must ignore them all
+  probe="$tmp/probe-include"; mkdir -p "$probe"; printf '#error ksl-env-probe\n' > "$probe/stdint.h"
+  for e in "CCC_OVERRIDE_OPTIONS=+-include/nonexistent/ksl-env-probe.h" "CPATH=$probe" "C_INCLUDE_PATH=$probe" "SDKROOT=/nonexistent/sdk"; do
+    out=$(env "$e" bash "$tree/tools/build-ksl-a.sh" macos-arm64 2>&1); rc=$?
+    check "control: ${e%%=*} reaches clang (a build-ksl-a.sh build fails because of it)" \
+      "$([ $rc != 0 ] && grep -qE 'ksl-env-probe|/nonexistent/sdk' <<< "$out" && echo 0 || echo 1)" "exit $rc"
+  done
   out=$(CC=/nonexistent/cc CPPFLAGS="-include /nonexistent/ksl-flags-probe.h" CFLAGS="-include /nonexistent/ksl-flags-probe.h" \
-    LDFLAGS="-Wl,-ksl-no-such-linker-flag" bash "$root/tools/check/double-build.sh" macos-arm64 --skip-openssl 2>&1); rc=$?
+    LDFLAGS="-Wl,-ksl-no-such-linker-flag" CCC_OVERRIDE_OPTIONS="+-include/nonexistent/ksl-env-probe.h" CPATH="$probe" \
+    C_INCLUDE_PATH="$probe" SDKROOT=/nonexistent/sdk LIBRARY_PATH=/nonexistent AR=/nonexistent/ar RANLIB=/nonexistent/ranlib \
+    OPT=-O0 MAKEFLAGS=-e KSL_OPENSSL_OUT=/nonexistent KSL_OPENSSL_PREFIXED=/nonexistent KSL_KEEP_DEBUG=1 \
+    bash "$root/tools/check/double-build.sh" macos-arm64 --skip-openssl 2>&1); rc=$?
   check "negative_doubleBuildIgnoresBuilderFlags" "$([ $rc = 0 ] && grep -q 'byte-identical' <<< "$out" && echo 0 || echo 1)" "exit $rc: $(tail -3 <<< "$out")"
 fi
 

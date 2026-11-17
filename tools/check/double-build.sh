@@ -10,9 +10,9 @@
 #        android-x86_64 linux-x64-kn linux-arm64-kn (host builds; the Docker targets run their builds inside the images)
 #        --skip-openssl reuses build/openssl/<target> in both copies and compares only libksl.
 set -euo pipefail
-# both builds with the project's own compiler and flags, as a release (tools/release/local-release.sh): the scripts would add
-# a builder's CC, CPPFLAGS, CFLAGS and LDFLAGS to them (docs/guide/building.md)
-unset CC CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS
+# both builds with the project's own compiler, flags and paths, as a release (tools/release/local-release.sh): the variables
+# that would change a native build are unset (tools/clean-build-env.sh, docs/guide/building.md)
+. "$(cd "$(dirname "$0")/../.." && pwd)/tools/clean-build-env.sh"; ksl_clean_build_env
 root="$(cd "$(dirname "$0")/../.." && pwd)"; target="${1:?target}"; skip_openssl=0; [ "${2:-}" = "--skip-openssl" ] && skip_openssl=1
 O="$root/build/openssl/$target"; [ -f "$O/lib/libcrypto.a" ] || { echo "FAIL: build OpenSSL for $target first ($O)" >&2; exit 2; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/gradle/openssl.toml")

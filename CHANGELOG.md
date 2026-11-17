@@ -23,7 +23,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`--prefix=`, `-no-<feature>`, `-shared`, ...) are refused, no flag is glob-expanded, and one word in
   `configure-target.txt` stands for all the flags (paths included) and, for macOS, `CC`, so a prebuilt OpenSSL is reused
   only with the same ones; Android, iOS and mingw builds of OpenSSL ignore `CC`. Releases, the double build and
-  `tools/verify/verify-release.sh` build with them unset. `docs/guide/building.md` describes it;
+  `tools/verify/verify-release.sh` build with them unset, and with every other variable that changes a native build
+  (`CCC_OVERRIDE_OPTIONS`, `CPATH`, `SDKROOT`, `OPT`, `AR`, `MAKEFLAGS`, OpenSSL's `__CNF_*`, ...; the list is
+  `tools/clean-build-env.sh`), which before reached the release's compilers unchecked. `docs/guide/building.md` describes it;
   `tools/check/native-flags-test.sh` checks it in the gate's reproducibility step.
 - QUIC qlog: a sent `reset_stream`, `reset_stream_at` or `stop_sending` frame now names its `stream_id` and `error_code`
   (and `final_size`, `reliable_size`), as qlog's QUIC event schema has them; before, only its type was recorded.

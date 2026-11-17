@@ -43,6 +43,7 @@ new_repo() { # <dir>: a repository with what the script reads before the gate, a
   git config user.email t@example.invalid; git config user.name t; git config commit.gpgsign false; git config core.hooksPath /dev/null
   mkdir -p tools/release tools/check kuicksilver-native/src/c gradle
   cp "$root/tools/check/llvm-tool.sh" tools/check/
+  cp "$root/tools/clean-build-env.sh" tools/
   cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
   mkdir -p tools/release/swift-package licenses; cp "$root/tools/release/swift-package.sh" tools/release/
   cp "$root"/tools/release/swift-package/*.in tools/release/swift-package/; cp "$root/LICENSE" "$root/NOTICE" .
@@ -109,6 +110,9 @@ t "release/0.2.x, 0.2.1"                                 ok:push_branch=release/
 t "release/0.2.x, 0.2.2 without the version bump"        "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2
 t "release/0.2.x, 0.2.2-rc1 without the version bump"    "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2-rc1 --central-prerelease
 t "release/0.4.x, 0.4.0-rc1 (coordinates not checked)"   ok:push_branch=release/0.4.x   release/0.4.x 0.4.0-rc1 --central-prerelease
+# the environment that would change a native build is unset before anything else (tools/clean-build-env.sh)
+CCC_OVERRIDE_OPTIONS="+-include/nonexistent/probe.h" CPATH=/nonexistent SDKROOT=/nonexistent OPT=-O0 CFLAGS=-O0 \
+t "negative_releaseClearsBuildEnvironment"               "ok:note: CCC_OVERRIDE_OPTIONS is ignored" main 0.3.0
 # a prerelease goes to Central only when asked for (its quota), never by default
 t "negative_prereleaseWithoutMode"                       "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1
 t "negative_prereleaseWithoutModeDryRun"                 "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1 --dry-run

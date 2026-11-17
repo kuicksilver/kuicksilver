@@ -7015,11 +7015,14 @@ What else to know:
 - **Gradle.** `CC`, `CPPFLAGS`, `CFLAGS` and `LDFLAGS` are inputs of the native tasks: changing one rebuilds what it
   affects. With `-Pkuicksilver.openssl.prebuilt=true` an existing OpenSSL build is reused only when it was configured
   with the flags you have now; otherwise the build stops and says the directory is stale.
-- **Reproducibility.** The published artifacts are built with the project's own compiler and flags only: the release
-  script (`tools/release/local-release.sh`), the double build of the release gate (`tools/check/double-build.sh`) and
-  the rebuild of `tools/verify/verify-release.sh` unset these variables before they build anything. A build with your
-  own flags is therefore not byte-identical to a release, and comparing it with one ([verifying.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md))
-  is expected to differ.
+- **Reproducibility.** The published artifacts are built with the project's own compiler, flags and paths only: the
+  release script (`tools/release/local-release.sh`), the double build of the release gate (`tools/check/double-build.sh`)
+  and the rebuild of `tools/verify/verify-release.sh` first unset every environment variable known to change a native
+  build (`tools/clean-build-env.sh` lists them: the variables above, `OPT`, clang's and gcc's `CCC_OVERRIDE_OPTIONS`,
+  `CPATH`, `C_INCLUDE_PATH`, `LIBRARY_PATH`, `SDKROOT` and the like, `AR` and `RANLIB`, OpenSSL's `__CNF_*` and
+  `OPENSSL_LOCAL_CONFIG_DIR`, `MAKEFLAGS`, and the scripts' own `KSL_OPENSSL_*` locations), and the hosted jobs that
+  build the libraries a release reuses fail if one is set. A build with your own flags is therefore not byte-identical to
+  a release, and comparing it with one ([verifying.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md)) is expected to differ.
 - **Tests.** `tools/check/native-flags-test.sh` checks all of the above (it runs in the gate's reproducibility step).
   The C tests (`tools/c-test.sh`) are a test build with sanitizers: they honour `CC`, and take extra flags as their
   second argument instead of `CFLAGS`.
