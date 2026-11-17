@@ -17,16 +17,40 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   mode.
 - **Support windows** (OpenSSL's release strategy): 3.5 LTS until 2030-04-08; 4.0 until 2027-05-14; 4.1 until
   2027-11-23; the next LTS, 4.2, is planned for April 2027.
-- **What a move costs.** The QUIC TLS interface `ksl` uses (`SSL_set_quic_tls_cbs`) is the same in 4.x. `ksl` already
-  builds against 4.1.0 after a two-line change around `X509_check_host`, its C tests pass under ASan and UBSan, and the
-  hosted CI builds 4.x weekly beside the pin (`gradle/openssl-next.toml`, the `openssl-next` job). The JNI library grew by
-  about 10 % in that measurement. `tools/openssl/configure-flags.txt` loses options 4.x removed and must not add
-  `no-ech`.
-- **What the spike found** (2026-11-18): OpenSSL 4.1.0 fails a handshake with ECH after a HelloRetryRequest when the
-  client sends any custom extension of its own (an internal error on the second ClientHello). QUIC always sends one, the
-  transport parameters, so every ECH handshake over QUIC that meets a HelloRetryRequest fails, and `ksl` cannot work
-  around it. A fix of about 30 lines in two OpenSSL files makes every check of the spike pass. OpenSSL's own QUIC ECH
-  test has no HelloRetryRequest.
+- **What a move costs**, from an earlier build of `ksl` against 4.1.0 and the ECH spike of 2026-11-18 (a one-off
+  experiment outside the repository, run on a copy of `ksl`):
+  - The QUIC TLS interface `ksl` uses (`SSL_set_quic_tls_cbs` and its callbacks) is the same in 4.x, byte for byte in
+    the headers.
+  - `tools/openssl/build.sh` fails on 4.x: OpenSSL 4 creates `crypto/buildinf.h` read-only (mode 0444), and the script
+    rewrites that file. The hosted `openssl-next` job, which builds 4.x weekly beside the pin
+    (`gradle/openssl-next.toml`), most likely fails for the same reason.
+  - `tools/openssl/configure-flags.txt` names four options 4.x removed (Configure only warns), and must not add
+    `no-ech`.
+  - `ksl` does not compile against 4.x with `no-deprecated`: `ksl_ocsp.c` uses `X509_STORE_get0_objects` and
+    `X509_cmp_time`. Their replacement `X509_STORE_get1_objects` takes the store's lock itself, so the lock `ksl` takes
+    around the call has to go, or it deadlocks.
+  - The `ksl` C tests: 103 of 105 sections pass on 4.1.0 (all 105 on 3.5.9). Two revocation negatives fail:
+    `revocation_stapling negative_client_mismatch` (the client sees no staple and the handshake passes, over QUIC, TLS
+    1.3 and TLS 1.2) and `revocation_crls negative_crl_issuer_outside_path` (the handshake passes where
+    CRL_SIGNATURE_FAILURE is expected). These are security regressions; their cause is not known yet.
+  - Size on macOS arm64 (the JNI library, our flags): +9.6 % from 4.1.0 itself, +0.7 % more with the ECH API linked;
+    `libcrypto.a` +7.1 %, `libssl.a` +15.3 %.
+- **What the spike showed about ECH through `ksl`'s callbacks**: accepted ECH, key rotation, GREASE and rejection with
+  retry configurations all work, apart from two OpenSSL 4.1.0 bugs and one gap in `ksl`:
+  - **Bug A.** A client custom extension whose `add_cb` returns 0 ("do not send") makes the ECH ClientHello fail
+    (`custom_ext_add: bad extension`, then an internal error). Every client context of `ksl` registers such an
+    extension (`KSL_ABORT_EXT_TYPE` in `ksl_ctx.c`, used by `ksl_tcp_abort`), so every ECH handshake of `ksl` fails at
+    once today. `ksl` can avoid it: register that extension only where it is needed, or abort another way.
+  - **Bug B.** After a HelloRetryRequest, ECH fails with an internal error on the second ClientHello when the client
+    sends any custom extension of its own. QUIC always sends one, the transport parameters, so every ECH handshake over
+    QUIC that meets a HelloRetryRequest fails, and `ksl` cannot work around it. A patch of about 30 lines in two
+    OpenSSL files (`ech-hrr-custom-ext.patch` of the spike) makes all 49 checks of the spike pass, HelloRetryRequest
+    included. OpenSSL's own QUIC ECH test has no HelloRetryRequest.
+  - **The name on rejection.** When the server rejects ECH, OpenSSL switches the name its verifier checks to the
+    `public_name` of the ECH configuration, but `ksl_verify.c` checks the leaf against the inner name again and fails
+    the handshake with `bad_certificate` instead of `ech_required`. `ksl_verify.c` must take the name OpenSSL checks on
+    an ECH session, and the paused path of the platform verifiers (ADR-0012: Android, Apple, Windows) must hand that
+    name to Kotlin, or they check the inner name too.
 
 ## Decision
 
@@ -36,9 +60,11 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **ECH in 0.3.0**: a client that takes the ECH configuration list from the origin's HTTPS record or from the application,
   retries once with the server's retry configurations, and sends GREASE ECH by default where it has none; a server in
   shared mode with key rotation and retry configurations. No split mode.
-- **One carried OpenSSL patch, as an exception** (owner decision 2026-11-18). Until now the bundled OpenSSL has been the
-  upstream release tarball exactly, checked by its signature and SHA-256 and nothing else. For the bug above the build
-  carries one minimal patch, under these rules:
+- **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
+  reported to OpenSSL as well.
+- **One carried OpenSSL patch for bug B, as an exception** (owner decision 2026-11-18). Until now the bundled OpenSSL
+  has been the upstream release tarball exactly, checked by its signature and SHA-256 and nothing else. For bug B the
+  build carries one minimal patch (from the spike's `ech-hrr-custom-ext.patch`), under these rules:
   - the bug is reported to OpenSSL with a minimal reproducer, and the patch is dropped in the first 4.1.x or 4.2
     release that fixes it;
   - the patch lives in the repository and is pinned by its SHA-256 next to the tarball's pin; `tools/openssl/build.sh`
@@ -47,6 +73,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
     and are part of the build cache's key and of `configure-target.txt`;
   - the reproducibility checks (the double build, `tools/verify/verify-release.sh`) rebuild with the same patch;
   - no other patch is carried without a new decision.
+- **On rejection the certificate is checked against the `public_name`**, in `ksl_verify.c` and on the paused path of the
+  platform verifiers alike.
   The implementation comes with the move to 4.1.x, not with this ADR.
 
 ## Consequences
@@ -54,6 +82,11 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **A non-LTS window.** From 0.3.0 until 4.2 LTS ships, the bundled OpenSSL is a release with a short support window
   (4.1 until 2027-11-23). The move to 4.2 is a planned patch release; until then the commitments of SECURITY.md for
   OpenSSL advisories apply to 4.1.x unchanged.
+- **The move is not a version bump.** Before the pin changes: `build.sh` removes the read-only `crypto/buildinf.h`
+  before rewriting it (which also fixes the `openssl-next` job), `configure-flags.txt` drops the removed options,
+  `ksl_ocsp.c` moves to the non-deprecated calls without its own store lock, the bug A workaround and the
+  `public_name` check land, and the two failing revocation negatives are root-caused and fixed. Until they pass,
+  the switch does not happen: they guard revocation checks this project made a security property (threat model 3.6a).
 - **Binary size** grows (about 10 % for the JNI library in the measurement above); the size gates of the AAR, the iOS
   framework and the JNI libraries are measured again and their limits changed only by decision.
 - **Reproducibility**: a new pin (tarball, signature, SHA-256), a reviewed `configure-flags.txt`, and new baselines for

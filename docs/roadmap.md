@@ -190,8 +190,10 @@ what the peers really do, and is delivered whole or not at all.
 - TLS Encrypted Client Hello ([RFC 9849](spec/rfc/9849.md#ech), and its HTTPS record parameter,
   [RFC 9848](spec/rfc/9848.md#ech-https-records)), decided 2026-11-18: a client that takes the configuration from the
   HTTPS record or the application and retries once with the server's retry configurations, GREASE ECH on by default,
-  and a server in shared mode with key rotation and retry configurations; no split mode. The work starts with a spike of
-  ECH through the QUIC TLS callbacks `ksl` uses.
+  and a server in shared mode with key rotation and retry configurations; no split mode. The spike of ECH through the
+  QUIC TLS callbacks `ksl` uses is done (2026-11-18): ECH works through them apart from two OpenSSL 4.1.0 bugs and the
+  name check on rejection, and the move to 4.1.x has its own prerequisites; both are listed in
+  [ADR-0019](adr/0019-openssl-4-and-ech.md).
 
 ### 0.3.x — multipath QUIC
 
