@@ -36,7 +36,7 @@ never replace the project's flags with yours:
 |---|---|
 | `CPPFLAGS`, `CFLAGS` | after the project's compile flags, on every compile line of `libksl` and of OpenSSL |
 | `LDFLAGS` | after the project's link flags, on the link line of the JNI library and of the Android `libksl.so`; OpenSSL and `libksl.a` are static archives and are not linked, so there it has no effect |
-| `CC` | the compiler of the JNI library on macOS (default `clang`) and on Linux (default `gcc`), of `libksl.a` for macOS, and of OpenSSL for macOS (passed to `Configure`). Every other target has a compiler of its own and ignores it: Android (the NDK's clang), iOS (Xcode's SDK compilers), the Kotlin/Native Linux and Windows targets (Kotlin/Native's LLVM and sysroots), the Linux and Windows OpenSSL builds (the Docker images' compilers) and the Windows JNI library (`x86_64-w64-mingw32-gcc`). A glob character in `CC` (`*`, `?`, `[`) is refused. |
+| `CC` | the compiler of the JNI library on macOS (default `clang`) and on Linux (default `gcc`), of `libksl.a` for macOS, and of OpenSSL for macOS and for Linux outside Docker (passed to `Configure`). Every other target has a compiler of its own and ignores it: Android (the NDK's clang), iOS (Xcode's SDK compilers), the Kotlin/Native Linux and Windows targets (Kotlin/Native's LLVM and sysroots), the OpenSSL builds in Docker (the images' compilers) and the Windows JNI library (`x86_64-w64-mingw32-gcc`). A glob character in `CC` (`*`, `?`, `[`) is refused. |
 
 Because your flags come last, where one of them conflicts with a project flag, yours wins (the compiler takes the later
 one). The project compiles `libksl` with `-Werror`, so a flag of yours that makes the compiler warn fails the build;
@@ -57,10 +57,13 @@ What else to know:
   of the flag before it) and is not one of `Configure`'s own options (`-d`, `-v`, `-w`, `-t`, `-rpath`, `-R`,
   `-framework`, `--prefix=` and the other `--` options of `Configure`); a `%` is refused too (`Configure` decodes
   `%xx`). It also refuses `-no-<feature>` (other than `-no-integrated-as`), which `Configure` rewrites to `no-<feature>`
-  and so would turn a feature off, and `-shared` or `--shared`, which it rewrites to `enable-shared`. The script refuses
+  and so would turn a feature off, `-shared` or `--shared`, which it rewrites to `enable-shared`, `-static`, which turns off static, PIC and thread
+  support, and a word that starts with `/D` or `/I`, which it reads as a define or an include directory (the argument
+  of `-include /Data/x.h`, say; write such paths another way, for example relative to the source). The script refuses
   anything else before it starts. Every script reads your flags word by word and never expands a glob in them. `CXXFLAGS` and `LDLIBS` are not used. Your flags are
   recorded in `build/openssl/<target>/configure-target.txt` and `provenance.txt`, together with one word,
-  `builder-flags-sha256=<hash>`, that stands for all of them and, for macOS, `CC`, paths included; that word and the
+  `builder-flags-sha256=<hash>`, that stands for all of them and, for macOS and Linux, `CC` (for Linux, a `CC` other
+  than the Docker image's own compiler), paths included; that word and the
   build cache's key change with any of them, so a build with other flags or another compiler is never taken from the
   cache or reused. The Docker builds get the same three variables.
 - **Debug symbols.** The JNI library and the Android `libksl.so` are stripped, as the release checks require. For a local

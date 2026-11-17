@@ -111,6 +111,9 @@ refuse "negative_configureNoFeatureRefused" CFLAGS "-O2 -no-ec" "'-no-ec' is an 
 refuse "negative_configureNoTls13Refused" CPPFLAGS "-no-tls1_3" "'-no-tls1_3' is an option of OpenSSL's Configure"
 refuse "negative_configureDoubleDashSharedRefused" LDFLAGS "--shared" "'--shared' is an option of OpenSSL's Configure"
 refuse "negative_configureSharedRefused" LDFLAGS "-shared" "'-shared' is an option of OpenSSL's Configure"
+refuse "negative_configureStaticRefused" LDFLAGS "-static" "'-static' is an option of OpenSSL's Configure"
+refuse "negative_includeArgumentStartingWithDRefused" CFLAGS "-include /Data/ksl-probe.h" "'/Data/ksl-probe.h' is an option of OpenSSL's Configure"
+refuse "negative_pathStartingWithIRefused" CPPFLAGS "-isystem /Includes/x" "'/Includes/x' is an option of OpenSSL's Configure"
 pt=$(CFLAGS="-no-integrated-as" bash "$root/tools/openssl/build.sh" --print-target linux-x64 2>&1); rc=$?
 check "openssl: -no-integrated-as is a compiler flag (Configure leaves it alone) and is accepted" "$([ $rc = 0 ] && grep -q -- '-no-integrated-as' <<< "$pt" && echo 0 || echo 1)" "$pt"
 
@@ -135,6 +138,12 @@ m1=$(CC=/opt/ksl/cc-one bash "$root/tools/openssl/build.sh" --print-target macos
 m2=$(CC=/opt/ksl/cc-two bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
 m0=$(bash "$root/tools/openssl/build.sh" --print-target macos-arm64)
 check "negative_macosCcChangesPrintTarget" "$([ "$m1" != "$m2" ] && [ "$m1" != "$m0" ] && echo 0 || echo 1)" "'$m1' '$m2' '$m0'"
+l1=$(CC=/usr/bin/clang bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+lp=$(CC=/opt/rh/devtoolset-10/root/usr/bin/gcc bash "$root/tools/openssl/build.sh" --print-target linux-x64)
+check "negative_linuxCcChangesPrintTarget" "$([ "$l1" != "$t1" ] && echo 0 || echo 1)" "'$l1' vs '$t1'"
+check "openssl: the image's own compiler (build-docker.sh) is not a builder's CC" "$([ "$lp" = "$t1" ] && echo 0 || echo 1)" "'$lp' vs '$t1'"
+dcc=$(sed -n 's/^  linux-x64) .* cc=\([^ ;]*\) ;;.*/\1/p' "$root/tools/openssl/build-docker.sh"); bcc=$(sed -n 's/^project_linux_cc=//p' "$root/tools/openssl/build.sh")
+check "openssl: build.sh and build-docker.sh name the same Linux compiler" "$([ -n "$dcc" ] && [ "$dcc" = "$bcc" ] && echo 0 || echo 1)" "'$dcc' vs '$bcc'"
 a1=$(CC=/opt/ksl/cc-one bash "$root/tools/openssl/build.sh" --print-target android-arm64)
 a0=$(bash "$root/tools/openssl/build.sh" --print-target android-arm64)
 check "openssl: CC does not change Android's configure line" "$([ "$a1" = "$a0" ] && echo 0 || echo 1)" "'$a1' vs '$a0'"
