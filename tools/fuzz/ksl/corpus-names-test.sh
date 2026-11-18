@@ -4,7 +4,9 @@
 # Negative controls of tools/fuzz/ksl/corpus-names.c on a scratch directory: inputs named by the FNV-1a 64 of their bytes
 # pass ("abc" is e71fa2190541574b); one named by the old offset basis 1469598103934665603 (e16801510db89efd), by its SHA-1
 # or by anything else fails; --rename gives it its name and then it passes; a rename onto a name another file holds (the
-# same bytes twice) is refused, while a chain or a cycle of misnamed inputs holding each other's names is resolved; the
+# same bytes twice) is refused, while a chain or a cycle of misnamed inputs holding each other's names is resolved; no
+# input is ever overwritten (one that cannot go back is left as <name>.unresolved); an error part way, or a directory that
+# cannot be written, leaves every input under its old name; the
 # reference values fail for a hash built with the old basis. Run by tools/c-test.sh.
 # Usage: corpus-names-test.sh [compiler, may be several words]   (default: $CC, else cc)
 set -uo pipefail
@@ -45,6 +47,25 @@ y="$tmp/cycle"; mkdir -p "$y"; printf 'abc' > "$y/$hc"; printf 'a' > "$y/$hb"
 expect 0 "--rename resolves a cycle (A has B's name, B has A's)" "2 file(s), 2 renamed" --rename "$y"
 expect 0 "  and leaves no temporary name" "2 file(s), 0 renamed" "$y"
 test -z "$(ls -A "$y" | grep '^\.')" && echo "ok:   no hidden file left" || { echo "FAIL: a hidden file is left"; rc=1; }
+# no input is ever lost: q0 = "q", fnv(q) = "h", fnv(h) = "d" (a duplicate of fnv(d) = "d"). The chain places q and h; the
+# duplicate cannot go back to its old name (h holds it now), so it is left as <old name>.unresolved, and reported
+fq=af63ec4c860207bc; fh=af63e54c8601fbd7; fd=af63d94c8601e773   # FNV-1a 64 of "q", "h", "d"
+l="$tmp/loss"; mkdir -p "$l"; printf 'q' > "$l/q0"; printf 'h' > "$l/$fq"; printf 'd' > "$l/$fh"; printf 'd' > "$l/$fd"
+expect 1 "negative: a duplicate whose old name is taken meanwhile is left as .unresolved" "left as $l/$fh.unresolved" --rename "$l"
+got="$(cat "$l/$fq")|$(cat "$l/$fh")|$(cat "$l/$fd")|$(cat "$l/$fh.unresolved" 2>/dev/null)|$(ls "$l" | wc -l | tr -d ' ')"
+[ "$got" = "q|h|d|d|4" ] && echo "ok:   every byte is kept: q, h and d under their names, the duplicate d aside" \
+  || { echo "FAIL: an input was lost or misplaced ($got)"; ls -la "$l"; rc=1; }
+# an error part way (the second input's temporary name is taken by a directory) undoes the moves made: exit 2, both
+# inputs under their old names, no temporary name left
+w="$tmp/undo"; mkdir -p "$w/m2.corpus-names-tmp"; printf 'one' > "$w/m1"; printf 'two' > "$w/m2"
+expect 2 "negative: an error part way undoes every move" "moving aside" --rename "$w"
+[ "$(cat "$w/m1")|$(cat "$w/m2")" = "one|two" ] && [ ! -e "$w/m1.corpus-names-tmp" ] && echo "ok:   both inputs back under their names" \
+  || { echo "FAIL: the moves were not undone"; ls -la "$w"; rc=1; }
+# a directory that cannot be written: nothing moves, exit 2
+o="$tmp/readonly"; mkdir -p "$o"; printf 'abc' > "$o/misnamed"; chmod 555 "$o"
+expect 2 "negative: a directory that cannot be written fails and changes nothing" "moving aside" --rename "$o"
+[ "$(ls "$o")" = misnamed ] && echo "ok:   the input is where it was" || { echo "FAIL: the read-only directory changed"; ls -la "$o"; rc=1; }
+chmod 755 "$o"
 printf 'x' > "$d/seed-x"
 expect 1 "negative: any other name" "named seed-x" "$d"
 rm "$d/seed-x"
