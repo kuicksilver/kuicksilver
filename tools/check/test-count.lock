@@ -1355,6 +1355,11 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.networkChangeForgetsNonPersistentAlternativesByDefault
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.plainHttpAltSvcIgnored
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.srttMapBounded
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.aUrlTheProxyDoesNotApplyToGoesDirectly
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.credentialsGoToTheProxy
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.http3ThroughTheProxy
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_aRefusedTunnelNeverFallsBackToADirectConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_h1OnlyWithAConnectUdpProxyIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009H3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_deflateAcceptedWithAnotherRsv1ExtensionFailsHandshake
@@ -2312,6 +2317,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.FileAltSvcStoreNo
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.FileAltSvcStoreNoNioTest.persistsWhenAtomicMoveIsUnsupported
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.altSvcStoreFileSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.clientSample
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.connectUdpProxySample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.diagnosticsSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.guideHasEveryMarker
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.http2Sample
@@ -2704,6 +2710,12 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffender
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffendersTest.negative_trackedAddressesAreBounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.RepeatOffendersTest.strikesOlderThanTheWindowDoNotCount
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerClientCaReloadTest.tcpAndQuicVerifyAgainstTheReloadedBundleKeepOpenConnections
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.negative_aRefusalBeforeTheRouteGoesOutAsItIs
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.negative_defaultProxyRefusesLoopbackThroughTheRoute
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.negative_engineWithoutConnectUdpAnswers501
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.negative_otherRoutesTwoHundredIs501
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.noRouteIs404
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerConnectUdpTest.tunnelThroughTheRoute
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerDeflateTest.bombIsSmall
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerDeflateTest.compressedEchoH1
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerDeflateTest.compressedEchoH3
@@ -3261,6 +3273,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.tr
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.webSocketsOverHttp2Key
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.certificateRotationSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.clientCaRotationSample
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.connectUdpSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.deploymentGuideHasEveryMarker
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.drainWaitSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.guideHasEveryMarker

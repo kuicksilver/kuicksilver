@@ -388,6 +388,14 @@ public class KuicksilverApplicationEngine(
         public var webTransport: Boolean = false
 
         /**
+         * Serve CONNECT-UDP (RFC 9298) over HTTP/3 to `connectUdp(proxy)` routes: turns on `enableConnectProtocol`; false by
+         * default. Only HTTP/3 carries it (ADR-0024). The proxy's target filter, limits and template are the `UdpProxy`'s the
+         * route is given; there is no configuration-file key, since a filter or a resolver is code.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var connectUdp: Boolean = false
+
+        /**
          * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
          * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
          * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A

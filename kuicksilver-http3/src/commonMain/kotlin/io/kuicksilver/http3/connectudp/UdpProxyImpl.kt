@@ -129,22 +129,25 @@ internal class UdpProxyImpl(
             clientBusy.load(),
         )
 
-    suspend fun serve(request: Http3ServerRequest) {
+    suspend fun serve(
+        request: Http3ServerRequest,
+        answered: (Int) -> Unit = {},
+    ) {
         // section 3.4: an Extended CONNECT with :protocol connect-udp; anything else is not ours to serve
-        if (!ConnectUdp.isConnectUdp(request)) return refuse(request, 400, "http_request_error")
+        if (!ConnectUdp.isConnectUdp(request)) return refuse(request, answered, 400, "http_request_error")
         val target =
             when (val m = config.template.match(request.path.orEmpty())) {
-                is TemplateMatch.NoMatch -> return refuse(request, 404, null)
-                is TemplateMatch.Invalid -> return refuse(request, 400, "http_request_error")
+                is TemplateMatch.NoMatch -> return refuse(request, answered, 404, null)
+                is TemplateMatch.Invalid -> return refuse(request, answered, 400, "http_request_error")
                 is TemplateMatch.Target -> m
             }
         if (config.requireCapsuleProtocolField && !CapsuleProtocol.isEnabled(request.headers)) {
-            return refuse(request, 400, "http_request_error")
+            return refuse(request, answered, 400, "http_request_error")
         }
         val client = request.remoteAddress.ipLiteral()
-        reserve(client)?.let { status -> return refuse(request, status, "connection_limit_reached") }
+        reserve(client)?.let { status -> return refuse(request, answered, status, "connection_limit_reached") }
         try {
-            open(request, target)
+            open(request, target, answered)
         } catch (e: CancellationException) {
             // a request the cancelled call leaves unanswered would hold its stream until the connection ends
             request.reset(Http3ErrorCode.REQUEST_CANCELLED)
@@ -158,6 +161,7 @@ internal class UdpProxyImpl(
     private suspend fun open(
         request: Http3ServerRequest,
         target: TemplateMatch.Target,
+        answered: (Int) -> Unit,
     ) {
         val candidates =
             when (val h = target.host) {
@@ -182,15 +186,15 @@ internal class UdpProxyImpl(
                             } catch (e: Throwable) {
                                 Result.failure(e)
                             }
-                        } ?: return refuse(request, 504, "dns_timeout")
-                    val list = r.getOrNull() ?: return refuse(request, 502, "dns_error")
-                    list.filter { it.size == 4 || it.size == 16 }.ifEmpty { return refuse(request, 502, "dns_error") }
+                        } ?: return refuse(request, answered, 504, "dns_timeout")
+                    val list = r.getOrNull() ?: return refuse(request, answered, 502, "dns_error")
+                    list.filter { it.size == 4 || it.size == 16 }.ifEmpty { return refuse(request, answered, 502, "dns_error") }
                 }
             }
         // section 7: the filter sees every address; the socket sends to the one it allowed, never to a later answer
         val address =
             candidates.map(::unmapped).firstOrNull { config.targetFilter.allows(target.host.text, it, target.port) }
-                ?: return refuse(request, 403, "destination_ip_prohibited")
+                ?: return refuse(request, answered, 403, "destination_ip_prohibited")
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)
         val io =
@@ -199,7 +203,7 @@ internal class UdpProxyImpl(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
-                return refuse(request, 502, "proxy_internal_error")
+                return refuse(request, answered, 502, "proxy_internal_error")
             }
         try {
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
@@ -211,10 +215,13 @@ internal class UdpProxyImpl(
                     request.acceptConnect(Http3Headers(listOf(CapsuleProtocol.Enabled)))
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Throwable) {
+                } catch (e: Throwable) {
                     count(refused)
-                    return // a request that rules capsules out was answered 400; a stream already gone needs nothing
+                    // a request that rules capsules out was answered 400 (RFC 9297 section 3.2); a stream already gone needs nothing
+                    if (e is io.kuicksilver.http3.Http3Exception.MessageError) answered(400)
+                    return
                 }
+            answered(200)
             answeredForTest?.invoke()
             val impl = stream as Http3StreamImpl
             val filter =
@@ -251,6 +258,7 @@ internal class UdpProxyImpl(
     /** Answers [status] with `proxy-status: <name>; error=<error>` when [error] is given (RFC 9209 section 2). */
     private suspend fun refuse(
         request: Http3ServerRequest,
+        answered: (Int) -> Unit,
         status: Int,
         error: String?,
     ) {
@@ -258,6 +266,7 @@ internal class UdpProxyImpl(
         val fields = if (error == null) emptyList() else listOf(PROXY_STATUS to "${config.proxyName}; error=$error")
         try {
             request.respond(status, Http3Headers(fields)).finish()
+            answered(status)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {

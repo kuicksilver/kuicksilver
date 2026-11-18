@@ -443,6 +443,24 @@ internal class KuicksilverEngine(
         if (disabled && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed; Http3DiscoveryMode.H3Only never uses TCP")
         }
+        // a CONNECT-UDP proxy carries the https requests it applies to over HTTP/3 only: no TCP path, which would leave it out
+        config.connectUdpProxy?.takeIf { url.protocol.isSecure() && it.applies(url) }?.let { udp ->
+            if (config.http3.discovery == Http3DiscoveryMode.H1Only) {
+                throw UnsupportedOperationException(
+                    "connectUdpProxy carries HTTP/3 only, which http3 { discovery = H1Only } turns off; exempt ${url.host} with " +
+                        "its applies, or use another discovery mode",
+                )
+            }
+            if (disabled) {
+                throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed, and connectUdpProxy never uses TCP")
+            }
+            selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Proxy, d)
+            return try {
+                h3.execute(H3Target(url.host, url.host, url.port, udp), data, callContext)
+            } catch (e: H3NotSent) {
+                throw e.cause ?: e
+            }
+        }
         val proxy = proxyFor(url) // explicit, else the resolver's: a proxy the engine cannot use fails here, never bypassed
         if (proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(

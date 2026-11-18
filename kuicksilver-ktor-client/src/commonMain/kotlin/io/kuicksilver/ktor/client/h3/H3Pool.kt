@@ -35,6 +35,7 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.awaitWebTransportExchangeEnd
+import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
@@ -107,8 +108,12 @@ internal class H3Target(
     val originHost: String,
     val host: String,
     val port: Int,
+    /** The CONNECT-UDP proxy the connection runs through ([H3Pool.connectThroughUdpProxy]), or null for a direct one. */
+    @property:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val udpProxy: io.kuicksilver.ktor.client.ConnectUdpProxy? = null,
 ) {
-    val key: String get() = "$originHost|$host:$port"
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val key: String get() = "$originHost|$host:$port" + (udpProxy?.let { "|" + it.routeKey } ?: "")
 }
 
 /** The origin host of an [H3Target.key]. */
@@ -1110,7 +1115,8 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
-        shareSameAddress(t, dns, wt)
+        // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
+        if (t.udpProxy == null) shareSameAddress(t, dns, wt)
         val (e, connect) =
             lock.withLock {
                 val existing = connections[t.key]
@@ -1148,31 +1154,35 @@ internal class H3Pool(
                     // look up again
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
-                        raceQuic(t.host, t.port, dns, failures, { won, a ->
-                            attempts.update { it + (won to Destination.of(a)) }
-                        }) { destination ->
-                            val (ep, remote) = endpointFor(destination)
-                            if (wt) {
-                                // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
-                                ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
-                            } else if (config.http3.earlyData) {
-                                // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
-                                // the handshake timer (a request sent early then fails, and falls back, at that time)
-                                ep
-                                    .connectEarly(
-                                        remote,
-                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                        quicWithin(data.connectTimeoutMillis(config)),
-                                        config.http3.settings,
-                                    )
-                            } else {
-                                ep
-                                    .connect(
-                                        remote,
-                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                        quic,
-                                        config.http3.settings,
-                                    )
+                        if (t.udpProxy != null) {
+                            connectThroughUdpProxy(t, dns, failures)
+                        } else {
+                            raceQuic(t.host, t.port, dns, failures, { won, a ->
+                                attempts.update { it + (won to Destination.of(a)) }
+                            }) { destination ->
+                                val (ep, remote) = endpointFor(destination)
+                                if (wt) {
+                                    // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
+                                    ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
+                                } else if (config.http3.earlyData) {
+                                    // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
+                                    // the handshake timer (a request sent early then fails, and falls back, at that time)
+                                    ep
+                                        .connectEarly(
+                                            remote,
+                                            config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                            quicWithin(data.connectTimeoutMillis(config)),
+                                            config.http3.settings,
+                                        )
+                                } else {
+                                    ep
+                                        .connect(
+                                            remote,
+                                            config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                            quic,
+                                            config.http3.settings,
+                                        )
+                                }
                             }
                         }
                     setupMadeForTest?.invoke()
@@ -1202,8 +1212,11 @@ internal class H3Pool(
                     withContext(NonCancellable) { runCatching { c.close() } }
                     return e to kept
                 }
-                followNetwork(c, data)
-                followPreferredAddress(e, c)
+                // a tunnel has one target and no network of its own: no preferred address to follow, no migration
+                if (t.udpProxy == null) {
+                    followNetwork(c, data)
+                    followPreferredAddress(e, c)
+                }
             } catch (
                 x: SetupTimedOut,
             ) {
@@ -1226,6 +1239,57 @@ internal class H3Pool(
             setupWaitersForTest.addAndFetch(1)
         }
         return e to d.await()
+    }
+
+    /**
+     * An HTTP/3 connection to [t]'s origin through its CONNECT-UDP proxy (RFC 9298): a connection to the proxy (raced over
+     * the proxy's addresses as any direct connection, from the pool's endpoints), a UDP tunnel on it to the origin's name
+     * and port (the proxy resolves the name; `proxy-authorization` from the proxy's credentials), and an endpoint of its own
+     * whose socket is the tunnel (`UdpTunnel.asDatagramIo`), connected with the origin's TLS configuration. The connection
+     * to the proxy carries this one tunnel and lives as long as the tunnelled connection: when that one closes, its endpoint
+     * (and so the tunnel) and the proxy connection are closed too. The inner connection never follows a preferred address.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectThroughUdpProxy(
+        t: H3Target,
+        dns: RequestDns,
+        failures: MutableList<Throwable>,
+    ): Http3Connection {
+        val p = t.udpProxy!!
+        val outer =
+            raceQuic(p.host, p.port, dns, failures) { destination ->
+                val (ep, remote) = endpointFor(destination)
+                ep.connect(remote, config.tlsConfigFor(p.host, listOf(Http3Endpoint.H3)), quic, config.http3.settings)
+            }
+        var inner: Http3Endpoint? = null
+        try {
+            val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
+            val tunnel = outer.connectUdp(p.template, t.host, t.port, headers)
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("0.0.0.0", 0), // handed to the factory, which gives the tunnel: nothing is bound
+                    endpointConfig.toBuilder().apply { io = { tunnel.asDatagramIo() } }.build(),
+                    config.http3.settings,
+                )
+            inner = ep
+            val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
+            val c =
+                ep.connect(
+                    tunnel.remoteAddress,
+                    config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                    tunnelled,
+                    config.http3.settings,
+                )
+            c.closed.invokeOnCompletion {
+                ep.close()
+                outer.close()
+            }
+            return c
+        } catch (e: Throwable) {
+            inner?.close()
+            outer.close()
+            throw e
+        }
     }
 
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */

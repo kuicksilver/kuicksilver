@@ -24,7 +24,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   loopback, private, link-local, multicast and broadcast refused, CWE-918), source validation, Not-ECT, a link-MTU limit,
   per-tunnel rate and unanswered-packet limits, tunnel limits in all and per client, and a two-minute idle timeout.
   HTTP/1.1 (sections 3.2, 3.3) and HTTP/2 (sections 3.4, 3.5) are not offered (ADR-0024), nor the ICMP Packet Too Big of section 6.1; the Ktor
-  engines do not use it yet. Template and datagram parsing are fuzzed (`http3.udpTemplate`, `http3.udpDatagrams`).
+  engines use it: the client's `connectUdpProxy = ConnectUdpProxy(template)` sends the `https` requests it applies to
+  over HTTP/3 through a tunnel (never over TCP or directly, no Alt-Svc), and the server's `connectUdp = true` with a
+  `connectUdp(proxy)` route serves CONNECT-UDP through Ktor's pipeline, behind the application's authentication. Template
+  and datagram parsing are fuzzed (`http3.udpTemplate`, `http3.udpDatagrams`).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

@@ -387,6 +387,19 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
 
     /**
+     * A CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3, or null (the default) for none. An `https` request it applies to
+     * goes over HTTP/3 inside a UDP tunnel through it, whatever `proxy` or `proxyResolver` say (they keep deciding for the
+     * requests it does not apply to): never over HTTP/1.1 or HTTP/2, and never directly, since either would leave the proxy
+     * out. So such a request fails, with the reason, when the origin has no HTTP/3, when the proxy refuses the tunnel
+     * (`Http3Exception.ConnectRejected` with its `proxy-status`), under `http3 { discovery = H1Only }` or while
+     * `http3Allowed` says no (UnsupportedOperationException). `Alt-Svc` is neither used nor learned for it, and the origin's
+     * name is resolved by the proxy, not here. WebTransport refuses such URLs unless `http3 { webTransportIgnoresProxy }`.
+     * docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
+     */
+    @ExperimentalKuicksilverApi
+    public var connectUdpProxy: ConnectUdpProxy? = null
+
+    /**
      * The largest WebSocket message, and so frame, the client takes from a server, in bytes (RFC 6455 section 10.4: an
      * implementation "SHOULD impose a limit on frame sizes and the total message size after reassembly"); 16 MiB by
      * default, as `PerMessageDeflate`'s `maxInflatedMessageSize`. A frame whose header claims more, or that takes its

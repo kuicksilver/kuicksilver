@@ -65,6 +65,15 @@ public suspend fun HttpClient.webTransport(
     }
     // the kill switch, as for H3Only requests: WebTransport has no TCP fallback, so it fails before any connection
     if (!engine.http3Allowed()) throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3Allowed turns off")
+    if (!engine.config.http3.webTransportIgnoresProxy && engine.config.connectUdpProxy
+            ?.applies
+            ?.invoke(url) == true
+    ) {
+        throw UnsupportedOperationException(
+            "WebTransport does not go through the CONNECT-UDP proxy that applies to ${url.host}: exempt the host with its " +
+                "applies, or set http3 { webTransportIgnoresProxy = true } to connect directly",
+        )
+    }
     if (!engine.config.http3.webTransportIgnoresProxy && engine.effectiveProxyFor(url) != null) {
         throw UnsupportedOperationException(
             "WebTransport runs over UDP and cannot go through the proxy that applies to ${url.host}: exempt the host from the " +

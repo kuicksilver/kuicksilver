@@ -174,8 +174,8 @@ what the peers really do, and is delivered whole or not at all.
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy. Done in `kuicksilver-http3` over HTTP/3 (client tunnel, proxy, proxied QUIC;
-  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); left: the Ktor engines (a CONNECT-UDP proxy for the client's
-  HTTP/3 connections, a route on the server).
+  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `connectUdpProxy`, the
+  server's `connectUdp(proxy)` route).
 - PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources.
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
 - HTTPS proxies (TLS to the proxy).

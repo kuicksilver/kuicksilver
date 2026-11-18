@@ -2494,11 +2494,13 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.ktor.server.priority
 import io.kuicksilver.ktor.server.receivedEarly
@@ -2541,6 +2543,8 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
@@ -3056,6 +3060,33 @@ wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :k
 dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
+
+#### CONNECT-UDP over HTTP/3 (experimental)
+
+With `connectUdp = true` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
+`:protocol` `connect-udp`) into Ktor's pipeline, and a `connectUdp(proxy)` route serves them with a `UdpProxy` of
+`kuicksilver-http3` ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)): the proxy reads the target from the path
+with its `pathTemplate`, checks it with its `targetFilter` (`UdpTargetFilter.PublicOnly` by default: loopback, private,
+link-local, multicast and broadcast targets are refused with 403) and its limits, answers and relays the tunnel; the call
+ends with the tunnel. The route matches only such a request, at any path, over HTTP/3; HTTP/1.1 and HTTP/2 do not carry
+CONNECT-UDP (ADR-0024). Without `connectUdp = true` the engine answers CONNECT-UDP with 501; a CONNECT-UDP request no route
+takes gets Ktor's 404, and one another route answers with a 2xx gets 501, since no tunnel was opened. Give the route one
+`UdpProxy` (its limits count the tunnels of every request) and put it behind authentication: "HTTP servers that support
+UDP proxying ought to restrict its use to authenticated users" (RFC 9298 section 7); a 401 or 407 from a check in front
+of it goes out as it is. The proxy's configuration is code (a filter, a resolver), so it has no configuration-file key.
+
+```kotlin
+// guide:ktor:connect-udp-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val proxyServer = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    connectUdp = true
+}) {
+    routing {
+        connectUdp(UdpProxy())                     // behind your authentication; public targets only by default
+    }
+}
+```
 
 #### Misdirected requests
 
@@ -4035,9 +4066,9 @@ resolver that does not answer within the engine's `connectTimeout` (not a per-re
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
 `replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (the engine does
-not use CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl; `kuicksilver-http3` itself can run HTTP/3
-through a CONNECT-UDP proxy ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)). A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**Through an HTTP or SOCKS5 proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries
+(SOCKS5 UDP ASSOCIATE is not supported), as with Chrome and curl. HTTP/3 goes through a CONNECT-UDP proxy instead:
+[HTTP/3 through a CONNECT-UDP proxy](#http3-through-a-connect-udp-proxy-experimental). A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
@@ -4061,6 +4092,44 @@ val perHost = HttpClient(Kuicksilver) {
             if (url.host.endsWith(".internal.test")) null // direct
             else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
         }
+    }
+}
+```
+
+#### HTTP/3 through a CONNECT-UDP proxy (experimental)
+
+`connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
+origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
+origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)). The proxy is
+reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
+tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+resolves it: the engine does not look it up.
+
+What it changes, for the `https` URLs its `applies` admits (all of them by default):
+
+- They go over HTTP/3 through the tunnel only, whatever the discovery mode (H3Only, Auto, Preferred): never over HTTP/1.1
+  or HTTP/2 and never directly, since both would leave the proxy out. An origin without HTTP/3, a refused tunnel
+  (`Http3Exception.ConnectRejected`, its `proxy-status` in `headers`) or a failed handshake fails the request instead of
+  falling back. `http3 { discovery = H1Only }` and an `http3Allowed` that says no fail it with UnsupportedOperationException.
+- `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
+- `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
+  URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless `http3 { webTransportIgnoresProxy }`.
+
+`credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
+must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
+finds a path MTU above about 1250 bytes within a few round trips; over a path that does not carry that, the handshake
+through the tunnel times out.
+
+```kotlin
+// guide:ktor:connect-udp-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectUdpProxy = ConnectUdpProxy(
+            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+            ProxyCredentials("user", password),
+        ) { url -> !url.host.endsWith(".internal.test") }   // these go the usual way
     }
 }
 ```
@@ -5755,6 +5824,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` |  | 0.2.0 | call, protocol, race, Alt-Svc and pool events ([Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#observability-experimental)) |
 | `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | 0.2.0 | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
 | `proxyResolver` (*experimental*) | `ProxyResolver` | `ProxyResolvers.System` | `System`, `Environment`, `None` or your own | 0.3.0 | the proxy for requests `proxy` does not cover, per scheme, host and port (kept 30 s); each lookup is bounded by the engine's `connectTimeout` (not a per-request `HttpTimeout`) and fails the request with `ProxyException` beyond it; loopback is always direct with the built-ins; docs/guide/ktor.md, "Proxies" |
+| `connectUdpProxy` (*experimental*) | `ConnectUdpProxy?` | `null` | a template that passes RFC 9298 section 2 | 0.3.0 | a CONNECT-UDP proxy (MASQUE) for HTTP/3: the `https` requests its `applies` admits go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly, and neither use nor learn `Alt-Svc`; `proxy` and `proxyResolver` keep deciding for the others ([HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental)) |
 | `pacFullWebSocketUrl` (*experimental*) | `Boolean` | `false` | — | 0.3.0 | with `ProxyResolvers.System` on Apple platforms and Windows: the PAC script the system settings name (inline, or by an `https://` or local `file:///` URL; never one WPAD found or one over plain `http://`) gets a `wss://` URI whole, path and query included (RFC 6455 section 4.1); off, every script gets `wss://host[:port]/` only, as browsers give it (CVE-2016-3763, CVE-2016-5134); docs/guide/ktor.md, "Proxies" |
 | `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | 0.3.0 | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins |
 
@@ -5827,6 +5897,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on); with `false` a WebSocket CONNECT gets 501 |
 | `webSocketMaxMessageSize` (*experimental*) | `Long` (bytes) | 16 777 216 (16 MiB) | 0.3.0 | at least 1; the largest WebSocket frame, and message once reassembled, the server takes from a client (RFC 6455 section 10.4), over HTTP/1.1, HTTP/2 and HTTP/3; an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and `PerMessageDeflate`'s `maxInflatedMessageSize` (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)) |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-over-http3-experimental)) |
+| `connectUdp` (*experimental*) | `Boolean` | `false` | 0.3.0 | take CONNECT-UDP requests (RFC 9298) into the pipeline for `connectUdp(proxy)` routes (turns `enableConnectProtocol` on); without it they are answered 501; no configuration-file key ([CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connect-udp-over-http3-experimental)) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | 0.2.0 | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |

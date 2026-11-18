@@ -37,8 +37,10 @@ its targets (section 7). A client that wants QUIC through the tunnel needs the t
 
 ## Consequences
 
-- MASQUE-style HTTP/3 through a proxy works at the HTTP/3 level; the Ktor engines do not offer it yet (the client's proxy
-  settings still mean HTTP/1.1 through an HTTP or SOCKS proxy, and the server has no CONNECT-UDP route).
+- MASQUE-style HTTP/3 through a proxy works at the HTTP/3 level and in the Ktor engines: the client's `connectUdpProxy`
+  (HTTP/3 only through the tunnel for the URLs it applies to, no fallback to TCP or a direct connection, which would leave
+  the proxy out; no Alt-Svc) and the server's `connectUdp(proxy)` route, opt-in with `connectUdp = true`, through the
+  pipeline so authentication runs first. No configuration-file key: a filter and a resolver are code.
 - The connection to the proxy must carry 1200-byte inner datagrams plus framing: a path MTU above about 1250, found by
   DPLPMTUD on sockets that set Don't Fragment; over a 1200-byte path proxied QUIC cannot work (RFC 9000 section 14).
 - The ICMP Packet Too Big of section 6.1 is not sent (no raw sockets in a library): the RFC row records the deviation.

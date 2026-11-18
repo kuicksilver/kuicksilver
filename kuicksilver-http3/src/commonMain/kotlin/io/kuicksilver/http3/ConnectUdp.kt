@@ -403,4 +403,14 @@ public class UdpProxy(
      * H3_NO_ERROR). Cancelling the call ends the tunnel the same way, with H3_CONNECT_ERROR.
      */
     public suspend fun serve(request: Http3ServerRequest): Unit = impl.serve(request)
+
+    /**
+     * [serve], telling [answered] (once, in the calling coroutine) the status the request was answered with as soon as it
+     * went out: the 200 of a tunnel, or a refusal. Not called when the stream failed before an answer could be written.
+     */
+    @io.kuicksilver.annotations.InternalKuicksilverApi
+    public suspend fun serve(
+        request: Http3ServerRequest,
+        answered: (status: Int) -> Unit,
+    ): Unit = impl.serve(request, answered)
 }

@@ -22,6 +22,7 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.native.KslLoader
@@ -71,6 +72,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:server" in guide, "marker server")
         assertTrue("guide:ktor:minimal-server" in guide, "marker minimal-server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
+        assertTrue("guide:ktor:connect-udp-server" in guide, "marker connect-udp-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
         assertTrue("guide:ktor:client-ca-rotation" in guide, "marker client-ca-rotation")
@@ -175,6 +177,26 @@ class GuideSamplesTest {
                 }
             }
         assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun connectUdpSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:connect-udp-server
+        val proxyServer =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
+                connectUdp = true
+            }) {
+                routing {
+                    connectUdp(UdpProxy())
+                }
+            }
+        assertTrue(proxyServer.engine.configuration.connectUdp) // ServerConnectUdpTest runs such a route
     }
 
     @Test fun certificateRotationSample() {
