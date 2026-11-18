@@ -121,8 +121,9 @@ static void init(void) {
     size_t el; uint8_t *pem = read_all("ech/ech-a.pem", &el), *keys = malloc(el + 5);
     keys[0] = (uint8_t)((el + 1) >> 24); keys[1] = (uint8_t)((el + 1) >> 16); keys[2] = (uint8_t)((el + 1) >> 8); keys[3] = (uint8_t)(el + 1);
     keys[4] = 1; memcpy(keys + 5, pem, el);
-    if (ksl_ctx_set_ech_keys(server_ech_ctx, keys, el + 5) != KSL_OK) abort();
-    free(keys); free(pem);
+    ksl_ech_keys *ek = ksl_ech_keys_new(keys, el + 5, NULL, 0);
+    if (!ek || ksl_ctx_set_ech_keys(server_ech_ctx, ek) != KSL_OK) abort();
+    ksl_ech_keys_free(ek); free(keys); free(pem);
 }
 /* Mode 0xfc: the kept ECHConfigs parse again to themselves, and never exceed the input */
 static void ech_list(const uint8_t *p, size_t n) {

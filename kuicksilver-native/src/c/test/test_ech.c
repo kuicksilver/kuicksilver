@@ -152,7 +152,7 @@ static echkey make_echkey(const char *public_name) {
     }
     return k;
 }
-/* the framing of ksl_ctx_set_ech_keys: (uint32 length || flags || PEM)* */
+/* the framing of ksl_ech_keys_new: (uint32 length || flags || PEM)* */
 static blob keyset(int n, ...) {
     blob b = {0};
     va_list ap;
@@ -172,6 +172,17 @@ static blob keyset(int n, ...) {
     return b;
 }
 
+/* ksl_ech_keys_new + ksl_ctx_set_ech_keys: KSL_OK, or KSL_ERROR when the set does not read or the context refuses it */
+static int set_keys(ksl_ctx *c, const uint8_t *framed, size_t len) {
+    char msg[256];
+    ksl_ech_keys *k = ksl_ech_keys_new(framed, len, msg, sizeof msg);
+    if (!k)
+        return KSL_ERROR;
+    int r = ksl_ctx_set_ech_keys(c, k);
+    ksl_ech_keys_free(k); /* the context keeps its own reference */
+    return r;
+}
+
 /* ---------- contexts and sessions ---------- */
 static ksl_ctx *ech_client(int verify_mode, int grease) {
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
@@ -187,7 +198,7 @@ static ksl_ctx *ech_server(const ident *id, const blob *keys, const char *groups
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
     CHECK(ksl_ctx_set_identity(c, id->chain.buf, id->chain.len, id->key, id->key_len) == KSL_OK, "server identity");
     if (keys)
-        CHECK(ksl_ctx_set_ech_keys(c, keys->buf, keys->len) == KSL_OK, "server ECH keys");
+        CHECK(set_keys(c, keys->buf, keys->len) == KSL_OK, "server ECH keys");
     if (groups)
         CHECK(ksl_ctx_set_groups(c, groups) == KSL_OK, "server groups");
     return c;
@@ -400,12 +411,14 @@ static void test_list_check(void) {
     size_t n = ech_list(list, 1, good, gl), on = 0;
     CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == n && !memcmp(out, list, n),
           "a list of one usable ECHConfig comes back unchanged");
-    n = ech_list(list, 8, other_version, vl, ipv4, il, hex, hl, mandatory, ml, kem, kl, dotted, dl, good, gl, optional, ol);
+    n = ech_list(list, 8, other_version, vl, ipv4, il, hex, hl, mandatory, ml, kem, kl, dotted, dl, good, gl, optional,
+                 ol);
     uint8_t want[512];
     size_t wn = ech_list(want, 2, good, gl, optional, ol);
-    CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == wn && !memcmp(out, want, wn),
-          "negative_ech_unusable_configs_ignored: another version, an IPv4 or 0x hex public_name, a trailing dot, a "
-          "mandatory extension and an unknown KEM are dropped one by one (RFC 9849 sections 4, 4.2, 6.1.7), the rest kept");
+    CHECK(
+        ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == wn && !memcmp(out, want, wn),
+        "negative_ech_unusable_configs_ignored: another version, an IPv4 or 0x hex public_name, a trailing dot, a "
+        "mandatory extension and an unknown KEM are dropped one by one (RFC 9849 sections 4, 4.2, 6.1.7), the rest kept");
     n = ech_list(list, 3, other_version, vl, ipv4, il, mandatory, ml);
     CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_OK && on == 0,
           "negative_ech_no_usable_config: a list that parses with nothing usable: KSL_OK, 0 bytes");
@@ -421,27 +434,30 @@ static void test_list_check(void) {
     CHECK(ksl_ech_config_list_check(list, 1, out, sizeof out, &on) == KSL_ERROR, "negative_ech_list_one_byte");
     CHECK(ksl_ech_config_list_check(NULL, 0, out, sizeof out, &on) == KSL_ERROR, "negative_ech_list_null");
     uint8_t empty[2] = {0, 0};
-    CHECK(ksl_ech_config_list_check(empty, 2, out, sizeof out, &on) == KSL_OK && on == 0, "an empty list: nothing usable");
+    CHECK(ksl_ech_config_list_check(empty, 2, out, sizeof out, &on) == KSL_OK && on == 0,
+          "an empty list: nothing usable");
     END();
 }
 
 /* ---------- handshakes ---------- */
 static echkey key_a, key_b;
 #define ACCEPTED(r)                                                                                                    \
-    ((r).rc != KSL_ERROR && (r).done && (r).status_c == KSL_ECH_ACCEPTED && (r).status_s == KSL_ECH_ACCEPTED &&       \
+    ((r).rc != KSL_ERROR && (r).done && (r).status_c == KSL_ECH_ACCEPTED && (r).status_s == KSL_ECH_ACCEPTED &&        \
      !strcmp((r).server_sni, INNER))
 static void report(const char *what, run r) {
-    printf("  %s: rc=%d done=%d alert c=%d s=%d status c=%d s=%d wire sni=%s ech=%d server sni=%s retry=%zu (client: %s)\n",
-           what, r.rc, r.done, r.alert_c, r.alert_s, r.status_c, r.status_s, r.wire_sni, r.wire_ech, r.server_sni, r.retry_len,
-           last_msg_c);
+    printf(
+        "  %s: rc=%d done=%d alert c=%d s=%d status c=%d s=%d wire sni=%s ech=%d server sni=%s retry=%zu (client: %s)\n",
+        what, r.rc, r.done, r.alert_c, r.alert_s, r.status_c, r.status_s, r.wire_sni, r.wire_ech, r.server_sni,
+        r.retry_len, last_msg_c);
 }
 static void test_accept(void) {
     SECTION("ech_accept");
     blob ks = keyset(1, &key_a, 1);
     ksl_ctx *sc = ech_server(&id_both, &ks, NULL), *cc = ech_client(KSL_VERIFY_OPENSSL, 0);
     run q = quic_run(cc, sc, &key_a, NULL);
-    CHECK(ACCEPTED(q) && !strcmp(q.wire_sni, PUBLIC) && q.wire_ech && q.retry_len == 0,
-          "QUIC: accepted; the wire names the public_name and carries encrypted_client_hello, the server sees the inner name");
+    CHECK(
+        ACCEPTED(q) && !strcmp(q.wire_sni, PUBLIC) && q.wire_ech && q.retry_len == 0,
+        "QUIC: accepted; the wire names the public_name and carries encrypted_client_hello, the server sees the inner name");
     if (!ACCEPTED(q))
         report("quic", q);
     run t = tcp_run(cc, sc, &key_a);
@@ -486,9 +502,10 @@ static void test_hrr(void) {
     blob kb = keyset(1, &key_b, 1);
     ksl_ctx *sb = ech_server(&id_both, &kb, "secp384r1");
     q = quic_run(cc, sb, &key_a, NULL);
-    CHECK(q.rc == KSL_ERROR && !q.done && q.status_c != KSL_ECH_ACCEPTED && q.retry_len == 0 &&
-              (q.alert_c == 47 || (q.alert_c == 121 && q.status_c == KSL_ECH_REJECTED)),
-          "negative_ech_rejected_after_hrr: no connection (illegal_parameter on OpenSSL 4.1.0, bug C), nothing accepted");
+    CHECK(
+        q.rc == KSL_ERROR && !q.done && q.status_c != KSL_ECH_ACCEPTED && q.retry_len == 0 &&
+            (q.alert_c == 47 || (q.alert_c == 121 && q.status_c == KSL_ECH_REJECTED)),
+        "negative_ech_rejected_after_hrr: no connection (illegal_parameter on OpenSSL 4.1.0, bug C), nothing accepted");
     if (q.rc != KSL_ERROR || q.done)
         report("quic hrr reject", q);
     ksl_ctx_free(sb);
@@ -506,8 +523,8 @@ static void test_reject(void) {
     ksl_ctx *sc = ech_server(&id_both, &kb, NULL);
     run q = quic_run(cc, sc, &key_a, NULL), t = tcp_run(cc, sc, &key_a);
     int okq = q.rc == KSL_ERROR && !q.done && q.alert_c == 121 && q.status_c == KSL_ECH_REJECTED &&
-              q.status_s == KSL_ECH_REJECTED && q.retry_len == key_b.list_len && !memcmp(q.retry, key_b.list, q.retry_len) &&
-              !strcmp(q.server_sni, PUBLIC);
+              q.status_s == KSL_ECH_REJECTED && q.retry_len == key_b.list_len &&
+              !memcmp(q.retry, key_b.list, q.retry_len) && !strcmp(q.server_sni, PUBLIC);
     CHECK(okq, "negative_ech_rejected: QUIC, ech_required (CRYPTO_ERROR 0x179), the server's retry configurations");
     if (!okq)
         report("quic reject", q);
@@ -573,8 +590,9 @@ static void test_grease(void) {
     ksl_ctx *gc = ech_client(KSL_VERIFY_OPENSSL, 1);
     ksl_ctx *plain = ech_server(&id_inner, NULL, NULL);
     run q = quic_run(gc, plain, NULL, NULL);
-    CHECK(q.rc != KSL_ERROR && q.done && q.status_c == KSL_ECH_GREASE && q.wire_ech && !strcmp(q.wire_sni, INNER),
-          "GREASE (RFC 9849 section 6.2.1): the extension is sent, the real name in the clear, the handshake completes");
+    CHECK(
+        q.rc != KSL_ERROR && q.done && q.status_c == KSL_ECH_GREASE && q.wire_ech && !strcmp(q.wire_sni, INNER),
+        "GREASE (RFC 9849 section 6.2.1): the extension is sent, the real name in the clear, the handshake completes");
     if (q.status_c != KSL_ECH_GREASE)
         report("grease", q);
     run t = tcp_run(gc, plain, NULL);
@@ -582,7 +600,8 @@ static void test_grease(void) {
     blob ka = keyset(1, &key_a, 1);
     ksl_ctx *ech = ech_server(&id_inner, &ka, NULL);
     q = quic_run(gc, ech, NULL, NULL);
-    CHECK(q.rc != KSL_ERROR && q.done && q.status_c == KSL_ECH_GREASE && q.retry_len == 0 && q.status_s == KSL_ECH_REJECTED,
+    CHECK(q.rc != KSL_ERROR && q.done && q.status_c == KSL_ECH_GREASE && q.retry_len == 0 &&
+              q.status_s == KSL_ECH_REJECTED,
           "negative_ech_grease_retry_configs_ignored: an ECH server answers GREASE with retry_configs, never reported");
     if (q.retry_len != 0 || q.status_c != KSL_ECH_GREASE)
         report("grease vs ech server", q);
@@ -610,7 +629,7 @@ static void test_rotation(void) {
     CHECK(ACCEPTED(q), "the new key decrypts");
     /* a session made before the rotation keeps its keys */
     ksl_ssl *early = ksl_ssl_new(sc, KSL_MODE_QUIC);
-    CHECK(ksl_ctx_set_ech_keys(sc, only_b.buf, only_b.len) == KSL_OK, "rotation on a frozen context");
+    CHECK(set_keys(sc, only_b.buf, only_b.len) == KSL_OK, "rotation on a frozen context");
     ksl_ssl *c = ech_session(cc, KSL_MODE_QUIC, &key_a);
     ksl_quic_set_transport_params(early, TP, sizeof TP);
     side cs = {0}, ss = {0};
@@ -618,7 +637,8 @@ static void test_rotation(void) {
     uint8_t st = 0xee;
     size_t n;
     ksl_ssl_get(c, KSL_GET_ECH_STATUS, &st, 1, &n);
-    CHECK(rc != KSL_ERROR && cs.done && st == KSL_ECH_ACCEPTED, "a session made before the rotation keeps the old keys");
+    CHECK(rc != KSL_ERROR && cs.done && st == KSL_ECH_ACCEPTED,
+          "a session made before the rotation keeps the old keys");
     ksl_ssl_free(c);
     ksl_ssl_free(early);
     q = quic_run(cc, sc, &key_a, NULL);
@@ -633,32 +653,45 @@ static void test_rotation(void) {
     CHECK(ACCEPTED(q), "the retry with the server's retry configuration is accepted");
     /* refused sets change nothing */
     blob none_retry = keyset(1, &key_a, 0);
-    CHECK(ksl_ctx_set_ech_keys(sc, none_retry.buf, none_retry.len) == KSL_ERROR,
+    CHECK(set_keys(sc, none_retry.buf, none_retry.len) == KSL_ERROR,
           "negative_ech_keys_without_retry: a set with no key for retry_configs is refused");
     blob bad = keyset(1, &key_a, 1);
     memcpy(bad.buf + 5, "-----BEGIN NOTHING", 18);
-    CHECK(ksl_ctx_set_ech_keys(sc, bad.buf, bad.len) == KSL_ERROR, "negative_ech_keys_garbage_pem");
+    CHECK(set_keys(sc, bad.buf, bad.len) == KSL_ERROR, "negative_ech_keys_garbage_pem");
     bad.buf[4] = 2;
-    CHECK(ksl_ctx_set_ech_keys(sc, bad.buf, bad.len) == KSL_ERROR, "negative_ech_keys_unknown_flag");
-    CHECK(ksl_ctx_set_ech_keys(sc, bad.buf, 3) == KSL_ERROR, "negative_ech_keys_truncated_framing");
-    CHECK(ksl_ctx_set_ech_keys(sc, NULL, 0) == KSL_ERROR, "negative_ech_keys_empty");
+    CHECK(set_keys(sc, bad.buf, bad.len) == KSL_ERROR, "negative_ech_keys_unknown_flag");
+    CHECK(set_keys(sc, bad.buf, 3) == KSL_ERROR, "negative_ech_keys_truncated_framing");
+    CHECK(set_keys(sc, NULL, 0) == KSL_ERROR, "negative_ech_keys_empty");
     blob many = {0};
     for (int i = 0; i < 17; i++) {
         many.buf = realloc(many.buf, many.len + only_b.len);
         memcpy(many.buf + many.len, only_b.buf, only_b.len);
         many.len += only_b.len;
     }
-    CHECK(ksl_ctx_set_ech_keys(sc, many.buf, many.len) == KSL_ERROR, "negative_ech_keys_too_many: 17 keys");
+    CHECK(set_keys(sc, many.buf, many.len) == KSL_ERROR, "negative_ech_keys_too_many: 17 keys");
     blob pubonly = keyset(1, &key_a, 1);
     echkey public_only = key_a; /* the ECHCONFIG block without the private key before it */
     public_only.pem = strstr(key_a.pem, "-----BEGIN ECHCONFIG-----");
     free(pubonly.buf);
     pubonly = keyset(1, &public_only, 1);
-    CHECK(ksl_ctx_set_ech_keys(sc, pubonly.buf, pubonly.len) == KSL_ERROR,
+    CHECK(set_keys(sc, pubonly.buf, pubonly.len) == KSL_ERROR,
           "negative_ech_keys_without_private_key: an ECHCONFIG block alone is refused");
     q = quic_run(cc, sc, &retry, NULL);
     CHECK(ACCEPTED(q), "after the refused sets the last good one is in use");
-    CHECK(ksl_ctx_set_ech_keys(cc, only_b.buf, only_b.len) == KSL_ERROR, "negative_ech_keys_on_client");
+    CHECK(set_keys(cc, only_b.buf, only_b.len) == KSL_ERROR, "negative_ech_keys_on_client");
+    /* one parsed set serves two contexts; removing it from one leaves the other */
+    ksl_ech_keys *shared = ksl_ech_keys_new(only_b.buf, only_b.len, NULL, 0);
+    ksl_ctx *s2 = ech_server(&id_both, NULL, NULL);
+    CHECK(shared && ksl_ctx_set_ech_keys(sc, shared) == KSL_OK && ksl_ctx_set_ech_keys(s2, shared) == KSL_OK,
+          "one key set on two contexts");
+    ksl_ech_keys_free(shared);
+    CHECK(ksl_ctx_set_ech_keys(s2, NULL) == KSL_OK, "keys removed from one context");
+    q = quic_run(cc, sc, &retry, NULL);
+    CHECK(ACCEPTED(q), "the other context still decrypts with the shared set");
+    q = quic_run(cc, s2, &retry, NULL);
+    CHECK(q.alert_c == 121 && q.status_c == KSL_ECH_REJECTED && q.status_s == KSL_ECH_NONE,
+          "without keys the server ignores ECH: rejected, no retry configurations");
+    ksl_ctx_free(s2);
     free(many.buf);
     free(pubonly.buf);
     free(bad.buf);
@@ -825,7 +858,7 @@ static void test_rotation_threads(void) {
         pthread_create(&t[i], NULL, make_sessions, &a);
     int ok = 1;
     for (int i = 0; i < 100; i++)
-        ok &= ksl_ctx_set_ech_keys(sc, (i & 1 ? &one : &two)->buf, (i & 1 ? &one : &two)->len) == KSL_OK;
+        ok &= set_keys(sc, (i & 1 ? &one : &two)->buf, (i & 1 ? &one : &two)->len) == KSL_OK;
     __atomic_store_n(&a.stop, 1, __ATOMIC_RELEASE);
     for (int i = 0; i < 3; i++)
         pthread_join(t[i], NULL);
@@ -864,7 +897,9 @@ void run_ech(void) {
     size_t n = 9;
     CHECK(ksl_ech_config_list_check(list, 2, out, sizeof out, &n) == KSL_OK && n == 0, "no ECH: nothing usable");
     ksl_ctx *s = ksl_ctx_new(KSL_SERVER);
-    CHECK(ksl_ctx_set_ech_keys(s, list, 2) == KSL_ERROR, "no ECH keys without ECH");
+    char msg[128];
+    CHECK(ksl_ech_keys_new(list, 2, msg, sizeof msg) == NULL, "no ECH keys without ECH");
+    CHECK(ksl_ctx_set_ech_keys(s, NULL) == KSL_ERROR, "no ECH keys on a context without ECH");
     ksl_ctx_free(s);
     END();
 }

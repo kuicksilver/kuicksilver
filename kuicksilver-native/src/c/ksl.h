@@ -42,7 +42,7 @@ extern "C" {
    ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
    ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8); Encrypted Client Hello
    (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE, KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS,
-   KSL_GET_VERIFY_NAME, ksl_ech_config_list_check and ksl_ctx_set_ech_keys (numbered from 15 so that other additions of 0.3.0
+   KSL_GET_VERIFY_NAME, ksl_ech_config_list_check, ksl_ech_keys_new, ksl_ech_keys_free and ksl_ctx_set_ech_keys (numbered from 15 so that other additions of 0.3.0
    keep the numbers below) */
 
 /* return codes */
@@ -400,14 +400,19 @@ int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
    does not match, an ECHConfig that does not fit, more than 65537 bytes), or out is too small (*out_len the size needed). Touches no
    context: safe from any thread. */
 int ksl_ech_config_list_check(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len);
-/* Server: the ECH keys sessions made from now on decrypt with (shared mode, RFC 9849 section 7.1), framed as (uint32 big-endian length
-   || entry)*, 1 to 16 entries, each a flags byte (bit 0: this key's ECHConfig goes into retry_configs) and the key's PEM as OpenSSL
-   writes it (a PKCS#8 PRIVATE KEY and the ECHCONFIG block of its ECHConfigList; `openssl ech -public_name <name>` makes one). At least
-   one key goes into retry_configs. The whole set replaces the previous one, also on a frozen context: the one setting that changes
-   there, for rotation (a session made before keeps the keys it was made with; the caller keeps an old key in the set while clients may
-   still hold its ECHConfig). A set that does not read changes nothing (KSL_E_BAD_ARG); KSL_E_BAD_ARG on a client context,
-   KSL_E_NOT_SUPPORTED in a build without ECH. */
-int ksl_ctx_set_ech_keys(ksl_ctx *, const uint8_t *keys, size_t len);
+/* A server's ECH keys, parsed once and kept in ksl (the private keys never leave it): framed as (uint32 big-endian length || entry)*,
+   1 to 16 entries, each a flags byte (bit 0: this key's ECHConfig goes into retry_configs) and the key's PEM as OpenSSL writes it (a
+   PKCS#8 PRIVATE KEY and the ECHCONFIG block of its ECHConfigList; `openssl ech -public_name <name>` makes one), at least one of
+   them for retry_configs. NULL when the set does not read (msg says why). Reference counted: ksl_ech_keys_free drops one reference,
+   the last one frees the keys. Immutable: safe to share between contexts and threads. */
+typedef struct ksl_ech_keys ksl_ech_keys;
+ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_t msglen);
+void ksl_ech_keys_free(ksl_ech_keys *);
+/* Server: the keys sessions made from now on decrypt with (shared mode, RFC 9849 section 7.1); the context takes its own reference, NULL
+   removes them. Also on a frozen context: the one setting that changes there, for rotation (a session made before keeps the keys it
+   was made with; the caller keeps an old key in the set while clients may still hold its ECHConfig). KSL_E_BAD_ARG on a client
+   context, KSL_E_NOT_SUPPORTED in a build without ECH. */
+int ksl_ctx_set_ech_keys(ksl_ctx *, ksl_ech_keys *keys);
 
 /* --- session (QUIC or TCP) --- */
 ksl_ssl *ksl_ssl_new(ksl_ctx *, int mode);

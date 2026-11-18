@@ -56,8 +56,8 @@ struct ksl_ctx {
     int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
     int ech_grease;  /* client: KSL_OPT_ECH_GREASE */
     int abort_ext; /* client: ksl_tcp_abort's ClientHello extension is registered (only on contexts that allow TLS 1.2) */
-    /* server: the ECH keys (OSSL_ECHSTORE) new sessions copy, replaced whole under ech_lock (ksl_ctx_set_ech_keys) */
-    void *ech_store;
+    /* server: the ECH keys new sessions copy (a reference), replaced whole under ech_lock (ksl_ctx_set_ech_keys) */
+    ksl_ech_keys *ech_keys;
     CRYPTO_RWLOCK *ech_lock;
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;

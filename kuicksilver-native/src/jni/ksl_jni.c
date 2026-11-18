@@ -217,6 +217,41 @@ static jint j_ctx_set_crls(JNIEnv *e, jclass c, jlong h, jbyteArray a) {
     drop(&b);
     return r;
 }
+/* KSL_OK with out[0] 0 and the kept list (NULL when empty), or out[0] -1 when the list does not parse */
+static jbyteArray j_ech_config_list_check(JNIEnv *e, jclass c, jbyteArray list, jintArray out) {
+    (void)c;
+    bytes b = get_bytes(e, list);
+    size_t cap = b.n > 2 ? b.n : 2, n = 0;
+    uint8_t *kept = malloc(cap);
+    int r = kept ? ksl_ech_config_list_check(b.p, b.n, kept, cap, &n) : KSL_ERROR;
+    drop(&b);
+    jint status = r == KSL_OK ? 0 : -1;
+    (*e)->SetIntArrayRegion(e, out, 0, 1, &status);
+    jbyteArray a = r == KSL_OK && n > 0 ? new_bytes(e, kept, n) : NULL;
+    free(kept);
+    return a;
+}
+/* the keys: copied by get_bytes, wiped by drop; the caller zeroes its array. 0 and msg[0] when they do not read */
+static jlong j_ech_keys_new(JNIEnv *e, jclass c, jbyteArray a, jobjectArray msg) {
+    (void)c;
+    bytes b = get_bytes(e, a);
+    char m[256] = "";
+    ksl_ech_keys *k = ksl_ech_keys_new(b.p, b.n, m, sizeof m);
+    drop(&b);
+    if (!k && msg)
+        (*e)->SetObjectArrayElement(e, msg, 0, (*e)->NewStringUTF(e, m));
+    return (jlong)(intptr_t)k;
+}
+static void j_ech_keys_free(JNIEnv *e, jclass c, jlong h) {
+    (void)e;
+    (void)c;
+    ksl_ech_keys_free((ksl_ech_keys *)(intptr_t)h);
+}
+static jint j_ctx_set_ech_keys(JNIEnv *e, jclass c, jlong h, jlong keys) {
+    (void)e;
+    (void)c;
+    return ksl_ctx_set_ech_keys(CTX(h), (ksl_ech_keys *)(intptr_t)keys);
+}
 static jint j_ocsp_check(JNIEnv *e, jclass c, jbyteArray resp, jbyteArray chain, jlong at, jlongArray until) {
     (void)c;
     bytes r = get_bytes(e, resp), ch = get_bytes(e, chain);
@@ -962,6 +997,10 @@ static const JNINativeMethod methods[] = {
     {"chainLevel", "([BZ)I", (void *)j_chain_level},
     {"ctxSetCrls", "(J[B)I", (void *)j_ctx_set_crls},
     {"ocspCheck", "([B[BJ[J)I", (void *)j_ocsp_check},
+    {"echConfigListCheck", "([B[I)[B", (void *)j_ech_config_list_check},
+    {"echKeysNew", "([B[Ljava/lang/String;)J", (void *)j_ech_keys_new},
+    {"echKeysFree", "(J)V", (void *)j_ech_keys_free},
+    {"ctxSetEchKeys", "(JJ)I", (void *)j_ctx_set_ech_keys},
     {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
     {"sslNew", "(JI)J", (void *)j_ssl_new},
     {"sslFree", "(J)V", (void *)j_ssl_free},

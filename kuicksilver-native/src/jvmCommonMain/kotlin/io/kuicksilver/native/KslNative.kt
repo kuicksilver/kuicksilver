@@ -96,6 +96,25 @@ internal object KslNative {
         out: IntArray,
     ): ByteArray?
 
+    /** KSL_OK (0) with out[0] = the length written into the returned array, or KSL_ERROR (-1); null array when nothing kept */
+    @JvmStatic external fun echConfigListCheck(
+        list: ByteArray,
+        out: IntArray,
+    ): ByteArray?
+
+    /** the handle, or 0 with msg[0] = why */
+    @JvmStatic external fun echKeysNew(
+        framed: ByteArray,
+        msg: Array<String?>,
+    ): Long
+
+    @JvmStatic external fun echKeysFree(keys: Long)
+
+    @JvmStatic external fun ctxSetEchKeys(
+        ctx: Long,
+        keys: Long,
+    ): Int
+
     @JvmStatic external fun ctxSetCrls(
         ctx: Long,
         crls: ByteArray,

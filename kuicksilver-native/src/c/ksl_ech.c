@@ -6,6 +6,7 @@
  * 3.x) answers KSL_E_NOT_SUPPORTED. */
 #include "ksl_internal.h"
 #include <limits.h>
+#include <stdio.h>
 #if KSL_HAS_ECH
 #include <openssl/ech.h>
 #endif
@@ -14,6 +15,13 @@
 #define ECH_LIST_MAX 65537       /* an ECHConfigList: a 2-byte length and at most 65535 bytes (RFC 9849 section 4) */
 #define ECH_KEYS_MAX 16          /* ECH keys a server context holds at once (rotation keeps a few) */
 #define ECH_KEY_PEM_MAX (16384u) /* one key's PEM: a PKCS#8 private key and its ECHCONFIG block */
+#if KSL_HAS_ECH
+/* a server's keys: immutable once made, shared by reference between contexts (ksl_ctx_set_ech_keys) */
+struct ksl_ech_keys {
+    int refs; /* atomic */
+    OSSL_ECHSTORE *es;
+};
+#endif
 
 /* The checked list into out: the ECHConfigs of `list` this OpenSSL can use, in their order. RFC 9849 section 4 has the client ignore an
    ECHConfig of another version, one with an unsupported mandatory extension (section 4.2), one without a KEM and cipher suite it
@@ -109,8 +117,9 @@ int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len) {
     /* OpenSSL 4.1.0 bug A (ADR-0019): a client custom extension that declines to be sent breaks the ECH ClientHello; the only one
        ksl registers (ksl_tcp_abort's) is on contexts that allow TLS 1.2, which ECH never needs */
     if (s->owner->abort_ext) {
-        ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED,
-                          "ksl: ECH needs a client context that allows TLS 1.3 only (KSL_OPT_MIN_VERSION KSL_TLS1_2 was set)");
+        ksl_ssl_set_error(
+            s, KSL_E_NOT_SUPPORTED,
+            "ksl: ECH needs a client context that allows TLS 1.3 only (KSL_OPT_MIN_VERSION KSL_TLS1_2 was set)");
         return KSL_ERROR;
     }
     if (s->verify_ip) {
@@ -124,8 +133,9 @@ int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len) {
     if (r != KSL_OK) {
         free(checked);
         ksl_ssl_set_error(s, code,
-                          code == KSL_E_NOT_SUPPORTED ? "ksl: no ECHConfig of the list is usable (version, suite, mandatory "
-                                                        "extension or public_name)"
+                          code == KSL_E_NOT_SUPPORTED
+                              ? "ksl: no ECHConfig of the list is usable (version, suite, mandatory "
+                                "extension or public_name)"
                           : code == KSL_E_NO_MEMORY ? "ksl: out of memory"
                                                     : "ksl: the ECHConfigList does not parse");
         return KSL_ERROR;
@@ -210,8 +220,7 @@ int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len) {
     *len = k;
     if (out == NULL || cap < k) {
         free(checked);
-        ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: buffer too small");
-        return KSL_ERROR;
+        return KSL_ERROR; /* *len says the size; the session's error (the handshake's) stays as it is, as copy_out leaves it */
     }
     memcpy(out, checked, k);
     free(checked);
@@ -247,8 +256,8 @@ int ksl_ech_ssl_init(ksl_ssl *s) {
         int ok = 1;
         if (!CRYPTO_THREAD_read_lock(c->ech_lock))
             return 0;
-        if (c->ech_store != NULL)
-            ok = SSL_set1_echstore(s->ssl, (OSSL_ECHSTORE *)c->ech_store) == 1; /* the session's own copy */
+        if (c->ech_keys != NULL)
+            ok = SSL_set1_echstore(s->ssl, c->ech_keys->es) == 1; /* the session's own copy */
         CRYPTO_THREAD_unlock(c->ech_lock);
         ERR_clear_error();
         return ok;
@@ -261,8 +270,8 @@ int ksl_ech_ssl_init(ksl_ssl *s) {
 
 void ksl_ech_ctx_free(ksl_ctx *c) {
 #if KSL_HAS_ECH
-    OSSL_ECHSTORE_free((OSSL_ECHSTORE *)c->ech_store);
-    c->ech_store = NULL;
+    ksl_ech_keys_free(c->ech_keys);
+    c->ech_keys = NULL;
     CRYPTO_THREAD_lock_free(c->ech_lock);
     c->ech_lock = NULL;
 #else
@@ -270,25 +279,25 @@ void ksl_ech_ctx_free(ksl_ctx *c) {
 #endif
 }
 
-int ksl_ctx_set_ech_keys(ksl_ctx *c, const uint8_t *keys, size_t len) {
+static void ech_msg(char *msg, size_t msglen, const char *m) {
+    if (msg && msglen)
+        snprintf(msg, msglen, "%s", m);
+}
+ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_t msglen) {
     ERR_clear_error();
-    if (c->role != KSL_SERVER) {
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ECH keys are for servers");
-        return KSL_ERROR;
-    }
 #if KSL_HAS_ECH
     if (keys == NULL || len == 0) {
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no ECH keys");
-        return KSL_ERROR;
+        ech_msg(msg, msglen, "ksl: no ECH keys");
+        return NULL;
     }
-    /* the whole set is read into a new store first: a set that does not read changes nothing */
     OSSL_ECHSTORE *es = OSSL_ECHSTORE_new(NULL, NULL);
     size_t off = 0;
     int count = 0, retry = 0, ok = es != NULL;
     const char *why = "ksl: out of memory";
     while (ok && off < len) {
         ok = ksl_span_fits(off, 4, len);
-        size_t l = ok ? ((size_t)keys[off] << 24) | ((size_t)keys[off + 1] << 16) | ((size_t)keys[off + 2] << 8) | keys[off + 3]
+        size_t l = ok ? ((size_t)keys[off] << 24) | ((size_t)keys[off + 1] << 16) | ((size_t)keys[off + 2] << 8) |
+                            keys[off + 3]
                       : 0;
         off += 4;
         ok = ok && l >= 2 && l - 1 <= ECH_KEY_PEM_MAX && ksl_span_fits(off, l, len) && count < ECH_KEYS_MAX &&
@@ -302,40 +311,71 @@ int ksl_ctx_set_ech_keys(ksl_ctx *c, const uint8_t *keys, size_t len) {
              OSSL_ECHSTORE_read_pem(es, in, for_retry ? OSSL_ECH_FOR_RETRY : OSSL_ECH_NO_RETRY) == 1 &&
              OSSL_ECHSTORE_num_keys(es, &after) == 1 && after == before + 1;
         BIO_free(in);
-        why = "ksl: an ECH key does not read: a PKCS#8 private key and an ECHCONFIG block of RFC 9849 version 0xfe0d that "
-              "it opens";
+        why =
+            "ksl: an ECH key does not read: a PKCS#8 private key and an ECHCONFIG block of RFC 9849 version 0xfe0d that "
+            "it opens";
         count++;
         retry |= for_retry;
         off += l;
     }
     if (ok && !retry) {
         ok = 0;
-        why = "ksl: no ECH key is marked for retry_configs (RFC 9849 section 7.1: a server that rejects ECH sends them)";
+        why =
+            "ksl: no ECH key is marked for retry_configs (RFC 9849 section 7.1: a server that rejects ECH sends them)";
     }
-    if (ok && c->ech_lock == NULL && (c->ech_lock = CRYPTO_THREAD_lock_new()) == NULL) {
-        ok = 0;
-        why = "ksl: out of memory";
-    }
-    if (!ok) {
+    ksl_ech_keys *k = ok ? calloc(1, sizeof *k) : NULL;
+    ERR_clear_error();
+    if (k == NULL) {
         OSSL_ECHSTORE_free(es);
-        ERR_clear_error();
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, why);
-        return KSL_ERROR;
+        ech_msg(msg, msglen, ok ? "ksl: out of memory" : why);
+        return NULL;
     }
-    /* rotation: sessions made from now on get the new set, sessions already made keep their copy (ksl_ech_ssl_init) */
-    if (!CRYPTO_THREAD_write_lock(c->ech_lock)) {
-        OSSL_ECHSTORE_free(es);
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: lock failed");
-        return KSL_ERROR;
-    }
-    OSSL_ECHSTORE *old = (OSSL_ECHSTORE *)c->ech_store;
-    c->ech_store = es;
-    CRYPTO_THREAD_unlock(c->ech_lock);
-    OSSL_ECHSTORE_free(old);
-    return KSL_OK;
+    k->refs = 1;
+    k->es = es;
+    return k;
 #else
     (void)keys;
     (void)len;
+    ech_msg(msg, msglen, "ksl: this build has no ECH (OpenSSL 4 bundled only)");
+    return NULL;
+#endif
+}
+void ksl_ech_keys_free(ksl_ech_keys *k) {
+#if KSL_HAS_ECH
+    if (k == NULL || __atomic_sub_fetch(&k->refs, 1, __ATOMIC_ACQ_REL) != 0)
+        return;
+    OSSL_ECHSTORE_free(k->es);
+    free(k);
+#else
+    (void)k;
+#endif
+}
+int ksl_ctx_set_ech_keys(ksl_ctx *c, ksl_ech_keys *keys) {
+    ERR_clear_error();
+    if (c->role != KSL_SERVER) {
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ECH keys are for servers");
+        return KSL_ERROR;
+    }
+#if KSL_HAS_ECH
+    if (c->ech_lock == NULL && (c->ech_lock = CRYPTO_THREAD_lock_new()) == NULL) {
+        ksl_ctx_set_error(c, KSL_E_NO_MEMORY, "ksl: out of memory");
+        return KSL_ERROR;
+    }
+    if (keys)
+        __atomic_add_fetch(&keys->refs, 1, __ATOMIC_RELAXED);
+    /* rotation: sessions made from now on get the new set, sessions already made keep their copy (ksl_ech_ssl_init) */
+    if (!CRYPTO_THREAD_write_lock(c->ech_lock)) {
+        ksl_ech_keys_free(keys);
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: lock failed");
+        return KSL_ERROR;
+    }
+    ksl_ech_keys *old = c->ech_keys;
+    c->ech_keys = keys;
+    CRYPTO_THREAD_unlock(c->ech_lock);
+    ksl_ech_keys_free(old);
+    return KSL_OK;
+#else
+    (void)keys;
     ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, "ksl: this build has no ECH (OpenSSL 4 bundled only)");
     return KSL_ERROR;
 #endif
