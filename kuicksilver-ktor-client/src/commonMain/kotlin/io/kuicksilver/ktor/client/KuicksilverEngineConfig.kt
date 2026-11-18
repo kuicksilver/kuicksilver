@@ -412,6 +412,18 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var pacFullWebSocketUrl: Boolean = false
 
+    /**
+     * Resolves host names to the addresses the engine connects to, over TCP and QUIC, with Happy Eyeballs (RFC 8305) on what
+     * it answers: [Dns.System] (the default: the system's resolver, as before 0.3.0) or your own, after OkHttp's `Dns`, for
+     * another DNS server (DNS over HTTPS), fixed addresses or a policy of your own; [Dns.blocking] adapts a blocking one, and
+     * a [FamilyDns] answers each address family on its own (RFC 8305 section 3). Its lookup is part of connecting
+     * ([connectTimeout] bounds it), it never gets address literals, it is asked for an HTTP proxy's name but never for the
+     * origin's behind it, and its answers never stand in for the host name in TLS: SNI and the certificate check use the
+     * URL's host. See [Dns] for the whole contract and docs/guide/ktor.md, "Name resolution".
+     */
+    @ExperimentalKuicksilverApi
+    public var dns: Dns = Dns.System
+
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns), both families at once. */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null

@@ -294,6 +294,37 @@ class GuideSamplesTest {
             }
         }
 
+    @Test fun dnsSample() =
+        clientTest {
+            // guide:ktor:dns
+            // fixed addresses for some names, the system's resolver for the rest
+            val fixed = mapOf("api.example.test" to listOf(IpAddress.parse("192.0.2.10"), IpAddress.parse("2001:db8::10")))
+            val client =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) }
+                    }
+                }
+            // a blocking resolver (here the JDK's; an OkHttp Dns alike) runs on threads of its own
+            val blocking =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        dns =
+                            Dns.blocking { name ->
+                                java.net.InetAddress
+                                    .getAllByName(name)
+                                    .map { IpAddress.of(it) }
+                            }
+                    }
+                }
+            blocking.close()
+            client.use {
+                val dns = (it.engine as KuicksilverEngine).config.dns
+                assertEquals(fixed["api.example.test"], dns.lookup("api.example.test"))
+                assertEquals(listOf(IpAddress.parse("127.0.0.1")), dns.lookup("127.0.0.1"))
+            }
+        }
+
     @Test
     fun poolSample() {
         // guide:ktor:pool

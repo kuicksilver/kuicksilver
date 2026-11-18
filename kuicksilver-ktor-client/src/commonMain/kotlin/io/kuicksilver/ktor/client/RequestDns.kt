@@ -57,6 +57,9 @@ internal class RequestDns private constructor(
         resolveFamily: suspend (String, Boolean) -> List<TcpAddress> = ::resolveFamily,
     ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null)
 
+    /** Whether this is the system's resolution ([Dns.System]), made as before the application resolver existed (tests). */
+    internal var isSystemForTest: Boolean = false
+
     /** The lock over the answers (tests). */
     internal val lockForTest: Mutex get() = lock
 
@@ -304,45 +307,20 @@ internal class RequestDns private constructor(
 }
 
 /**
- * A fresh [RequestDns] with this configuration's resolver: the system's, or a test's. A test resolver of both families
- * ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
+ * A fresh [RequestDns] with this configuration's resolver: the system's ([Dns.System], the default: the path of 0.2, as it
+ * was), the application's ([KuicksilverEngineConfig.dns], through [familyResolver]), or a test's. A test resolver of both
+ * families ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
  */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverEngineConfig.newRequestDns(): RequestDns {
     familyResolverForTest?.let { return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }, it) }
-    val both = resolverForTest ?: return RequestDns()
-    val lock = Mutex()
-    val once = HashMap<String, CompletableDeferred<Result<List<TcpAddress>>>>()
-    return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }) { name, ipv6 ->
-        var answer: Result<List<TcpAddress>>? = null
-        while (answer == null) {
-            var mine = false
-            val d =
-                lock.withLock {
-                    once[name]?.takeUnless { it.isCancelled } ?: CompletableDeferred<Result<List<TcpAddress>>>().also {
-                        mine = true
-                        once[name] = it
-                    }
-                }
-            if (mine) {
-                d.complete(
-                    try {
-                        Result.success(both(name, 0))
-                    } catch (e: CancellationException) {
-                        d.cancel()
-                        throw e
-                    } catch (e: Throwable) {
-                        Result.failure(e)
-                    },
-                )
-            }
-            answer =
-                try {
-                    d.await()
-                } catch (e: CancellationException) {
-                    currentCoroutineContext().ensureActive() // the caller that asked went away: ask again
-                    null
-                }
+    resolverForTest?.let { both ->
+        val once = OncePerName { name -> both(name, 0) }
+        return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }) { name, ipv6 ->
+            once.get(name).filter { it.isIpv6 == ipv6 }
         }
-        answer.getOrThrow().filter { it.isIpv6 == ipv6 }
     }
+    if (dns === Dns.System) return RequestDns().also { it.isSystemForTest = true }
+    // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
+    return RequestDns(resolveFamily = dns.familyResolver())
 }

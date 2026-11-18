@@ -93,9 +93,10 @@ internal object AltSvcDestination {
 
     /**
      * Whether [s] has the shape of an inet_aton IPv4 literal: dot-separated parts of digits, or `0x` and hex digits. An
-     * empty part (`1..2`) keeps that shape, as no DNS name has an empty label; [inetAton] then refuses it.
+     * empty part (`1..2`) keeps that shape, as no DNS name has an empty label; [inetAton] then refuses it. [s] is lower case.
+     * Also the test of an application resolver's names ([familyResolver]): no such host is ever passed to it.
      */
-    private fun numericV4(s: String): Boolean =
+    fun numericV4(s: String): Boolean =
         s.any { it in '0'..'9' } &&
             s.split('.').all { p ->
                 if (p.startsWith("0x")) {
@@ -110,7 +111,7 @@ internal object AltSvcDestination {
      * the last filling the remaining bytes (`a`, `a.b` with b < 2^24, `a.b.c` with c < 2^16, `a.b.c.d`). Null for a part
      * with a leading zero or `0x` (octal or hex to inet_aton, decimal or refused by the JVM) and for values out of range.
      */
-    private fun inetAton(s: String): IntArray? {
+    fun inetAton(s: String): IntArray? {
         val parts = s.split('.')
         if (parts.size > 4) return null
         val values = LongArray(parts.size)

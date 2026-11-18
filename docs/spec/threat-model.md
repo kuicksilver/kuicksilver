@@ -759,6 +759,45 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
 - **Mitigations:** where the platform synthesizes itself (Apple: `getaddrinfo` with `AI_DEFAULT`) or tells its prefix (Android API 30 with a `ConnectivityManager` given to the engine: `LinkProperties.getNat64Prefix`) that is used and no query is made. Elsewhere the discovery asks the system resolver, through whatever protection the platform gives it (Android's Private DNS, an encrypted-DNS profile, systemd-resolved over TLS); "DNSSEC validation cannot be utilized in the case of a WKP". Only plausible prefixes count (`2000::/3`, `64:ff9b::/96`, `64:ff9b:1::/48`: never link-local, loopback or mapped space), and only the lengths of RFC 6052 with the well-known address found exactly once. Synthesis runs only on a network detected as IPv6-only and only for an IPv4 destination the host has no route to: loopback, LAN and VPN addresses are never redirected, and the Well-Known Prefix never carries a non-global address (RFC 6052 section 3.1). TLS authenticates the server behind a synthesized address against the URL's host (an IP address SAN for an IPv4 literal), so a forged prefix can deny service or redirect cleartext `http` only. A prefix belongs to the IPv6 /64 it was learnt on. The discovery is one query at a time of at most 2 s, at most every 30 s after a failure, and its answer is read by the same bounded DNS reader as the HTTPS records.
 - **Verification:** `Nat64Test.negative_aWkaTwiceRepeatsTheSearchWithTheOther`, `.negative_noWellKnownAddressNoPrefix`, `.negative_extractionNeedsAZeroUOctet`, `.negative_implausiblePrefixesAreIgnored`, `.negative_loopbackAndNonGlobalAreNotSynthesizedWithTheWellKnownPrefix`, `.negative_noDiscoveryOffAnIpv6OnlyNetwork`, `.negative_aNegativeAnswerIsNotAskedAgainWithinItsTtl`, `.negative_aFailedDiscoveryBacksOff`, `.negative_aNewIpv6NetworkDropsThePrefix`, `RequestDnsTest.negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4`, `.negative_aRoutedPrivateIpv4AnswerStaysIpv4`, `.negative_noSynthesisOnADualStackNetwork`.
 
+### 3.25 An application name resolver (`dns`)
+
+- **Threats:** `KuicksilverEngineConfig.dns` ([ADR-0020](../adr/0020-pluggable-dns.md)) lets the application resolve host
+  names itself, often from the network (DNS over HTTPS, a resolver library) or from a policy it does not fully control.
+  The resolver is the application's code, but its answers are untrusted data: whoever forges or poisons them chooses
+  where the client connects. (a) Taken for the server's identity (SNI, the certificate's reference name, pins), a forged
+  answer would authenticate an impostor; with an IP-address SAN on a certificate, verifying the address instead of the
+  name lets any server holding a certificate for that address pass for any name. (b) An answer of 0.0.0.0 reaches the
+  device's own listeners on Linux and macOS ("0.0.0.0 day"), and a multicast or broadcast destination sends QUIC
+  Initials to a whole network; RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2 and RFC 9293 section 3.9.1 (MUST-46) never
+  allow them as destinations. (c) A huge answer costs memory and attempts; a stalled or blocking resolver could hold the
+  call or the engine's threads. (d) A resolver's own timeout (a `CancellationException` it throws) taken for the call's
+  cancellation leaves a lookup without an answer, and a WebSocket waiting for it hung past its connect timeout. (e) A host
+  with the form of an IPv4 address that is not a dotted quad (`010.0.0.1`) is read as different addresses by different
+  resolvers.
+- **Mitigations:** (a) TLS sends the URL's host as SNI and verifies the certificate and the pins against it, over TCP and
+  QUIC, whatever the resolver answered; connections are pooled per origin, never per address, and none is shared across
+  origins (an HTTP/3 connection is shared only between destinations of one origin, with that origin's TLS settings). (b) The engine drops
+  unspecified (0.0.0.0/8, `::`), multicast (224.0.0.0/4, `ff00::/8`) and limited broadcast addresses from the answer, in
+  their IPv4-mapped form too (`usableAnswer`, `kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/Dns.kt`);
+  an answer left empty fails as a name without addresses. (c) At most 32 addresses of each family are kept, duplicates
+  dropped; the lookup runs within the connect timeout and the call's cancellation cancels it; `Dns.blocking` runs a
+  blocking resolver on a pool of 8 threads of its own, which a caller stops waiting for. (d) A `CancellationException` from
+  the resolver while its caller is active is a failed lookup (`asking`). (e) Such a host is never passed to the resolver:
+  `127.1` is its address, one that platforms read differently fails.
+- **Residue:** the system path (`Dns.System`, the default) keeps its behaviour as it was: it does not drop 0.0.0.0 or
+  multicast answers of the system resolver (the operating system's TCP refuses multicast; a QUIC attempt to such an
+  address and a connect to 0.0.0.0 are not refused there yet). An answer pointing at loopback or a private network is
+  allowed from either resolver (an application may point a name at a local server on purpose; DNS rebinding is not
+  defended against, as in OkHttp); an `Alt-Svc` alternative's host is classified only as a literal (3.14).
+- **Verification:** `ClientDnsTest.negative_theResolvedAddressNeverStandsInForTheName`,
+  `.negative_theResolvedAddressNeverStandsInForTheNameOverHttp3` (a name the certificate lacks, pointed at the address its
+  IP SAN holds, fails), `.negative_anUnspecifiedAnswerIsNeverConnected` (0.0.0.0 would reach the test's listener),
+  `.negative_aCancellationTheDnsThrowsFailsTheCall`, `.negative_aStalledDnsEndsAtTheConnectTimeout`,
+  `.negative_aStalledBlockingDnsEndsAtTheConnectTimeout`, `.negative_aHugeAnswerIsBounded`, `.negative_aLiteralIsNeverAskedFor`,
+  `DnsTest.negative_unusableDestinationsAreDropped`, `.negative_aHugeAnswerIsCappedPerFamily`,
+  `.negative_aNumericHostIsNeverAskedFor`, `.negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure`,
+  `.negative_aBlockingDnsThatNeverReturnsDoesNotHoldTheCaller`.
+
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
@@ -803,6 +842,7 @@ Supply chain:
 
 Sockets:
 11. `negative_ipv6ConnectorListensOnItsAddressOnly`, `negative_h1ToIpv6LiteralReachesThatAddressOnly`, `negative_ipv6ListenerDoesNotAcceptIpv4`, `negative_connectToAnotherIpv6AddressDoesNotReachTheListener`, `negative_portableRefusesASpecificIpv6Address`, `negative_portableRefusesIpv6Destinations` (§3.19; the TCP ones on the JVM and every Native target, the portable UDP ones on Native), `negative_stalledResolverHoldsBoundedThreads`, `negative_invalidIpv6LiteralIsNotLookedUp` (name resolution, §3.21.1)
+14. `negative_theResolvedAddressNeverStandsInForTheName`, `negative_theResolvedAddressNeverStandsInForTheNameOverHttp3`, `negative_anUnspecifiedAnswerIsNeverConnected`, `negative_unusableDestinationsAreDropped`, `negative_aHugeAnswerIsCappedPerFamily`, `negative_aNumericHostIsNeverAskedFor`, `negative_aCancellationTheDnsThrowsFailsTheCall`, `negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure` (an application resolver, §3.25)
 
 Pre-release status (2026-10-02): items 4 (partly), 7 (partly), 8 (partly) are covered in `kuicksilver-quic` (`core.HandshakeLimitsTest`, `flow.StreamLimitsTest`, `core.ConnectionIdTest`, `stream.ReassemblerTest`, `flow.FlowControlTest`, `recovery.LossDetectionTest`, `core.ClientVersionNegotiationTest`, `endpoint.EndpointCoreTest`, `core.ReceivePathTest`, `wire.TransportParametersTest`, `wire.FrameCodecTest`, `wire.PacketHeaderTest`) on JVM, macOS Native and Linux x64 (Docker):
 
@@ -832,7 +872,7 @@ correctness, not assumed to be free of bugs.
 | Boundary | What crosses it | Trusted on the inner side | Not trusted | Controls (where they live) | Threats |
 |---|---|---|---|---|---|
 | **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.24 |
-| **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md` | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20 |
+| **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`, a name resolver `Dns`, whose answers are data, not trust) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md`; a resolver's answers are checked as destinations and never stand in for the host name (3.25) | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20, 3.25 |
 | **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | byte buffers without an explicit length: every buffer of data crossing into C carries its length; `strlen` is used only on NUL-terminated strings that OpenSSL or `ksl` produced or that the binding passes as C strings (labels, host names, cipher lists, key log lines), never on bytes from the network (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15 |
 | **B4. Library ↔ operating system** | sockets (GSO/GRO, `recvmsg` ancillary data), the system resolver, the platform certificate verifiers, files (the extracted native library, the key log, qlog, the Alt-Svc store) | the kernel and the platform verifier (their compromise is out of scope, section 2) | file system locations other users can write; the resolver's answers (they come from the network, B1); what a platform API returns about an address | `KslLoader` extracts into a private directory and checks the library's SHA-256 before loading it (`kuicksilver-native/src/jvmMain/kotlin/io/kuicksilver/native/KslLoader.jvm.kt`); the key log refuses a symbolic link and is created with mode 0600 (`kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/KeylogFile.kt` and its platform files); GRO segments keep their own address (3.12); a stalled resolver holds a bounded number of threads (3.21.1) | 3.7, 3.11, 3.12, 3.16, 3.19, 3.21, 3.21.1, 3.24 |
 | **B5. Build and supply chain ↔ published artifacts** | the OpenSSL tarball, Gradle plugins and dependencies, toolchains, the release machine, CI runners | the pinned toolchains and the maintainer's release machine (SLSA Build Level 1, `docs/release.md`) | anything downloaded until its signature or hash is checked; a build directory or cache left by an earlier build; CI artifacts | the OpenSSL tarball's PGP signature and SHA-256 (`tools/openssl/fetch.sh`, `gradle/openssl.toml`); Gradle dependency verification (`gradle/verification-metadata.xml`); a release rebuilds every OpenSSL from the verified tarball and checks every shipped binary (`tools/release/local-release.sh`, `tools/check/native-release.sh`); the double build from two paths (`tools/check/double-build.sh`); signatures, SBOM and provenance, verified by `tools/verify/verify-release.sh` | 3.11 |
@@ -873,6 +913,7 @@ weakness appears in different protocols.
 | 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
 | 3.24 | forged NAT64 prefix | CWE-345 |
+| 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and

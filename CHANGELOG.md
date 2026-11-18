@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
+  resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
+  resolver (run on a pool of 8 threads of its own, or a dispatcher you give), `FamilyDns` for one that answers IPv6 and
+  IPv4 separately (RFC 8305 section 3), or any `Dns` returning `IpAddress`es (`IpAddress.of(InetAddress)` on the JVM and
+  Android). It resolves the origin over TCP and QUIC, an `Alt-Svc` alternative, an HTTPS record's target and a proxy's
+  name, never an IP literal nor the origin behind an HTTP or `socks5h` proxy; it is asked once per name per request and
+  bounded by the connect timeout. Its answers are sorted by RFC 6724 and raced with Happy Eyeballs like the system's;
+  duplicates, unspecified, multicast and broadcast addresses are dropped and at most 32 addresses per family kept; a
+  failure or an empty answer fails the connection as an unresolvable name does. SNI and certificate verification use the
+  host name, never the answer (threat model 3.25, ADR-0020).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

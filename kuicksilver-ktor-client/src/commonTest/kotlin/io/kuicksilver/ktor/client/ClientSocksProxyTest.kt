@@ -42,6 +42,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -182,6 +183,46 @@ class ClientSocksProxyTest {
                         assertEquals(listOf(0), seen.methods.await(), "only 'no authentication' without credentials")
                         assertEquals(1, seen.atyp.await())
                         assertContentEquals(byteArrayOf(127, 0, 0, 1), seen.destination.await())
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The application resolver ([KuicksilverEngineConfig.dns]) through SOCKS5: asked for the proxy's name in both forms; for
+     * the origin's only through `socks5` (names resolved here, the proxy gets the address), never through `socks5h`, whose
+     * proxy gets the name (ATYP 3, RFC 1928 section 5).
+     */
+    @Test fun theDnsResolvesTheOriginThroughSocks5ButNotThroughSocks5h() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
+            try {
+                for (remoteDns in listOf(false, true)) {
+                    socksProxy(port) { proxyPort, seen ->
+                        val asked = ArrayList<String>()
+                        val lock = kotlinx.coroutines.sync.Mutex()
+                        val dns =
+                            Dns { name ->
+                                lock.withLock { asked += name }
+                                listOf(IpAddress.parse("127.0.0.1"))
+                            }
+                        testClient(engine = {
+                            this.dns = dns
+                            proxyResolver = ProxyResolver { ResolvedProxy.socks5("proxy.test", proxyPort, remoteDns = remoteDns) }
+                        }).use { c ->
+                            assertEquals("through", c.get("https://server.test:$port/").bodyAsText())
+                        }
+                        if (remoteDns) {
+                            assertEquals(listOf("proxy.test"), lock.withLock { asked.toList() })
+                            assertEquals(3, seen.atyp.await())
+                            assertEquals("server.test", seen.destination.await().decodeToString())
+                        } else {
+                            assertEquals(setOf("proxy.test", "server.test"), lock.withLock { asked.toSet() })
+                            assertEquals(1, seen.atyp.await())
+                            assertContentEquals(byteArrayOf(127, 0, 0, 1), seen.destination.await())
+                        }
                     }
                 }
             } finally {
