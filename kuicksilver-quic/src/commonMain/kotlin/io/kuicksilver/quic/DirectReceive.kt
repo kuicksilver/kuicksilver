@@ -25,6 +25,29 @@ internal interface NonSuspendingSend {
     fun takeEmsgsize(): Int
 }
 
+/**
+ * A socket the endpoint loop can empty without waiting before an idle timer closes a connection (RFC 9000 section 10.1: the
+ * idle timer restarts "when a packet from its peer is received and processed successfully"): every socket of the library,
+ * accelerated and portable, and a loop's view of a shared one. A caller's own [DatagramIo] without it is not emptied first.
+ *
+ * Both calls serve the loop's receiver ([io.kuicksilver.quic.runtime.BatchReceiver]); only it reads the socket, so the socket
+ * keeps one reader at a time.
+ */
+internal interface QueuedReceive {
+    /**
+     * Fills free slots of [into] (from `count`) with the datagrams already queued, never waiting; 0 when none. On the receiving
+     * coroutine's thread, and never while a [DatagramIo.receive] of this socket is in flight.
+     */
+    fun receiveQueued(into: PacketBatch): Int
+
+    /**
+     * Any thread: a [DatagramIo.receive] in flight returns soon, with what arrived meanwhile or with 0 datagrams (within one
+     * wait slice of the blocking receive, at most 100 ms on the accelerated socket). A receive that starts later is not
+     * affected.
+     */
+    fun interruptReceive()
+}
+
 /** A socket that queues ICMP Packet Too Big messages (Linux and Android with DF): the loop takes them as DPLPMTUD hints. */
 internal interface PacketTooBigSource {
     /**

@@ -23,7 +23,8 @@ import java.nio.channels.Selector
 internal class NioDatagramIo private constructor(
     private val channel: DatagramChannel,
     private val selector: Selector,
-) : DatagramIo {
+) : DatagramIo,
+    QueuedReceive {
     override val localAddress: InetSocketAddress =
         (channel.localAddress as java.net.InetSocketAddress).let {
             InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
@@ -106,17 +107,42 @@ internal class NioDatagramIo private constructor(
         return n
     }
 
+    /** Set by [interruptReceive]: the receive in flight returns 0. */
+    private val interrupted =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
+
+    /** What the channel holds now, on the calling thread; 0 once it is closed. */
+    override fun receiveQueued(into: PacketBatch): Int =
+        try {
+            if (channel.isOpen) drain(into) else 0
+        } catch (_: java.nio.channels.ClosedChannelException) {
+            0
+        }
+
+    /** Wakes the selector the receive in flight waits on; it returns 0 unless datagrams came. */
+    override fun interruptReceive() {
+        interrupted.set(true)
+        try {
+            selector.wakeup()
+        } catch (_: java.nio.channels.ClosedSelectorException) {
+        }
+    }
+
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
+        interrupted.set(false) // left by a receive that returned with datagrams before it looked
         val immediate = drain(into)
         if (immediate > 0) return immediate
         return runInterruptible(Dispatchers.IO) {
             while (true) {
                 if (!channel.isOpen) throw java.io.IOException("datagram channel closed")
+                if (interrupted.getAndSet(false)) return@runInterruptible 0
                 selector.select()
                 selector.selectedKeys().clear()
                 val n = drain(into)
                 if (n > 0) return@runInterruptible n
+                if (interrupted.getAndSet(false)) return@runInterruptible 0
             }
             @Suppress("UNREACHABLE_CODE")
             0

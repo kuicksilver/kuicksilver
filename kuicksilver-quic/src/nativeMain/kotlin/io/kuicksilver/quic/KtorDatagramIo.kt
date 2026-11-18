@@ -14,8 +14,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
@@ -37,14 +39,50 @@ import kotlin.time.Duration.Companion.seconds
 internal class KtorDatagramIo private constructor(
     private val selector: SelectorManager,
     private val socket: BoundDatagramSocket,
-) : DatagramIo {
+) : DatagramIo,
+    QueuedReceive {
     override val localAddress: InetSocketAddress = socket.localAddress as InetSocketAddress
     override val capabilities: StateFlow<IoCapabilities> = MutableStateFlow(IoCapabilities.Portable)
     private var lastAddress: InetSocketAddress? = null
 
+    /** One-shot: [interruptReceive] ends the receive in flight with 0 datagrams. */
+    private val interrupts = Channel<Unit>(Channel.CONFLATED)
+
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
-        val d = defunctAware { socket.receive() }
+        interrupts.tryReceive() // left by a receive that returned with a datagram before it looked
+        // a select takes either the datagram or the interrupt, never loses a datagram to the interrupt
+        val d =
+            defunctAware {
+                select<Datagram?> {
+                    socket.incoming.onReceive { it }
+                    interrupts.onReceive { null }
+                }
+            } ?: return 0
+        return put(into, d)
+    }
+
+    /**
+     * What ktor-network's receiver already took from the socket and queued, never waiting. Datagrams still in the kernel's queue
+     * are ktor's to read: they are not reached.
+     */
+    override fun receiveQueued(into: PacketBatch): Int {
+        var n = 0
+        while (into.count < into.capacity) {
+            val d = socket.incoming.tryReceive().getOrNull() ?: break
+            n += put(into, d)
+        }
+        return n
+    }
+
+    override fun interruptReceive() {
+        interrupts.trySend(Unit)
+    }
+
+    private fun put(
+        into: PacketBatch,
+        d: Datagram,
+    ): Int {
         val i = into.count
         val bytes = d.packet.readByteArray()
         val n = minOf(bytes.size, into.segmentSize)

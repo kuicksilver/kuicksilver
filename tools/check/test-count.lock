@@ -5122,6 +5122,10 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.stableAddress
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.trySendDoesNotSuspend
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NormalPathExceptionsJvmTest.aNormalConnectionBuildsOnlyItsCloseReasons
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.PreferredAddressJvmTest.nameIsRefusedByItsName
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedInterruptEndsAReceiveInFlight
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.acceleratedQueuedDatagramsAreTakenWithoutWaiting
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.portableInterruptEndsAReceiveInFlight
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.portableQueuedDatagramsAreTakenWithoutWaiting
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpLoopbackTest.nioServerClientTenMiB
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpMigrationTest.closeAfterMigrationReachesTheServer
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpMigrationTest.nioClientMigratesBetweenTwoSockets
@@ -5234,6 +5238,8 @@ kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.KtorDatagramIoTest.portableB
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.NativeServerGuardTest.nativeServerBindsWhereTheAcceleratedIoExists
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.NativeServerGuardTest.nativeServerWithPortableIoRejected
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.NativeServerLoopbackTest.nativeServerServes10MiB
+kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.QueuedReceiveNativeTest.acceleratedQueuedAndInterrupted
+kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.QueuedReceiveNativeTest.portableQueuedAndInterrupted
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipBytesNeverResolvesHostnames
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipv4LiteralsAreParsed
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipv6SpellingsOfOneAddressGiveTheSameBytes
