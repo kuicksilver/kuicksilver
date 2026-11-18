@@ -62,6 +62,10 @@ class CleartextPolicyHostTest {
         assertEquals("::ffff:0:7f00:1", cleartextPolicyHost("[::ffff:0:127.0.0.1]"))
         assertEquals("::7f00:1", cleartextPolicyHost("[::127.0.0.1]"))
         assertEquals("64:ff9b::7f00:1", cleartextPolicyHost("[64:ff9b::127.0.0.1]"))
+        // one bit off the prefix, in bytes 8 to 11
+        assertEquals("::1:ffff:7f00:1", cleartextPolicyHost("[::1:ffff:7f00:1]"))
+        assertEquals("::ff:7f00:1", cleartextPolicyHost("[::ff:7f00:1]"))
+        assertEquals("::fffe:7f00:1", cleartextPolicyHost("[::fffe:7f00:1]"))
     }
 
     /** The policy knows no interfaces: the zone is dropped, and a rule for the address holds on every link. */
