@@ -231,6 +231,9 @@ public class KslUdpSocket private constructor(
     /** Counts a caller in as a native call does (tests); false after [shutdown]. */
     internal fun enterForTest(): Boolean = enter()
 
+    /** Callers inside a send or a receive now (tests: one that waits in [receive] is counted until it returns). */
+    internal val callersInsideForTest: Int get() = state.load() and COUNT
+
     /** Counts the caller of [enterForTest] out (tests). */
     internal fun leaveForTest(): Unit = leave()
 

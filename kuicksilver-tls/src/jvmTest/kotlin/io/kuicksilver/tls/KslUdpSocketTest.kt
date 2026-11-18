@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * The accelerated UDP socket (ADR-0006) over `ksl_udp_*`: Linux and macOS deliver batches with ECN (GSO/GRO on Linux only),
@@ -141,35 +142,41 @@ class KslUdpSocketTest {
     }
 
     /**
-     * A close ends a receive that waits for a datagram: the receive returns 0 well before its timeout. The close comes once
-     * the receiving thread is about to receive; whether the receive was already waiting (woken) or not yet inside (closed
-     * before: it answers 0 at once) is left to the scheduler, and both are the right answer. The timeout of 30 s against a
-     * bound of 10 s tells either from a receive that waited its timeout out.
+     * A close ends a receive that waits inside the socket: the receive returns 0 well before its timeout. The close comes
+     * once the receiving thread is counted inside the receive (it stays inside until a datagram, which nobody sends, or its
+     * timeout of 30 s), and the test records that it still was when the close began; a run where it was not (it never got
+     * in within 10 s) does not count and the next one tries again with a fresh socket.
      */
     @Test fun closeUnblocksReceive() {
         if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
-        val s = KslUdpSocket.open(loopback(), 0)
-        val bufs = Array(1) { PacketBuffer.allocate(64) }
-        val receiving = java.util.concurrent.CountDownLatch(1)
-        var result = -2
-        var elapsed = 0L
-        val t =
-            thread {
-                val t0 = System.nanoTime()
-                receiving.countDown()
-                result =
-                    s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 30_000)
-                elapsed =
-                    (System.nanoTime() - t0) / 1_000_000
+        repeat(5) {
+            val s = KslUdpSocket.open(loopback(), 0)
+            val bufs = Array(1) { PacketBuffer.allocate(64) }
+            var result = -2
+            var elapsed = 0L
+            val t =
+                thread {
+                    val t0 = System.nanoTime()
+                    result =
+                        s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 30_000)
+                    elapsed =
+                        (System.nanoTime() - t0) / 1_000_000
+                }
+            val giveUp = System.nanoTime() + 10_000_000_000L
+            while (s.callersInsideForTest == 0 && System.nanoTime() < giveUp) Thread.onSpinWait()
+            val insideAtClose = s.callersInsideForTest == 1
+            s.close()
+            t.join(20_000)
+            assertFalse(t.isAlive, "the receive still waits after the close")
+            if (insideAtClose) {
+                assertEquals(0, result, "a woken receive answers 0")
+                assertTrue(elapsed < 10_000, "the receive returned after $elapsed ms, as at its timeout of 30 s")
+                assertTrue(s.isClosed)
+                assertEquals(0, s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 10))
+                return
             }
-        assertTrue(receiving.await(10, java.util.concurrent.TimeUnit.SECONDS), "the receiving thread never started")
-        s.close()
-        t.join(20_000)
-        assertFalse(t.isAlive, "the receive still waits after the close")
-        assertEquals(0, result, "a woken receive, or one after the close, answers 0")
-        assertTrue(elapsed < 10_000, "the receive returned after $elapsed ms, as at its timeout of 30 s")
-        assertTrue(s.isClosed)
-        assertEquals(0, s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 10))
+        }
+        fail("the receiving thread never got inside the receive")
     }
 
     /** A receive error on a socket nobody shut down throws instead of looking like a timeout. */
