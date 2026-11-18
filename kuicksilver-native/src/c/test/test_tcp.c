@@ -926,8 +926,11 @@ static void drop_alpn_after_first_hello(int write_p, int version, int content_ty
         SSL_set_alpn_protos(ssl, NULL, 0); /* the second ClientHello carries no ALPN */
     }
 }
-static int alpn_policy_alert(const uint8_t *offer, size_t offer_len, int policy, int hrr, int drop) {
-    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+/* override_policy < 0: no SNI pause; else the server pauses and resumes with an override context of that policy (the base one is
+   [policy]); with [hrr] both take only P-384 */
+static int alpn_policy_alert_with(const uint8_t *offer, size_t offer_len, int policy, int override_policy, int hrr,
+                                  int drop) {
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"), *oc = NULL;
     static const uint8_t x1[] = {2, 'x', '1'};
     ksl_ctx_set_alpn(sc, x1, sizeof x1);
     if (offer)
@@ -938,22 +941,42 @@ static int alpn_policy_alert(const uint8_t *offer, size_t offer_len, int policy,
         ksl_ctx_set_option(sc, KSL_OPT_ALPN_POLICY, policy);
     if (hrr)
         SSL_CTX_set1_groups_list(sc->ctx, "secp384r1");
+    if (override_policy >= 0) {
+        oc = server_ctx("server");
+        ksl_ctx_set_alpn(oc, x1, sizeof x1);
+        if (override_policy)
+            ksl_ctx_set_option(oc, KSL_OPT_ALPN_POLICY, override_policy);
+        if (hrr) {
+            oc->groups = "secp384r1"; /* what ksl_ctx_apply_to_ssl gives the session once the override is applied */
+            SSL_CTX_set1_groups_list(oc->ctx, oc->groups);
+        }
+        ksl_ctx_set_option(sc, KSL_OPT_SNI_PAUSE, 1);
+        ksl_ctx_freeze(oc);
+    }
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     alpn_dropped = 0;
     int hellos = 0;
     if (drop)
         ksl_ssl_msg_observer_for_test(c, drop_alpn_after_first_hello, NULL);
     ksl_ssl_msg_observer_for_test(s, client_hello_count_cb, &hellos);
-    int rc = tcp_pump(c, s, NULL, NULL), sent = 0;
+    sni_arg a = {oc, 0, 0, {0}};
+    int rc = tcp_pump(c, s, oc ? on_sni : NULL, &a), sent = 0;
     if (rc != KSL_OK)
         last_code(s, &sent);
     if (hrr && hellos != 2)
         sent = -1; /* no HelloRetryRequest: the case was not run */
+    if (oc && !a.saw_sni)
+        sent = -2; /* the override was never applied */
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
-    return rc == KSL_OK ? 0 : sent;
+    if (oc)
+        ksl_ctx_free(oc);
+    return sent < 0 ? sent : rc == KSL_OK ? 0 : sent;
+}
+static int alpn_policy_alert(const uint8_t *offer, size_t offer_len, int policy, int hrr, int drop) {
+    return alpn_policy_alert_with(offer, offer_len, policy, -1, hrr, drop);
 }
 static void test_alpn_policy(void) {
     SECTION("tcp_alpn_policy");
@@ -978,6 +1001,23 @@ static void test_alpn_policy(void) {
           "negative: REQUIRED, ALPN dropped after a HelloRetryRequest gets no_application_protocol");
     CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_REQUIRED, 1, 0) == 0,
           "control: REQUIRED, ALPN kept after a HelloRetryRequest completes");
+    /* the SNI override's policy is the one in effect once it is applied, whatever the base context's, also for a second
+       ClientHello after a HelloRetryRequest (the override takes only P-384 too) */
+    CHECK(alpn_policy_alert_with(NULL, 0, KSL_ALPN_POLICY_OPEN, KSL_ALPN_POLICY_REQUIRED, 0, 0) ==
+              SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: base OPEN, override REQUIRED: a client without ALPN gets no_application_protocol");
+    CHECK(alpn_policy_alert_with(NULL, 0, KSL_ALPN_POLICY_REQUIRED, KSL_ALPN_POLICY_OPEN, 0, 0) == 0,
+          "base REQUIRED, override OPEN: a client without ALPN completes");
+    CHECK(alpn_policy_alert_with(x1, sizeof x1, KSL_ALPN_POLICY_OPEN, KSL_ALPN_POLICY_REFUSE, 0, 0) ==
+              SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: base OPEN, override REFUSE: a client offering x1 gets no_application_protocol");
+    CHECK(alpn_policy_alert_with(x1, sizeof x1, KSL_ALPN_POLICY_OPEN, KSL_ALPN_POLICY_REQUIRED, 1, 1) ==
+              SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: override REQUIRED, ALPN dropped after a HelloRetryRequest gets no_application_protocol");
+    CHECK(alpn_policy_alert_with(x1, sizeof x1, KSL_ALPN_POLICY_REQUIRED, KSL_ALPN_POLICY_OPEN, 1, 1) == 0,
+          "control: base REQUIRED, override OPEN, ALPN dropped after a HelloRetryRequest completes");
+    CHECK(alpn_policy_alert_with(x1, sizeof x1, KSL_ALPN_POLICY_OPEN, KSL_ALPN_POLICY_REQUIRED, 1, 0) == 0,
+          "control: override REQUIRED, ALPN kept after a HelloRetryRequest completes");
     /* the last line: a handshake that completes without a protocol under a context that requires one fails (the policy is
        switched on after the ClientHello was checked, as a path past ksl_client_hello_cb would) */
     {
