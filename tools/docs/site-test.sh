@@ -83,6 +83,14 @@ mkdir -p "$tmp/only"; cp -R "$out/0.4.0-rc1" "$tmp/only/"
   && pass "negative_prereleaseNeverLatest: no latest/ without a final release" || fail "negative_prereleaseNeverLatest: a pre-release became latest"
 [ "$(sed -n 's/.*<h2>Latest release: \([^<]*\)<.*/\1/p' "$out/index.html")" = "0.3.0" ] && pass "landing names latest" || fail "landing latest"
 
+# a version with the verification pages of tools/docs/verify.py gets their link on the landing page; one without does not
+mkdir -p "$out/0.3.0/verify"; printf '<html><body>verify</body></html>\n' > "$out/0.3.0/verify/index.html"
+"${site[@]}" index "$out" 2>/dev/null
+grep -q 'href="latest/verify/index.html"' "$out/index.html" && grep -q 'href="0.3.0/verify/index.html"' "$out/index.html" \
+  && ! grep -q 'href="0.2.1/verify/index.html"' "$out/index.html" && [ -f "$out/latest/verify/index.html" ] \
+  && "${site[@]}" check "$out" >/dev/null 2>&1 \
+  && pass "landing links the verification pages of a version that has them" || fail "landing verification link"
+
 # negative controls
 neg="$tmp/neg"; cp -R "$out" "$neg"
 printf '<html><body><a href="nowhere.html">x</a></body></html>\n' > "$neg/0.3.0/guide/extra.html"

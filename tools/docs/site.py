@@ -204,17 +204,24 @@ def landing(out):
         f"<h2>Latest release: {html.escape(latest)}</h2>\n"
         '<ul><li><a href="latest/guide/index.html">Guide</a>: QUIC, HTTP/3, TLS, the Ktor engines, deployment, '
         "configuration and troubleshooting</li>\n"
-        '<li><a href="latest/api/index.html">API reference</a>: every public declaration of the published modules</li></ul>\n'
+        '<li><a href="latest/api/index.html">API reference</a>: every public declaration of the published modules</li>\n'
+        + ('<li><a href="latest/verify/index.html">How we verify</a>: test, interop, conformance, fuzzing, size and RFC '
+           "results of the release's commit, from its CI run (tools/docs/verify.py)</li>\n"
+           if os.path.isfile(os.path.join(out, "latest", "verify", "index.html")) else "")
+        + "</ul>\n"
         if latest else "<h2>No final release yet</h2>\n<p>Every version below is a prerelease or a snapshot.</p>\n"
     )
     rows = "".join(
         f'<tr><td>{html.escape(v)}</td><td><a href="{v}/guide/index.html">Guide</a></td>'
-        f'<td><a href="{v}/api/index.html">API reference</a></td></tr>' for v in reversed(versions)
+        f'<td><a href="{v}/api/index.html">API reference</a></td>'
+        + (f'<td><a href="{v}/verify/index.html">How we verify</a></td>' if os.path.isfile(os.path.join(out, v, "verify", "index.html"))
+           else "<td></td>")
+        + "</tr>" for v in reversed(versions)
     )
     body = (
         "<h1>Kuicksilver</h1>\n<p>QUIC, HTTP/3 and TLS 1.3 for Kotlin Multiplatform, with Ktor client and server engines.</p>\n"
         f"{head}"
-        f"<h2>All versions</h2>\n<table><tr><th>Version</th><th></th><th></th></tr>{rows}</table>\n"
+        f"<h2>All versions</h2>\n<table><tr><th>Version</th><th></th><th></th><th></th></tr>{rows}</table>\n"
         f'<p>Source code, releases and issues: <a href="{REPO}">{REPO}</a>.</p>'
     )
     write(os.path.join(out, "index.html"), page("Kuicksilver documentation", "", body, depth=0))

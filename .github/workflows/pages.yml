@@ -3,13 +3,18 @@
 # Documentation site on GitHub Pages (https://kuicksilver.github.io/kuicksilver/, docs/release.md "Every release"): the
 # guide and the API reference of each release under /<version>/, /latest/ and a landing page (tools/docs/site.sh).
 #
-#   openssl-mingw (ubuntu) ── build (xcode-27) ── publish (ubuntu) ── deploy (ubuntu, actions/deploy-pages)
+#   openssl-mingw (ubuntu) ─┬─ build (xcode-27) ──────────┬─ publish (ubuntu) ── deploy (ubuntu, actions/deploy-pages)
+#                           └─ verify (ubuntu, actions: read) ─┘
 #
 # build checks out the release tag and builds that version's pages. The Dokka build compiles every target's sources, so
 # it runs on the macOS image with the pinned Xcode, like build.yml's apple job, and gets the mingw OpenSSL from
 # openssl-mingw, which builds it in Docker exactly as build.yml's openssl-docker job does. publish adds the version to
 # the gh-pages branch, which keeps every published version, recomputes /latest/ and the landing page, and pushes the
-# branch; deploy publishes that tree with actions/deploy-pages. Runs on a published release (not on a prerelease), or by
+# branch; deploy publishes that tree with actions/deploy-pages. verify builds the "How we verify" pages of the version
+# (<version>/verify/, ru/verify/, zh/verify/; tools/docs/verify.py) from the CI results of the tag's commit: the newest
+# successful build.yml run of exactly that commit (push or schedule first, then workflow_dispatch; never pull_request),
+# its verify-* artifacts (kept 30 days), the newest fuzz.yml campaign on main and a perf.yml run of the commit if there
+# is one; a section without a result says "no data", and data of another commit or run fails the job. Runs on a published release (not on a prerelease), or by
 # hand for a version (from 0.3.0, the first release with tools/docs/site.sh). Never on push.
 name: pages
 on:
@@ -119,8 +124,79 @@ jobs:
             !**/*.hprof
           retention-days: 7
 
+  verify:
+    # the "How we verify" pages of this version (tools/docs/verify.py): tables and badges from the CI runs of the tag's commit
+    needs: openssl-mingw
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read     # gh run list / view / download on build.yml, fuzz.yml and perf.yml of this repository
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}   # this workflow's tools/docs/verify.py; the tag's sources are checked out to src/
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ needs.openssl-mingw.outputs.version }}
+          path: src
+          persist-credentials: false
+      - name: 'verify: the CI runs of the tagged commit'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          d="$RUNNER_TEMP/verify-in"; mkdir -p "$d/data" "$d/fuzz" "$d/perf"
+          sha=$(git -C src rev-parse HEAD)
+          echo "SHA=$sha" >> "$GITHUB_ENV"
+          # the newest successful build.yml run of exactly this commit: a full one (push, schedule) before a dispatched one,
+          # which may have run only some jobs; a pull_request run built a merge commit and never counts
+          run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$sha" --status success --limit 50 --json databaseId,event \
+            --jq '([.[] | select(.event == "push" or .event == "schedule")] + [.[] | select(.event == "workflow_dispatch")])[0].databaseId // empty')
+          if [ -n "$run" ]; then
+            gh run view "$run" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/meta.json"
+            gh run download "$run" --repo "$REPO" --pattern 'verify-*' --dir "$d/data" \
+              || echo "::warning::build.yml run $run has no verify-* artifacts (expired after 30 days, or older than tools/docs/verify.py): the pages say no data"
+          else
+            echo "::warning::no successful build.yml run for $sha: the pages say no data"
+          fi
+          # the newest finished fuzzing campaign on main: shown with its own commit and date, never as this commit's
+          fuzz=$(gh run list --repo "$REPO" --workflow fuzz.yml --branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$fuzz" ]; then
+            gh run view "$fuzz" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/fuzz-meta.json"
+            gh run download "$fuzz" --repo "$REPO" --pattern 'fuzz-stats-*' --dir "$d/fuzz" || echo "::warning::fuzz.yml run $fuzz: no fuzz-stats artifacts"
+          fi
+          # a perf.yml run of this commit, if one was started: its result files only (perf-<peer>, not perf-<peer>-logs)
+          perf=$(gh run list --repo "$REPO" --workflow perf.yml --commit "$sha" --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$perf" ]; then
+            gh run view "$perf" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/perf-meta.json"
+            names=$(gh api "repos/$REPO/actions/runs/$perf/artifacts" --paginate \
+              --jq '.artifacts[] | select(.expired | not) | .name | select(startswith("perf-") and (endswith("-logs") | not) and . != "perf-interop-image")')
+            for a in $names; do gh run download "$perf" --repo "$REPO" --name "$a" --dir "$d/perf/$a"; done
+          fi
+          KSL_FUZZ_STATE="$RUNNER_TEMP/fuzz-state" bash src/tools/fuzz/campaign.sh list > "$d/fuzz-targets.txt" \
+            || echo "::warning::tools/fuzz/campaign.sh list failed: the fuzz targets are the committed corpus directories"
+      - name: 'verify: build the pages'
+        env:
+          VERSION: ${{ needs.openssl-mingw.outputs.version }}
+        run: |
+          d="$RUNNER_TEMP/verify-in"
+          opt() { [ -e "$2" ] && printf '%s\n%s\n' "$1" "$2"; return 0; }
+          mapfile -t extra < <(opt --meta "$d/meta.json"; opt --fuzz-meta "$d/fuzz-meta.json"; opt --perf-meta "$d/perf-meta.json"; opt --fuzz-targets "$d/fuzz-targets.txt")
+          python3 -I tools/docs/verify.py build --sha "$SHA" --version "$VERSION" --ref "v$VERSION" --src src \
+            --out "$RUNNER_TEMP/verify-site/$VERSION" --data "$d/data" --fuzz-stats "$d/fuzz" --perf "$d/perf" "${extra[@]}"
+          # nothing of a runner in the published pages: home and temporary paths, the user and host names
+          python3 -I tools/check/build-paths.py "$RUNNER_TEMP/verify-site"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-verify
+          path: ${{ runner.temp }}/verify-site/${{ needs.openssl-mingw.outputs.version }}
+          retention-days: 1
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, verify]
     runs-on: ubuntu-24.04
     permissions:
       contents: write   # push the gh-pages branch, the store of every published version
@@ -138,6 +214,10 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: site-version
+          path: ${{ runner.temp }}/new
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-verify
           path: ${{ runner.temp }}/new
       - name: 'pages: add the version to gh-pages'
         env:
