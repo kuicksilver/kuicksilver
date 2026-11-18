@@ -35,6 +35,7 @@ import kotlin.random.Random
  * @param directory where the traces go; created when missing.
  * @property maxOpenTraces traces open at the same time; at least 1 (default 256).
  * @property maxTotalBytes bytes written by all traces of this sink together; at least 1 (default 1 GiB).
+ * @property logHeaderValues see [QlogSink.logHeaderValues]; false (the default) writes field names only.
  */
 public class DirectoryQlogSink
     @ExperimentalKuicksilverApi
@@ -42,6 +43,7 @@ public class DirectoryQlogSink
         private val directory: String,
         public val maxOpenTraces: Int,
         public val maxTotalBytes: Long,
+        override val logHeaderValues: Boolean = false,
     ) : QlogSink {
         /** A sink with the default ceilings: 256 open traces, 1 GiB over its lifetime. */
         @OptIn(ExperimentalKuicksilverApi::class)

@@ -780,7 +780,12 @@ public final class io/kuicksilver/quic/PreferredAddress {
 }
 
 public abstract interface class io/kuicksilver/quic/QlogSink {
+	public fun getLogHeaderValues ()Z
 	public abstract fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;
+}
+
+public final class io/kuicksilver/quic/QlogSink$DefaultImpls {
+	public static fun getLogHeaderValues (Lio/kuicksilver/quic/QlogSink;)Z
 }
 
 public abstract interface class io/kuicksilver/quic/QlogTrace : java/lang/AutoCloseable {
@@ -1408,6 +1413,7 @@ public final class io/kuicksilver/quic/qlog/AsyncQlogSink : io/kuicksilver/quic/
 	public final fun flush (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getDropped ()J
 	public final fun getFailures ()J
+	public fun getLogHeaderValues ()Z
 	public final fun getQueueCapacity ()I
 	public final fun getSampleEvery ()I
 	public fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;
@@ -1415,7 +1421,9 @@ public final class io/kuicksilver/quic/qlog/AsyncQlogSink : io/kuicksilver/quic/
 
 public final class io/kuicksilver/quic/qlog/DirectoryQlogSink : io/kuicksilver/quic/QlogSink {
 	public fun <init> (Ljava/lang/String;)V
-	public fun <init> (Ljava/lang/String;IJ)V
+	public fun <init> (Ljava/lang/String;IJZ)V
+	public synthetic fun <init> (Ljava/lang/String;IJZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getLogHeaderValues ()Z
 	public final fun getMaxOpenTraces ()I
 	public final fun getMaxTotalBytes ()J
 	public fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;

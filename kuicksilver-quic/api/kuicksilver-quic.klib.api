@@ -253,6 +253,9 @@ abstract interface io.kuicksilver.quic/KuicksilverLogger { // io.kuicksilver.qui
 }
 
 abstract interface io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic/QlogSink|null[0]
+    open val logHeaderValues // io.kuicksilver.quic/QlogSink.logHeaderValues|{}logHeaderValues[0]
+        open fun <get-logHeaderValues>(): kotlin/Boolean // io.kuicksilver.quic/QlogSink.logHeaderValues.<get-logHeaderValues>|<get-logHeaderValues>(){}[0]
+
     abstract fun open(kotlin/String, io.kuicksilver.tls/TlsRole): io.kuicksilver.quic/QlogTrace? // io.kuicksilver.quic/QlogSink.open|open(kotlin.String;io.kuicksilver.tls.TlsRole){}[0]
 }
 
@@ -657,6 +660,8 @@ final class io.kuicksilver.quic.qlog/AsyncQlogSink : io.kuicksilver.quic/QlogSin
         final fun <get-dropped>(): kotlin/Long // io.kuicksilver.quic.qlog/AsyncQlogSink.dropped.<get-dropped>|<get-dropped>(){}[0]
     final val failures // io.kuicksilver.quic.qlog/AsyncQlogSink.failures|{}failures[0]
         final fun <get-failures>(): kotlin/Long // io.kuicksilver.quic.qlog/AsyncQlogSink.failures.<get-failures>|<get-failures>(){}[0]
+    final val logHeaderValues // io.kuicksilver.quic.qlog/AsyncQlogSink.logHeaderValues|{}logHeaderValues[0]
+        final fun <get-logHeaderValues>(): kotlin/Boolean // io.kuicksilver.quic.qlog/AsyncQlogSink.logHeaderValues.<get-logHeaderValues>|<get-logHeaderValues>(){}[0]
     final val queueCapacity // io.kuicksilver.quic.qlog/AsyncQlogSink.queueCapacity|{}queueCapacity[0]
         final fun <get-queueCapacity>(): kotlin/Int // io.kuicksilver.quic.qlog/AsyncQlogSink.queueCapacity.<get-queueCapacity>|<get-queueCapacity>(){}[0]
     final val sampleEvery // io.kuicksilver.quic.qlog/AsyncQlogSink.sampleEvery|{}sampleEvery[0]
@@ -669,8 +674,10 @@ final class io.kuicksilver.quic.qlog/AsyncQlogSink : io.kuicksilver.quic/QlogSin
 
 final class io.kuicksilver.quic.qlog/DirectoryQlogSink : io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic.qlog/DirectoryQlogSink|null[0]
     constructor <init>(kotlin/String) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String){}[0]
-    constructor <init>(kotlin/String, kotlin/Int, kotlin/Long) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Long){}[0]
+    constructor <init>(kotlin/String, kotlin/Int, kotlin/Long, kotlin/Boolean = ...) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Long;kotlin.Boolean){}[0]
 
+    final val logHeaderValues // io.kuicksilver.quic.qlog/DirectoryQlogSink.logHeaderValues|{}logHeaderValues[0]
+        final fun <get-logHeaderValues>(): kotlin/Boolean // io.kuicksilver.quic.qlog/DirectoryQlogSink.logHeaderValues.<get-logHeaderValues>|<get-logHeaderValues>(){}[0]
     final val maxOpenTraces // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxOpenTraces|{}maxOpenTraces[0]
         final fun <get-maxOpenTraces>(): kotlin/Int // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxOpenTraces.<get-maxOpenTraces>|<get-maxOpenTraces>(){}[0]
     final val maxTotalBytes // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxTotalBytes|{}maxTotalBytes[0]

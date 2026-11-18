@@ -11,6 +11,13 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.channels.Channel
+import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
  * qlog JSON-SEQ writer (docs/guide/quic.md, "qlog"): schema `0.3` with the event names qvis opens; one record per line prefixed
@@ -20,7 +27,12 @@ import io.kuicksilver.tls.TlsRole
  * none, so a forged Initial costs no file. A sink whose `open`, `write` or `close` throws (EMFILE, ENOSPC; anything, a
  * CancellationException included) disables tracing for this connection only and is reported once to [onFailure]; [close] runs when the connection releases its resources. Records are written
  * on the loop thread: a [QlogSink] should buffer (DirectoryQlogSink does).
+ *
+ * The layer above (HTTP/3) adds its events through [enqueue] from any thread ([io.kuicksilver.quic.QlogRecorder]): each is
+ * formatted whole by its caller and queued; the loop writes what is queued before its own next event ([drainExternal] too),
+ * so the sink is only ever called on the loop and two records never interleave. The queue holds at most [MAX_QUEUED] events.
  */
+@OptIn(ExperimentalAtomicApi::class)
 internal class QlogWriter(
     private val sink: QlogSink,
     private val maxBytes: Long,
@@ -30,6 +42,20 @@ internal class QlogWriter(
 ) {
     private var written = 0L
     private var closed = false
+    private var ending = false
+
+    /** False once the trace ended ([close]); read on any thread by [enqueue] and the layer above. */
+    @Volatile var enabled: Boolean = true
+        private set
+
+    /** Events of the layer above, formatted and waiting for the loop; at most [MAX_QUEUED] ([queued] counts them). */
+    private val external = Channel<String>(Channel.UNLIMITED)
+    private val queued = AtomicInt(0)
+    private val dropped = AtomicLong(0)
+
+    /** Events of the layer above dropped because the queue was full. */
+    val externalDropped: Long get() = dropped.load()
+
     private var trace: QlogTrace? = null
     private val sb = StringBuilder(256)
     private var failure: Throwable? = null
@@ -52,7 +78,43 @@ internal class QlogWriter(
         onFailure?.invoke(e)
     }
 
+    /**
+     * Any thread: queues one event of the layer above, [data] being the members of its `data` object (already JSON). False
+     * when it was not taken: the trace ended, or the queue is full (counted in [externalDropped]).
+     */
+    fun enqueue(
+        name: String,
+        data: String,
+        now: TimeMark,
+    ): Boolean {
+        if (!enabled) return false
+        if (queued.incrementAndFetch() > MAX_QUEUED) {
+            queued.decrementAndFetch()
+            dropped.incrementAndFetch()
+            return false
+        }
+        if (external.trySend("{\"time\":${time(now)},\"name\":\"$name\",\"data\":{$data}}").isFailure) {
+            queued.decrementAndFetch()
+            return false
+        }
+        return true
+    }
+
+    /** Loop: writes the queued events of the layer above, in the order they were queued. */
+    fun drainExternal() {
+        while (!closed) {
+            val r = external.tryReceive().getOrNull() ?: return
+            queued.decrementAndFetch()
+            write(r)
+        }
+    }
+
     private fun emit(json: String) {
+        drainExternal() // what the layer above logged before this event comes first
+        write(json)
+    }
+
+    private fun write(json: String) {
         if (closed) return
         val t = trace ?: open() ?: return
         val record = "\u001e$json\n"
@@ -61,10 +123,14 @@ internal class QlogWriter(
             t.write(record)
         } catch (e: Throwable) {
             failed(e)
+            ending = true // nothing more reaches a failed sink, queued events included
             close()
             return
         }
-        if (written >= maxBytes) close()
+        if (written >= maxBytes) {
+            ending = true
+            close()
+        }
     }
 
     private fun open(): QlogTrace? {
@@ -77,6 +143,7 @@ internal class QlogWriter(
             }
         if (t == null) {
             closed = true
+            enabled = false
             return null
         }
         trace = t
@@ -89,14 +156,16 @@ internal class QlogWriter(
             t.write(header)
         } catch (e: Throwable) {
             failed(e)
+            ending = true
             close()
             return null
         }
         return t
     }
 
+    /** Milliseconds since the trace's start; an event of the layer above stamped before it (another thread's clock) gets 0. */
     private fun time(now: TimeMark): String {
-        val us = (now - start).inWholeMicroseconds
+        val us = (now - start).inWholeMicroseconds.coerceAtLeast(0)
         return "${us / 1000}.${(us % 1000).toString().padStart(3, '0')}"
     }
 
@@ -213,9 +282,15 @@ internal class QlogWriter(
         close()
     }
 
-    /** Ends the trace (idempotent); a sink whose close throws is ignored. */
+    /** Ends the trace (idempotent) after what the layer above queued so far; a sink whose close throws is ignored. */
     fun close() {
+        if (!closed && !ending) {
+            ending = true // a write below that ends the trace (cap, failure) closes it without draining again
+            drainExternal()
+        }
         closed = true
+        enabled = false
+        external.cancel() // what is queued from now on is dropped with the queue
         val t = trace ?: return
         trace = null
         try {
@@ -346,5 +421,10 @@ internal class QlogWriter(
             }
         }
         return o.toString()
+    }
+
+    internal companion object {
+        /** Events of the layer above waiting for the loop at most; more are dropped. */
+        const val MAX_QUEUED = 4096
     }
 }

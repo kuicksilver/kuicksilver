@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.quic.runtime
 
@@ -138,6 +142,35 @@ internal class ConnectionRuntime(
 
     init {
         core.qlog?.onFailure = { e -> loop.observer.qlogFailed(this, e) } // LogLevel.Warn: a failing qlog sink
+    }
+
+    /** See [io.kuicksilver.quic.qlogRecorder]: null when the connection is not traced. */
+    internal val qlogRecorder: io.kuicksilver.quic.QlogRecorder? = core.qlog?.let { QueuedQlogRecorder(it) }
+
+    /**
+     * Queues the events of the layer above in the connection's [io.kuicksilver.quic.qlog.QlogWriter] and has the loop write
+     * them: one drain task at a time is scheduled, the first event after a drain started schedules the next, so no event
+     * waits for a transport event to be written and a burst costs one task.
+     */
+    private inner class QueuedQlogRecorder(
+        private val writer: io.kuicksilver.quic.qlog.QlogWriter,
+    ) : io.kuicksilver.quic.QlogRecorder {
+        private val drainScheduled = kotlin.concurrent.atomics.AtomicInt(0)
+        override val enabled: Boolean get() = writer.enabled
+        override val logHeaderValues: Boolean = core.config.qlog?.logHeaderValues == true
+
+        override fun record(
+            name: String,
+            data: String,
+        ) {
+            if (!writer.enqueue(name, data, loop.now())) return
+            if (drainScheduled.compareAndSet(0, 1)) {
+                loop.scope.launch {
+                    drainScheduled.store(0)
+                    writer.drainExternal()
+                }
+            }
+        }
     }
 
     // ---- paths ----
