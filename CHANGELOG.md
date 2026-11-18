@@ -709,6 +709,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tests that had been renamed, or named them after the wrong class; those names are corrected, four ✅ sections
   that named no test now name theirs, and the RFC 9460 section 9.3 text says that a cached Alt-Svc alternative does not
   skip the HTTPS records (it shares the origin's lookup), as the client has done since 0.3.0.
+- Fuzzing: the 120 committed `quic.connectionNull` and `quic.connectionTls` inputs that lost their early server
+  application operations when the connection fuzzer moved to endpoints are refreshed: each decodes again to the operations
+  it was kept for (463 server application operations instead of 216); 110 old versions that a Jazzer merge found redundant
+  are removed, and every corpus input is named by the SHA-1 of its bytes again, which `CommittedCorpusReplayTest` checks.
+- Fuzzing: the ksl harness's driver names its inputs by the standard FNV-1a 64 (its offset basis was missing a digit), the
+  `ksl.parsers` corpus is renamed accordingly, and `tools/c-test.sh` fails on an input whose name is not the FNV-1a 64 of
+  its bytes (`tools/fuzz/ksl/corpus-names.c`, with reference values and negative controls).
+  `tools/fuzz/campaign.sh minimize` and `prune` rename a `ksl.parsers` merge's output the same way, so a minimize with
+  libFuzzer (Linux), which names inputs by SHA-1, keeps those names.
+- Build: `tools/fuzz/formats/flags.txt` names every flag bit, setup bit and outcome of the traced connection fuzz
+  programs (`ConnProgram`, `ZeroRttProgram`) by its constant, value and trace name. `tools/check/fuzz-formats.py` checks
+  it against the programs' sources and KDoc (no gap, no duplicate, no stale or unlisted name, the trace name the
+  constant's in lowerCamelCase; a renamed or moved flag needs a reason in `changes.txt`), and `FuzzTraceTest` against the
+  compiled programs, each with negative controls.
 - Build: `tools/check/commit-msg.sh` also checks the commit hashes a message cites: each must name a commit in the
   history of the branch (`--range`, step 3 of the local gate) or of `HEAD` (the hook). After a rebase or a rewrite of the
   dates, messages kept citing the old hashes, which name nothing. A 7 to 40 digit hex word counts when it names a commit
@@ -775,6 +789,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
+  values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
+  from earlier versions; the same seed still gives the same hash in every run.
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets

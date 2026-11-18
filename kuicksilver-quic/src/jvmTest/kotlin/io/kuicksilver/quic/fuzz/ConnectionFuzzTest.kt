@@ -82,8 +82,9 @@ class ConnectionFuzzTest {
  * RFC 9000 section 13.4.2); bit 5 ([RETRY]) — the server asks every new client for a Retry; bit 6 ([VN]) — the client offers v1
  * and v2 and starts with v1, the server offers v2 only (a Version Negotiation) or, with [COMPATIBLE], v2 then v1 (a compatible
  * upgrade, RFC 9368 section 2.3); bit 7 ([SETUP]) — a setup byte follows: bit 0 [PREFERRED] (the server offers a preferred
- * address), 1 [COMPATIBLE], 2/3 the client's/server's socket reads no ECN, 4/5 the client's/server's socket has no DF, 6 no ICMP
- * hints (`QuicConfig.pmtudIcmpHints` off), 7 BBR instead of CUBIC.
+ * address), 1 [COMPATIBLE], 2 [CLIENT_NO_ECN_READ] / 3 [SERVER_NO_ECN_READ] the client's / server's socket reads no ECN,
+ * 4 [CLIENT_NO_DF] / 5 [SERVER_NO_DF] the client's / server's socket has no DF, 6 [NO_ICMP_HINTS] no ICMP hints
+ * (`QuicConfig.pmtudIcmpHints` off), 7 [BBR] BBR instead of CUBIC. Each bit's trace name is in tools/fuzz/formats/flags.txt.
  *
  * An op byte `o`: kind `o & 7`, side `(o >> 3) & 1` (0: the client acts or sends, so the server receives; 1: the
  * server), argument `o >> 4`:

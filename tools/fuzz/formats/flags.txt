@@ -1,0 +1,41 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The flag bits, setup bits and outcomes of the traced connection programs, each by its constant and by the name its trace
+# gives it (the trace is hashed into tools/fuzz/formats/<target>.lock, so a renamed flag changes the recorded decoding of
+# every input that sets it). `program <name> <source> <targets>` declares a program; `<program> <field> <value> <CONSTANT>
+# <trace name>` is one bit (flags, setup) or outcome. The trace name is the constant's name in lowerCamelCase, bits are 1,
+# 2, 4, ... and outcomes 0, 1, 2, ... without a gap. Checked against the sources by tools/check/fuzz-formats.py and against
+# the compiled programs by FuzzTraceTest; a row changed or removed on a branch needs a line in changes.txt naming every
+# target of its program.
+program ConnProgram kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ConnectionFuzzTest.kt quic.connectionNull,quic.connectionTls
+ConnProgram flags 1 LIVE live
+ConnProgram flags 2 SMALL small
+ConnProgram flags 4 NO_PMTUD noPmtud
+ConnProgram flags 8 DF df
+ConnProgram flags 16 ECN ecn
+ConnProgram flags 32 RETRY retry
+ConnProgram flags 64 VN vn
+ConnProgram flags 128 SETUP setup
+ConnProgram setup 1 PREFERRED preferred
+ConnProgram setup 2 COMPATIBLE compatible
+ConnProgram setup 4 CLIENT_NO_ECN_READ clientNoEcnRead
+ConnProgram setup 8 SERVER_NO_ECN_READ serverNoEcnRead
+ConnProgram setup 16 CLIENT_NO_DF clientNoDf
+ConnProgram setup 32 SERVER_NO_DF serverNoDf
+ConnProgram setup 64 NO_ICMP_HINTS noIcmpHints
+ConnProgram setup 128 BBR bbr
+program ZeroRttProgram kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/fuzz/ZeroRttConnectionFuzz.kt quic.zeroRttConnection
+ZeroRttProgram flags 1 RETRY retry
+ZeroRttProgram flags 2 VERSION_NEGOTIATION versionNegotiation
+ZeroRttProgram flags 4 SMALL small
+ZeroRttProgram flags 8 NO_RESET_AT noResetAt
+ZeroRttProgram flags 16 LOWERED lowered
+ZeroRttProgram flags 32 OVERRUN overrun
+ZeroRttProgram flags 64 HIGHER higher
+ZeroRttProgram outcome 0 ACCEPT accept
+ZeroRttProgram outcome 1 REJECT_APPLICATION rejectApplication
+ZeroRttProgram outcome 2 REJECT_LIMITS rejectLimits
+ZeroRttProgram outcome 3 REJECT_REQUIRED rejectRequired
+ZeroRttProgram outcome 4 REJECT_ALPN rejectAlpn
+ZeroRttProgram outcome 5 NO_SERVER_EARLY_DATA noServerEarlyData
+ZeroRttProgram outcome 6 LOST lost

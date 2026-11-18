@@ -29,9 +29,14 @@ esac
 # The committed corpus of the ksl fuzz target (tools/fuzz/corpus/ksl.parsers, grown by campaigns) replays once under
 # ASan/UBSan, so a regression on an input a campaign found shows here, not at the next campaign. Host builds with the
 # sanitizers and the default OpenSSL location only (tools/fuzz/ksl/build.sh builds for the host from build/openssl); a copy
-# is replayed, the committed directory is never written.
+# is replayed, the committed directory is never written. First every input must be named by the FNV-1a 64 of its bytes, the
+# name the driver gives it (tools/fuzz/ksl/corpus-names.c, with its negative controls; `corpus-names --rename` renames).
 host="$( [ "$(uname)" = Darwin ] && echo "macos-$( [ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)" || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )"
 if [ "$target" = "$host" ] && [ -n "$san" ] && [ "${KSL_TSAN:-0}" != 1 ] && [ -z "${KSL_OPENSSL_OUT:-}" ] && [ -d tools/fuzz/corpus/ksl.parsers ]; then
+  bash "$root/tools/fuzz/ksl/corpus-names-test.sh" "$CC" > "$out/ksl-corpus-names-test.log" 2>&1 \
+    || { cat "$out/ksl-corpus-names-test.log"; echo "ksl corpus-names negative controls failed"; exit 1; }
+  $CC -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$out/ksl-corpus-names"
+  "$out/ksl-corpus-names" tools/fuzz/corpus/ksl.parsers || { echo "ksl corpus: misnamed inputs (tools/fuzz/ksl/corpus-names.c --rename)"; exit 1; }
   bash "$root/tools/fuzz/ksl/build.sh" >/dev/null
   replay="$out/ksl-corpus-replay"; rm -rf "$replay"; mkdir -p "$replay"
   cp tools/fuzz/corpus/ksl.parsers/* "$replay"/

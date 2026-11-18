@@ -9,7 +9,13 @@
 # merge base: a changed trace (a decoder change, recorded again), a renamed input whose trace changed, an input deleted,
 # an input rewritten into other operations under a new name, and a lock given up for an untraced line each fail without
 # a reason added on the branch, and pass with one; a reason for another target, one already on main, and a malformed one
-# do not count. Without a merge base the rule is skipped, and said so.
+# do not count. Without a merge base the rule is skipped, and said so. The flag manifest (flags.txt) passes with its
+# program, and fails for a trace name renamed in the source or in the manifest, a constant renamed, a flag moved to
+# another bit, a duplicate bit, constant or trace name, a gap, a flag of the source without a row and a row without a
+# flag, a constant its KDoc does not name, a target or source that is not there and a malformed row; against the merge
+# base a renamed flag needs a reason naming its program's targets, and a new flag does not; annotations between a program's
+# KDoc and its object are skipped. KSL_FUZZ_FORMATS_BASE names the base (CI: the commit before a push to main), and a base
+# that is no commit is skipped with a message.
 # Usage: fuzz-formats-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,9 +117,88 @@ write_lock "$S" 1111111111111111 "$A" aaaaaaaaaaaaaaaa tools/fuzz/corpus/x.prog/
 expect 1 "negative: an input rewritten into other operations under a new name" "| changed | 1 recorded input(s)"
 reset; git -C "$r" rm -q "$lock"; printf 'x.prog | given up, the trace calls are gone\n' >> "$r/tools/fuzz/formats/untraced.txt"
 expect 1 "negative: a lock given up for an untraced line" "| changed | 3 recorded input(s) of x.prog"
+# the flag manifest: on main with its program, so the reason rule has rows to compare with
+reset; git -C "$r" checkout -q main
+src="kuicksilver-x/src/jvmTest/kotlin/io/x/fuzz/XFuzzTest.kt"; mkdir -p "$r/$(dirname "$src")"
+program() { # <SMALL's constant> <its value> <its trace name> <KDoc names it: 1|0> [extra constant line] [extra map line]
+  { echo "/**"
+    echo " * Flags: [LIVE] the first, $([ "$4" = 1 ] && echo "[$1]") the second; outcomes [OK] and [LOST]."
+    echo " */"
+    echo "internal object XProgram {"
+    echo "    const val LIVE = 1"
+    echo "    const val $1 = $2"
+    [ -n "${5:-}" ] && echo "    $5"
+    echo "    const val MAX_OPS = 3"
+    echo "    const val OK = 0"
+    echo "    const val LOST = 1"
+    echo ""
+    echo "    val FLAG_NAMES ="
+    echo "        mapOf("
+    echo "            LIVE to \"live\","
+    echo "            $1 to \"$3\","
+    [ -n "${6:-}" ] && echo "            $6"
+    echo "        )"
+    echo "    val OUTCOME_NAMES = listOf(\"ok\", \"lost\")"
+    echo "}"; } > "$r/$src"
+}
+manifest() { # rows after the program line
+  { echo "# flags"; echo "program XProgram $src x.prog"; printf '%s\n' "$@"; } > "$r/tools/fuzz/formats/flags.txt"
+}
+rows=("XProgram flags 1 LIVE live" "XProgram flags 2 SMALL small" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost")
+program SMALL 2 small 1; manifest "${rows[@]}"
+git -C "$r" add -A; git -C "$r" commit -qm flags; git -C "$r" checkout -q topic; git -C "$r" merge -q main
+expect 0 "a flag manifest that agrees with its program passes" "0 finding(s); 4 flag rows"
+program SMALL 2 tiny 1
+expect 1 "negative: a trace name renamed in the source" "| unlisted | XProgram.FLAG_NAMES names 2 \`tiny\` (SMALL)"
+reset; manifest "XProgram flags 1 LIVE live" "XProgram flags 2 SMALL smol" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+expect 1 "negative: a trace name renamed in the manifest" "| name | XProgram flags SMALL is traced as \`smol\`, not \`small\`"
+reset; program TINY 2 tiny 1
+expect 1 "negative: a constant renamed in the source" "| stale | XProgram has no constant SMALL"
+reset; program SMALL 4 small 1
+expect 1 "negative: a flag moved to another bit in the source" "| bit | XProgram.SMALL is 4 in $src, not 2"
+reset; manifest "XProgram flags 1 LIVE live" "XProgram flags 1 SMALL small" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+expect 1 "negative: two flags of one bit in the manifest" "| duplicate | XProgram flags: value 1 is also on line 3"
+reset; manifest "${rows[@]}" "XProgram flags 4 LIVE live"
+expect 1 "negative: a constant listed twice" "| duplicate | XProgram flags: constant LIVE is also on line 3"
+reset; program SMALL 2 live 1
+expect 1 "negative: a trace name given twice in the source" "| duplicate | XProgram.FLAG_NAMES gives trace name live twice"
+reset; program SMALL 4 small 1; manifest "XProgram flags 1 LIVE live" "XProgram flags 4 SMALL small" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+expect 1 "negative: a gap in the bits" "| gap | XProgram flags: the values are [1, 4], not [1, 2]"
+reset; manifest "XProgram flags 1 LIVE live" "XProgram flags 2 SMALL small" "XProgram outcome 0 OK ok" "XProgram outcome 2 LOST lost"
+expect 1 "negative: a gap in the outcomes" "| gap | XProgram outcome: the values are [0, 2], not [0, 1]"
+reset; manifest "XProgram flags 1 LIVE live" "XProgram flags 3 SMALL small" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+expect 1 "negative: a bit that is not one bit" "| gap | XProgram flags: the values are [1, 3]"
+reset; program SMALL 2 small 1 "const val FAST = 4" "FAST to \"fast\","
+expect 1 "negative: a flag of the source without a row" "| unlisted | XProgram.FLAG_NAMES names 4 \`fast\` (FAST)"
+reset; manifest "${rows[@]}" "XProgram flags 4 FAST fast"
+expect 1 "negative: a row without its flag" "| stale | XProgram has no constant FAST"
+reset; program SMALL 2 small 0
+expect 1 "negative: a flag its program's KDoc does not name" "| undocumented | the KDoc of XProgram does not name [SMALL]"
+reset; manifest "${rows[@]}"; sed -i.bak 's/ x.prog$/ x.prog,x.gone/' "$r/tools/fuzz/formats/flags.txt"; rm "$r/tools/fuzz/formats/flags.txt.bak"
+expect 1 "negative: a program target that is no target" "| target | x.gone (of XProgram) is no jvm target"
+reset; sed -i.bak 's/internal object XProgram/internal object Other/' "$r/$src"; rm "$r/$src.bak"
+expect 1 "negative: a program its source does not declare" "| source | $src has no \`internal object XProgram {\`"
+reset; manifest "${rows[@]}" "XProgram flags two TWO two"
+expect 1 "negative: a malformed row" "flags.txt:7 | format |"
+reset; program TINY 2 tiny 1; manifest "XProgram flags 1 LIVE live" "XProgram flags 2 TINY tiny" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+expect 1 "negative: a flag renamed in source and manifest, without a reason" "flags.txt | changed | 1 row(s) of XProgram on the merge base are gone or changed (flags 2 SMALL)"
+reason "2026-11-18 | x.prog | the second flag is called tiny now, every input that sets it decodes otherwise"
+expect 0 "the same with a reason naming the program's target" "0 finding(s); 4 flag rows"
+reset; program SMALL 2 small 1 "const val FAST = 4" "FAST to \"fast\","; manifest "${rows[@]}" "XProgram flags 4 FAST fast"
+sed -i.bak 's/the second; /the second, [FAST] the third; /' "$r/$src"; rm "$r/$src.bak"
+expect 0 "a new flag with its row needs no reason" "0 finding(s); 5 flag rows"
+reset; awk '/^internal object XProgram/ { print "@OptIn(ExperimentalX::class)"; print "@Suppress(\"unused\")" } 1' "$r/$src" > "$r/$src.new"
+mv "$r/$src.new" "$r/$src"
+expect 0 "annotations between the KDoc and the object are skipped" "0 finding(s); 4 flag rows"
 reset
 git -C "$r" checkout -q main; git -C "$r" branch -qD topic
 write_lock "$S" 1111111111111111 "$A" dddddddddddddddd "$B" bbbbbbbbbbbbbbbb; sort_lock; git -C "$r" commit -qam direct
 expect 0 "on main itself the reason rule is skipped, and said so" "the reason rule is skipped"
+# a push to main: CI names the commit before the push as the base (KSL_FUZZ_FORMATS_BASE)
+program TINY 2 tiny 1; manifest "XProgram flags 1 LIVE live" "XProgram flags 2 TINY tiny" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+git -C "$r" commit -qam renamed
+before=$(git -C "$r" rev-parse HEAD~1)
+KSL_FUZZ_FORMATS_BASE=$before expect 1 "negative: a push to main that renames a flag, against the commit before it" "flags.txt | changed | 1 row(s) of XProgram"
+KSL_FUZZ_FORMATS_BASE=0000000000000000000000000000000000000000 expect 0 "a base that is no commit here is skipped, and said so" "is no commit here"
 [ "$rc" = 0 ] && echo "all passed" || echo "FAILED"
 exit "$rc"

@@ -114,7 +114,7 @@ public class Simulator(
         }
     private var serverEndpoint: EndpointCore? = null
     private val invariants = SimInvariants()
-    private var traceHash = 1469598103934665603L
+    private var traceHash = Fnv1a64.BASIS
     private val start = now
 
     /** Scenario hook: drop the next client datagram (tail-loss tests). */
@@ -224,13 +224,11 @@ public class Simulator(
         from: InetSocketAddress,
     ) {
         var h = traceHash
-        h =
-            (h xor dir.toLong()) * 1099511628211L
-        h = (h xor b.size.toLong()) * 1099511628211L
-        h = (h xor now.nanos) * 1099511628211L
-        h =
-            (h xor ecn.ordinal.toLong()) * 1099511628211L
-        h = (h xor from.port.toLong()) * 1099511628211L
+        h = Fnv1a64.mix(h, dir.toLong())
+        h = Fnv1a64.mix(h, b.size.toLong())
+        h = Fnv1a64.mix(h, now.nanos)
+        h = Fnv1a64.mix(h, ecn.ordinal.toLong())
+        h = Fnv1a64.mix(h, from.port.toLong())
         traceHash = h
     }
 
@@ -447,4 +445,21 @@ public class Simulator(
         step()
         return SimResult(done(), now - start, traceHash, invariants.violations.toList())
     }
+}
+
+/**
+ * FNV-1a 64 (Fowler, Noll, Vo): offset basis 14695981039346656037 (0xcbf29ce484222325), prime 1099511628211. Reference values:
+ * "" cbf29ce484222325, "a" af63dc4c8601ec8c, "abc" e71fa2190541574b (TraceHashTest). The simulator's trace hash mixes whole
+ * values per datagram into it with [mix], starting from [BASIS].
+ */
+internal object Fnv1a64 {
+    val BASIS: Long = 0xcbf29ce484222325uL.toLong()
+    const val PRIME: Long = 1099511628211L
+
+    fun mix(
+        h: Long,
+        v: Long,
+    ): Long = (h xor v) * PRIME
+
+    fun of(bytes: ByteArray): Long = bytes.fold(BASIS) { h, b -> mix(h, (b.toInt() and 0xff).toLong()) }
 }
