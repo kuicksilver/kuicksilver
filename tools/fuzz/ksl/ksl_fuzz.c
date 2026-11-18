@@ -380,5 +380,29 @@ int ksl_fuzz_write_seeds(const char *dir) {
         }
         if (!alpn) ksl_ctx_free(cc);
     }
+    /* mode 0xfd: a client that offers x1 in its first ClientHello and drops ALPN from the second, after the HelloRetryRequest of a
+       P-384-only server (RFC 9846 section 4.2.2 forbids it; KSL_OPT_ALPN_POLICY judges the second on its own) */
+    {
+        ksl_ssl *tc = ksl_ssl_new(tcp_client_ctx, KSL_MODE_TCP), *ts = ksl_ssl_new(tcp_server_ctx[0][0][1], KSL_MODE_TCP);
+        ksl_ssl_set(tc, KSL_SET_SNI, (const uint8_t *)"server.test", 11);
+        uint8_t rec[8192], out[4096]; size_t rl = 0, w, used;
+        for (int round = 0; round < 2; round++) {
+            ksl_drive(tc);
+            while (ksl_tcp_drain(tc, out, sizeof out, &w) == KSL_OK && w) {
+                if (rl + w <= sizeof rec) { memcpy(rec + rl, out, w); rl += w; }
+                ksl_tcp_feed(ts, out, w, &used);
+            }
+            if (round == 0) SSL_set_alpn_protos(tc->ssl, NULL, 0); /* the second ClientHello carries no ALPN */
+            ksl_drive(ts);
+            while (ksl_tcp_drain(ts, out, sizeof out, &w) == KSL_OK && w) ksl_tcp_feed(tc, out, w, &used);
+        }
+        static const int cfgs[] = {0, 1, 4, 8};   /* + 12: base OPEN, base REQUIRED, overrides OPEN and REQUIRED */
+        for (size_t k = 0; k < sizeof cfgs / sizeof cfgs[0]; k++) {
+            uint8_t framedfd[8193]; framedfd[0] = (uint8_t)(cfgs[k] + 12); memcpy(framedfd + 1, rec, rl);
+            char name[48]; snprintf(name, sizeof name, "tcp-alpn-dropped-hrr-%d", cfgs[k]);
+            PUT(name, 0xfd, framedfd, rl + 1);
+        }
+        ksl_ssl_free(tc); ksl_ssl_free(ts);
+    }
     return 0;
 }
