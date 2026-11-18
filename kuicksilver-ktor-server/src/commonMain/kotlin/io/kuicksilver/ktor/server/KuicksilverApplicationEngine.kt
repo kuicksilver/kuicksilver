@@ -187,6 +187,10 @@ public class KuicksilverApplicationEngine(
         /** Set by `EngineMain` (`kuicksilver.tls.versions`): the TLS versions of the connectors [identity] serves. */
         internal var tlsVersions: TlsVersions = TlsVersions.Tls13
 
+        /** Set by `EngineMain` (`kuicksilver.tls.keyExchangeGroups`): the key-exchange groups of the connectors [identity] serves. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal var tlsKeyExchangeGroups: io.kuicksilver.tls.KeyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups.Default
+
         /** Set by `EngineMain` (`kuicksilver.tls.ocspStapling`): the OCSP response the connectors [identity] serves staple. */
         @OptIn(ExperimentalKuicksilverApi::class)
         internal var tlsOcspStapling: io.kuicksilver.tls.OcspStapling? = null
@@ -660,6 +664,8 @@ public class KuicksilverApplicationEngine(
                             ocspStapling = configuration.tlsOcspStapling
                             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                             versions = configuration.tlsVersions
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            keyExchangeGroups = configuration.tlsKeyExchangeGroups
                         }.build()
                         .let { Listener(it, it) }
                 }
@@ -680,6 +686,13 @@ public class KuicksilverApplicationEngine(
                     throw TlsException.Config(
                         "kuicksilver.tls.versions applies to the port of kuicksilver.tls.certificateChain, not to $c: " +
                             "use ktor.security.ssl.enabledProtocols there",
+                    )
+                }
+                // and the key-exchange groups, which Ktor's sslConnector has no setting for
+                @OptIn(ExperimentalKuicksilverApi::class)
+                if (configuration.tlsKeyExchangeGroups != io.kuicksilver.tls.KeyExchangeGroups.Default) {
+                    throw TlsException.Config(
+                        "kuicksilver.tls.keyExchangeGroups applies to the port of kuicksilver.tls.certificateChain, not to $c",
                     )
                 }
                 // Ktor's sslConnector has no stapled OCSP response and no trusted-gateway switch: tlsConnector(identity) has both.

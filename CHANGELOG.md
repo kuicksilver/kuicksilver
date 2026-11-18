@@ -23,8 +23,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is built. A server picks by its own order: the first of its list the client sent a key share for, else a
   HelloRetryRequest for the first of its list the client supports, `handshake_failure` (40; over QUIC CRYPTO_ERROR
   0x0128) with none in common; an `sniSelector` answer may bring its own list (`ServerTlsOverride.keyExchangeGroups`), and
-  the Ktor TLS connector has `keyExchangeGroups` for TCP and HTTP/3. `TlsConnection.keyExchangeGroup`,
-  `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the group a handshake used. The default
+  the Ktor TLS connector has `keyExchangeGroups` for TCP and HTTP/3 (and `EngineMain` the key
+  `kuicksilver.tls.keyExchangeGroups`, a list of names, for the deployment port). In TLS 1.2 a client's list also names
+  the curves of ECDSA certificates it accepts (RFC 8422 section 5.1). `TlsConnection.keyExchangeGroup`,
+  `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the group a handshake used (none for
+  a TLS 1.2 abbreviated handshake). The default
   list and key shares are unchanged; a client that sends several key shares now gets the server's first of them, where
   OpenSSL took the client's order among them before. `ksl`: `ksl_ctx_set_groups` and `KSL_GET_GROUP`, additive under ABI
   7. Docs: [TLS: Key exchange groups](docs/guide/tls.md#key-exchange-groups).

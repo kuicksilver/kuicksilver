@@ -614,6 +614,94 @@ class EngineMainTest {
             assertTrue("certificateChain" in e.message.orEmpty(), e.message)
         }
 
+    /** A TLS 1.3 handshake of the JDK's client offering only [group] (its named groups) with the server on [port]; null when it worked. */
+    private suspend fun jdkHandshakeFails(
+        port: Int,
+        group: String,
+    ): Throwable? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            runCatching {
+                (jdkContext().socketFactory.createSocket(java.net.InetAddress.getLoopbackAddress(), port) as javax.net.ssl.SSLSocket)
+                    .use { s ->
+                        s.soTimeout = 20_000
+                        s.sslParameters =
+                            s.sslParameters.apply {
+                                protocols = arrayOf("TLSv1.3")
+                                namedGroups = arrayOf(group)
+                            }
+                        s.startHandshake()
+                    }
+            }.exceptionOrNull()
+        }
+
+    /**
+     * `kuicksilver.tls.keyExchangeGroups` (a list) sets the deployment port's groups: a server of secp384r1 alone serves a client
+     * of secp384r1 and refuses one of x25519 (RFC 9846 section 4.2.1, handshake_failure); names are case-insensitive.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun keyExchangeGroupsKeySetsTheServersGroups() =
+        serverTest {
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups.size=1", "-P:kuicksilver.tls.keyExchangeGroups.0=SECP384R1"),
+                )
+            assertEquals(
+                io.kuicksilver.tls.KeyExchangeGroups(listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP384R1)),
+                server.engine.configuration.tlsKeyExchangeGroups,
+            )
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                assertEquals(null, jdkHandshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
+                assertTrue(jdkHandshakeFails(port, "x25519") is javax.net.ssl.SSLException, "a client of x25519 alone is refused")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    @Test fun negative_keyExchangeGroupsKeyRefusesAnInvalidListOrNoIdentity() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups.size=1", "-P:kuicksilver.tls.keyExchangeGroups.0=P-256"),
+                    ).engine
+            }
+        assertTrue("kuicksilver.tls.keyExchangeGroups" in e.message.orEmpty() && "P-256" in e.message.orEmpty(), e.message)
+        val dup =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs(
+                            "-P:kuicksilver.tls.keyExchangeGroups.size=2",
+                            "-P:kuicksilver.tls.keyExchangeGroups.0=x25519",
+                            "-P:kuicksilver.tls.keyExchangeGroups.1=X25519",
+                        ),
+                    ).engine
+            }
+        assertTrue("twice" in dup.message.orEmpty(), dup.message)
+        val noIdentity =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        arrayOf(
+                            "-host=127.0.0.1",
+                            "-port=0",
+                            "-P:ktor.application.modules.size=1",
+                            "-P:ktor.application.modules.0=$module",
+                            "-P:kuicksilver.tls.keyExchangeGroups.size=1",
+                            "-P:kuicksilver.tls.keyExchangeGroups.0=x25519",
+                        ),
+                    ).engine
+            }
+        assertTrue("certificateChain" in noIdentity.message.orEmpty(), noIdentity.message)
+    }
+
     @Test fun negative_tlsVersionsKeyWithSslPortRefused() =
         serverTest {
             val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
