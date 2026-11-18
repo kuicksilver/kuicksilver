@@ -21,6 +21,13 @@ public fun InetSocketAddress.ipLiteral(): String {
 }
 
 /**
+ * Address bytes (4 or 16) as an IP literal, the same text [ipLiteral] gives an address without a zone: a dotted quad, or
+ * IPv6 as RFC 5952 recommends. Throws [IllegalArgumentException] for any other length.
+ */
+@InternalKuicksilverApi
+public fun ipLiteralOf(bytes: ByteArray): String = ipText(bytes)
+
+/**
  * The same host as an IP literal with [port] (the loop group's extra sockets, a resolved connect target). An IP address is
  * never looked up; a host name is resolved here, once (on Kotlin/Native `resolveAddress()` calls `getaddrinfo`). A name that
  * does not resolve (an unresolved java.net address) stays as it is, this same address for the same port.

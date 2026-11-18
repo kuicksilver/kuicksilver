@@ -14,6 +14,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.network.TlsSocket
 import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.ktor.network.tls
+import io.kuicksilver.tls.TlsConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
@@ -187,15 +188,28 @@ internal class RawH2Client private constructor(
     companion object {
         val PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".encodeToByteArray()
 
-        /** Connects to [host]:[port] (127.0.0.1 by default) over TLS offering [alpn]. */
+        /**
+         * Connects to [host]:[port] (127.0.0.1 by default) over TLS offering [alpn]; a non-empty [proxyPrefix] (a PROXY
+         * protocol header) is written on the TCP connection before the TLS handshake, as a proxy in front of the server does.
+         */
         suspend fun connect(
             port: Int,
             alpn: List<String> = listOf("h2"),
             host: String = "127.0.0.1",
+            proxyPrefix: ByteArray = ByteArray(0),
         ): RawH2Client {
             val selector = SelectorManager(Dispatchers.Default)
             try {
                 val tcp = connectTcp(selector, InetSocketAddress(host, port))
+                if (proxyPrefix.isNotEmpty()) {
+                    // the socket's channels can be opened once: the header and then TLS go through the same ones, the
+                    // header not flushed so that it leaves with the ClientHello
+                    val r = tcp.openReadChannel()
+                    val w = tcp.openWriteChannel(autoFlush = false)
+                    w.writeFully(proxyPrefix)
+                    val session = TlsConnection.client(r, w, ServerFixtures.clientTls(alpn = alpn), tcp.coroutineContext)
+                    return RawH2Client(selector, tcp, session.input, session.output, session.negotiatedAlpn)
+                }
                 val t: TlsSocket = tcp.tls(ServerFixtures.clientTls(alpn = alpn))
                 return RawH2Client(selector, t, t.openReadChannel(), t.openWriteChannel(), t.negotiatedAlpn)
             } catch (e: Throwable) {

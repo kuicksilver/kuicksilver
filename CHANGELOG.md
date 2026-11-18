@@ -29,6 +29,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   name lookup the engine makes, through the system's resolver (per address family) or `dns` (per family for a
   `FamilyDns`, once for both with a plain `Dns`); `dnsEnd` carries the addresses the engine may connect to, or the
   failure (a cancellation included). An address literal is no lookup and has no events.
+- Ktor server engine: the PROXY protocol (HAProxy, versions 1 and 2) on TCP connectors, experimental and off by default:
+  `proxyProtocol { trust("10.0.0.0/8") }` on `plainConnector { }` and `tlsConnector(identity) { }`, and
+  `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` for `EngineMain`'s deployment port.
+  Every connection of such a connector must start with a header from one of the trusted sources, before the TLS
+  handshake on a TLS connector; any other peer is closed at accept, and a missing, malformed, oversized (version 1: 107
+  bytes; version 2: `maxHeaderSize`, 4096 by default) or late (`headerTimeout`, 5 s, at least 3 s) header resets the
+  connection (`connectionRefused` reasons `PROXY protocol untrusted source` and `PROXY protocol header`). A LOCAL header
+  (a health check) is accepted with any length and family. Version 2 TLVs are checked to fit their block, a CRC32c TLV is
+  verified, and the header is `call.request.proxyHeader`. The client it names becomes `call.request.origin` on HTTP/1.1
+  and HTTP/2 while `call.request.local` keeps the TCP peer, and `http2RepeatOffenderPenalty` counts that client, never
+  the proxy. HTTP/3 takes no header. A fuzz target (`server.proxyHeader`) covers the parser. ADR-0022; threat model 3.27.
+- `kuicksilver-ktor-network`: `Socket.tlsServer(config, input)` (internal API) runs a TLS server on a socket whose read
+  channel the caller already opened and read a prefix from.
+- `tools/check/rfc-table.sh` takes `spec-<name>` in the RFC column for a specification outside the IETF;
+  `tools/check/rfc-table-test.sh` holds its negative controls (in the gate and the hosted lint job).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

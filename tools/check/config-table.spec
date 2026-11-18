@@ -17,8 +17,10 @@ HTTP/3 client options | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksi
 Ktor server engine | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverApplicationEngine.kt | KuicksilverApplicationEngine.Configuration | var
 TLS connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverTlsConnector.kt | KuicksilverTlsConnector.Builder | var
 Plain connector | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/KuicksilverPlainConnector.kt | KuicksilverPlainConnector.Builder | var
+PROXY protocol | kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyProtocol.kt | ProxyProtocolConfig.Builder | var
 # Rows of options the classes inherit or take as plain constructor parameters:
 #allow SessionTicketConfig | keys
 #allow Ktor client engine | proxy
 #allow QuicClientConfig and QuicServerConfig | tls
 #allow TLS connector | identity
+#allow PROXY protocol | trustedSources

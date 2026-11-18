@@ -675,6 +675,60 @@ A plain connector has no certificate at all, so a request whose target is an abs
 a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
 port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
 
+### PROXY protocol
+
+Behind an L4 load balancer or a TCP proxy (HAProxy, AWS NLB, Envoy, nginx `stream`) the server's TCP peer is the proxy.
+A proxy that speaks the PROXY protocol (HAProxy's, versions 1 and 2; *experimental* here) sends the client's address
+first on each connection, and a connector with `proxyProtocol` reports that client as `call.request.origin`:
+
+```kotlin
+// guide:ktor:proxy-protocol
+plainConnector {
+    port = 8080
+    proxyProtocol {
+        trust("10.0.0.0/8", "2001:db8:1::/48") // the load balancers' addresses
+    }
+}
+```
+
+```kotlin
+// guide:ktor:proxy-protocol-origin
+get("/") {
+    val client = call.request.origin.remoteAddress // the client the header names
+    val proxy = call.request.local.remoteAddress // the TCP peer: the load balancer
+    val sni = call.request.proxyHeader?.authority // a TLV, when the proxy sends one
+    call.respondText("$client via $proxy for $sni")
+}
+```
+
+`tlsConnector(identity) { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
+on a TCP-mode backend). The rules ([ADR-0022](../adr/0022-proxy-protocol.md), the details in
+[spec-haproxy-proxy-protocol.md](../spec/rfc/spec-haproxy-proxy-protocol.md)):
+
+- Only the `trustedSources` may send the header, and every connection to the connector must come from one of them: any
+  other peer is closed at accept, before a byte is read (an event `connectionRefused` with the reason
+  `PROXY protocol untrusted source`, and a warning at most every 10 s). A client that reaches the port around the proxy
+  can therefore not choose its own address. List the proxies' own addresses, as the server sees them; an IPv4 proxy
+  matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
+  `0.0.0.0/0` and `::/0`: every peer must then send a header.
+- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
+  spec's bound for a TCP retransmit; `requestHeaderTimeoutSeconds` must then be at least 3 too, or the start fails); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
+  an `UNKNOWN` one leaves the origin as the connection's.
+- `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and
+  `ForwardedHeaders` overwrite the origin whenever their fields are present, and behind an L4 proxy those fields come
+  from the client: install them only when an HTTP proxy in front of the server sets or strips them. `call.request.proxyHeader` gives the whole header:
+  version, command, family, both addresses and ports, and the version 2 TLVs (`alpn`, `authority`, `uniqueId`, `ssl`,
+  `netns`, any other by type); a CRC32c TLV is verified before the connection is served.
+- `http2RepeatOffenderPenalty` counts the client the header names and never the proxy (a flood behind a header that names
+  no client strikes nobody); `maxTcpConnectionsPerIp` counts TCP peers, so on such a connector it limits each proxy's
+  connections: leave it off there, or size it for a proxy.
+- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Set `altSvc = false`
+  unless the proxy forwards UDP on the same port number.
+- `EngineMain`: `kuicksilver.proxyProtocol.trustedSources` (a list or a comma-separated string),
+  `kuicksilver.proxyProtocol.headerTimeout` and `kuicksilver.proxyProtocol.maxHeaderSize` turn it on for the deployment
+  port; next to Ktor's `-sslPort` connector the start fails.
+
 ### Certificate per name (SNI)
 
 One connector can serve several names, each with its own certificate (RFC 6066 section 3): its `sniSelector` sees the
@@ -875,6 +929,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
+| `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
 
 An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not

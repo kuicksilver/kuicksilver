@@ -412,6 +412,48 @@ class ServerH2FloodTest {
         }
 
     /**
+     * On a PROXY protocol connector the TCP peer is the proxy that carries every client. Three floods behind headers that
+     * name no client (`PROXY UNKNOWN`) must strike nobody: struck by the proxy's address, they would refuse the proxy, and
+     * so a client whose header names it (`TCP4`) behind the same proxy, at accept.
+     */
+    @Test fun negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy() =
+        serverTest {
+            val (server, port) =
+                h2TlsServer(
+                    configure = { http2RepeatOffenderPenalty = 30.seconds },
+                    connector = { proxyProtocol { trust("127.0.0.1") } },
+                ) {
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            val unknown = "PROXY UNKNOWN\r\n".encodeToByteArray()
+            try {
+                val before = server.engine.h2FloodEnds.value
+                for (k in 1..3) {
+                    RawH2Client.connect(port, proxyPrefix = unknown).use { raw ->
+                        raw.preface()
+                        raw.write(RawH2Client.frame(RawFrame.HEADERS, 0x1, 1, RawH2Client.block(RawH2Client.get())))
+                        raw.flood(100) { RawH2Client.frame(RawFrame.CONTINUATION, 0, 1, byteArrayOf(0)) }
+                        raw.goAwaySeen()
+                    }
+                    withTimeout(10.seconds) { server.engine.h2FloodEnds.first { it == before + k } }
+                }
+                // the proxy's own address was not struck either (the accept-time check is skipped on such a connector, so
+                // only the table tells)
+                assertEquals(false, server.engine.h2Offenders!!.refuses(parseIpLiteral("127.0.0.1")), "the proxy was struck")
+                val client = "PROXY TCP4 192.0.2.67 198.51.100.2 40000 443\r\n".encodeToByteArray()
+                RawH2Client.connect(port, proxyPrefix = client).use { raw ->
+                    raw.preface()
+                    raw.headers(1, RawH2Client.get())
+                    val f = assertNotNull(raw.await(within = 15.seconds) { (it.stream == 1 && it.endStream) || it.type == RawFrame.GOAWAY })
+                    assertEquals(1, f.stream, "a client behind the proxy is served after floods behind UNKNOWN headers: $f")
+                }
+                assertEquals(0L, server.engine.refusedOffenders.value)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * Off by default: every client behind one shared address (a NAT, an L4 load balancer that rewrites source addresses)
      * would be refused with a flooder, so only the per-connection limits apply unless the operator turns it on.
      */

@@ -21,12 +21,15 @@ public class KuicksilverPlainConnector private constructor(
     override val port: Int,
     /** Whether every client of this connector is a trusted gateway; see [Builder.trustedGateway]. */
     public val trustedGateway: Boolean,
+    /** The PROXY protocol on this connector, or null (the default) for none; see [Builder.proxyProtocol]. */
+    @property:ExperimentalKuicksilverApi
+    public val proxyProtocol: ProxyProtocolConfig? = null,
 ) : EngineConnectorConfig {
     /** Always plain HTTP. */
     override val type: ConnectorType get() = ConnectorType.HTTP
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
-    public fun withPort(port: Int): KuicksilverPlainConnector = KuicksilverPlainConnector(host, port, trustedGateway)
+    public fun withPort(port: Int): KuicksilverPlainConnector = KuicksilverPlainConnector(host, port, trustedGateway, proxyProtocol)
 
     /** For logs. */
     override fun toString(): String = "HTTP $host:$port"
@@ -50,10 +53,24 @@ public class KuicksilverPlainConnector private constructor(
          */
         public var trustedGateway: Boolean = false
 
+        /**
+         * The PROXY protocol (HAProxy, versions 1 and 2) on this connector: every connection must start with a header from
+         * one of its trusted sources, which becomes the requests' `origin`; null (the default) takes none. See
+         * [ProxyProtocolConfig].
+         */
+        @ExperimentalKuicksilverApi
+        public var proxyProtocol: ProxyProtocolConfig? = null
+
+        /** Sets [proxyProtocol] from [block]. */
+        @ExperimentalKuicksilverApi
+        public fun proxyProtocol(block: ProxyProtocolConfig.Builder.() -> Unit) {
+            proxyProtocol = ProxyProtocolConfig.Builder().apply(block).build()
+        }
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         public fun build(): KuicksilverPlainConnector {
             require(port in 0..65_535) { "port must be 0..65535" }
-            return KuicksilverPlainConnector(host, port, trustedGateway)
+            return KuicksilverPlainConnector(host, port, trustedGateway, proxyProtocol)
         }
     }
 }

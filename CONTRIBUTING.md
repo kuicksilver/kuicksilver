@@ -95,6 +95,7 @@ bash tools/check/links.sh                                        # relative link
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 python3 tools/check/code-refs.py                                 # the File.kt:N lines docs/spec cites (--fix re-points moved ones, --write records new ones)
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
+bash tools/check/rfc-table-test.sh                               # negative controls of rfc-table.sh
 python3 tools/check/rfc-tests.py                                 # the tests a ✅ section of docs/spec/rfc names exist, and it names one
 python3 tools/check/test-discovery.py                            # every @Test can run (not inside a function body, not in an object, ...)
 python3 tools/check/test-bytecode.py                             # the same in the compiled JVM test classes (after compileTestKotlinJvm)
@@ -313,8 +314,8 @@ request without such tests is not merged. The tests run in the automated suites 
   `tools/fuzz/formats/changes.txt`; new inputs (a `minimize`, a new reproducer) are recorded the same way. A new target
   traces its program or is listed with its reason in `tools/fuzz/formats/untraced.txt` (`tools/check/fuzz-formats.py`);
   `tools/c-test.sh` replays `tools/fuzz/corpus/ksl.parsers` under ASan/UBSan. `tools/fuzz/gen-seeds.sh` regenerates the
-  QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py` and `tools/fuzz/gen-h1-seeds.py`
-  write those of the WebSocket, HTTPS record and HTTP/1.1 targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
+  QUIC and TLS seed corpora, `tools/fuzz/gen-ws-seeds.py`, `tools/fuzz/gen-svcb-seeds.py`, `tools/fuzz/gen-h1-seeds.py` and `tools/fuzz/gen-proxy-seeds.py`
+  write those of the WebSocket, HTTPS record, HTTP/1.1 and PROXY protocol targets, `tools/fuzz/ksl/build.sh --seeds` the ksl seeds.
   `tools/fuzz/planted-check.sh` plants known bugs in a copy of the tree and checks that the HTTP/1.1 targets fail on the
   inputs written for them: run it after changing those targets or the code they fuzz. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses

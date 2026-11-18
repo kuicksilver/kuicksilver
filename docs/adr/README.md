@@ -25,3 +25,4 @@ Documents and identifiers are in English.
 | [0018](0018-h2c-and-coalescing-in-030.md) | h2c (prior knowledge, opt-in) and connection coalescing across origins in 0.3.0 | accepted, not implemented yet |
 | [0019](0019-openssl-4-and-ech.md) | OpenSSL 4.1.x, then 4.2 LTS, for Encrypted Client Hello in 0.3.0 | accepted, implementation pending |
 | [0020](0020-pluggable-dns.md) | A pluggable name resolver for the Ktor client engine (`dns`), after OkHttp's `Dns`, sorted and raced by the engine | accepted |
+| [0022](0022-proxy-protocol.md) | The PROXY protocol on the server's TCP connectors: trusted sources only, the header first, the client in `origin` | accepted; implemented in 0.3.0 (experimental) |

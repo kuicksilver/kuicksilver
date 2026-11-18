@@ -71,7 +71,7 @@ This is a practice of review, not a check a tool runs. The same six QUIC stacks 
 - [docs/spec/rfc-compliance.md](spec/rfc-compliance.md) has one row per requirement or topic (met, feature subset,
   planned, not planned) and links each row to its section in `docs/spec/rfc/<rfc>.md`: the requirement, the files that
   implement it, the tests that pin it, history, notes on peers and open items. A change of behaviour updates the row
-  and its details in the same commit. [`tools/check/rfc-table.sh`](../tools/check/rfc-table.sh) checks the table format
+  and its details in the same commit. [`tools/check/rfc-table.sh`](../tools/check/rfc-table.sh) (negative controls in `rfc-table-test.sh`) checks the table format
   and that every details link and anchor exists; [`tools/check/rfc-tests.py`](../tools/check/rfc-tests.py) that every
   test a ✅ section names exists and that a ✅ section names one ([repository checks](#repository-checks)); whether the
   tests pin what the row claims is a matter of review (stage 2).
@@ -192,7 +192,7 @@ programs trace only what the input decides (the HTTP/2 server target states all 
 closed). Targets listed in
 `untraced.txt` are not covered (most read the input as the bytes of what they parse; `tls.zeroRttHello`,
 `ktor-network.inflate`, `ktor-network.wsGuard`, `client.h1Response`, `server.h1Request` and `quic.rememberedTicket` have
-small decoders not traced yet), and neither is a Jazzer target that is not in the campaign's table
+small decoders not traced yet; `server.proxyHeader` reads only a mode byte before the header's own bytes), and neither is a Jazzer target that is not in the campaign's table
 (`BbrInvariantFuzzTest`). The reason rule needs the history: the hosted lint job checks out all of it and compares a push to `main` or `release/**` with the commit before it, anything else with its merge base with `origin/main` (`KSL_FUZZ_FORMATS_BASE`); without a base it skips the rule and says so.
 
 `deadline-sites.py` resolves the kotlinx functions exactly from each file's imports, but its timer and select forms are

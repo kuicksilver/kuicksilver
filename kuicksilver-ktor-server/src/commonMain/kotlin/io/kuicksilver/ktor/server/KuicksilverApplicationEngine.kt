@@ -86,6 +86,9 @@ public class KuicksilverApplicationEngine(
          * keep-alive connection, or a connection that never spoke) is closed without a response. It also bounds the
          * field-block deadline `maxHeaderBlockTime` of [http2Settings] and [http3Settings]. Positive; default 30.
          *
+         * A connector with `proxyProtocol` needs at least 3: the PROXY protocol header's wait is cut to this deadline, and the
+         * start fails below it.
+         *
          * @throws IllegalArgumentException when set to zero or less.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -199,6 +202,12 @@ public class KuicksilverApplicationEngine(
          * or, without one, in cleartext behind a TLS-terminating proxy (absolute-form `https` targets, RFC 9110 section 7.4).
          */
         internal var tlsTrustedGateway: Boolean = false
+
+        /**
+         * Set by `EngineMain` (`kuicksilver.proxyProtocol.*`): the PROXY protocol on the deployment port (a Ktor connector,
+         * served in cleartext or with [identity]); null for none.
+         */
+        internal var deploymentProxyProtocol: ProxyProtocolConfig? = null
 
         /**
          * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
@@ -632,10 +641,17 @@ public class KuicksilverApplicationEngine(
         val tls: KuicksilverTlsConnector?,
         /** `EngineMain`'s `kuicksilver.tls.trustedGateway` for the plain deployment port (a Ktor connector, not a plain one of ours). */
         gateway: Boolean = false,
+        /** `EngineMain`'s `kuicksilver.proxyProtocol.*` for the plain deployment port. */
+        deploymentProxy: ProxyProtocolConfig? = null,
     ) {
         /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
         @OptIn(ExperimentalKuicksilverApi::class)
         val trustedGateway: Boolean = tls?.trustedGateway ?: (((config as? KuicksilverPlainConnector)?.trustedGateway ?: false) || gateway)
+
+        /** The PROXY protocol of the connector's TCP side, or null. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val proxyProtocol: ProxyProtocolConfig? =
+            tls?.proxyProtocol ?: (config as? KuicksilverPlainConnector)?.proxyProtocol ?: deploymentProxy
     }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
@@ -660,10 +676,13 @@ public class KuicksilverApplicationEngine(
                             ocspStapling = configuration.tlsOcspStapling
                             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                             versions = configuration.tlsVersions
+                            // a plain connector served with the deployment's identity keeps its PROXY protocol
+                            @OptIn(ExperimentalKuicksilverApi::class)
+                            proxyProtocol = (c as? KuicksilverPlainConnector)?.proxyProtocol ?: configuration.deploymentProxyProtocol
                         }.build()
                         .let { Listener(it, it) }
                 }
-                    ?: Listener(c, null, configuration.tlsTrustedGateway)
+                    ?: Listener(c, null, configuration.tlsTrustedGateway, configuration.deploymentProxyProtocol)
             }
 
             else -> {
@@ -692,6 +711,13 @@ public class KuicksilverApplicationEngine(
                             "with the kuicksilver.tls keys, or set ocspStapling and trustedGateway on tlsConnector(identity) in code",
                     )
                 }
+                // nor the PROXY protocol, which must come before its TLS: a proxy sending headers there would be refused
+                if (configuration.deploymentProxyProtocol != null) {
+                    throw TlsException.Config(
+                        "kuicksilver.proxyProtocol applies to the deployment port, not to $c: Ktor's sslConnector cannot read a " +
+                            "PROXY header; serve that port with the kuicksilver.tls keys, or set proxyProtocol on tlsConnector(identity) in code",
+                    )
+                }
                 platformTlsConnector(c)?.let { Listener(it, it) }
                     ?: throw TlsException.Config(
                         "connector $c is not supported by the Kuicksilver engine: use tlsConnector(identity) or a plain connector",
@@ -717,6 +743,20 @@ public class KuicksilverApplicationEngine(
                         }
                     }
                     val listeners = configuration.connectors.map { resolve(it) }
+
+                    // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
+                    // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)
+                    @OptIn(ExperimentalKuicksilverApi::class)
+                    val headDeadline = configuration.requestHeaderTimeoutSeconds
+                    if (headDeadline < ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds &&
+                        listeners.any { it.proxyProtocol != null }
+                    ) {
+                        val key = if (configuration.deploymentProxyProtocol != null) "kuicksilver.proxyProtocol" else "proxyProtocol"
+                        throw IllegalArgumentException(
+                            "$key needs requestHeaderTimeoutSeconds of at least ${ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds} " +
+                                "(it is $headDeadline): the PROXY protocol header's wait is cut to the request-head deadline",
+                        )
+                    }
                     // TCP accepting waits for the HTTP/3 listeners: h3Ports is complete (and published) before any connection reads it
                     val h3Ready = Job()
                     // one at a time: a connector whose set-up throws leaves those before it in [servers], so the failure path

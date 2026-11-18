@@ -18,6 +18,42 @@ final enum class io.kuicksilver.ktor.server/Http3Advertising : kotlin/Enum<io.ku
     final fun values(): kotlin/Array<io.kuicksilver.ktor.server/Http3Advertising> // io.kuicksilver.ktor.server/Http3Advertising.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.ktor.server/ProxyCommand : kotlin/Enum<io.kuicksilver.ktor.server/ProxyCommand> { // io.kuicksilver.ktor.server/ProxyCommand|null[0]
+    enum entry Local // io.kuicksilver.ktor.server/ProxyCommand.Local|null[0]
+    enum entry Proxy // io.kuicksilver.ktor.server/ProxyCommand.Proxy|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/ProxyCommand.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/ProxyCommand> // io.kuicksilver.ktor.server/ProxyCommand.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/ProxyCommand // io.kuicksilver.ktor.server/ProxyCommand.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/ProxyCommand> // io.kuicksilver.ktor.server/ProxyCommand.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.ktor.server/ProxyFamily : kotlin/Enum<io.kuicksilver.ktor.server/ProxyFamily> { // io.kuicksilver.ktor.server/ProxyFamily|null[0]
+    enum entry Inet // io.kuicksilver.ktor.server/ProxyFamily.Inet|null[0]
+    enum entry Inet6 // io.kuicksilver.ktor.server/ProxyFamily.Inet6|null[0]
+    enum entry Unix // io.kuicksilver.ktor.server/ProxyFamily.Unix|null[0]
+    enum entry Unspecified // io.kuicksilver.ktor.server/ProxyFamily.Unspecified|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/ProxyFamily.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/ProxyFamily> // io.kuicksilver.ktor.server/ProxyFamily.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/ProxyFamily // io.kuicksilver.ktor.server/ProxyFamily.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/ProxyFamily> // io.kuicksilver.ktor.server/ProxyFamily.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.ktor.server/ProxyTransport : kotlin/Enum<io.kuicksilver.ktor.server/ProxyTransport> { // io.kuicksilver.ktor.server/ProxyTransport|null[0]
+    enum entry Dgram // io.kuicksilver.ktor.server/ProxyTransport.Dgram|null[0]
+    enum entry Stream // io.kuicksilver.ktor.server/ProxyTransport.Stream|null[0]
+    enum entry Unspecified // io.kuicksilver.ktor.server/ProxyTransport.Unspecified|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/ProxyTransport.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/ProxyTransport> // io.kuicksilver.ktor.server/ProxyTransport.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/ProxyTransport // io.kuicksilver.ktor.server/ProxyTransport.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/ProxyTransport> // io.kuicksilver.ktor.server/ProxyTransport.values|values#static(){}[0]
+}
+
 abstract class io.kuicksilver.ktor.server/KuicksilverServerEventListener { // io.kuicksilver.ktor.server/KuicksilverServerEventListener|null[0]
     constructor <init>() // io.kuicksilver.ktor.server/KuicksilverServerEventListener.<init>|<init>(){}[0]
 
@@ -148,6 +184,8 @@ final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.serve
         final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host.<get-host>|<get-host>(){}[0]
     final val port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port|{}port[0]
         final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port.<get-port>|<get-port>(){}[0]
+    final val proxyProtocol // io.kuicksilver.ktor.server/KuicksilverPlainConnector.proxyProtocol|{}proxyProtocol[0]
+        final fun <get-proxyProtocol>(): io.kuicksilver.ktor.server/ProxyProtocolConfig? // io.kuicksilver.ktor.server/KuicksilverPlainConnector.proxyProtocol.<get-proxyProtocol>|<get-proxyProtocol>(){}[0]
     final val trustedGateway // io.kuicksilver.ktor.server/KuicksilverPlainConnector.trustedGateway|{}trustedGateway[0]
         final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverPlainConnector.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
     final val type // io.kuicksilver.ktor.server/KuicksilverPlainConnector.type|{}type[0]
@@ -165,11 +203,15 @@ final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.serve
         final var port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port|{}port[0]
             final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port.<get-port>|<get-port>(){}[0]
             final fun <set-port>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.port.<set-port>|<set-port>(kotlin.Int){}[0]
+        final var proxyProtocol // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.proxyProtocol|{}proxyProtocol[0]
+            final fun <get-proxyProtocol>(): io.kuicksilver.ktor.server/ProxyProtocolConfig? // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.proxyProtocol.<get-proxyProtocol>|<get-proxyProtocol>(){}[0]
+            final fun <set-proxyProtocol>(io.kuicksilver.ktor.server/ProxyProtocolConfig?) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.proxyProtocol.<set-proxyProtocol>|<set-proxyProtocol>(io.kuicksilver.ktor.server.ProxyProtocolConfig?){}[0]
         final var trustedGateway // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway|{}trustedGateway[0]
             final fun <get-trustedGateway>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway.<get-trustedGateway>|<get-trustedGateway>(){}[0]
             final fun <set-trustedGateway>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.trustedGateway.<set-trustedGateway>|<set-trustedGateway>(kotlin.Boolean){}[0]
 
         final fun build(): io.kuicksilver.ktor.server/KuicksilverPlainConnector // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.build|build(){}[0]
+        final fun proxyProtocol(kotlin/Function1<io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder, kotlin/Unit>) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.proxyProtocol|proxyProtocol(kotlin.Function1<io.kuicksilver.ktor.server.ProxyProtocolConfig.Builder,kotlin.Unit>){}[0]
     }
 }
 
@@ -186,6 +228,8 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
     final val port // io.kuicksilver.ktor.server/KuicksilverTlsConnector.port|{}port[0]
         final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverTlsConnector.port.<get-port>|<get-port>(){}[0]
+    final val proxyProtocol // io.kuicksilver.ktor.server/KuicksilverTlsConnector.proxyProtocol|{}proxyProtocol[0]
+        final fun <get-proxyProtocol>(): io.kuicksilver.ktor.server/ProxyProtocolConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.proxyProtocol.<get-proxyProtocol>|<get-proxyProtocol>(){}[0]
     final val sniSelector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.sniSelector|{}sniSelector[0]
         final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
     final val trust // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trust|{}trust[0]
@@ -222,6 +266,9 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
         final var port // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port|{}port[0]
             final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port.<get-port>|<get-port>(){}[0]
             final fun <set-port>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port.<set-port>|<set-port>(kotlin.Int){}[0]
+        final var proxyProtocol // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.proxyProtocol|{}proxyProtocol[0]
+            final fun <get-proxyProtocol>(): io.kuicksilver.ktor.server/ProxyProtocolConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.proxyProtocol.<get-proxyProtocol>|<get-proxyProtocol>(){}[0]
+            final fun <set-proxyProtocol>(io.kuicksilver.ktor.server/ProxyProtocolConfig?) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.proxyProtocol.<set-proxyProtocol>|<set-proxyProtocol>(io.kuicksilver.ktor.server.ProxyProtocolConfig?){}[0]
         final var sniSelector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector|{}sniSelector[0]
             final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
             final fun <set-sniSelector>(kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>?) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector.<set-sniSelector>|<set-sniSelector>(kotlin.coroutines.SuspendFunction1<io.kuicksilver.tls.ClientHelloInfo,io.kuicksilver.tls.ServerTlsOverride?>?){}[0]
@@ -236,7 +283,129 @@ final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.
             final fun <set-versions>(io.kuicksilver.tls/TlsVersions) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.versions.<set-versions>|<set-versions>(io.kuicksilver.tls.TlsVersions){}[0]
 
         final fun build(): io.kuicksilver.ktor.server/KuicksilverTlsConnector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.build|build(){}[0]
+        final fun proxyProtocol(kotlin/Function1<io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder, kotlin/Unit>) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.proxyProtocol|proxyProtocol(kotlin.Function1<io.kuicksilver.ktor.server.ProxyProtocolConfig.Builder,kotlin.Unit>){}[0]
     }
+}
+
+final class io.kuicksilver.ktor.server/ProxyHeader { // io.kuicksilver.ktor.server/ProxyHeader|null[0]
+    final val alpn // io.kuicksilver.ktor.server/ProxyHeader.alpn|{}alpn[0]
+        final fun <get-alpn>(): kotlin/String? // io.kuicksilver.ktor.server/ProxyHeader.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val authority // io.kuicksilver.ktor.server/ProxyHeader.authority|{}authority[0]
+        final fun <get-authority>(): kotlin/String? // io.kuicksilver.ktor.server/ProxyHeader.authority.<get-authority>|<get-authority>(){}[0]
+    final val command // io.kuicksilver.ktor.server/ProxyHeader.command|{}command[0]
+        final fun <get-command>(): io.kuicksilver.ktor.server/ProxyCommand // io.kuicksilver.ktor.server/ProxyHeader.command.<get-command>|<get-command>(){}[0]
+    final val destinationAddress // io.kuicksilver.ktor.server/ProxyHeader.destinationAddress|{}destinationAddress[0]
+        final fun <get-destinationAddress>(): kotlin/String? // io.kuicksilver.ktor.server/ProxyHeader.destinationAddress.<get-destinationAddress>|<get-destinationAddress>(){}[0]
+    final val destinationPort // io.kuicksilver.ktor.server/ProxyHeader.destinationPort|{}destinationPort[0]
+        final fun <get-destinationPort>(): kotlin/Int? // io.kuicksilver.ktor.server/ProxyHeader.destinationPort.<get-destinationPort>|<get-destinationPort>(){}[0]
+    final val family // io.kuicksilver.ktor.server/ProxyHeader.family|{}family[0]
+        final fun <get-family>(): io.kuicksilver.ktor.server/ProxyFamily // io.kuicksilver.ktor.server/ProxyHeader.family.<get-family>|<get-family>(){}[0]
+    final val netns // io.kuicksilver.ktor.server/ProxyHeader.netns|{}netns[0]
+        final fun <get-netns>(): kotlin/String? // io.kuicksilver.ktor.server/ProxyHeader.netns.<get-netns>|<get-netns>(){}[0]
+    final val sourceAddress // io.kuicksilver.ktor.server/ProxyHeader.sourceAddress|{}sourceAddress[0]
+        final fun <get-sourceAddress>(): kotlin/String? // io.kuicksilver.ktor.server/ProxyHeader.sourceAddress.<get-sourceAddress>|<get-sourceAddress>(){}[0]
+    final val sourcePort // io.kuicksilver.ktor.server/ProxyHeader.sourcePort|{}sourcePort[0]
+        final fun <get-sourcePort>(): kotlin/Int? // io.kuicksilver.ktor.server/ProxyHeader.sourcePort.<get-sourcePort>|<get-sourcePort>(){}[0]
+    final val ssl // io.kuicksilver.ktor.server/ProxyHeader.ssl|{}ssl[0]
+        final fun <get-ssl>(): io.kuicksilver.ktor.server/ProxySsl? // io.kuicksilver.ktor.server/ProxyHeader.ssl.<get-ssl>|<get-ssl>(){}[0]
+    final val tlvs // io.kuicksilver.ktor.server/ProxyHeader.tlvs|{}tlvs[0]
+        final fun <get-tlvs>(): kotlin.collections/List<io.kuicksilver.ktor.server/ProxyTlv> // io.kuicksilver.ktor.server/ProxyHeader.tlvs.<get-tlvs>|<get-tlvs>(){}[0]
+    final val transport // io.kuicksilver.ktor.server/ProxyHeader.transport|{}transport[0]
+        final fun <get-transport>(): io.kuicksilver.ktor.server/ProxyTransport // io.kuicksilver.ktor.server/ProxyHeader.transport.<get-transport>|<get-transport>(){}[0]
+    final val uniqueId // io.kuicksilver.ktor.server/ProxyHeader.uniqueId|{}uniqueId[0]
+        final fun <get-uniqueId>(): kotlin/ByteArray? // io.kuicksilver.ktor.server/ProxyHeader.uniqueId.<get-uniqueId>|<get-uniqueId>(){}[0]
+    final val version // io.kuicksilver.ktor.server/ProxyHeader.version|{}version[0]
+        final fun <get-version>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.version.<get-version>|<get-version>(){}[0]
+
+    final fun tlv(kotlin/Int): io.kuicksilver.ktor.server/ProxyTlv? // io.kuicksilver.ktor.server/ProxyHeader.tlv|tlv(kotlin.Int){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/ProxyHeader.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.ktor.server/ProxyHeader.Companion|null[0]
+        final const val PP2_TYPE_ALPN // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_ALPN|{}PP2_TYPE_ALPN[0]
+            final fun <get-PP2_TYPE_ALPN>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_ALPN.<get-PP2_TYPE_ALPN>|<get-PP2_TYPE_ALPN>(){}[0]
+        final const val PP2_TYPE_AUTHORITY // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_AUTHORITY|{}PP2_TYPE_AUTHORITY[0]
+            final fun <get-PP2_TYPE_AUTHORITY>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_AUTHORITY.<get-PP2_TYPE_AUTHORITY>|<get-PP2_TYPE_AUTHORITY>(){}[0]
+        final const val PP2_TYPE_CRC32C // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_CRC32C|{}PP2_TYPE_CRC32C[0]
+            final fun <get-PP2_TYPE_CRC32C>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_CRC32C.<get-PP2_TYPE_CRC32C>|<get-PP2_TYPE_CRC32C>(){}[0]
+        final const val PP2_TYPE_NETNS // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_NETNS|{}PP2_TYPE_NETNS[0]
+            final fun <get-PP2_TYPE_NETNS>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_NETNS.<get-PP2_TYPE_NETNS>|<get-PP2_TYPE_NETNS>(){}[0]
+        final const val PP2_TYPE_NOOP // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_NOOP|{}PP2_TYPE_NOOP[0]
+            final fun <get-PP2_TYPE_NOOP>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_NOOP.<get-PP2_TYPE_NOOP>|<get-PP2_TYPE_NOOP>(){}[0]
+        final const val PP2_TYPE_SSL // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_SSL|{}PP2_TYPE_SSL[0]
+            final fun <get-PP2_TYPE_SSL>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_SSL.<get-PP2_TYPE_SSL>|<get-PP2_TYPE_SSL>(){}[0]
+        final const val PP2_TYPE_UNIQUE_ID // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_UNIQUE_ID|{}PP2_TYPE_UNIQUE_ID[0]
+            final fun <get-PP2_TYPE_UNIQUE_ID>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyHeader.Companion.PP2_TYPE_UNIQUE_ID.<get-PP2_TYPE_UNIQUE_ID>|<get-PP2_TYPE_UNIQUE_ID>(){}[0]
+    }
+}
+
+final class io.kuicksilver.ktor.server/ProxyProtocolConfig { // io.kuicksilver.ktor.server/ProxyProtocolConfig|null[0]
+    final val headerTimeout // io.kuicksilver.ktor.server/ProxyProtocolConfig.headerTimeout|{}headerTimeout[0]
+        final fun <get-headerTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.server/ProxyProtocolConfig.headerTimeout.<get-headerTimeout>|<get-headerTimeout>(){}[0]
+    final val maxHeaderSize // io.kuicksilver.ktor.server/ProxyProtocolConfig.maxHeaderSize|{}maxHeaderSize[0]
+        final fun <get-maxHeaderSize>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyProtocolConfig.maxHeaderSize.<get-maxHeaderSize>|<get-maxHeaderSize>(){}[0]
+    final val trustedSources // io.kuicksilver.ktor.server/ProxyProtocolConfig.trustedSources|{}trustedSources[0]
+        final fun <get-trustedSources>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.ktor.server/ProxyProtocolConfig.trustedSources.<get-trustedSources>|<get-trustedSources>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/ProxyProtocolConfig.toString|toString(){}[0]
+
+    final class Builder { // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder|null[0]
+        constructor <init>() // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.<init>|<init>(){}[0]
+
+        final val trustedSources // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.trustedSources|{}trustedSources[0]
+            final fun <get-trustedSources>(): kotlin.collections/MutableList<kotlin/String> // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.trustedSources.<get-trustedSources>|<get-trustedSources>(){}[0]
+
+        final var headerTimeout // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.headerTimeout|{}headerTimeout[0]
+            final fun <get-headerTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.headerTimeout.<get-headerTimeout>|<get-headerTimeout>(){}[0]
+            final fun <set-headerTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.headerTimeout.<set-headerTimeout>|<set-headerTimeout>(kotlin.time.Duration){}[0]
+        final var maxHeaderSize // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.maxHeaderSize|{}maxHeaderSize[0]
+            final fun <get-maxHeaderSize>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.maxHeaderSize.<get-maxHeaderSize>|<get-maxHeaderSize>(){}[0]
+            final fun <set-maxHeaderSize>(kotlin/Int) // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.maxHeaderSize.<set-maxHeaderSize>|<set-maxHeaderSize>(kotlin.Int){}[0]
+
+        final fun build(): io.kuicksilver.ktor.server/ProxyProtocolConfig // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.build|build(){}[0]
+        final fun trust(kotlin/Array<out kotlin/String>...) // io.kuicksilver.ktor.server/ProxyProtocolConfig.Builder.trust|trust(kotlin.Array<out|kotlin.String>...){}[0]
+    }
+}
+
+final class io.kuicksilver.ktor.server/ProxySsl { // io.kuicksilver.ktor.server/ProxySsl|null[0]
+    final val cipher // io.kuicksilver.ktor.server/ProxySsl.cipher|{}cipher[0]
+        final fun <get-cipher>(): kotlin/String? // io.kuicksilver.ktor.server/ProxySsl.cipher.<get-cipher>|<get-cipher>(){}[0]
+    final val client // io.kuicksilver.ktor.server/ProxySsl.client|{}client[0]
+        final fun <get-client>(): kotlin/Int // io.kuicksilver.ktor.server/ProxySsl.client.<get-client>|<get-client>(){}[0]
+    final val clientSsl // io.kuicksilver.ktor.server/ProxySsl.clientSsl|{}clientSsl[0]
+        final fun <get-clientSsl>(): kotlin/Boolean // io.kuicksilver.ktor.server/ProxySsl.clientSsl.<get-clientSsl>|<get-clientSsl>(){}[0]
+    final val commonName // io.kuicksilver.ktor.server/ProxySsl.commonName|{}commonName[0]
+        final fun <get-commonName>(): kotlin/String? // io.kuicksilver.ktor.server/ProxySsl.commonName.<get-commonName>|<get-commonName>(){}[0]
+    final val keyAlgorithm // io.kuicksilver.ktor.server/ProxySsl.keyAlgorithm|{}keyAlgorithm[0]
+        final fun <get-keyAlgorithm>(): kotlin/String? // io.kuicksilver.ktor.server/ProxySsl.keyAlgorithm.<get-keyAlgorithm>|<get-keyAlgorithm>(){}[0]
+    final val signatureAlgorithm // io.kuicksilver.ktor.server/ProxySsl.signatureAlgorithm|{}signatureAlgorithm[0]
+        final fun <get-signatureAlgorithm>(): kotlin/String? // io.kuicksilver.ktor.server/ProxySsl.signatureAlgorithm.<get-signatureAlgorithm>|<get-signatureAlgorithm>(){}[0]
+    final val subTlvs // io.kuicksilver.ktor.server/ProxySsl.subTlvs|{}subTlvs[0]
+        final fun <get-subTlvs>(): kotlin.collections/List<io.kuicksilver.ktor.server/ProxyTlv> // io.kuicksilver.ktor.server/ProxySsl.subTlvs.<get-subTlvs>|<get-subTlvs>(){}[0]
+    final val verify // io.kuicksilver.ktor.server/ProxySsl.verify|{}verify[0]
+        final fun <get-verify>(): kotlin/Long // io.kuicksilver.ktor.server/ProxySsl.verify.<get-verify>|<get-verify>(){}[0]
+    final val version // io.kuicksilver.ktor.server/ProxySsl.version|{}version[0]
+        final fun <get-version>(): kotlin/String? // io.kuicksilver.ktor.server/ProxySsl.version.<get-version>|<get-version>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/ProxySsl.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.ktor.server/ProxySsl.Companion|null[0]
+        final const val PP2_CLIENT_CERT_CONN // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_CERT_CONN|{}PP2_CLIENT_CERT_CONN[0]
+            final fun <get-PP2_CLIENT_CERT_CONN>(): kotlin/Int // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_CERT_CONN.<get-PP2_CLIENT_CERT_CONN>|<get-PP2_CLIENT_CERT_CONN>(){}[0]
+        final const val PP2_CLIENT_CERT_SESS // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_CERT_SESS|{}PP2_CLIENT_CERT_SESS[0]
+            final fun <get-PP2_CLIENT_CERT_SESS>(): kotlin/Int // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_CERT_SESS.<get-PP2_CLIENT_CERT_SESS>|<get-PP2_CLIENT_CERT_SESS>(){}[0]
+        final const val PP2_CLIENT_SSL // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_SSL|{}PP2_CLIENT_SSL[0]
+            final fun <get-PP2_CLIENT_SSL>(): kotlin/Int // io.kuicksilver.ktor.server/ProxySsl.Companion.PP2_CLIENT_SSL.<get-PP2_CLIENT_SSL>|<get-PP2_CLIENT_SSL>(){}[0]
+    }
+}
+
+final class io.kuicksilver.ktor.server/ProxyTlv { // io.kuicksilver.ktor.server/ProxyTlv|null[0]
+    final val type // io.kuicksilver.ktor.server/ProxyTlv.type|{}type[0]
+        final fun <get-type>(): kotlin/Int // io.kuicksilver.ktor.server/ProxyTlv.type.<get-type>|<get-type>(){}[0]
+    final val value // io.kuicksilver.ktor.server/ProxyTlv.value|{}value[0]
+        final fun <get-value>(): kotlin/ByteArray // io.kuicksilver.ktor.server/ProxyTlv.value.<get-value>|<get-value>(){}[0]
+
+    final fun text(): kotlin/String? // io.kuicksilver.ktor.server/ProxyTlv.text|text(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/ProxyTlv.toString|toString(){}[0]
 }
 
 final object io.kuicksilver.ktor.server/EngineMain { // io.kuicksilver.ktor.server/EngineMain|null[0]
@@ -260,6 +429,8 @@ final val io.kuicksilver.ktor.server/priority // io.kuicksilver.ktor.server/prio
     final fun (io.ktor.server.request/ApplicationRequest).<get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.ktor.server/priority.<get-priority>|<get-priority>@io.ktor.server.request.ApplicationRequest(){}[0]
 final val io.kuicksilver.ktor.server/priorityUpdates // io.kuicksilver.ktor.server/priorityUpdates|@io.ktor.server.request.ApplicationRequest{}priorityUpdates[0]
     final fun (io.ktor.server.request/ApplicationRequest).<get-priorityUpdates>(): kotlinx.coroutines.flow/StateFlow<io.kuicksilver.quic/StreamPriority> // io.kuicksilver.ktor.server/priorityUpdates.<get-priorityUpdates>|<get-priorityUpdates>@io.ktor.server.request.ApplicationRequest(){}[0]
+final val io.kuicksilver.ktor.server/proxyHeader // io.kuicksilver.ktor.server/proxyHeader|@io.ktor.server.request.ApplicationRequest{}proxyHeader[0]
+    final fun (io.ktor.server.request/ApplicationRequest).<get-proxyHeader>(): io.kuicksilver.ktor.server/ProxyHeader? // io.kuicksilver.ktor.server/proxyHeader.<get-proxyHeader>|<get-proxyHeader>@io.ktor.server.request.ApplicationRequest(){}[0]
 final val io.kuicksilver.ktor.server/receivedEarly // io.kuicksilver.ktor.server/receivedEarly|@io.ktor.server.request.ApplicationRequest{}receivedEarly[0]
     final fun (io.ktor.server.request/ApplicationRequest).<get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.ktor.server/receivedEarly.<get-receivedEarly>|<get-receivedEarly>@io.ktor.server.request.ApplicationRequest(){}[0]
 

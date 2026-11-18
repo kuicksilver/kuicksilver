@@ -809,6 +809,65 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `.negative_aNumericHostIsNeverAskedFor`, `.negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure`,
   `.negative_aBlockingDnsThatNeverReturnsDoesNotHoldTheCaller`.
 
+### 3.27 PROXY protocol: client addresses from a proxy (HAProxy "The PROXY protocol" v1/v2; CWE-290, CWE-348)
+
+- **Threats:** a connector with `proxyProtocol` reports the address a PROXY header names as the request's origin
+  (`call.request.origin`), so whoever can put a header on a connection chooses the client address the application logs,
+  rate-limits, allows or denies by (CWE-290, authentication bypass by spoofing; CWE-348, use of a less trusted source):
+  a client that reaches the port directly, around the proxy, or a server that guesses whether a header is there and so
+  takes one from anyone. A header is also input from the network: a version 2 length field of up to 65,535 bytes, TLVs
+  whose lengths overrun the block, a version 1 line that never ends, a header trickled a byte at a time (a slowloris
+  before the first request), a header split over several reads with the request pipelined behind it.
+- **Trust boundary:** the proxy. Only TCP peers in the connector's `trustedSources` may send the header; what such a
+  proxy writes in it (addresses, TLVs, the `PP2_TYPE_SSL` facts) is believed as far as the proxy is trusted, and nothing
+  the client sends through the proxy is ever read as a header. HTTP/3 (QUIC, UDP) on the port of a TLS connector takes
+  no header: its requests report their UDP peer.
+- **Mitigations:** opt-in per connector; `trustedSources` must name at least one address or CIDR block (a block with
+  bits past its prefix, a zone ID or a name is refused at build); a peer outside it is closed at accept, before a byte is
+  read, and reported (`connectionRefused`, reason `PROXY protocol untrusted source`, a rate-limited warning); an
+  IPv4-mapped IPv6 peer is matched as its IPv4 address, IPv4 peers only against IPv4 blocks. On a PROXY connector every
+  connection must start with a valid header, before TLS on a TLS connector; nothing is guessed ("MUST not try to guess
+  whether the protocol header is present or not"). The header is read with bounds: version 1 at most 107 bytes with its
+  CRLF, version 2 at most `maxHeaderSize` (4096 by default, 232..65551), refused from its 16 fixed bytes before its body
+  is read; within `headerTimeout` (5 s by default, at least 3 s as section 2 asks, cut to what is left of
+  `requestHeaderTimeoutSeconds` counted from accept, which must be at least 3 s on such a connector or the engine does not
+  start); every field checked as the spec defines it (no leading zeros in version 1 numbers, no zone IDs and no dotted tail in
+  TCP6, valid family and transport nibbles, a PROXY header only with the combinations section 2.2 lists and an address
+  block at least its family's size, a LOCAL header (a health check) accepted with any length, every TLV inside the block, the
+  `PP2_TYPE_SSL` sub-TLVs inside it, a unique ID of at most 128 bytes, a `PP2_TYPE_CRC32C` of 4 bytes, once, verified).
+  Any other byte sequence, a late header and a connection that ends inside one are closed with a reset and reported
+  (`connectionRefused`, reason `PROXY protocol header`). The reader takes exactly the header, so a request or ClientHello
+  sent with it is not lost. `call.request.local` keeps the TCP peer (the proxy) for logs; `XForwardedHeaders` and
+  `ForwardedHeaders` overwrite the origin from fields the client controls behind an L4 proxy, and the guide says to install
+  them only behind an HTTP proxy that sets or strips them. `http2RepeatOffenderPenalty` strikes and refuses the client the
+  header names and never the proxy all clients share (a flood behind a header that names no client strikes nobody, and
+  the accept-time check of the peer is skipped); `maxTcpConnectionsPerIp` counts TCP
+  peers, which on such a connector is the proxy (it bounds descriptors before any byte is read).
+- **Verification:** `ServerProxyProtocolTest.negative_headerFromAnUntrustedSourceIsRefused`,
+  `.negative_connectionWithoutAHeaderIsClosed`, `.negative_malformedHeadersAreClosed`,
+  `.negative_headerNotCompleteWithinTheTimeoutIsCut`, `.repeatOffendersAreTheClientsBehindTheProxy`,
+  `.pipelinedRequestsAfterTheHeaderAreServed`, `.negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`,
+  `.negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`,
+  `.negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`,
+  `ServerH2FloodTest.negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `ProxyProtocolConfigTest.headerWaitIsTheTimeoutCutToTheRequestHeadDeadline`,
+  `ProxyProtocolConfigTest.negative_unknownPeerIsNotTrusted`,
+  `.negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `.negative_invalidConfigurationsAreRefused`,
+  `.ipv4MappedPeersMatchIpv4Blocks`, `ProxyProtocolCodecTest.negative_v1WithoutCrlfWithin107BytesIsRefused`,
+  `.negative_v1LineEndsOtherThanCrlfAreRefused`, `.negative_v1MalformedFieldsAreRefused`,
+  `.negative_v2BadVersionCommandOrFamilyIsRefused`, `.negative_v2LocalWithAnInvalidNibbleIsRefused`,
+  `.negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `.v2LocalIsAcceptedWhateverItsFamilyAndLength`,
+  `.negative_v2AddressBlockShorterThanItsFamilyIsRefused`,
+  `.negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `.negative_v2TlvOverrunningTheHeaderIsRefused`,
+  `.negative_v2CrcMismatchIsRefused`, `.negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`,
+  `.negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `.negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`,
+  `.negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `.readerTakesAHeaderSplitIntoSingleBytesAndLeavesWhatFollows`,
+  `EngineMainTest.negative_proxyProtocolKeysWithSslPortRefused`; fuzzing: `server.proxyHeader` (`ProxyHeaderFuzzTest`: the
+  bytes a proxy sends first, in pieces of 1 to 15 bytes or at once, under four header limits; the reader either refuses
+  them or takes exactly the header, the same bytes decoded whole give the same header, and the rest of the input is left
+  whole), seeds from `tools/fuzz/gen-proxy-seeds.py`. Not covered: the platform's report of an IPv4 peer on a dual-stack
+  listener as IPv4-mapped (the tests bind loopback addresses only; the mapping itself is unit-tested), and a proxy that
+  is trusted but lies.
+
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
@@ -848,6 +907,9 @@ HTTP/1.1 and WebSockets (§3.20, §3.20.1, §3.22):
 HTTP/2 and HPACK (§3.23):
 13. `negative_frameAboveMaxFrameSizeIsFrameSizeError`, `negative_padLengthBeyondPayloadIsProtocolError`, `negative_hpackBomb`, `negative_hugeStringLengthRejectedBeforeAllocation`, `negative_integerOverflow`, `negative_huffmanEosOrBadPadding`, `negative_tableSizeUpdateAboveSettingIsCompressionError`, `negative_tableSizeUpdateAfterFirstFieldIsCompressionError`, `negative_requiredTableSizeUpdateMissing`, `negative_indexZeroAndBeyondTable`, `negative_continuationFloodClosesBeforeDecoding`, `negative_continuationBytesAboveListSize`, `negative_headerBlockTakingTooLongCloses`, `negative_pingFloodBoundedQueue`, `negative_settingsFloodBounded`, `negative_emptyDataFlood`, `negative_rapidResetExhaustsBudget`, `negative_rapidResetHandlersStayWithinConcurrency`, `negative_madeYouResetCountsOurResets`, `negative_resetStreamStillRunningCountsTowardConcurrency`, `negative_priorityFloodCreatesNoState`, `negative_interimResponseFloodBounded`, `negative_dataBeyondWindowIsFlowControlError`, `negative_settingsAckTimeoutIsSettingsTimeout`, `negative_pingTimeoutClosesConnection`, `negative_pushPromiseIsProtocolError`, `negative_serverHpackBombFailsTheRequestOnly`, `negative_contentLengthMismatchIsMalformed`, `negative_resetFailsTheBodyNotEndsIt`, `negative_noServerPrefaceFailsTheRequestsAtTheDeadline`, `negative_noServerSettingsWithinConnectTimeoutFails`, `negative_http11RequiredFallsBackAndMarks` (client side, JVM and macOS Native); `negative_h2cPrefaceOnPlainConnectorRejected`, `negative_headerBlockSlowerThanTimeoutCloses`, `negative_prefaceSlowerThanTimeoutCloses`, `negative_extendedConnectRefusedWhenDisabled`, `negative_fieldRulesOfSection82`, `negative_pseudoHeaderRulesOfSection83`, `negative_contentLengthMismatch`, `negative_requestBodyStallIs408`, `negative_oversizedFieldSectionAndConnectAreAnswered` (server side, `ServerH2Test`); `negative_clientResetOfOneStreamLeavesTheOthers`, `negative_handlerThrowingAfterItsStreamWasResetLeavesTheOthers`, `negative_handlerAnsweringAResetStreamLeavesTheOthers`, `negative_malformedBodyUnderARunningHandlerLeavesTheConnection`, `negative_clientResetWithNoErrorCancelsTheHandler` (`ServerH2StreamTest`); `negative_contentNotMatchingItsLengthResetsTheStream`, `negative_callWithoutAResponseResetsItsStream`, `negative_finalInterimStatusIs500`, `negative_streamAboveTheConcurrencyLimitIsRefused`, `negative_clientGrantingNoWindowGetsItsStreamReset` (`ServerH2ResponseTest`); `negative_noResetOfAStreamThePeerResetOrThatEnded`, `negative_headersOnAClosedStreamIsAConnectionError` (core); `negative_rapidResetDoesNotRunHandlersUnbounded`, `negative_madeYouResetBounded`, `negative_continuationFloodBounded`, `negative_slowReadDoesNotPinResponses`, `negative_floodWithoutReadingIsCutOffAfterTheStallDeadline`, `negative_repeatOffenderBackoff` (`ServerH2FloodTest`, JVM and macOS Native), `negative_threeStrikesWithinAMinuteRefuseForThePenalty`, `negative_ipv4MappedPeersCountAsTheirIpv4Address`, `negative_trackedAddressesAreBounded`, `negative_penalisedAddressesOutliveEviction` (`RepeatOffendersTest`), `negative_zeroRefillRateNeverRefills` (core), `negative_connectionLimitCountsH2`
 
+PROXY protocol (§3.27):
+15. `negative_headerFromAnUntrustedSourceIsRefused`, `negative_connectionWithoutAHeaderIsClosed`, `negative_malformedHeadersAreClosed`, `negative_headerNotCompleteWithinTheTimeoutIsCut`, `negative_unknownPeerIsNotTrusted`, `negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `negative_invalidConfigurationsAreRefused`, `negative_v1WithoutCrlfWithin107BytesIsRefused`, `negative_v1LineEndsOtherThanCrlfAreRefused`, `negative_v1MalformedFieldsAreRefused`, `negative_v2BadVersionCommandOrFamilyIsRefused`, `negative_v2LocalWithAnInvalidNibbleIsRefused`, `negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `negative_v2AddressBlockShorterThanItsFamilyIsRefused`, `negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `negative_v2TlvOverrunningTheHeaderIsRefused`, `negative_v2CrcMismatchIsRefused`, `negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`, `negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`, `negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `negative_proxyProtocolKeysWithSslPortRefused`, `negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`, `negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`, `negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused` (`ServerProxyProtocolTest`, `ServerH2FloodTest`, `ProxyProtocolConfigTest`, `ProxyProtocolCodecTest` on the JVM and every Native target; `EngineMainTest` on the JVM)
+
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)
 
@@ -882,7 +944,7 @@ correctness, not assumed to be free of bugs.
 
 | Boundary | What crosses it | Trusted on the inner side | Not trusted | Controls (where they live) | Threats |
 |---|---|---|---|---|---|
-| **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.25 |
+| **B1. Network peer ↔ library** | UDP datagrams (QUIC), TCP bytes (TLS, HTTP/1.1, HTTP/2, WebSocket), DNS answers, ICMP errors | nothing from the peer until it is parsed against the RFC grammar and limits; after AEAD authentication only that the peer holds the keys, never that it behaves | every byte, length, count and timing a peer controls; an authenticated peer can still be malicious (section 2) | the sans-IO cores parse every input with explicit limits (ADR-0004; `kuicksilver-quic/src/commonMain/kotlin/io/kuicksilver/quic/EndpointCore.kt`, `ConnectionAdmission.kt`); the amplification limit before address validation; the HTTP field rules (`kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/FieldValidator.kt`); the PROXY protocol header, from a connector's `trustedSources` only (`kuicksilver-ktor-server/src/commonMain/kotlin/io/kuicksilver/ktor/server/ProxyProtocolCodec.kt`); the negative controls of section 5 | 3.1–3.5, 3.8, 3.9, 3.10, 3.12, 3.13, 3.15–3.18, 3.20–3.25, 3.27 |
 | **B2. Application ↔ library API** | configuration, trust settings, certificates and keys, request and response bodies, callbacks (a custom verifier, a `KeylogSink`, a name resolver `Dns`, whose answers are data, not trust) | the application, for the configuration it chooses | values outside their documented ranges; combinations that would turn a security check off | the name is always checked and a pin only adds to a validated chain (ADR-0011, `kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TrustConfig.kt`); 0-RTT and key logging are off unless asked for, and the API that can break a guarantee is `@DelicateKuicksilverApi` (CONTRIBUTING.md, "Proposing a change"); the configurations refuse values outside the ranges of `docs/guide/configuration.md`; a resolver's answers are checked as destinations and never stand in for the host name (3.25) | 3.6, 3.6a, 3.7, 3.8, 3.14, 3.19, 3.20, 3.25 |
 | **B3. Kotlin ↔ `ksl` ↔ OpenSSL** | handles, buffers with explicit lengths, TLS records and secrets, through JNI or cinterop | OpenSSL for cryptography and the TLS 1.3 state machine (we track its advisories, `SECURITY.md`); `ksl` for memory safety at its own API | byte buffers without an explicit length: every buffer of data crossing into C carries its length; `strlen` is used only on NUL-terminated strings that OpenSSL or `ksl` produced or that the binding passes as C strings (labels, host names, cipher lists, key log lines), never on bytes from the network (3.10) | a single narrow C shim (ADR-0001, ADR-0003, `kuicksilver-native/src/c/ksl.h`); secrets stay in native memory and are wiped (section 1); OpenSSL built from `tools/openssl/configure-flags.txt` without legacy protocols and algorithms, engines, its own key log or the FIPS provider; symbol isolation (ADR-0007, `tools/check/exports.sh`, `tools/prefix/check-no-unprefixed.sh`); the C tests under ASan and UBSan (`tools/c-test.sh`) and a libFuzzer harness (`tools/fuzz/ksl/build.sh`) | 3.7, 3.10, 3.15 |
 | **B4. Library ↔ operating system** | sockets (GSO/GRO, `recvmsg` ancillary data), the system resolver, the platform certificate verifiers, files (the extracted native library, the key log, qlog, the Alt-Svc store) | the kernel and the platform verifier (their compromise is out of scope, section 2) | file system locations other users can write; the resolver's answers (they come from the network, B1); what a platform API returns about an address | `KslLoader` extracts into a private directory and checks the library's SHA-256 before loading it (`kuicksilver-native/src/jvmMain/kotlin/io/kuicksilver/native/KslLoader.jvm.kt`); the key log refuses a symbolic link and is created with mode 0600 (`kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/KeylogFile.kt` and its platform files); GRO segments keep their own address (3.12); a stalled resolver holds a bounded number of threads (3.21.1) | 3.7, 3.11, 3.12, 3.16, 3.19, 3.21, 3.21.1, 3.24, 3.25 |
@@ -925,6 +987,7 @@ weakness appears in different protocols.
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
 | 3.24 | forged NAT64 prefix | CWE-345 |
 | 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
+| 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and

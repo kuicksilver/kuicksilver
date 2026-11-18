@@ -144,6 +144,7 @@ ktor-network.wsGuard jvm kuicksilver-ktor-network io.kuicksilver.ktor.network.fu
 client.svcb jvm kuicksilver-ktor-client io.kuicksilver.ktor.client.fuzz.SvcbFuzzTest svcbMessage
 client.h1Response jvm kuicksilver-ktor-client io.kuicksilver.ktor.client.fuzz.H1ResponseFuzzTest h1Response
 server.h1Request jvm kuicksilver-ktor-server io.kuicksilver.ktor.server.fuzz.H1RequestFuzzTest h1Request
+server.proxyHeader jvm kuicksilver-ktor-server io.kuicksilver.ktor.server.fuzz.ProxyHeaderFuzzTest proxyHeader
 ksl.parsers c kuicksilver-native ksl_fuzz parsers
 EOF
 }

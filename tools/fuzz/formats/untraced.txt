@@ -15,5 +15,6 @@ ktor-network.wsGuard | a program of WebSocket frames and splits: not traced yet
 client.svcb | the input is the DNS message itself: no fuzz-side decoder
 client.h1Response | a program of response pieces and kinds: not traced yet
 server.h1Request | a program of request pieces and kinds: not traced yet
+server.proxyHeader | a mode byte (piece size, header limit), then the bytes as a proxy sends them: no other fuzz-side decoder
 quic.bbrInvariants | a seed, a datagram size and BBR operations whose arguments each operation reads itself: not traced yet
 http3.h3Connection | a program of HTTP/3 connection operations: not traced yet

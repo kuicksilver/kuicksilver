@@ -108,6 +108,7 @@ internal fun h2SettingsWithin(
 internal suspend fun KuicksilverApplicationEngine.serveH2(
     sock: Socket,
     remote: InetSocketAddress?,
+    proxy: ProxyHeader?,
     peer: List<Certificate>,
     authorityCheck: AuthorityCheck,
     altSvc: () -> String?,
@@ -190,7 +191,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
                 supervisorScope {
                     for (r in c.requests) {
-                        launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout) }
+                        launch { handleH2(r, local, remote, proxy, peer, authorityCheck, connAltSvc, idle, sendTimeout) }
                     }
                 }
             }
@@ -200,7 +201,8 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     } finally {
         conn?.let { c ->
             h2BytesRead.update { it + c.bytesReceived }
-            if (c.endedByFloodDefence) strikeOffender(remote)
+            // behind a PROXY protocol header the client it names is struck, not the proxy all its clients share
+            if (c.endedByFloodDefence) strikeOffender(remote, proxy)
         }
         // closeWithin handles a cancelled caller itself (it aborts); the probe's set is left last and without cancellation,
         // so a forced stop neither skips the close nor leaves the entry behind
@@ -246,18 +248,36 @@ private suspend fun drainsWhileMoving(
 }
 
 /**
+ * The address an HTTP/2 flood of a connection strikes: on a PROXY protocol connector ([proxy] not null) the client its header
+ * names, and nobody when it names none (LOCAL, UNKNOWN, UNSPEC, AF_UNIX): the TCP peer there is the proxy, and a penalty on
+ * it would refuse every client it carries. Elsewhere the TCP peer [peer].
+ */
+internal fun offenderToStrike(
+    peer: ByteArray?,
+    proxy: ProxyHeader?,
+): ByteArray? = if (proxy != null) proxy.sourceIp else peer
+
+/**
  * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM for a flood limit): with
- * `http2RepeatOffenderPenalty`, one strike for its address. The
+ * `http2RepeatOffenderPenalty`, one strike for its address ([offenderToStrike]: behind a PROXY protocol header the client it
+ * names, or nobody). The
  * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
  * are the warning, rate-limited per connector ([RefusalReporter]).
  */
-private suspend fun KuicksilverApplicationEngine.strikeOffender(remote: InetSocketAddress?) {
+private suspend fun KuicksilverApplicationEngine.strikeOffender(
+    remote: InetSocketAddress?,
+    proxy: ProxyHeader?,
+) {
     // counted after the strike is recorded: a test that waits for the count then sees the strike's effect at accept
     try {
         val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
-        if (withContext(NonCancellable) { offenders.strike(remote) }) {
+        // inside the try: whatever the address conversion throws, the flood end is still counted
+        val client = offenderToStrike(remote?.let { peerAddressBytes(it) }, proxy)
+        val struck = withContext(NonCancellable) { offenders.strike(client) }
+        if (struck) {
+            val who = client?.let { RepeatOffenders.describe(it) } ?: "an unknown address"
             environment.log.debug(
-                "HTTP/2: connections from ${RepeatOffenders.describe(remote)} keep ending in ENHANCE_YOUR_CALM (flood limits); " +
+                "HTTP/2: connections from $who keep ending in ENHANCE_YOUR_CALM (flood limits); " +
                     "refusing its connections for a while",
             )
         }
@@ -303,6 +323,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     r: H2ServerStream,
     local: InetSocketAddress?,
     remote: InetSocketAddress?,
+    proxy: ProxyHeader?,
     peer: List<Certificate>,
     authorityCheck: AuthorityCheck,
     altSvc: H2AltSvc,
@@ -353,6 +374,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     userDispatcher,
                     configuration.webSocketMaxMessageSize,
                 )
+            call.applyProxyHeader(proxy)
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_2_0, call) }
             var failure: Throwable? = null
             try {

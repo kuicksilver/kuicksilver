@@ -9,4 +9,5 @@ ktor-network.inflate
 ktor-network.wsGuard
 client.h1Response
 server.h1Request
+server.proxyHeader
 quic.bbrInvariants
