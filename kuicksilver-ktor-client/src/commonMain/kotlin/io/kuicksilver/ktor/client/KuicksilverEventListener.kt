@@ -14,11 +14,14 @@ import kotlin.time.Duration
  * Hears what the client engine does with each call (docs/guide/ktor.md, "Observability"), in the manner of OkHttp's
  * `EventListener`: set it with `engine { eventListener = ... }`. Every method has an empty default; override the ones you
  * need. The order for one call is [callStart], then for each attempt the protocol decision ([protocolSelected], with
- * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply) and [connectionAcquired], and finally [callEnd] or
- * [callFailed]; [connectionReleased] follows when the call's response is done with.
+ * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply), the name lookups it makes ([dnsStart] and [dnsEnd],
+ * before the connection they serve; none when the request reuses a connection) and [connectionAcquired], and finally
+ * [callEnd] or [callFailed]; [connectionReleased] follows when the call's response is done with.
  *
  * Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without
- * blocking; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
+ * blocking. [dnsStart] and [dnsEnd] may run concurrently, on different threads, for one call: the two address families
+ * are looked up at once, and the two sides of the HTTP/3 and TCP race too, so an implementation of them must be
+ * thread-safe; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
  * logger and otherwise ignored.
  */
 @ExperimentalKuicksilverApi
@@ -107,7 +110,8 @@ public abstract class KuicksilverEventListener {
      * [FamilyDns] are asked once per family (RFC 8305 section 3), often both at once; null when one lookup answers both (a
      * plain [Dns]). Each host and family is looked up once per request (again only after a lookup whose caller was cancelled),
      * so the h3/h1 race and a fallback share it.
-     * No lookup, and no event, for an address literal or for the addresses an HTTPS answer carried. [dnsEnd] follows once.
+     * No lookup, and no event, for an address literal, a host with the form of an IPv4 address, or the addresses an HTTPS
+     * answer carried. [dnsEnd] follows once. May run concurrently with the call's other DNS events, on another thread.
      */
     public open fun dnsStart(
         request: HttpRequestData,
@@ -120,7 +124,7 @@ public abstract class KuicksilverEventListener {
      * are what the engine may connect to, after the destination check (no unspecified, multicast or broadcast address) and
      * before the RFC 6724 sort, empty when the name has none of that family; on a failure (a cancellation included)
      * [addresses] is empty and [failure] says why. On an IPv6-only network the IPv4 answers are synthesized later, so they
-     * appear here as IPv4.
+     * appear here as IPv4. May run concurrently with the call's other DNS events, on another thread.
      */
     public open fun dnsEnd(
         request: HttpRequestData,

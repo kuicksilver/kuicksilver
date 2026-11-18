@@ -28,8 +28,9 @@ server. The reference stacks offer it:
   `lookup(host): List<IpAddress>`; `Dns.System` is the default and is the engine's existing system path, unchanged
   (the same shared, bounded lookups, cache, NAT64 handling and order). Suspending, as Ktor's CIO and Netty's are, because
   the engine is coroutine-based and must not lose a thread per stalled lookup; `Dns.blocking { }` adapts a blocking
-  resolver (OkHttp's shape) by running it on a pool of its own (8 threads by default) that a caller stops waiting for when
-  it is cancelled or times out. `FamilyDns` answers each family on its own, for RFC 8305 section 3's separate queries.
+  resolver (OkHttp's shape) by running it on a pool of its own (8 threads by default, shared by every such resolver of the
+  process) that a caller stops waiting for when it is cancelled or times out, taking its lookup off the queue when it has
+  not started. `FamilyDns` answers each family on its own, for RFC 8305 section 3's separate queries.
   `IpAddress` is our own type (common code has none); `IpAddress.of(InetAddress)` converts on the JVM and Android.
 - **The engine owns the order.** RFC 8305 section 4 says the client MUST sort the addresses by RFC 6724, so the engine
   sorts and interleaves an application's answer exactly as it does the system's; the resolver's order breaks ties only.
@@ -37,7 +38,9 @@ server. The reference stacks offer it:
 - **What it is asked for.** Host names only, once per name per request (the h3/h1 race and a fallback share the answer).
   IP literals never reach it (as OkHttp), nor a host with the form of an IPv4 address that is not a dotted quad: one
   every platform reads alike (`127.1`) is its address, one platforms read differently (octal, hex) fails without a lookup
-  (no host name has that form, RFC 1123 section 2.1). The origin's name, an `Alt-Svc` alternative's host and an HTTPS
+  (no host name has that form, RFC 1123 section 2.1); the engine reads such hosts itself for every resolver, the system's
+  included, so `010.0.0.1` does not become 8.0.0.1 through getaddrinfo. A literal that no connection may go to
+  (`0.0.0.0`, a multicast group) fails the call. The origin's name, an `Alt-Svc` alternative's host and an HTTPS
   record's target, over TCP and QUIC, and a proxy's name; never the origin's behind an HTTP proxy or `socks5h` (as
   OkHttp and Netty's proxy handlers), but the origin's through `socks5`, where the engine resolves by definition. HTTPS
   records, the NAT64 prefix discovery and a PAC script's `dnsResolve` stay with the system: they have sources of their

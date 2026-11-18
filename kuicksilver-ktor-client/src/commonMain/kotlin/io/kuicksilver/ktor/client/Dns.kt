@@ -77,6 +77,7 @@ public class IpAddress private constructor(
          */
         public fun parse(text: String): IpAddress {
             val s = socketHost(text)
+            require(':' in s || s == text) { "brackets are for IPv6 addresses only: $text" }
             val pct = s.indexOf('%')
             val literal = if (pct >= 0) s.substring(0, pct) else s
             val bytes =
@@ -122,9 +123,10 @@ public class IpAddress private constructor(
  *   2.5.2 never allow them as a destination, RFC 9293 section 3.9.1 (MUST-46) makes a TCP open to them an error, and a
  *   connect to 0.0.0.0 reaches the host's own listeners on Linux and macOS. The system's answers get the same check.
  * - It gets host names only, without brackets or port. An IP address literal in a URL is its own address and never reaches
- *   it; nor does a host with the form of an IPv4 address that is not a dotted quad (`127.1` is 127.0.0.1, as every platform
- *   reads it; `010.0.0.1` or `0x7f.1` read differently by different platforms, and `256.1.1.1`, fail the call: no host
- *   name has that form, RFC 1123 section 2.1).
+ *   it (one no connection may go to, such as `0.0.0.0` or `ff02::1`, fails the call); nor does a host with the form of an
+ *   IPv4 address that is not a dotted quad (`127.1` is 127.0.0.1, as every platform reads it; `010.0.0.1` or `0x7f.1` read
+ *   differently by different platforms, and `256.1.1.1`, fail the call: no host name has that form, RFC 1123 section
+ *   2.1). The engine reads such hosts the same way with [Dns.System].
  * - It is asked once per name per request: both sides of the HTTP/3 and TCP race, and a fallback, connect to that one
  *   answer. The engine keeps no answer beyond the request: caching (and its TTL) is the resolver's. A [FamilyDns] is asked
  *   for each address family on its own instead (RFC 8305 section 3), the two at once.
@@ -164,10 +166,13 @@ public fun interface Dns {
 
         /**
          * A [Dns] over a blocking [lookup] (an OkHttp `Dns`, a call into a native resolver), run on [dispatcher]: by
-         * default a view of `Dispatchers.IO` limited to 8 threads shared by every such resolver, so lookups that stall
-         * hold at most those and never the threads the engine's sockets run on. A caller that is cancelled or whose
-         * connect timeout ends stops waiting at once; the blocking call cannot be interrupted, it goes on to its end on its
-         * thread and its answer is dropped.
+         * default a view of `Dispatchers.IO` limited to 8 threads, shared by every resolver made this way in the process,
+         * whatever engine uses it, so lookups that stall hold at most those and never the threads the engine's sockets run
+         * on. The other side of that bound: 8 lookups that hang hold all 8 threads, and every other lookup of the default
+         * pool, of any engine, waits behind them until one returns (their calls fail at their connect timeouts). Give a
+         * resolver that may hang a [dispatcher] of its own to keep it from starving the others. A caller that is cancelled
+         * or whose connect timeout ends stops waiting at once and takes its lookup off the queue if it has not started; a
+         * started blocking call cannot be interrupted, it goes on to its end on its thread and its answer is dropped.
          */
         public fun blocking(
             dispatcher: CoroutineDispatcher = blockingLookups,
@@ -243,7 +248,17 @@ private class BlockingDns(
 ) : Dns {
     /** Not a child of the caller: a cancelled caller stops waiting, and the blocking call ends on its thread. */
     @OptIn(DelicateCoroutinesApi::class)
-    override suspend fun lookup(host: String): List<IpAddress> = GlobalScope.async(dispatcher) { blockingLookup(host) }.await()
+    override suspend fun lookup(host: String): List<IpAddress> {
+        val lookup = GlobalScope.async(dispatcher) { blockingLookup(host) }
+        try {
+            return lookup.await()
+        } catch (e: CancellationException) {
+            // the caller went: a lookup still waiting for a thread never runs (one that runs goes on to its end), so callers
+            // that give up do not pile lookups up behind a resolver that hangs
+            lookup.cancel()
+            throw e
+        }
+    }
 
     override fun toString(): String = "Dns.blocking($blockingLookup)"
 }
@@ -287,18 +302,18 @@ internal suspend fun DnsObserver?.observing(
  * The resolver of one [RequestDns] over this application [Dns]: one family of a host name (port 0) as the engine connects
  * to it ([usableAnswer]). A plain [Dns] is asked once per name and its answer split by family ([OncePerName]); a
  * [FamilyDns] once per name and family (the [RequestDns] shares each family's answer within the request). A host with the
- * form of an IPv4 address is answered here and never asked for ([numericAnswer]). A failure becomes the lookup's
+ * form of an IPv4 address never reaches it: [RequestDns] answers it ([numericAnswer]). A failure becomes the lookup's
  * ([asking]).
  */
 internal fun Dns.familyResolver(observer: DnsObserver? = null): suspend (String, Boolean) -> List<TcpAddress> {
     val dns = this
     if (dns is FamilyDns) {
         // the per-family events are the RequestDns's, which calls this once per name and family
-        return { name, ipv6 -> numericAnswer(name, ipv6) ?: usableAnswer(asking(name) { dns.lookup(name, ipv6) }, ipv6) }
+        return { name, ipv6 -> usableAnswer(asking(name) { dns.lookup(name, ipv6) }, ipv6) }
     }
     // one lookup of both families: its events are here, once, not per family
     val once = OncePerName { name -> observer.observing(name, null) { usableAnswer(asking(name) { dns.lookup(name) }, null) } }
-    return { name, ipv6 -> numericAnswer(name, ipv6) ?: once.get(name).filter { it.isIpv6 == ipv6 } }
+    return { name, ipv6 -> once.get(name).filter { it.isIpv6 == ipv6 } }
 }
 
 /**
@@ -326,7 +341,7 @@ private suspend fun <T> asking(
  * itself), as inet_aton reads it where every platform reads it alike (`127.1`, `2130706433`); null for a host name. One
  * that platforms read differently (octal, hex) or that is no address fails: it is no host name either (RFC 1123 section 2.1).
  */
-private fun numericAnswer(
+internal fun numericAnswer(
     name: String,
     ipv6: Boolean,
 ): List<TcpAddress>? {
@@ -335,7 +350,26 @@ private fun numericAnswer(
     val v4 =
         AltSvcDestination.inetAton(h)
             ?: throw IOException("$name is neither a host name nor an IP address that every platform reads alike; it is not looked up")
-    return if (ipv6) emptyList() else listOf(TcpAddress(ByteArray(4) { v4[it].toByte() }, 0))
+    val address = TcpAddress(ByteArray(4) { v4[it].toByte() }, 0)
+    requireDestination(name, address)
+    return if (ipv6) emptyList() else listOf(address)
+}
+
+/**
+ * Fails with an [IOException] when [address], which [host] (an address literal of a URL, or a numeric host) names itself,
+ * is one no connection may go to ([usableAsDestination]): the URL asks for it, so it is not dropped as a resolver's answer
+ * is, the request fails before any packet.
+ */
+internal fun requireDestination(
+    host: String,
+    address: TcpAddress,
+) {
+    if (!usableAsDestination(address)) {
+        throw IOException(
+            "$host is an address no connection may go to (unspecified, multicast or broadcast: RFC 1122 section 3.2.1.3, " +
+                "RFC 4291 section 2.5.2, RFC 9293 section 3.9.1)",
+        )
+    }
 }
 
 /**
@@ -377,7 +411,8 @@ private fun usableDestination(a: IpAddress): TcpAddress? {
  * Whether a connection may go to [t]: not "this network" (0.0.0.0/8, RFC 1122 section 3.2.1.3: "MUST NOT be sent, except
  * as a source address"), the unspecified IPv6 address (RFC 4291 section 2.5.2), multicast (224.0.0.0/4, ff00::/8; RFC 9293
  * section 3.9.1, MUST-46, and no QUIC connection either) or the limited broadcast address, IPv4-mapped forms included.
- * Every resolver's answer is held to it, the system's too ([RequestDns]); an address literal written in a URL is no answer.
+ * Every resolver's answer is held to it, the system's too ([RequestDns]), and an address literal written in a URL fails
+ * ([requireDestination]).
  */
 internal fun usableAsDestination(t: TcpAddress): Boolean {
     var b = t.bytes

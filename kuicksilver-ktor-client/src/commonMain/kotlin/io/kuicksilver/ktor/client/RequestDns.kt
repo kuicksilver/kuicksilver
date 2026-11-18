@@ -112,8 +112,8 @@ internal class RequestDns private constructor(
         if (endpoint != null) return root().resolution(endpoint.first, endpoint.second)
         val name = socketHost(host)
         val ipv6Only = nat64.ipv6OnlyNetwork()
-        // an address literal is never looked up
-        val literal = if (':' in name || parseIpv4Literal(name) != null) SystemResolution(name, port) else null
+        // an address literal is never looked up, and one no connection may go to fails here
+        val literal = if (':' in name || parseIpv4Literal(name) != null) checkedLiteral(name, port) else null
         return object : AddressResolution {
             override val ipv6Only: Boolean = ipv6Only
             private var literalSynthesized: List<TcpAddress>? = null
@@ -160,7 +160,7 @@ internal class RequestDns private constructor(
         val name = socketHost(host)
         val plain =
             if (':' in name || parseIpv4Literal(name) != null) {
-                SystemResolution(name, port)
+                checkedLiteral(name, port)
             } else {
                 object : AddressResolution {
                     override suspend fun addresses(ipv6: Boolean): List<TcpAddress> = family(name, ipv6).map { it.withPort(port) }
@@ -189,7 +189,7 @@ internal class RequestDns private constructor(
         if (endpoint != null) return root().answered(endpoint.first, endpoint.second, onAnswered, afterForTest)
         val name = socketHost(host)
         if (':' in name || parseIpv4Literal(name) != null) {
-            return resolveBoth(SystemResolution(name, port), name).also {
+            return resolveBoth(checkedLiteral(name, port), name).also {
                 onAnswered?.invoke(it)
                 afterForTest?.invoke()
             }
@@ -256,13 +256,41 @@ internal class RequestDns private constructor(
         return found + found.filter { it.bytes.size == 4 }.flatMap { nat64.synthesize(it.bytes, port) }
     }
 
+    /**
+     * The resolution of the address literal [name] (no lookup), failing with an IOException when it is an address no
+     * connection may go to ([requireDestination]). A literal that does not parse fails later, as before, where it is used.
+     */
+    private suspend fun checkedLiteral(
+        name: String,
+        port: Int,
+    ): SystemResolution {
+        val literal = SystemResolution(name, port)
+        val addresses =
+            try {
+                literal.addresses(true) + literal.addresses(false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        addresses.forEach { requireDestination(name, it) }
+        // the JDK makes an IPv4-mapped literal its IPv4 address, which the IPv6 family then leaves out: check the literal itself
+        if (':' in name) parseIpLiteral(name)?.let { requireDestination(name, TcpAddress(it, 0)) }
+        return literal
+    }
+
     private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null, familyEvents)
 
-    /** One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. */
+    /**
+     * One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. A host with
+     * the form of an IPv4 address other than a dotted quad is the engine's to read, whatever the resolver ([numericAnswer]):
+     * its address without a lookup (and without DNS events), or a failure.
+     */
     private suspend fun family(
         name: String,
         ipv6: Boolean,
     ): List<TcpAddress> {
+        numericAnswer(name, ipv6)?.let { return it }
         val key = name to ipv6
         while (true) {
             var mine = false

@@ -368,6 +368,75 @@ class ClientDnsTest {
             }
         }
 
+    /**
+     * An address literal in the URL that no connection may go to fails before any packet, over TCP and QUIC: `0.0.0.0`
+     * reached this host's own listener (the test server on 127.0.0.1) on Linux and macOS.
+     */
+    @Test fun negative_anUnusableLiteralIsNeverConnected() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("reached") } } }
+            try {
+                val modes =
+                    if (quicServerSupported()) {
+                        listOf(
+                            Http3DiscoveryMode.H1Only,
+                            Http3DiscoveryMode.H3Only,
+                        )
+                    } else {
+                        listOf(Http3DiscoveryMode.H1Only)
+                    }
+                for (mode in modes) {
+                    testClient(mode, engine = { connectTimeout = 30.seconds }).use { c ->
+                        val started = TimeSource.Monotonic.markNow()
+                        val e = assertFailsWith<IOException>("$mode") { c.get("https://0.0.0.0:$port/") }
+                        val said = generateSequence<Throwable>(e) { it.cause }.any { "no connection may go to" in it.message.orEmpty() }
+                        assertTrue(said && started.elapsedNow() < 20.seconds, "$mode: $e")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** The default engine reads `010.0.0.1` as no host: getaddrinfo would read it as octal, 8.0.0.1 (ADR-0020). */
+    @Test fun negative_theDefaultEngineRefusesAnAmbiguousNumericHost() =
+        clientTest {
+            testClient().use { c ->
+                val e = assertFailsWith<IOException> { c.get("http://010.0.0.1:1/") }
+                assertTrue(
+                    generateSequence<Throwable>(e) { it.cause }.any { "neither a host name" in it.message.orEmpty() },
+                    "$e",
+                )
+            }
+        }
+
+    /** A numeric host is no lookup, for a [FamilyDns] too: no DNS events. */
+    @Test fun aNumericHostHasNoDnsEvents() =
+        clientTest {
+            val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val events = DnsEvents()
+                val dns =
+                    object : FamilyDns {
+                        override suspend fun lookup(
+                            host: String,
+                            ipv6: Boolean,
+                        ): List<IpAddress> = error("asked for $host")
+                    }
+                testClient(engine = {
+                    this.dns = dns
+                    eventListener = events
+                    // the JDK's ProxySelector takes no URI with such a host
+                    proxyResolver = ProxyResolvers.None
+                }).use { c ->
+                    assertEquals("ok", c.get("http://127.1:$port/").bodyAsText())
+                }
+                assertEquals(emptyList(), events.drain())
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun negative_aDnsThatThrowsFailsTheCall() =
         clientTest {
             val boom = IOException("boom")

@@ -55,7 +55,18 @@ class DnsTest {
     }
 
     @Test fun negative_ipAddressRefusesWhatIsNoLiteral() {
-        for (bad in listOf("example.com", "010.0.0.1", "1.2.3", "256.0.0.1", "0x7f.0.0.1", "fe80::1%eth0", "1::2::3", "", "[::1")) {
+        for (bad in listOf(
+            "example.com",
+            "010.0.0.1",
+            "1.2.3",
+            "256.0.0.1",
+            "0x7f.0.0.1",
+            "fe80::1%eth0",
+            "1::2::3",
+            "",
+            "[::1",
+            "[1.2.3.4]",
+        )) {
             assertFailsWith<IllegalArgumentException>(bad) { IpAddress.parse(bad) }
         }
         assertFailsWith<IllegalArgumentException> { IpAddress.of(ByteArray(5)) }
@@ -154,21 +165,34 @@ class DnsTest {
      * alike (`127.1`) is its address, one the platforms read differently (octal, hex) or that is no address fails, and the
      * resolver is asked for neither.
      */
+
+    /**
+     * A host that has the shape of an IPv4 literal is never a host name (RFC 1123 section 2.1): one every platform reads
+     * alike (`127.1`) is its address, one the platforms read differently (octal, hex) or that is no address fails, and the
+     * resolver is asked for neither; the engine decides this for every resolver ([RequestDns]). `0x` is one of them: glibc's
+     * inet_aton reads it as 0.0.0.0, other parsers as a name (`AltSvcDestinationTest` refuses it alike).
+     */
     @Test fun negative_aNumericHostIsNeverAskedFor() =
         runBlocking {
-            var asked = 0
-            val resolve =
-                Dns {
-                    asked++
-                    listOf(ip("192.0.2.1"))
-                }.familyResolver()
-            assertEquals(listOf(tcp("127.0.0.1")), resolve("127.1", false))
-            assertEquals(emptyList(), resolve("127.1", true))
-            assertEquals(listOf(tcp("127.0.0.1")), resolve("2130706433", false))
-            for (bad in listOf("010.0.0.1", "0x7f.0.0.1", "256.1.1.1", "1.2.3.4.5")) {
-                assertFailsWith<IOException>(bad) { resolve(bad, false) }
+            val asked = ArrayList<String>()
+            val dns =
+                RequestDns(
+                    Nat64.offForTest(),
+                    { RequestDns.dualStackSortForTest() },
+                    resolveFamily =
+                        Dns { host ->
+                            asked += host
+                            listOf(ip("192.0.2.1"))
+                        }.familyResolver(),
+                )
+            assertEquals(listOf("127.0.0.1:80"), dns.lookup("127.1", 80).map { it.toString() })
+            assertEquals(listOf("127.0.0.1:80"), dns.lookup("2130706433", 80).map { it.toString() })
+            for (bad in listOf("010.0.0.1", "0x7f.0.0.1", "256.1.1.1", "1.2.3.4.5", "0x")) {
+                assertFailsWith<IOException>(bad) { dns.lookup(bad, 80) }
             }
-            assertEquals(0, asked)
+            assertEquals(emptyList(), asked)
+            assertEquals(listOf("192.0.2.1:80"), dns.lookup("x0", 80).map { it.toString() })
+            assertEquals(listOf("x0"), asked)
         }
 
     @Test fun negative_aDnsFailureIsTheLookupsFailure() =
@@ -238,6 +262,43 @@ class DnsTest {
             assertFalse(returned.isCompleted)
             gate.complete(Unit)
             returned.await()
+        }
+
+    /**
+     * A caller that stops waiting for a blocking lookup takes it off the queue: a lookup still waiting for a thread of the
+     * dispatcher never runs. Before, every such caller left a lookup behind that ran later for nobody, so a resolver that
+     * hangs held the dispatcher's threads with lookups nobody waited for, request after request.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun negative_aCallerThatStopsWaitingLeavesNoQueuedBlockingLookup() =
+        runBlocking {
+            val threads = 2
+            val gate = CompletableDeferred<Unit>()
+            val entered = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val ran = kotlin.concurrent.atomics.AtomicInt(0)
+            val dns =
+                Dns.blocking(
+                    kotlinx.coroutines.Dispatchers.Default
+                        .limitedParallelism(threads),
+                ) {
+                    ran.addAndFetch(1)
+                    entered.trySend(Unit)
+                    runBlocking { gate.await() }
+                    listOf(ip("192.0.2.1"))
+                }
+            coroutineScope {
+                // the dispatcher's threads, all held by lookups whose callers wait
+                val holders = List(threads) { async { dns.lookup("held.test") } }
+                repeat(threads) { entered.receive() }
+                // callers that give up while their lookups wait for a thread
+                repeat(5) { assertNull(withTimeoutOrNull(50.milliseconds) { dns.lookup("queued.test") }) }
+                gate.complete(Unit)
+                holders.forEach { it.await() }
+                // a lookup queued now runs after any that were left in the queue
+                assertEquals(listOf(ip("192.0.2.1")), dns.lookup("after.test"))
+            }
+            assertEquals(threads + 1, ran.load(), "lookups whose callers had gone still ran")
         }
 
     @Test fun blockingDnsAnswers() =

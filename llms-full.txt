@@ -3754,7 +3754,10 @@ The contract (the KDoc of `Dns` has it in full):
 
 - **Suspending, not blocking.** `lookup` is called in the call's coroutine on the engine's dispatcher and must not block
   it. `Dns.blocking { }` runs a blocking resolver on a pool of its own (8 threads by default, shared by all of them, or the
-  dispatcher you give it): a lookup that never returns holds one of those threads, never the engine's.
+  dispatcher you give it): a lookup that never returns holds one of those threads, never the engine's. The default pool
+  is shared by every `Dns.blocking` resolver of the process, every engine's: 8 lookups that hang hold it whole, and the
+  others wait behind them until their calls time out. Give a resolver that may hang a dispatcher of its own. A call that
+  gives up takes its lookup off the queue when it has not started.
 - **Within the connect timeout.** The lookup is part of connecting: the connect timeout bounds it with the rest, and the
   call then fails with Ktor's `ConnectTimeoutException`; a cancelled call cancels its lookup. A blocking lookup cannot be
   interrupted: the call stops waiting and the lookup ends on its thread. A `CancellationException` your resolver throws
@@ -3771,9 +3774,11 @@ The contract (the KDoc of `Dns` has it in full):
   dropped: a connect to
   0.0.0.0 reaches the device's own listeners on Linux and macOS, and RFC 9293 makes a TCP open to a multicast address an
   error.
-- **Literals.** An IP address in the URL is connected to as it is; your resolver gets host names only. A host with the
-  form of an IPv4 address that is not a dotted quad is not a host name (RFC 1123): `127.1` is 127.0.0.1, and one that
-  platforms read differently (`010.0.0.1`, octal to some, decimal to others) fails the call without a lookup.
+- **Literals.** An IP address in the URL is connected to as it is, unless no connection may go there (`0.0.0.0`,
+  `[::]`, a multicast group, 255.255.255.255): that call fails with an `IOException`. Your resolver gets host names only.
+  A host with the form of an IPv4 address that is not a dotted quad is not a host name (RFC 1123): `127.1` is 127.0.0.1,
+  and one that platforms read differently (`010.0.0.1`, octal to some, decimal to others) fails the call without a
+  lookup, with the system's resolver too.
 - **Once per request.** Each name is asked once per request, both sides of the HTTP/3 and TCP race and a fallback
   included; the engine caches nothing across requests, so caching and TTLs are your resolver's.
 - **Proxies.** Your resolver is asked for a proxy's name. Behind an HTTP proxy and `socks5h` the origin's name goes to

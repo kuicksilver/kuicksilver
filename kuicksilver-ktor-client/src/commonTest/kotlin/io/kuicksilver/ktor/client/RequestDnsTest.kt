@@ -213,6 +213,47 @@ class RequestDnsTest {
             assertEquals(listOf("192.0.2.2:443"), seeded.texts("b.example"))
         }
 
+    /**
+     * An address literal in a URL that no connection may go to (RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2, RFC 9293
+     * section 3.9.1 MUST-46) fails with an IOException that says so, for the race (TCP and QUIC), the SOCKS5 targets and
+     * WebSocket keys, before any packet: `0.0.0.0` reaches the host's own listeners, `ff02::1` and `224.0.0.251` are groups.
+     */
+    @Test fun negative_anUnusableLiteralIsNoDestination() =
+        runTest {
+            val dns = dns { _, _ -> error("a literal is never looked up") }
+            for (bad in listOf("0.0.0.0", "[::]", "[ff02::1]", "224.0.0.251", "255.255.255.255", "[::ffff:0.0.0.0]")) {
+                for (call in listOf<suspend () -> Unit>(
+                    { dns.resolution(bad, 443) },
+                    { dns.lookup(bad, 443) },
+                    { dns.answered(bad, 443) },
+                )) {
+                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException>(bad) { call() }
+                    assertTrue("no connection may go to" in e.message.orEmpty(), "$bad: $e")
+                }
+            }
+            assertEquals(listOf("127.0.0.1:443"), dns.texts("127.0.0.1"))
+        }
+
+    /**
+     * The engine reads a numeric host once, whatever the resolver (ADR-0020): `127.1` is 127.0.0.1 without a lookup, and
+     * one that resolvers read differently (`010.0.0.1`: octal 8.0.0.1 to getaddrinfo) fails without one.
+     */
+    @Test fun negative_numericHostsAreTheEnginesForEveryResolver() =
+        runTest {
+            val asked = ArrayList<String>()
+            val dns =
+                dns { name, _ ->
+                    asked += name
+                    emptyList()
+                }
+            assertEquals(listOf("127.0.0.1:443"), dns.texts("127.1"))
+            assertEquals(listOf("127.0.0.1:443"), dns.resolution("127.1", 443).addresses(false).map { it.toString() })
+            for (bad in listOf("010.0.0.1", "0x7f.1", "0")) {
+                kotlin.test.assertFailsWith<kotlinx.io.IOException>(bad) { dns.lookup(bad, 443) }
+            }
+            assertEquals(emptyList(), asked)
+        }
+
     @Test fun seededIpv4IsUsedAndIpv6StillLookedUp() =
         runTest {
             // section 5: the A records of the answer are the A answer, no query for them; the AAAA query still runs

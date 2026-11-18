@@ -1325,6 +1325,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.wssSharesTheHttpsOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aCancelledCallCancelsTheLookup
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aFamilyDnsIsAskedForEachFamily
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aNumericHostHasNoDnsEvents
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aProxysNameIsResolvedAndTheOriginsIsNot
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.anAlternativesHostIsResolvedByTheDns
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.dnsEventsBracketEveryLookup
@@ -1336,6 +1337,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_aStalledDnsEndsAtTheConnectTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_aSystemAnswerOfTheUnspecifiedAddressIsNeverConnected
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_anUnspecifiedAnswerIsNeverConnected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_anUnusableLiteralIsNeverConnected
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_theDefaultEngineRefusesAnAmbiguousNumericHost
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_theResolvedAddressNeverStandsInForTheName
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_theResolvedAddressNeverStandsInForTheNameOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theDefaultIsTheSystemResolver
@@ -1799,6 +1802,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.duplic
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.ipAddressParsesLiterals
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.ipv4MappedAnswersAreIpv4
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negative_aBlockingDnsThatNeverReturnsDoesNotHoldTheCaller
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negative_aCallerThatStopsWaitingLeavesNoQueuedBlockingLookup
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negative_aDnsFailureIsTheLookupsFailure
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.DnsTest.negative_aHugeAnswerIsCappedPerFamily
@@ -1932,9 +1936,11 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_aNameWithAaaaNeverWaitsForTheNat64Prefix
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_aRoutedPrivateIpv4AnswerStaysIpv4
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_anAnswerAtTheEndOfTheResolutionDelayIsUsed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_anUnusableLiteralIsNoDestination
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_cancelledLookUpUnderAContendedLockLeavesNoStuckEntry
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_loopbackLiteralOnAnIpv6OnlyNetworkStaysIpv4
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_noSynthesisOnADualStackNetwork
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_numericHostsAreTheEnginesForEveryResolver
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_seededIpv4DoesNotWaitForAStalledIpv6LookupInARace
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_seededIpv6OnAnIpv4OnlyHostPutsIpv4First
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.RequestDnsTest.negative_unusableAnswersAreNeverDestinations
