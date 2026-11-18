@@ -5,8 +5,12 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readByte
+import io.ktor.utils.io.writeByte
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.runtime.EndpointLoop
+import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.KslUdpSocket
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +22,8 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -120,4 +126,67 @@ class QueuedReceiveTest {
     }
 
     @Test fun portableInterruptEndsAReceiveInFlight() = interruptEndsAReceiveInFlight(false)
+
+    /**
+     * End to end on real sockets: an idle connection's receiver waits in the socket's own receive (on the accelerated socket
+     * a native wait of up to 100 ms on another thread); the idle deadline interrupts it, the socket is drained, and the
+     * connection closes as idle once nothing restarted its timer.
+     */
+    private fun idleCloseInterruptsTheWaitingReceiver(prefer: IoPreference): Unit =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = KslQuicCrypto
+                            io = { DatagramIo.open(it, prefer) }
+                        }.build(),
+                )
+            val client =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = KslQuicCrypto
+                            io = { DatagramIo.open(it, prefer) }
+                        }.build(),
+                ) as EndpointLoop
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { server.accept() }
+                    val c =
+                        client.connect(
+                            server.localAddress,
+                            QuicClientConfig
+                                .Builder(CoreFixtures.client())
+                                .apply { quic = quicConfig { maxIdleTimeout = 400.milliseconds } }
+                                .build(),
+                        )
+                    val s = accepted.await()
+                    val up = c.openUni()
+                    up.output.writeByte(1)
+                    up.output.flush()
+                    assertEquals(1, s.acceptStream().input.readByte())
+                    val why = c.closed.await()
+                    val t = assertIs<QuicException.ConnectionLost.Timeout>(why, "$why")
+                    assertEquals(TimeoutKind.Idle, t.kind)
+                    assertTrue(client.idleDrainRoundsForTest >= 1, "the receiver was asked for a drain")
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
+    @Test fun acceleratedIdleCloseInterruptsTheWaitingReceiver() {
+        assumeTrue(accelerated(), "needs the accelerated socket (Linux, macOS, Windows)")
+        idleCloseInterruptsTheWaitingReceiver(IoPreference.Accelerated)
+    }
+
+    @Test fun portableIdleCloseInterruptsTheWaitingReceiver() = idleCloseInterruptsTheWaitingReceiver(IoPreference.Portable)
 }

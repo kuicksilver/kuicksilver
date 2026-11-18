@@ -5,9 +5,11 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.yield
 
 /** An in-memory UDP "network" (all platforms, no sockets): datagrams are routed to the [MemoryDatagramIo] bound to their destination address, or dropped. */
@@ -98,7 +100,8 @@ internal class MemoryDatagramIo internal constructor(
     override val localAddress: InetSocketAddress,
     internal val deaf: Boolean,
     df: Boolean = false,
-) : DatagramIo {
+) : DatagramIo,
+    QueuedReceive {
     /** Like a socket's receive buffer: 256 unread datagrams, then drops (as the public MemoryNetwork). */
     internal val inbox = Channel<Pair<ByteArray, InetSocketAddress>>(256)
     override val capabilities: StateFlow<IoCapabilities> =
@@ -133,18 +136,94 @@ internal class MemoryDatagramIo internal constructor(
         inbox.close(e)
     }
 
-    override suspend fun receive(into: PacketBatch): Int {
-        failure?.let { throw it }
-        if (into.count >= into.capacity) return 0
-        // like a socket: a non-empty buffer answers at once, after a yield (taken before the datagram, so a cancelled receiver loses nothing)
-        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-        if (!inbox.isEmpty) yield()
-        val (bytes, from) = inbox.tryReceive().getOrNull() ?: inbox.receive()
+    /** One-shot signals: an interrupt ([interruptReceive]), a change of [stalled]. */
+    private val interrupts = Channel<Unit>(Channel.CONFLATED)
+    private val stallChanged = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * While set, a receive takes nothing from the queue (a receive whose thread has not handed its datagrams back yet: a frozen
+     * process just woken, a stopped debugger): datagrams wait in the queue, which only [receiveQueued] empties. A receive in
+     * flight returns 0 when interrupted.
+     */
+    @kotlin.concurrent.Volatile
+    var stalled: Boolean = false
+        set(value) {
+            field = value
+            stallChanged.trySend(Unit)
+        }
+
+    /** While set, an interrupted receive returns only once this completes (a blocking receive that ends with its wait slice). */
+    @kotlin.concurrent.Volatile
+    var interruptGate: CompletableDeferred<Unit>? = null
+
+    /** More datagrams [receiveQueued] finds once the queue is empty, from ([from], bytes); null ends them (a flood without end). */
+    @kotlin.concurrent.Volatile
+    var queuedSource: (() -> Pair<InetSocketAddress, ByteArray>?)? = null
+
+    /** Calls of [interruptReceive] and datagrams [receiveQueued] took (test counters). */
+    @kotlin.concurrent.Volatile
+    var interruptsSeen: Long = 0
+        private set
+
+    @kotlin.concurrent.Volatile
+    var queuedTaken: Long = 0
+        private set
+
+    private fun put(
+        into: PacketBatch,
+        bytes: ByteArray,
+        from: InetSocketAddress,
+    ): Int {
         val i = into.count
         into.buffer(i).copyFrom(bytes, 0, 0, bytes.size)
         into.setLength(i, bytes.size)
         into.setAddress(i, from)
         return 1
+    }
+
+    override suspend fun receive(into: PacketBatch): Int {
+        failure?.let { throw it }
+        if (into.count >= into.capacity) return 0
+        interrupts.tryReceive() // left by a receive that returned before it saw it
+        while (true) {
+            if (!stalled) {
+                // like a socket: a non-empty buffer answers at once, after a yield (taken before the datagram, so a cancelled receiver loses nothing)
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                if (!inbox.isEmpty) yield()
+                inbox.tryReceive().getOrNull()?.let { (bytes, from) -> return put(into, bytes, from) }
+            }
+            val got: Pair<ByteArray, InetSocketAddress>? =
+                select {
+                    if (!stalled) inbox.onReceive { it }
+                    interrupts.onReceive { INTERRUPTED }
+                    stallChanged.onReceive { null }
+                }
+            if (got === INTERRUPTED) {
+                interruptGate?.await()
+                return 0
+            }
+            if (got != null) return put(into, got.first, got.second)
+        }
+    }
+
+    override fun receiveQueued(into: PacketBatch): Int {
+        if (failure != null || closed) return 0
+        var n = 0
+        while (into.count < into.capacity) {
+            val (bytes, from) =
+                inbox.tryReceive().getOrNull()?.let { it.first to it.second }
+                    ?: queuedSource?.invoke()?.let { it.second to it.first }
+                    ?: break
+            put(into, bytes, from)
+            n++
+        }
+        queuedTaken += n
+        return n
+    }
+
+    override fun interruptReceive() {
+        interruptsSeen++
+        interrupts.trySend(Unit)
     }
 
     /** Runs before each suspending send: a test stalls the loop's flush in it, as a socket without room would. */
@@ -173,6 +252,8 @@ internal class MemoryDatagramIo internal constructor(
     }
 
     companion object {
+        private val INTERRUPTED = ByteArray(0) to InetSocketAddress("0.0.0.0", 0)
+
         /** Two sockets on a fresh network, 10.0.0.1:1111 and 10.0.0.2:2222. */
         fun pair(): Pair<MemoryDatagramIo, MemoryDatagramIo> {
             val net = MemoryNetwork()

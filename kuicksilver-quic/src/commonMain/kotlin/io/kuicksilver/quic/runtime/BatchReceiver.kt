@@ -5,6 +5,7 @@ package io.kuicksilver.quic.runtime
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DirectReceive
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.QueuedReceive
 import io.kuicksilver.quic.TimeMark
 import kotlinx.coroutines.yield
 import kotlin.time.Duration
@@ -41,6 +42,13 @@ import kotlin.time.Duration.Companion.milliseconds
  * connection over loopback"). A task queued while a wait is already under way still runs after it: when a datagram
  * arrives, at most [maxWait] later. Two receivers of one loop (the endpoint's socket and a migration path's or a preferred
  * address's) count as such work for each other, so while both flow they alternate batch by batch.
+ *
+ * Before a connection's idle timer closes it, the loop asks each receiver for a drain ([requestDrain]; RFC 9000 section 10.1:
+ * the timer restarts "when a packet from its peer is received and processed successfully", and a process frozen past the
+ * deadline wakes with the peer's datagrams still queued). A receive in flight is interrupted ([QueuedReceive.interruptReceive])
+ * and hands back what it has; the next receives take what the socket holds without waiting ([QueuedReceive.receiveQueued]),
+ * at most [DRAIN_BUDGET] datagrams, until it runs dry. The loop processes each such batch like any other, and the drain counts
+ * as done ([drainServed]) when the receiver comes back after the last one: only then is everything it took processed.
  */
 internal class BatchReceiver(
     private val io: DatagramIo,
@@ -60,6 +68,73 @@ internal class BatchReceiver(
     }
 
     private val direct = io as? DirectReceive
+
+    /** The socket's side of a drain before an idle close; null for a socket that has none (a caller's own [DatagramIo]). */
+    private val queuedIo = io as? QueuedReceive
+
+    /** The receiver is suspended in the socket's own receive (the loop's thread knows; the receive may run on another). */
+    private var inReceive = false
+
+    /** Drain rounds the loop asked for and the last one done ([requestDrain]); loop dispatcher only. */
+    internal var drainRequested = 0L
+        private set
+    internal var drainServed = 0L
+        private set
+
+    /** The round being drained (0: none), the datagrams taken for it, and a round done once its last batch was processed. */
+    private var serving = 0L
+    private var servingTaken = 0
+    private var servedPending = 0L
+
+    /** Runs once a drain round is done (the loop wakes its timer coroutine). */
+    internal var onDrained: (() -> Unit)? = null
+
+    /** True when this receiver can drain its socket before an idle close. */
+    internal val drains: Boolean get() = queuedIo != null
+
+    /**
+     * Asks for drain round [round] (rounds only grow): a receive in flight returns soon, and the receives that follow take what
+     * the socket holds without waiting until it runs dry or [DRAIN_BUDGET] datagrams were taken. Loop dispatcher only.
+     */
+    internal fun requestDrain(round: Long) {
+        val q = queuedIo ?: return
+        if (round <= drainRequested) return
+        drainRequested = round
+        if (inReceive) q.interruptReceive()
+    }
+
+    /** A round whose last batch the loop has processed by now (this is the receiver's next call) is done. */
+    private fun commitDrain() {
+        val done = servedPending
+        if (done == 0L) return
+        servedPending = 0L
+        drainServed = done
+        onDrained?.invoke()
+    }
+
+    /** A receiver that joins the loop now owes nothing for the rounds before [round]. */
+    internal fun startAtDrainRound(round: Long) {
+        drainRequested = round
+        drainServed = round
+    }
+
+    private fun drainDue(): Boolean = queuedIo != null && drainRequested > drainServed && servedPending == 0L
+
+    /** One batch of a drain round: what the socket holds now, never waiting. */
+    private fun drainStep(into: PacketBatch): Int {
+        if (serving == 0L) {
+            serving = drainRequested
+            servingTaken = 0
+        }
+        val free = into.capacity - into.count
+        val n = queuedIo!!.receiveQueued(into)
+        servingTaken += n
+        if (n < free || servingTaken >= DRAIN_BUDGET) {
+            servedPending = serving // the socket ran dry, or the budget is spent: done once this batch is processed
+            serving = 0L
+        }
+        return n
+    }
 
     /** The last receive brought datagrams: the next ones are likely close behind. */
     private var flowing = false
@@ -87,6 +162,8 @@ internal class BatchReceiver(
         untilTimer: TimerHorizon,
         directTried: Boolean = false,
     ): Int {
+        commitDrain()
+        if (drainDue()) return drainStep(into)
         if (direct != null && flowing && !directTried) {
             if (yieldDue(untilTimer)) yieldToQueued()
             var n = takeDirect(direct, into, untilTimer)
@@ -98,7 +175,13 @@ internal class BatchReceiver(
             }
             if (n > 0) return n
         }
-        val n = io.receive(into) // suspends: the loop's queued work runs meanwhile
+        inReceive = true
+        val n =
+            try {
+                io.receive(into) // suspends: the loop's queued work runs meanwhile; a drain request interrupts it
+            } finally {
+                inReceive = false
+            }
         yielded()
         // [accounted] stays: a receive may return without suspending (a loop's inbox on a shared socket whose signal was already
         // set), and then nothing queued ran. When it did suspend, the next round yields once more for nothing
@@ -115,6 +198,8 @@ internal class BatchReceiver(
         into: PacketBatch,
         untilTimer: TimerHorizon,
     ): Int {
+        commitDrain()
+        if (drainDue()) return drainStep(into)
         if (direct == null || !flowing || yieldDue(untilTimer)) return NOT_TRIED
         val n = takeDirect(direct, into, untilTimer)
         // WORK_FIRST: receive yields to that work, then waits
@@ -183,6 +268,9 @@ internal class BatchReceiver(
 
         /** [DEFAULT_WAIT] where the platform's poll timeout is precise to the millisecond, else zero (Windows). */
         val PLATFORM_WAIT: Duration get() = if (millisecondPollWaits) DEFAULT_WAIT else Duration.ZERO
+
+        /** Datagrams one drain before an idle close takes from a socket at most, so a flood cannot hold the close forever. */
+        const val DRAIN_BUDGET: Int = 64
 
         /** The blocking receive's batch (the loop's 16 slots): queued work ran at least this often. */
         const val YIELD_DATAGRAMS = 16

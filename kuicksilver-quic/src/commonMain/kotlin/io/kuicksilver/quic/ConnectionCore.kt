@@ -590,6 +590,12 @@ public class ConnectionCore internal constructor(
     internal var dirty: Boolean = false
     internal var heapIndex: Int = -1
     internal var heapDeadline: TimeMark = TimeMark.NEVER
+
+    /**
+     * Endpoint bookkeeping: the idle deadline passed and the loop holds every timer of this connection until its sockets were
+     * drained (RFC 9000 section 10.1; `runtime/EndpointLoop.idle.kt`). The core itself never reads it.
+     */
+    internal var idleHeld: Boolean = false
     internal val cids =
         ConnectionIdManager(
             config.activeConnectionIdLimit,

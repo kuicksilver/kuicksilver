@@ -1246,6 +1246,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   yet. A timer wake-up later than a due deadline now lets the loop process the datagrams it already received first (RFC
   9000 section 10.1: the idle timer restarts when a packet is "received and processed"), as quic-go does with its queued
   packets. Datagrams still in the operating system's socket buffer are not read before the timers.
+- QUIC: a process frozen past a connection's idle deadline (an Android app freeze or Doze, a sleeping laptop, a stopped
+  debugger) closed the connection as idle on waking although its peer's packets waited in the socket's buffer, read only
+  after the timer. Before an idle timer closes a connection the endpoint now drains its sockets without waiting (the
+  accelerated socket's recvmsg or WSARecvMsg, the JVM's non-blocking channel, the shared socket's ring, ktor-network's
+  queue on Native) and processes what they held; the connection closes only if none of it restarted the idle timer (RFC
+  9000 section 10.1). The connection's other timers wait for that too, so no probe or keep-alive sent after the deadline
+  restarts the timer. A drain takes at most 64 datagrams per socket and a connection waits for it at most 500 ms, so a
+  flood or junk from the peer cannot keep a connection open; on the accelerated socket the receive in flight ends with
+  its native wait slice, so an idle close may come up to about 100 ms after the deadline. A caller's own `DatagramIo`
+  is not drained.
 - QUIC: native memory was not freed on some error paths: the 1-RTT write key that arrived with a peer's missing
   transport parameters (RFC 9001 section 8.2), the TLS session of a connection whose construction failed (client and
   server, including a reset token that failed for its first connection ID), the first derived key of a key phase whose

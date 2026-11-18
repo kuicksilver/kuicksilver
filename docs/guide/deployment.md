@@ -390,6 +390,14 @@ server with many idle clients pays for). The Ktor client closes HTTP/3 connectio
 `idleTimeout` (5 minutes) whatever `keepAlive` says. TCP has the same problem with longer timers (`ktor.deployment.connectionIdleTimeoutSeconds`, 45 s,
 closes idle HTTP/1.1 connections first).
 
+A process that was frozen (an Android app frozen in the background or in Doze, a laptop that slept, a debugger stopped
+at a breakpoint) wakes with its idle timers overdue. Before an idle timer closes a connection, the endpoint reads what
+its sockets hold, without waiting, and processes it: a packet the peer sent meanwhile keeps the connection, and only a
+connection none of whose packets arrived closes (RFC 9000 section 10.1). Such a close can come up to about 100 ms after
+the deadline on the accelerated socket, which ends its receive in flight with its current wait. A `DatagramIo` of your own
+is not read this way. After a long freeze the peer has usually closed its side by its own idle timer, so keep-alive
+still decides whether a quiet connection survives.
+
 ### Reply addresses
 
 A client drops QUIC packets from an address it did not send to (RFC 9000 section 9), so every answer must leave from the

@@ -15,6 +15,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.onEmsgsize
 import io.kuicksilver.quic.runtime.EndpointLoop.Companion.FLUSH_ROUNDS
 import kotlinx.coroutines.CancellationException
@@ -248,7 +249,8 @@ private inline fun EndpointLoop.flushBody(
                     runtimes.remove(c)
                     if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
                 } else {
-                    timers.update(c, c.nextTimeoutOrNever())
+                    // held for a drain while its idle deadline stays passed: no timer of it runs until the drain decides
+                    timers.update(c, if (c.idleHeld && c.idleDeadline() <= now) TimeMark.NEVER else c.nextTimeoutOrNever())
                 }
             }
         }
