@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.tls.EchConfigList
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
@@ -85,6 +86,22 @@ internal class EchRoute(
         val next = Offer(rejected.retryConfigs?.takeIf { it.isUsable }, retry = true)
         if (state.compareAndSet(used, next)) return next
         return state.load().takeIf { it !== used }
+    }
+}
+
+/**
+ * The ECH routes of one request's HTTPS record endpoints ([of]): one per target and `ech` value, so the QUIC and TCP sides
+ * of one record share a route (one retry for both), while two records for the same host and port with different `ech`
+ * values each offer their own configuration. Used by one request's coroutine only.
+ */
+internal class EchRoutesOfEndpoints {
+    private val routes = HashMap<String, EchRoute>()
+
+    /** The route of [e], made on first use; null for an endpoint without `ech`. */
+    fun of(e: HttpsEndpoint?): EchRoute? {
+        val bytes = e?.ech ?: return null
+        val key = "${e.host}:${e.port}|${kotlin.io.encoding.Base64.encode(bytes)}"
+        return routes.getOrPut(key) { EchRoute(parsedEch(bytes)) }
     }
 }
 

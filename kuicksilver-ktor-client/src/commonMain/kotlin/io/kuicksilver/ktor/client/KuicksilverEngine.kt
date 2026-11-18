@@ -1199,12 +1199,9 @@ internal class KuicksilverEngine(
         val triedQuic = HashSet<String>()
         val triedTcp = HashSet<String>()
         // one ECH route per endpoint with `ech` (RFC 9848), shared by its QUIC and TCP sides: one retry for both
-        val echRoutes = HashMap<String, EchRoute>()
+        val echRoutes = EchRoutesOfEndpoints()
 
-        fun echOf(e: HttpsEndpoint?): EchRoute? {
-            val bytes = e?.ech ?: return null
-            return echRoutes.getOrPut("${e.host}:${e.port}") { EchRoute(parsedEch(bytes)) }
-        }
+        fun echOf(e: HttpsEndpoint?): EchRoute? = echRoutes.of(e)
         var misdirected = false
         var lastFailure: Throwable? = null
         for (a in attempts) {

@@ -24,6 +24,7 @@ import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeByteArray
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.SvcbRecord
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.bindTcp
@@ -421,6 +422,26 @@ class ClientEchTest {
                 server.stopSuspend(0, 0)
             }
         }
+
+    /**
+     * Routes of HTTPS record endpoints: the QUIC and TCP sides of one record share one (one retry for both), but two records
+     * for the same host and port with different `ech` values each offer their own configuration.
+     */
+    @Test fun echRoutesAreKeyedByTheRecordsEchValue() {
+        val listB = listOf(EchTestKeys.B)
+        val routes = EchRoutesOfEndpoints()
+        val quicA = HttpsEndpoint("svc.test", 443, quic = true, tcp = false, ech = listA.bytes)
+        val tcpA = HttpsEndpoint("svc.test", 443, quic = false, tcp = true, ech = listA.bytes.copyOf())
+        val tcpB = HttpsEndpoint("svc.test", 443, quic = false, tcp = true, ech = listB.bytes)
+        val a = assertNotNull(routes.of(quicA))
+        assertTrue(a === routes.of(tcpA), "one record's sides share a route")
+        val b = assertNotNull(routes.of(tcpB))
+        assertTrue(a !== b, "another ech value for the same target: another route")
+        assertEquals(listA, a.offer.list)
+        assertEquals(listB, b.offer.list)
+        assertNull(routes.of(HttpsEndpoint("svc.test", 443, quic = true, tcp = true)))
+        assertNull(routes.of(null))
+    }
 
     @Test fun echRouteRetriesOnceAndSharesTheRetryBetweenSiblings() {
         val route = EchRoute(listA)
