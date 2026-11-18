@@ -57,6 +57,6 @@ docker run --rm --platform "$plat" --cap-add=NET_RAW -v "$root:/w" -w /w \
   > "$out/jvm.log" 2>&1 || { cat "$out/jvm.log"; echo "LinuxIcmpCheckTest failed"; exit 1; }
 x="$results/TEST-io.kuicksilver.http3.LinuxIcmpCheckTest.xml"
 [ -f "$x" ] || { cat "$out/jvm.log"; echo "no result for LinuxIcmpCheckTest"; exit 1; }
-grep -q 'tests="3" skipped="0" failures="0" errors="0"' "$x" || { cat "$x"; echo "LinuxIcmpCheckTest: not 3 passing tests"; exit 1; }
+grep -q 'tests="4" skipped="0" failures="0" errors="0"' "$x" || { cat "$x"; echo "LinuxIcmpCheckTest: not 4 passing tests"; exit 1; }
 if grep -q 'skipped: run by tools/interop/icmp-linux-check.sh' "$x"; then echo "LinuxIcmpCheckTest skipped its checks (KSL_ICMP_LINUX_CHECK not seen)"; exit 1; fi
 echo "icmp-linux-check: OK ($cls)"
