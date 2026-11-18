@@ -47,9 +47,10 @@ import kotlin.time.Duration.Companion.seconds
  * which closes), never answers, answers after a Retry, or after a Version Negotiation; or the application closes first.
  * Odd seeds remember small limits, so calls in 0-RTT also wait for stream and flow-control credit.
  *
- * Once the answer is known: after a rejection every stream the application opened before it is failed with
- * [QuicException.StreamError.EarlyDataRejected] on both halves and done, it has left the connection's stream map, and every
- * job on it (reads, writes, finishes, STOP_SENDING watchers) has ended; the map holds no stream a rejection dropped. Once
+ * Once the answer is known: no wrapper stays for a stream retired with its reset unacknowledged; after a rejection every
+ * stream the application opened before it is failed with [QuicException.StreamError.EarlyDataRejected] on both halves and
+ * done, it has left the connection's stream map, and every job on it (reads, writes, finishes, STOP_SENDING watchers) has
+ * ended; the map holds no stream a rejection dropped. Once
  * the connection ended: its handshake and `closed` are complete, every stream the application saw is done, and no job of
  * the application waits on anything of the connection any more; each stream's Deferreds (every getter of [QuicStream] typed
  * Deferred) are awaited by such jobs. `KUICKSILVER_ZRTT_SEEDS` sets the seeds per outcome.
@@ -347,9 +348,17 @@ class ZeroRttRuntimeSeededTest {
         }
     }
 
-    /** The answer is known: a rejection failed and removed every stream opened before it, and nothing waits on them. */
+    /**
+     * The answer is known: no wrapper stays for a stream that retired with its reset unacknowledged (one retired before an
+     * acceptance goes at it); a rejection failed and removed every stream opened before it, and nothing waits on them.
+     */
     private suspend fun afterAnswer(app: App) {
         val conn = app.conn
+        withContext(conn.loopDispatcherForTest) {
+            for (id in conn.streams.keys) {
+                check(!conn.core.streams.retiredAndOfferedForTest(id)) { "stream $id retired before the answer keeps its wrapper after it" }
+            }
+        }
         if (conn.earlyDataAccepted != false) return
         val early = app.streams.toList()
         withContext(conn.loopDispatcherForTest) {
