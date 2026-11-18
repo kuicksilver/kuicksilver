@@ -68,6 +68,21 @@ public suspend fun Socket.tlsServer(
 }
 
 /**
+ * [tlsServer] on a socket whose read channel the caller has opened already ([openDeliveringReadChannel]) and read a prefix
+ * from: a PROXY protocol header, which arrives before the ClientHello. The TLS session reads [input] from where the caller
+ * stopped, so bytes that came in the same segment as the prefix (the ClientHello, early records) are not lost.
+ */
+@InternalKuicksilverApi
+public suspend fun Socket.tlsServer(
+    config: TlsConfig,
+    input: ByteReadChannel,
+    context: CoroutineContext = EmptyCoroutineContext,
+): TlsSocket {
+    if (config.role != TlsRole.Server) throw TlsException.Config("Socket.tlsServer needs a server configuration")
+    return TlsSocket.start(this, config, context, input)
+}
+
+/**
  * A [Socket] over a [TlsConnection]; closing it sends `close_notify` and closes the underlying socket.
  *
  * @property tls the TLS session underneath, for what [Socket] cannot express: the protocol version, the exporter
@@ -345,9 +360,10 @@ public class TlsSocket private constructor(
             raw: Socket,
             config: TlsConfig,
             context: CoroutineContext,
+            opened: ByteReadChannel? = null,
         ): TlsSocket {
             val ctx = raw.coroutineContext + context
-            val rawIn = raw.openDeliveringReadChannel()
+            val rawIn = opened ?: raw.openDeliveringReadChannel()
             val rawOut = raw.openWriteChannel(autoFlush = true)
             val tls =
                 try {
