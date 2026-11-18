@@ -217,6 +217,21 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
                 return KSL_ERROR;
             }
         }
+        /* RFC 9846 section 4.2.2: after a HelloRetryRequest the second ClientHello comes without early_data. An OpenSSL 3.5 QUIC
+           client keeps offering it there (its early data state stays SSL_EARLY_DATA_CONNECTING, so tls_construct_ctos_early_data
+           sends it again, and the server answers illegal_parameter), unless the session's max_early_data is 0. The session offered
+           is shared with other holders and threads: this connection offers a copy of its own, which ksl_msg_cb may clear. */
+        {
+            SSL_SESSION *own = SSL_get_session(s->ssl) ? SSL_SESSION_dup(SSL_get_session(s->ssl)) : NULL;
+            int ok = own && SSL_set_session(s->ssl, own) == 1;
+            SSL_SESSION_free(own);
+            if (!ok) {
+                ERR_clear_error();
+                ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no session of its own for early data");
+                return KSL_ERROR;
+            }
+            s->early_session = own; /* OpenSSL holds it now */
+        }
         if (!SSL_set_quic_tls_early_data_enabled(s->ssl, 1)) {
             ERR_clear_error();
             ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: the session does not allow early data");
@@ -790,6 +805,15 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
         s->owner->role == KSL_CLIENT)
         s->nst_early_data = ksl_nst_has_early_data(m, len);
+    /* a HelloRetryRequest (RFC 9846 section 4.2.3: a ServerHello whose random is the SHA-256 of "HelloRetryRequest") to a QUIC client
+       that offered 0-RTT: its second ClientHello offers none (KSL_SET_EARLY_DATA) */
+    static const uint8_t hrr_random[32] = {0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c,
+                                           0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb,
+                                           0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c};
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 38 && m[0] == SSL3_MT_SERVER_HELLO &&
+        s->early_session && SSL_get_session(ssl) == s->early_session &&
+        memcmp(m + 6, hrr_random, sizeof hrr_random) == 0)
+        (void)SSL_SESSION_set_max_early_data(s->early_session, 0);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

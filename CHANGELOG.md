@@ -1167,6 +1167,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC client: a 0-RTT attempt answered with a HelloRetryRequest (a server whose key-exchange groups did not include
+  any the client sent a key share for) never completed. The second ClientHello was handed to the transport at the 0-RTT
+  level, where a server reads no CRYPTO frame (RFC 9000 section 12.4; RFC 9001 section 4.1.4 puts every ClientHello in
+  Initial packets), and it offered `early_data` again, which RFC 9846 section 4.2.2 removes and the server answered with
+  `illegal_parameter`; the client also got a second 0-RTT key from it. `ksl` now gives a ClientHello the Initial level,
+  hands out no 0-RTT key after a HelloRetryRequest, and has each 0-RTT connection offer a copy of its session, whose
+  0-RTT allowance a HelloRetryRequest clears (OpenSSL 3.5's QUIC client otherwise keeps offering it). The handshake
+  completes with 0-RTT rejected (RFC 9001 section 4.6.2: "A server will always reject 0-RTT if it sends a TLS
+  HelloRetryRequest") and the session resumed.
 - HTTP/3 client (ktor-client) and `QuicConnection.rebind`: a local process could take the replies of an HTTP/3
   connection to a server on localhost on macOS (and the other BSD-socket systems, iOS included). The client's endpoint was
   bound to the wildcard address, which shares its port with a socket another process binds to 127.0.0.1 or ::1, and the

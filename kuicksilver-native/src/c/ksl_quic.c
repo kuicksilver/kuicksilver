@@ -71,10 +71,20 @@ int ksl_quic_next_event(ksl_ssl *s, ksl_event *out) {
 static int cb_crypto_send(SSL *ssl, const unsigned char *buf, size_t len, size_t *consumed, void *arg) {
     (void)ssl;
     ksl_ssl *s = arg;
+    /* RFC 9001 section 4.1.4 (Table 1): a ClientHello goes in Initial packets, also the second one after a HelloRetryRequest, which
+       a client sending 0-RTT writes after its 0-RTT key: OpenSSL then drops its write keys to none
+       (tls_process_as_hello_retry_request) without telling the QUIC callbacks (quic_tls.c, no secret for that level), so the level
+       is taken from the message itself; RFC 9000 section 12.4 allows no CRYPTO frame in a 0-RTT packet. */
+    int level = s->write_level;
+    if (s->owner->role == KSL_CLIENT && len > 0 && buf[0] == SSL3_MT_CLIENT_HELLO &&
+        s->write_level <= KSL_LEVEL_EARLY) {
+        level = s->write_level = KSL_LEVEL_INITIAL;
+        s->client_hellos++;
+    }
     ksl_event *e = ksl_push_event(s, KSL_EV_CRYPTO_SEND, buf, len);
     if (!e)
         return 0;
-    e->level = s->write_level;
+    e->level = level;
     *consumed = len;
     return 1;
 }
@@ -110,6 +120,12 @@ static int cb_yield_secret(SSL *ssl, uint32_t prot_level, int direction, const u
     ksl_ssl *s = arg;
     if (prot_level >= KSL_NLEVELS)
         return 0;
+    /* After a HelloRetryRequest OpenSSL derives a 0-RTT write key again from the second ClientHello (statem_clnt.c,
+       TLS_ST_CW_CLNT_HELLO post work), but 0-RTT is over: the second ClientHello carries no early_data (RFC 9846 section 4.2.2)
+       and "A server will always reject 0-RTT if it sends a TLS HelloRetryRequest" (RFC 9001 section 4.6.2). No key is handed
+       out, and the second ClientHello's level stays Initial. */
+    if (prot_level == KSL_LEVEL_EARLY && direction == 1 && s->client_hellos > 1)
+        return 1;
     if (direction == 0)
         s->read_level = (int)prot_level;
     else

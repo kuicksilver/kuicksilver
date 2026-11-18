@@ -86,6 +86,7 @@ struct ksl_ssl {
     size_t tp_len; /* must outlive the handshake: OpenSSL keeps the pointer */
     uint32_t quic_version;
     int hs_keys; /* version whose labels derive Handshake/1-RTT keys; set once Handshake keys exist */
+    int client_hellos; /* QUIC client: ClientHellos written; a second one follows a HelloRetryRequest (ksl_quic.c cb_crypto_send) */
     uint32_t
         orig_version; /* server: the client's original version (0 until negotiated); labels of 0-RTT keys (RFC 9369 4.1) */
     ksl_inbuf in[KSL_NLEVELS], stash[KSL_NLEVELS]; /* stash receives bytes while a record is outstanding */
@@ -126,6 +127,9 @@ struct ksl_ssl {
     SSL_SESSION *new_sessions[KSL_CLIENT_TICKETS];
     int new_sessions_n;           /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
     SSL_SESSION *offered_session; /* client: the session set by ksl_ssl_set_session (a reference), for own_alpn */
+    SSL_SESSION *
+        early_session; /* QUIC client with 0-RTT: this session's own copy of the offered one (OpenSSL's reference), whose
+                                     max_early_data a HelloRetryRequest clears (ksl_msg_cb) */
     uint64_t key_updates_sent,
         key_update_limit; /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted,
