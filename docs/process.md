@@ -193,7 +193,7 @@ closed). Targets listed in
 `untraced.txt` are not covered (most read the input as the bytes of what they parse; `tls.zeroRttHello`,
 `ktor-network.inflate`, `ktor-network.wsGuard`, `client.h1Response`, `server.h1Request` and `quic.rememberedTicket` have
 small decoders not traced yet), and neither is a Jazzer target that is not in the campaign's table
-(`BbrInvariantFuzzTest`). The reason rule needs the history: the hosted lint job, a shallow clone, skips it.
+(`BbrInvariantFuzzTest`). The reason rule needs the history: the hosted lint job checks out all of it and compares a push to `main` or `release/**` with the commit before it, anything else with its merge base with `origin/main` (`KSL_FUZZ_FORMATS_BASE`); without a base it skips the rule and says so.
 
 `deadline-sites.py` resolves the kotlinx functions exactly from each file's imports, but its timer and select forms are
 syntactic: a deadline through another library (Ktor's `HttpTimeout`), through a project helper (only the helper's own

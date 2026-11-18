@@ -62,10 +62,30 @@ jobs:
     permissions: { contents: read }
     timeout-minutes: 45
     steps:
+      # the whole history (fuzz-formats.py compares the fuzz formats with a base commit, below); release tags come with it
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - name: 'lint: fetch the release tags (config-table.sh checks Since against them)'
-        run: git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: 'lint: fetch main and the release tags (fuzz-formats base; config-table.sh checks Since against the tags)'
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git fetch origin 'refs/tags/v*:refs/tags/v*'
+      - name: 'lint: the base the fuzz-formats reason rule compares with'
+        # a push to main or release/**: the commit before it (github.event.before; none for a new branch, all zeros);
+        # anything else (a pull request, a dispatched or weekly run of another branch): its merge base with origin/main.
+        # Empty when there is none, and fuzz-formats.py then skips the rule and says so.
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=""
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+            && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base=$BEFORE
+          else
+            base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+          fi
+          echo "fuzz-formats base: ${base:-none}"
+          echo "KSL_FUZZ_FORMATS_BASE=$base" >> "$GITHUB_ENV"
       - name: 'lint: action/image pins'
         run: bash tools/check/pins.sh .
       - name: 'lint: documentation references'
@@ -74,7 +94,7 @@ jobs:
           python3 -I tools/check/code-refs.py   # the source lines docs/spec cites, against tools/check/code-refs.lock
       - name: 'lint: tests that can run and fail, sleeps, name-service calls, tests behind RFC rows'
         # docs/process.md, "Repository checks"; the commit types and cited hashes are checked by local-matrix.sh over
-        # main..HEAD (this shallow checkout has no history to read them from; commit-msg-test.sh runs below)
+        # main..HEAD (commit-msg-test.sh runs below)
         run: |
           rc=0
           python3 -I tools/check/test-discovery.py || rc=1
@@ -83,10 +103,10 @@ jobs:
           python3 -I tools/check/env-apis.py || rc=1      # allowlist tools/check/env-apis.allow
           python3 -I tools/check/rfc-tests.py || rc=1     # the ratchet in tools/check/rfc-tests.lock
           python3 -I tools/check/reproducers.py || rc=1   # every fuzz reproducer recorded in tools/fuzz/reproducers.txt
-          python3 -I tools/check/fuzz-formats.py || rc=1  # tools/fuzz/formats/ (the reason rule needs history: local gate)
+          python3 -I tools/check/fuzz-formats.py || rc=1  # tools/fuzz/formats/, the reason rule against KSL_FUZZ_FORMATS_BASE
           python3 -I tools/check/deadline-sites.py || rc=1 # every deadline judged in tools/check/deadline-sites.allow
           python3 -I tools/check/test-hooks.py || rc=1    # global *ForTest hooks a test sets are reset
-          python3 -I tools/check/tracked-hashes.py || rc=1  # cited hashes in tracked files (shallow here: unchecked)
+          python3 -I tools/check/tracked-hashes.py || rc=1  # cited hashes in tracked files
           python3 -I tools/check/wildcard-binds.py || rc=1  # test sockets reached over loopback bind loopback
           exit $rc
       - name: 'lint: doc-refs and test-check negative controls'

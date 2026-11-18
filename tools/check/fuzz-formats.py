@@ -30,7 +30,9 @@ is the part that needs no build, with the repository checks:
              those that no row lists, and a constant its KDoc does not name (`[CONSTANT]`). Against the merge base, a row
              removed or changed (a renamed or moved flag) needs a line naming every target of its program in
              changes.txt, as a changed decoding does. FuzzTraceTest checks the same table against the compiled program.
-Without a merge base (a shallow clone, main itself) the reason rule is skipped, and said so.
+The base is the merge base with main (else origin/main), or the commit KSL_FUZZ_FORMATS_BASE names (CI: the commit before a
+push, or the merge base of a pull request with its target). Without one (a shallow clone, main itself, a base that is no
+commit here) the reason rule is skipped, and said so.
 Usage: fuzz-formats.py [root]   (exit 1 on any finding)
 """
 import hashlib
@@ -142,7 +144,9 @@ def kotlin_object(src, name):
         return None
     end = next((i for i in range(at + 1, len(lines)) if lines[i] == "}"), len(lines))
     doc = at
-    if at > 0 and lines[at - 1].strip() == "*/":
+    while doc > 0 and lines[doc - 1].lstrip().startswith("@"):   # @OptIn(...), @Suppress(...) between the KDoc and the object
+        doc -= 1
+    if doc > 0 and lines[doc - 1].strip() == "*/":
         while doc > 0 and not lines[doc - 1].lstrip().startswith("/**"):
             doc -= 1
         doc -= 1
@@ -308,11 +312,17 @@ def main(argv):
                 findings.append(f"{lock} | unrecorded | {f} is a committed input of {tid} the lock does not list")
         current[tid] = (pairs, {e[0]: e[2] for e in entries if not isinstance(e, str)})
     # the reason rule, against the merge base with main
-    base = git(root, "merge-base", "HEAD", "main").stdout.strip()
+    given = os.environ.get("KSL_FUZZ_FORMATS_BASE", "").strip()
+    if given:
+        # CI names the base itself: a push compares with the commit before it, other runs with their merge base
+        base = git(root, "rev-parse", "-q", "--verify", f"{given}^{{commit}}").stdout.strip()
+    else:
+        base = git(root, "merge-base", "HEAD", "main").stdout.strip() or \
+            git(root, "merge-base", "HEAD", "origin/main").stdout.strip()
     head = git(root, "rev-parse", "-q", "--verify", "HEAD").stdout.strip()
     if not base or base == head and not git(root, "status", "--porcelain", "--", FORMATS).stdout.strip():
-        print("fuzz-formats: no merge base with main to compare with (or none changed): the reason rule is skipped",
-              file=sys.stderr)
+        print(f"fuzz-formats: no base to compare with ({'KSL_FUZZ_FORMATS_BASE=' + given + ' is no commit here' if given else 'no merge base with main'}, "
+              "or none changed): the reason rule is skipped", file=sys.stderr)
     else:
         def at_base(path):
             r = git(root, "show", f"{base}:{path}")

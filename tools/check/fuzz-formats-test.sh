@@ -13,7 +13,9 @@
 # program, and fails for a trace name renamed in the source or in the manifest, a constant renamed, a flag moved to
 # another bit, a duplicate bit, constant or trace name, a gap, a flag of the source without a row and a row without a
 # flag, a constant its KDoc does not name, a target or source that is not there and a malformed row; against the merge
-# base a renamed flag needs a reason naming its program's targets, and a new flag does not.
+# base a renamed flag needs a reason naming its program's targets, and a new flag does not; annotations between a program's
+# KDoc and its object are skipped. KSL_FUZZ_FORMATS_BASE names the base (CI: the commit before a push to main), and a base
+# that is no commit is skipped with a message.
 # Usage: fuzz-formats-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,9 +187,18 @@ expect 0 "the same with a reason naming the program's target" "0 finding(s); 4 f
 reset; program SMALL 2 small 1 "const val FAST = 4" "FAST to \"fast\","; manifest "${rows[@]}" "XProgram flags 4 FAST fast"
 sed -i.bak 's/the second; /the second, [FAST] the third; /' "$r/$src"; rm "$r/$src.bak"
 expect 0 "a new flag with its row needs no reason" "0 finding(s); 5 flag rows"
+reset; awk '/^internal object XProgram/ { print "@OptIn(ExperimentalX::class)"; print "@Suppress(\"unused\")" } 1' "$r/$src" > "$r/$src.new"
+mv "$r/$src.new" "$r/$src"
+expect 0 "annotations between the KDoc and the object are skipped" "0 finding(s); 4 flag rows"
 reset
 git -C "$r" checkout -q main; git -C "$r" branch -qD topic
 write_lock "$S" 1111111111111111 "$A" dddddddddddddddd "$B" bbbbbbbbbbbbbbbb; sort_lock; git -C "$r" commit -qam direct
 expect 0 "on main itself the reason rule is skipped, and said so" "the reason rule is skipped"
+# a push to main: CI names the commit before the push as the base (KSL_FUZZ_FORMATS_BASE)
+program TINY 2 tiny 1; manifest "XProgram flags 1 LIVE live" "XProgram flags 2 TINY tiny" "XProgram outcome 0 OK ok" "XProgram outcome 1 LOST lost"
+git -C "$r" commit -qam renamed
+before=$(git -C "$r" rev-parse HEAD~1)
+KSL_FUZZ_FORMATS_BASE=$before expect 1 "negative: a push to main that renames a flag, against the commit before it" "flags.txt | changed | 1 row(s) of XProgram"
+KSL_FUZZ_FORMATS_BASE=0000000000000000000000000000000000000000 expect 0 "a base that is no commit here is skipped, and said so" "is no commit here"
 [ "$rc" = 0 ] && echo "all passed" || echo "FAILED"
 exit "$rc"
