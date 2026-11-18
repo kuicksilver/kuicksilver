@@ -86,8 +86,10 @@ public class KeyExchangeGroups(
     override fun equals(other: Any?): Boolean =
         other is KeyExchangeGroups && other.groups == groups && other.keyShares == keyShares && other.sharesGiven == sharesGiven
 
+    /** Consistent with [equals]: the groups, the key shares and whether the shares were given. */
     override fun hashCode(): Int = (groups.hashCode() * 31 + keyShares.hashCode()) * 31 + sharesGiven.hashCode()
 
+    /** The groups in order and the key shares, for logs and error messages. */
     override fun toString(): String = "KeyExchangeGroups($groups, keyShares=$keyShares)"
 
     /** The group names this stack supports (RFC 9846 section 4.3.7 and the IANA TLS Supported Groups registry) and the default. */

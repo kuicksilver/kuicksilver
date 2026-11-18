@@ -310,7 +310,7 @@ internal class QlogWriter(
         now: TimeMark,
     ) = event(now, "connectivity:connection_state_updated", "\"old\":\"${stateName(old)}\",\"new\":\"${stateName(new)}\"")
 
-    /** quic-events-04 section 8.3 Owner: "local" or "remote" (our [Initiator.Peer]). */
+    /** quic-events-04 section 8.3 Owner: "local" or "remote" (our [io.kuicksilver.quic.Initiator.Peer]). */
     private fun owner(i: io.kuicksilver.quic.Initiator): String = if (i == io.kuicksilver.quic.Initiator.Local) "local" else "remote"
 
     private fun stateName(state: ConnectionState): String =
