@@ -368,8 +368,11 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * when it picks that method, or `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests,
      * sent with the first request (no 407 round trip) unless the request sets its own `Proxy-Authorization`. Off the JVM
      * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
-     * in clear to the proxy (RFC 1929 section 5, RFC 7617 section 4), never to the origin, and never into the engine's
-     * logs or events. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
+     * in clear to an `http://` or SOCKS5 proxy (RFC 1929 section 5, RFC 7617 section 4) and only inside TLS to an
+     * `https://` one (after its certificate verified), never to the origin, and never into the engine's logs or events.
+     * On the JVM the `proxy` is a `java.net.Proxy`, which has no scheme: `ProxyBuilder.http(Url("https://..."))` there
+     * makes a plain HTTP proxy, so name an `https://` proxy with a [proxyResolver] (`ResolvedProxy.https`) or the
+     * environment instead. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
      * [IllegalArgumentException]: RFC 1929 section 2 gives the password 1 to 255 octets (curl and Go send an empty one
      * anyway, outside the protocol).
      */
@@ -377,10 +380,25 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var proxyCredentials: ProxyCredentials? = null
 
     /**
+     * The TLS settings of connections to an `https://` proxy ([ResolvedProxy.https]: TLS to the proxy itself), separate
+     * from the origin's. Null (the default) takes the origin's: the [tls] block over [trust], then that trust without
+     * what names the origin (a `TrustConfig.ExpectedName` gives way to its base, a `TrustConfig.Pinned` to its base: the
+     * proxy has another name and another key), and no client certificate ([identity] is the origin's and is not shown to
+     * the proxy). A block starts from that same trust and no identity and may set anything (`trust`, `identity` for a
+     * proxy that wants a client certificate, `versions`...). Whatever it says, the server name, which is both SNI and
+     * the name the certificate is verified against (RFC 9525), is the proxy's host and ALPN offers `http/1.1` only; set
+     * after the block. The origin's TLS inside the proxy's tunnel keeps [trust], [identity] and [tls], as without a
+     * proxy. docs/guide/ktor.md, "Proxies".
+     */
+    @ExperimentalKuicksilverApi
+    public var proxyTls: (TlsConfig.Builder.() -> Unit)? = null
+
+    /**
      * Where the proxy for a request comes from when `proxy` is not set (an explicit `proxy` always wins):
      * [ProxyResolvers.System] (the default: the platform's proxy settings), [ProxyResolvers.Environment]
      * (`https_proxy`, `no_proxy`...), [ProxyResolvers.None] for direct connections, or your own [ProxyResolver]. A
-     * request through a proxy uses HTTP/1.1 only and neither uses nor learns `Alt-Svc`; `localhost` and loopback
+     * request through a proxy uses TCP only (HTTP/1.1, or HTTP/2 with the origin inside a tunnel) and neither uses nor
+     * learns `Alt-Svc`; `localhost` and loopback
      * addresses always connect directly with the built-in resolvers. docs/guide/ktor.md, "Proxies".
      */
     @ExperimentalKuicksilverApi

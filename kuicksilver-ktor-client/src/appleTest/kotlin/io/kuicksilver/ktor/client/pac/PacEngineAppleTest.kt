@@ -215,6 +215,25 @@ class PacEngineAppleTest {
             }
         }
 
+    /** A script's `HTTPS host:port` is TLS to that proxy (Chromium's extension of the PAC grammar), not refused. */
+    @Test fun httpsAnswerIsTlsToTheProxy() =
+        runBlocking {
+            val entry =
+                CfProxy(
+                    CfProxy.Type.AutoConfiguration,
+                    null,
+                    null,
+                    pacScript = "function FindProxyForURL(url, host) { return 'HTTPS tls.test; SOCKS4 s4.test:1080'; }",
+                )
+            val warnings = ArrayList<String>()
+            assertEquals(
+                io.kuicksilver.ktor.client.ResolvedProxy
+                    .https("tls.test", 443),
+                pickCfProxyWithPac(listOf(entry), { evaluatePac(it, "https://x.test:443/", "x.test") }) { warnings += it },
+            )
+            assertEquals(emptyList(), warnings)
+        }
+
     /** An answer with only proxies the engine cannot use fails closed: never a direct connection. */
     @Test fun negative_unsupportedOnlyAnswerFailsClosed() =
         runBlocking {
@@ -223,7 +242,7 @@ class PacEngineAppleTest {
                     CfProxy.Type.AutoConfiguration,
                     null,
                     null,
-                    pacScript = "function FindProxyForURL(url, host) { return 'HTTPS tls.test:443; SOCKS4 s4.test:1080'; }",
+                    pacScript = "function FindProxyForURL(url, host) { return 'SOCKS4 s4.test:1080; SOCKS4 s5.test:1081'; }",
                 )
             val warnings = ArrayList<String>()
             assertFailsWith<ProxyException> {
@@ -631,7 +650,7 @@ class PacEngineAppleTest {
                 CfProxy.Type.Http,
                 CfProxy.Type.Socks,
                 CfProxy.Type.Socks,
-                CfProxy.Type.Unsupported,
+                CfProxy.Type.TlsHttp,
                 CfProxy.Type.Unsupported,
                 CfProxy.Type.None,
                 CfProxy.Type.Http,

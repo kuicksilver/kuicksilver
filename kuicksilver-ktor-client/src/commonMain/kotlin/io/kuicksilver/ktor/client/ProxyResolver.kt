@@ -27,6 +27,7 @@ import kotlin.concurrent.atomics.AtomicInt
  * [proxyFor] returns null for a direct connection. It may throw (UnsupportedOperationException for a proxy the engine
  * cannot use): the request then fails rather than going around the proxy. A request through a proxy uses HTTP/1.1 only
  * (HTTP/3 is UDP, which no supported proxy carries). The engine keeps an answer for 30 seconds per scheme, host and port.
+ * [ResolvedProxy.https] is a proxy spoken to in TLS (an `https://` proxy).
  */
 @ExperimentalKuicksilverApi
 public fun interface ProxyResolver {
@@ -47,9 +48,10 @@ public object ProxyResolvers {
      * The environment variables, with curl's meaning: `https_proxy` / `HTTPS_PROXY` for `https` and `wss`, `http_proxy`
      * (lower case only: an `HTTP_PROXY` header of a CGI request lands in `HTTP_PROXY`, "httpoxy") for `http` and `ws`,
      * then `all_proxy` / `ALL_PROXY`; `no_proxy` / `NO_PROXY` lists what goes direct: `*`, names (`example.com` also
-     * covers its subdomains, on a label boundary), IP addresses and CIDR ranges. A value is `http://`, `socks5://`
-     * (names resolved here), `socks5h://` (names resolved by the proxy) or a bare `host:port` (HTTP); its user info, if
-     * any, becomes the credentials. Any other scheme (`https://`, `socks4://`) fails the request.
+     * covers its subdomains, on a label boundary), IP addresses and CIDR ranges. A value is `http://`, `https://` (TLS to
+     * the proxy, [ResolvedProxy.https]; port 443 when none is given), `socks5://` (names resolved here), `socks5h://`
+     * (names resolved by the proxy) or a bare `host:port` (HTTP); its user info, if any, becomes the credentials. Any
+     * other scheme (`socks4://`) fails the request.
      */
     public val Environment: ProxyResolver = EnvironmentProxyResolver { platformGetenv(it) }
 
@@ -151,8 +153,9 @@ internal fun decodeUserInfo(part: String): String =
 private val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*")
 
 /**
- * A proxy URL as curl takes it: `http://`, `socks5://`, `socks5h://` or no scheme (HTTP), user info as credentials
- * (percent-decoded), port 1080 when none is given, a path ignored. A `://` after the first `/` is in the path, not a
+ * A proxy URL as curl takes it: `http://`, `https://` (TLS to the proxy), `socks5://`, `socks5h://` or no scheme (HTTP),
+ * user info as credentials (percent-decoded), port 1080 when none is given (443 for `https://`, as Chrome and Go's
+ * `net/http` default it; curl's documentation gives 1080 for every scheme), a path ignored. A `://` after the first `/` is in the path, not a
  * scheme's end. Another scheme fails with UnsupportedOperationException, a text before `://` that is not a scheme (RFC
  * 3986 section 3.1; it may be user info) with IllegalArgumentException, a bad port or a broken percent-escape in the user
  * info with IllegalArgumentException. No message repeats any part of the value, not even an unsupported scheme (a user
@@ -183,23 +186,23 @@ internal fun parseProxyUrl(value: String): ResolvedProxy {
             val info = rest.substring(0, at)
             ProxyCredentials(decodeUserInfo(info.substringBefore(':')), if (':' in info) decodeUserInfo(info.substringAfter(':')) else "")
         }
-    val (host, port) = splitHostPort(rest.substring(at + 1), defaultPort = 1080)
+    if (scheme !in PROXY_SCHEMES) {
+        throw UnsupportedOperationException(
+            "the proxy URL's scheme is not supported (http://, https://, socks5:// and socks5h:// are); refusing to connect around it",
+        )
+    }
+    val (host, port) = splitHostPort(rest.substring(at + 1), defaultPort = if (scheme == "https") 443 else 1080)
     return when (scheme) {
         "http" -> ResolvedProxy.http(host, port, credentials)
-
+        "https" -> ResolvedProxy.https(host, port, credentials)
         "socks5" -> ResolvedProxy.socks5(host, port, credentials, remoteDns = false)
-
-        "socks5h" -> ResolvedProxy.socks5(host, port, credentials, remoteDns = true)
-
-        "https" -> throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
-
-        else -> throw UnsupportedOperationException(
-            "the proxy URL's scheme is not supported (http://, socks5:// and socks5h:// are); refusing to connect around it",
-        )
+        else -> ResolvedProxy.socks5(host, port, credentials, remoteDns = true)
     }
 }
 
 private val AUTHORITY_END = charArrayOf('/', '?', '#')
+
+private val PROXY_SCHEMES = setOf("http", "https", "socks5", "socks5h")
 
 /**
  * `host`, `host:port`, `[v6]`, `[v6]:port` or a bare IPv6 address. The host must be an IP literal or a name of RFC 3986
@@ -396,7 +399,9 @@ internal fun parseIpLiteral(text: String): ByteArray? {
  * The proxy Windows' Internet settings give for [url]: [proxy] is `host:port` for every scheme or a list such as
  * `http=a:80;https=b:443;socks=c:1080` (HTTP for `https` and `wss` takes the `https=` entry, `http` and `ws` the `http=`
  * one, else a bare entry, else `socks=`); [bypass] is `;`-separated patterns with `*` wildcards, `<local>` meaning any
- * host name without a dot. Null for a direct connection.
+ * host name without a dot. An entry is a plain HTTP proxy, whatever its key says (`https=` names the proxy for `https`
+ * URLs, not TLS to it), unless its value itself starts with `https://`, which is TLS to the proxy (port 443 when none is
+ * given), as Chromium reads a proxy URI there. Null for a direct connection.
  */
 internal fun parseWinInetProxy(
     proxy: String?,
@@ -419,7 +424,10 @@ internal fun parseWinInetProxy(
     }
 
     fun http(v: String): ResolvedProxy {
-        if (v.startsWith("https://", ignoreCase = true)) throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
+        if (v.startsWith("https://", ignoreCase = true)) {
+            val (h, p) = splitHostPort(v.substring("https://".length).substringBefore('/'), defaultPort = 443)
+            return ResolvedProxy.https(h, p)
+        }
         val (h, p) = splitHostPort(v.removePrefix("http://").removePrefix("HTTP://").substringBefore('/'), defaultPort = 80)
         return ResolvedProxy.http(h, p)
     }
@@ -494,8 +502,12 @@ internal class CfProxy(
     /** For [Type.AutoConfiguration]: the script is found by WPAD's discovery (the system's "auto discover" setting). */
     val wpad: Boolean = false,
 ) {
-    /** [Unsupported]: a proxy a PAC script named that the engine cannot use (`HTTPS`, `SOCKS4`). */
-    enum class Type { None, Http, Https, Socks, AutoConfiguration, Unsupported, Other }
+    /**
+     * [Https] is CFNetwork's `kCFProxyTypeHTTPS`: a plain HTTP proxy for `https` URLs. [TlsHttp] is TLS to the proxy, a PAC
+     * script's `HTTPS host:port` (Chromium's extension of the PAC grammar). [Unsupported]: a proxy a PAC script named that
+     * the engine cannot use (`SOCKS4`).
+     */
+    enum class Type { None, Http, Https, TlsHttp, Socks, AutoConfiguration, Unsupported, Other }
 }
 
 /** What running a PAC entry gave. */
@@ -516,7 +528,7 @@ internal sealed interface PacOutcome {
  * [pickCfProxy] where a PAC entry is run by [runPac] and its answer picked the same way, in the order of CFNetwork's
  * list. A script that could not be fetched or run is skipped with a [warn]ing ([PAC_FAILED]), and WPAD that found no
  * script with [WPAD_NOT_FOUND]; the next entry then counts. An answer that names only proxies the engine cannot use
- * (`HTTPS`, `SOCKS4`) is skipped with [PAC_UNSUPPORTED] too, and fails closed: when no later entry decides, the lookup
+ * (`SOCKS4`) is skipped with [PAC_UNSUPPORTED] too, and fails closed: when no later entry decides, the lookup
  * fails with [ProxyException] instead of connecting directly, as the script asked for a proxy.
  */
 internal inline fun pickCfProxyWithPac(
@@ -555,7 +567,7 @@ internal inline fun pickCfProxyWithPac(
 }
 
 internal const val PAC_UNSUPPORTED: String =
-    "the proxy auto-configuration script answered only with proxies the engine cannot use (HTTPS, SOCKS4): requests " +
+    "the proxy auto-configuration script answered only with proxies the engine cannot use (SOCKS4): requests " +
         "use the next proxy setting, and fail when there is none rather than connect directly"
 
 /** What a run of fixed entries decides: a proxy, or a direct connection ("none"); null when no entry decides. */
@@ -574,6 +586,10 @@ internal fun pickFixed(proxies: List<CfProxy>): FixedPick? {
                 if (p.host != null) return FixedPick(ResolvedProxy.http(p.host, p.port ?: 8080))
             }
 
+            CfProxy.Type.TlsHttp -> {
+                if (p.host != null) return FixedPick(ResolvedProxy.https(p.host, p.port ?: 443))
+            }
+
             CfProxy.Type.Socks -> {
                 if (p.host != null) return FixedPick(ResolvedProxy.socks5(p.host, p.port ?: 1080))
             }
@@ -585,7 +601,7 @@ internal fun pickFixed(proxies: List<CfProxy>): FixedPick? {
 }
 
 /**
- * The proxy to use from [proxies]: the first HTTP(S) or SOCKS entry, null for "none" first. A PAC entry (a script not
+ * The proxy to use from [proxies]: the first HTTP (plain or TLS) or SOCKS entry, null for "none" first. A PAC entry (a script not
  * run here) means a direct connection and a [warn]ing; [pickCfProxyWithPac] runs it.
  */
 internal fun pickCfProxy(
@@ -600,6 +616,10 @@ internal fun pickCfProxy(
 
             CfProxy.Type.Http, CfProxy.Type.Https -> {
                 if (p.host != null) return ResolvedProxy.http(p.host, p.port ?: 8080)
+            }
+
+            CfProxy.Type.TlsHttp -> {
+                if (p.host != null) return ResolvedProxy.https(p.host, p.port ?: 443)
             }
 
             CfProxy.Type.Socks -> {
@@ -623,9 +643,6 @@ internal fun pickCfProxy(
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private val resolverDispatcher = Dispatchers.IO.limitedParallelism(ProxyRouting.MAX_ROUTES)
-
-internal const val TLS_PROXY_UNSUPPORTED: String =
-    "an https:// proxy (TLS to the proxy) is not supported; use an http:// proxy, whose CONNECT tunnels still carry TLS"
 
 internal const val PAC_FAILED: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script that could not be fetched or run in " +

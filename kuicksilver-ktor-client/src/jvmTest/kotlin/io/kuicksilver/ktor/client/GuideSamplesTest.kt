@@ -286,6 +286,18 @@ class GuideSamplesTest {
                             }
                     }
                 }
+            // an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+            val overTls =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+                        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+                    }
+                }
+            overTls.use {
+                val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
+                assertEquals("https://proxy.corp.test:443", resolver.proxyFor(io.ktor.http.Url("https://example.test/")).toString())
+            }
             viaProxy.close()
             perHost.use {
                 val resolver = (it.engine as KuicksilverEngine).config.proxyResolver

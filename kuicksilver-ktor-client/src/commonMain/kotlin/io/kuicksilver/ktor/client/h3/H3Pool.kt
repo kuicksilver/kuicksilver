@@ -1869,8 +1869,14 @@ internal class H3Pool(
         /** How long a connection stays in use after a WebTransport session on it closed, for its CONNECT exchange to end. */
         val EXCHANGE_END_TIMEOUT = 5.seconds
 
-        /** Connection-specific fields (RFC 9114 section 4.2) and HTTP/1.1 WebSocket handshake fields RFC 9220 drops. */
-        val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te")
+        /**
+         * Connection-specific fields (RFC 9114 section 4.2, RFC 9113 section 8.2.2), and `proxy-authorization`: HTTP/2 and
+         * HTTP/3 requests go to the origin only (directly, or inside a proxy's tunnel, the CONNECT having carried the
+         * field), and the field is for the proxy that asked for it (RFC 9110 section 11.7.2), as HTTP/1.1 drops it inside a
+         * tunnel. [WS_HOP_BY_HOP]: HTTP/1.1 WebSocket handshake fields RFC 9220 drops.
+         */
+        val HOP_BY_HOP =
+            setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te", "proxy-authorization")
         val WS_HOP_BY_HOP = setOf("sec-websocket-key", "sec-websocket-accept")
 
         fun io.ktor.http.Url.authority(): String = if (port == protocol.defaultPort) host else hostWithPort
