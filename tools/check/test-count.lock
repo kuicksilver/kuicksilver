@@ -1426,6 +1426,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Framin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.probeThenExpectContinue
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1FramingTest.requestConnectionCloseEndsTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.alpnHttp11AllowsChunkedOnFirstContact
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.cleartextThePolicyIsAskedAboutTheAddressANumericHostNames
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.cleartextThePolicyRefusesNeverConnects
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.closeLetsCallsInFlightFinish
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.connectTimeoutMapsToKtor
@@ -1438,6 +1439,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.g
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.h1FallsBackToSecondAddress
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.informationalResponsesAreSkipped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.keepAliveReusesConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_anAmbiguousNumericHostIsRefusedBeforeThePolicyIsAsked
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_connectionAttemptDelayOutOfRangeRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_h3OnlyRefusesHttpUrls

@@ -98,6 +98,57 @@ class ClientH1Test {
             }
         }
 
+    /**
+     * The policy is asked about the address a numeric host names (`127.1` is `127.0.0.1`), as it matches strings: a rule
+     * for an address holds for every spelling of it, both ways.
+     */
+    @Test fun cleartextThePolicyIsAskedAboutTheAddressANumericHostNames() =
+        clientTest {
+            var served = 0
+            val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok").also { served++ } } } }
+            try {
+                testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    val asked = mutableListOf<String>()
+                    engine.h1.cleartextPermitted = { host ->
+                        asked += host
+                        host == "127.0.0.1"
+                    }
+                    assertEquals("ok", client.get("http://127.1:$port/").bodyAsText())
+                    assertEquals("ok", client.get("http://2130706433:$port/").bodyAsText())
+                    assertEquals(listOf("127.0.0.1", "127.0.0.1"), asked)
+                    engine.h1.cleartextPermitted = { host -> host != "127.0.0.1" }
+                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get("http://127.1:$port/") }
+                    assertEquals("CLEARTEXT communication to 127.0.0.1 not permitted by network security policy", e.message)
+                    assertEquals(2, served)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A numeric host that platforms read differently is refused as no host before the policy is asked, so a policy that
+     * refuses cleartext (Android's default) does not hide that refusal.
+     */
+    @Test fun negative_anAmbiguousNumericHostIsRefusedBeforeThePolicyIsAsked() =
+        clientTest {
+            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                val engine = client.engine as KuicksilverEngine
+                var asked = 0
+                engine.h1.cleartextPermitted = {
+                    asked++
+                    false
+                }
+                val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get("http://010.0.0.1:1/") }
+                assertTrue(
+                    generateSequence<Throwable>(e) { it.cause }.any { "neither a host name" in it.message.orEmpty() },
+                    "$e",
+                )
+                assertEquals(0, asked)
+            }
+        }
+
     @Test fun getHttps() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
