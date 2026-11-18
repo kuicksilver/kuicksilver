@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Format check of the RFC compliance summary, docs/spec/rfc-compliance.md. Every table there must have the columns
 # | RFC | Section / topic | Status | Since | Summary | Details |, and every row of it:
+#   - RFC is `RFC <number>`, a draft name (`draft-...`) or `spec-<name>` for a specification outside the IETF (the PROXY
+#     protocol: `spec-haproxy-proxy-protocol`);
 #   - Status is exactly one of ✅ (met), 🔶 (feature subset or accepted deviation), ⬜ (planned), ❌ (not planned);
 #   - Since is one version token (0.2.0, 0.3.x), or — for a ⬜ row not scheduled yet and for a ❌ row;
 #   - Summary is one sentence (it ends with a full stop and has no second one) and names no test;
@@ -89,8 +91,8 @@ while i < len(lines):
         if len(c) != 6:
             findings.append(f"{where}: {len(c)} cells, the table has 6"); continue
         rfc, topic, status, since, text, details = c
-        if not re.match(r"^(RFC \d+(/\d+)?|draft-[a-z0-9-]+)$", rfc):
-            findings.append(f"{where}: RFC '{rfc}' is neither 'RFC <number>' nor a draft name")
+        if not re.match(r"^(RFC \d+(/\d+)?|draft-[a-z0-9-]+|spec-[a-z0-9-]+)$", rfc):
+            findings.append(f"{where}: RFC '{rfc}' is neither 'RFC <number>', a draft name nor 'spec-<name>'")
         if not topic:
             findings.append(f"{where}: empty Section / topic")
         if status not in STATUS:
