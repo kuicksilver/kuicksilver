@@ -45,7 +45,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * A plain Netty 4.2 server (no Ktor) over JDK TLS, ALPN `h2` and `http/1.1` (or `http/1.1` only), for what Ktor's server
+ * A plain Netty 4.2 server (no Ktor) over JDK TLS, ALPN `h2` and `http/1.1` (or `http/1.1` only), or HTTP/2 over cleartext
+ * TCP with prior knowledge ([h2c]), for what Ktor's server
  * API cannot send: interim 1xx responses before the final one, trailer fields, and a GOAWAY while a stream is open.
  *
  * Paths: `/early-hints` (103 with a Link field, then 200 "hinted"), `/trailers` (200 "with trailers" and a trailer
@@ -54,6 +55,8 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 internal class PlainNettyServer(
     h2: Boolean,
+    /** No TLS: HTTP/2 with prior knowledge on cleartext TCP (h2c, RFC 9113 section 3.3), the same paths; needs [h2]. */
+    private val h2c: Boolean = false,
 ) : AutoCloseable {
     /** TCP connections accepted so far. */
     val connections = AtomicInteger()
@@ -66,6 +69,7 @@ internal class PlainNettyServer(
     val port: Int
 
     init {
+        require(!h2c || h2) { "h2c is HTTP/2" }
         val protocols =
             if (h2) {
                 arrayOf(
@@ -96,6 +100,20 @@ internal class PlainNettyServer(
                     object : ChannelInitializer<SocketChannel>() {
                         override fun initChannel(ch: SocketChannel) {
                             connections.incrementAndGet()
+                            if (h2c) {
+                                // Netty's frame codec checks the client preface itself (Http2ConnectionHandler)
+                                ch.pipeline().addLast(Http2FrameCodecBuilder.forServer().build())
+                                ch.pipeline().addLast(
+                                    Http2MultiplexHandler(
+                                        object : ChannelInitializer<Channel>() {
+                                            override fun initChannel(ch: Channel) {
+                                                ch.pipeline().addLast(H2Exchange())
+                                            }
+                                        },
+                                    ),
+                                )
+                                return
+                            }
                             ch.pipeline().addLast(ssl.newHandler(ch.alloc()))
                             ch.pipeline().addLast(
                                 object : ApplicationProtocolNegotiationHandler(ApplicationProtocolNames.HTTP_1_1) {
@@ -128,7 +146,7 @@ internal class PlainNettyServer(
         port = (channel.localAddress() as InetSocketAddress).port
     }
 
-    fun url(path: String) = "https://127.0.0.1:$port$path"
+    fun url(path: String) = (if (h2c) "http" else "https") + "://127.0.0.1:$port$path"
 
     override fun close() {
         channel.close().syncUninterruptibly()

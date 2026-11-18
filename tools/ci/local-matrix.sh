@@ -282,7 +282,7 @@ step --needs "native: link linux/mingw tests" "docker: test.kexe linux-arm64 (al
 step --pre linux-x64 --pre deps "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step --pre linux-arm64 --pre deps "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
-step --pre linux-x64 "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
+step --pre linux-x64 "docker: h2spec (HTTP/2 server over TLS and h2c, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0 per transport, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
 step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025

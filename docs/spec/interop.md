@@ -232,6 +232,7 @@ applicable to the pair):
 | Ktor Java → Kuicksilver, HTTP/2 | ✓ | ✓ | ✓ | ✓ | ✓ᴾ (6) | ✓ | |
 | OkHttp → Kuicksilver | | | | | | | ALPN `h2` / `http/1.1` both ways ✓, WebSocket permessage-deflate ✓, close codes ✓ |
 | JDK HttpClient → Kuicksilver | | | | | | | ALPN ✓, HTTP/2 multiplexing (20 requests on one connection) ✓, WebSocket fragments, Ping/Pong, close codes ✓ |
+| h2c (`H2cInteropTest`, 2026-11-18) | | | | | | | OkHttp `H2_PRIOR_KNOWLEDGE` → Kuicksilver (`Only` and `WithHttp11`) ✓, Ktor OkHttp engine with it ✓, JDK HttpClient (`HTTP_2` sends `Upgrade: h2c`, no prior knowledge) → `WithHttp11` served HTTP/1.1 ✓ and → `Only` refused ✓, Kuicksilver → plain Netty h2c (trailers, reuse) ✓, Kuicksilver → Ktor Netty `enableH2c` ✓; by hand: curl 8.7.1 `--http2-prior-knowledge` → the h2spec server's h2c connector ✓ |
 | Netty HTTP/3 → Kuicksilver | GET, 1 MiB POST, 204, 100 fields, UTF-8 target, 10 concurrent streams, HEAD (Content-Length without content) ✓ | | | | | | |
 
 | WebSocket client → server | text, binary | client fragments | server fragments | Ping → Pong | close codes | permessage-deflate |

@@ -22,6 +22,11 @@ kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.ClientToPlai
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.ClientToPlainNettyTest.goAwayLetsTheStreamInFlightCompleteAndMovesOn
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.ClientToPlainNettyTest.trailersH1
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.ClientToPlainNettyTest.trailersH2
+kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.H2cInteropTest.jdkHttpClientUpgradeIsServedAsHttp11
+kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.H2cInteropTest.ktorOkHttpEnginePriorKnowledgeToOurServer
+kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.H2cInteropTest.okHttpPriorKnowledgeToOurServer
+kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.H2cInteropTest.ourClientToKtorNettyH2c
+kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.H2cInteropTest.ourClientToPlainNettyH2c
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.HttpPairSuite.cancelMidBody
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.HttpPairSuite.concurrentRequests
 kuicksilver-engine-interop/src/jvmTest	io.kuicksilver.engineinterop.HttpPairSuite.conditionalGetIs304
