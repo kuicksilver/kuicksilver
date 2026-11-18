@@ -640,6 +640,7 @@ int ksl_drive(ksl_ssl *s) {
     ERR_clear_error();
     int r;
     if (!s->done) {
+        ksl_ech_before_handshake(s);
         r = SSL_do_handshake(s->ssl);
         /* A server with early data enabled stops at TLS_ST_EARLY_DATA once its own Finished is out (SSL_do_handshake returns 1, as for
            SSL_read_early_data over TCP); the handshake is complete only with the client's Finished: calling again re-enters it. */
@@ -663,6 +664,12 @@ int ksl_drive(ksl_ssl *s) {
                     return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED,
                                         "ksl: no application protocol negotiated where one is required");
                 }
+            }
+            /* RFC 9849 sections 5 and 6.2.1: what the server sent in EncryptedExtensions for ECH, checked before the session counts as
+               established */
+            if (ksl_ech_check_done(s) != KSL_OK) {
+                s->done = 0;
+                return KSL_ERROR;
             }
             if (s->mode == KSL_MODE_QUIC) {
                 /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
@@ -709,6 +716,8 @@ int ksl_drive(ksl_ssl *s) {
             return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
         s->fatal = 1;
         ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: handshake failed");
+        ksl_ech_check_failed(
+            s); /* after our ech_required: the ECH error RFC 9849 has the client report instead, if any */
         return KSL_ERROR;
     }
 }

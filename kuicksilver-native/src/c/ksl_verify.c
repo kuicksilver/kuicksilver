@@ -390,6 +390,10 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         *al = SSL_AD_PROTOCOL_VERSION;
         return SSL_CLIENT_HELLO_ERROR;
     }
+    if (!ksl_ech_inner_versions_ok(ssl)) { /* RFC 9849 section 7.1 (ksl_ech.c) */
+        *al = SSL_AD_ILLEGAL_PARAMETER;
+        return SSL_CLIENT_HELLO_ERROR;
+    }
     int has_alpn =
         SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) == 1;
     /* a malformed ALPN extension is decode_error, as OpenSSL would send it, before any decision that could answer it with another

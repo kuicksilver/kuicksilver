@@ -23,19 +23,87 @@ struct ksl_ech_keys {
 };
 #endif
 
+#define ECH_GREASE(v) (((v) & 0x0f0f) == 0x0a0a)
+/* The syntax of an ECHConfigList (RFC 9849 section 4): its length exact, every ECHConfig framed inside it, and the contents of each
+   ECHConfig of version 0xfe0d well formed to their last byte: config_id, kem_id, public_key<1..2^16-1>, cipher_suites<4..2^16-4> of
+   4-byte pairs, maximum_name_length, public_name<1..255>, extensions<0..2^16-1> each framed, no trailing byte, and no extension type
+   twice (section 4.2: "there MUST NOT be more than one extension of the same type"). The contents of another version are opaque
+   (section 4: ignored). 1 when it holds. What the server sends in retry_configs MUST pass this (section 6.1.6, 6.2.1: decode_error). */
+static int list_syntax_ok(const uint8_t *list, size_t len) {
+    if (list == NULL || len < 2 || len > ECH_LIST_MAX || (((size_t)list[0] << 8) | list[1]) != len - 2)
+        return 0;
+    size_t off = 2;
+    while (off < len) {
+        if (!ksl_span_fits(off, 4, len))
+            return 0;
+        size_t version = ((size_t)list[off] << 8) | list[off + 1], n = ((size_t)list[off + 2] << 8) | list[off + 3];
+        off += 4;
+        if (!ksl_span_fits(off, n, len))
+            return 0;
+        if (version == ECH_VERSION) {
+            const uint8_t *c = list + off;
+            size_t p = 3; /* config_id, kem_id */
+            if (n < p + 2)
+                return 0;
+            size_t pk = ((size_t)c[p] << 8) | c[p + 1];
+            p += 2;
+            if (pk == 0 || !ksl_span_fits(p, pk, n))
+                return 0;
+            p += pk;
+            if (!ksl_span_fits(p, 2, n))
+                return 0;
+            size_t cs = ((size_t)c[p] << 8) | c[p + 1];
+            p += 2;
+            if (cs < 4 || cs % 4 != 0 || !ksl_span_fits(p, cs, n))
+                return 0;
+            p += cs;
+            if (!ksl_span_fits(p, 2, n)) /* maximum_name_length, public_name length */
+                return 0;
+            size_t pn = c[p + 1];
+            p += 2;
+            if (pn == 0 || !ksl_span_fits(p, pn, n))
+                return 0;
+            p += pn;
+            if (!ksl_span_fits(p, 2, n))
+                return 0;
+            size_t el = ((size_t)c[p] << 8) | c[p + 1];
+            p += 2;
+            if (p + el != n) /* the extensions end the contents: a trailing byte is no ECHConfig */
+                return 0;
+            for (size_t e = p; e < n;) {
+                if (!ksl_span_fits(e, 4, n))
+                    return 0;
+                unsigned t = ((unsigned)c[e] << 8) | c[e + 1];
+                size_t l = ((size_t)c[e + 2] << 8) | c[e + 3];
+                if (!ksl_span_fits(e + 4, l, n))
+                    return 0;
+                for (size_t f = p; f < e;) { /* types before this one: quadratic, bounded by the 64 KiB list */
+                    if ((((unsigned)c[f] << 8) | c[f + 1]) == t)
+                        return 0;
+                    f += 4 + (((size_t)c[f + 2] << 8) | c[f + 3]);
+                }
+                e += 4 + l;
+            }
+        }
+        off += n;
+    }
+    return 1;
+}
+
 /* The checked list into out: the ECHConfigs of `list` this OpenSSL can use, in their order. RFC 9849 section 4 has the client ignore an
    ECHConfig of another version, one with an unsupported mandatory extension (section 4.2), one without a KEM and cipher suite it
    supports, and one whose public_name is not a valid DNS name or could be read as an IPv4 address (section 6.1.7). OpenSSL checks all of
    that per ECHConfig (ech_store.c ech_final_config_checks), but refuses the whole list for one bad entry, where the RFC ignores that
    entry alone: so each entry goes to OpenSSL on its own, as a list of one, and only those it takes are kept. Bounds: the list's own
    length must match `len` exactly, every entry must fit, and an entry OpenSSL would not read (longer than OSSL_ECH_MAX_ECHCONFIG_LEN)
-   is dropped. KSL_OK with at least one entry kept; else KSL_ERROR with *code KSL_E_NOT_SUPPORTED (no entry usable, or no ECH in
+   is dropped. The whole list must pass list_syntax_ok first (a malformed ECHConfig of version 0xfe0d, or an extension type twice,
+   is a list that does not parse). KSL_OK with at least one entry kept; else KSL_ERROR with *code KSL_E_NOT_SUPPORTED (no entry usable, or no ECH in
    this build) or KSL_E_BAD_ARG (the framing does not parse, *out_len 0; or the result does not fit `cap`, *out_len the size it
    needs). */
 static int check_list(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len, uint32_t *code) {
     *out_len = 0;
     *code = KSL_E_BAD_ARG;
-    if (list == NULL || len < 2 || len > ECH_LIST_MAX || (((size_t)list[0] << 8) | list[1]) != len - 2)
+    if (!list_syntax_ok(list, len))
         return KSL_ERROR;
 #if KSL_HAS_ECH
     size_t kept = 2, off = 2;
@@ -156,6 +224,60 @@ int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len) {
 #endif
 }
 
+#if KSL_HAS_ECH
+/* What OpenSSL holds of the server's retry_configs (EncryptedExtensions): 0 none, 1 present in *raw (OPENSSL_free), -1 present and
+   malformed. SSL_ech_get1_retry_config answers once the outer handshake is authenticated (RFC 9849 section 6.1.6; OpenSSL:
+   retry_configs_ok) or the handshake is complete (an accepted ECH, GREASE); with the carried patch of ADR-0019 (M1) it checks only
+   the list's framing and hands the bytes over as the server sent them, so one ECHConfig OpenSSL cannot use no longer takes the
+   others with it, and a failure means bytes that do not frame (or no memory: the handshake fails either way). ksl then checks the
+   syntax itself (list_syntax_ok). */
+static int retry_raw(ksl_ssl *s, unsigned char **raw, size_t *n) {
+    *raw = NULL;
+    *n = 0;
+    int r;
+#ifdef KSL_TEST
+    if (s->test_ech_retry_set) {
+        if (s->test_ech_retry_set == 2)
+            return -1;
+        if (s->test_ech_retry == NULL)
+            return 0;
+        *raw = OPENSSL_memdup(s->test_ech_retry, s->test_ech_retry_len);
+        *n = s->test_ech_retry_len;
+        return *raw ? (list_syntax_ok(*raw, *n) ? 1 : -1) : -1;
+    }
+#endif
+    r = SSL_ech_get1_retry_config(s->ssl, raw, n);
+    ERR_clear_error();
+    if (r != 1) {
+        OPENSSL_free(*raw);
+        *raw = NULL;
+        *n = 0;
+        return -1;
+    }
+    if (*raw == NULL || *n == 0) {
+        OPENSSL_free(*raw);
+        *raw = NULL;
+        *n = 0;
+        return 0;
+    }
+    return list_syntax_ok(*raw, *n) ? 1 : -1;
+}
+static int retry_state(ksl_ssl *s) {
+    unsigned char *raw;
+    size_t n;
+    int r = retry_raw(s, &raw, &n);
+    OPENSSL_free(raw);
+    return r;
+}
+static int session_reused(ksl_ssl *s) {
+#ifdef KSL_TEST
+    if (s->test_ech_reused)
+        return 1;
+#endif
+    return SSL_session_reused(s->ssl) == 1;
+}
+#endif
+
 int ksl_ech_status(ksl_ssl *s) {
 #if KSL_HAS_ECH
     char *inner = NULL, *outer = NULL;
@@ -175,9 +297,12 @@ int ksl_ech_status(ksl_ssl *s) {
     if (!s->ech_set)
         return (st == SSL_ECH_STATUS_GREASE || st == SSL_ECH_STATUS_GREASE_ECH) ? KSL_ECH_GREASE : KSL_ECH_NONE;
     /* rejected: OpenSSL authenticated the outer handshake for public_name and then sent ech_required (statem_clnt.c
-       tls_process_initial_server_flight), with or without retry_configs; the alert is ours, not the peer's */
-    if (s->last_alert == SSL_AD_ECH_REQUIRED)
-        return KSL_ECH_REJECTED;
+       tls_process_initial_server_flight), with or without retry_configs; the alert is ours (info_cb), not the peer's. Not a
+       rejection the caller may act on (no retry configurations, never "securely disabled"; the handshake failed, ksl_ech_check_failed
+       says why) when the server resumed a session in the outer handshake (section 6.1.2: illegal_parameter), or when its
+       retry_configs are malformed (section 6.1.6: decode_error) */
+    if (s->ech_required_sent)
+        return session_reused(s) || retry_state(s) < 0 ? KSL_ECH_OFFERED : KSL_ECH_REJECTED;
     /* BAD_NAME: accepted, and OpenSSL's verifier refused the certificate (a separate failure of the handshake) */
     if (st == SSL_ECH_STATUS_SUCCESS || st == SSL_ECH_STATUS_BAD_NAME)
         return KSL_ECH_ACCEPTED;
@@ -190,7 +315,7 @@ int ksl_ech_status(ksl_ssl *s) {
 
 /* RFC 9849 section 6.1.6: retry_configs only from a rejection whose outer handshake was authenticated for public_name (OpenSSL keeps
    them otherwise: retry_configs_ok), never after GREASE (section 6.2.1: "It MUST NOT save the retry_configs value"); checked like a
-   list from DNS, so only usable ECHConfigs reach the caller. Zero bytes when there are none. */
+   list from DNS, entry by entry, so only usable ECHConfigs reach the caller. Zero bytes when there are none. */
 int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len) {
     *len = 0;
 #if KSL_HAS_ECH
@@ -198,9 +323,8 @@ int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len) {
         return KSL_OK;
     unsigned char *ec = NULL;
     size_t n = 0;
-    if (SSL_ech_get1_retry_config(s->ssl, &ec, &n) != 1 || ec == NULL || n == 0) {
+    if (retry_raw(s, &ec, &n) != 1) {
         OPENSSL_free(ec);
-        ERR_clear_error();
         return KSL_OK;
     }
     uint8_t *checked = malloc(n);
@@ -233,6 +357,117 @@ int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len) {
 #endif
 }
 
+/* A client handshake that completed (ksl_drive). RFC 9849 section 5: an encrypted_client_hello extension in EncryptedExtensions
+   answers only the outer ClientHello; "If the server sent this extension in response to the inner variant, then the client MUST
+   abort with an unsupported_extension alert" (OpenSSL 4.1 keeps it). Section 6.2.1: after GREASE "the client MUST check the
+   extension syntactically and abort the connection with a decode_error alert if it is invalid" (OpenSSL checks only its outer
+   length). The session fails before it is reported established: over QUIC with that alert (the CONNECTION_CLOSE takes it from
+   last_alert); over TCP the client's Finished is already written and OpenSSL 4.1 has no call to send an alert afterwards, so the
+   connection ends without one. */
+int ksl_ech_check_done(ksl_ssl *s) {
+#if KSL_HAS_ECH
+    if (s->owner->role != KSL_CLIENT)
+        return KSL_OK;
+    int st = s->ech_set ? ksl_ech_status(s) : KSL_ECH_NONE, rs = retry_state(s);
+    if (s->ech_set && st == KSL_ECH_ACCEPTED && rs != 0) {
+        s->last_alert = s->mode == KSL_MODE_QUIC ? SSL_AD_UNSUPPORTED_EXTENSION : 0;
+        return ksl_ssl_fail(
+            s, KSL_E_NOT_SUPPORTED,
+            "ksl: the server accepted ECH and sent retry_configs (RFC 9849 section 5: unsupported_extension)");
+    }
+    if (!s->ech_set && rs < 0) {
+        s->last_alert = s->mode == KSL_MODE_QUIC ? SSL_AD_DECODE_ERROR : 0;
+        return ksl_ssl_fail(
+            s, KSL_E_NOT_SUPPORTED,
+            "ksl: the server's retry_configs to a GREASE ECH do not parse (RFC 9849 section 6.2.1: decode_error)");
+    }
+#else
+    (void)s;
+#endif
+    return KSL_OK;
+}
+
+/* A client handshake that failed (ksl_drive): after our ech_required, the ECH errors RFC 9849 has the client report instead of a
+   rejection. Over QUIC the alert is the one the section names (the CONNECTION_CLOSE takes it from last_alert); over TCP OpenSSL wrote
+   ech_required already, and the message names the error. */
+void ksl_ech_check_failed(ksl_ssl *s) {
+#if KSL_HAS_ECH
+    if (s->owner->role != KSL_CLIENT || !s->ech_set || !s->ech_required_sent)
+        return;
+    const char *why = NULL;
+    int alert = 0;
+    if (session_reused(s)) {
+        why = "ksl: ECH rejected, and the server resumed a session in the outer handshake (RFC 9849 section 6.1.2: "
+              "illegal_parameter)";
+        alert = SSL_AD_ILLEGAL_PARAMETER;
+    } else if (retry_state(s) < 0) {
+        why = "ksl: ECH rejected with retry_configs that do not parse (RFC 9849 section 6.1.6: decode_error)";
+        alert = SSL_AD_DECODE_ERROR;
+    }
+    if (why == NULL)
+        return;
+    if (s->mode == KSL_MODE_QUIC)
+        s->last_alert = alert;
+    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, why);
+#else
+    (void)s;
+#endif
+}
+
+/* RFC 9849 section 7.1: the client-facing server "checks that [the ClientHelloInner] includes a well-formed encrypted_client_hello
+   extension of type inner and that it does not offer TLS 1.2 or below. If either of these checks fails, the client-facing server
+   MUST abort with an illegal_parameter alert." OpenSSL 4.1 checks the first (ech_internal.c) and not the second; the ClientHello
+   callback sees the inner ClientHello of an accepted ECH (statem_srvr.c decrypts it before), so the check is ksl's: a
+   supported_versions with a version below TLS 1.3 other than a GREASE value, or none at all (TLS 1.2 and below only). 1 when it
+   holds or no ECH was accepted. */
+int ksl_ech_inner_versions_ok(SSL *ssl) {
+#if KSL_HAS_ECH
+    char *inner = NULL, *outer = NULL;
+    int st = SSL_ech_get1_status(ssl, &inner, &outer);
+    OPENSSL_free(inner);
+    OPENSSL_free(outer);
+    ERR_clear_error();
+    if (st != SSL_ECH_STATUS_SUCCESS)
+        return 1;
+    const unsigned char *v;
+    size_t vl;
+    if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_supported_versions, &v, &vl) != 1 || vl < 1 || v[0] + 1u != vl ||
+        v[0] % 2 != 0)
+        return 0;
+    for (size_t i = 1; i + 1 < vl; i += 2) {
+        unsigned ver = ((unsigned)v[i] << 8) | v[i + 1];
+        if (ver <= TLS1_2_VERSION && !ECH_GREASE(ver))
+            return 0;
+    }
+#else
+    (void)ssl;
+#endif
+    return 1;
+}
+
+/* RFC 9849 section 6.2.1: a GREASE ECH extension sets "cipher_suite to a value it would choose ... (for example, the cipher suite of
+   the ECHConfig the client would use)"; OpenSSL 4.1 sends the default suite (HKDF-SHA256, AES-128-GCM) every time, a fixed mark
+   among clients that choose. Each GREASE handshake takes one of the suites a Kuicksilver client uses with a real ECHConfig
+   (HKDF-SHA256 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305; X25519, the KEM every ECHConfig of RFC 9849's mandatory suite
+   has), at random. Set when the handshake starts, not at ksl_ssl_new: SSL_ech_set1_grease_suite marks the session as GREASE, and a
+   list given after ksl_ssl_new (KSL_SET_ECH_CONFIG_LIST) must not run under that mark. */
+void ksl_ech_before_handshake(ksl_ssl *s) {
+#if KSL_HAS_ECH
+    if (s->owner->role != KSL_CLIENT || !s->owner->ech_grease || s->ech_set || s->ech_grease_ready ||
+        !SSL_in_before(s->ssl))
+        return;
+    static const char *const suites[] = {"x25519,hkdf-sha256,aes-128-gcm", "x25519,hkdf-sha256,aes-256-gcm",
+                                         "x25519,hkdf-sha256,chacha20-poly1305"};
+    uint8_t r = 0;
+    (void)ksl_rand(&r, 1); /* on failure the first suite, OpenSSL's default */
+    s->ech_grease_ready = 1;
+    (void)SSL_ech_set1_grease_suite(s->ssl, suites[r % 3]); /* on failure OpenSSL's default suite */
+    ERR_clear_error();
+#else
+    (void)s;
+#endif
+}
+
 /* The name a server certificate is checked against: the session's verify name, or once a server rejected this session's ECH, the
    public_name of the ECHConfig it used (RFC 9849 section 6.1.7), which OpenSSL then makes the verify host (statem_clnt.c,
    SSL_set1_dnsname). Accepted or not yet answered, the host is still the verify name. */
@@ -252,6 +487,7 @@ int ksl_ech_ssl_init(ksl_ssl *s) {
     ksl_ctx *c = s->owner;
     if (c->role == KSL_CLIENT && c->ech_grease)
         SSL_set_options(s->ssl, SSL_OP_ECH_GREASE);
+    /* the lock is made with the context (ksl_ctx_new) and never changes: reading the pointer needs no lock */
     if (c->role == KSL_SERVER && c->ech_lock != NULL) {
         int ok = 1;
         if (!CRYPTO_THREAD_read_lock(c->ech_lock))
@@ -357,8 +593,8 @@ int ksl_ctx_set_ech_keys(ksl_ctx *c, ksl_ech_keys *keys) {
         return KSL_ERROR;
     }
 #if KSL_HAS_ECH
-    if (c->ech_lock == NULL && (c->ech_lock = CRYPTO_THREAD_lock_new()) == NULL) {
-        ksl_ctx_set_error(c, KSL_E_NO_MEMORY, "ksl: out of memory");
+    if (c->ech_lock == NULL) { /* made by ksl_ctx_new, which ran out of memory */
+        ksl_ctx_set_error(c, KSL_E_NO_MEMORY, "ksl: out of memory (no ECH key lock)");
         return KSL_ERROR;
     }
     if (keys)
@@ -366,7 +602,7 @@ int ksl_ctx_set_ech_keys(ksl_ctx *c, ksl_ech_keys *keys) {
     /* rotation: sessions made from now on get the new set, sessions already made keep their copy (ksl_ech_ssl_init) */
     if (!CRYPTO_THREAD_write_lock(c->ech_lock)) {
         ksl_ech_keys_free(keys);
-        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: lock failed");
+        ksl_ctx_set_error(c, KSL_E_NO_MEMORY, "ksl: the ECH key lock is unavailable (a system resource)");
         return KSL_ERROR;
     }
     ksl_ech_keys *old = c->ech_keys;

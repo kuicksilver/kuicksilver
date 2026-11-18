@@ -44,6 +44,11 @@ static void info_cb(const SSL *ssl, int where, int ret) {
         (SSL_version(ssl) < TLS1_3_VERSION || code == SSL_AD_USER_CANCELLED))
         return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
+#if KSL_HAS_ECH
+    /* the rejected-ECH path (RFC 9849 section 6.1.6) is ours, recorded for itself: a later alert must not hide it (ksl_ech_status) */
+    if (!(where & SSL_CB_READ) && code == SSL_AD_ECH_REQUIRED)
+        s->ech_required_sent = 1;
+#endif
 }
 /* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
    (or leave behind) a copy of the TLS secrets uncleansed (threat model 3.7). */
@@ -657,6 +662,13 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_tlsext_status_cb(c->ctx, ksl_ocsp_status_cb);
     if (role == KSL_SERVER)
         c->ocsp_lock = CRYPTO_THREAD_lock_new(); /* NULL: no verdict cache, every handshake checks the response */
+#endif
+#if KSL_HAS_ECH
+    /* a server's ECH keys may be set (and rotated) from any thread at any time, also on a frozen context: the lock exists before
+       the context is shared (made by the first ksl_ctx_set_ech_keys, it raced the others and ksl_ech_ssl_init). NULL: out of
+       memory, no keys can be set (ksl_ctx_set_ech_keys answers KSL_E_NO_MEMORY) */
+    if (role == KSL_SERVER)
+        c->ech_lock = CRYPTO_THREAD_lock_new();
 #endif
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;

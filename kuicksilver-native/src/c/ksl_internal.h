@@ -114,7 +114,17 @@ struct ksl_ssl {
     char *verify_ip;
     unsigned verify_flags;
     int verify_pending, verify_decision, verify_alert;
-    int ech_set; /* client: KSL_SET_ECH_CONFIG_LIST took a list (ksl_ech.c) */
+    int ech_set;           /* client: KSL_SET_ECH_CONFIG_LIST took a list (ksl_ech.c) */
+    int ech_required_sent; /* client: info_cb saw this session send ech_required (121): OpenSSL rejected-ECH path (ksl_ech.c) */
+    int ech_grease_ready; /* client: the GREASE ECH suite of this handshake was picked (ksl_ech_before_handshake) */
+#ifdef KSL_TEST
+    /* test hooks (ksl_ech.c): what OpenSSL reports of the server's retry_configs and of a resumption, for the outcomes a real OpenSSL
+       server cannot produce (an accepted ECH with retry_configs, malformed ones, a PSK after a rejection) */
+    int test_ech_retry_set; /* 1: test_ech_retry is what SSL_ech_get1_retry_config gives (NULL: none); 2: it fails */
+    const uint8_t *test_ech_retry;
+    size_t test_ech_retry_len;
+    int test_ech_reused;
+#endif
     STACK_OF(X509) * presented_chain, *validated_chain;
     /* 0-RTT (server): context stamped into tickets, the transport's verdict, whether the resumed ticket's context matched */
     uint8_t early_ctx[64];
@@ -216,6 +226,12 @@ int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len);
 int ksl_ech_status(ksl_ssl *s);
 int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len);
 int ksl_ech_ssl_init(ksl_ssl *s); /* ksl_ssl_new: GREASE, a server's keys; 0 on failure */
+void ksl_ech_before_handshake(
+    ksl_ssl *s);                       /* ksl_drive, before the first ClientHello: the GREASE suite of this session */
+int ksl_ech_check_done(ksl_ssl *s);    /* ksl_drive, a client handshake that completed: KSL_OK, or the session failed */
+void ksl_ech_check_failed(ksl_ssl *s); /* ksl_drive, a client handshake that failed: the precise ECH error, if any */
+int ksl_ech_inner_versions_ok(
+    SSL *ssl); /* ksl_client_hello_cb: 0 when an accepted inner ClientHello offers TLS 1.2 or below */
 void ksl_ech_ctx_free(ksl_ctx *c);
 const char *
 ksl_verify_host(ksl_ssl *s); /* the host name a server certificate is checked against now (NULL: an IP literal) */

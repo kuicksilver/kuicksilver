@@ -105,8 +105,10 @@ extern "C" {
                                       context */
 #define KSL_OPT_ECH_GREASE 15 /* client (ABI 7, additive): 1 = a session without an ECH configuration sends a GREASE
                                       encrypted_client_hello extension in its ClientHello (RFC 9849 section 6.2.1: a random config_id,
-                                      payload and enc of plausible sizes), so that offering ECH does not stand out; the server's answer
-                                      to it is checked and ignored, its retry_configs never reported. A session with a configuration
+                                      payload and enc of plausible sizes, a cipher suite drawn per handshake from those ksl offers with
+                                      a real configuration), so that offering ECH does not stand out; the server's answer to it is
+                                      checked and ignored, its retry_configs never reported (retry_configs that do not parse fail the
+                                      handshake: decode_error, section 6.2.1). A session with a configuration
                                       (KSL_SET_ECH_CONFIG_LIST) offers that instead. Default 0. KSL_E_BAD_ARG on a server context */
 /* clang-format on */
 #define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */
@@ -161,11 +163,16 @@ extern "C" {
 #define KSL_ECH_REJECTED 3 /* client: the server rejected it; the outer handshake was authenticated for the ECHConfig's public_name and
                               the client ended it with ech_required (121; QUIC CRYPTO_ERROR 0x179), as RFC 9849 section 6.1.6 requires,
                               so nothing of the session reached the application; KSL_GET_ECH_RETRY_CONFIGS has the server's new
-                              configurations, or none ("securely disabled", section 6.1.6). Server: the ClientHello carried an ECH
+                              configurations, or none ("securely disabled", section 6.1.6). Never when the server resumed a session
+                              in the outer handshake (section 6.1.2) or sent retry_configs that do not parse (section 6.1.6): those
+                              are KSL_ECH_OFFERED, the handshake failed with that error (QUIC: illegal_parameter or decode_error;
+                              TCP: OpenSSL wrote ech_required first, the message names the error). Server: the ClientHello carried an ECH
                               extension this server did not decrypt (another key, or GREASE); it answered with retry_configs */
 #define KSL_ECH_OFFERED 4  /* client: offered, and neither accepted nor rejected with an authenticated outer handshake: the ServerHello
                               has not come yet, or the handshake failed first (a certificate not valid for the public_name: then the
-                              failure is that certificate's, and no retry configuration is reported) */
+                              failure is that certificate's, and no retry configuration is reported), or a rejection RFC 9849 has
+                              the client fail instead (KSL_ECH_REJECTED). An accepted ECH whose EncryptedExtensions carry
+                              retry_configs is KSL_ECH_ACCEPTED in a session that failed (section 5: unsupported_extension) */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -239,7 +246,7 @@ extern "C" {
                                          KSL_QUIC_LEVEL_MAX unread bytes at one level */
 #define KSL_E_BIND 0xff000cu /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
                                          in ABI 7 */
-#define KSL_E_NO_MEMORY 0xff000du /* ksl_udp_open, ksl_udp_sender: an allocation failed (the object, its scratch, a mutex); additive in ABI 7
+#define KSL_E_NO_MEMORY 0xff000du /* ksl_udp_open, ksl_udp_sender, ksl_ctx_set_ech_keys: an allocation failed (the object, its scratch, a mutex), or a lock could not be taken; additive in ABI 7
                  (ksl_udp_open answered KSL_E_BAD_ARG for it before) */
 /* clang-format on */
 
