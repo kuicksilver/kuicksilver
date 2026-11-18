@@ -440,6 +440,13 @@ public class KuicksilverApplicationEngine(
          * Test hook: runs before an HTTP/2 connection's wait for the client preface races the stop, with the connection and
          * the listener's draining job (a test holds it here until the core took a request and the stop began).
          */
+
+        /**
+         * Test hook: runs inside the wait for the client preface that races the stop, before the preface is awaited (a
+         * test that never returns from it leaves the stop as the only side that can win).
+         */
+        internal var h2PrefaceAwaitForTest: (suspend () -> Unit)? = null
+
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
         internal var h2BeforePrefaceRaceForTest: (
             suspend (io.kuicksilver.http2.runtime.H2ServerConnection, kotlinx.coroutines.Job) -> Unit

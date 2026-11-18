@@ -29,7 +29,9 @@ import kotlin.time.Duration.Companion.seconds
  * The stop racing the client preface (RFC 9113 sections 3.4 and 6.8): a client whose preface and first request arrive as
  * the server starts to stop. The core reads on its own, so it may have taken the request when the stop wins the wait for
  * the preface; that request is then served (or, had nothing been taken, the GOAWAY says last stream 0), never left
- * unanswered under a GOAWAY that names it. The hook holds the wait until the stop began and the core took stream 1.
+ * unanswered under a GOAWAY that names it. The hooks hold the wait until the stop began and the core took stream 1, and
+ * keep the preface's side of the race from completing, so the stop wins in every run. The hooks are the server
+ * configuration's own, one server per test.
  */
 class H2PrefaceDrainRaceTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -39,6 +41,8 @@ class H2PrefaceDrainRaceTest {
             c.requestsTaken.first { it >= 1 } // the preface and the GET were read, stream 1 taken
             draining.join() // and the server is stopping
         }
+        // the preface's side of the race never completes: the stop is the only side that can win, whatever the scheduling
+        h2PrefaceAwaitForTest = { kotlinx.coroutines.awaitCancellation() }
     }
 
     private suspend fun run(

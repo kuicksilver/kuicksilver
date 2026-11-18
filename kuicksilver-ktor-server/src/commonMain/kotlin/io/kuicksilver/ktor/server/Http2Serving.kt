@@ -176,7 +176,11 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 completedWithin(prefaceWithin) {
                     configuration.h2BeforePrefaceRaceForTest?.invoke(c, draining)
                     coroutineScope {
-                        val arrived = async { runCatching { c.awaitPreface() }.isSuccess }
+                        val arrived =
+                            async {
+                                configuration.h2PrefaceAwaitForTest?.invoke()
+                                runCatching { c.awaitPreface() }.isSuccess
+                            }
                         try {
                             select {
                                 arrived.onAwait { it }
