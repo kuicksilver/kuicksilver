@@ -432,7 +432,8 @@ class TcpSocketsNativeTest {
     /**
      * A connect that stays undecided (no error, no peer: what is left when the event that carried the error was lost) fails
      * once its rechecks add up to the limit, instead of waiting for ever. A SYN to an address that never answers stays
-     * undecided; where the system refuses it at once (no route), the connect fails all the same.
+     * undecided; a network that answers or refuses a connect to it within 500 ms (a VPN in TUN mode, no route) leaves
+     * nothing undecided, and the test skips itself there.
      */
     @Test fun negative_anUndecidedConnectEndsAtItsLimit() =
         runBlocking {
@@ -444,6 +445,11 @@ class TcpSocketsNativeTest {
                 if (faked?.isSuccess == true) {
                     faked.getOrThrow().close()
                     println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")
+                    return@runBlocking
+                }
+                // a TUN that refuses the connect at once ("Failed to connect") answers it too: nothing stays undecided there
+                if (faked != null) {
+                    println("skipped: this network refuses TCP connects to TEST-NET-1 at once: ${faked.exceptionOrNull()}")
                     return@runBlocking
                 }
                 val failure =

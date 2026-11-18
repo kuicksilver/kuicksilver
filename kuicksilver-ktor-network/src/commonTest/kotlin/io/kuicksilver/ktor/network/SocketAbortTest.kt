@@ -73,7 +73,8 @@ class SocketAbortTest {
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                withTimeout(30.seconds) {
+                // the TLS variant fills its connection through TLS records, which a slow host makes the longest step
+                withTimeout(if (tls) 60.seconds else 30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
                     val port = (server.localAddress as InetSocketAddress).port
                     coroutineScope {
