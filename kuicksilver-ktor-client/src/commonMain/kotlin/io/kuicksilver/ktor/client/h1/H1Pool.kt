@@ -81,6 +81,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -281,6 +282,12 @@ internal class H1Pool(
     private val closers = CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-close"))
 
     /**
+     * The bound of [closeOrderly], [ORDERLY_CLOSE_TIMEOUT] (a test hook: a test stretches it to tell a call that waited
+     * for the orderly close from one that did not by a wide margin).
+     */
+    internal var orderlyCloseTimeoutForTest: Duration = ORDERLY_CLOSE_TIMEOUT
+
+    /**
      * Ends [tls] in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
      * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
@@ -296,8 +303,9 @@ internal class H1Pool(
         @OptIn(DelicateCoroutinesApi::class)
         closers.launch(start = CoroutineStart.ATOMIC) {
             try {
-                withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) {
-                    tls.shutdown(drainTimeout = ORDERLY_CLOSE_TIMEOUT)
+                val bound = orderlyCloseTimeoutForTest
+                withTimeoutOrNull(bound) {
+                    tls.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
                 }
             } finally {
