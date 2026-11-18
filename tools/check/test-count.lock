@@ -3625,6 +3625,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.tokenFrom
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.tokenIsSingleUse
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.tokenReturnedInEveryInitialOfTheNextConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.TokenStoreTest.tokenReturnedInEveryInitialUntilRetry
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.acceptedEarlyRequestsCancelledAndNeverAcknowledgedLetTheirWrappersGo
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.acceptedEarlyStreamsResetAndNeverAcknowledgedLetTheirWrappersGo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.connectEarlySendsRequestIn0Rtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.earlyDataDisabledByDefault
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.earlyStreamResetBeforeTheAnswerHasItsSizeOnAccept
@@ -3633,6 +3635,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.keysOfRes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.negative_earlyStreamResetBeforeARejectionFailsItsSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.negative_earlyStreamResetThenConnectionLossFailsItsSize
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.negative_earlyStreamResetThroughARetryThenARejectionFailsItsSize
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.negative_rejectedEarlyStreamsResetAndNeverAcknowledgedFailAndGo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.negative_sendStoppedWatcherOfARejectedStreamEnds
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.rejectedZeroRttFailsEarlyStreamsAndTheConnectionGoesOn
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ZeroRttApiTest.requiredWithoutTicketFails
@@ -4242,6 +4245,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyResetA
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAcrossAVersionUpgradeIsReportedOnce
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetAtZeroReportsItsSizeThenItsEndOnAccept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamResetBeforeTheAnswerReportsItsSizeThenItsEndOnAccept
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.earlyStreamRetiredBeforeTheAnswerIsOfferedAgainAtTheAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.heldFinalSizeOfA0RttStreamIsSettledInOrderByAnAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterAcceptedZeroRtt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ZeroRttTest.keyUpdatesAfterRejectedZeroRtt

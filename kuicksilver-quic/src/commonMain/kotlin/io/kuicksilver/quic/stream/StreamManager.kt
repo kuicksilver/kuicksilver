@@ -454,10 +454,27 @@ internal class StreamManager(
     /**
      * The server answered our 0-RTT ([accepted]), or the connection ended or failed before the answer stood (false): what
      * was held is reported in order or dropped, and nothing is held any more. Called once per outcome.
+     *
+     * At an acceptance, a stream that retired before the answer with its reset still unacknowledged is offered again by
+     * [takeRetiredAwaitingAck], after its held size: the runtime skipped it at its retirement to keep the wrapper for the
+     * answer, and lets the wrapper go now that the size stood, instead of at the acknowledgment, which a peer may never send
+     * (only the completion of its `done` waits for that). The RESET_STREAM needs nothing of the wrapper: a lost one goes
+     * again with the code and final size it carries (RFC 9000 section 13.3). A rejection drops those streams with the rest
+     * ([resetForRejectedZeroRtt]), and the end of the connection ends every wrapper.
      */
     fun settleHeldUntilAnswer(accepted: Boolean) {
         zeroRttPending = false
+        val ids = heldIds
         heldIds = null
+        if (accepted && ids != null) {
+            finishedAwaitingResetAck?.let { waiting ->
+                for (id in ids) {
+                    if (id !in waiting) continue
+                    val offered = retiredAwaitingAck ?: ArrayList<Long>().also { retiredAwaitingAck = it }
+                    if (id !in offered) offered += id // not taken since its retirement: offered once
+                }
+            }
+        }
         val h = held ?: return
         held = null
         if (accepted) events += h
@@ -1352,6 +1369,13 @@ internal class StreamManager(
         if (r.isNullOrEmpty()) return null
         return r.toList().also { r.clear() }
     }
+
+    /**
+     * Probe: stream [id] retired with its reset unacknowledged and was offered by [takeRetiredAwaitingAck] while nothing holds
+     * it for the 0-RTT answer: a runtime wrapper still kept for it outlives what it was kept for.
+     */
+    internal fun retiredAndOfferedForTest(id: Long): Boolean =
+        finishedAwaitingResetAck?.contains(id) == true && !heldForAnswer(id) && retiredAwaitingAck?.contains(id) != true
 
     /** (streams with an unacknowledged reset, retired ones among them waiting to be reported finished), a probe. */
     internal fun resetAcksPendingForTest(): IntArray = intArrayOf(resetsUnacked?.size ?: 0, finishedAwaitingResetAck?.size ?: 0)
