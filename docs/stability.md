@@ -156,7 +156,9 @@ operating system.
 
 - **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is not supported yet (it is built and tested in CI only, below). The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
-  build verifies both before compiling (`tools/openssl/fetch.sh`).
+  build verifies both before compiling (`tools/openssl/fetch.sh`). Its libcrypto contains zlib and brotli for TLS
+  certificate compression, pinned in `gradle/compression-libs.toml` and verified the same way (brotli, which signs no
+  release, by its SHA-256 and tag commit; [ADR-0020](adr/0020-zlib-and-brotli-in-libcrypto.md)).
   `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
   (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). No artifact is built with 4.x. The CI job
   `openssl-next` (weekly, or `only=openssl-next` by hand; never required, never a source of release artifacts) builds the

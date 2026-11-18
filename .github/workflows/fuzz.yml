@@ -89,7 +89,7 @@ jobs:
             build/openssl-work/cache
             build/openssl-work/src/*.tar.gz
             build/openssl-work/src/*.tar.gz.asc
-          key: openssl-docker-linux-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+          key: openssl-docker-linux-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/compression-libs.toml', 'tools/openssl/**') }}
       - name: 'openssl: fetch and verify'
         run: bash tools/openssl/fetch.sh
       - name: 'openssl: build linux-x64'

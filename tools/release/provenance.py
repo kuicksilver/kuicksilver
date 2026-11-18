@@ -114,6 +114,7 @@ def main():
     tree_clean = run("git", "status", "--porcelain") == ""
     toolchains = toml_tables("gradle/toolchains.toml")
     ossl = toml_tables("gradle/openssl.toml")["openssl"]
+    comp = toml_tables("gradle/compression-libs.toml")   # zlib and brotli, compiled into libcrypto (tools/openssl/compression.mk)
     wrapper = dict(l.split("=", 1) for l in open("gradle/wrapper/gradle-wrapper.properties").read().splitlines() if "=" in l)
     gradle_url = wrapper["distributionUrl"].replace("\\:", ":")
     tarball = f"https://github.com/openssl/openssl/releases/download/openssl-{ossl['version']}/openssl-{ossl['version']}.tar.gz"
@@ -127,6 +128,10 @@ def main():
         {"uri": tarball, "digest": {"sha256": ossl["sha256"]},
          "annotations": {"pgpFingerprint": ossl["pgp_fingerprint"], "configureFlags": " ".join(flags),
                          "configureFlagsFile": flags_file, "configureFlagsSha256": sha256(flags_file)}},
+        {"uri": comp["zlib"]["url"], "digest": {"sha256": comp["zlib"]["sha256"]},
+         "annotations": {"pgpFingerprint": comp["zlib"]["pgp_fingerprint"], "linkedInto": "libcrypto.a"}},
+        {"uri": comp["brotli"]["url"], "digest": {"sha256": comp["brotli"]["sha256"], "gitCommit": comp["brotli"]["commit"]},
+         "annotations": {"linkedInto": "libcrypto.a"}},
         {"uri": gradle_url, "digest": {"sha256": wrapper.get("distributionSha256Sum", "")}},
         {"uri": "file:gradle/verification-metadata.xml", "digest": {"sha256": sha256("gradle/verification-metadata.xml")}},
         {"uri": "file:gradle/libs.versions.toml", "digest": {"sha256": sha256("gradle/libs.versions.toml")}},

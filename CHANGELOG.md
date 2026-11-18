@@ -775,6 +775,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- The bundled OpenSSL now contains zlib 1.4 and brotli 1.2.1, for TLS certificate compression (RFC 8879; ADR-0020):
+  both are pinned in `gradle/compression-libs.toml` and verified by `tools/openssl/fetch.sh` before they are compiled
+  (zlib by SHA-256 and its release key's signature, `tools/openssl/zlib-release-key.asc`; brotli, which signs no release,
+  by SHA-256 and the tag's commit), with OpenSSL's own compiler and flags, into `libcrypto.a`
+  (`tools/openssl/compression.mk`), so their symbols carry the `ksl_ossl_` prefix on Kotlin/Native and nothing of them is
+  exported from the JNI libraries. OpenSSL is configured `enable-zlib enable-brotli no-zstd` instead of `no-comp`; TLS
+  record compression stays off (`SSL_OP_NO_COMPRESSION`), and so does certificate compression until `ksl` configures it
+  (`SSL_OP_NO_RX_CERTIFICATE_COMPRESSION`, `SSL_OP_NO_TX_CERTIFICATE_COMPRESSION`). The native libraries grow by about 0.8 MB per target (Android
+  arm64 `libksl.so` 2,898,576 to 3,704,880 bytes, macOS arm64 JNI 2,544,056 to 3,337,496), and the Android size gate
+  (`tools/check/size.sh`) moves up by 800,000 bytes to a limit of 3,800,000. brotli's encoder needs `libm`: the Linux and
+  Android libraries link it (`libm.so.6` joins the Linux import whitelist of the release). `provenance.txt` of every
+  OpenSSL build names the two tarballs' SHA-256, which `-Pkuicksilver.openssl.prebuilt` checks; the SBOM lists zlib (Zlib
+  license) and brotli (MIT) as components inside OpenSSL, the provenance statement as resolved dependencies; NOTICE and
+  every published artifact carry their licenses (`licenses/LICENSE.zlib.txt`, `licenses/LICENSE.brotli.txt`); Renovate
+  watches both pins.
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets

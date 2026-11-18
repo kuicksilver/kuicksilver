@@ -21,6 +21,11 @@ val prebuilt = providers.gradleProperty("kuicksilver.openssl.prebuilt").map { it
 // -Pkuicksilver.openssl.pin=gradle/openssl-next.toml: the pin profile of the CI job openssl-next (OpenSSL 4.x); tools/openssl/*.sh read it as KSL_OPENSSL_PIN
 val pinFile = providers.gradleProperty("kuicksilver.openssl.pin").map { root.resolve(it) }.getOrElse(root.resolve("gradle/openssl.toml"))
 val pinText = pinFile.readText()
+// zlib and brotli, compiled into libcrypto.a by tools/openssl/build.sh (RFC 8879 certificate compression); provenance.txt
+// names the tarball SHA-256 of each, which must be the pinned ones
+val compressionPin = root.resolve("gradle/compression-libs.toml")
+fun compressionSha(table: String): String? =
+    Regex("(?ms)^\\[$table]\\s*\\n[^\\[]*?^sha256 = \"([0-9a-f]+)\"").find(compressionPin.readText())?.groupValues?.get(1)
 val pinnedVersion = Regex("^version = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
 fun prebuiltState(t: String): String? { // null when current, else why not ("missing" when there is nothing to reuse)
     val dir = root.resolve("build/openssl/$t")
@@ -39,6 +44,10 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
         ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
     val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
+    for (lib in listOf("zlib", "brotli")) {
+        val pinned = compressionSha(lib)
+        if (pinned == null || provenance["$lib-tarball-sha256"] != pinned) return "provenance.txt names $lib tarball ${provenance["$lib-tarball-sha256"]}, $pinned is pinned in ${compressionPin.name}"
+    }
     if (provenance["target"] != expected) return "provenance.txt names target '${provenance["target"]}', not '$expected'"
     for (a in listOf("libcrypto.a", "libssl.a")) {
         val actual = java.security.MessageDigest.getInstance("SHA-256").digest(dir.resolve("lib/$a").readBytes()).joinToString("") { "%02x".format(it) }
@@ -49,7 +58,7 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
 
 val opensslFetch = tasks.register<Exec>("opensslFetch") {
     group = "openssl"; description = "Downloads and verifies the pinned OpenSSL tarball"
-    inputs.file(pinFile); outputs.dir(root.resolve("build/openssl-work/src"))
+    inputs.files(pinFile, compressionPin); outputs.dir(root.resolve("build/openssl-work/src"))
     environment("KSL_OPENSSL_PIN", pinFile.path)
     commandLine("bash", root.resolve("tools/openssl/fetch.sh").path)
     // nothing to fetch when every OpenSSL build this invocation needs is reused
@@ -63,7 +72,7 @@ val builderFlags = listOf("CPPFLAGS", "CFLAGS", "LDFLAGS").associateWith { provi
 opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
-        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), pinFile)
+        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own

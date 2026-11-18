@@ -1,0 +1,19 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The compression libraries linked into libcrypto for TLS certificate compression (RFC 8879): tools/openssl/fetch.sh
+# downloads exactly these releases and verifies them, tools/openssl/build.sh compiles them with OpenSSL's own compiler and
+# flags into libcrypto.a. Update together: version, tarball SHA-256 and the signing key fingerprint (zlib) or tag commit (brotli).
+[zlib]
+version = "1.4"
+url = "https://github.com/madler/zlib/releases/download/v1.4/zlib-1.4.tar.gz"
+sha256 = "02dd159783677a749c04adbdd02b55b8a2bcc7e054f51b76b549199a916ad584"
+# Mark Adler's release key (tools/openssl/zlib-release-key.asc); the .asc is downloaded from url + ".asc"
+pgp_fingerprint = "5ED46A6721D365587791E2AA783FCD8E58BCAFBA"
+
+[brotli]
+version = "1.2.1"
+# brotli publishes no signature for its releases: the tarball is GitHub's archive of the tag, pinned by its SHA-256 and by
+# the commit of the tag, which git archive writes into the tarball's pax header (fetch.sh checks both)
+url = "https://github.com/google/brotli/archive/refs/tags/v1.2.1.tar.gz"
+sha256 = "98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f"
+commit = "db24a98aed38a16de78cc05ca15cdd8dc2a0d92d"

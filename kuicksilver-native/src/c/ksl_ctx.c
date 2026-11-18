@@ -460,6 +460,9 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+    /* TLS certificate compression (RFC 8879): OpenSSL offers and accepts it by default once it has an algorithm (zlib and brotli,
+       ADR-0020); off until ksl configures it */
+    SSL_CTX_set_options(c->ctx, SSL_OP_NO_RX_CERTIFICATE_COMPRESSION | SSL_OP_NO_TX_CERTIFICATE_COMPRESSION);
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
     /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
        keys. If clients need to send such alerts, they SHOULD first rekey to the handshake keys if possible." In middlebox

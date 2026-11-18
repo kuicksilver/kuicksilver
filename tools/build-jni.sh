@@ -36,7 +36,7 @@ case "$os" in
   linux)
     JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$dir/exports.map"
     ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" ${user_cflags[@]+"${user_cflags[@]}"} -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
-      ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
+      ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -lm -o "$dir/$lib"
     [ "${KSL_KEEP_DEBUG:-0}" = 1 ] || strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"

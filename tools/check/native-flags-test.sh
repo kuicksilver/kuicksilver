@@ -34,6 +34,9 @@ pos() { awk -v w="$2" '$0 == w { print NR; f = 1; exit } END { if (!f) print -1 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/gradle/openssl.toml")
 work="$tmp/openssl-work"; src="$work/src/openssl-$version"; stub="$tmp/stub-bin"; log="$tmp/configure"
 mkdir -p "$src/util" "$src/include/openssl" "$stub"
+# the compression libraries' trees as fetch.sh leaves them: unpacked, with the marker naming the pinned tarball's SHA-256
+ctv() { awk -v t="[$1]" -v k="$2" '$0 == t { f = 1; next } /^\[/ { f = 0 } f && $1 == k { v = $3; gsub(/"/, "", v); print v; exit }' "$root/gradle/compression-libs.toml"; }
+for lib in zlib brotli; do mkdir -p "$work/src/$lib-$(ctv $lib version)"; ctv $lib sha256 > "$work/src/$lib-$(ctv $lib version)/.ksl-unpacked-sha256"; done
 echo '#define OPENSSL_VERSION_STR "stub"' > "$src/include/openssl/opensslv.h"
 cat > "$src/Configure" <<'EOF'
 #!/bin/sh
@@ -92,6 +95,11 @@ check "openssl: ... which names them" "$([ "$(portable < "$tmp/o3/linux-x64/conf
 out=$(ossl "$tmp/o4")
 check "negative_cacheOfFlaggedBuildNotReusedWithout" \
   "$(grep -q '^cache hit' <<< "$out" && [ "$(portable < "$tmp/o4/linux-x64/configure-target.txt")" = "$t1" ] && echo 0 || echo 1)" "$out"
+
+zmark="$work/src/zlib-$(ctv zlib version)/.ksl-unpacked-sha256"; cp "$zmark" "$tmp/zmark"
+echo 0000 > "$zmark"; rm -f "$log".*; out=$(ossl "$tmp/o5" KSL_OPENSSL_FRESH=1); rc=$?
+check "negative_unverifiedZlibTreeRefused" "$([ $rc = 1 ] && grep -q 'is not the verified tree' <<< "$out" && [ ! -e "$log.args" ] && echo 0 || echo 1)" "exit $rc: $out"
+cp "$tmp/zmark" "$zmark"
 
 refuse() { # <name> <VAR> <value> <expected message>: refused by --print-target and by a build, before Configure runs
   local o rc

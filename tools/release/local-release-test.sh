@@ -47,7 +47,7 @@ new_repo() { # <dir>: a repository with what the script reads before the gate, a
   cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
   mkdir -p tools/release/swift-package licenses; cp "$root/tools/release/swift-package.sh" tools/release/
   cp "$root"/tools/release/swift-package/*.in tools/release/swift-package/; cp "$root/LICENSE" "$root/NOTICE" .
-  cp "$root/licenses/LICENSE.openssl.txt" licenses/
+  cp "$root"/licenses/LICENSE.openssl.txt "$root"/licenses/LICENSE.zlib.txt "$root"/licenses/LICENSE.brotli.txt licenses/
   awk -v m="$marker" '$0 ~ m {print "echo \"STOPPED-BEFORE-GATE push_branch=$push_branch problems=$problems\"; exit 0"} {print}' \
     "$root/tools/release/local-release.sh" > tools/release/local-release.sh
   printf 'build/\n' > .gitignore

@@ -54,7 +54,8 @@ The C shim `ksl` (`src/c/ksl_*.c`, one header `ksl.h`), its JNI binding (`src/jn
 (`src/nativeInterop/cinterop/ksl.def`) and the Kotlin facade `Ksl` (`src/commonMain/.../native/Ksl.kt`, with `actual`s
 per platform). Also `PacketBuffer` (a native-memory buffer: direct `ByteBuffer` on the JVM, `nativeHeap` on Native),
 `KslLoader` and the opt-in annotations (`io.kuicksilver.annotations`). OpenSSL is built from a pinned, signature-checked
-tarball by `tools/openssl` and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
+tarball by `tools/openssl`, with zlib and brotli compiled into its libcrypto for TLS certificate compression (ADR-0020),
+and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
 
 **Architecture Invariant:** no upcalls from C into Kotlin. When OpenSSL needs a decision (a certificate verdict), `ksl`
 pauses the handshake and returns; Kotlin resumes it later (ADR-0012). Packet keys and the endpoint's Retry and reset keys
