@@ -393,7 +393,7 @@ void run_icmp(void) {
     CHECK(fd == -1 && err == (int)KSL_E_NOT_SUPPORTED, "no raw ICMP sender outside Linux and Android");
     CHECK(ksl_icmp_send(-1, m, 8, ta, la) == 0, "send without a socket does nothing");
 #endif
-    CHECK(ksl_icmp_open(5, &err) == -1 && err == (int)KSL_E_BAD_ARG || (err == (int)KSL_E_NOT_SUPPORTED),
+    CHECK(ksl_icmp_open(5, &err) == -1 && (err == (int)KSL_E_BAD_ARG || err == (int)KSL_E_NOT_SUPPORTED),
           "probe of an unknown family");
 #if defined(__linux__)
     {
