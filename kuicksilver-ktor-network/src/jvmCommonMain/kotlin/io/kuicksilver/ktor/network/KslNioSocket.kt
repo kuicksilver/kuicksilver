@@ -92,6 +92,10 @@ internal class KslNioSocket(
         }
     }
 
+    /** `SO_SNDBUF` and `SO_RCVBUF` of the channel as the system reports them now (a test hook). */
+    internal fun bufferSizesForTest(): Pair<Int, Int> =
+        nio.getOption(java.net.StandardSocketOptions.SO_SNDBUF) to nio.getOption(java.net.StandardSocketOptions.SO_RCVBUF)
+
     private val closing = AtomicBoolean(false)
 
     /** Set by [abort] before it cancels the writer: the writer then ends without shutting the output down. */

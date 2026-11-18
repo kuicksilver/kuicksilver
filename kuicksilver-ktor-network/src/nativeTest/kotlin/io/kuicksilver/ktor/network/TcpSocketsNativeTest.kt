@@ -22,7 +22,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -269,18 +268,8 @@ class TcpSocketsNativeTest {
                     val clientOut = client.openWriteChannel()
                     val serverOut = accepted.openWriteChannel()
                     accepted.openReadChannel()
-                    val progress = Channel<Unit>(Channel.CONFLATED)
-                    val response =
-                        async {
-                            val chunk = ByteArray(64 shl 10) { 7 }
-                            while (true) {
-                                serverOut.writeFully(chunk)
-                                serverOut.flush()
-                                progress.trySend(Unit)
-                            }
-                        }
-                    // until the response is stuck (no chunk for 300 ms): every buffer on the way is full
-                    while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                    // until the response is stuck on a full connection: every buffer on the way is full
+                    val response = fillUntilStuck(serverOut, fill = 7) { kernelBufferBytes(accepted, client) }
                     response.cancelAndJoin()
                     accepted.close() // ends the read loop; the write loop still sends what the channel holds
                     delay(300.milliseconds)
@@ -586,20 +575,8 @@ class TcpSocketsNativeTest {
                 val accepted = server.accept() as NativeTcpSocket // reads nothing
                 val input = client.openReadChannel()
                 val out = client.openWriteChannel()
-                val progress = Channel<Unit>(Channel.CONFLATED)
-                val writer =
-                    async {
-                        runCatching {
-                            val chunk = ByteArray(64 shl 10)
-                            while (true) {
-                                out.writeFully(chunk)
-                                out.flush()
-                                progress.trySend(Unit)
-                            }
-                        }.exceptionOrNull()
-                    }
-                // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
-                while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                // until the writer is stuck on a full connection: the peer's buffers are full
+                val writer = fillUntilStuck(out) { kernelBufferBytes(client, accepted) }
                 if (finFirst) {
                     tcpShutdown(accepted.descriptor, TCP_SHUT_WR)
                     assertEquals(-1, input.readAvailable(ByteArray(1), 0, 1), "the client's read loop saw the peer's end")
