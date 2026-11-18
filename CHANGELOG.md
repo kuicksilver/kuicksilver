@@ -20,7 +20,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   build without ECH, each with its own message), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
   with the server's retry configurations after an authenticated rejection, the certificate checked against the
   `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
-  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory)
+  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory; given as a `ByteArray` or
+  `CharArray` it is zeroed once read)
   with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. During a rejection the certificate is checked for the
   `public_name` by the base trust alone: the origin's pins (`TrustConfig.Pinned`) do not apply to it, and
   `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).

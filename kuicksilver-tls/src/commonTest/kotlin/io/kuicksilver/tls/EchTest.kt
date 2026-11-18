@@ -118,6 +118,29 @@ class EchTest {
         Fixtures.client()
     }
 
+    /**
+     * A key given as bytes or characters: the caller's array is zeroed at once, the key's copy once the keys were read into
+     * native memory (a second use is refused); a String key can be used again.
+     */
+    @Test fun keyMaterialArraysAreWiped() {
+        val bytes = EchTestKeys.A.encodeToByteArray()
+        val fromBytes = EchKey(bytes)
+        assertTrue(bytes.all { it == 0.toByte() }, "the caller's bytes are zeroed")
+        val chars = EchTestKeys.A.toCharArray()
+        val fromChars = EchKey(chars)
+        assertTrue(chars.all { it == '\u0000' }, "the caller's characters are zeroed")
+        for (k in kotlin.collections.listOf(fromBytes, fromChars)) {
+            val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(k)) })
+            p.close()
+            assertEquals(EchStatus.Accepted, p.c.echStatus)
+            val e = assertFailsWith<TlsException.Config> { EchServerKeys(listOf(k)) }
+            assertTrue("already used" in e.message!!, e.message)
+        }
+        val text = EchKey(EchTestKeys.A)
+        EchServerKeys(listOf(text))
+        EchServerKeys(listOf(text)) // a String key stays usable
+    }
+
     @Test fun quicAccepted() {
         val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyA)) })
         try {

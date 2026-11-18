@@ -109,13 +109,41 @@ public enum class EchStatus {
  * block followed by the `ECHCONFIG` block of its ECHConfigList (publish that block's base64 in the HTTPS record's `ech`
  * parameter). [inRetryConfigs]: whether a server that rejects ECH sends this key's configuration in `retry_configs` (RFC
  * 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt clients that still hold it.
+ *
+ * Prefer the `ByteArray` and `CharArray` constructors: the array given is zeroed at once, the key keeps its own copy only
+ * until an [EchServerKeys] (or its [EchServerKeys.rotate]) has read it into native memory, then zeroes that copy too, so
+ * such a key is used once (a second use throws [TlsException.Config]). A `String` cannot be wiped: a key made from one
+ * keeps that text for its life (and can be used again).
  */
 @ExperimentalKuicksilverApi
-public class EchKey(
-    pem: String,
-    public val inRetryConfigs: Boolean = true,
+@OptIn(ExperimentalAtomicApi::class)
+public class EchKey private constructor(
+    private val text: String?,
+    bytes: ByteArray?,
+    public val inRetryConfigs: Boolean,
 ) {
-    internal val pem: ByteArray = pem.encodeToByteArray()
+    /** The PEM as text, which stays in memory as long as this key (prefer the `ByteArray` or `CharArray` constructor). */
+    public constructor(pem: String, inRetryConfigs: Boolean = true) : this(pem, null, inRetryConfigs)
+
+    /** The PEM as bytes (ASCII); [pem] is zeroed before this returns. */
+    public constructor(pem: ByteArray, inRetryConfigs: Boolean = true) : this(null, pem.copyOf().also { pem.fill(0) }, inRetryConfigs)
+
+    /** The PEM as characters (ASCII; no `String` of it is made); [pem] is zeroed before this returns. */
+    public constructor(pem: CharArray, inRetryConfigs: Boolean = true) :
+        this(null, ByteArray(pem.size) { pem[it].code.toByte() }.also { pem.fill('\u0000') }, inRetryConfigs)
+
+    // the bytes of an array key until they are read (then null: zeroed by the reader)
+    private val bytes = AtomicReference(bytes)
+
+    /**
+     * The PEM bytes, for the caller to zero after use: a new array for a `String` key; for an array key its copy, taken out
+     * of the key (a second take throws).
+     */
+    internal fun takePem(): ByteArray {
+        text?.let { return it.encodeToByteArray() }
+        return bytes.exchange(null)
+            ?: throw TlsException.Config("ECH key already used: its key material was wiped after it was read; make a new EchKey")
+    }
 
     override fun toString(): String = "EchKey(inRetryConfigs=$inRetryConfigs)"
 }
@@ -206,26 +234,32 @@ public class EchServerKeys(
                 throw TlsException.Config("ECH keys: at least one goes into retry_configs (RFC 9849 section 7.1)")
             }
             KslLoader.ensureLoaded()
-            var size = 0
-            for (k in keys) size += 5 + k.pem.size
-            val framed = ByteArray(size)
-            var at = 0
-            for (k in keys) {
-                val l = k.pem.size + 1
-                framed[at] = (l ushr 24).toByte()
-                framed[at + 1] = (l ushr 16).toByte()
-                framed[at + 2] = (l ushr 8).toByte()
-                framed[at + 3] = l.toByte()
-                framed[at + 4] = if (k.inRetryConfigs) 1 else 0
-                k.pem.copyInto(framed, at + 5)
-                at += 4 + l
-            }
+            val pems = ArrayList<ByteArray>(keys.size)
+            var framed: ByteArray? = null
             try {
-                return Ksl.echKeysNew(framed)
+                for (k in keys) pems += k.takePem()
+                var size = 0
+                for (p in pems) size += 5 + p.size
+                val f = ByteArray(size)
+                framed = f
+                var at = 0
+                for ((i, p) in pems.withIndex()) {
+                    val l = p.size + 1
+                    f[at] = (l ushr 24).toByte()
+                    f[at + 1] = (l ushr 16).toByte()
+                    f[at + 2] = (l ushr 8).toByte()
+                    f[at + 3] = l.toByte()
+                    f[at + 4] = if (keys[i].inRetryConfigs) 1 else 0
+                    p.copyInto(f, at + 5)
+                    at += 4 + l
+                }
+                return Ksl.echKeysNew(f)
             } catch (e: KslException.Internal) {
                 throw TlsException.Config("ECH keys refused: ${e.message}")
             } finally {
-                framed.fill(0)
+                // the key material lives on in native memory only
+                framed?.fill(0)
+                pems.forEach { it.fill(0) }
             }
         }
     }

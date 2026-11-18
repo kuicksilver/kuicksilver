@@ -369,7 +369,7 @@ openssl ech -public_name cover.example.com -out ech-1.pem   # the PEM: the priva
 val ech1 = File("/etc/kuicksilver/ech-1.pem")
 val ech2 = File("/etc/kuicksilver/ech-2.pem")
 // guide:ktor:ech-server
-val keys = EchServerKeys(listOf(EchKey(ech1.readText())))
+val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
 val server =
     embeddedServer(Kuicksilver, configure = {
         tlsConnector(identity) {
@@ -378,7 +378,7 @@ val server =
         }
     }) { routing { get("/") { call.respondText("hidden") } } }
 // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
-keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfigs = false)))
+keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))
 ```
 
 - **The public name.** A client whose configuration the server cannot decrypt (an old key, or GREASE) gets the keys' retry
@@ -386,6 +386,9 @@ keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfi
   6.1.7): the connector's certificate must cover that name. With an `sniSelector` the selector is asked for the
   `public_name` then (the outer ClientHello's name), and its answer is the certificate the client checks; after an
   accepted ECH it is asked for the inner name, as without ECH.
+- **Key material.** `EchKey` takes the PEM as a `ByteArray` or `CharArray` and zeroes it; its own copy is zeroed once
+  `EchServerKeys` (or `rotate`) has read it into native memory, so such a key is used once. A `String` cannot be wiped and
+  stays in memory as long as the key. `kuicksilver.tls.echKeys` reads its files without making a `String`.
 - **Rotation.** `rotate` replaces the whole set for handshakes that start afterwards, on TCP and QUIC; handshakes in
   progress keep the set they started with. Keep a replaced key (`inRetryConfigs = false`) until the DNS TTL of the old
   record has run out.
