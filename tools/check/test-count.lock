@@ -1181,9 +1181,12 @@ kuicksilver-ktor-client/src/androidDeviceTest	io.kuicksilver.ktor.client.HttpsRe
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.ClientMigrationAppleTest.connectionFollowingTheDefaultNetworkServes
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.SystemProxyAppleTest.parsesCfProxyDictionary
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.SystemProxyAppleTest.systemProxiesCallRuns
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.aHeldScriptIsPreparedOnce
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.answersAreParsed
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.downloadsAreSingleFlight
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aCallerGoneDuringPreparationLeavesNoRun
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aCancelledLookupDoesNotBreakTheOthers
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aNulDoesNotEndTheScript
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_busyLoopIsAbandonedAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_deepRecursionFailsAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_discoveredUrlIsHttpOnly
@@ -1203,6 +1206,7 @@ kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAp
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_queuedRunsAreNotRunaways
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_runawayScriptIsAbandonedAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_slowDnsIsNotARunaway
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_slowPreparationIsNotARunaway
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_stringBombFailsAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_theScriptHasNoHostAccess
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_unsupportedOnlyAnswerFailsClosed

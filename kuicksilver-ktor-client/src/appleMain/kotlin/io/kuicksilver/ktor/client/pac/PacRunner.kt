@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -30,7 +31,8 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * Runs PAC scripts on one thread of their own, each in its [PacContext] (kept per script source, at most [MAX_CONTEXTS],
  * the least recently used released). A run's time limit counts from when it starts on that thread, not from when it was
- * queued behind others. JavaScriptCore's public API cannot interrupt a script, so a run that overruns its limit gives no
+ * queued behind others, nor from the preparation of a new script's text before it ([PacSource]: no script code runs then,
+ * and the size cap bounds it). JavaScriptCore's public API cannot interrupt a script, so a run that overruns its limit gives no
  * answer and its thread is abandoned to it: the next run gets a new thread and new contexts. While [MAX_ABANDONED]
  * threads are abandoned no script runs (lookups give no answer, so the next setting or a direct connection); when an
  * abandoned run ends its thread and contexts are released and scripts run again. A hostile script can so hold at most
@@ -50,9 +52,20 @@ internal object PacRunner {
         /** When the run now on the thread started; [IDLE] when none runs. */
         val busySince = AtomicLong(IDLE)
 
+        /**
+         * [script]'s source made ready for a new context, or null when a context of [script] is held under [key]. The
+         * engine's own work before a run's limit starts: no script code runs in it, and the script's size cap bounds it.
+         */
+        fun prepare(
+            key: String,
+            script: String,
+        ): PacSource? = if (contexts[key]?.first == script) null else PacSource(script)
+
+        /** The answer of [script]'s context under [key], created from [source] ([prepare]) unless one is held. */
         fun find(
             key: String,
             script: String,
+            source: PacSource?,
             url: String,
             host: String,
         ): String {
@@ -62,7 +75,7 @@ internal object PacRunner {
                     held.second
                 } else {
                     held?.second?.close()
-                    PacContext(script)
+                    PacContext(checkNotNull(source) { "no source prepared" })
                 }
             contexts[key] = script to ctx
             while (contexts.size > MAX_CONTEXTS) contexts.remove(contexts.keys.first())?.second?.close()
@@ -84,6 +97,9 @@ internal object PacRunner {
     var nowForTest: (() -> Long)? = null
 
     internal fun now(): Long = nowForTest?.invoke() ?: clock()
+
+    /** Tests: called on the PAC thread once a new script's text is ready for JavaScriptCore, before any of it runs. */
+    var preparedForTest: (() -> Unit)? = null
 
     private val queued = MutableStateFlow(0)
 
@@ -118,15 +134,22 @@ internal object PacRunner {
         val started = CompletableDeferred<Long>()
         val call =
             GlobalScope.async(w.dispatcher) {
-                val at = now()
-                w.busySince.store(at)
-                started.complete(at)
+                // before the limit starts: the engine's own work on the script's text (no script code runs in it)
+                val source = runCatching { w.prepare(key, script) }
                 try {
-                    PacRun.begin(at + limitMillis * 3 / 4)
-                    runCatching { w.find(key, script, url, host) }
+                    ensureActive() // its caller gave up while the text was prepared: no run
+                    val at = now()
+                    w.busySince.store(at)
+                    started.complete(at)
+                    try {
+                        PacRun.begin(at + limitMillis * 3 / 4)
+                        source.mapCatching { w.find(key, script, it, url, host) }
+                    } finally {
+                        PacRun.end()
+                        w.busySince.store(IDLE)
+                    }
                 } finally {
-                    PacRun.end()
-                    w.busySince.store(IDLE)
+                    source.getOrNull()?.close()
                 }
             }
         var answer: Result<String>? = null

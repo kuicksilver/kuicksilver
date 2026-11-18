@@ -104,6 +104,7 @@ class PacEngineAppleTest {
             PacHost.setForTest(null)
             PacScripts.nowForTest = null
             PacRunner.nowForTest = null
+            PacRunner.preparedForTest = null
         }
 
     /** Echoes what the script gets: the URL and host, made a host name. */
@@ -431,6 +432,93 @@ class PacEngineAppleTest {
                 assertEquals("PROXY ok.test:1", b.await())
             }
             assertEquals(0, PacRunner.abandonedThreads.value)
+        }
+
+    /**
+     * A run's limit bounds the script, not the engine's own preparation of the script's text (its size checked, the text
+     * handed to JavaScriptCore): no script code runs then, and the 1 MiB cap bounds that work. A device slow at it (a
+     * script of the largest size on an old phone or a busy machine) still gets the script's answer. Here the preparation
+     * is held past the run's limit (a lower bound only: correct code passes however long that is); then the script
+     * answers and no thread is abandoned. Before, the preparation counted against the limit and such a script failed.
+     */
+    @Test fun negative_slowPreparationIsNotARunaway() =
+        runBlocking {
+            val prepared = CompletableDeferred<Unit>()
+            val go = CompletableDeferred<Unit>()
+            PacRunner.preparedForTest = {
+                prepared.complete(Unit)
+                runBlocking { go.await() }
+            }
+            try {
+                withTimeout(30.seconds) {
+                    val run = async(Dispatchers.Default) { PacRunner.findProxy("prep", ok, "https://x.test:443/", "x.test", 200) }
+                    prepared.await()
+                    assertNull(withTimeoutOrNull(600) { run.join() }, "the caller waits for the preparation, past the run's limit")
+                    go.complete(Unit)
+                    assertEquals("PROXY ok.test:1", run.await())
+                }
+                assertEquals(0, PacRunner.abandonedThreads.value)
+            } finally {
+                go.complete(Unit)
+            }
+        }
+
+    /**
+     * A caller that gives up while its script's text is prepared leaves no run behind: the script never runs, no thread
+     * is abandoned, and the next lookup runs at once.
+     */
+    @Test fun negative_aCallerGoneDuringPreparationLeavesNoRun() =
+        runBlocking {
+            val prepared = CompletableDeferred<Unit>()
+            val go = CompletableDeferred<Unit>()
+            PacRunner.preparedForTest = {
+                prepared.complete(Unit)
+                runBlocking { go.await() }
+            }
+            try {
+                withTimeout(30.seconds) {
+                    val asks = "function FindProxyForURL(url, host) { myIpAddressEx(); return 'DIRECT'; }"
+                    val gone = async(Dispatchers.Default) { PacRunner.findProxy("gone", asks, "https://x.test:443/", "x.test", 2_000) }
+                    prepared.await()
+                    gone.cancel()
+                    gone.join()
+                    PacRunner.preparedForTest = null
+                    go.complete(Unit)
+                    // one thread, in order: once this answers, the given-up run would have run before it
+                    assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000))
+                    assertTrue(!host.entered.isCompleted, "the script of the caller that gave up never ran")
+                }
+                assertEquals(0, PacRunner.abandonedThreads.value)
+            } finally {
+                go.complete(Unit)
+            }
+        }
+
+    /** A script whose context is held is not prepared again: the preparation is paid once per script, not per lookup. */
+    @Test fun aHeldScriptIsPreparedOnce() =
+        runBlocking {
+            val preparations = AtomicInt(0)
+            PacRunner.preparedForTest = { preparations.incrementAndGet() }
+            try {
+                repeat(3) { assertEquals("PROXY ok.test:1", PacRunner.findProxy("once", ok, "https://x.test:443/", "x.test", 2_000)) }
+                assertEquals(1, preparations.value)
+                val other = "function FindProxyForURL(url, host) { return 'DIRECT'; }"
+                assertEquals("DIRECT", PacRunner.findProxy("once", other, "https://x.test:443/", "x.test", 2_000))
+                assertEquals(2, preparations.value, "a changed script under the same key is prepared")
+            } finally {
+                PacRunner.preparedForTest = null
+            }
+        }
+
+    /**
+     * A NUL in a script is a character of it, as in every other engine: the text is handed to JavaScriptCore whole.
+     * Before, it went through a C string and ended at the NUL, so the engine ran another script than the one it was
+     * given (here: only a comment, so no `FindProxyForURL`).
+     */
+    @Test fun negative_aNulDoesNotEndTheScript() =
+        runBlocking {
+            val script = "// a\u0000b\nfunction FindProxyForURL(url, host) { return 'PROXY nul.test:1'; }"
+            assertEquals("PROXY nul.test:1", PacRunner.findProxy("nul", script, "https://x.test:443/", "x.test", 2_000))
         }
 
     /**

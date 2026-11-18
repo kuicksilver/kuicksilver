@@ -831,7 +831,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   only, on macOS; then `wpad.<domain>` for each configured DNS search domain exactly, never a parent domain; then
   `http://wpad/wpad.dat` for the system resolver to complete), run on JavaScriptCore with the PAC utility functions
   (`…Ex` included) in a context without network, file or timer APIs, each run limited to 2 seconds from its start and
-  its DNS lookups within that (threat model 3.20.3). An answer naming only proxies the engine cannot use (`HTTPS`,
+  its DNS lookups within that (threat model 3.20.3); a new script's text is prepared before that start (its size
+  checked, its characters handed to JavaScriptCore whole, a NUL included), so a script of the largest size is not
+  failed by a device slow at that. An answer naming only proxies the engine cannot use (`HTTPS`,
   `SOCKS4`) fails closed: the next setting, else the request fails, never a direct connection. A WPAD discovery that
   finds no script is logged once at Info. The script gets the URL as Chrome builds it (lower-case host, also as the
   `host` argument): a `ws://` URI whole, with its resource name (RFC 6455 section 4.1); `wss` and `https` as their

@@ -3915,7 +3915,8 @@ exactly; a URL written differently (case, a trailing slash) gets the origin only
 (`file://srv/share/p.pac`, `file:////srv/share/p.pac`) is fetched over SMB from that host and counts as remote: origin
 only. Turn it on only when that script is
 yours.
-On Apple platforms the engine's own runner also bounds the script: 2 s per run, 20 distinct lookups per run in total (as
+On Apple platforms the engine's own runner also bounds the script: 2 s per run (the script's own code; preparing a new
+script's text comes before), 20 distinct lookups per run in total (as
 Chrome; a name looked up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer of at most 64 KiB of ASCII, a script of at most 1 MiB; an answer entry it cannot read is skipped,
 and an answer with none left counts as a failed script. JavaScriptCore's public API has no memory limit: a script that
 allocates without end is stopped only by the time limit (its thread is given up, threat model 3.20.3).
