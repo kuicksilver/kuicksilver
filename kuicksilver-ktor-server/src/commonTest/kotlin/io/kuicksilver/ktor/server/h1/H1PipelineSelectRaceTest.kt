@@ -139,8 +139,12 @@ class H1PipelineSelectRaceTest {
             assertEquals(listOf("/buffered"), handled)
         }
 
-    /** The client closed its side as the server stopped (an end, nothing to read): the connection ends, unanswered. */
-    @Test fun aClientThatClosedAsTheServerStoppedEndsTheConnection() =
+    /**
+     * The client closed its side as the server stopped (an end, nothing to read): the connection ends, unanswered. This pins
+     * the outcome only: whether the stop's recheck answers "read on" (the parser then meets the end) or "nothing to read",
+     * the connection ends the same way, so no test can tell the two answers apart here.
+     */
+    @Test fun aClientThatClosedAsTheServerStoppedEndsTheConnectionEitherWay() =
         runTest {
             val draining = Job()
             val reached = CompletableDeferred<Unit>()
@@ -162,9 +166,10 @@ class H1PipelineSelectRaceTest {
 
     /**
      * The client's side failed while the wait was in the socket's awaitContent (which never hands back here) and the server
-     * stopped: the stop's side sees the failure, and the connection ends without a request read from it.
+     * stopped: the connection ends without a request read from it. This pins the outcome only: whether the stop's recheck
+     * answers "read on" (the read then meets the failure) or "nothing to read", the connection ends the same way.
      */
-    @Test fun aClientThatFailedAsTheServerStoppedEndsTheConnection() =
+    @Test fun aClientThatFailedAsTheServerStoppedEndsTheConnectionEitherWay() =
         runTest {
             val draining = Job()
             val c = pipeline(draining, input = { NeverWakes(it) }) { respond("never") }
