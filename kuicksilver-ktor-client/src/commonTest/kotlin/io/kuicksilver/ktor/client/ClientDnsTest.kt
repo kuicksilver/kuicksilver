@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -14,6 +14,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.kuicksilver.ktor.network.setSystemLookupForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
@@ -227,6 +228,47 @@ class ClientDnsTest {
                     assertTrue("no address" in e.message.orEmpty(), "$e")
                 }
             } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The system resolver's answers get the same destination check (RFC 1122 section 3.2.1.3, RFC 9293 MUST-46): an answer of
+     * 0.0.0.0 for a name would reach this host's own listener on Linux and macOS, here the test server on 127.0.0.1, over TCP
+     * and over QUIC. The system lookup is the test's ([setSystemLookupForTest]); everything after it is the default path.
+     */
+    @Test fun negative_aSystemAnswerOfTheUnspecifiedAddressIsNeverConnected() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("reached") } } }
+            setSystemLookupForTest { name, ipv6 ->
+                if (name == "server.test" && !ipv6) {
+                    listOf(
+                        io.kuicksilver.ktor.network
+                            .TcpAddress(ByteArray(4), 0),
+                    )
+                } else {
+                    emptyList()
+                }
+            }
+            try {
+                val modes =
+                    if (quicServerSupported()) {
+                        listOf(
+                            Http3DiscoveryMode.H1Only,
+                            Http3DiscoveryMode.H3Only,
+                        )
+                    } else {
+                        listOf(Http3DiscoveryMode.H1Only)
+                    }
+                for (mode in modes) {
+                    testClient(mode, engine = { connectTimeout = 30.seconds }).use { c ->
+                        val started = TimeSource.Monotonic.markNow()
+                        val e = assertFailsWith<IOException>("$mode") { c.get("https://server.test:$port/") }
+                        assertTrue("no address" in e.message.orEmpty() && started.elapsedNow() < 20.seconds, "$mode: $e")
+                    }
+                }
+            } finally {
+                setSystemLookupForTest(null)
                 server.stop(100, 500)
             }
         }

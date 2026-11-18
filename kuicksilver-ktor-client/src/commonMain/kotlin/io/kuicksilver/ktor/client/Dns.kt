@@ -120,7 +120,7 @@ public class IpAddress private constructor(
  *   each family are kept, the first ones. Unspecified (0.0.0.0/8, `::`), multicast (224.0.0.0/4, `ff00::/8`) and limited
  *   broadcast (255.255.255.255) addresses are dropped, never connected to: RFC 1122 section 3.2.1.3 and RFC 4291 section
  *   2.5.2 never allow them as a destination, RFC 9293 section 3.9.1 (MUST-46) makes a TCP open to them an error, and a
- *   connect to 0.0.0.0 reaches the host's own listeners on Linux and macOS.
+ *   connect to 0.0.0.0 reaches the host's own listeners on Linux and macOS. The system's answers get the same check.
  * - It gets host names only, without brackets or port. An IP address literal in a URL is its own address and never reaches
  *   it; nor does a host with the form of an IPv4 address that is not a dotted quad (`127.1` is 127.0.0.1, as every platform
  *   reads it; `010.0.0.1` or `0x7f.1` read differently by different platforms, and `256.1.1.1`, fail the call: no host
@@ -328,27 +328,32 @@ internal fun usableAnswer(
     return out
 }
 
-/**
- * [a] as a destination (port 0), an IPv4-mapped address as IPv4; null for one no connection may go to: "this network"
- * (0.0.0.0/8, RFC 1122 section 3.2.1.3: "MUST NOT be sent, except as a source address"), the unspecified IPv6 address
- * (RFC 4291 section 2.5.2), multicast (224.0.0.0/4, ff00::/8; RFC 9293 section 3.9.1, MUST-46) and the limited broadcast
- * address.
- */
+/** [a] as a destination (port 0), an IPv4-mapped address as IPv4; null for one no connection may go to ([usableAsDestination]). */
 private fun usableDestination(a: IpAddress): TcpAddress? {
-    var b = a.bytes
-    var scope = a.scopeId
-    if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) {
-        b = b.copyOfRange(12, 16)
-        scope = 0
-    }
+    val t = a.toTcp()
+    if (!usableAsDestination(t)) return null
+    val b = t.bytes
+    return if (isIpv4Mapped(b)) TcpAddress(b.copyOfRange(12, 16), 0) else t
+}
+
+/**
+ * Whether a connection may go to [t]: not "this network" (0.0.0.0/8, RFC 1122 section 3.2.1.3: "MUST NOT be sent, except
+ * as a source address"), the unspecified IPv6 address (RFC 4291 section 2.5.2), multicast (224.0.0.0/4, ff00::/8; RFC 9293
+ * section 3.9.1, MUST-46, and no QUIC connection either) or the limited broadcast address, IPv4-mapped forms included.
+ * Every resolver's answer is held to it, the system's too ([RequestDns]); an address literal written in a URL is no answer.
+ */
+internal fun usableAsDestination(t: TcpAddress): Boolean {
+    var b = t.bytes
+    if (isIpv4Mapped(b)) b = b.copyOfRange(12, 16)
     if (b.size == 4) {
         val first = b[0].toInt() and 0xff
-        if (first == 0 || first in 224..239 || b.all { it == 0xff.toByte() }) return null
-    } else if (b.all { it == 0.toByte() } || b[0] == 0xff.toByte()) {
-        return null
+        return !(first == 0 || first in 224..239 || b.all { it == 0xff.toByte() })
     }
-    return TcpAddress(b, 0, scope)
+    return !(b.all { it == 0.toByte() } || b[0] == 0xff.toByte())
 }
+
+private fun isIpv4Mapped(b: ByteArray): Boolean =
+    b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte()
 
 /**
  * One call of [lookup] per name, its result (or failure) shared by every caller that asks for that name meanwhile and after;

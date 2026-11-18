@@ -47,8 +47,8 @@ server. The reference stacks offer it:
   32 addresses per family are kept, and unspecified (0.0.0.0/8, `::`), multicast and limited broadcast addresses are
   dropped: RFC 1122 section 3.2.1.3 and RFC 4291 section 2.5.2 forbid them as destinations, RFC 9293 section 3.9.1
   (MUST-46) makes a TCP open to a multicast address an error, and a connect to 0.0.0.0 reaches the host's own listeners on
-  Linux and macOS. The system path keeps its behaviour as it was (a requirement of this item: the default unchanged); the
-  operating system's TCP refuses multicast there, and an answer of 0.0.0.0 from the system resolver is the open item below.
+  Linux and macOS. These are MUSTs, so the same destination check holds for the system resolver's answers (and the
+  addresses an HTTPS answer carries), over TCP and QUIC: the one change to the default path, which is otherwise as it was.
 - **Failures and time.** An exception, an empty answer or one without a usable address fails the connection with the
   engine's existing `IOException` for a name that does not resolve, the resolver's exception as the cause. The lookup is
   part of connecting: the connect timeout bounds it and the call's cancellation cancels it. A `CancellationException` the
@@ -68,7 +68,8 @@ server. The reference stacks offer it:
 - **OkHttp's blocking signature as the interface.** It would block an engine thread per lookup and could not be cancelled;
   the adapter gives blocking resolvers the same shape without that cost.
 - **Keeping the resolver's order (OkHttp).** RFC 8305 section 4 makes the RFC 6724 sort a MUST.
-- **Filtering 0.0.0.0 and multicast on the system path too.** Right on the merits, but it changes the default, which this
-  item must not; recorded as an open item of [threat model 3.25](../spec/threat-model.md#325-an-application-name-resolver-dns).
+- **Leaving the system path's answers unchecked, to keep the default exactly as it was.** RFC 1122 section 3.2.1.3,
+  RFC 4291 section 2.5.2 and RFC 9293 MUST-46 are MUSTs whichever resolver answered; a system answer of 0.0.0.0 reached
+  the host's own listeners, and QUIC sent Initials to it ([threat model 3.25](../spec/threat-model.md#325-an-application-name-resolver-dns)).
 - **Passing numeric hosts such as `127.1` to the resolver.** A resolver that hands them to `getaddrinfo` would read
   `010.0.0.1` as octal and another resolver as decimal; the engine decides once.

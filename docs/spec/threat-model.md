@@ -784,9 +784,10 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   blocking resolver on a pool of 8 threads of its own, which a caller stops waiting for. (d) A `CancellationException` from
   the resolver while its caller is active is a failed lookup (`asking`). (e) Such a host is never passed to the resolver:
   `127.1` is its address, one that platforms read differently fails.
-- **Residue:** the system path (`Dns.System`, the default) keeps its behaviour as it was: it does not drop 0.0.0.0 or
-  multicast answers of the system resolver (the operating system's TCP refuses multicast; a QUIC attempt to such an
-  address and a connect to 0.0.0.0 are not refused there yet). An answer pointing at loopback or a private network is
+  The same destination check holds for the system resolver's answers (`Dns.System`, the default), over TCP and QUIC, and
+  for the addresses an HTTPS answer carries (`RequestDns`, `usableAsDestination`); an address literal written in a URL is
+  no answer and is connected to as written.
+- **Residue:** an answer pointing at loopback or a private network is
   allowed from either resolver (an application may point a name at a local server on purpose; DNS rebinding is not
   defended against, as in OkHttp); an `Alt-Svc` alternative's host is classified only as a literal (3.14).
 - **Verification:** `ClientDnsTest.negative_theResolvedAddressNeverStandsInForTheName`,
@@ -794,6 +795,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   IP SAN holds, fails), `.negative_anUnspecifiedAnswerIsNeverConnected` (0.0.0.0 would reach the test's listener),
   `.negative_aCancellationTheDnsThrowsFailsTheCall`, `.negative_aStalledDnsEndsAtTheConnectTimeout`,
   `.negative_aStalledBlockingDnsEndsAtTheConnectTimeout`, `.negative_aHugeAnswerIsBounded`, `.negative_aLiteralIsNeverAskedFor`,
+  `.negative_aSystemAnswerOfTheUnspecifiedAddressIsNeverConnected` (the system path, TCP and QUIC),
+  `RequestDnsTest.negative_unusableAnswersAreNeverDestinations`,
   `DnsTest.negative_unusableDestinationsAreDropped`, `.negative_aHugeAnswerIsCappedPerFamily`,
   `.negative_aNumericHostIsNeverAskedFor`, `.negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure`,
   `.negative_aBlockingDnsThatNeverReturnsDoesNotHoldTheCaller`.
@@ -842,7 +845,7 @@ Supply chain:
 
 Sockets:
 11. `negative_ipv6ConnectorListensOnItsAddressOnly`, `negative_h1ToIpv6LiteralReachesThatAddressOnly`, `negative_ipv6ListenerDoesNotAcceptIpv4`, `negative_connectToAnotherIpv6AddressDoesNotReachTheListener`, `negative_portableRefusesASpecificIpv6Address`, `negative_portableRefusesIpv6Destinations` (§3.19; the TCP ones on the JVM and every Native target, the portable UDP ones on Native), `negative_stalledResolverHoldsBoundedThreads`, `negative_invalidIpv6LiteralIsNotLookedUp` (name resolution, §3.21.1)
-14. `negative_theResolvedAddressNeverStandsInForTheName`, `negative_theResolvedAddressNeverStandsInForTheNameOverHttp3`, `negative_anUnspecifiedAnswerIsNeverConnected`, `negative_unusableDestinationsAreDropped`, `negative_aHugeAnswerIsCappedPerFamily`, `negative_aNumericHostIsNeverAskedFor`, `negative_aCancellationTheDnsThrowsFailsTheCall`, `negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure` (an application resolver, §3.25)
+14. `negative_theResolvedAddressNeverStandsInForTheName`, `negative_theResolvedAddressNeverStandsInForTheNameOverHttp3`, `negative_anUnspecifiedAnswerIsNeverConnected`, `negative_unusableDestinationsAreDropped`, `negative_aHugeAnswerIsCappedPerFamily`, `negative_aNumericHostIsNeverAskedFor`, `negative_aCancellationTheDnsThrowsFailsTheCall`, `negative_aCancellationTheDnsThrowsOnItsOwnIsAFailure`, `negative_aSystemAnswerOfTheUnspecifiedAddressIsNeverConnected`, `negative_unusableAnswersAreNeverDestinations` (name resolution answers, §3.25)
 
 Pre-release status (2026-10-02): items 4 (partly), 7 (partly), 8 (partly) are covered in `kuicksilver-quic` (`core.HandshakeLimitsTest`, `flow.StreamLimitsTest`, `core.ConnectionIdTest`, `stream.ReassemblerTest`, `flow.FlowControlTest`, `recovery.LossDetectionTest`, `core.ClientVersionNegotiationTest`, `endpoint.EndpointCoreTest`, `core.ReceivePathTest`, `wire.TransportParametersTest`, `wire.FrameCodecTest`, `wire.PacketHeaderTest`) on JVM, macOS Native and Linux x64 (Docker):
 

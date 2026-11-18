@@ -1437,7 +1437,8 @@ The contract (the KDoc of `Dns` has it in full):
   call; implement `FamilyDns` to answer IPv6 and IPv4 separately, so that the race can start on the first answer
   (RFC 8305 section 3). Duplicates are dropped, an IPv4-mapped address counts as IPv4, and at most 32 addresses of each
   family are kept. On an IPv6-only network with NAT64 the IPv4 answers are synthesized as the system's are.
-- **Never a destination.** 0.0.0.0/8, `::`, multicast and 255.255.255.255 in an answer are dropped: a connect to
+- **Never a destination.** 0.0.0.0/8, `::`, multicast and 255.255.255.255 in an answer, yours or the system's, are
+  dropped: a connect to
   0.0.0.0 reaches the device's own listeners on Linux and macOS, and RFC 9293 makes a TCP open to a multicast address an
   error.
 - **Literals.** An IP address in the URL is connected to as it is; your resolver gets host names only. A host with the

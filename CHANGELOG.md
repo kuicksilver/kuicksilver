@@ -785,6 +785,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: an answer of the system resolver that no connection may go to is dropped before connecting, over TCP and
+  QUIC: "this network" (0.0.0.0/8), `::`, multicast (224.0.0.0/4, `ff00::/8`) and 255.255.255.255, IPv4-mapped forms
+  included (RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2, RFC 9293 section 3.9.1 MUST-46), as for an application's
+  `dns`; also the addresses an HTTPS answer carries. Before, an answer of 0.0.0.0 (a DNS sinkhole's, say) reached the
+  device's own listeners on Linux and macOS, and QUIC sent its Initials there. A name left without addresses fails as one
+  that resolves to none. An IP address written in the URL is still connected to as written (threat model 3.25).
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets

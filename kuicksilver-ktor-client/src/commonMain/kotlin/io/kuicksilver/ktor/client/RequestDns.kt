@@ -84,8 +84,8 @@ internal class RequestDns private constructor(
         host: String,
         addresses: List<ByteArray>,
     ) {
-        if (addresses.isEmpty()) return
-        val list = addresses.map { TcpAddress(it, 0) }
+        val list = addresses.map { TcpAddress(it, 0) }.filter(::usableAsDestination)
+        if (list.isEmpty()) return
         val name = socketHost(host)
         lock.withLock {
             for (v6 in listOf(true, false)) {
@@ -274,7 +274,8 @@ internal class RequestDns private constructor(
             if (mine) {
                 val result =
                     try {
-                        Result.success(resolveFamily(name, ipv6))
+                        // no answer, the system's included, is a destination no packet may go to (usableAsDestination)
+                        Result.success(resolveFamily(name, ipv6).filter(::usableAsDestination))
                     } catch (e: CancellationException) {
                         // this caller goes: no answer is left behind, and a caller waiting for it asks again. Cancel first,
                         // then remove without being cancellable: a busy lock must not leave the entry behind
@@ -322,5 +323,5 @@ internal fun KuicksilverEngineConfig.newRequestDns(): RequestDns {
     }
     if (dns === Dns.System) return RequestDns().also { it.isSystemForTest = true }
     // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
-    return RequestDns(resolveFamily = dns.familyResolver())
+    return RequestDns(nat64ForTest ?: Nat64.system, resolveFamily = dns.familyResolver())
 }
