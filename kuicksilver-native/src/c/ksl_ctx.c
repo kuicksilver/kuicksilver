@@ -342,7 +342,7 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
    Registered only on a client context that allows TLS 1.2 (KSL_OPT_MIN_VERSION KSL_TLS1_2), the only one where it can matter: a
    renegotiation is TLS 1.2's. OpenSSL 4.1.0 cannot build an ECH ClientHello next to a custom extension whose callback declines to
    send it (bug A of ADR-0019: extensions_cust.c custom_ext_add marks it for the outer ClientHello, which then fails with
-   internal_error), so a context that has it can take no ECH configuration; ECH never needs TLS 1.2. */
+   internal_error), so a context that has it takes no ECH configuration (KSL_SET_ECH_CONFIG_LIST); ECH never needs TLS 1.2. */
 #define KSL_ABORT_EXT_TYPE 0xff5a
 static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al,
                             void *arg) {
@@ -667,6 +667,7 @@ void ksl_ctx_free(ksl_ctx *c) {
     ksl_live_add(KSL_LIVE_CTX, -1);
     SSL_CTX_free(c->ctx);
     CRYPTO_THREAD_lock_free(c->ocsp_lock);
+    ksl_ech_ctx_free(c);
     if (c->ticket_keys) {
         OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80);
         free(c->ticket_keys);
@@ -1161,6 +1162,13 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
             return KSL_ERROR;
         }
         c->sni_pause = value != 0;
+        return KSL_OK;
+    case KSL_OPT_ECH_GREASE:
+        if (c->role != KSL_CLIENT) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ECH GREASE is client-only");
+            return KSL_ERROR;
+        }
+        c->ech_grease = value != 0;
         return KSL_OK;
     case KSL_OPT_ALPN_POLICY:
         if (c->role != KSL_SERVER || value < KSL_ALPN_POLICY_OPEN || value > KSL_ALPN_POLICY_REFUSE) {

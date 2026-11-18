@@ -54,6 +54,7 @@ int main(int argc, char **argv) {
     run_verify();
     run_revocation();
     run_groups();
+    run_ech();
 #endif
     if (failures) {
         printf("%d FAILURES\n", failures);

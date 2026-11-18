@@ -40,7 +40,10 @@ extern "C" {
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
    ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
-   ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8) */
+   ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8); Encrypted Client Hello
+   (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE, KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS,
+   KSL_GET_VERIFY_NAME, ksl_ech_config_list_check and ksl_ctx_set_ech_keys (numbered from 15 so that other additions of 0.3.0
+   keep the numbers below) */
 
 /* return codes */
 #define KSL_OK 0
@@ -100,6 +103,11 @@ extern "C" {
                                       A present ALPN extension is validated first, in both modes (RFC 7301 section 3.1: a non-empty
                                       list of non-empty names, lengths exact), else decode_error (50). KSL_E_BAD_ARG on a client
                                       context */
+#define KSL_OPT_ECH_GREASE 15 /* client (ABI 7, additive): 1 = a session without an ECH configuration sends a GREASE
+                                      encrypted_client_hello extension in its ClientHello (RFC 9849 section 6.2.1: a random config_id,
+                                      payload and enc of plausible sizes), so that offering ECH does not stand out; the server's answer
+                                      to it is checked and ignored, its retry_configs never reported. A session with a configuration
+                                      (KSL_SET_ECH_CONFIG_LIST) offers that instead. Default 0. KSL_E_BAD_ARG on a server context */
 /* clang-format on */
 #define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */
 #define KSL_ALPN_POLICY_REQUIRED 1 /* a ClientHello without the ALPN extension: no_application_protocol (120) */
@@ -132,6 +140,32 @@ extern "C" {
                                       4.3.7), once the ServerHello is sent or read; 0 bytes before, and for a handshake without key
                                       exchange: a TLS 1.2 abbreviated (resumed) handshake, a TLS 1.3 psk_ke resumption (which ksl
                                       never allows). Additive in ABI 7 */
+#define KSL_GET_ECH_STATUS 15 /* 1 byte, KSL_ECH_*: the session's Encrypted Client Hello outcome (RFC 9849); readable after the
+                                      handshake failed too. Additive in ABI 7 */
+#define KSL_GET_ECH_RETRY_CONFIGS 16 /* client: the ECHConfigList the server sent in retry_configs when it rejected this session's ECH
+                                      (KSL_ECH_REJECTED: the outer handshake was authenticated for the public_name, RFC 9849 section
+                                      6.1.6), with only the ECHConfigs this OpenSSL can use (ksl_ech_config_list_check); 0 bytes in every
+                                      other state, GREASE included (section 6.2.1). Readable after the failure. Additive in ABI 7 */
+#define KSL_GET_VERIFY_NAME 17 /* client: the DNS name or IP literal the server certificate is checked against at this moment: the
+                                      verify name, or once the server rejected ECH, the ECHConfig's public_name (RFC 9849 section
+                                      6.1.7). The paused path (KSL_WANT_VERIFY) checks this name, never the configured one. Additive
+                                      in ABI 7 */
+/* clang-format on */
+/* KSL_GET_ECH_STATUS values */
+#define KSL_ECH_NONE                                                                                                   \
+    0 /* no ECH: none configured and no GREASE (client); a ClientHello without the extension (server) */
+#define KSL_ECH_ACCEPTED                                                                                               \
+    1 /* the server accepted it: the handshake runs on the inner ClientHello (the real server name) */
+#define KSL_ECH_GREASE 2 /* client: GREASE was sent (RFC 9849 section 6.2.1); nothing was hidden */
+/* clang-format off */
+#define KSL_ECH_REJECTED 3 /* client: the server rejected it; the outer handshake was authenticated for the ECHConfig's public_name and
+                              the client ended it with ech_required (121; QUIC CRYPTO_ERROR 0x179), as RFC 9849 section 6.1.6 requires,
+                              so nothing of the session reached the application; KSL_GET_ECH_RETRY_CONFIGS has the server's new
+                              configurations, or none ("securely disabled", section 6.1.6). Server: the ClientHello carried an ECH
+                              extension this server did not decrypt (another key, or GREASE); it answered with retry_configs */
+#define KSL_ECH_OFFERED 4  /* client: offered, and neither accepted nor rejected with an authenticated outer handshake: the ServerHello
+                              has not come yet, or the handshake failed first (a certificate not valid for the public_name: then the
+                              failure is that certificate's, and no retry configuration is reported) */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -153,6 +187,15 @@ extern "C" {
                                       CertificateEntry's extensions; larger: not stapled there). Sent only when it is for the leaf the handshake presents (the issuer: the
                                       certificate of the configured chain that issued it), verifies, and is inside its validity interval
                                       at that moment (ksl_ocsp_check rules); otherwise nothing is stapled. Additive in ABI 7 */
+#define KSL_SET_ECH_CONFIG_LIST 15 /* client, before the handshake starts, once (ABI 7, additive): an ECHConfigList (RFC 9849
+                                      section 4, the value of an HTTPS record's ech parameter, RFC 9848) in binary. Only its usable
+                                      ECHConfigs are kept (ksl_ech_config_list_check); the ClientHello then carries ECH with one of them:
+                                      the outer ClientHello names its public_name, the inner one the SNI of KSL_SET_SNI. KSL_E_BAD_ARG when
+                                      the list does not parse, on a server, or with an IP literal as the verify name; KSL_E_NOT_SUPPORTED
+                                      when no ECHConfig is usable, when the context allows TLS 1.2 (KSL_OPT_MIN_VERSION KSL_TLS1_2: the
+                                      context then has ksl_tcp_abort's ClientHello extension, which OpenSSL 4.1.0 cannot combine with
+                                      ECH; ADR-0019), or in a build without ECH; KSL_E_TOO_LATE once the handshake started or a list was
+                                      set. A rejected ECH ends the handshake with ech_required (KSL_GET_ECH_STATUS) */
 /* clang-format on */
 
 /* ksl_ssl_get_peer_chain selector */
@@ -347,6 +390,24 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
    reason-limited CRL or an issuingDistributionPoint that does not decode, is refused whole (KSL_E_BAD_ARG). On a client the
    CRLs also apply to a delegated OCSP responder (ksl_ocsp_check rules). */
 int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
+
+/* --- Encrypted Client Hello (additive under ABI 7; RFC 9849, ADR-0019) --- */
+/* Checks an ECHConfigList (binary, RFC 9849 section 4: a 2-byte length and the ECHConfigs) as a client would use it: the ECHConfigs this
+   OpenSSL can use, in their order, are written to out (as an ECHConfigList). An ECHConfig is ignored, as the RFC requires, when its
+   version is not 0xfe0d, its KEM or every cipher suite is unsupported, it has an unsupported mandatory extension (section 4.2), or its
+   public_name is not a DNS name or could be read as an IPv4 address (section 6.1.7). KSL_OK: *out_len is the length written, 0 when
+   the list parses but holds nothing usable (or the build has no ECH). KSL_ERROR: the list does not parse (*out_len 0: a length that
+   does not match, an ECHConfig that does not fit, more than 65537 bytes), or out is too small (*out_len the size needed). Touches no
+   context: safe from any thread. */
+int ksl_ech_config_list_check(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len);
+/* Server: the ECH keys sessions made from now on decrypt with (shared mode, RFC 9849 section 7.1), framed as (uint32 big-endian length
+   || entry)*, 1 to 16 entries, each a flags byte (bit 0: this key's ECHConfig goes into retry_configs) and the key's PEM as OpenSSL
+   writes it (a PKCS#8 PRIVATE KEY and the ECHCONFIG block of its ECHConfigList; `openssl ech -public_name <name>` makes one). At least
+   one key goes into retry_configs. The whole set replaces the previous one, also on a frozen context: the one setting that changes
+   there, for rotation (a session made before keeps the keys it was made with; the caller keeps an old key in the set while clients may
+   still hold its ECHConfig). A set that does not read changes nothing (KSL_E_BAD_ARG); KSL_E_BAD_ARG on a client context,
+   KSL_E_NOT_SUPPORTED in a build without ECH. */
+int ksl_ctx_set_ech_keys(ksl_ctx *, const uint8_t *keys, size_t len);
 
 /* --- session (QUIC or TCP) --- */
 ksl_ssl *ksl_ssl_new(ksl_ctx *, int mode);

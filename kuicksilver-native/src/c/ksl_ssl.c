@@ -52,6 +52,12 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
            fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
         SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
+    if (!ksl_ech_ssl_init(s)) {
+        SSL_free(s->ssl);
+        BIO_free(s->net);
+        free(s);
+        return NULL;
+    }
     /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) {
         SSL_set_msg_callback(s->ssl, ksl_msg_cb);
@@ -122,6 +128,16 @@ static int set_verify_name(ksl_ssl *s, const char *name) {
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: verify name must be a non-empty ASCII host or IP literal");
         return KSL_ERROR;
     }
+    if (s->ech_set) { /* ECH names a host (RFC 9849 section 6.1): an IP literal is refused before anything changes */
+        X509_VERIFY_PARAM *probe = X509_VERIFY_PARAM_new();
+        int ip = probe != NULL && X509_VERIFY_PARAM_set1_ip_asc(probe, name) == 1;
+        X509_VERIFY_PARAM_free(probe);
+        ERR_clear_error();
+        if (ip || probe == NULL) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: ECH needs a host name, not an IP literal, as the verify name");
+            return KSL_ERROR;
+        }
+    }
     X509_VERIFY_PARAM *p = SSL_get0_param(s->ssl);
     s->verify_flags = X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
     X509_VERIFY_PARAM_set_hostflags(p, s->verify_flags);
@@ -161,6 +177,8 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         name[len] = 0;
         return what == KSL_SET_SNI ? set_sni(s, name) : set_verify_name(s, name);
     }
+    case KSL_SET_ECH_CONFIG_LIST:
+        return ksl_ech_set_config_list(s, data, len);
     case KSL_SET_QUIC_VERSION: {
         if (!data || len != 4) {
             ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: QUIC version is 4 bytes");
@@ -284,7 +302,8 @@ static int copy_out(uint8_t *out, size_t cap, size_t *len, const void *src, size
 }
 int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     ERR_clear_error();
-    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG && what != KSL_GET_QUIC_PENDING) {
+    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG && what != KSL_GET_QUIC_PENDING &&
+        what != KSL_GET_ECH_STATUS && what != KSL_GET_ECH_RETRY_CONFIGS && what != KSL_GET_VERIFY_NAME) {
         ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: session failed");
         return KSL_ERROR;
     }
@@ -371,6 +390,21 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;
         return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_ECH_STATUS: {
+        uint8_t b = (uint8_t)ksl_ech_status(s);
+        return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_ECH_RETRY_CONFIGS: {
+        size_t n = 0;
+        int r = ksl_ech_retry_configs(s, out, cap, &n);
+        if (len)
+            *len = n;
+        return r;
+    }
+    case KSL_GET_VERIFY_NAME: {
+        const char *n = s->verify_ip ? s->verify_ip : ksl_verify_host(s);
+        return copy_out(out, cap, len, (const uint8_t *)n, n ? strlen(n) : 0);
     }
     default:
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter");
