@@ -1,7 +1,7 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
 /* ICMP Packet Too Big for a CONNECT-UDP proxy (RFC 9298 section 6.1): ksl_icmp_ptb_build writes the message (pure, every
- * platform, fuzzed by tools/fuzz/ksl mode 0xfc and tested), ksl_icmp_open / ksl_icmp_send / ksl_icmp_close send it through a raw socket, which needs
+ * platform, fuzzed by tools/fuzz/ksl mode 0xf9 and tested), ksl_icmp_open / ksl_icmp_send / ksl_icmp_close send it through a raw socket, which needs
  * CAP_NET_RAW (or root) on Linux and Android; elsewhere ksl_icmp_open answers KSL_E_NOT_SUPPORTED. The raw socket only
  * sends: it never reads (a raw ICMP socket would see every ICMP message of the host), so nothing from the network is
  * parsed here. No allocation, no state beyond the descriptor. */

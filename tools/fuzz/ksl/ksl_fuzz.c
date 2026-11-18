@@ -258,7 +258,7 @@ static void ticket_program(const uint8_t *p, size_t n) {
     fake_now = 1000000;   /* the generated keys of mode 7 stay valid: every input starts at the same clock */
 }
 
-/* mode 0xfc: ksl_icmp_ptb_build (RFC 9298 section 6.1) on [flags][mtu:2][cap:2][target port:2][local port:2][target 16]
+/* mode 0xf9: ksl_icmp_ptb_build (RFC 9298 section 6.1) on [flags][mtu:2][cap:2][target port:2][local port:2][target 16]
    [local 16][payload]: flags bit 0 picks IPv6. A message is no longer than cap and KSL_ICMP_PTB_MAX, its ICMP checksum is
    right (RFC 1071; over the ICMPv6 pseudo-header, RFC 4443 section 2.3) and it quotes the payload's start unchanged. */
 static uint32_t fz_sum(uint32_t s, const uint8_t *p, size_t n) {
@@ -302,7 +302,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (r != 0 && r != 1) abort();
         return 0;
     }
-    if (data[0] == 0xfc) {
+    if (data[0] == 0xf9) {
         icmp_ptb(rest, n);
         return 0;
     }
@@ -396,10 +396,10 @@ int ksl_fuzz_write_seeds(const char *dir) {
         ptb[1] = 0x05; ptb[2] = 0x00; ptb[3] = 0x04; ptb[4] = 0xd8; /* mtu 1280, cap 1240 */
         ptb[5] = 0x13; ptb[6] = 0x88; ptb[7] = 0x01; ptb[8] = 0xbb; /* ports 5000, 443 */
         ptb[9] = 192; ptb[10] = 0; ptb[11] = 2; ptb[12] = 50; ptb[25] = 10; ptb[28] = 2;
-        PUT("icmp-ptb-v4", 0xfc, ptb, sizeof ptb);
+        PUT("icmp-ptb-v4", 0xf9, ptb, sizeof ptb);
         ptb[0] = 1; ptb[9] = 0x20; ptb[10] = 0x01; ptb[11] = 0x0d; ptb[12] = 0xb8; ptb[24] = 1;
         ptb[25] = 0x20; ptb[26] = 0x01; ptb[27] = 0x0d; ptb[28] = 0xb8; ptb[40] = 2;
-        PUT("icmp-ptb-v6", 0xfc, ptb, sizeof ptb);
+        PUT("icmp-ptb-v6", 0xf9, ptb, sizeof ptb);
     }
     /* mode 0xfd: a TCP client's first records offering x1 or no ALPN, under each policy (with an override: cfg 3..), and the
        records of a client that went through a HelloRetryRequest (its first ClientHello, then the second) */
