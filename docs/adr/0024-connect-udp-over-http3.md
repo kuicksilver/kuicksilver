@@ -3,7 +3,7 @@ Copyright 2026 The Kuicksilver Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# ADR-0023. CONNECT-UDP (RFC 9298) over HTTP/3 only, in `kuicksilver-http3`, with proxied QUIC through `DatagramIo`
+# ADR-0024. CONNECT-UDP (RFC 9298) over HTTP/3 only, in `kuicksilver-http3`, with proxied QUIC through `DatagramIo`
 
 Date: 2026-11-18. Status: proposed (0.3.0 feature-parity item 4).
 

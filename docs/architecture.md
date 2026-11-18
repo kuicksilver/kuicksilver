@@ -140,7 +140,7 @@ HTTP/3 and QPACK (`io.kuicksilver.http3`). `frame` holds the sans-IO frame and S
 decoder with the dynamic table (blocked streams, Section Acknowledgment and Stream Cancellation, Insert Count
 Increment), `message` the field and pseudo-header rules (RFC 9114 section 4), the `Priority` field, the Capsule parser and the
 CONNECT-UDP template, target syntax and address classes (RFC 9298), `connectudp` the CONNECT-UDP proxy and client tunnel
-(`UdpProxyImpl.kt`, `UdpTunnelImpl.kt`; ADR-0023), `runtime` the
+(`UdpProxyImpl.kt`, `UdpTunnelImpl.kt`; ADR-0024), `runtime` the
 connection (`H3Session`: control and QPACK streams, GOAWAY, PRIORITY_UPDATE, datagram demultiplexing; its extension
 files are `H3Session.control.kt`, `H3Session.critical.kt` and `H3Session.shutdown.kt`) and the request
 streams (HEADERS/DATA/trailers with backpressure, 1xx, Extended CONNECT: `ServerRequestStream.kt` reads requests and
