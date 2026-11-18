@@ -157,7 +157,10 @@ class ClientOrderlyCloseTest {
             val requestRead = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
             tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, _ ->
                 readRequest(input)
-                requestRead.complete(kotlin.time.TimeSource.Monotonic.markNow())
+                requestRead.complete(
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow(),
+                )
                 clean.complete(input.endsCleanly())
                 release.await() // never answers the client's close_notify, holds the connection
             }) { port ->

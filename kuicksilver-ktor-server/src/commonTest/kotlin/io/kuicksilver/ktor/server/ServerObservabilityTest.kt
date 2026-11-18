@@ -104,7 +104,12 @@ class ServerObservabilityTest {
                         while (refused == null) {
                             val late = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
                             try {
-                                late.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")), lateQuic).close()
+                                late
+                                    .connect(
+                                        InetSocketAddress("127.0.0.1", port),
+                                        ServerFixtures.clientTls(alpn = listOf("h3")),
+                                        lateQuic,
+                                    ).close()
                                 delay(20) // the stop has not reached the endpoint yet
                             } catch (e: QuicException.ConnectionLost.TransportClosed) {
                                 refused = e

@@ -277,7 +277,11 @@ class WtCreditOrderTest {
                         // the server stopped reading at BUSY / 2: at most that plus the window of a was sent
                         assertTrue(f.sendDataForTest.second < BUSY, "a still has bytes queued: ${f.sendDataForTest}")
                         assertTrue((f.grantedByOrderForTest[aOrder] ?: 0L) >= BUSY / 2, "a got the raises: ${f.grantedByOrderForTest}")
-                        assertEquals(0L, f.grantedByOrderForTest[bOrder] ?: 0L, "b got credit while a had bytes queued: ${f.sendersForTest}")
+                        assertEquals(
+                            0L,
+                            f.grantedByOrderForTest[bOrder] ?: 0L,
+                            "b got credit while a had bytes queued: ${f.sendersForTest}",
+                        )
                     }
                     // a ends, then b moves
                     assertEquals(BUSY - read, withTimeout(10.seconds) { sa.input.readAllBytes() }.size, "the rest of a")

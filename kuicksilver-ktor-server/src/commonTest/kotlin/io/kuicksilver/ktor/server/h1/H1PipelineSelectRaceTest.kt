@@ -114,7 +114,12 @@ class H1PipelineSelectRaceTest {
             draining.complete()
             runCurrent()
             assertTrue(c.job.isCompleted, "the idle connection stayed open after the stop")
-            assertTrue(c.fromServer.readBuffer().readString().endsWith("first"))
+            assertTrue(
+                c.fromServer
+                    .readBuffer()
+                    .readString()
+                    .endsWith("first"),
+            )
         }
 
     /**
