@@ -395,6 +395,7 @@ class GuideSamplesTest {
                         // guide:ktor:sni-server
                         tlsConnector(defaultIdentity) {
                             port = 0
+                            host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                             sniSelector = { hello ->
                                 when (hello.serverName) {
                                     "api.example.com" -> {
