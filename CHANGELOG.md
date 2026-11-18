@@ -20,8 +20,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with the server's retry configurations after an authenticated rejection, the certificate checked against the
   `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
   `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory)
-  with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. OpenSSL 4.1.0 ends a rejection after a
-  HelloRetryRequest with `illegal_parameter` (ADR-0019, bug C).
+  with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only.
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
   resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller
@@ -863,13 +862,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `no-ssl3`, `no-ssl3-method`), and `tools/openssl/build.sh` rewrites the read-only `crypto/buildinf.h` that 4.x makes.
   The native libraries grow by about 10 % (the macOS arm64 JNI library: 2,544,072 to 2,809,416 bytes). `Ksl.version()`
   names OpenSSL 4.1.0. Building `ksl` against a system OpenSSL (Linux, `KSL_SYSTEM_OPENSSL`) still takes 3.5 to 3.x.
-- The bundled OpenSSL carries one patch on the 4.1.0 tarball, as an exception to "the upstream tarball only" (ADR-0019):
-  OpenSSL 4.1.0 fails Encrypted Client Hello with internal_error after a HelloRetryRequest whenever the client has a
-  custom extension of its own, which every QUIC client has (its transport parameters). The patch
-  (`tools/openssl/patches/`) is pinned by its SHA-256 in `gradle/openssl.toml`, applied exactly by
-  `tools/openssl/build.sh` (`apply-patch.pl`: no fuzz, no offset), part of the build cache key, the target line and
-  `provenance.txt`, listed in the release provenance and in the SBOM (`kuicksilver:openssl:patch`), and dropped with the
-  first OpenSSL release that fixes the bug.
+- The bundled OpenSSL carries two patches on the 4.1.0 tarball, as an exception to "the upstream tarball only"
+  (ADR-0019): OpenSSL 4.1.0 fails Encrypted Client Hello with internal_error after a HelloRetryRequest whenever the
+  client has a custom extension of its own, which every QUIC client has (its transport parameters), and ends an ECH
+  rejection after a HelloRetryRequest with illegal_parameter instead of `ech_required` and the retry configurations. The
+  patches (`tools/openssl/patches/`) are pinned by their SHA-256 in `gradle/openssl.toml` (`patch`, `patch_2`), applied in
+  that order and exactly by `tools/openssl/build.sh` (`apply-patch.pl`: no fuzz, no offset, both or neither), part of the
+  build cache key, the target line and `provenance.txt`, listed in the release provenance and in the SBOM
+  (`kuicksilver:openssl:patch`), and each dropped with the first OpenSSL release that fixes its bug.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

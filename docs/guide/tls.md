@@ -596,6 +596,4 @@ val client = tlsConfig(TlsRole.Client) {
 
 ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
 remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
-the DNS query itself unless DNS is protected, stay visible. OpenSSL 4.1.0 ends a rejection that follows a
-HelloRetryRequest with `illegal_parameter` instead of the rejection path, so no retry configurations come back then
-(ADR-0019, bug C).
+the DNS query itself unless DNS is protected, stay visible.

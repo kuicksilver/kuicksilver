@@ -34,9 +34,11 @@ fun Project.registerCyclonedxSbom(description: String, platformConstraints: List
         opensslVersion.set(tomlValue("version"))
         opensslSha256.set(tomlValue("sha256"))
         opensslPatch.set(toml.map { t ->
-            val path = Regex("^patch = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
-            val sha = Regex("^patch_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
-            if (path != null && sha != null) "$path sha256:$sha" else ""
+            listOf("patch", "patch_2").mapNotNull { k ->
+                val path = Regex("^$k = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
+                val sha = Regex("^${k}_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
+                if (path != null && sha != null) "$path sha256:$sha" else null
+            }.joinToString(", ")
         })
         opensslConfigureFlags.set(providers.fileContents(root.file("tools/openssl/configure-flags.txt")).asText.map { t ->
             t.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }

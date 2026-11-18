@@ -39,9 +39,11 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
         ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
     val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
-    // the patch carried under ADR-0019, when the pin names one (its hash is in the target line too)
-    val pinnedPatch = Regex("^patch_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
-    if (provenance["patch-sha256"] != pinnedPatch) return "provenance.txt names patch ${provenance["patch-sha256"] ?: "none"}, ${pinnedPatch ?: "none"} is pinned"
+    // the patches carried under ADR-0019, when the pin names them (their hashes are in the target line too)
+    for ((key, label) in listOf("patch_sha256" to "patch-sha256", "patch_2_sha256" to "patch-2-sha256")) {
+        val pinnedPatch = Regex("^$key = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
+        if (provenance[label] != pinnedPatch) return "provenance.txt names $label ${provenance[label] ?: "none"}, ${pinnedPatch ?: "none"} is pinned"
+    }
     if (provenance["target"] != expected) return "provenance.txt names target '${provenance["target"]}', not '$expected'"
     for (a in listOf("libcrypto.a", "libssl.a")) {
         val actual = java.security.MessageDigest.getInstance("SHA-256").digest(dir.resolve("lib/$a").readBytes()).joinToString("") { "%02x".format(it) }

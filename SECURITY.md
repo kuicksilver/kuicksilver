@@ -78,11 +78,12 @@ from us, so we commit to the following.
 - **Pinned release.** We use the OpenSSL 4.1 branch, and the 4.2 LTS branch once it is released (ADR-0019: Encrypted
   Client Hello needs OpenSSL 4; 4.1 is supported by OpenSSL until 2027-11-23). The exact release, the SHA-256 of its tarball and the
   fingerprint of the OpenSSL release signing key are pinned in [`gradle/openssl.toml`](gradle/openssl.toml); the build
-  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). One small patch is carried on the
+  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). Two small patches are carried on the
   tarball as an exception (ADR-0019: OpenSSL 4.1.0 fails Encrypted Client Hello after a HelloRetryRequest when the client
-  has a custom extension, as every QUIC client has): it is in `tools/openssl/patches/`, pinned by its SHA-256 next to the
-  tarball's, applied exactly by `tools/openssl/build.sh`, listed in the build provenance and the SBOM, and dropped with
-  the first OpenSSL release that fixes the bug. The build configuration
+  has a custom extension, as every QUIC client has, and ends an ECH rejection after a HelloRetryRequest with
+  `illegal_parameter`): they are in `tools/openssl/patches/`, pinned by their SHA-256 next to the tarball's, applied in
+  a fixed order and exactly by `tools/openssl/build.sh`, listed in the build provenance and the SBOM, and each is dropped
+  with the first OpenSSL release that fixes its bug. The build configuration
   ([`tools/openssl/configure-flags.txt`](tools/openssl/configure-flags.txt)) compiles out everything the stack does
   not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
   logging, and more), which removes a large part of OpenSSL's attack surface.

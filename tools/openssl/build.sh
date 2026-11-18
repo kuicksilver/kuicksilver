@@ -21,9 +21,11 @@
 # (docs/guide/building.md).
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
-# The carried patch (ADR-0019): when the pin profile names one (patch, patch_sha256), the file must have that SHA-256, and
-# tools/openssl/apply-patch.pl applies it, exactly, to the copy of the verified tree the build runs in; its hash is part of
-# the cache key, of the target line (a token patch-sha256=<first 16 hex>) and of provenance.txt (patch-sha256 <hash>).
+# The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, patch_2 /
+# patch_2_sha256 second (only with a first). Each file must have its pinned SHA-256, and tools/openssl/apply-patch.pl applies
+# them, in that order and exactly, to the copy of the verified tree the build runs in; their hashes are part of the cache
+# key, of the target line (tokens patch-sha256=<first 16 hex> and patch-2-sha256=<...>) and of provenance.txt
+# (patch-sha256 <hash>, patch-2-sha256 <hash>).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
@@ -34,13 +36,20 @@ pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;;
 [ -f "$toml" ] || { echo "no pin profile $toml" >&2; exit 1; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
-patch_file=$(sed -n 's/^patch = "\(.*\)"/\1/p' "$toml"); patch_sha=$(sed -n 's/^patch_sha256 = "\(.*\)"/\1/p' "$toml")
-case "${patch_file:+f}${patch_sha:+s}" in ""|fs) ;; *) echo "$toml: patch and patch_sha256 go together" >&2; exit 1 ;; esac
-patch_id="${patch_sha:+patch-sha256=$(printf %s "$patch_sha" | cut -c1-16)}"
-if [ -n "$patch_file" ] && [ "$print_only" != 1 ]; then
-  actual=$(shasum -a 256 < "$root/$patch_file" 2>/dev/null | cut -d' ' -f1) || actual=""
-  [ "$actual" = "$patch_sha" ] || { echo "FAILED: $patch_file has SHA-256 ${actual:-<unreadable>}, $toml pins $patch_sha" >&2; exit 1; }
-fi
+patch_files=(); patch_id=""; prov_patches=""
+for n in "" _2; do
+  pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$toml"); ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$toml")
+  case "${pf:+f}${ps:+s}" in ""|fs) ;; *) echo "$toml: patch$n and patch${n}_sha256 go together" >&2; exit 1 ;; esac
+  [ -n "$pf" ] || continue
+  [ -z "$n" ] || [ ${#patch_files[@]} -eq 1 ] || { echo "$toml: patch$n without patch" >&2; exit 1; }
+  label="patch${n//_/-}-sha256"
+  patch_id="${patch_id:+$patch_id }$label=$(printf %s "$ps" | cut -c1-16)"; prov_patches="${prov_patches}$label $ps"$'\n'
+  if [ "$print_only" != 1 ]; then
+    actual=$(shasum -a 256 < "$root/$pf" 2>/dev/null | cut -d' ' -f1) || actual=""
+    [ "$actual" = "$ps" ] || { echo "FAILED: $pf has SHA-256 ${actual:-<unreadable>}, $toml pins $ps" >&2; exit 1; }
+  fi
+  patch_files+=("$root/$pf")
+done
 [ "$print_only" = 1 ] || [ -d "$src" ] || { echo "run fetch.sh first" >&2; exit 1; }
 OPT="${OPT:--Os}"
 # the builder's flags, word by word into an array (never glob-expanded), refused where Configure would read a word as
@@ -132,7 +141,7 @@ dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
 provenance() { # <dir>: what was built from what, checked by -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts)
   { echo "tarball-sha256 $(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")"; echo "target $(portable < "$1/configure-target.txt")"
     for a in libcrypto.a libssl.a; do echo "$a $(shasum -a 256 < "$1/lib/$a" | cut -d' ' -f1)"; done
-    [ -z "$patch_sha" ] || echo "patch-sha256 $patch_sha"; } > "$1/provenance.txt"
+    printf %s "$prov_patches"; } > "$1/provenance.txt"
 }
 if [ -d "$cache/lib" ] && [ "${KSL_OPENSSL_FRESH:-0}" != 1 ]; then
   rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"; [ -f "$dest/provenance.txt" ] || provenance "$dest"
@@ -142,8 +151,8 @@ fi
 work="$out/build/$target"
 rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
 cd "$work"
-[ -z "$patch_file" ] || perl "$here/apply-patch.pl" "$root/$patch_file" "$work" >"$out/build/$target.patch.log" 2>&1 \
-  || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: $patch_file does not apply to OpenSSL $version" >&2; exit 1; }
+[ ${#patch_files[@]} -eq 0 ] || perl "$here/apply-patch.pl" "$work" "${patch_files[@]}" >"$out/build/$target.patch.log" 2>&1 \
+  || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: the carried patches do not apply to OpenSSL $version" >&2; exit 1; }
 # shellcheck disable=SC2086
 ./Configure "$cfg" $flags --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
 # The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the

@@ -62,17 +62,26 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   shared mode with key rotation and retry configurations. No split mode.
 - **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
   reported to OpenSSL as well.
-- **One carried OpenSSL patch for bug B, as an exception** (owner decision 2026-11-18). Until now the bundled OpenSSL
-  has been the upstream release tarball exactly, checked by its signature and SHA-256 and nothing else. For bug B the
-  build carries one minimal patch (from the spike's `ech-hrr-custom-ext.patch`), under these rules:
-  - the bug is reported to OpenSSL with a minimal reproducer, and the patch is dropped in the first 4.1.x or 4.2
-    release that fixes it;
-  - the patch lives in the repository and is pinned by its SHA-256 next to the tarball's pin; `tools/openssl/build.sh`
-    applies it to the verified tarball and refuses a patch whose hash differs;
-  - the patch and its hash are listed in the build's provenance (`provenance.txt`, the release provenance and the SBOM)
-    and are part of the build cache's key and of `configure-target.txt`;
-  - the reproducibility checks (the double build, `tools/verify/verify-release.sh`) rebuild with the same patch;
-  - no other patch is carried without a new decision.
+- **Two carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C). Until now the
+  bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and nothing else.
+  The build carries two minimal patches, applied in this order:
+  1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
+     extension, which every QUIC client has; from the spike's `ech-hrr-custom-ext.patch`); dropped with the first 4.1.x
+     or 4.2 release whose `tls_construct_extensions` resets the custom extensions' flags at every inner ClientHello;
+  2. `openssl-4.1.0-ech-hrr-rejection.patch` (bug C: a rejection after a HelloRetryRequest ends with `illegal_parameter`
+     instead of the rejection path of RFC 9849 section 6.1.6); dropped with the first release whose
+     `tls_process_server_hello` aborts only when the HelloRetryRequest's confirmation matched (RFC 9849 section 6.1.4).
+  The rules for both:
+  - each bug is reported to OpenSSL with a minimal reproducer (`upstream-issue-B.md`, `upstream-issue-C.md` of the spike
+    folder; the maintainers file them), and each patch is dropped on its own condition above;
+  - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
+    `patch_sha256`, then `patch_2`, `patch_2_sha256`); `tools/openssl/build.sh` applies them in that order to the
+    verified tarball (`apply-patch.pl`, exactly, both or neither) and refuses a patch whose hash differs, and a second
+    patch without a first;
+  - the patches and their hashes are listed in the build's provenance (`provenance.txt`, the release provenance and the
+    SBOM) and are part of the build cache's key and of `configure-target.txt`;
+  - the reproducibility checks (the double build, `tools/verify/verify-release.sh`) rebuild with the same patches;
+  - no further patch is carried without a new decision.
 - **On rejection the certificate is checked against the `public_name`**, in `ksl_verify.c` and on the paused path of the
   platform verifiers alike.
   The implementation comes with the move to 4.1.x, not with this ADR.
@@ -95,9 +104,9 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   the troubleshooting text of `KslException.Version`, and the system-OpenSSL build mode on Linux, which today refuses
   4.x and will then need 4.x for ECH.
 - **A patched OpenSSL until upstream fixes the bug.** A user who verifies a release no longer gets the upstream tarball
-  alone: the published OpenSSL is that tarball plus one patch whose hash is pinned and listed in the provenance, and
-  `verify-release.sh` applies it before comparing. The patch is reviewed like our own code, and every OpenSSL update
-  checks whether it is still needed.
+  alone: the published OpenSSL is that tarball plus two patches whose hashes are pinned and listed in the provenance, and
+  `verify-release.sh` applies them before comparing. The patches are reviewed like our own code, and every OpenSSL update
+  checks whether each is still needed.
 
 ## Alternatives rejected
 
@@ -194,13 +203,14 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **System OpenSSL.** ECH is compiled only with the bundled OpenSSL 4 (`KSL_HAS_ECH`): the system-OpenSSL build mode keeps
   its range of 3.5 to 3.x, which has no ECH, and a system 4.x would lack the carried patch. Such a build reports ECH
   unavailable.
-- **Bug C (found 2026-11-18, not patched; needs a decision).** After a HelloRetryRequest, OpenSSL 4.1.0's client takes any
-  `encrypted_client_hello` extension in the HelloRetryRequest for an acceptance (`statem_clnt.c`: `hrrsignal_p != NULL`),
-  and a server that rejects ECH may send one with eight random bytes (RFC 9849 lets it, and OpenSSL's own server does:
-  `extensions_srvr.c`, `tls_construct_stoc_ech`). The client then ends the handshake with `illegal_parameter` at the
-  ServerHello instead of authenticating the `public_name` and sending `ech_required` with the retry configurations. It
-  fails closed (no connection, nothing accepted, nothing revealed), but a client whose configuration is out of date
-  cannot recover through `retry_configs` when the server also asks for another key share. The fix is a few lines in
-  `statem_clnt.c` (compare the HelloRetryRequest's confirmation, not its presence); carrying it would be a second patch,
-  which this ADR does not allow without a new decision. `test_ech.c` pins the fail-closed outcome.
+- **Bug C (found 2026-11-18; the second carried patch, owner decision 2026-11-18).** After a HelloRetryRequest, OpenSSL
+  4.1.0's client takes any `encrypted_client_hello` extension in the HelloRetryRequest for an acceptance
+  (`statem_clnt.c`: `hrrsignal_p != NULL`), and a server that rejects ECH may send one with eight random bytes (RFC 9849
+  section 7.1; OpenSSL's own server does: `extensions_srvr.c`, `tls_construct_stoc_ech`). The client then ended the
+  handshake with `illegal_parameter` at the ServerHello instead of authenticating the `public_name` and sending
+  `ech_required` with the retry configurations, so a client whose configuration was out of date could not recover when
+  the server also asked for another key share. The same path ran the fallback to the `public_name` twice, the second time
+  overwriting (and leaking) the saved inner name. `openssl-4.1.0-ech-hrr-rejection.patch` remembers whether the
+  HelloRetryRequest's confirmation matched before the ServerHello's check, aborts only then, and falls back once.
+  `test_ech.c` (`ech_rejected_after_hrr`, QUIC and TCP, and the retry) fails without it.
 

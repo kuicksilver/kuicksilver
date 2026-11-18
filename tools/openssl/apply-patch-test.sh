@@ -13,16 +13,33 @@ bad() { echo "FAIL: $1"; fail=1; }
 tree() { rm -rf "$tmp/t"; mkdir -p "$tmp/t/d"; printf 'one\ntwo\nthree\nfour\nfive\n' > "$tmp/t/d/f.c"; }
 expect_refused() { # <name> <patch text>: refused, and the file unchanged
   tree; printf '%s' "$2" > "$tmp/p"
-  if perl "$here/apply-patch.pl" "$tmp/p" "$tmp/t" >"$tmp/out" 2>&1; then bad "$1 (applied)"
+  if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p" >"$tmp/out" 2>&1; then bad "$1 (applied)"
   elif [ "$(cat "$tmp/t/d/f.c")" != "$(printf 'one\ntwo\nthree\nfour\nfive')" ]; then bad "$1 (tree changed)"
   else ok "$1 refused: $(head -1 "$tmp/out")"; fi
 }
 
 tree
 printf 'A description line\n\n--- a/d/f.c\n+++ b/d/f.c\n@@ -2,3 +2,3 @@\n two\n-three\n+THREE\n four\n' > "$tmp/p"
-if perl "$here/apply-patch.pl" "$tmp/p" "$tmp/t" >/dev/null 2>&1 && [ "$(cat "$tmp/t/d/f.c")" = "$(printf 'one\ntwo\nTHREE\nfour\nfive')" ]; then
+if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p" >/dev/null 2>&1 && [ "$(cat "$tmp/t/d/f.c")" = "$(printf 'one\ntwo\nTHREE\nfour\nfive')" ]; then
   ok "an exact patch applies, its description skipped"
 else bad "an exact patch applies"; fi
+
+# two patches in order: the second applies to the first's result, and both or neither
+tree
+printf -- '--- a/d/f.c\n+++ b/d/f.c\n@@ -2,3 +2,3 @@\n two\n-three\n+THREE\n four\n' > "$tmp/p1"
+printf -- '--- a/d/f.c\n+++ b/d/f.c\n@@ -3,2 +3,2 @@\n-THREE\n+3\n four\n' > "$tmp/p2"
+if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p1" "$tmp/p2" >/dev/null 2>&1 && [ "$(cat "$tmp/t/d/f.c")" = "$(printf 'one\ntwo\n3\nfour\nfive')" ]; then
+  ok "two patches apply in order, the second to the first's result"
+else bad "two patches apply in order"; fi
+tree
+if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p2" "$tmp/p1" >/dev/null 2>&1; then bad "negative_patches_out_of_order (applied)"
+elif [ "$(cat "$tmp/t/d/f.c")" != "$(printf 'one\ntwo\nthree\nfour\nfive')" ]; then bad "negative_patches_out_of_order (tree changed)"
+else ok "negative_patches_out_of_order refused, tree untouched"; fi
+tree
+printf -- '--- a/d/f.c\n+++ b/d/f.c\n@@ -1,1 +1,1 @@\n-nope\n+x\n' > "$tmp/p3"
+if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p1" "$tmp/p3" >/dev/null 2>&1; then bad "negative_second_patch_fails (applied)"
+elif [ "$(cat "$tmp/t/d/f.c")" != "$(printf 'one\ntwo\nthree\nfour\nfive')" ]; then bad "negative_second_patch_fails (first one written)"
+else ok "negative_second_patch_fails: the first is not written either"; fi
 
 expect_refused "negative_context_differs" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -2,3 +2,3 @@\n two\n-tree\n+THREE\n four\n'
 expect_refused "negative_offset_hunk" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -3,3 +3,3 @@\n two\n-three\n+THREE\n four\n'
@@ -44,13 +61,28 @@ if [ -n "$patch" ]; then
     bad "negative_patch_hash_mismatch (build.sh went on)"
   elif grep -q "FAILED: $patch has SHA-256" "$tmp/out"; then ok "negative_patch_hash_mismatch refused"
   else bad "negative_patch_hash_mismatch (another error: $(head -1 "$tmp/out"))"; fi
+  sed 's/^patch_2_sha256 = ".*"/patch_2_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"/' "$pin" > "$tmp/pin2.toml"
+  if grep -q '^patch_2 = ' "$pin"; then
+    if KSL_OPENSSL_PIN="$tmp/pin2.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
+      bad "negative_second_patch_hash_mismatch (build.sh went on)"
+    elif grep -q "has SHA-256" "$tmp/out"; then ok "negative_second_patch_hash_mismatch refused"
+    else bad "negative_second_patch_hash_mismatch (another error: $(head -1 "$tmp/out"))"; fi
+    grep -v '^patch = \|^patch_sha256 = ' "$pin" > "$tmp/pin3.toml"
+    if KSL_OPENSSL_PIN="$tmp/pin3.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
+      bad "negative_second_patch_without_first (build.sh went on)"
+    elif grep -q "patch_2 without patch" "$tmp/out"; then ok "negative_second_patch_without_first refused"
+    else bad "negative_second_patch_without_first (another error: $(head -1 "$tmp/out"))"; fi
+  fi
   grep -v '^patch_sha256 = ' "$pin" > "$tmp/pin1.toml"
   if KSL_OPENSSL_PIN="$tmp/pin1.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
     bad "negative_patch_without_hash (build.sh went on)"
   elif grep -q "patch and patch_sha256 go together" "$tmp/out"; then ok "negative_patch_without_hash refused"
   else bad "negative_patch_without_hash (another error: $(head -1 "$tmp/out"))"; fi
-  # the pinned patch's hash is what the pin says (the file in the repository is the one reviewed)
-  [ "$(shasum -a 256 < "$root/$patch" | cut -d' ' -f1)" = "$(sed -n 's/^patch_sha256 = "\(.*\)"/\1/p' "$pin")" ] \
-    && ok "the pinned patch has its pinned SHA-256" || bad "the pinned patch has its pinned SHA-256"
+  # the pinned patches' hashes are what the pin says (the files in the repository are the ones reviewed)
+  for k in patch patch_2; do
+    f=$(sed -n "s/^$k = \"\(.*\)\"/\1/p" "$pin"); [ -n "$f" ] || continue
+    [ "$(shasum -a 256 < "$root/$f" | cut -d' ' -f1)" = "$(sed -n "s/^${k}_sha256 = \"\(.*\)\"/\1/p" "$pin")" ] \
+      && ok "$k has its pinned SHA-256" || bad "$k has its pinned SHA-256"
+  done
 fi
 [ "$fail" = 0 ] && echo "apply-patch-test: all passed" || { echo "apply-patch-test: FAILED"; exit 1; }

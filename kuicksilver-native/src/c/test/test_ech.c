@@ -494,20 +494,27 @@ static void test_hrr(void) {
     CHECK(ACCEPTED(t), "TCP: ECH accepted after a HelloRetryRequest");
     if (!ACCEPTED(t))
         report("tcp hrr", t);
-    /* rejected after a HelloRetryRequest. RFC 9849 wants the rejection path (public_name authenticated, ech_required, the
-       retry configurations), but OpenSSL 4.1.0's client takes any encrypted_client_hello extension in a HelloRetryRequest for
-       acceptance (statem_clnt.c: hrrsignal_p != NULL), and a rejecting server sends one with 8 random bytes (its own does,
-       extensions_srvr.c tls_construct_stoc_ech), so the ServerHello ends the handshake with illegal_parameter (bug C of
-       ADR-0019, not patched without a decision). It fails closed: no connection, nothing accepted, no retry configurations. */
+    /* rejected after a HelloRetryRequest (RFC 9849 sections 6.1.4, 7.1: the rejecting server may answer with an ECH extension
+       of 8 random bytes, which is no acceptance): the rejection path, ech_required and the retry configurations, over QUIC and
+       TCP, and the retry with them succeeds. OpenSSL 4.1.0 took that extension for an acceptance and ended with
+       illegal_parameter (bug C of ADR-0019, the second carried patch) */
     blob kb = keyset(1, &key_b, 1);
     ksl_ctx *sb = ech_server(&id_both, &kb, "secp384r1");
-    q = quic_run(cc, sb, &key_a, NULL);
-    CHECK(
-        q.rc == KSL_ERROR && !q.done && q.status_c != KSL_ECH_ACCEPTED && q.retry_len == 0 &&
-            (q.alert_c == 47 || (q.alert_c == 121 && q.status_c == KSL_ECH_REJECTED)),
-        "negative_ech_rejected_after_hrr: no connection (illegal_parameter on OpenSSL 4.1.0, bug C), nothing accepted");
-    if (q.rc != KSL_ERROR || q.done)
-        report("quic hrr reject", q);
+    run qs[2] = {quic_run(cc, sb, &key_a, NULL), tcp_run(cc, sb, &key_a)};
+    for (int m = 0; m < 2; m++) {
+        run r = qs[m];
+        int ok = r.rc == KSL_ERROR && !r.done && r.alert_c == 121 && r.status_c == KSL_ECH_REJECTED &&
+                 r.retry_len == key_b.list_len && !memcmp(r.retry, key_b.list, key_b.list_len);
+        CHECK(ok, m == 0 ? "ech_rejected_after_hrr: QUIC, ech_required and the retry configurations (bug C)"
+                         : "ech_rejected_after_hrr over TCP");
+        if (!ok)
+            report(m == 0 ? "quic hrr reject" : "tcp hrr reject", r);
+    }
+    echkey retry = key_b;
+    memcpy(retry.list, qs[0].retry, qs[0].retry_len);
+    retry.list_len = qs[0].retry_len;
+    q = quic_run(cc, sb, &retry, NULL);
+    CHECK(ACCEPTED(q), "the retry with them after a HelloRetryRequest is accepted");
     ksl_ctx_free(sb);
     free(kb.buf);
     ksl_ctx_free(cc);

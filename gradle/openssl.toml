@@ -12,3 +12,6 @@ configure_flags = "tools/openssl/configure-flags.txt"
 # QUIC client has), applied by tools/openssl/build.sh after the tarball's checks; dropped with the first release that fixes it.
 patch = "tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch"
 patch_sha256 = "1bdce1d99addf8667ebc735daede776fff00c0bc9dd7e3bd3f131f8d98fe5b6c"
+# The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first
+patch_2 = "tools/openssl/patches/openssl-4.1.0-ech-hrr-rejection.patch"
+patch_2_sha256 = "8457f3f84a1e78d9c05918078f63216fb4d923ecce380d41377fb7d2e4a57403"

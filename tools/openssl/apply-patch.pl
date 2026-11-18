@@ -6,18 +6,20 @@
 # removed line as it stands in the tree. No fuzz, no offset, no new, deleted or renamed files, no "\ No newline" lines. The
 # text before the first "--- " line is the patch's description and is skipped. Anything else stops with an error before a
 # file is written, so the tree is either patched whole or left as it was. Perl only: the build images have it (OpenSSL's
-# Configure needs it), and none of them is required to have patch(1) or git.
-# Usage: apply-patch.pl <patch> <tree>
+# Configure needs it), and none of them is required to have patch(1) or git. Several patches apply in the order given, each to
+# the result of the ones before (a file two of them change is read once and written once), and all or none are applied.
+# Usage: apply-patch.pl <tree> <patch>...
 use strict;
 use warnings;
 
-my ($patch, $tree) = @ARGV;
-die "usage: apply-patch.pl <patch> <tree>\n" unless defined $tree && @ARGV == 2;
+my ($tree, @patches) = @ARGV;
+die "usage: apply-patch.pl <tree> <patch>...\n" unless defined $tree && @patches;
+my (%new, @order);
+for my $patch (@patches) {
 open(my $ph, '<', $patch) or die "apply-patch: cannot read $patch: $!\n";
 my @p = <$ph>;
 close $ph;
-
-my (%new, @order);
+my %seen;
 my $i = 0;
 $i++ while $i < @p && $p[$i] !~ /^--- /;
 die "apply-patch: $patch holds no file\n" if $i >= @p;
@@ -26,12 +28,17 @@ while ($i < @p) {
     my ($nw) = ($p[$i + 1] // '') =~ m{^\+\+\+ b/(\S+)\s*$} or die "apply-patch: line " . ($i + 2) . ": expected '+++ b/<path>'\n";
     die "apply-patch: $old renamed to $nw\n" if $old ne $nw;
     die "apply-patch: unsafe path $old\n" if $old =~ m{(^|/)\.\.(/|$)} || $old =~ m{^/};
-    die "apply-patch: $old patched twice\n" if exists $new{$old};
+    die "apply-patch: $old patched twice in $patch\n" if $seen{$old}++;
     $i += 2;
     my $file = "$tree/$old";
-    open(my $fh, '<', $file) or die "apply-patch: cannot read $file: $!\n";
-    my @src = <$fh>;
-    close $fh;
+    my @src;
+    if (exists $new{$old}) {    # an earlier patch changed it: this one applies to that result
+        @src = split /^/m, $new{$old};
+    } else {
+        open(my $fh, '<', $file) or die "apply-patch: cannot read $file: $!\n";
+        @src = <$fh>;
+        close $fh;
+    }
     my @out;
     my $at = 0;    # lines of @src already copied
     while ($i < @p && $p[$i] =~ /^@@ /) {
@@ -68,9 +75,10 @@ while ($i < @p) {
     }
     die "apply-patch: $old has no hunk\n" if !@out && $at == 0;
     push @out, @src[$at .. $#src];
+    push @order, $old unless exists $new{$old};
     $new{$old} = join('', @out);
-    push @order, $old;
     die "apply-patch: line " . ($i + 1) . ": unexpected text after the hunks of $old\n" if $i < @p && $p[$i] !~ /^--- /;
+}
 }
 for my $f (@order) {
     my $file = "$tree/$f";
