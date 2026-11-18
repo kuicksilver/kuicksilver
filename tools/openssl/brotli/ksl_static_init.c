@@ -27,8 +27,9 @@ static void ksl_brotli_init(void) {
                     BrotliEncoderInitDictionaryHash(dict, kStaticDictionaryHashWords, kStaticDictionaryHashLengths);
 }
 
+/* brotli's names for the computation (static_init.h): both go through the same once */
 void BrotliEncoderLazyStaticInitInner(void) {
-    ksl_brotli_init();
+    CRYPTO_THREAD_run_once(&ksl_brotli_once, ksl_brotli_init);
 }
 void BrotliEncoderLazyStaticInit(void) {
     CRYPTO_THREAD_run_once(&ksl_brotli_once, ksl_brotli_init);

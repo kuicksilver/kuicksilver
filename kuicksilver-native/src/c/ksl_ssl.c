@@ -347,6 +347,10 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
         uint8_t b = s->renegotiations > 0;
         return copy_out(out, cap, len, &b, 1);
     }
+    case KSL_GET_CERT_COMPRESSORS: {
+        uint8_t b = (uint8_t)ksl_cert_compressors();
+        return copy_out(out, cap, len, &b, 1);
+    }
     case KSL_GET_CERT_COMPRESSION: {
         uint8_t b[2] = {(uint8_t)(s->peer_cert_comp >> 8), (uint8_t)s->peer_cert_comp};
         return copy_out(out, cap, len, b, 2);

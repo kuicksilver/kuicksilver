@@ -62,7 +62,12 @@ tv() { # <table> <key>: the string value of key in [table]
 zv=$(tv zlib version); zsha=$(tv zlib sha256); zfpr=$(tv zlib pgp_fingerprint); zurl=$(tv zlib url)
 bv=$(tv brotli version); bsha=$(tv brotli sha256); bcommit=$(tv brotli commit); burl=$(tv brotli url)
 for v in zv zsha zfpr zurl bv bsha bcommit burl; do [ -n "${!v}" ] || { echo "FAILED: $v missing in $ctoml" >&2; exit 1; }; done
-[ -f "zlib-$zv.tar.gz" ] || dl "zlib-$zv.tar.gz" "$zurl"
+# the tarball and its signature come together: a tarball already here without its .asc (an offline bundle missing a file, a
+# copy that dropped it) fails closed instead of fetching a signature for whatever tarball is here
+if [ -f "zlib-$zv.tar.gz" ] && [ ! -f "zlib-$zv.tar.gz.asc" ]; then
+  echo "FAILED: zlib-$zv.tar.gz is here without zlib-$zv.tar.gz.asc; put both, or neither to download both" >&2; exit 1
+fi
+[ -f "zlib-$zv.tar.gz" ] || { dl "zlib-$zv.tar.gz" "$zurl"; rm -f "zlib-$zv.tar.gz.asc"; }
 [ -f "zlib-$zv.tar.gz.asc" ] || dl "zlib-$zv.tar.gz.asc" "$zurl.asc"
 [ -f "brotli-$bv.tar.gz" ] || dl "brotli-$bv.tar.gz" "$burl"
 gpg --batch --import "$here/zlib-release-key.asc" >/dev/null 2>&1 || true

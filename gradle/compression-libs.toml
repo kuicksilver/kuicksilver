@@ -12,8 +12,9 @@ pgp_fingerprint = "5ED46A6721D365587791E2AA783FCD8E58BCAFBA"
 
 [brotli]
 version = "1.2.1"
-# brotli publishes no signature for its releases: the tarball is GitHub's archive of the tag, pinned by its SHA-256 and by
-# the commit of the tag, which git archive writes into the tarball's pax header (fetch.sh checks both)
+# brotli publishes no signature for its releases: the tarball is GitHub's archive of the tag, pinned by its SHA-256 (the
+# control); the commit, which git archive writes into the tarball's pax header and fetch.sh compares, is a consistency check
+# only. A pin update runs tools/openssl/brotli-pin-check.sh: the tag peels to this commit and the tarball is its tree.
 url = "https://github.com/google/brotli/archive/refs/tags/v1.2.1.tar.gz"
 sha256 = "98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f"
 commit = "db24a98aed38a16de78cc05ca15cdd8dc2a0d92d"

@@ -4,6 +4,7 @@ package io.kuicksilver.tls
 
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -21,8 +22,16 @@ import kotlin.time.Duration.Companion.seconds
  * brotli, client certificates too, a peer without it, and a peer's malformed CompressedCertificate (QUIC, whose handshake
  * messages the test sees in the clear and rewrites). The C suite (`test_certcomp.c`) covers every field of the message.
  */
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
 class CertificateCompressionTest {
+    /**
+     * What this platform's library compresses with: brotli and zlib, or zlib alone where it has brotli's decoder only (Android,
+     * iOS; ADR-0025). A server's chain comes in [serverAlg], a client's certificate in [clientAlg] (null: uncompressed).
+     */
+    private val brotli = CertificateCompression.Brotli in CertificateCompression.compressors()
+    private val serverAlg = if (brotli) CertificateCompression.Brotli else CertificateCompression.Zlib
+    private val clientAlg = if (brotli) CertificateCompression.Brotli else null
+
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
         runBlocking { SessionCache.Default.clear() } // a TCP test resuming another's ticket would see no Certificate at all
@@ -63,8 +72,8 @@ class CertificateCompressionTest {
         try {
             p.run()
             assertTrue(p.cs.done && p.ss.done, "handshake")
-            assertEquals(CertificateCompression.Brotli, p.c.peerCertificateCompression, "the server's chain")
-            assertEquals(CertificateCompression.Brotli, p.s.peerCertificateCompression, "the client's certificate")
+            assertEquals(serverAlg, p.c.peerCertificateCompression, "the server's chain")
+            assertEquals(clientAlg, p.s.peerCertificateCompression, "the client's certificate")
             assertEquals(chain.map(::Certificate), p.c.peerCertificates, "the chain decompressed whole")
         } finally {
             p.close()
@@ -204,6 +213,8 @@ class CertificateCompressionTest {
         val f =
             tampered { m ->
                 val head = m.copyOfRange(0, 12)
+                head[4] = 0
+                head[5] = 2 // brotli, whatever the server sent (zlib from a library with brotli's decoder only)
                 put24(head, 1, 2 + 3 + 3 + bomb.size)
                 put24(head, 9, bomb.size)
                 head + bomb
@@ -246,7 +257,7 @@ class CertificateCompressionTest {
             staple: ByteArray,
         ) = Fixtures.server(listOf(leaf, RevocationCerts.rvMid), key) { ocspStapling = OcspStapling(staple) }
         val good = server(RevocationCerts.rvLeaf, RevocationCerts.rvLeafKey, RevocationCerts.ocspGood)
-        for ((policy, expected) in listOf(RevocationPolicy.RequireStapled to null, RevocationPolicy.Off to CertificateCompression.Brotli)) {
+        for ((policy, expected) in listOf(RevocationPolicy.RequireStapled to null, RevocationPolicy.Off to serverAlg)) {
             val p = pair(Fixtures.client(anchored) { revocation = policy }, good)
             try {
                 p.run()
@@ -282,8 +293,8 @@ class CertificateCompressionTest {
             val c = withTimeout(10.seconds) { cd.await() }
             val s = withTimeout(10.seconds) { sd.await() }
             try {
-                assertEquals(CertificateCompression.Brotli, c.peerCertificateCompression)
-                assertEquals(CertificateCompression.Brotli, s.peerCertificateCompression)
+                assertEquals(serverAlg, c.peerCertificateCompression)
+                assertEquals(clientAlg, s.peerCertificateCompression)
             } finally {
                 c.close()
                 s.close()
@@ -328,7 +339,7 @@ class CertificateCompressionTest {
             try {
                 assertEquals(TlsVersion.Tls13, c.protocolVersion)
                 assertFalse(c.sessionReused)
-                assertEquals(CertificateCompression.Brotli, c.peerCertificateCompression)
+                assertEquals(serverAlg, c.peerCertificateCompression)
             } finally {
                 c.close()
                 s.close()
@@ -351,7 +362,7 @@ class CertificateCompressionTest {
                     s.output.flush()
                     c.input.readExactly(1)
                     assertEquals(round == 1, c.sessionReused, "round $round")
-                    assertEquals(if (round == 0) CertificateCompression.Brotli else null, c.peerCertificateCompression, "round $round")
+                    assertEquals(if (round == 0) serverAlg else null, c.peerCertificateCompression, "round $round")
                 } finally {
                     c.close()
                     s.close()

@@ -214,7 +214,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    commit identity stays as it is; the script prints the command), push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the six files of
    step 3, under exactly these names: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.jsonl`,
-   `Kuicksilver.xcframework.zip` and their `.asc`. SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
+   `Kuicksilver.xcframework.zip` and their `.asc`. Attach as well the source tarballs the release build verified, from
+   `build/openssl-work/src`: `openssl-<v>.tar.gz` and its `.asc`, `zlib-<v>.tar.gz` and its `.asc`, `brotli-<v>.tar.gz`
+   (GitHub's archive of brotli's tag is not promised to stay the same byte for byte, so the pinned SHA-256 may not match a
+   later download; these copies are what `tools/verify/verify-release.sh --offline <dir>` takes in `<dir>/openssl/`).
+   SwiftPM finds the zip by that URL, and OpenSSF Scorecard's
    Signed-Releases check recognises the provenance by the `.intoto.jsonl` suffix. **Then, once the GitHub release is
    published** (before that the zip's URL does not resolve), the Swift package, in a terminal with the release key,
    exactly as the script printed (step 5 of its last lines):

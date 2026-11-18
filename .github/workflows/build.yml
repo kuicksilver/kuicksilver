@@ -560,6 +560,7 @@ jobs:
           bash tools/check/double-build.sh macos-arm64
           bash tools/check/native-flags-test.sh   # the builder's compiler and flags (docs/guide/building.md)
           bash tools/openssl/fetch-test.sh        # zlib and brotli verification (ADR-0025), on the tarballs fetched above
+          bash tools/openssl/brotli-pin-check-test.sh   # the brotli pin-update check, against a local fixture repository
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -606,7 +607,9 @@ jobs:
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_COMPILE
       - name: 'native: prefix whitelist (apple)'
-        run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+        run: |
+          bash tools/prefix/check-no-unprefixed-test.sh   # its negative controls (unprefixed OpenSSL, zlib and brotli references)
+          for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

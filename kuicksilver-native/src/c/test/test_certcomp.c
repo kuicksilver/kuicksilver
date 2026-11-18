@@ -15,6 +15,31 @@
 #define ALG_ZSTD 3
 #define CERT_LIST_MAX (100 * 1024) /* OpenSSL's max_cert_list default (SSL_MAX_CERT_LIST_DEFAULT), which ksl keeps */
 
+/* Whether this OpenSSL compresses with brotli: not the decoder-only build of Android and iOS (ADR-0025), which the C tests also run
+   on a host (the matrix step "c-tests: macos-arm64 (decoder-only)"). A server then sends zlib, a client its certificate
+   uncompressed. */
+static int brotli_here(void) {
+    return (ksl_cert_compressors() & 2) != 0;
+}
+#define SERVER_ALG (brotli_here() ? ALG_BROTLI : ALG_ZLIB)
+#define CLIENT_ALG (brotli_here() ? ALG_BROTLI : 0)
+
+/* brotli inputs made beforehand, so that a build without the encoder decodes them too: 1 MiB of zeros (14 bytes), and a stream
+   whose first meta-block declares 16 MiB and holds 64 bytes (68 bytes: brotli 1.2.1 sizes its ring buffer by the declared length) */
+static const uint8_t BROTLI_BOMB[] = {0x59, 0xff, 0xff, 0x8f, 0x7f, 0x02, 0x20,
+                                      0x1e, 0x0b, 0x04, 0x72, 0xef, 0x1f, 0x00};
+static const uint8_t BROTLI_RING[68] = {0xcf, 0xff, 0xff, 0xff};
+/* testdata/certcomp-chain.br: the Certificate body of server-via-intermediate + intermediate in brotli
+   (tools/certs/gen-certcomp-fixtures.sh) */
+static uint8_t *brotli_chain(size_t *len) {
+    static uint8_t *b;
+    static size_t l;
+    if (!b)
+        b = read_file(TESTDATA "certcomp-chain.br", &l);
+    *len = l;
+    return b;
+}
+
 static int set_str(ksl_ssl *s, int what, const char *v) {
     return ksl_ssl_set(s, what, (const uint8_t *)v, strlen(v));
 }
@@ -124,9 +149,9 @@ static void test_tcp_default(void) {
     ksl_ctx *cc = cli(1, 1), *sc = srv("server", NULL, 1, 1);
     ksl_ssl *c = tclient(cc), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_handshake(c, s) == KSL_OK, "handshake");
-    CHECK(peer_alg(c) == ALG_BROTLI,
-          "the client got the server's chain compressed with brotli, the first of both lists");
-    CHECK(peer_alg(s) == ALG_BROTLI, "the server got the client's certificate compressed with brotli (per handshake)");
+    CHECK(peer_alg(c) == SERVER_ALG,
+          "the client got the server's chain with brotli, the first of both lists (zlib: decoder only)");
+    CHECK(peer_alg(s) == CLIENT_ALG, "the server got the client's certificate with brotli (none: decoder only)");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     ksl_ctx_free(cc);
@@ -149,9 +174,9 @@ static void test_tls12_capable_peers(void) {
         uint8_t v[2];
         size_t n;
         CHECK(ksl_ssl_get(c, KSL_GET_VERSION, v, 2, &n) == KSL_OK && v[1] == 0x04, "TLS 1.3");
-        if (peer_alg(c) != ALG_BROTLI)
+        if (peer_alg(c) != SERVER_ALG)
             printf("  client%s server%s: %u\n", which & 1 ? " 1.2+" : "", which & 2 ? " 1.2+" : "", peer_alg(c));
-        CHECK(peer_alg(c) == ALG_BROTLI, "compressed");
+        CHECK(peer_alg(c) == SERVER_ALG, "compressed");
         ksl_ssl_free(c);
         ksl_ssl_free(s);
         ksl_ctx_free(cc);
@@ -167,7 +192,7 @@ static void test_default_is_on(void) {
     ksl_ctx_freeze(sc);
     ksl_ssl *c = tclient(cc), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_handshake(c, s) == KSL_OK, "handshake");
-    CHECK(peer_alg(c) == ALG_BROTLI, "compressed without any option set");
+    CHECK(peer_alg(c) == SERVER_ALG, "compressed without any option set");
     CHECK(peer_alg(s) == 0, "no client certificate: 0");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
@@ -286,6 +311,7 @@ enum {
     TM_LEN_MAX,       /* 2^24 - 1 */
     TM_BOMB_ZLIB,     /* 1 MiB of zeros compressed, uncompressed_length the real one */
     TM_BOMB_BROTLI,   /* the same with brotli */
+    TM_BROTLI_RING,   /* brotli declaring a 16 MiB meta-block in 68 bytes */
     TM_BOMB_AT_LIMIT, /* 1 MiB of zeros, uncompressed_length max_cert_list */
     TM_ALG_ZSTD,      /* zlib data labelled zstd (not offered) */
     TM_ALG_UNKNOWN,   /* zlib data labelled 0x4242 */
@@ -323,7 +349,7 @@ static void put24(uint8_t *p, size_t v) {
    its handshake header), shaped by `mode`; returns its length with the 4-byte header */
 static size_t make_compressed(int mode, const uint8_t *body, size_t blen, uint8_t *out, size_t cap) {
     static uint8_t zeros[1 << 20];
-    int alg = mode == TM_BROTLI || mode == TM_BOMB_BROTLI ? ALG_BROTLI : ALG_ZLIB;
+    int alg = mode == TM_BROTLI || mode == TM_BOMB_BROTLI || mode == TM_BROTLI_RING ? ALG_BROTLI : ALG_ZLIB;
     const uint8_t *src = body;
     size_t slen = blen;
     if (mode == TM_BOMB_ZLIB || mode == TM_BOMB_BROTLI || mode == TM_BOMB_AT_LIMIT) {
@@ -336,6 +362,12 @@ static size_t make_compressed(int mode, const uint8_t *body, size_t blen, uint8_
         for (size_t i = 0; i < 64; i++)
             data[i] = (uint8_t)(0x5a ^ (i * 37));
         dlen = 64;
+    } else if (mode == TM_BROTLI) { /* the fixture, made by the brotli command for exactly this chain */
+        uint8_t *f = brotli_chain(&dlen);
+        memcpy(data, f, dlen);
+    } else if (mode == TM_BOMB_BROTLI || mode == TM_BROTLI_RING) {
+        dlen = mode == TM_BOMB_BROTLI ? sizeof BROTLI_BOMB : sizeof BROTLI_RING;
+        memcpy(data, mode == TM_BOMB_BROTLI ? BROTLI_BOMB : BROTLI_RING, dlen);
     } else if (mode != TM_EMPTY)
         dlen = compress_with(alg, src, slen, data, cap - 12);
     size_t ulen = blen;
@@ -485,8 +517,8 @@ static void test_quic_default(void) {
     tamper t = {TM_NONE, 0, 0, {0, 0}, 0, NULL, 0, 0, 0, 0};
     int rc = qpump(c, s, &cs, &ss, &t);
     CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs.done && ss.done, "QUIC handshake with compressed certificates");
-    CHECK(peer_alg(c) == ALG_BROTLI, "the client got the chain with brotli");
-    CHECK(peer_alg(s) == ALG_BROTLI, "a QUIC server that asks for a client certificate notes its compression");
+    CHECK(peer_alg(c) == SERVER_ALG, "the client got the chain with brotli (zlib: decoder only)");
+    CHECK(peer_alg(s) == CLIENT_ALG, "a QUIC server that asks for a client certificate notes its compression");
     CHECK(ksl_ssl_get_peer_chain(c, KSL_CHAIN_PRESENTED, -1, NULL, 0, NULL) == 2,
           "the decompressed chain has both certificates");
     ksl_ssl_free(c);
@@ -510,7 +542,7 @@ static void test_first_flight(void) {
             tamper t = {TM_NONE, 0, 0, {0, 0}, 0, NULL, 0, 0, 0, 0};
             int rc = qpump(c, s, &cs, &ss, &t);
             CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs.done, "handshake");
-            CHECK(peer_alg(c) == (unsigned)(comp ? ALG_BROTLI : 0), comp ? "compressed" : "plain");
+            CHECK(peer_alg(c) == (unsigned)(comp ? SERVER_ALG : 0), comp ? "compressed" : "plain");
             bytes[comp] = t.flight[0] + t.flight[1];
             ksl_ssl_free(c);
             ksl_ssl_free(s);
@@ -520,7 +552,8 @@ static void test_first_flight(void) {
         printf("  first flight, %s%s%s: %zu bytes plain, %zu compressed\n", chains[i][0], chains[i][1] ? " + " : "",
                chains[i][1] ? chains[i][1] : "", bytes[0], bytes[1]);
         CHECK(bytes[1] < bytes[0], "the compressed first flight is smaller");
-        if (i == 2)
+        if (i == 2 &&
+            brotli_here()) /* zlib (decoder only) needs 3,681 bytes: within the 3x of a two-datagram ClientHello */
             CHECK(
                 bytes[0] > 3 * 1200 && bytes[1] < 3 * 1200,
                 "the big chain's flight exceeds three 1200-byte datagrams plain, and fits compressed (CRYPTO bytes alone)");
@@ -538,7 +571,9 @@ static void test_tampered(void) {
     } cases[] = {
         {TM_ZLIB, 1, 51,
          "control: a valid zlib CompressedCertificate decompresses (decrypt_error from CertificateVerify)"},
-        {TM_BROTLI, 1, 51, "control: a valid brotli one decompresses as well"},
+        {TM_BROTLI, 1, 51,
+         "control: a valid brotli one decompresses as well (testdata/certcomp-chain.br; after the test certificates changed, run "
+         "tools/certs/gen-certcomp-fixtures.sh)"},
         {TM_LEN_PLUS1, 1, 42, "uncompressed_length one more than the output: bad_certificate"},
         {TM_LEN_MINUS1, 1, 42, "uncompressed_length one less: bad_certificate"},
         {TM_LEN_ZERO, 1, 42, "uncompressed_length 0: bad_certificate"},
@@ -546,6 +581,7 @@ static void test_tampered(void) {
         {TM_LEN_MAX, 1, 42, "uncompressed_length 2^24-1: bad_certificate"},
         {TM_BOMB_ZLIB, 1, 42, "zlib bomb (1 MiB of zeros): bad_certificate"},
         {TM_BOMB_BROTLI, 1, 42, "brotli bomb (1 MiB of zeros): bad_certificate"},
+        {TM_BROTLI_RING, 1, 42, "brotli declaring a 16 MiB meta-block: bad_certificate"},
         {TM_BOMB_AT_LIMIT, 1, 42, "bomb with uncompressed_length at the bound: bad_certificate"},
         {TM_ALG_ZSTD, 1, 47, "zstd, which was not offered: illegal_parameter"},
         {TM_ALG_UNKNOWN, 1, 47, "an unknown algorithm: illegal_parameter"},
@@ -649,11 +685,6 @@ static void test_client_hello_extension(void) {
     END();
 }
 
-/* whether this build's brotli compresses (a decoder-only build of OpenSSL fails here) */
-static int brotli_here(void) {
-    uint8_t in[32] = {0}, out[128];
-    return compress_with(ALG_BROTLI, in, sizeof in, out, sizeof out) > 0;
-}
 /* A build with brotli's decoder only (Android and iOS, ADR-0025), as the probe answers there: the server's chain is compressed with
    zlib, which a client offering brotli then zlib gets; a client still decompresses brotli (from a full build's server) but sends
    its own certificate uncompressed (OpenSSL would pick brotli for it, fail, and end the handshake). */
@@ -674,6 +705,7 @@ static void test_decoder_only(void) {
     ksl_brotli_compresses_for_test(-1);
     /* a server of this build (brotli where brotli compresses): the decoder-only client takes what it sends */
     full = srv("server", NULL, 1, 1);
+    unsigned sent = SERVER_ALG; /* what this build's server sends, before the client is made decoder-only */
     ksl_brotli_compresses_for_test(0);
     cc = cli(1, 1);
     c = qclient(cc);
@@ -681,8 +713,7 @@ static void test_decoder_only(void) {
     side cs2 = {0}, ss2 = {0};
     rc = qpump(c, s, &cs2, &ss2, &t);
     CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs2.done && ss2.done, "handshake with a full server");
-    CHECK(peer_alg(c) == (brotli_here() ? ALG_BROTLI : ALG_ZLIB),
-          "a decoder-only client decompresses what a server sends");
+    CHECK(peer_alg(c) == sent, "a decoder-only client decompresses what a server sends");
     CHECK(peer_alg(s) == 0, "and sends its certificate uncompressed");
     ksl_ssl_free(c);
     ksl_ssl_free(s);
@@ -693,7 +724,38 @@ static void test_decoder_only(void) {
     END();
 }
 
+/* RFC 8879 section 5 SHOULD: the one-shot brotli decoder OpenSSL uses holds its allocations to 3 x the output + 256 KiB
+   (tools/openssl/brotli/ksl_decompress.c): a stream declaring a 16 MiB meta-block in 68 bytes made brotli 1.2.1 allocate 16.8 MiB */
+int BrotliDecoderDecompress(size_t encoded_size, const uint8_t *encoded, size_t *decoded_size, uint8_t *decoded);
+size_t ksl_brotli_decode_budget(size_t decoded);
+extern size_t ksl_brotli_decode_peak;
+static void test_brotli_memory_bound(void) {
+    SECTION("negative_certcomp_brotli_memory_bounded");
+    static uint8_t out[CERT_LIST_MAX];
+    size_t n = sizeof out;
+    CHECK(BrotliDecoderDecompress(sizeof BROTLI_RING, BROTLI_RING, &n, out) != 1, "the 68-byte stream fails");
+    printf("  68-byte stream: peak %zu bytes, budget %zu\n", ksl_brotli_decode_peak,
+           ksl_brotli_decode_budget(sizeof out));
+    CHECK(ksl_brotli_decode_peak <= ksl_brotli_decode_budget(sizeof out) && ksl_brotli_decode_peak < 1024 * 1024,
+          "its allocations stayed under the budget (not 16.8 MiB)");
+    size_t fl;
+    uint8_t *f = brotli_chain(&fl);
+    blob ch = chain_of(2, "server-via-intermediate", "intermediate");
+    size_t body =
+        4 + ch.len + 2; /* context and list length, then per entry 3 + DER + 2 against the framing's 4 + DER */
+    n = sizeof out;
+    CHECK(BrotliDecoderDecompress(fl, f, &n, out) == 1 && n == body,
+          "the fixture decodes to the chain's Certificate body (else run tools/certs/gen-certcomp-fixtures.sh)");
+    CHECK(ksl_brotli_decode_peak <= ksl_brotli_decode_budget(sizeof out), "inside the budget");
+    n = 2;
+    CHECK(BrotliDecoderDecompress(fl, f, &n, out) != 1, "an output too small fails, as upstream's");
+    CHECK(ksl_brotli_decode_budget((size_t)-1) == (size_t)-1, "the budget saturates");
+    free(ch.buf);
+    END();
+}
+
 void run_certcomp(void) {
+    test_brotli_memory_bound();
     test_option_values();
     test_quic_default();
     test_first_flight();

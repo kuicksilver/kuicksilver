@@ -37,7 +37,7 @@ mkdir -p "$src/util" "$src/include/openssl" "$stub"
 # the compression libraries' trees as fetch.sh leaves them: unpacked, with the marker naming the pinned tarball's SHA-256
 ctv() { awk -v t="[$1]" -v k="$2" '$0 == t { f = 1; next } /^\[/ { f = 0 } f && $1 == k { v = $3; gsub(/"/, "", v); print v; exit }' "$root/gradle/compression-libs.toml"; }
 for lib in zlib brotli; do mkdir -p "$work/src/$lib-$(ctv $lib version)"; ctv $lib sha256 > "$work/src/$lib-$(ctv $lib version)/.ksl-unpacked-sha256"; done
-mkdir -p "$work/src/brotli-$(ctv brotli version)/c/enc"   # build.sh puts ksl's brotli files there (compression.mk)
+mkdir -p "$work/src/brotli-$(ctv brotli version)/c/enc" "$work/src/brotli-$(ctv brotli version)/c/dec"   # build.sh puts ksl's brotli files there (compression.mk)
 echo '#define OPENSSL_VERSION_STR "stub"' > "$src/include/openssl/opensslv.h"
 cat > "$src/Configure" <<'EOF'
 #!/bin/sh

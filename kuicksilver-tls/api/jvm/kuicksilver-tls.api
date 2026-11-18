@@ -28,11 +28,15 @@ public final class io/kuicksilver/tls/Certificate$Companion {
 
 public final class io/kuicksilver/tls/CertificateCompression : java/lang/Enum {
 	public static final field Brotli Lio/kuicksilver/tls/CertificateCompression;
+	public static final field Companion Lio/kuicksilver/tls/CertificateCompression$Companion;
 	public static final field Zlib Lio/kuicksilver/tls/CertificateCompression;
 	public final fun getCodePoint ()I
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/CertificateCompression;
 	public static fun values ()[Lio/kuicksilver/tls/CertificateCompression;
+}
+
+public final class io/kuicksilver/tls/CertificateCompression$Companion {
 }
 
 public final class io/kuicksilver/tls/CertificateRevocationList {

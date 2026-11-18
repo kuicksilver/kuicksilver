@@ -85,7 +85,8 @@ from us, so we commit to the following.
   (RFC 8879; [ADR-0025](docs/adr/0025-zlib-and-brotli-in-libcrypto.md)). Their releases are pinned in
   [`gradle/compression-libs.toml`](gradle/compression-libs.toml) and verified before compiling (`tools/openssl/fetch.sh`):
   zlib by its tarball's SHA-256 and the signature of its release key (`tools/openssl/zlib-release-key.asc`); brotli,
-  which signs no release, by its tarball's SHA-256 and the commit of its release tag. An advisory for zlib or brotli is
+  which signs no release, by its tarball's SHA-256 (the tag's commit in the tarball is a consistency check only; when the pin
+  changes, `tools/openssl/brotli-pin-check.sh` checks the tag and the tarball's tree against the repository). An advisory for zlib or brotli is
   handled like an OpenSSL advisory below; both decompress what a peer sends during the handshake (a compressed
   certificate chain), bounded by the size limit of the certificate chain.
 - **Watching upstream.** The maintainers follow the openssl-announce list, which pre-announces security releases, and

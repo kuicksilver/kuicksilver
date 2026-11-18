@@ -7,8 +7,16 @@
 # it is installed, else is only built. KSL_TSAN=1 (host targets): ThreadSanitizer instead of ASan/UBSan, into ksl_test_tsan; any
 # report fails the run, so a data race between threads cannot pass as a green test: halt_on_error stops at the first report (on
 # macOS by abort, exit 134; exitcode=66 is what a run that got to its end with reports exits with).
+# --decoder-only (first argument): against the host OpenSSL built without brotli's encoder, as Android and iOS ship it
+# (KSL_BROTLI_ENCODER=0, ADR-0025), built here into build/openssl-decoder-only (its own cache entry); the expectations of
+# test_certcomp.c follow what the build compresses with (KSL_GET_CERT_COMPRESSORS).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cd "$root"
+if [ "${1:-}" = "--decoder-only" ]; then
+  shift; host_target="$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )"
+  export KSL_OPENSSL_OUT="$root/build/openssl-decoder-only"
+  KSL_BROTLI_ENCODER=0 bash "$root/tools/openssl/build.sh" "${1:-$host_target}" > /dev/null
+fi
 target="${1:-$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )}"
 O="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built (tools/openssl/build.sh $target)"; exit 2; }
 out="$root/build/c-test"; mkdir -p "$out"

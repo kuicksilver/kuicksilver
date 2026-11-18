@@ -22,10 +22,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   bytes sent at once. `TlsConfig.Builder.certificateCompression` (experimental, default true) turns it off;
   `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell what the
   peer's chain came in. What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an
-  announced length above it, a length that does not match or data that does not decompress is `bad_certificate`, an
-  algorithm not offered `illegal_parameter` (threat model 3.30, CWE-409). A server session that staples an OCSP response
+  announced length above it is `bad_certificate` before anything is decompressed, as is a length that does not match or data
+  that does not decompress; brotli's decoder, which sized its ring buffer by the stream's own claims (16.8 MiB from 68
+  bytes), allocates at most 3 times the announced length plus 256 KiB; an algorithm not offered is `illegal_parameter`
+  (threat model 3.30, CWE-409). A server session that staples an OCSP response
   sends its Certificate uncompressed, since the chain compressed beforehand has no response in it. ksl ABI 7, additive:
-  `KSL_OPT_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSION`.
+  `KSL_OPT_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSORS`. A context whose OpenSSL has no
+  algorithm (a system OpenSSL without zlib and brotli) starts with it off, and asking for it is `KSL_E_NOT_SUPPORTED`.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -790,11 +793,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - The bundled OpenSSL now contains zlib 1.4 and brotli 1.2.1, for TLS certificate compression (RFC 8879; ADR-0025):
   both are pinned in `gradle/compression-libs.toml` and verified by `tools/openssl/fetch.sh` before they are compiled
   (zlib by SHA-256 and its release key's signature, `tools/openssl/zlib-release-key.asc`; brotli, which signs no release,
-  by SHA-256 and the tag's commit), with OpenSSL's own compiler and flags, into `libcrypto.a`
+  by SHA-256; the tag's commit, which the tarball's pax header names, is only a consistency check, and a pin update checks
+  the tag and the tree against the repository with `tools/openssl/brotli-pin-check.sh`), with OpenSSL's own compiler and
+  flags, into `libcrypto.a`
   (`tools/openssl/compression.mk`), so their symbols carry the `ksl_ossl_` prefix on Kotlin/Native and nothing of them is
   exported from the JNI libraries. OpenSSL is configured `enable-zlib enable-brotli no-zstd` instead of `no-comp`; TLS
-  record compression stays off (`SSL_OP_NO_COMPRESSION`), and so does certificate compression until `ksl` configures it
-  (`SSL_OP_NO_RX_CERTIFICATE_COMPRESSION`, `SSL_OP_NO_TX_CERTIFICATE_COMPRESSION`). Android and iOS get brotli's
+  record compression stays off (`SSL_OP_NO_COMPRESSION`), and `ksl` configures certificate compression itself (on by
+  default, `KSL_OPT_CERT_COMPRESSION`). brotli's one-shot encoder and decoder, the two OpenSSL uses for certificates, go
+  through `ksl` wrappers built into libcrypto: the encoder at quality 9 at most (`tools/openssl/brotli/ksl_compress.c`), the
+  decoder with its allocations capped at 3 times the output plus 256 KiB (`ksl_decompress.c`). Android and iOS get brotli's
   decoder only (the encoder's entry points are stubs that fail), the other targets the encoder with its static tables
   computed on first use (`BROTLI_STATIC_INIT_LAZY`, run once by `tools/openssl/brotli/ksl_static_init.c`): the Android
   arm64 `libksl.so` grows from 2,898,576 to 3,127,568 bytes, the macOS arm64 JNI library from 2,544,056 to 3,056,792

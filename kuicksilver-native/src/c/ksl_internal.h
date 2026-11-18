@@ -199,6 +199,7 @@ int ksl_client_hello_sni(SSL *ssl, const unsigned char **name,
                          size_t *len); /* during the ClientHello: its host_name, if any */
 /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed 2^48-1" */
 #define KSL_MAX_KEY_UPDATES ((UINT64_C(1) << 48) - 1)
+int ksl_cert_compressors(void); /* ksl_ctx.c: bit 0 zlib, bit 1 brotli compress here (KSL_GET_CERT_COMPRESSORS) */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
                 void *arg); /* a TCP client's handshake messages (ksl_ssl.c) */
 

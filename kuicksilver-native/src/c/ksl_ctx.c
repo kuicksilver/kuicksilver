@@ -467,20 +467,31 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
    the encoder's entry points fail. Probed once, by compressing a few bytes (on a full build this also makes the encoder compute
    its lazily built tables, which only a context about to compress needs). */
 static CRYPTO_ONCE brotli_probe_once = CRYPTO_ONCE_STATIC_INIT;
-static int brotli_compresses, brotli_probed;
-static void brotli_probe(void) {
+static int brotli_compresses, brotli_probed, zlib_compresses;
 #ifndef OPENSSL_NO_COMP
-    COMP_METHOD *m = COMP_brotli_oneshot();
+static int compresses(COMP_METHOD *m) {
     COMP_CTX *z = m ? COMP_CTX_new(m) : NULL;
     unsigned char in[32] = {0}, out[128];
-    brotli_compresses = brotli_probed =
-        z != NULL && COMP_compress_block(z, out, (int)sizeof out, in, (int)sizeof in) > 0;
+    int ok = z != NULL && COMP_compress_block(z, out, (int)sizeof out, in, (int)sizeof in) > 0;
     COMP_CTX_free(z);
+    return ok;
+}
+#endif
+static void brotli_probe(void) {
+#ifndef OPENSSL_NO_COMP
+    brotli_compresses = brotli_probed = compresses(COMP_brotli_oneshot());
+    zlib_compresses = compresses(COMP_zlib_oneshot());
 #endif
     ERR_clear_error();
 }
 static int brotli_can_compress(void) {
     return CRYPTO_THREAD_run_once(&brotli_probe_once, brotli_probe) == 1 && brotli_compresses;
+}
+/* KSL_GET_CERT_COMPRESSORS: bit 0 zlib, bit 1 brotli compress here (a test's override of brotli included) */
+int ksl_cert_compressors(void) {
+    if (CRYPTO_THREAD_run_once(&brotli_probe_once, brotli_probe) != 1)
+        return 0;
+    return (zlib_compresses ? 1 : 0) | (brotli_compresses ? 2 : 0);
 }
 #ifdef KSL_TEST
 /* Test hook: the probe's answer, as on a build with brotli's decoder only (0) or a full one (1); -1 restores what it found */
@@ -527,11 +538,10 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
-    if (!cert_compression_set(c, 1)) {
-        SSL_CTX_free(c->ctx);
-        free(c);
-        return NULL;
-    }
+    /* an OpenSSL without any algorithm (a system one built without zlib and brotli) starts with it off; asking for it then is
+       KSL_E_NOT_SUPPORTED (ksl_ctx_set_option) */
+    if (!cert_compression_set(c, 1))
+        cert_compression_set(c, 0);
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
     /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
        keys. If clients need to send such alerts, they SHOULD first rekey to the handshake keys if possible." In middlebox

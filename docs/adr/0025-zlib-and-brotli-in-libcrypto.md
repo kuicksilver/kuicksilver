@@ -30,8 +30,12 @@ BoringSSL examples register (`examples/tls_shared_boringssl.h`).
 third upstream to watch.
 - **Verification** as for OpenSSL, by `tools/openssl/fetch.sh`: zlib's tarball by its SHA-256 and the PGP signature of
   its release key (`tools/openssl/zlib-release-key.asc`, fingerprint pinned). brotli signs no release: its tarball is
-  GitHub's archive of the tag, pinned by its SHA-256 and by the tag's commit, which `git archive` writes into the
-  tarball's pax header and `fetch.sh` checks. Both are in the SBOM, the provenance statement, `provenance.txt` of every
+  GitHub's archive of the tag, pinned by its SHA-256. The tag's commit, which `git archive` writes into the tarball's pax
+  header and `fetch.sh` compares, is a consistency check only (whoever makes a tarball writes that header); the control is
+  `tools/openssl/brotli-pin-check.sh`, run with network access whenever the pin changes: the repository's tag peels to the
+  pinned commit, and the tarball holds exactly that commit's tree. GitHub does not promise stable archive bytes, so a later
+  download may not match the SHA-256 (an availability risk, not an integrity one): the verified tarballs are kept with each
+  release, in the offline bundle `tools/verify/verify-release.sh --offline` reads. Both are in the SBOM, the provenance statement, `provenance.txt` of every
   OpenSSL build (which `-Pkuicksilver.openssl.prebuilt` checks) and Renovate.
 - **Built into libcrypto.** `tools/openssl/compression.mk` compiles them with the compiler and flags of libcrypto's own
   objects (OpenSSL's Makefile variables: the target's flags and the project's `-Os -ffunction-sections -fdata-sections
@@ -46,6 +50,12 @@ third upstream to watch.
   cannot advertise brotli for receiving only. So `ksl` probes once whether brotli compresses: where it does not, a client
   with a certificate sends it uncompressed (`SSL_OP_NO_TX_CERTIFICATE_COMPRESSION`) and a server compresses its chain with
   zlib alone. Every other target (the JVM and Kotlin/Native libraries of macOS, Linux and Windows) has the full encoder.
+- **brotli's one-shot functions, which OpenSSL uses for certificates, are `ksl`'s.** Upstream's are renamed when
+  `enc/encode.c` and `dec/decode.c` are compiled. `ksl_compress.c` caps the quality at 9 (OpenSSL asks for 11: 8.6 ms for the
+  13.7 KB test chain against 0.30 ms, 6 % larger; threat model 3.30, a peer cycling server names makes a server build and
+  compress contexts). `ksl_decompress.c` caps the decoder's allocations at 3 times the announced length plus 256 KiB:
+  brotli 1.2.1 sizes its ring buffer by the meta-block length a stream declares, and 68 bytes made it allocate 16.8 MiB
+  (RFC 8879 section 5: "SHOULD bound the memory usage when decompressing").
 - **The encoder's static tables are computed on first use** (`BROTLI_STATIC_INIT_LAZY`), not shipped: about 290 KB less.
   brotli leaves the call of that computation to the embedder (a C++11 function-local static, `static_init_lazy.cc`), which
   OpenSSL never makes; `tools/openssl/brotli/ksl_static_init.c` replaces brotli's `enc/static_init.c` and runs it once, under

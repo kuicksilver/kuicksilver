@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 class HandshakeLimitsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -66,7 +66,7 @@ class HandshakeLimitsTest {
      * RFC 9000 section 8.1 with TLS certificate compression (RFC 8879): only the client's first flight (its ClientHello) reaches
      * the server, and every later client datagram is dropped, so the server's address check never completes and it may send
      * three times those bytes. The big chain (13.7 KB) does not fit plain: the client never gets the server's whole flight
-     * (Finished) until its datagrams get through again; compressed (brotli) it fits, and the client completes its handshake
+     * (Finished) until its datagrams get through again; compressed (brotli, or zlib on Android and iOS) it fits, and the client completes its handshake
      * from that one flight. Both finish once the network lets the client through, the compressed one with brotli.
      */
     @Test fun compressedChainFitsTheFirstFlightInsideTheAmplificationLimit() = firstFlight(compressed = true)
@@ -100,7 +100,17 @@ class HandshakeLimitsTest {
             assertEquals(compressed, whole, "the client completed from the server's first flight alone")
             released = true
             assertTrue(p.handshake(), "the handshake completes once the client gets through")
-            assertEquals(if (compressed) CertificateCompression.Brotli else null, p.client.peerCertificateCompression)
+            // zlib where the library has brotli's decoder only (Android, iOS; ADR-0025): 3,680 bytes, still inside the 3x of the
+            // two-datagram ClientHello
+            val sent =
+                if (CertificateCompression.Brotli in
+                    CertificateCompression.compressors()
+                ) {
+                    CertificateCompression.Brotli
+                } else {
+                    CertificateCompression.Zlib
+                }
+            assertEquals(if (compressed) sent else null, p.client.peerCertificateCompression)
         }
     }
 

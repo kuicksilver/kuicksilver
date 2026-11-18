@@ -2,7 +2,8 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of tools/openssl/fetch.sh for the compression libraries (gradle/compression-libs.toml, ADR-0025): with
-# the verified tarballs it passes; a zlib tarball with one byte changed, a zlib signature from another key or none, a
+# the verified tarballs it passes; a zlib tarball with one byte changed, a zlib signature from another key or none (no
+# download is tried: a tarball without its signature fails closed), a
 # brotli tarball with one byte changed and a pin whose brotli commit is not the one the tarball archives are each refused,
 # and nothing is unpacked. Runs a copy of tools/openssl and gradle/ in a temporary directory against copies of the tarballs
 # fetch.sh left in build/openssl-work/src (run it first): no network. Usage: tools/openssl/fetch-test.sh
@@ -38,6 +39,8 @@ setup() { flip "$1/work/src/zlib-$zv.tar.gz"; }
 case_ "negative_zlibTarballChangedIsRefused" 1 "PGP signature of zlib-$zv.tar.gz is not from"
 setup() { rm "$1/work/src/zlib-$zv.tar.gz.asc"; cp "$1/work/src/openssl-$ov.tar.gz.asc" "$1/work/src/zlib-$zv.tar.gz.asc"; }
 case_ "negative_zlibSignatureOfAnotherKeyIsRefused" 1 "PGP signature of zlib-$zv.tar.gz is not from"
+setup() { rm "$1/work/src/zlib-$zv.tar.gz.asc"; }
+case_ "negative_zlibSignatureMissingFailsClosed" 1 "is here without zlib-$zv.tar.gz.asc"
 setup() { flip "$1/work/src/brotli-$bv.tar.gz"; }
 case_ "negative_brotliTarballChangedIsRefused" 1 "sha256 mismatch (brotli)"
 setup() { sed -i.bak 's/^commit = ".*"/commit = "0000000000000000000000000000000000000000"/' "$1/gradle/compression-libs.toml"; }

@@ -31,6 +31,8 @@ final enum class io.kuicksilver.tls/CertificateCompression : kotlin/Enum<io.kuic
 
     final fun valueOf(kotlin/String): io.kuicksilver.tls/CertificateCompression // io.kuicksilver.tls/CertificateCompression.valueOf|valueOf#static(kotlin.String){}[0]
     final fun values(): kotlin/Array<io.kuicksilver.tls/CertificateCompression> // io.kuicksilver.tls/CertificateCompression.values|values#static(){}[0]
+
+    final object Companion // io.kuicksilver.tls/CertificateCompression.Companion|null[0]
 }
 
 final enum class io.kuicksilver.tls/ClientAuth : kotlin/Enum<io.kuicksilver.tls/ClientAuth> { // io.kuicksilver.tls/ClientAuth|null[0]

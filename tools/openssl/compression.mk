@@ -12,16 +12,19 @@
 #     runs that computation once when the first encoder is created;
 #   KSL_BROTLI_ENCODER=0 (Android and iOS): no encoder; the entry points OpenSSL calls fail (ksl_encoder_stub.c), so brotli is
 #     decompressed but never compressed there.
-# build.sh copies both ksl files next to brotli's encoder sources (ksl-brotli/c/enc/), whose relative includes they use.
+#   ksl_compress.c (with the encoder): brotli's one-shot encoder, which OpenSSL uses for certificates, at quality 9 at most;
+#   ksl_decompress.c (all targets): brotli's one-shot decoder, which OpenSSL uses for certificates, with its allocations bounded
+#     by the output size.
+# build.sh copies the ksl files next to brotli's encoder and decoder sources (ksl-brotli/c/enc/, c/dec/).
 KSL_BROTLI_ENCODER ?= 1
 
 KSL_ZLIB_SRCS := adler32 compress crc32 deflate inffast inflate inftrees trees uncompr zutil
 KSL_BROTLI_COMMON_SRCS := constants context dictionary platform shared_dictionary transform
-KSL_BROTLI_DEC_SRCS := bit_reader decode huffman prefix state static_init
+KSL_BROTLI_DEC_SRCS := bit_reader decode huffman prefix state static_init ksl_decompress
 ifeq ($(KSL_BROTLI_ENCODER),1)
 KSL_BROTLI_ENC_SRCS := backward_references backward_references_hq bit_cost block_splitter brotli_bit_stream cluster command \
   compound_dictionary compress_fragment compress_fragment_two_pass dictionary_hash encode encoder_dict entropy_encode \
-  fast_log histogram literal_cost memory metablock static_dict static_dict_lut utf8_util ksl_static_init
+  fast_log histogram literal_cost memory metablock static_dict static_dict_lut utf8_util ksl_static_init ksl_compress
 else
 KSL_BROTLI_ENC_SRCS := ksl_encoder_stub
 endif
@@ -41,12 +44,17 @@ ksl-compression/zlib-%.o: ksl-zlib/%.c
 ksl-compression/brotli-common-%.o: ksl-brotli/c/common/%.c
 	@mkdir -p ksl-compression
 	$(CC) $(KSL_COMPRESSION_CFLAGS) -Iksl-brotli/c/include -c -o $@ $<
+# dec/decode.c's one-shot BrotliDecoderDecompress gives way to ksl_decompress.c's, which bounds its allocations (RFC 8879
+# section 5); the streaming decoder it calls is upstream's
+ksl-compression/brotli-dec-decode.o: KSL_BROTLI_DEC_DEFS = -DBrotliDecoderDecompress=ksl_brotli_decompress_upstream
 ksl-compression/brotli-dec-%.o: ksl-brotli/c/dec/%.c
 	@mkdir -p ksl-compression
-	$(CC) $(KSL_COMPRESSION_CFLAGS) -Iksl-brotli/c/include -c -o $@ $<
+	$(CC) $(KSL_COMPRESSION_CFLAGS) $(KSL_BROTLI_DEC_DEFS) -Iksl-brotli/c/include -c -o $@ $<
+# enc/encode.c's one-shot BrotliEncoderCompress gives way to ksl_compress.c's, which caps the quality at 9 (threat model 3.30)
+ksl-compression/brotli-enc-encode.o: KSL_BROTLI_ENC_DEFS = -DBrotliEncoderCompress=ksl_brotli_compress_upstream
 ksl-compression/brotli-enc-%.o: ksl-brotli/c/enc/%.c
 	@mkdir -p ksl-compression
-	$(CC) $(KSL_COMPRESSION_CFLAGS) -DBROTLI_STATIC_INIT=BROTLI_STATIC_INIT_LAZY -Iksl-brotli/c/include -Iinclude -c -o $@ $<
+	$(CC) $(KSL_COMPRESSION_CFLAGS) $(KSL_BROTLI_ENC_DEFS) -DBROTLI_STATIC_INIT=BROTLI_STATIC_INIT_LAZY -Iksl-brotli/c/include -Iinclude -c -o $@ $<
 
 # appended in a fixed order (reproducible archives); the archive's index is rebuilt after
 .PHONY: ksl-compression

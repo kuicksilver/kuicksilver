@@ -215,9 +215,12 @@ abstract class CyclonedxSbomTask : DefaultTask() {
             "brotli" -> Triple("MIT", "Google" to "https://github.com/google/brotli", "cpe:2.3:a:google:brotli:$v:*:*:*:*:*:*:*")
             else -> error("no SBOM data for the compression library $name")
         }
+        // the projects' own GitHub repositories and release tags (package-url's github type), with the tarball and its SHA-256
+        val repo = if (name == "zlib") "madler/zlib" else "google/brotli"
+        val purl = "pkg:github/$repo@v$v?download_url=${url.replace(":", "%3A")}&checksum=sha256%3A$sha"
         return Component(
-            ref = "pkg:generic/$name@$v", group = null, name = name, version = v,
-            purl = "pkg:generic/$name@$v?download_url=${url.replace(":", "%3A")}&checksum=sha256%3A$sha",
+            ref = "pkg:github/$repo@v$v", group = null, name = name, version = v,
+            purl = purl,
             description = "$name, built from the pinned release tarball with OpenSSL's flags and linked statically into its libcrypto (TLS certificate compression)",
             own = false,
         ).apply {

@@ -30,7 +30,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
 target="${1:?target}"
 # brotli's encoder: not on the client-mostly targets, where it was most of the 0.8 MB the libraries grew by (ADR-0025)
-case "$target" in android-*|ios-*) brotli_encoder=0; ksl_tag="ksl-brotli-encoder=0" ;; *) brotli_encoder=1; ksl_tag="" ;; esac
+# KSL_BROTLI_ENCODER=0: the same for any target (the decoder-only C test variant on a host, tools/c-test.sh); it is part of
+# the target line, so such a build is cached and reused apart from the target's usual one
+case "$target" in android-*|ios-*) brotli_encoder=0 ;; *) brotli_encoder=1 ;; esac
+case "${KSL_BROTLI_ENCODER:-}" in "") ;; 0) brotli_encoder=0 ;; *) echo "KSL_BROTLI_ENCODER: 0 or unset" >&2; exit 2 ;; esac
+ksl_tag=""; [ "$brotli_encoder" = 1 ] || ksl_tag="ksl-brotli-encoder=0"
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
 # KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
 pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
@@ -150,7 +154,8 @@ fi
 work="$out/build/$target"
 rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
 mkdir -p "$work/ksl-zlib" "$work/ksl-brotli"; cp -R "$zlib_src/." "$work/ksl-zlib/"; cp -R "$brotli_src/." "$work/ksl-brotli/"
-cp "$here"/brotli/*.c "$work/ksl-brotli/c/enc/"
+cp "$here"/brotli/ksl_static_init.c "$here"/brotli/ksl_encoder_stub.c "$here"/brotli/ksl_compress.c "$work/ksl-brotli/c/enc/"
+cp "$here"/brotli/ksl_decompress.c "$work/ksl-brotli/c/dec/"
 cd "$work"
 # the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
