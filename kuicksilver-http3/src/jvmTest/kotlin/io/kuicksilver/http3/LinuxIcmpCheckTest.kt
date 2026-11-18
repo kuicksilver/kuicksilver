@@ -16,13 +16,16 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.KslIcmp
 import io.kuicksilver.tls.KslUdpSocket
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -154,14 +157,18 @@ class LinuxIcmpCheckTest {
                         val quote = ByteArray(KslUdpSocket.PTB_QUOTE)
                         val meta = IntArray(2)
                         val dst = ByteArray(KslUdpSocket.ADDR_LEN)
-                        var took = false
-                        while (!took) {
-                            // the receive blocks this thread, which also runs the proxy: let it forward between them
-                            // (and let the timeout end the loop)
-                            yield()
-                            t.pump(50)
-                            took = t.takePacketTooBig(quote, meta, dst)
-                        }
+                        // off the runBlocking thread: the receive blocks, and the proxy and both endpoints run there
+                        val took =
+                            withContext(Dispatchers.IO) {
+                                withTimeoutOrNull(20.seconds) {
+                                    while (!t.takePacketTooBig(quote, meta, dst)) {
+                                        ensureActive() // the receives do not suspend: the timeout ends the loop here
+                                        t.pump(50)
+                                    }
+                                    true
+                                } ?: false
+                            }
+                        assertTrue(took, "no Packet Too Big reached the target; proxy stats: ${rig.proxy.stats}")
                         assertEquals(1, rig.proxy.stats.packetTooBigSent)
                         assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
                         assertTrue(meta[1] in 1200 until payload.size + 28, "the MTU the client carries: ${meta[1]}")
