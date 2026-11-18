@@ -30,6 +30,7 @@ import io.kuicksilver.ktor.server.H2cMode
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
