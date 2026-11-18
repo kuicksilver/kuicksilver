@@ -108,6 +108,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector : io/kto
 	public fun getAddressDescription ()Ljava/lang/String;
 	public fun getHost ()Ljava/lang/String;
 	public fun getPort ()I
+	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getTrustedGateway ()Z
 	public fun getType ()Lio/ktor/server/engine/ConnectorType;
 	public fun toString ()Ljava/lang/String;
@@ -119,9 +120,12 @@ public final class io/kuicksilver/ktor/server/KuicksilverPlainConnector$Builder 
 	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverPlainConnector;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPort ()I
+	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getTrustedGateway ()Z
+	public final fun proxyProtocol (Lkotlin/jvm/functions/Function1;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setPort (I)V
+	public final fun setProxyProtocol (Lio/kuicksilver/ktor/server/ProxyProtocolConfig;)V
 	public final fun setTrustedGateway (Z)V
 }
 
@@ -143,6 +147,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public fun getPort ()I
+	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getTrustedGateway ()Z
@@ -162,16 +167,19 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getOcspStapling ()Lio/kuicksilver/tls/OcspStapling;
 	public final fun getPort ()I
+	public final fun getProxyProtocol ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
 	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getTrustedGateway ()Z
 	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
+	public final fun proxyProtocol (Lkotlin/jvm/functions/Function1;)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setHost (Ljava/lang/String;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setOcspStapling (Lio/kuicksilver/tls/OcspStapling;)V
 	public final fun setPort (I)V
+	public final fun setProxyProtocol (Lio/kuicksilver/ktor/server/ProxyProtocolConfig;)V
 	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
 	public final fun setTrustedGateway (Z)V
@@ -192,6 +200,112 @@ public final class io/kuicksilver/ktor/server/PriorityKt {
 	public static final fun getPriorityUpdates (Lio/ktor/server/request/ApplicationRequest;)Lkotlinx/coroutines/flow/StateFlow;
 	public static final fun priority (Lio/ktor/server/response/ApplicationResponse;Ljava/lang/Integer;Ljava/lang/Boolean;)V
 	public static synthetic fun priority$default (Lio/ktor/server/response/ApplicationResponse;Ljava/lang/Integer;Ljava/lang/Boolean;ILjava/lang/Object;)V
+}
+
+public final class io/kuicksilver/ktor/server/ProxyCommand : java/lang/Enum {
+	public static final field Local Lio/kuicksilver/ktor/server/ProxyCommand;
+	public static final field Proxy Lio/kuicksilver/ktor/server/ProxyCommand;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/ProxyCommand;
+	public static fun values ()[Lio/kuicksilver/ktor/server/ProxyCommand;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyFamily : java/lang/Enum {
+	public static final field Inet Lio/kuicksilver/ktor/server/ProxyFamily;
+	public static final field Inet6 Lio/kuicksilver/ktor/server/ProxyFamily;
+	public static final field Unix Lio/kuicksilver/ktor/server/ProxyFamily;
+	public static final field Unspecified Lio/kuicksilver/ktor/server/ProxyFamily;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/ProxyFamily;
+	public static fun values ()[Lio/kuicksilver/ktor/server/ProxyFamily;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyHeader {
+	public static final field Companion Lio/kuicksilver/ktor/server/ProxyHeader$Companion;
+	public static final field PP2_TYPE_ALPN I
+	public static final field PP2_TYPE_AUTHORITY I
+	public static final field PP2_TYPE_CRC32C I
+	public static final field PP2_TYPE_NETNS I
+	public static final field PP2_TYPE_NOOP I
+	public static final field PP2_TYPE_SSL I
+	public static final field PP2_TYPE_UNIQUE_ID I
+	public final fun getAlpn ()Ljava/lang/String;
+	public final fun getAuthority ()Ljava/lang/String;
+	public final fun getCommand ()Lio/kuicksilver/ktor/server/ProxyCommand;
+	public final fun getDestinationAddress ()Ljava/lang/String;
+	public final fun getDestinationPort ()Ljava/lang/Integer;
+	public final fun getFamily ()Lio/kuicksilver/ktor/server/ProxyFamily;
+	public final fun getNetns ()Ljava/lang/String;
+	public final fun getSourceAddress ()Ljava/lang/String;
+	public final fun getSourcePort ()Ljava/lang/Integer;
+	public final fun getSsl ()Lio/kuicksilver/ktor/server/ProxySsl;
+	public final fun getTlvs ()Ljava/util/List;
+	public final fun getTransport ()Lio/kuicksilver/ktor/server/ProxyTransport;
+	public final fun getUniqueId ()[B
+	public final fun getVersion ()I
+	public final fun tlv (I)Lio/kuicksilver/ktor/server/ProxyTlv;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyHeader$Companion {
+}
+
+public final class io/kuicksilver/ktor/server/ProxyHeaderKt {
+	public static final fun getProxyHeader (Lio/ktor/server/request/ApplicationRequest;)Lio/kuicksilver/ktor/server/ProxyHeader;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyProtocolConfig {
+	public final fun getHeaderTimeout-UwyO8pc ()J
+	public final fun getMaxHeaderSize ()I
+	public final fun getTrustedSources ()Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyProtocolConfig$Builder {
+	public fun <init> ()V
+	public final fun build ()Lio/kuicksilver/ktor/server/ProxyProtocolConfig;
+	public final fun getHeaderTimeout-UwyO8pc ()J
+	public final fun getMaxHeaderSize ()I
+	public final fun getTrustedSources ()Ljava/util/List;
+	public final fun setHeaderTimeout-LRDsOJo (J)V
+	public final fun setMaxHeaderSize (I)V
+	public final fun trust ([Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/server/ProxySsl {
+	public static final field Companion Lio/kuicksilver/ktor/server/ProxySsl$Companion;
+	public static final field PP2_CLIENT_CERT_CONN I
+	public static final field PP2_CLIENT_CERT_SESS I
+	public static final field PP2_CLIENT_SSL I
+	public final fun getCipher ()Ljava/lang/String;
+	public final fun getClient ()I
+	public final fun getClientSsl ()Z
+	public final fun getCommonName ()Ljava/lang/String;
+	public final fun getKeyAlgorithm ()Ljava/lang/String;
+	public final fun getSignatureAlgorithm ()Ljava/lang/String;
+	public final fun getSubTlvs ()Ljava/util/List;
+	public final fun getVerify ()J
+	public final fun getVersion ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/server/ProxySsl$Companion {
+}
+
+public final class io/kuicksilver/ktor/server/ProxyTlv {
+	public final fun getType ()I
+	public final fun getValue ()[B
+	public final fun text ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/server/ProxyTransport : java/lang/Enum {
+	public static final field Dgram Lio/kuicksilver/ktor/server/ProxyTransport;
+	public static final field Stream Lio/kuicksilver/ktor/server/ProxyTransport;
+	public static final field Unspecified Lio/kuicksilver/ktor/server/ProxyTransport;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/server/ProxyTransport;
+	public static fun values ()[Lio/kuicksilver/ktor/server/ProxyTransport;
 }
 
 public final class io/kuicksilver/ktor/server/WebTransportRoutingKt {

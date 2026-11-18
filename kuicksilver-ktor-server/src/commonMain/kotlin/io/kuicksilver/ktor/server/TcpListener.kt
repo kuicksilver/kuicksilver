@@ -20,6 +20,7 @@ import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
 import io.ktor.util.pipeline.PipelinePhase
 import io.ktor.util.pipeline.execute
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeStringUtf8
@@ -44,6 +45,7 @@ import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
@@ -251,6 +253,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     val refusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     val perIpRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
+                    val untrustedRefusals = RefusalReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
+                    val proxyProtocol = l.proxyProtocol
                     try {
                         // the checks cheapest first: a slot of maxTcpConnections before accept (none free: the backlog holds
                         // the client), maxTcpConnectionsPerIp right after it (no lock, no suspension), then the HTTP/2
@@ -281,9 +285,24 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 lease.release()
                                 openTcpSockets.update { it - 1 }
                             }
+                            val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
+                            // the PROXY protocol: "only trusted proxies are allowed to use this protocol" (threat model 3.25); any
+                            // other peer is closed before a byte is read, so no client that reaches the port can name its own address
+                            if (proxyProtocol != null &&
+                                !proxyProtocol.trusts(from?.let { runCatching { peerAddressBytes(it) }.getOrNull() })
+                            ) {
+                                client.abort()
+                                untrustedRefusals.report(
+                                    from?.let { peerAddressBytes(it) }?.let { describeIp(it) } ?: "an unknown address",
+                                    "it is not a trusted source of the PROXY protocol",
+                                )
+                                events.emit("connectionRefused") {
+                                    connectionRefused(HttpProtocolVersion.HTTP_1_1, from, REFUSED_PROXY_UNTRUSTED)
+                                }
+                                return@acceptLoop
+                            }
                             // with http2RepeatOffenderPenalty, a client whose HTTP/2 connections keep earning ENHANCE_YOUR_CALM
                             // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
-                            val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
                             val refused =
                                 try {
                                     h2Offenders?.refuses(from) == true
@@ -312,12 +331,52 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 var sni: SniChoice? = null
                                 var h3ForName = true // the sniSelector's answer for this connection's name allows HTTP/3
                                 val remote = client.remoteAddress as? InetSocketAddress
+                                // the PROXY protocol header comes first, before TLS; the input it was read from goes on to TLS or
+                                // HTTP/1.1 with what followed it in the same segment
+                                var input: ByteReadChannel? = null
+                                var proxy: ProxyHeader? = null
+                                if (proxyProtocol != null) {
+                                    val opened =
+                                        try {
+                                            client.openDeliveringReadChannel()
+                                        } catch (e: Throwable) {
+                                            client.abort() // a socket already gone: released, never left open
+                                            if (e is CancellationException) throw e
+                                            return@launchOrElse
+                                        }
+                                    input = opened
+                                    proxy = readProxyHeaderOrClose(client, opened, proxyProtocol, headerTimeout, accepted, remote)
+                                        ?: return@launchOrElse
+                                    // the HTTP/2 penalty belongs to the client the header names, not to the proxy all clients share
+                                    val penalised =
+                                        try {
+                                            proxy.namesClient && h2Offenders?.refuses(proxy.sourceIp) == true
+                                        } catch (e: CancellationException) {
+                                            client.abort() // a stop while the table's lock is awaited
+                                            throw e
+                                        }
+                                    if (penalised) {
+                                        client.abort()
+                                        environment.log.debug(
+                                            "Refused a connection from ${proxy.sourceAddress} (PROXY protocol): HTTP/2 penalty",
+                                        )
+                                        events.emit("connectionRefused") {
+                                            connectionRefused(HttpProtocolVersion.HTTP_1_1, remote, REFUSED_REPEAT_OFFENDER)
+                                        }
+                                        refusedOffenders.update { it + 1 }
+                                        return@launchOrElse
+                                    }
+                                }
                                 if (tlsConfig != null) {
                                     val t =
                                         try {
                                             // a handshake that completes as the deadline fires (or a stop comes) is
-                                            // dropped by the timeout: its TLS session is aborted, not leaked
-                                            withTimeoutOrRelease(headerTimeout, { it.abort() }) { client.tlsServer(tlsConfig) }
+                                            // dropped by the timeout: its TLS session is aborted, not leaked. The deadline counts
+                                            // from accept, a PROXY protocol header included
+                                            val within = (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)
+                                            withTimeoutOrRelease(within, { it.abort() }) {
+                                                if (input != null) client.tlsServer(tlsConfig, input) else client.tlsServer(tlsConfig)
+                                            }
                                                 ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
                                             // never a close without a bound (the socket has none of its own): it would keep
@@ -362,6 +421,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     return@launchOrElse serveH2(
                                         sock,
                                         remote,
+                                        proxy,
                                         peer,
                                         authorityCheck,
                                         altSvc,
@@ -378,7 +438,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     // inside the try: a socket whose channels cannot be opened is still closed below
                                     connection =
                                         H1Connection(
-                                            sock.openDeliveringReadChannel(),
+                                            if (tlsConfig == null && input != null) input else sock.openDeliveringReadChannel(),
                                             sock.openWriteChannel(),
                                             sock.remoteAddress.toH1Address(),
                                             sock.localAddress.toH1Address(),
@@ -390,7 +450,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         draining = draining,
                                         sendTimeout = sendTimeout,
-                                    ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc) }.join()
+                                    ) { request -> handleRequest(this, request, scheme, peer, authorityCheck, altSvc, proxy) }.join()
                                 } finally {
                                     // a client cut for not reading has had the stall deadline already: no second one for the close
                                     val stall = if (connection?.clientStoppedReading == true) Duration.ZERO else sendTimeout
@@ -463,6 +523,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
     peer: List<Certificate>,
     authorityCheck: AuthorityCheck,
     altSvc: () -> String?,
+    proxy: ProxyHeader?,
 ) {
     with(scope) {
         // final statuses the head alone determines, answered by the engine as over HTTP/2 and HTTP/3: no call is made, so
@@ -511,6 +572,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     configuration.webSocketMaxMessageSize,
                     upgradeInput,
                 )
+            call.applyProxyHeader(proxy)
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null
             try {
@@ -763,6 +825,45 @@ internal const val REFUSED_PER_IP = "per-IP limit"
 
 /** [KuicksilverServerEventListener.connectionRefused] reason: the client's address serves an `http2RepeatOffenderPenalty`. */
 internal const val REFUSED_REPEAT_OFFENDER = "HTTP/2 repeat offender"
+
+/** [KuicksilverServerEventListener.connectionRefused] reason: a peer outside a PROXY protocol connector's trusted sources. */
+internal const val REFUSED_PROXY_UNTRUSTED = "PROXY protocol untrusted source"
+
+/** [KuicksilverServerEventListener.connectionRefused] reason: no valid PROXY protocol header within its limits. */
+internal const val REFUSED_PROXY_HEADER = "PROXY protocol header"
+
+/**
+ * Reads the PROXY protocol header of [client] from [input] within [config]'s `headerTimeout` and what is left of the
+ * request-head deadline [headerTimeout] counted from [accepted], whichever ends first; null after closing the connection
+ * when it has no valid header in time ("any sequence which does not exactly match the protocol must be discarded and cause
+ * the receiver to abort the connection"). The abort resets the connection: a proxy sees the refusal at once, and nothing
+ * the peer sent is answered.
+ */
+private suspend fun KuicksilverApplicationEngine.readProxyHeaderOrClose(
+    client: Socket,
+    input: ByteReadChannel,
+    config: ProxyProtocolConfig,
+    headerTimeout: Duration,
+    accepted: TimeMark,
+    remote: InetSocketAddress?,
+): ProxyHeader? {
+    val within = minOf(config.headerTimeout, headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)
+    val failure =
+        try {
+            // a header read as the deadline fires is the header (completedWithin keeps a result that withTimeoutOrNull drops)
+            completedWithin(within) { input.readProxyHeader(config.maxHeaderSize) }?.let { return it }
+            ProxyProtocolException("no complete PROXY protocol header within $within")
+        } catch (e: CancellationException) {
+            client.abort()
+            throw e
+        } catch (e: Exception) {
+            e
+        }
+    client.abort()
+    environment.log.debug("Closed a connection from ${remote?.let { peerAddressBytes(it) }?.let { describeIp(it) }}: ${failure.message}")
+    events.emit("connectionRefused") { connectionRefused(HttpProtocolVersion.HTTP_1_1, remote, REFUSED_PROXY_HEADER) }
+    return null
+}
 
 /**
  * Logs the connections closed at accept for one reason (an address under an HTTP/2 penalty, [RepeatOffenders]; an address

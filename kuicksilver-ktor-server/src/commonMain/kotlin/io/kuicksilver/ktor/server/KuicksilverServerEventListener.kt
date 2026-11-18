@@ -46,8 +46,10 @@ public abstract class KuicksilverServerEventListener {
      * A client from [remote] was refused before it became a connection, for [reason]. For TCP the refusal comes right after
      * `accept`, before the TLS handshake, so whether the client would have spoken HTTP/1.1 or HTTP/2 is not known and
      * [protocol] is `HTTP_1_1`; the socket is closed at once. Reasons: `per-IP limit` (the address holds
-     * `maxTcpConnectionsPerIp` connections already) and `HTTP/2 repeat offender` (the address serves an
-     * `http2RepeatOffenderPenalty`). A connector at `maxTcpConnections` refuses no one: it stops accepting and the OS
+     * `maxTcpConnectionsPerIp` connections already), `HTTP/2 repeat offender` (the address serves an
+     * `http2RepeatOffenderPenalty`; on a PROXY protocol connector, the client its header names), `PROXY protocol untrusted
+     * source` (a PROXY protocol connector's peer outside its `trustedSources`) and `PROXY protocol header` (no valid PROXY
+     * protocol header within its limits; reported after the header was read, so [remote] is the TCP peer). A connector at `maxTcpConnections` refuses no one: it stops accepting and the OS
      * backlog holds new clients, so they are not reported here.
      */
     public open fun connectionRefused(

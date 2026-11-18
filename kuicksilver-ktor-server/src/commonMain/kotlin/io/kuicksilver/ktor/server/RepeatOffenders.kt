@@ -45,8 +45,14 @@ internal class RepeatOffenders(
     @Volatile private var size = 0
 
     /** Records one flood-ended connection of [remote]; true when it starts a penalty (the caller logs that). */
-    suspend fun strike(remote: InetSocketAddress?): Boolean {
-        val key = keyOf(remote) ?: return false
+    suspend fun strike(remote: InetSocketAddress?): Boolean = strike(remote?.let { peerAddressBytes(it) })
+
+    /**
+     * [strike] for a client known by its address bytes (4 or 16): the client a PROXY protocol header names, which is not the
+     * TCP peer (the proxy that all its clients share).
+     */
+    suspend fun strike(client: ByteArray?): Boolean {
+        val key = client?.let { keyOf(it) } ?: return false
         val now = timeSource.markNow()
         return lock.withLock {
             val e = entries.remove(key) ?: Entry()
@@ -65,7 +71,13 @@ internal class RepeatOffenders(
     /** True while [remote] serves a penalty: its connection is closed at accept. */
     suspend fun refuses(remote: InetSocketAddress?): Boolean {
         if (size == 0 || remote == null) return false
-        val key = keyOf(remote) ?: return false
+        return refuses(peerAddressBytes(remote))
+    }
+
+    /** [refuses] for a client known by its address bytes (4 or 16), as [strike] takes it. */
+    suspend fun refuses(client: ByteArray?): Boolean {
+        if (size == 0 || client == null) return false
+        val key = keyOf(client)
         return lock.withLock {
             val e = entries[key] ?: return@withLock false
             val until = e.refusedUntil ?: return@withLock false

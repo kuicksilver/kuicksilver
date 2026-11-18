@@ -430,6 +430,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |
+| `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; HTTP/3 takes none ([PROXY protocol](ktor.md#proxy-protocol)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -439,7 +440,9 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
-`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`,
+`kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string; turns the PROXY protocol on for the
+deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuicksilver.proxyProtocol.maxHeaderSize`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ### Plain connector
@@ -451,6 +454,17 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 | `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
 | `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
+| `proxyProtocol` | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes `call.request.origin` ([PROXY protocol](ktor.md#proxy-protocol)) |
+
+### PROXY protocol
+
+`proxyProtocol { … }` (`ProxyProtocolConfig.Builder`, experimental), on either connector:
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
+| `headerTimeout` | `Duration` | 5 s | positive; at most what is left of `requestHeaderTimeoutSeconds` | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
+| `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
 
 ## ktor-network
 

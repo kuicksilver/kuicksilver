@@ -63,6 +63,9 @@ public class KuicksilverTlsConnector private constructor(
     /** The TLS versions of the TCP side; QUIC is always TLS 1.3. See [Builder.versions]. */
     @ExperimentalKuicksilverApi
     public val versions: TlsVersions,
+    /** The PROXY protocol on the TCP side of this connector, or null (the default) for none; see [Builder.proxyProtocol]. */
+    @ExperimentalKuicksilverApi
+    public val proxyProtocol: ProxyProtocolConfig? = null,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -129,6 +132,7 @@ public class KuicksilverTlsConnector private constructor(
             ocspStapling,
             trustedGateway,
             versions,
+            proxyProtocol,
         )
 
     /** For logs. */
@@ -213,6 +217,21 @@ public class KuicksilverTlsConnector private constructor(
         @ExperimentalKuicksilverApi
         public var versions: TlsVersions = TlsVersions.Tls13
 
+        /**
+         * The PROXY protocol (HAProxy, versions 1 and 2) on the TCP side of this connector: every TCP connection must start
+         * with a header from one of its trusted sources, before the TLS ClientHello, and the client it names becomes the
+         * requests' `origin`; null (the default) takes none. HTTP/3 on the same port (QUIC, UDP) takes no header. See
+         * [ProxyProtocolConfig].
+         */
+        @ExperimentalKuicksilverApi
+        public var proxyProtocol: ProxyProtocolConfig? = null
+
+        /** Sets [proxyProtocol] from [block]. */
+        @ExperimentalKuicksilverApi
+        public fun proxyProtocol(block: ProxyProtocolConfig.Builder.() -> Unit) {
+            proxyProtocol = ProxyProtocolConfig.Builder().apply(block).build()
+        }
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         @OptIn(ExperimentalKuicksilverApi::class)
         public fun build(): KuicksilverTlsConnector {
@@ -228,6 +247,7 @@ public class KuicksilverTlsConnector private constructor(
                 ocspStapling,
                 trustedGateway,
                 versions,
+                proxyProtocol,
             )
         }
     }

@@ -174,7 +174,8 @@ what the peers really do, and is delivered whole or not at all.
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
   HTTP/3 through a MASQUE proxy.
-- PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources.
+- PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources: implemented, experimental
+  ([ADR-0020](adr/0020-proxy-protocol.md), [details](spec/rfc/spec-haproxy-proxy-protocol.md#receiver)).
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
 - HTTPS proxies (TLS to the proxy).
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.

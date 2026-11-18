@@ -13,6 +13,7 @@ import io.ktor.server.application.install
 import io.ktor.server.application.pluginOrNull
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.plugins.origin
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -347,6 +348,51 @@ class GuideSamplesTest {
             identity.close()
         }
     }
+
+    @Test fun proxyProtocolSample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val server =
+                    embeddedServer(Kuicksilver, configure = {
+                        // guide:ktor:proxy-protocol
+                        plainConnector {
+                            host = "127.0.0.1"
+                            port = 0
+                            proxyProtocol {
+                                trust("10.0.0.0/8", "2001:db8:1::/48") // the load balancers' addresses
+                                trust("127.0.0.1") // the test plays the load balancer
+                            }
+                        }
+                    }) {
+                        routing {
+                            // guide:ktor:proxy-protocol-origin
+                            get("/") {
+                                val client = call.request.origin.remoteAddress // the client the header names
+                                val proxy = call.request.local.remoteAddress // the TCP peer: the load balancer
+                                val sni = call.request.proxyHeader?.authority // a TLV, when the proxy sends one
+                                call.respondText("$client via $proxy for $sni")
+                            }
+                        }
+                    }
+                server.startSuspend(wait = false)
+                try {
+                    val port =
+                        server.engine
+                            .resolvedConnectors()
+                            .first()
+                            .port
+                    val r =
+                        rawHttp(
+                            port,
+                            "PROXY TCP6 2001:db8::7 2001:db8::1 40000 443\r\nGET / HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    assertTrue(r.startsWith("HTTP/1.1 200 ") && r.endsWith("2001:db8::7 via 127.0.0.1 for null"), r)
+                } finally {
+                    server.stopSuspend(100, 500)
+                }
+            }
+        }
 
     @Test fun trustedGatewaySample() =
         runBlocking {

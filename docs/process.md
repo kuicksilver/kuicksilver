@@ -190,7 +190,7 @@ programs trace only what the input decides (the HTTP/2 server target states all 
 closed). Targets listed in
 `untraced.txt` are not covered (most read the input as the bytes of what they parse; `tls.zeroRttHello`,
 `ktor-network.inflate`, `ktor-network.wsGuard`, `client.h1Response`, `server.h1Request` and `quic.rememberedTicket` have
-small decoders not traced yet), and neither is a Jazzer target that is not in the campaign's table
+small decoders not traced yet; `server.proxyHeader` reads only a mode byte before the header's own bytes), and neither is a Jazzer target that is not in the campaign's table
 (`BbrInvariantFuzzTest`). The reason rule needs the history: the hosted lint job, a shallow clone, skips it.
 
 `deadline-sites.py` resolves the kotlinx functions exactly from each file's imports, but its timer and select forms are

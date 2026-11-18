@@ -33,7 +33,8 @@ import kotlin.time.Duration.Companion.seconds
  * default), `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
  * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
- * server).
+ * server), `kuicksilver.proxyProtocol.trustedSources`, `headerTimeout` and `maxHeaderSize` (the PROXY protocol on the
+ * deployment port, [ProxyProtocolConfig]; off by default).
  */
 public object EngineMain {
     /** Where configuration warnings go before the application exists (a client CA file with non-CA certificates). */
@@ -53,7 +54,8 @@ public object EngineMain {
      * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
      * `kuicksilver.tls.ocspStapling` is set without the identity files, a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
-     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range. Throws
+     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, or a
+     * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`. Throws
      * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
      * or is larger than 1 MiB, and when the chain file (with `kuicksilver.tls.reloadInterval`) or the client CA file also holds
      * a private key. Throws `TlsException.Config` when a PEM file holds no certificate or a damaged one, the key does not
@@ -200,6 +202,44 @@ public object EngineMain {
             ?.getString()
             ?.toInt()
             ?.let { udpSocketCount = it }
+        deploymentProxyProtocol = parseProxyProtocol(config)
+    }
+
+    /**
+     * `kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string, of addresses and CIDR blocks; it
+     * turns the PROXY protocol on for the deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration) and
+     * `kuicksilver.proxyProtocol.maxHeaderSize` (bytes); null when none is set. Throws [IllegalArgumentException] for a
+     * value the builder refuses, a value that does not parse, or the other two keys without `trustedSources`.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun parseProxyProtocol(config: ApplicationConfig): ProxyProtocolConfig? {
+        val sourcesKey = config.propertyOrNull("kuicksilver.proxyProtocol.trustedSources")
+        val timeout = config.propertyOrNull("kuicksilver.proxyProtocol.headerTimeout")?.getString()?.trim()
+        val size = config.propertyOrNull("kuicksilver.proxyProtocol.maxHeaderSize")?.getString()
+        if (sourcesKey == null) {
+            require(timeout == null && size == null) {
+                "kuicksilver.proxyProtocol.headerTimeout and maxHeaderSize need kuicksilver.proxyProtocol.trustedSources"
+            }
+            return null
+        }
+        val sources =
+            (runCatching { sourcesKey.getList() }.getOrNull() ?: sourcesKey.getString().split(','))
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        return ProxyProtocolConfig
+            .Builder()
+            .apply {
+                trustedSources += sources
+                timeout?.let {
+                    headerTimeout =
+                        try {
+                            Duration.parse(it)
+                        } catch (e: IllegalArgumentException) {
+                            throw IllegalArgumentException("kuicksilver.proxyProtocol.headerTimeout: \"$it\" is not a duration (5s)", e)
+                        }
+                }
+                size?.let { maxHeaderSize = parseCount("kuicksilver.proxyProtocol.maxHeaderSize", it) }
+            }.build()
     }
 
     /**

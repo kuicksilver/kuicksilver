@@ -3005,6 +3005,56 @@ A plain connector has no certificate at all, so a request whose target is an abs
 a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
 port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
 
+#### PROXY protocol
+
+Behind an L4 load balancer or a TCP proxy (HAProxy, AWS NLB, Envoy, nginx `stream`) the server's TCP peer is the proxy.
+A proxy that speaks the PROXY protocol (HAProxy's, versions 1 and 2; *experimental* here) sends the client's address
+first on each connection, and a connector with `proxyProtocol` reports that client as `call.request.origin`:
+
+```kotlin
+// guide:ktor:proxy-protocol
+plainConnector {
+    port = 8080
+    proxyProtocol {
+        trust("10.0.0.0/8", "2001:db8:1::/48") // the load balancers' addresses
+    }
+}
+```
+
+```kotlin
+// guide:ktor:proxy-protocol-origin
+get("/") {
+    val client = call.request.origin.remoteAddress // the client the header names
+    val proxy = call.request.local.remoteAddress // the TCP peer: the load balancer
+    val sni = call.request.proxyHeader?.authority // a TLV, when the proxy sends one
+    call.respondText("$client via $proxy for $sni")
+}
+```
+
+`tlsConnector(identity) { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
+on a TCP-mode backend). The rules ([ADR-0020](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0020-proxy-protocol.md), the details in
+[spec-haproxy-proxy-protocol.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/rfc/spec-haproxy-proxy-protocol.md)):
+
+- Only the `trustedSources` may send the header, and every connection to the connector must come from one of them: any
+  other peer is closed at accept, before a byte is read (an event `connectionRefused` with the reason
+  `PROXY protocol untrusted source`, and a warning at most every 10 s). A client that reaches the port around the proxy
+  can therefore not choose its own address. List the proxies' own addresses, as the server sees them; an IPv4 proxy
+  matches an IPv4 entry also on a dual-stack listener.
+- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s); otherwise it is
+  reset (reason `PROXY protocol header`). Health checks of the proxy must send one too (HAProxy sends LOCAL with
+  `send-proxy-v2`); a LOCAL or `UNKNOWN` header leaves the origin as the connection's.
+- `call.request.local` stays the TCP connection, for logs that need the real hop; `XForwardedHeaders` or
+  `ForwardedHeaders`, when installed, start from the PROXY client. `call.request.proxyHeader` gives the whole header:
+  version, command, family, both addresses and ports, and the version 2 TLVs (`alpn`, `authority`, `uniqueId`, `ssl`,
+  `netns`, any other by type); a CRC32c TLV is verified before the connection is served.
+- `http2RepeatOffenderPenalty` counts the client the header names; `maxTcpConnectionsPerIp` counts TCP peers, so on such
+  a connector it limits each proxy.
+- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Behind an L4 proxy that
+  forwards TCP only, set `altSvc = false`.
+- `EngineMain`: `kuicksilver.proxyProtocol.trustedSources` (a list or a comma-separated string),
+  `kuicksilver.proxyProtocol.headerTimeout` and `kuicksilver.proxyProtocol.maxHeaderSize` turn it on for the deployment
+  port; next to Ktor's `-sslPort` connector the start fails.
+
 #### Certificate per name (SNI)
 
 One connector can serve several names, each with its own certificate (RFC 6066 section 3): its `sniSelector` sees the
@@ -3205,6 +3255,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.webSocketsOverHttp3` | accept RFC 9220 WebSockets (`true`) |
 | `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
+| `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
 
 An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not
@@ -5745,6 +5796,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
+| `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; HTTP/3 takes none ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -5754,7 +5806,9 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
-`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
+`kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`,
+`kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string; turns the PROXY protocol on for the
+deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuicksilver.proxyProtocol.maxHeaderSize`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 #### Plain connector
@@ -5766,6 +5820,17 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 | `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
 | `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
+| `proxyProtocol` | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes `call.request.origin` ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
+
+#### PROXY protocol
+
+`proxyProtocol { … }` (`ProxyProtocolConfig.Builder`, experimental), on either connector:
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
+| `headerTimeout` | `Duration` | 5 s | positive; at most what is left of `requestHeaderTimeoutSeconds` | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
+| `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
 
 ### ktor-network
 
@@ -5841,6 +5906,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
+| a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
@@ -6504,6 +6570,19 @@ Only when every client of a connector is a trusted gateway, such as a TLS-termin
 internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
 `tlsConnector { trustedGateway = true }` or `plainConnector { trustedGateway = true }`
 ([Ktor: Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)). Never set it on a connector that clients reach directly.
+
+#### A PROXY protocol connector resets connections
+
+A connector with `proxyProtocol` serves only connections that start with a PROXY protocol header from one of its
+`trustedSources` ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)).
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| The proxy's address is not in `trustedSources` (a new load balancer node, an IPv6 address, an address after SNAT) | a warning "Refused a connection from <address>" ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol untrusted source` | add the address the server sees (the warning names it) or its block |
+| The proxy sends no header (PROXY protocol not turned on there, a health check without it) | `connectionRefused` with `PROXY protocol header`; the debug log "the connection does not start with a PROXY protocol header" | turn it on in the proxy (HAProxy `send-proxy` or `send-proxy-v2`, nginx `proxy_protocol on`, AWS NLB target group attribute) for traffic and checks alike |
+| A version 2 header larger than `maxHeaderSize` (many or large TLVs) | the debug log "a PROXY protocol version 2 header of <n> bytes, over the limit of <max>" | raise `maxHeaderSize` (at most 65 551) |
+| The header takes longer than `headerTimeout` | the debug log "no complete PROXY protocol header within <duration>" | a proxy sends it at once; check what sits between the proxy and the server |
+| Clients reach the port directly, not through the proxy | `connectionRefused` with `PROXY protocol untrusted source` for client addresses | intended: only the proxy may connect; serve direct clients on another connector |
 
 ### Key logging is refused
 

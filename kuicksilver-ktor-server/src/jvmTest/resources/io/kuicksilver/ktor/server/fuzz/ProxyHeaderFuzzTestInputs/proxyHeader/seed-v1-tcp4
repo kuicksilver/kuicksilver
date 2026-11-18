@@ -1,0 +1,4 @@
+ PROXY TCP4 192.0.2.1 198.51.100.2 56324 443
+GET / HTTP/1.1
+Host: a.test
+

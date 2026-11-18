@@ -557,6 +557,101 @@ class EngineMainTest {
             }
         }
 
+    /**
+     * `kuicksilver.proxyProtocol.*` turns the PROXY protocol on for the deployment port: a request after a header from a
+     * trusted source is served, one without a header is not; an invalid source, a key without trustedSources and Ktor's
+     * `-sslPort` connector next to it are refused.
+     */
+    @Test fun proxyProtocolKeysOnTheDeploymentPort() =
+        serverTest {
+            fun args(vararg extra: String) =
+                arrayOf(
+                    "-host=127.0.0.1",
+                    "-port=0",
+                    "-P:ktor.application.modules.size=1",
+                    "-P:ktor.application.modules.0=$module",
+                    *extra,
+                )
+            val server =
+                EngineMain.createServer(
+                    args(
+                        "-P:kuicksilver.proxyProtocol.trustedSources.size=2",
+                        "-P:kuicksilver.proxyProtocol.trustedSources.0=127.0.0.1",
+                        "-P:kuicksilver.proxyProtocol.trustedSources.1=::1",
+                        "-P:kuicksilver.proxyProtocol.headerTimeout=2s",
+                        "-P:kuicksilver.proxyProtocol.maxHeaderSize=512",
+                    ),
+                )
+
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            val pp = server.engine.configuration.deploymentProxyProtocol!!
+            assertEquals(listOf("127.0.0.1", "::1"), pp.trustedSources)
+            assertEquals(2.seconds, pp.headerTimeout)
+            assertEquals(512, pp.maxHeaderSize)
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val served = rawHttp(port, "PROXY TCP4 192.0.2.1 198.51.100.2 1 80\r\n$get", tls = null)
+                assertTrue(served.startsWith("HTTP/1.1 200") && served.endsWith("engine main"), served)
+                val refused = runCatching { rawHttp(port, get, tls = null) }.getOrDefault("")
+                assertEquals("", refused, "a request without a PROXY header was answered")
+            } finally {
+                server.stop(100, 500)
+            }
+            // one comma-separated string works too
+            val listed = EngineMain.createServer(args("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8, 192.0.2.7"))
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            assertEquals(
+                listOf("10.0.0.0/8", "192.0.2.7"),
+                listed.engine.configuration.deploymentProxyProtocol!!
+                    .trustedSources,
+            )
+            listed.stop(0, 0)
+            for (bad in listOf(
+                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.1/8"),
+                arrayOf("-P:kuicksilver.proxyProtocol.headerTimeout=2s"),
+                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.maxHeaderSize=many"),
+                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.headerTimeout=soon"),
+            )) {
+                assertFailsWith<IllegalArgumentException>(bad.joinToString()) { EngineMain.createServer(args(*bad)).engine }
+            }
+        }
+
+    /** Ktor's `-sslPort` connector cannot take the PROXY protocol: the keys are refused next to it, naming the way out. */
+    @Test fun negative_proxyProtocolKeysWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "proxy-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    arrayOf(
+                        "-host=127.0.0.1",
+                        "-port=0",
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:ktor.application.modules.size=1",
+                        "-P:ktor.application.modules.0=$module",
+                        "-P:kuicksilver.http3=false",
+                        "-P:kuicksilver.proxyProtocol.trustedSources=127.0.0.1",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue("kuicksilver.proxyProtocol" in e.message.orEmpty(), e.message)
+            server.stop(0, 0)
+        }
+
     @Test fun tlsVersionsKeyParsed() {
         assertNull(EngineMain.parseTlsVersions(null))
         assertEquals(io.kuicksilver.tls.TlsVersions.Tls13, EngineMain.parseTlsVersions("tls13"))

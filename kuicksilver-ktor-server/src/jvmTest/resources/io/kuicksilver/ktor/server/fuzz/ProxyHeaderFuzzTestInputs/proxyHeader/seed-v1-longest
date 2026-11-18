@@ -1,0 +1,4 @@
+ PROXY UNKNOWN xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GET / HTTP/1.1
+Host: a.test
+

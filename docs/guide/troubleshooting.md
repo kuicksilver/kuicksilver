@@ -42,6 +42,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `kuicksilverDiagnostics.fallback`, `ProtocolReason`, `FallbackReason` (every value) | [the client never uses HTTP/3](#the-ktor-client-never-uses-http3-or-stops-using-it) |
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
+| a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
@@ -705,6 +706,19 @@ Only when every client of a connector is a trusted gateway, such as a TLS-termin
 internal certificate or forwards absolute `https://` targets, turn the check off for that connector:
 `tlsConnector { trustedGateway = true }` or `plainConnector { trustedGateway = true }`
 ([Ktor: Misdirected requests](ktor.md#misdirected-requests)). Never set it on a connector that clients reach directly.
+
+### A PROXY protocol connector resets connections
+
+A connector with `proxyProtocol` serves only connections that start with a PROXY protocol header from one of its
+`trustedSources` ([PROXY protocol](ktor.md#proxy-protocol)).
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| The proxy's address is not in `trustedSources` (a new load balancer node, an IPv6 address, an address after SNAT) | a warning "Refused a connection from <address>" ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol untrusted source` | add the address the server sees (the warning names it) or its block |
+| The proxy sends no header (PROXY protocol not turned on there, a health check without it) | `connectionRefused` with `PROXY protocol header`; the debug log "the connection does not start with a PROXY protocol header" | turn it on in the proxy (HAProxy `send-proxy` or `send-proxy-v2`, nginx `proxy_protocol on`, AWS NLB target group attribute) for traffic and checks alike |
+| A version 2 header larger than `maxHeaderSize` (many or large TLVs) | the debug log "a PROXY protocol version 2 header of <n> bytes, over the limit of <max>" | raise `maxHeaderSize` (at most 65 551) |
+| The header takes longer than `headerTimeout` | the debug log "no complete PROXY protocol header within <duration>" | a proxy sends it at once; check what sits between the proxy and the server |
+| Clients reach the port directly, not through the proxy | `connectionRefused` with `PROXY protocol untrusted source` for client addresses | intended: only the proxy may connect; serve direct clients on another connector |
 
 ## Key logging is refused
 
