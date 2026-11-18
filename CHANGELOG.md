@@ -902,14 +902,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   OpenSSL could not use dropped the whole list, as did a first entry of another version and a list past 1500 bytes.
   `openssl-4.1.0-ech-sni-padding.patch` pads the inner server name by max(0, M − D) (RFC 9849 section 6.1.3; 4.1.0
   padded 9 bytes less). Upstream issues are to be filed.
+- The bundled OpenSSL carries three more ECH patches of Kuicksilver's own (`patch_5` to `patch_7`):
+  - `openssl-4.1.0-ech-ee-checks.patch`: the client checks the `encrypted_client_hello` of EncryptedExtensions:
+    `unsupported_extension` after an acceptance; `decode_error` for `retry_configs` that do not parse or have bytes
+    after the list, also after GREASE; nothing handed out after GREASE (RFC 9849 sections 5, 6.1.6, 6.2.1).
+  - `openssl-4.1.0-ech-psk-after-rejection.patch`: `illegal_parameter` for a pre_shared_key in the ServerHello after a
+    rejection (section 6.1.2).
+  - `openssl-4.1.0-ech-grease-length.patch`: a GREASE payload has the length a real offer of the same ClientHello would
+    have (section 6.2.1), not a random one.
+  - These alerts now go out over TCP too, before any `ech_required`.
+  - `tools/openssl/build.sh` refuses a pin key it does not read, such as `patch_10`.
+- TLS, Encrypted Client Hello: a server key set whose keys share a config_id is refused (`TlsException.Config` from
+  `EchServerKeys`). OpenSSL tries only the first key of a config_id, so a client of the other would have been rejected.
+  Make one of the keys again.
 - TLS, Encrypted Client Hello (`ksl`). Each item is checked where OpenSSL 4.1 does not:
   - An ECHConfigList whose 0xfe0d ECHConfig is malformed, for example by a trailing byte or an extension type given
     twice, does not parse (RFC 9849 sections 4, 4.2).
   - A rejection where the server resumed a session (section 6.1.2), or whose `retry_configs` do not parse (section
     6.1.6), fails the handshake instead of reporting a rejection: no retry configurations, never "securely disabled".
   - `retry_configs` on an accepted ECH (section 5), and malformed ones after GREASE (section 6.2.1), fail the session.
-  - Over QUIC these failures close with the alert the RFC names. Over TCP the alert is OpenSSL's `ech_required`, or
-    there is none.
+  - These failures close with the alert the RFC names, over TCP and QUIC (patches 5 and 6 below).
   - A server refuses an accepted inner ClientHello that offers TLS 1.2 or below, with `illegal_parameter` (section 7.1).
   - GREASE takes a cipher suite at random per handshake.
   - A server context's ECH key lock is made with the context. A first key set from several threads raced, and

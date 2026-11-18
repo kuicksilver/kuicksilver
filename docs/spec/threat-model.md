@@ -932,12 +932,16 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   out, not read back from the last alert. Some outcomes the RFC makes failures are never reported as a rejection, so
   there is no retry configuration and no "securely disabled": a server that resumes a session after rejecting
   (§6.1.2), `retry_configs` that do not parse (§6.1.6), `retry_configs` on an accepted ECH (§5), and malformed ones after
-  GREASE (§6.2.1). Each fails the handshake. Over QUIC the failure carries the alert the RFC names. Over TCP the alert is
-  OpenSSL's `ech_required`, or there is none (see "Not covered"). An ECH client offers TLS 1.3 only, so a server that
+  GREASE (§6.2.1). Each fails the handshake with the alert the RFC names, over TCP and QUIC (the fifth and sixth carried patches;
+  `ksl`'s own checks stay as a second line). An ECH client offers TLS 1.3 only, so a server that
   answers TLS 1.2 gets no connection. A server refuses an accepted inner ClientHello that offers TLS 1.2 or below, with
   `illegal_parameter` (§7.1). The server's keys are replaced whole under a lock made with the context (rotation, also
   the first set from several threads), and each session copies the set it starts with. GREASE ECH hides whether a
-  client has a configuration, and takes a cipher suite at random per handshake, as a real offer would (§6.2.1). The
+  client has a configuration, takes a cipher suite at random per handshake, and has a real offer's payload length for
+  the same ClientHello (§6.2.1, the seventh carried patch). A server key set whose keys share a config_id is refused:
+  OpenSSL tries only the first key of a config_id, and a client of the other would be rejected (§4.1, §7.1). Keys are
+  loaded from PEM only: a store made by `OSSL_ECHSTORE_new_config` and used directly would decrypt no client
+  configured from DNS (bug L of ADR-0019). The
   inner server name is padded by max(0, M − D) (§6.1.3, the fourth carried patch). OpenSSL 4.1.0 needs two upstream
   patches for ECH after a HelloRetryRequest (QUIC's transport parameters; a rejection after one: bugs B and C of
   ADR-0019). On a rejection no client certificate and no session ticket is exchanged (§6.1.7), because OpenSSL aborts
@@ -967,7 +971,10 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `negative_ech_rejected_with_psk`, `negative_ech_retry_configs_*`, `negative_ech_server_sends_truncated_retry_configs`,
   `negative_ech_server_sends_duplicate_extension`, `negative_ech_accepted_with_retry_configs`,
   `negative_ech_grease_malformed_retry_configs`, `ech_retry_list_with_*`, `ech_long_retry_list`; the TCP `ech_required`
-  is protected), `negative_ech_inner_offers_tls12`, `ech_grease_suites`, `ech_inner_name_padding`, and the accepted,
+  is protected), the alerts on the wire (`ech_alerts_on_the_wire`: trailing bytes after a rejection and after GREASE,
+  `retry_configs` on an accepted ECH, a pre_shared_key after a rejection, over TCP and QUIC),
+  `negative_ech_keys_sharing_a_config_id`, `ech_grease_payload_length`, `negative_ech_inner_offers_tls12`,
+  `ech_grease_suites`, `ech_inner_name_padding`, and the accepted,
   HelloRetryRequest, rotation (three threads under ThreadSanitizer), first key set (`ech_first_keys_threads`, four
   threads on fresh contexts under ThreadSanitizer) and resumption cases; Kotlin: `tls.EchTest` (`pinsDoNotApplyToThePublicNameCertificate`,
   `negative_pinnedRejectionStillNeedsTheBaseTrust`, `negative_tofuDoesNotTrustAPublicNameOnFirstContact`),
@@ -980,10 +987,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   protected (RFC 9849 §10.2, "Unauthenticated and Plaintext DNS"; RFC 9848 §8), and so is an attacker's ability to block
   that query and with it ECH (RFC 9848 §8: abandoning the request on a failed protected lookup, `Exchange(secure = true)`,
   is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
-  client-facing server forwarding to a backend) is not implemented. Some aborts over TCP do not send the alert the RFC
-  names, because OpenSSL 4.1 has written `ech_required` first, or has no call to send an alert after the client's
-  Finished. The connection still fails, and nothing is reported as a rejection (RFC 9849 row "Deviations"; upstream
-  issues to be filed). §6.1.7's empty Certificate is not sent (accepted deviation, upstream issue
+  client-facing server forwarding to a backend) is not implemented. §6.1.7's empty Certificate is not sent (accepted deviation, upstream issue
   https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
   hook for it). Certificate validation under an accepted ECH stays offline on Windows and Apple (§10.7); on the JVM the
   default trust manager fetches revocation or AIA data only when the process turned that on, process-wide.
