@@ -233,6 +233,7 @@ class WtCreditOrderTest {
         h3Test {
             H3Pair.open(clientSettings = wtLimits(data = WINDOW), serverSettings = wtLimits(data = WINDOW)).useScoped { p ->
                 val (client, server) = pair(p, incremental)
+                withContext(p.client.session.dispatcher) { assertNotNull(client.flow).grantedByOrderForTest = HashMap() }
                 val a = client.openUni()
                 val b = client.openUni()
                 launch {
@@ -261,7 +262,7 @@ class WtCreditOrderTest {
                         val f = assertNotNull(client.flow)
                         // the server read 4096 bytes of a, so at most 4096 + the window of a were sent: most of it is queued
                         assertTrue(f.sendDataForTest.second < BUSY / 2, "a still has bytes queued: ${f.sendDataForTest}")
-                        assertTrue((f.grantedByOrderForTest[bOrder] ?: 0L) > 0, "b got credit: ${f.grantedByOrderForTest}")
+                        assertTrue((assertNotNull(f.grantedByOrderForTest)[bOrder] ?: 0L) > 0, "b got credit: ${f.grantedByOrderForTest}")
                     }
                     assertEquals(BUSY - step.size, withTimeout(10.seconds) { sa.input.readAllBytes() }.size, "the rest of a")
                 } else {
@@ -276,10 +277,13 @@ class WtCreditOrderTest {
                         val f = assertNotNull(client.flow)
                         // the server stopped reading at BUSY / 2: at most that plus the window of a was sent
                         assertTrue(f.sendDataForTest.second < BUSY, "a still has bytes queued: ${f.sendDataForTest}")
-                        assertTrue((f.grantedByOrderForTest[aOrder] ?: 0L) >= BUSY / 2, "a got the raises: ${f.grantedByOrderForTest}")
+                        assertTrue(
+                            (assertNotNull(f.grantedByOrderForTest)[aOrder] ?: 0L) >= BUSY / 2,
+                            "a got the raises: ${f.grantedByOrderForTest}",
+                        )
                         assertEquals(
                             0L,
-                            f.grantedByOrderForTest[bOrder] ?: 0L,
+                            assertNotNull(f.grantedByOrderForTest)[bOrder] ?: 0L,
                             "b got credit while a had bytes queued: ${f.sendersForTest}",
                         )
                     }
