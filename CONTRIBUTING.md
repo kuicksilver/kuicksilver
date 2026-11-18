@@ -230,6 +230,12 @@ request without such tests is not merged. The tests run in the automated suites 
   coroutine, thread or the peer get somewhere first: it waits on the event itself, a `CompletableDeferred` completed
   where the thing happens, a `Channel`, a `Job` or a state flow. `delay()` stays fine where the delay is the subject,
   such as a slow peer under virtual time. A test that is flaky is a bug; report the seed.
+- **Races.** A test of a race forces the order it tests: a `*ForTest` hook inside the started work that holds one side
+  (the side not under test can then not win), virtual time or the simulator. Where the code races work it started in a
+  `select`, each outcome is right and judged in `tools/check/select-races.allow`; a race test without a seam says why in
+  `tools/check/race-tests.allow`. A wall-clock bound in a test is at least twice away from the path it is to catch and
+  at least 1 s from both paths, with the numbers in `tools/check/wall-bounds.allow` ([docs/process.md](docs/process.md#repository-checks)).
+  The race tests a branch adds or changes run 10 times under load before the gate (`tools/ci/race-repeat.sh`).
 - **Flake hunting.** `tools/ci/flake-hunt.sh` runs the chosen modules' tests N times (default 20) under CPU load and
   prints the failures by test, for example
   `tools/ci/flake-hunt.sh -n 20 -b 8 http3 quic` for the JVM or `tools/ci/flake-hunt.sh -t macos -n 5 quic` for
@@ -432,6 +438,12 @@ already shipped or nearly shipped. Each line names the question to ask of the di
   leave room for a loaded host, and negative tests own every address they assert nothing answers on. No test waits
   for something the protocol allows never to happen (a request stream reset before its HEADERS were read surfaces no
   request), and every wait has a deadline that fails with a message naming what did not happen.
+- **Wait for a state that stays, never for an instant.** A test waits for a sticky state: a counter that only grows, a
+  record of what happened (all credit ever granted, not what a stream holds now), a completed `Job` or
+  `CompletableDeferred`, a state the code cannot leave before the test's next step. Never for an instant state seen
+  through a conflated `StateFlow` or a sampled field: under load the state can come and go between two looks, and the
+  wait then times out for good (a busy stream that went idle for a moment let the next one take its credit and end
+  before the test looked).
 - **No pipe into `grep -q` under `pipefail`.** `grep -q` exits at its first match; a writer still writing then dies
   of SIGPIPE and pipefail turns the match into a failure, and a writer that exits non-zero makes the test false
   whatever it printed. Gate scripts read the output into a variable first and grep that (`grep -q x <<< "$out"`).
