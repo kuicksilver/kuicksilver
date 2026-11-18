@@ -1,0 +1,41 @@
+OpenSSL 4.1.0: the ECH client resumes a session in the outer handshake after a rejection
+
+Kuicksilver's own code, the sixth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-ee-checks.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_6, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
+report drafted 2026-11-19, to be filed). Applies to OpenSSL master at df4c3359 on top of the patches before it (git apply; extensions_clnt.c is 99
+lines further down there).
+
+The bug: RFC 9849 section 6.1.2: "If ECH is rejected and the client-facing server replies with a "pre_shared_key"
+extension in its ServerHello, then the client MUST abort the handshake with an "illegal_parameter" alert."
+tls_parse_stoc_psk (extensions_clnt.c) accepts identity 0 although the outer ClientHello carried only a GREASE PSK, and
+goes on with the inner session's key.
+
+The fix: when ECH was offered (not GREASE) and not accepted, a pre_shared_key in the ServerHello is illegal_parameter.
+
+diff --git a/ssl/statem/extensions_clnt.c b/ssl/statem/extensions_clnt.c
+--- a/ssl/statem/extensions_clnt.c
++++ b/ssl/statem/extensions_clnt.c
+@@ -2451,8 +2451,22 @@
+ 
+     if (!PACKET_get_net_2(pkt, &identity) || PACKET_remaining(pkt) != 0) {
+         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);
++        return 0;
++    }
++
++#ifndef OPENSSL_NO_ECH
++    /*
++     * ECH offered and rejected: our ClientHelloOuter only had a GREASE PSK,
++     * and the server may not resume in the outer handshake (RFC 9849,
++     * section 6.1.2)
++     */
++    if (s->ext.ech.es != NULL && s->ext.ech.attempted == 1
++        && s->ext.ech.success != 1
++        && s->ext.ech.grease != OSSL_ECH_IS_GREASE) {
++        SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_BAD_PSK_IDENTITY);
+         return 0;
+     }
++#endif
+ 
+     if (identity >= (unsigned int)s->ext.tick_identity) {
+         SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_BAD_PSK_IDENTITY);

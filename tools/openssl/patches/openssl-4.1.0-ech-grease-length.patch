@@ -1,0 +1,213 @@
+OpenSSL 4.1.0: a GREASE ECH payload has a random length instead of a real offer's
+
+Kuicksilver's own code, the seventh patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-psk-after-rejection.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_7, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
+report drafted 2026-11-19, to be filed). Applies to OpenSSL master at df4c3359 on top of the patches before it (git apply; extensions_clnt.c is 99
+lines further down there).
+
+The bug: RFC 9849 section 6.2.1 has a GREASE client "Set the payload field to a randomly generated string of L+C bytes,
+where C is the ciphertext expansion of the selected AEAD scheme and L is the size of the EncodedClientHelloInner the
+client would compute when offering ECH, padded according to Section 6.1.3." ossl_ech_send_grease (ech_internal.c) picks
+144, 176, 208 or 240 at random, so the length of a GREASE payload tells it from a real offer of the same ClientHello
+(section 10.10.4: GREASE must not be distinguishable from a real offer).
+
+The fix: ech_grease_clear_len computes L from the ClientHello written so far, as ossl_ech_encode_inner would encode the
+inner one (no legacy_session_id, the extensions a real offer compresses as one ech_outer_extensions, the others as they
+are, an inner encrypted_client_hello, and the pre_shared_key still to come, sized by ossl_ech_grease_psk_len), padded as
+ossl_ech_calc_padding does with a maximum_name_length of 0; the payload is L plus the AEAD's expansion. The RFC 8701
+GREASE extensions (SSL_OP_GREASE) are not counted.
+
+diff --git a/ssl/ech/ech_internal.c b/ssl/ech/ech_internal.c
+--- a/ssl/ech/ech_internal.c
++++ b/ssl/ech/ech_internal.c
+@@ -276,9 +276,60 @@
+ 
+ /* GREASEy constants */
+ #define OSSL_ECH_MAX_GREASE_PUB 0x100 /* buffer size for 'enc' values */
+-#define OSSL_ECH_MAX_GREASE_CT 0x200 /* max GREASEy ciphertext we'll emit */
++#define OSSL_ECH_MAX_GREASE_CT 0x800 /* max GREASEy ciphertext we'll emit */
+ 
+ /*
++ * The EncodedClientHelloInner length a real ECH offer of this ClientHello would
++ * have, padded as in ossl_ech_calc_padding() for a maximum_name_length of 0
++ * (RFC 9849, section 6.2.1: "L is the size of the EncodedClientHelloInner the
++ * client would compute when offering ECH, padded according to Section
++ * 6.1.3"). It is computed from the ClientHello written so far, as
++ * ossl_ech_encode_inner() would make it: no legacy_session_id, the extensions
++ * a real offer compresses as one ech_outer_extensions, the others as they are,
++ * an inner encrypted_client_hello, and the pre_shared_key still to come. The
++ * RFC 8701 GREASE extensions (SSL_OP_GREASE) are not counted. 0 on error.
++ */
++static size_t ech_grease_clear_len(SSL_CONNECTION *s, WPACKET *pkt)
++{
++    size_t written = 0, len, k = 0;
++    PACKET ch, sid, suites, comp, ext;
++    unsigned int type;
++
++    if (!WPACKET_get_total_written(pkt, &written) || written < 4
++        || !PACKET_buf_init(&ch, WPACKET_get_curr(pkt) - written + 4,
++            written - 4)
++        || !PACKET_forward(&ch, 2 + SSL3_RANDOM_SIZE)
++        || !PACKET_get_length_prefixed_1(&ch, &sid)
++        || !PACKET_get_length_prefixed_2(&ch, &suites)
++        || !PACKET_get_length_prefixed_1(&ch, &comp)
++        || !PACKET_forward(&ch, 2)) /* the extensions' length, still open */
++        return 0;
++    len = 2 + SSL3_RANDOM_SIZE + 1 + 2 + PACKET_remaining(&suites)
++        + 1 + PACKET_remaining(&comp) + 2;
++    while (PACKET_remaining(&ch) > 0) {
++        if (!PACKET_get_net_2(&ch, &type)
++            || !PACKET_get_length_prefixed_2(&ch, &ext))
++            return 0;
++        if (ossl_ech_type_compressed(type))
++            k++;
++        else
++            len += 4 + PACKET_remaining(&ext);
++    }
++    if (k > 0)
++        len += 4 + 1 + 2 * k; /* ech_outer_extensions */
++    len += 4 + 1; /* the inner encrypted_client_hello */
++    len += ossl_ech_grease_psk_len(s);
++    /*
++     * as ossl_ech_calc_padding() with a maximum_name_length of 0: a multiple
++     * of 32 octets, at least 128
++     */
++    len += 31 - ((len - 1) % 32);
++    while (len < 128)
++        len += 32;
++    return len;
++}
++
++/*
+  * Send a random value that looks like a real ECH.
+  *
+  * We do GREASEing as follows:
+@@ -286,7 +337,8 @@
+  *   - always AES-128-GCM
+  *   - random config ID, even for requests to same server in same session
+  *   - random enc
+- *   - random looking payload, randomly 144, 176, 208, 240 bytes, no correlation with server
++ *   - random looking payload of the length a real offer of this ClientHello
++ *     would have (ech_grease_clear_len() plus the AEAD tag)
+  */
+ int ossl_ech_send_grease(SSL_CONNECTION *s, WPACKET *pkt)
+ {
+@@ -295,7 +347,7 @@
+     OSSL_HPKE_SUITE hpke_suite = OSSL_HPKE_SUITE_DEFAULT;
+     size_t pp_at_start = 0, pp_at_end = 0;
+     size_t senderpub_len = OSSL_ECH_MAX_GREASE_PUB;
+-    size_t cipher_len = 0, cipher_len_jitter = 0;
++    size_t cipher_len = 0, clear_len = 0;
+     unsigned char cid, senderpub[OSSL_ECH_MAX_GREASE_PUB];
+     unsigned char cipher[OSSL_ECH_MAX_GREASE_CT];
+     SSL_CTX *sctx = SSL_CONNECTION_GET_CTX(s);
+@@ -304,14 +356,16 @@
+         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+         return 0;
+     }
+-    /* randomly select cipher_len to be one of 144, 176, 208, 244 */
+-    if (RAND_bytes_ex(sctx->libctx, &cid, 1, 0) <= 0) {
++    /*
++     * RFC 9849, section 6.2.1: the payload is "a randomly generated string of
++     * L+C bytes", L the padded EncodedClientHelloInner a real offer would
++     * have, C the AEAD's expansion
++     */
++    clear_len = ech_grease_clear_len(s, pkt);
++    if (clear_len == 0) {
+         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+         return 0;
+     }
+-    cipher_len_jitter = cid % 4;
+-    cipher_len = 144;
+-    cipher_len += 32 * cipher_len_jitter;
+     /* generate a random (1 octet) client id */
+     if (RAND_bytes_ex(sctx->libctx, &cid, 1, 0) <= 0) {
+         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+@@ -325,6 +379,11 @@
+             return 0;
+         }
+         hpke_suite_in_p = &hpke_suite_in;
++    }
++    cipher_len = OSSL_HPKE_get_ciphertext_size(*hpke_suite_in_p, clear_len);
++    if (cipher_len == 0 || cipher_len > OSSL_ECH_MAX_GREASE_CT) {
++        SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
++        return 0;
+     }
+     if (OSSL_HPKE_get_grease_value(hpke_suite_in_p, &hpke_suite,
+             senderpub, &senderpub_len,
+--- a/ssl/ech/ech_local.h
++++ b/ssl/ech/ech_local.h
+@@ -364,6 +364,8 @@
+ int ossl_ech_same_ext(SSL_CONNECTION *s, WPACKET *pkt);
+ int ossl_ech_same_key_share(void);
+ int ossl_ech_2bcompressed(size_t ind);
++int ossl_ech_type_compressed(unsigned int type);
++size_t ossl_ech_grease_psk_len(SSL_CONNECTION *s);
+ int ossl_ech_copy_inner2outer(SSL_CONNECTION *s, uint16_t ext_type, int ind,
+     WPACKET *pkt);
+ 
+--- a/ssl/statem/extensions.c
++++ b/ssl/statem/extensions.c
+@@ -564,6 +564,21 @@
+     return ext_defs[ind].ech_handling == OSSL_ECH_HANDLING_COMPRESS;
+ }
+ 
++/*
++ * Whether a real ECH offer would compress the ClientHello extension |type| into
++ * ech_outer_extensions: a built-in one marked so, or a custom one (see
++ * custom_ext_add()). Used to size GREASE like a real offer.
++ */
++int ossl_ech_type_compressed(unsigned int type)
++{
++    size_t i;
++
++    for (i = 0; i < OSSL_NELEM(ext_defs); i++)
++        if (ext_defs[i].type == type)
++            return ext_defs[i].ech_handling == OSSL_ECH_HANDLING_COMPRESS;
++    return 1;
++}
++
+ /* as needed, repeat extension from inner in outer handling compression */
+ int ossl_ech_same_ext(SSL_CONNECTION *s, WPACKET *pkt)
+ {
+--- a/ssl/statem/extensions_clnt.c
++++ b/ssl/statem/extensions_clnt.c
+@@ -2858,6 +2858,37 @@
+ }
+ 
+ /*
++ * The length of the pre_shared_key extension tls_construct_ctos_psk() will
++ * write into this (first) ClientHello, 0 when none: for sizing GREASE like a
++ * real offer, whose inner ClientHello carries the same extension.
++ */
++size_t ossl_ech_grease_psk_len(SSL_CONNECTION *s)
++{
++    SSL_CTX *sctx = SSL_CONNECTION_GET_CTX(s);
++    const EVP_MD *md;
++    size_t ids = 0, binders = 0;
++    int size;
++
++    if (s->session->ssl_version != TLS1_3_VERSION
++        || (s->session->ext.ticklen == 0 && s->psksession == NULL))
++        return 0;
++    if (s->session->ext.ticklen != 0 && s->session->cipher != NULL
++        && (md = ssl_md(sctx, s->session->cipher->algorithm2)) != NULL
++        && tls13_check_tick_lifetime_hint(s)
++        && (size = EVP_MD_get_size(md)) > 0) {
++        ids += 2 + s->session->ext.ticklen + 4;
++        binders += 1 + (size_t)size;
++    }
++    if (s->psksession != NULL && s->psksession->cipher != NULL
++        && (md = ssl_md(sctx, s->psksession->cipher->algorithm2)) != NULL
++        && (size = EVP_MD_get_size(md)) > 0) {
++        ids += 2 + s->psksession_id_len + 4;
++        binders += 1 + (size_t)size;
++    }
++    return ids == 0 ? 0 : 4 + 2 + ids + 2 + binders;
++}
++
++/*
+  * Is |list| (the contents of an ECHConfigList) syntactically valid (RFC 9849,
+  * sections 4 and 4.2)? Each ECHConfig must frame; one of our version must
+  * also parse as ECHConfigContents to its last octet, with no extension type

@@ -26,3 +26,16 @@ patch_3_sha256 = "9beb570284cc7a6541b3f4e65ddcb3f5286bd8cc7a22595dde352274149ff5
 # 9 bytes less). Kuicksilver's own code; upstream issue #32170 (pull request #32930); dropped with the first release that fixes it.
 patch_4 = "tools/openssl/patches/openssl-4.1.0-ech-sni-padding.patch"
 patch_4_sha256 = "3c1d08cf4186cc028e41209b76ecf8ab4c11f55e9e973b870595871e810accf8"
+# The fifth carried patch (ADR-0019): the ECH client checks the encrypted_client_hello of EncryptedExtensions (RFC 9849
+# sections 5, 6.1.6, 6.2.1: unsupported_extension after an acceptance, decode_error for retry_configs that do not parse or
+# have bytes after them; none handed out after GREASE). Kuicksilver's own code; dropped with the first release that fixes it.
+patch_5 = "tools/openssl/patches/openssl-4.1.0-ech-ee-checks.patch"
+patch_5_sha256 = "224dd152aec31616f543e866f784dbef8ea5b33f355e3c8c8a5a8ff025625054"
+# The sixth carried patch (ADR-0019): illegal_parameter for a pre_shared_key in the ServerHello after an ECH rejection (RFC 9849
+# section 6.1.2). Kuicksilver's own code; dropped with the first release that fixes it.
+patch_6 = "tools/openssl/patches/openssl-4.1.0-ech-psk-after-rejection.patch"
+patch_6_sha256 = "7072a4f9b0e85ae01949aad8532bf4c46d405d8961b8f11452686a944c0c9793"
+# The seventh carried patch (ADR-0019): a GREASE ECH payload of the length a real offer of the same ClientHello would have (RFC
+# 9849 section 6.2.1: L+C). Kuicksilver's own code; dropped with the first release that fixes it.
+patch_7 = "tools/openssl/patches/openssl-4.1.0-ech-grease-length.patch"
+patch_7_sha256 = "ab2a69ecd66c26b75434cbe99792368fb48907eee1e7b24fa28508ddfdf1b99f"

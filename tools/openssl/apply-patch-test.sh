@@ -89,6 +89,13 @@ if [ -n "$patch" ]; then
     elif grep -q "patch_3 without patch_2" "$tmp/out"; then ok "negative_third_patch_without_second refused"
     else bad "negative_third_patch_without_second (another error: $(head -1 "$tmp/out"))"; fi
   fi
+  for key in patch_10 patch_1 patch2 Patch_2; do # keys build.sh would not read: refused, never skipped
+    { cat "$pin"; printf '%s = "tools/openssl/patches/x.patch"\n%s_sha256 = "00"\n' "$key" "$key"; } > "$tmp/pin5.toml"
+    if KSL_OPENSSL_PIN="$tmp/pin5.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" --print-target macos-arm64 >"$tmp/out" 2>&1; then
+      bad "negative_unknown_patch_key_$key (build.sh went on)"
+    elif grep -q "unknown patch key" "$tmp/out"; then ok "negative_unknown_patch_key_$key refused"
+    else bad "negative_unknown_patch_key_$key (another error: $(head -1 "$tmp/out"))"; fi
+  done
   grep -v '^patch_sha256 = ' "$pin" > "$tmp/pin1.toml"
   if KSL_OPENSSL_PIN="$tmp/pin1.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
     bad "negative_patch_without_hash (build.sh went on)"
