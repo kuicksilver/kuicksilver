@@ -28,6 +28,7 @@ import io.kuicksilver.quic.inputTakenForTest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -534,9 +535,22 @@ class HeaderLimitsTest {
                     assertTrue(taken <= budget.capacity + streams * 16L, "the server took $taken bytes of unfinished heads")
                 }
                 assertFalse(server.closed.isCompleted)
-                writers.cancel()
+                // the writers end before their streams are reset: a flush still running on the loop as the reset closes its
+                // output fails with that reset, and a writer cancelled but not yet ended failed the test with it
+                writers.cancelAndJoin()
                 // a reader waiting in line notices its stream's reset long before the 10 s deadline
                 opened.forEach { runCatching { it.reset(Http3ErrorCode.REQUEST_CANCELLED) } }
+                // a stream the server takes late (its first frame came with the resets or after them) gets its reader once the
+                // others' may have ended: an empty pendingHeaders before then said nothing about it, and the head showed up
+                // pending afterwards. Each reader ends its own direction too (RFC 9114 section 4.1.1), so a reset from the
+                // server on every stream is every reader done
+                withTimeout(3.seconds) {
+                    for (st in opened) {
+                        val end = runCatching { st.input.readAllBytes() }.exceptionOrNull()
+                        val reset = generateSequence(end) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull()
+                        assertEquals(Initiator.Peer, reset?.initiator, "stream ${st.id} reset by the server, not $end")
+                    }
+                }
                 awaitCondition("the readers to end at the resets", 3.seconds) {
                     withContext(server.session.dispatcher) { server.session.pendingHeaders.isEmpty() }
                 }
