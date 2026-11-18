@@ -5310,6 +5310,8 @@ kuicksilver-tls/src/appleTest	io.kuicksilver.tls.KeylogFileAppleTest.negative_ke
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.PrivateFilesAppleTest.negative_plantedSymlinkFifoOrFileIsNotUsed
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.PrivateFilesAppleTest.negative_sharedOrLinkedDirectoryRefused
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.AlertNameTest.alertNames
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.AlpnExtensionAlertTest.aWellFormedOrAbsentAlpnExtensionGetsThePolicysAnswer
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.AlpnExtensionAlertTest.negative_aMalformedAlpnExtensionIsDecodeErrorWithOrWithoutTheFallback
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.CertificatePemTest.negative_derLengthPastIntMaxIsMalformed
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.CertificatePemTest.parsePemRejectsMalformedDer
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.CertificatePemTest.parsePemReturnsBlocksInOrder
@@ -5604,6 +5606,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.clientAuthOption
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.clientAuthRequiredAnchoredCaAndPinned
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.ipServerNameNeverSentAsSni
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_aClientWithoutAlpnIsRefusedWhereTheFallbackIsNotOffered
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_aServersOwnH3IsNeverSelectedOverTcp
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_alpnFallbackIsForServersAndANameOfOneToTwoHundredFiftyFiveBytes
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_anH3OnlyOverrideEndsATcpHandshakeWithNoApplicationProtocol
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_anOverrideNeverNegotiatesH3OverTcp

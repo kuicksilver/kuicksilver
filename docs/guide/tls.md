@@ -121,8 +121,15 @@ connection (`alpn`, or the `sniSelector` answer's) name the fallback; elsewhere 
 `no_application_protocol` (120). That is the alert RFC 7301 section 3.2 gives a server that "supports no protocols that
 the client advertises", and the one RFC 9001 section 8.1 requires when "an application protocol is not negotiated" over
 QUIC; `missing_extension` (109) is for an extension "mandatory to send for the offered TLS version" (RFC 9846 section
-6.2), which ALPN over TCP is not. An empty list in effect (no ALPN) takes any client. QUIC ignores `alpnFallback`: a QUIC
-client without ALPN is always refused (RFC 9001 section 8.1). The Ktor server's TLS connector sets it to `http/1.1`.
+6.2), which ALPN over TCP is not. The rule holds at every ClientHello, the second one after a HelloRetryRequest included:
+RFC 9846 section 4.2.2 has the client "send the same ClientHello without modification" there but does not tell a server
+to compare the two, and OpenSSL does not, so a client that drops ALPN from its second ClientHello is judged as one that
+never sent it; the handshake is checked once more when it completes. A ClientHello whose ALPN extension is present but
+malformed (RFC 7301 section 3.1: a non-empty list of non-empty names) gets `decode_error` (50), with or without the
+fallback, as OpenSSL answers it. An empty list in effect (no ALPN) takes any client. The fallback cannot be `h3`, and a
+server over TCP selects from its `alpn` without `h3` (RFC 9114 section 3.1: HTTP/3 runs over QUIC only); a list of `h3`
+alone serves nothing over TCP, and every TCP handshake ends with `no_application_protocol`. QUIC ignores `alpnFallback`:
+a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The Ktor server's TLS connector sets it to `http/1.1`.
 
 ### Rotating the server certificate
 

@@ -358,24 +358,17 @@ public class TlsConnection private constructor(
     private var rejection: VerifyReason? = null
 
     private suspend fun selectIdentity() {
-        val selector = config.sniSelector
-        if (selector == null && !config.pausesForAlpnFallback) throw TlsException.Config("ksl paused for SNI without a selector")
+        val selector = config.sniSelector ?: throw TlsException.Config("ksl paused for SNI without a selector")
         val ch = Ksl.sslClientHello(s())
         val info = ClientHelloInfo(ch.serverName, parseAlpn(ch.alpnWire), parseU16List(ch.signatureAlgorithmsWire))
-        if (selector != null) selectedFor = ch.serverName
-        val answer = selector?.invoke(info)
-        // without a selector the pause is for the alpnFallback check alone
-        val verdict =
-            when (selector) {
-                null -> config.withoutAlpnVerdict(info, config.alpn, SniVerdict.Default)
-                else -> config.sniVerdictOverTcp(info, answer)
-            }
-        when (verdict) {
+        selectedFor = ch.serverName
+        when (val verdict = config.sniVerdict(info, selector(info))) {
             is SniVerdict.Override -> {
-                val override = verdict.override // the answer, without h3 in its ALPN list
+                val override = verdict.override
+                // its TCP context selects from the list without h3, and refuses every client when h3 was all of it (tcpAlpnPolicy)
                 val o = KslContext.acquire(config.overrideConfigs.of(config, override), quic = false)
                 overrideCtx = o
-                selectedAlpn = answer?.alpn?.toList()
+                selectedAlpn = override.alpn?.toList()
                 lock.withLock {
                     // the override's identity staples its own response, never the default identity's
                     if (config.ocspStapling != null || override.ocspStapling != null) {
@@ -385,8 +378,7 @@ public class TlsConnection private constructor(
                 }
             }
 
-            // unrecognized_name, missing_extension without a default identity, or no_application_protocol (a name served over QUIC
-            // only, or a client without ALPN where the alpnFallback is not offered)
+            // unrecognized_name, or missing_extension without a default identity
             is SniVerdict.Refuse -> {
                 lock.withLock { Ksl.sslSniResume(s(), 0L, verdict.alert) }
             }

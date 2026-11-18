@@ -334,7 +334,9 @@ internal class KslContext private constructor(
             snapshot: TlsIdentity.InMemory?,
             trust: TrustConfig,
         ): List<Certificate> {
-            if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
+            // a TLS-over-TCP server never selects h3 (RFC 9114 section 3.1); what a client offers is its own business
+            val alpn = if (quic || config.role == TlsRole.Client) config.alpn else config.tcpAlpn
+            if (alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             val chain =
@@ -376,8 +378,15 @@ internal class KslContext private constructor(
                         ClientAuth.Required -> KslConst.CLIENT_CERT_REQUIRED
                     },
                 )
-                if (config.sniSelector != null || (!quic && config.pausesForAlpnFallback)) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
+                if (config.sniSelector != null) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
                 if (!quic) {
+                    config.tcpAlpnPolicy.takeIf { it != KslConst.ALPN_POLICY_OPEN }?.let {
+                        Ksl.ctxSetOption(
+                            h,
+                            KslConst.OPT_ALPN_POLICY,
+                            it,
+                        )
+                    }
                     // contexts of other configurations and processes (and, before P.3, of every connection): without shared keys no ticket could be
                     // resumed elsewhere, so the default is a process-wide rotating set
                     useTicketKeys(h, config.sessionTickets)

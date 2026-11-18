@@ -876,6 +876,18 @@ class TlsServerTest {
         assertEquals("alert 120", withoutAlpn(base = listOf("x1", "fb"), answer = listOf("h3", "x1")), "h3 dropped first")
     }
 
+    /**
+     * A server's own list over TCP goes without `h3` too, as an answer's does: `h3` listed first is never selected, and a list
+     * of `h3` alone refuses every client (RFC 9114 section 3.1, RFC 7301 section 3.2).
+     */
+    @Test fun negative_aServersOwnH3IsNeverSelectedOverTcp() {
+        assertEquals("x1", withoutAlpn(base = listOf("h3", "x1"), offer = listOf("h3", "x1"), fb = null))
+        assertEquals("alert 120", withoutAlpn(base = listOf("h3"), offer = listOf("h3"), fb = null))
+        assertEquals("alert 120", withoutAlpn(base = listOf("h3"), fb = null), "a client without ALPN too")
+        assertEquals("alert 120", withoutAlpn(base = listOf("h3", "fb"), offer = listOf("h3"), fb = "fb"), "only h3 offered")
+        assertEquals("none", withoutAlpn(base = listOf("h3", "fb"), fb = "fb"), "the fallback is listed beside h3")
+    }
+
     /** The controls: the fallback offered, an empty list (no ALPN), a client with ALPN, and no fallback (OpenSSL's default). */
     @Test fun aClientWithoutAlpnConnectsWhereTheFallbackIsOfferedOrNoneIsSet() {
         assertEquals("none", withoutAlpn(base = listOf("x1", "fb")))
@@ -890,9 +902,11 @@ class TlsServerTest {
         assertEquals("alert 120", withoutAlpn(base = listOf("x1"), offer = listOf("fb")), "an offer without overlap stays 120")
     }
 
+    /** A client without ALPN over TCP never speaks HTTP/3, which is QUIC only (RFC 9114 section 3.1): `h3` is no fallback. */
     @OptIn(ExperimentalKuicksilverApi::class)
     @Test
     fun negative_alpnFallbackIsForServersAndANameOfOneToTwoHundredFiftyFiveBytes() {
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "h3" } }
         assertFailsWith<TlsException.Config> { TcpFixtures.client { alpnFallback = "http/1.1" } }
         assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "" } }
         assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "x".repeat(256) } }

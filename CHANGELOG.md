@@ -31,7 +31,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (120, RFC 7301 section 3.2). A TCP client without ALPN speaks HTTP/1.1 (RFC 9113 section 3.3: "HTTP/2 connections
   over TLS MUST use protocol negotiation in TLS"), so a name whose list leaves `http/1.1` out refuses it with
   `no_application_protocol` too (new `TlsConfig.Builder.alpnFallback`, experimental, set to `http/1.1` by the Ktor
-  connector; it also covers a connector's own `tlsConfig(listOf("h2"))`). Retry and address
+  connector; it also covers a connector's own `tlsConfig(listOf("h2"))`). `ksl` applies these rules
+  (`KSL_OPT_ALPN_POLICY`, additive under ABI 7) at every ClientHello, the second one after a HelloRetryRequest included,
+  and again when the handshake completes; a server's own `alpn` over TCP goes without `h3` as well, and `alpnFallback`
+  cannot be `h3`. A ClientHello whose ALPN extension is malformed gets `decode_error` (50) (RFC 7301 section 3.1), never
+  `no_application_protocol`. Retry and address
   validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
   [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni). The context of a chosen identity is built
   once per answer (same identity, trust and staple objects, equal ALPN and client-certificate settings) and shared by

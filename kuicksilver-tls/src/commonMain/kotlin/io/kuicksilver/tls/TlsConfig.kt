@@ -255,6 +255,8 @@ public class TlsConfig private constructor(
          * ALPN protocol IDs in preference order (RFC 7301), each 1..255 bytes of UTF-8 and at most 255 bytes together with one length byte each; default empty, which sends no ALPN
          * extension. QUIC needs at least one (RFC 9001 section 8.1); a server that shares none with the client's offer
          * fails the handshake with `no_application_protocol`.
+         * A server over TCP selects from the list without `h3`, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a
+         * list of `h3` alone serves nothing there, and every TCP handshake ends with `no_application_protocol`.
          */
         public var alpn: List<String> = emptyList()
 
@@ -360,8 +362,12 @@ public class TlsConfig private constructor(
          * completes it only where the protocols in effect for its connection name it: [alpn], or the [sniSelector] answer's
          * [ServerTlsOverride.alpn]; otherwise the handshake ends with `no_application_protocol` (120), the alert RFC 7301
          * section 3.2 gives a server that "supports no protocols that the client advertises" and RFC 9001 section 8.1 a
-         * QUIC server whose client negotiated none. An empty list in effect (no ALPN) takes any client. QUIC ignores it: a
-         * QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is 1..255 bytes of UTF-8.
+         * QUIC server whose client negotiated none. The check runs at every ClientHello, a second one after HelloRetryRequest
+         * included (RFC 9846 section 4.2.2 lets a client change nothing else there, and a server is not told to compare), and
+         * again when the handshake completes. A present but malformed ALPN extension (RFC 7301 section 3.1: a non-empty list
+         * of non-empty names) gets `decode_error` (50) instead, as without the fallback. An empty list in effect (no ALPN)
+         * takes any client. QUIC ignores it: a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is
+         * 1..255 bytes of UTF-8, and not `h3`, which identifies HTTP/3 over QUIC only (RFC 9114 section 3.1).
          */
         @ExperimentalKuicksilverApi
         public var alpnFallback: String? = null
@@ -369,7 +375,7 @@ public class TlsConfig private constructor(
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client or not 1..255 bytes, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
@@ -389,6 +395,8 @@ public class TlsConfig private constructor(
             val fallback = alpnFallback
             if (fallback != null) {
                 if (role != TlsRole.Server) throw TlsException.Config("alpnFallback applies to servers")
+                // a client without ALPN over TCP never speaks HTTP/3, which is QUIC only (RFC 9114 section 3.1)
+                if (fallback == ALPN_H3) throw TlsException.Config("alpnFallback cannot be h3: HTTP/3 runs over QUIC only")
                 validateAlpn(listOf(fallback))
             }
             return TlsConfig(
@@ -475,7 +483,7 @@ public class ClientHelloInfo internal constructor(
  * @property identity the chain and key presented on this connection instead of [TlsConfig.identity].
  * @property alpn replaces [TlsConfig.alpn] for this connection; null keeps it. Over TCP the list goes without `h3`, which
  *   identifies HTTP/3 over QUIC only (RFC 9114 section 3.1): one of `h3` alone ends a TCP handshake with
- *   `no_application_protocol` (RFC 7301 section 3.2), the name being served over QUIC only.
+ *   `no_application_protocol` (RFC 7301 section 3.2), the name being served over QUIC only, as for [TlsConfig.alpn].
  * @property clientAuth replaces [TlsConfig.clientAuth] for this connection; null keeps it.
  * @property trust replaces [TlsConfig.trust] for client certificates on this connection; null keeps it. The override passes
  *   the checks of [TlsConfig.Builder.build]: with client certificates the trust must be AnchoredCa or ReloadableCa (optionally inside Pinned)
