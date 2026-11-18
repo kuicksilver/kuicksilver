@@ -1,0 +1,107 @@
+OpenSSL 4.1.0: SSL_ech_get1_retry_config drops the whole retry_configs list for one ECHConfig it cannot use
+
+Kuicksilver's own code, the third patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
+openssl-4.1.0-ech-hrr-rejection.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_3, applied by
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes the upstream
+issue filed for it (research note M1). Applies unchanged to OpenSSL master at df4c3359.
+
+The bug: SSL_ech_get1_retry_config decodes the server's retry_configs into an OSSL_ECHSTORE before handing them out,
+and that decode (ech_store.c ech_decode_and_flatten) fails the whole list when one ECHConfig fails
+ech_final_config_checks (an unsupported KEM or cipher suite, a mandatory extension, a public_name of section 6.1.7), when
+the first entry is not of version 0xfe0d (ech_check_format then takes the binary list for base64), or when the list is
+shorter than 32 or longer than 1500 bytes. RFC 9849 section 4 has the client ignore such an ECHConfig ("Clients MUST
+ignore any ECHConfig structure with a key using a KEM they do not support"; section 4.2: "If an unsupported mandatory
+extension is present, clients MUST ignore the ECHConfig"), not the others; and the application cannot tell a list that
+did not frame (section 6.1.6: decode_error) from one it merely could not use, since both return 0.
+
+The fix: after the same state check (the outer handshake authenticated, retry_configs_ok, or the handshake complete), check
+only the framing of the ECHConfigList (not empty, every ECHConfig's version and length inside it, nothing after the
+last) and return the bytes as the server sent them. A 0 then means bytes that do not frame (or no memory). Kuicksilver
+checks each ECHConfig itself (ksl_ech.c check_list and list_syntax_ok) and keeps the usable ones.
+
+diff --git a/ssl/ech/ech_ssl_apis.c b/ssl/ech/ech_ssl_apis.c
+--- a/ssl/ech/ech_ssl_apis.c
++++ b/ssl/ech/ech_ssl_apis.c
+@@ -302,17 +302,14 @@
+ int SSL_ech_get1_retry_config(SSL *ssl, unsigned char **ec, size_t *eclen)
+ {
+     SSL_CONNECTION *s;
+-    OSSL_ECHSTORE *ve = NULL;
+-    BIO *in = NULL;
+-    int rv = 0;
+-    OSSL_LIB_CTX *libctx = NULL;
+-    const char *propq = NULL;
++    PACKET pkt, list, entry;
++    unsigned int version;
+ 
+     s = SSL_CONNECTION_FROM_SSL(ssl);
+     if (s == NULL || ec == NULL || eclen == NULL
+         || s->ext.ech.returned_len > INT_MAX) {
+         ERR_raise(ERR_LIB_SSL, ERR_R_PASSED_INVALID_ARGUMENT);
+-        goto err;
++        return 0;
+     }
+     if (s->ext.ech.returned == NULL) {
+         *ec = NULL;
+@@ -328,40 +325,35 @@
+      */
+     if (SSL_is_init_finished(ssl) != 1 && s->ext.ech.retry_configs_ok != 1) {
+         ERR_raise(ERR_LIB_SSL, ERR_R_OSSL_STORE_LIB);
+-        goto err;
++        return 0;
+     }
+     /*
+-     * To not hand rubbish to application, we'll decode the value we have
+-     * so only syntactically good things are passed up. We won't insist
+-     * though that every entry in the retry_config list seems good - it
+-     * could be that e.g. one is a newer version than we support now,
+-     * and letting the application see that might cause someone to do an
+-     * upgrade.
++     * Check the framing only: an ECHConfigList (RFC 9849, section 4) that
++     * is not empty and whose ECHConfig entries each fit, with nothing after
++     * the last one. Each ECHConfig is the application's to check: a client
++     * MUST ignore one of another version, with an unsupported KEM or an
++     * unsupported mandatory extension (sections 4, 4.2), and that must not
++     * take the others with it, as decoding the whole list into a store did.
+      */
+-    if (s->ext.ech.es != NULL) {
+-        libctx = s->ext.ech.es->libctx;
+-        propq = s->ext.ech.es->propq;
++    if (!PACKET_buf_init(&pkt, s->ext.ech.returned, s->ext.ech.returned_len)
++        || !PACKET_get_length_prefixed_2(&pkt, &list)
++        || PACKET_remaining(&pkt) != 0
++        || PACKET_remaining(&list) == 0) {
++        ERR_raise(ERR_LIB_SSL, SSL_R_ECH_DECODE_ERROR);
++        return 0;
+     }
+-    if ((in = BIO_new(BIO_s_mem())) == NULL
+-        || BIO_write(in, s->ext.ech.returned, (int)s->ext.ech.returned_len) <= 0
+-        || (ve = OSSL_ECHSTORE_new(libctx, propq)) == NULL) {
+-        ERR_raise(ERR_LIB_SSL, ERR_R_INTERNAL_ERROR);
+-        goto err;
++    while (PACKET_remaining(&list) > 0) {
++        if (!PACKET_get_net_2(&list, &version)
++            || !PACKET_get_length_prefixed_2(&list, &entry)) {
++            ERR_raise(ERR_LIB_SSL, SSL_R_ECH_DECODE_ERROR);
++            return 0;
++        }
+     }
+-    if (OSSL_ECHSTORE_read_echconfiglist(ve, in) != 1) {
+-        ERR_raise(ERR_LIB_SSL, ERR_R_INTERNAL_ERROR);
+-        goto err;
+-    }
+-    /* all good, copy and return */
+     *ec = OPENSSL_memdup(s->ext.ech.returned, s->ext.ech.returned_len);
+     if (*ec == NULL)
+-        goto err;
++        return 0;
+     *eclen = s->ext.ech.returned_len;
+-    rv = 1;
+-err:
+-    OSSL_ECHSTORE_free(ve);
+-    BIO_free_all(in);
+-    return rv;
++    return 1;
+ }
+ 
+ /*

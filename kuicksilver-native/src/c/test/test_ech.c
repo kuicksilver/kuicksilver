@@ -114,13 +114,13 @@ typedef struct {
     uint8_t list[512]; /* its ECHConfigList, binary */
     size_t list_len;
 } echkey;
-static echkey make_echkey(const char *public_name) {
+static echkey make_echkey_mnl(const char *public_name, uint8_t max_name_length) {
     echkey k;
     memset(&k, 0, sizeof k);
     OSSL_ECHSTORE *es = OSSL_ECHSTORE_new(NULL, NULL);
     OSSL_HPKE_SUITE suite = OSSL_HPKE_SUITE_DEFAULT; /* X25519, HKDF-SHA256, AES-128-GCM: RFC 9849's mandatory suite */
     BIO *m = BIO_new(BIO_s_mem());
-    if (!es || !m || OSSL_ECHSTORE_new_config(es, OSSL_ECH_RFC9849_VERSION, 0, public_name, suite) != 1 ||
+    if (!es || !m || OSSL_ECHSTORE_new_config(es, OSSL_ECH_RFC9849_VERSION, max_name_length, public_name, suite) != 1 ||
         OSSL_ECHSTORE_write_pem(es, OSSL_ECHSTORE_LAST, m) != 1) {
         printf("ECH key generation failed\n");
         exit(3);
@@ -152,6 +152,9 @@ static echkey make_echkey(const char *public_name) {
         exit(3);
     }
     return k;
+}
+static echkey make_echkey(const char *public_name) {
+    return make_echkey_mnl(public_name, 0);
 }
 /* the framing of ksl_ech_keys_new: (uint32 length || flags || PEM)* */
 static blob keyset(int n, ...) {
@@ -269,7 +272,7 @@ typedef struct {
     int rc, done, alert_c, alert_s, status_c, status_s;
     char wire_sni[256];
     int wire_ech;
-    uint8_t retry[512];
+    uint8_t retry[4096];
     size_t retry_len;
     char server_sni[256];
     int server_got_cert;             /* the server holds a client certificate */
@@ -1008,6 +1011,12 @@ static void test_rotation_threads(void) {
     free(two.buf);
     END();
 }
+/* a host name of d bytes: labels of up to 40 'a', then ".test" */
+static void name_of(char *out, int d) {
+    for (int i = 0; i < d - 5; i++)
+        out[i] = (i % 41 == 40 && i < d - 6) ? '.' : 'a'; /* never a dot before ".test" */
+    memcpy(out + d - 5, ".test", 6);
+}
 /* ---------- the outcomes of RFC 9849 sections 5, 6.1.2, 6.1.6 and 6.2.1 ---------- */
 /* a PEM of k's private key with `list` as its ECHCONFIG block */
 static char *pem_with_list(const echkey *k, const uint8_t *list, size_t len) {
@@ -1180,6 +1189,41 @@ static void test_outcomes(void) {
             CHECK(ACCEPTED(again), "... and the retry with it is accepted");
         }
     }
+    /* M1 from a real server: retry_configs of 6 keys with long public names, 1.6 KB in all. OpenSSL 4.1.0 decoded the list
+       into a store before handing it out and refused it past 1500 bytes, so a good rejection read as one whose retry_configs do
+       not parse; with the patch they come back whole */
+    {
+        echkey big[6];
+        blob kbig = {0};
+        size_t want = 2;
+        uint8_t all[4096];
+        for (int i = 0; i < 6; i++) {
+            char pn[256];
+            name_of(pn, 230);
+            pn[0] = (char)('b' + i);
+            big[i] = make_echkey(pn);
+            blob one = keyset(1, &big[i], 1);
+            kbig.buf = realloc(kbig.buf, kbig.len + one.len);
+            memcpy(kbig.buf + kbig.len, one.buf, one.len);
+            kbig.len += one.len;
+            free(one.buf);
+            memcpy(all + want, big[i].list + 2, big[i].list_len - 2);
+            want += big[i].list_len - 2;
+        }
+        ksl_ctx *sbig = ech_server(&id_both, &kbig, NULL);
+        set_hooks(0, NULL, 0, 0);
+        run r = quic_run(cc, sbig, &key_a, NULL);
+        all[0] = (uint8_t)((want - 2) >> 8), all[1] = (uint8_t)(want - 2);
+        int ok = r.status_c == KSL_ECH_REJECTED && r.alert_c == 121 && want > 1500 && r.retry_len == want &&
+                 !memcmp(r.retry, all, want);
+        CHECK(ok, "ech_long_retry_list: 6 retry configurations past 1500 bytes are reported whole (carried patch M1)");
+        if (!ok)
+            report("long retry list", r);
+        ksl_ctx_free(sbig);
+        free(kbig.buf);
+        for (int i = 0; i < 6; i++)
+            free(big[i].pem);
+    }
     /* section 5: retry_configs answer only the outer ClientHello; with ECH accepted they fail the session (unsupported_extension) */
     set_hooks(1, key_b.list, key_b.list_len, 0);
     run as[2] = {quic_run(cc, sa, &key_a, NULL), tcp_run(cc, sa, &key_a)};
@@ -1310,6 +1354,47 @@ static void test_inner_tls12(void) {
     END();
 }
 
+/* the payload length of the encrypted_client_hello in the first ClientHello of a session for `name` with k */
+static size_t payload_for(ksl_ctx *cc, const echkey *k, const char *name) {
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC);
+    ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)name, strlen(name));
+    ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)name, strlen(name));
+    ksl_ssl_set(c, KSL_SET_ECH_CONFIG_LIST, k->list, k->list_len);
+    ksl_quic_set_transport_params(c, TP, sizeof TP);
+    ksl_drive(c);
+    ksl_event ev;
+    char sni[256];
+    int has = 0;
+    hello_ech_payload = 0;
+    if (ksl_quic_peek_event(c, &ev) && ev.type == KSL_EV_CRYPTO_SEND)
+        hello_sni(ev.buf, ev.len, sni, sizeof sni, &has);
+    ksl_ssl_free(c);
+    return has ? hello_ech_payload : 0;
+}
+/* RFC 9849 section 6.1.3: with maximum_name_length M, an inner server_name of length D gets max(0, M - D) bytes of padding, then
+   the whole is rounded up to 32 bytes: every name up to M bytes gives the same payload length. OpenSSL 4.1.0 padded
+   max(0, M - D - 9), so a name of M bytes came out up to 9 bytes longer than a short one, visible whenever that crossed a
+   32-byte step (the fourth carried patch of ADR-0019). Every M of one 32-byte cycle above the 128-byte floor is tried. */
+static void test_padding(void) {
+    SECTION("ech_inner_name_padding");
+    ksl_ctx *cc = ech_client(KSL_VERIFY_OPENSSL, 0);
+    int same = 1;
+    for (int m = 160; m < 192 && same; m++) {
+        echkey k = make_echkey_mnl(PUBLIC, (uint8_t)m);
+        char shortest[16], longest[256];
+        name_of(shortest, 6);
+        name_of(longest, m);
+        size_t a = payload_for(cc, &k, shortest), b = payload_for(cc, &k, longest);
+        if (a == 0 || a != b) {
+            printf("  M=%d: payload %zu for 6 bytes, %zu for %d bytes\n", m, a, b, m);
+            same = 0;
+        }
+        free(k.pem);
+    }
+    CHECK(same, "a name of 6 bytes and one of M bytes give one encrypted payload length, for 32 values of M");
+    ksl_ctx_free(cc);
+    END();
+}
 /* the first ksl_ctx_set_ech_keys on a fresh server context, from several threads at once, while others make sessions: the
    key lock exists from ksl_ctx_new (a lock made by the first setter raced the others and ksl_ech_ssl_init); run under
    ThreadSanitizer by KSL_TSAN=1 tools/c-test.sh */
@@ -1371,6 +1456,7 @@ void run_ech(void) {
     test_outcomes();
     test_grease_suites();
     test_inner_tls12();
+    test_padding();
     free(key_a.pem);
     free(key_b.pem);
     free_pki();

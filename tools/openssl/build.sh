@@ -21,11 +21,11 @@
 # (docs/guide/building.md).
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
-# The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, patch_2 /
-# patch_2_sha256 second (only with a first). Each file must have its pinned SHA-256, and tools/openssl/apply-patch.pl applies
-# them, in that order and exactly, to the copy of the verified tree the build runs in; their hashes are part of the cache
-# key, of the target line (tokens patch-sha256=<first 16 hex> and patch-2-sha256=<...>) and of provenance.txt
-# (patch-sha256 <hash>, patch-2-sha256 <hash>).
+# The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, then patch_2 /
+# patch_2_sha256 up to patch_9 / patch_9_sha256, each only with all the ones before it. Each file must have its pinned
+# SHA-256, and tools/openssl/apply-patch.pl applies them, in that order and exactly, to the copy of the verified tree the
+# build runs in; their hashes are part of the cache key, of the target line (tokens patch-sha256=<first 16 hex>,
+# patch-2-sha256=<...>, ...) and of provenance.txt (patch-sha256 <hash>, patch-2-sha256 <hash>, ...).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
@@ -37,11 +37,14 @@ pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;;
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
 patch_files=(); patch_id=""; prov_patches=""
-for n in "" _2; do
+for n in "" _2 _3 _4 _5 _6 _7 _8 _9; do
   pf=$(sed -n "s/^patch$n = \"\(.*\)\"/\1/p" "$toml"); ps=$(sed -n "s/^patch${n}_sha256 = \"\(.*\)\"/\1/p" "$toml")
   case "${pf:+f}${ps:+s}" in ""|fs) ;; *) echo "$toml: patch$n and patch${n}_sha256 go together" >&2; exit 1 ;; esac
   [ -n "$pf" ] || continue
-  [ -z "$n" ] || [ ${#patch_files[@]} -eq 1 ] || { echo "$toml: patch$n without patch" >&2; exit 1; }
+  idx=${n#_}; idx=${idx:-1}   # patch is 1, patch_2 is 2, ...: all the ones before it must be there
+  if [ ${#patch_files[@]} -ne $((idx - 1)) ]; then
+    prev=$([ "$idx" -eq 2 ] && echo patch || echo "patch_$((idx - 1))"); echo "$toml: patch$n without $prev" >&2; exit 1
+  fi
   label="patch${n//_/-}-sha256"
   patch_id="${patch_id:+$patch_id }$label=$(printf %s "$ps" | cut -c1-16)"; prov_patches="${prov_patches}$label $ps"$'\n'
   if [ "$print_only" != 1 ]; then

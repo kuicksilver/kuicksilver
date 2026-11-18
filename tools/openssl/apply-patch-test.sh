@@ -82,13 +82,20 @@ if [ -n "$patch" ]; then
     elif grep -q "patch_2 without patch" "$tmp/out"; then ok "negative_second_patch_without_first refused"
     else bad "negative_second_patch_without_first (another error: $(head -1 "$tmp/out"))"; fi
   fi
+  if grep -q '^patch_3 = ' "$pin"; then
+    grep -v '^patch_2 = \|^patch_2_sha256 = ' "$pin" > "$tmp/pin4.toml"
+    if KSL_OPENSSL_PIN="$tmp/pin4.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
+      bad "negative_third_patch_without_second (build.sh went on)"
+    elif grep -q "patch_3 without patch_2" "$tmp/out"; then ok "negative_third_patch_without_second refused"
+    else bad "negative_third_patch_without_second (another error: $(head -1 "$tmp/out"))"; fi
+  fi
   grep -v '^patch_sha256 = ' "$pin" > "$tmp/pin1.toml"
   if KSL_OPENSSL_PIN="$tmp/pin1.toml" KSL_OPENSSL_WORK="$tmp/work" bash "$here/build.sh" macos-arm64 >"$tmp/out" 2>&1; then
     bad "negative_patch_without_hash (build.sh went on)"
   elif grep -q "patch and patch_sha256 go together" "$tmp/out"; then ok "negative_patch_without_hash refused"
   else bad "negative_patch_without_hash (another error: $(head -1 "$tmp/out"))"; fi
   # the pinned patches' hashes are what the pin says (the files in the repository are the ones reviewed)
-  for k in patch patch_2; do
+  for k in patch patch_2 patch_3 patch_4 patch_5 patch_6 patch_7 patch_8 patch_9; do
     f=$(sed -n "s/^$k = \"\(.*\)\"/\1/p" "$pin"); [ -n "$f" ] || continue
     [ "$(shasum -a 256 < "$root/$f" | cut -d' ' -f1)" = "$(sed -n "s/^${k}_sha256 = \"\(.*\)\"/\1/p" "$pin")" ] \
       && ok "$k has its pinned SHA-256" || bad "$k has its pinned SHA-256"
