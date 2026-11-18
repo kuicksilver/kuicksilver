@@ -218,7 +218,8 @@ in its race tests: from the test files changed since the base, a race test as `r
 outside a test picks its whole class). They run 10 times under CPU load through `tools/ci/flake-hunt.sh`, test by test:
 those of `commonTest`, `jvmTest` and `jvmCommonTest` on the JVM, those of `nativeTest`, `appleTest` and `posixTest` as
 `macosArm64Test` on a macOS host; other source sets are listed and not run. The base is the newest commit this checkout's
-gate passed on (`build/ci/gate/<commit>.stamp` with `result=pass`) that `HEAD` descends from, so an integration branch
+gate passed on having run it (`build/ci/gate/<commit>.stamp` with `result=pass` and `race-repeat=ran`, which the gate
+writes) that `HEAD` descends from, so an integration branch
 repeats what came since its last gate, else the merge base with `main`; `--base` names another. The cost follows the
 selection: a branch's own changes take a few minutes (one build per target and 10 runs of the picked tests; nine picks
 across four modules took about 70 s for 2 runs), and a first run against `main` with a whole integration branch's worth of

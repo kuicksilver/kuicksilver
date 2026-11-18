@@ -433,6 +433,7 @@ fi
 # 10 times under load (tools/ci/race-repeat.sh; docs/process.md, "Repository checks"), so a test that passes only in the
 # order a quiet machine picks fails here, not after the gate; a few minutes for a branch's own changes. A selection
 # (--only, --from) leaves it out
+race_repeat=no
 if [ -z "$selection" ]; then
   if [ "$dry" = 1 ]; then
     echo "preflight: race tests changed since the last passed gate, 10 runs under load (dry run):"
@@ -440,7 +441,7 @@ if [ -z "$selection" ]; then
   else
     mkdir -p build/ci; printf 'preflight: race tests changed since the last passed gate, 10 runs under load ... '
     if FLAKE_HUNT_GRADLE_ARGS="--max-workers=${KSL_GATE_WORKERS:-2} -Pkotlin.incremental=false" \
-      bash tools/ci/race-repeat.sh > build/ci/race-repeat.log 2>&1; then echo ok
+      bash tools/ci/race-repeat.sh > build/ci/race-repeat.log 2>&1; then echo ok; race_repeat=ran
     else
       echo "FAIL (see build/ci/race-repeat.log)"; tail -15 build/ci/race-repeat.log | sed 's/^/     | /'
       echo "local matrix: refused before step 1: a race test failed under load; reproduce with tools/ci/race-repeat.sh" >&2; exit 1
@@ -459,7 +460,7 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes
   mkdir -p build/ci/gate
   { echo "commit=$head0"; echo "result=$result"; echo "selection=${selection:-all}"
     [ -z "$selection" ] || echo "selected=$(picked_ranges)"
-    echo "tree=$tree"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "tree=$tree"; echo "race-repeat=$race_repeat"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
     echo "with_windows=$with_windows"; echo "with_browser=$with_browser"; echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
   if [ -z "$selection" ]; then echo "gate record: $record (result=$result, tree $tree)"

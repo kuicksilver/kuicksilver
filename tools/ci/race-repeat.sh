@@ -9,7 +9,8 @@
 # a line in a helper outside a test picks its whole class). Each runs through tools/ci/flake-hunt.sh: those of commonTest,
 # jvmTest and jvmCommonTest on the JVM (one build, -Pkuicksilver.test.repeat), those of nativeTest, appleTest and posixTest
 # as macosArm64Test (one build per run, on a macOS host only); other source sets are listed, not run. The base by default
-# is the newest commit this checkout's gate passed on (build/ci/gate/<commit>.stamp, result=pass) that HEAD descends from,
+# is the newest commit this checkout's gate passed on, having run this script (build/ci/gate/<commit>.stamp with
+# result=pass and race-repeat=ran), that HEAD descends from,
 # so an integration branch repeats what came since its last gate; else the merge base with main. Cost: about 10 runs of
 # the picked tests' classes' set-up plus the tests, typically a few minutes; --list shows the selection first.
 #
@@ -43,7 +44,8 @@ if [ -z "$base" ]; then
   # the last commit this checkout's gate passed on, if HEAD descends from it: what came since is the branch's own work
   best=""; bestn=""
   for stamp in build/ci/gate/*.stamp; do
-    [ -f "$stamp" ] && grep -qx 'result=pass' "$stamp" || continue
+    # a passed gate that also ran this script: its race tests were repeated already
+    [ -f "$stamp" ] && grep -qx 'result=pass' "$stamp" && grep -qx 'race-repeat=ran' "$stamp" || continue
     c=$(basename "$stamp" .stamp)
     git merge-base --is-ancestor "$c" HEAD 2>/dev/null || continue
     n=$(git rev-list --count "$c..HEAD")
@@ -80,7 +82,8 @@ for f in filter(None, (l.strip() for l in sys.stdin)):
         if h:
             at = int(h.group(1))
             n = int(h.group(2) if h.group(2) is not None else 1)
-            lines.update(range(at, at + n))
+            # a pure deletion (+at,0) adds no line: the lines around it changed (at is the line before the gap)
+            lines.update(range(at, at + n) if n else (at, at + 1))
         elif d.startswith("+") and not d.startswith("+++"):
             added.append((at, d[1:]))
             at += 1
@@ -88,9 +91,10 @@ for f in filter(None, (l.strip() for l in sys.stdin)):
     code = rt.ks.blank(text)
     starts = [0] + [i + 1 for i, ch in enumerate(code) if ch == "\n"]
     line_of = lambda pos: next(i for i in range(len(starts) - 1, -1, -1) if starts[i] <= pos) + 1
-    spans = {}
+    spans, bodies = {}, {}
     for name, s0, e0 in rt.ks.function_bodies(code):
         spans.setdefault(name, []).append((line_of(s0), line_of(max(s0, e0 - 1))))
+        bodies.setdefault(name, []).append(code[s0:e0])
     tests = {t["name"]: t["line"] for t in rt.ks.tests_in(code, text) if t["name"]}
     def test_at(ln):
         for name, decl in tests.items():
@@ -98,14 +102,30 @@ for f in filter(None, (l.strip() for l in sys.stdin)):
                 if decl <= ln <= hi:
                     return name
         return None
+    def changed_fn(name):
+        decl = tests.get(name)
+        # a function of the file: its body, and for a test its declaration (the annotation line on) too
+        ranges = [(min(lo, decl) if decl else lo, hi) for lo, hi in spans.get(name, [])] or ([(decl, decl)] if decl else [])
+        return any(lo <= ln <= hi for lo, hi in ranges for ln in lines)
     def touched(name):
-        decl = tests[name]
-        return any(decl <= ln <= hi for lo, hi in spans.get(name, [(decl, decl)]) for ln in lines)
+        # the test, or a function of the file it reaches through calls (as race-tests.py follows them), changed
+        seen, todo = {name}, [name]
+        while todo:
+            fn = todo.pop()
+            if changed_fn(fn):
+                return True
+            for body in bodies.get(fn, []):
+                for c in rt.CALL.finditer(body):
+                    callee = c.group(1)
+                    if callee in bodies and callee not in seen:
+                        seen.add(callee)
+                        todo.append(callee)
+        return False
     cls = os.path.basename(f)[:-3]
     picked = {}
     for _, name, _ in rt.race_tests(f, text):
         if touched(name):
-            picked[name] = "a race test whose lines changed"
+            picked[name] = "a race test whose lines, or a helper it calls, changed"
     hook_lines = [ln for ln, l in added if HOOK.search(rt.ks.blank(l))]
     whole = False
     for ln in hook_lines:

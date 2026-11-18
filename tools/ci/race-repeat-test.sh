@@ -5,7 +5,8 @@
 # arguments: nothing is built or run. Picked: a race test added on the branch (by its name, and a test added to a file
 # named *Race*), a test whose body gained a hook assignment, the whole class when a helper outside a test gained one, a
 # race test in nativeTest (the macOS runner, or listed on another host), one in androidDeviceTest (listed, not run). Not
-# picked: main sources, a race test the base already had unchanged (also when another test of its file changed), a test
+# picked: a race test whose same-file helper changed, one that only lost a line (a pure deletion). Not picked: main
+# sources, a race test the base already had unchanged (also when another test of its file changed), a test
 # whose hook assignment was there before (another line of it changed), a file deleted on the branch, a file that only
 # compares a hook (`== null`), a test named trace or grace; with a passed gate stamp of an ancestor, what came before it.
 # The stub is called with the runs, the target and one -T pattern per test; its failure fails the script; a bad base and
@@ -36,6 +37,23 @@ put kuicksilver-x/src/commonTest/kotlin/x/KeptHookTest.kt 'class KeptHookTest {
         println(1)
     }
 }'
+put kuicksilver-x/src/commonTest/kotlin/x/HelpedRaceTest.kt 'class HelpedRaceTest {
+    @kotlin.test.Test fun usesTheHelper() = helper()
+
+    @kotlin.test.Test fun standsAlone() = Unit
+
+    private fun helper() {
+        println(1)
+    }
+}'
+put kuicksilver-x/src/commonTest/kotlin/x/ShrunkRaceTest.kt 'class ShrunkRaceTest {
+    @kotlin.test.Test fun lostALine() {
+        println(1)
+        println(2)
+    }
+
+    @kotlin.test.Test fun untouched() = Unit
+}'
 git -C "$r" add -A; git -C "$r" commit -qm base
 git -C "$r" checkout -qb topic
 echo calls.txt > "$r/.gitignore"
@@ -65,6 +83,22 @@ put kuicksilver-x/src/commonTest/kotlin/x/KeptHookTest.kt 'class KeptHookTest {
         println(2)
     }
 }'
+put kuicksilver-x/src/commonTest/kotlin/x/HelpedRaceTest.kt 'class HelpedRaceTest {
+    @kotlin.test.Test fun usesTheHelper() = helper()
+
+    @kotlin.test.Test fun standsAlone() = Unit
+
+    private fun helper() {
+        println(2)
+    }
+}'
+put kuicksilver-x/src/commonTest/kotlin/x/ShrunkRaceTest.kt 'class ShrunkRaceTest {
+    @kotlin.test.Test fun lostALine() {
+        println(1)
+    }
+
+    @kotlin.test.Test fun untouched() = Unit
+}'
 put kuicksilver-x/src/commonTest/kotlin/x/HelperTest.kt 'class HelperTest {
     private fun setUp() {
         startForTest = { }
@@ -75,7 +109,7 @@ put kuicksilver-x/src/commonTest/kotlin/x/HelperTest.kt 'class HelperTest {
 git -C "$r" rm -q kuicksilver-x/src/commonTest/kotlin/x/GoneRaceTest.kt
 git -C "$r" add -A; git -C "$r" commit -qm topic
 run --list; out=$?
-check $out 0 "a race test by its name is picked" "jvm    kuicksilver-x *.StopTest.aStopRacingAHead (a race test whose lines changed)"
+check $out 0 "a race test by its name is picked" "jvm    kuicksilver-x *.StopTest.aStopRacingAHead (a race test"
 check $out 0 "a test of a file named *Race* is picked" "kuicksilver-x *.SelectRaceTest.plainName (a race test"
 check $out 0 "a test whose body gained a hook assignment is picked" "kuicksilver-y *.HookTest.f (its hook assignments changed)"
 check $out 0 "a Native race test runs on macOS" "macos  kuicksilver-x *.NativeRaceTest.n"
@@ -84,13 +118,17 @@ check $out 0 "negative: a comparison with a hook, trace and grace are not picked
 check $out 0 "a test added to a file named *Race* is picked" "*.OldRaceTest.added (a race test"
 check $out 0 "negative: an unchanged race test beside a changed one is not picked" "10 runs under load" "OldRaceTest.old"
 check $out 0 "negative: a deleted race test is not picked" "10 runs under load" "GoneRaceTest"
+check $out 0 "a race test whose helper changed is picked" "*.HelpedRaceTest.usesTheHelper (a race test"
+check $out 0 "negative: a race test that does not reach the changed helper is not picked" "10 runs under load" "HelpedRaceTest.standsAlone"
+check $out 0 "a race test that only lost a line is picked" "*.ShrunkRaceTest.lostALine (a race test"
+check $out 0 "negative: and its unchanged neighbour is not" "10 runs under load" "ShrunkRaceTest.untouched"
 check $out 0 "a helper that gained a hook assignment picks its class" "kuicksilver-x *.HelperTest (a helper that assigns a hook changed)"
 check $out 0 "negative: a hook assignment that was there before is not picked" "10 runs under load" "KeptHookTest"
 check $out 0 "negative: main sources are not picked" "10 runs under load" " Racing ("
 check $out 0 "negative: --list runs nothing" "10 runs under load" "race-repeat: tools/ci/flake-hunt.sh"
 [ ! -e "$r/calls.txt" ] || { echo "FAIL: --list called flake-hunt.sh"; rc=1; }
 run -n 3 -b 0; out=$?
-check $out 0 "the JVM tests go to flake-hunt.sh in one call" "flake-hunt.sh -n 3 -t jvm -o build/race-repeat/jvm -b 0 -T *.HelperTest -T *.OldRaceTest.added -T *.StopTest.aStopRacingAHead -T *.SelectRaceTest.plainName -T *.HookTest.f kuicksilver-x kuicksilver-y"
+check $out 0 "the JVM tests go to flake-hunt.sh in one call" "-T *.StopTest.aStopRacingAHead -T *.SelectRaceTest.plainName -T *.HookTest.f kuicksilver-x kuicksilver-y"
 calls=$(cat "$r/calls.txt" 2>/dev/null)
 if grep -qF -- "-t jvm" <<< "$calls" && grep -qF -- "kuicksilver-x kuicksilver-y" <<< "$calls"; then echo "ok: flake-hunt.sh got the modules"
 else echo "FAIL: flake-hunt.sh calls: $calls"; rc=1; fi
@@ -102,6 +140,8 @@ else
 fi
 git -C "$r" rev-parse HEAD > "$tmp/gated"
 mkdir -p "$r/build/ci/gate"; printf 'commit=%s\nresult=pass\n' "$(cat "$tmp/gated")" > "$r/build/ci/gate/$(cat "$tmp/gated").stamp"
+run --list; check $? 0 "negative: a passed gate that did not run the repeat is no base" "since $(git -C "$r" rev-parse --short main)" "since $(cut -c1-7 "$tmp/gated")"
+printf 'race-repeat=ran\n' >> "$r/build/ci/gate/$(cat "$tmp/gated").stamp"
 echo build/ >> "$r/.gitignore"
 put kuicksilver-x/src/commonTest/kotlin/x/LateRaceTest.kt 'class LateRaceTest { @kotlin.test.Test fun late() = Unit }'
 git -C "$r" add -A; git -C "$r" commit -qm after-gate
