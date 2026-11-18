@@ -430,11 +430,12 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
 - **Mitigations:** since 0.3.0 the engine runs PAC scripts itself on JavaScriptCore (`io.kuicksilver.ktor.client.pac`).
   Each script gets a bare `JSGlobalContextCreate` context: ECMAScript's built-ins, the PAC utility functions written in
   JavaScript, and four native functions (`dnsResolve`, `dnsResolveEx`, `myIpAddress`, `myIpAddressEx`, read-only; an
-  argument longer than 1024 characters gives nothing), so no network, file, timer, module or process API; scripts share
+  argument longer than 1024 characters or holding a NUL gives nothing), so no network, file, timer, module or process API; scripts share
   no context. A run is limited to 2 s from its start (not from its queueing, nor from the engine's
   preparation of a new script's text before it: the size check and the copy into JavaScriptCore, in which no script
-  code runs and which the 1 MiB cap bounds, so a device slow at it does not lose a legitimate script's answer), its DNS
-  lookups to three quarters of that
+  code runs and which the 1 MiB cap bounds, so a device slow at it does not lose a legitimate script's answer; the
+  residual risk: a slow preparation is never taken for an overrun, so it keeps the PAC thread busy until it ends, and
+  each lookup queued behind it is bounded only by its own 5 s overall limit), its DNS lookups to three quarters of that
   (a lookup that does not answer in time gives nothing; answers are kept for the run), a lookup with its download to
   5 s. JavaScriptCore's public API cannot interrupt a script, so a run that overruns gives no answer and its thread is
   abandoned, also when its caller gave up first (the next run finds it busy past its limit); the next run gets a new
@@ -491,7 +492,8 @@ Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the sam
   `.negative_stringBombFailsAndPacRecovers`, `.negative_busyLoopIsAbandonedAndPacRecovers`, `.negative_oversizedInlineScriptIsRefused`,
   `.negative_hugeThrownValueIsNotCopied`, `.negative_wssScriptsGetTheOriginUnlessTheSettingsNameThemAndTheAppOptsIn`,
   `.negative_plainHttpPacUrlGetsTheOriginEvenWhenNamed`, `.negative_slowPreparationIsNotARunaway`,
-  `.negative_aCallerGoneDuringPreparationLeavesNoRun`, `.negative_aNulDoesNotEndTheScript` (macOS);
+  `.negative_aCallerGoneDuringPreparationLeavesNoRun`, `.negative_aNulDoesNotEndTheScript`, `.negative_aNulInTheAnswerFailsTheRun`,
+  `.negative_aNulInADnsNameResolvesNothing` (macOS);
   `ProxyResolverTest.negative_unsupportedOnlyPacAnswerFailsClosed`, `.negative_pacTargetOfASecureUrlIsItsOriginOnly`,
   `.negative_wpadScriptOnWindowsGetsTheOriginOnly`, `.negative_plainHttpPacUrlOnWindowsGetsTheOriginOnly`, `.negative_remoteFilePacUrlGetsTheOriginOnly`, `.pacHostIsLowerCase`.
 

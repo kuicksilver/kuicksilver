@@ -32,7 +32,9 @@ import kotlin.time.Duration.Companion.milliseconds
  * Runs PAC scripts on one thread of their own, each in its [PacContext] (kept per script source, at most [MAX_CONTEXTS],
  * the least recently used released). A run's time limit counts from when it starts on that thread, not from when it was
  * queued behind others, nor from the preparation of a new script's text before it ([PacSource]: no script code runs then,
- * and the size cap bounds it). JavaScriptCore's public API cannot interrupt a script, so a run that overruns its limit gives no
+ * and the size cap bounds it). A slow preparation is so never taken for an overrun: it keeps the thread busy until it
+ * ends, and each lookup queued behind it is bounded only by its caller's own overall limit (5 s, [evaluatePac]).
+ * JavaScriptCore's public API cannot interrupt a script, so a run that overruns its limit gives no
  * answer and its thread is abandoned to it: the next run gets a new thread and new contexts. While [MAX_ABANDONED]
  * threads are abandoned no script runs (lookups give no answer, so the next setting or a direct connection); when an
  * abandoned run ends its thread and contexts are released and scripts run again. A hostile script can so hold at most
