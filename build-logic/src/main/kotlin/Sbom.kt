@@ -72,6 +72,9 @@ abstract class CyclonedxSbomTask : DefaultTask() {
 
     @get:Input abstract val opensslConfigureFlags: ListProperty<String>
 
+    /** The patch carried on the OpenSSL tarball (ADR-0019) as "<path> sha256:<hash>", empty without one (gradle/openssl.toml). */
+    @get:Input abstract val opensslPatch: Property<String>
+
     @get:Input abstract val kslAbi: Property<String>
 
     /** The modules of a BOM (java-platform) publication, which has constraints and no graph. */
@@ -193,6 +196,8 @@ abstract class CyclonedxSbomTask : DefaultTask() {
             distribution = url
             properties += "kuicksilver:linkage" to "static"
             properties += "kuicksilver:openssl:configure" to opensslConfigureFlags.get().joinToString(" ")
+            // the one patch carried on the tarball (ADR-0019), applied before Configure (tools/openssl/build.sh)
+            opensslPatch.get().takeIf { it.isNotEmpty() }?.let { properties += "kuicksilver:openssl:patch" to it }
             // OpenSSL 3 builds its FIPS provider only with enable-fips; the flags leave it at its default (disabled), and no-module
             // rules out any loadable provider (tools/check/openssl-no-fips.sh checks each build's configdata.pm)
             properties += "kuicksilver:openssl:fips-provider" to "not built"

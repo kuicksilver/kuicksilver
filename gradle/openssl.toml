@@ -8,3 +8,7 @@ version = "4.1.0"
 sha256 = "50c17baf54cb008f6ce42d50deb4b28050a1aad711636cabd4b241c7e90cc2fd"
 pgp_fingerprint = "B146647E45A7B33947AB226B2A2C87D161692D40"
 configure_flags = "tools/openssl/configure-flags.txt"
+# The one OpenSSL patch carried under ADR-0019 (ECH after a HelloRetryRequest with a client's own custom extension, which every
+# QUIC client has), applied by tools/openssl/build.sh after the tarball's checks; dropped with the first release that fixes it.
+patch = "tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch"
+patch_sha256 = "1bdce1d99addf8667ebc735daede776fff00c0bc9dd7e3bd3f131f8d98fe5b6c"

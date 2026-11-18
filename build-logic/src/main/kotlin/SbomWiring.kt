@@ -33,6 +33,11 @@ fun Project.registerCyclonedxSbom(description: String, platformConstraints: List
         gitCommitDate.set(git.map { it.substringAfter(' ', "").ifBlank { "1970-01-01T00:00:00Z" } })
         opensslVersion.set(tomlValue("version"))
         opensslSha256.set(tomlValue("sha256"))
+        opensslPatch.set(toml.map { t ->
+            val path = Regex("^patch = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
+            val sha = Regex("^patch_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(t)?.groupValues?.get(1)
+            if (path != null && sha != null) "$path sha256:$sha" else ""
+        })
         opensslConfigureFlags.set(providers.fileContents(root.file("tools/openssl/configure-flags.txt")).asText.map { t ->
             t.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         })

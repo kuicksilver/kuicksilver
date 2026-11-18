@@ -118,6 +118,8 @@ jobs:
             bash "tools/check/$t-test.sh" || rc=1
           done
           exit $rc
+      - name: 'lint: the carried OpenSSL patch applies exactly, and only with its pinned hash'
+        run: bash tools/openssl/apply-patch-test.sh   # ADR-0019
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'

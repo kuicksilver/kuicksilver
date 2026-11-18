@@ -1,0 +1,34 @@
+OpenSSL 4.1.0: ECH with a HelloRetryRequest fails when the client sends a custom extension of its own
+
+Carried by Kuicksilver under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md); pinned by its SHA-256 in gradle/openssl.toml,
+applied by tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes the
+bug.
+
+The bug: tls_construct_extensions (ssl/statem/extensions.c) resets the SENT and RECEIVED flags of the custom extensions
+(custom_ext_init) at the start of a ClientHello only when ECH is not attempted. With ECH the second inner ClientHello after
+a HelloRetryRequest adds the custom extensions again with their SENT flag still set from the first one, custom_ext_add
+fails its assertion that the flag is clear, and the handshake ends with internal_error. QUIC always registers one
+(quic_transport_parameters, through ossl_quic_tls_configure or a third-party stack's SSL_set_quic_tls_transport_params),
+so every ECH handshake over QUIC that meets a HelloRetryRequest fails.
+
+The fix: reset the flags at the start of every inner ClientHello (ch_depth 1), the second one included; the outer
+ClientHello copies the extensions from the inner one and calls no add_cb, so its flags stay as the inner one left them.
+
+--- a/ssl/statem/extensions.c
++++ b/ssl/statem/extensions.c
+@@ -1187,7 +1187,14 @@
+ 
+     /* Add custom extensions first */
+ #ifndef OPENSSL_NO_ECH
+-    if ((context & SSL_EXT_CLIENT_HELLO) != 0 && s->ext.ech.attempted == 0)
++    /*
++     * With ECH the inner ClientHello is built first (ch_depth == 1) and the
++     * outer one copies the custom extensions from it, so reset the flags at
++     * the start of each inner ClientHello, including the second one after a
++     * HelloRetryRequest.
++     */
++    if ((context & SSL_EXT_CLIENT_HELLO) != 0
++        && (s->ext.ech.attempted == 0 || s->ext.ech.ch_depth == 1))
+         /* On the server side with initialise during ClientHello parsing */
+         custom_ext_init(&s->cert->custext);
+ #else

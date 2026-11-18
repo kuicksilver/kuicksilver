@@ -39,6 +39,9 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
         ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
     val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
     if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
+    // the patch carried under ADR-0019, when the pin names one (its hash is in the target line too)
+    val pinnedPatch = Regex("^patch_sha256 = \"(.*)\"", RegexOption.MULTILINE).find(pinText)?.groupValues?.get(1)
+    if (provenance["patch-sha256"] != pinnedPatch) return "provenance.txt names patch ${provenance["patch-sha256"] ?: "none"}, ${pinnedPatch ?: "none"} is pinned"
     if (provenance["target"] != expected) return "provenance.txt names target '${provenance["target"]}', not '$expected'"
     for (a in listOf("libcrypto.a", "libssl.a")) {
         val actual = java.security.MessageDigest.getInstance("SHA-256").digest(dir.resolve("lib/$a").readBytes()).joinToString("") { "%02x".format(it) }
@@ -64,6 +67,7 @@ opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
         inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/configure-flags.txt"), pinFile)
+        inputs.files(root.resolve("tools/openssl/apply-patch.pl"), fileTree(root.resolve("tools/openssl/patches")))   // ADR-0019
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own

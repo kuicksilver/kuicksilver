@@ -855,6 +855,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `no-ssl3`, `no-ssl3-method`), and `tools/openssl/build.sh` rewrites the read-only `crypto/buildinf.h` that 4.x makes.
   The native libraries grow by about 10 % (the macOS arm64 JNI library: 2,544,072 to 2,809,416 bytes). `Ksl.version()`
   names OpenSSL 4.1.0. Building `ksl` against a system OpenSSL (Linux, `KSL_SYSTEM_OPENSSL`) still takes 3.5 to 3.x.
+- The bundled OpenSSL carries one patch on the 4.1.0 tarball, as an exception to "the upstream tarball only" (ADR-0019):
+  OpenSSL 4.1.0 fails Encrypted Client Hello with internal_error after a HelloRetryRequest whenever the client has a
+  custom extension of its own, which every QUIC client has (its transport parameters). The patch
+  (`tools/openssl/patches/`) is pinned by its SHA-256 in `gradle/openssl.toml`, applied exactly by
+  `tools/openssl/build.sh` (`apply-patch.pl`: no fuzz, no offset), part of the build cache key, the target line and
+  `provenance.txt`, listed in the release provenance and in the SBOM (`kuicksilver:openssl:patch`), and dropped with the
+  first OpenSSL release that fixes the bug.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

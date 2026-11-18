@@ -149,3 +149,25 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   2,809,416 on 4.1.0 (+265,344, +10.4 %); `libcrypto.a` 5,170,512 → 5,539,528 (+7.1 %), `libssl.a` 804,048 → 926,824
   (+15.3 %). The size gates are measured again on the matrix; their limits change only by decision.
 
+### The carried patch for bug B
+
+- **The patch.** `tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch`, one hunk in
+  `ssl/statem/extensions.c` (`tls_construct_extensions`): the SENT and RECEIVED flags of the custom extensions are reset
+  at the start of every inner ClientHello (`ch_depth == 1`), the second one after a HelloRetryRequest included, where
+  4.1.0 resets them only without ECH. It is the bug-B half of the spike's patch, made again against the 4.1.0 tarball;
+  bug A is not patched (below). Its text starts with a description of the bug and the fix.
+- **Pinned and applied.** `gradle/openssl.toml` names the file (`patch`) and its SHA-256 (`patch_sha256`).
+  `tools/openssl/build.sh` refuses a patch whose hash differs before it looks at anything else, copies the verified
+  tree and applies the patch with `tools/openssl/apply-patch.pl` (Perl, which every build image has; no fuzz, no
+  offset, every hunk at the line it names, nothing written unless every hunk matches). The hash is part of the build
+  cache key, of the target line (`patch-sha256=<first 16 hex digits>` in `configure-target.txt` and `--print-target`)
+  and of `provenance.txt`, which `-Pkuicksilver.openssl.prebuilt` compares; the release provenance
+  (`tools/release/provenance.py`) lists the file and its hash, the SBOM's OpenSSL component carries the property
+  `kuicksilver:openssl:patch`. The double build and `verify-release.sh` run the same `build.sh`, so they apply it too.
+  `tools/openssl/apply-patch-test.sh` (CI lint) keeps the applier exact and the hash check in place.
+- **Leaving.** Renovate's note for an OpenSSL update says to check the release for the fix: the patch, its two pin
+  lines and the file go with the first release that has it. `gradle/openssl-next.toml` carries the same lines while it
+  names a release without the fix, so the `openssl-next` job tests what would ship.
+- **Upstream.** The report for OpenSSL (bug B, with the reproducer of the spike) is written but not filed from the
+  build host; filing it, and bug A's report, is a maintainer's step.
+

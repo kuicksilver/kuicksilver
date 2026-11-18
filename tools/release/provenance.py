@@ -128,6 +128,9 @@ def main():
          "annotations": {"pgpFingerprint": ossl["pgp_fingerprint"], "configureFlags": " ".join(flags),
                          "configureFlagsFile": flags_file, "configureFlagsSha256": sha256(flags_file)}},
         {"uri": gradle_url, "digest": {"sha256": wrapper.get("distributionSha256Sum", "")}},
+        # the one patch carried on the OpenSSL tarball (ADR-0019): its file and pinned hash; build.sh refuses another
+        *([{"uri": f"file:{ossl['patch']}", "digest": {"sha256": ossl["patch_sha256"]},
+            "annotations": {"appliedTo": tarball, "fileSha256": sha256(ossl["patch"])}}] if "patch" in ossl else []),
         {"uri": "file:gradle/verification-metadata.xml", "digest": {"sha256": sha256("gradle/verification-metadata.xml")}},
         {"uri": "file:gradle/libs.versions.toml", "digest": {"sha256": sha256("gradle/libs.versions.toml")}},
     ]
