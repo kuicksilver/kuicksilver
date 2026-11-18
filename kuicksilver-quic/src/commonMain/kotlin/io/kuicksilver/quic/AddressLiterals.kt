@@ -85,6 +85,42 @@ private fun sameUnmapped(
 }
 
 /**
+ * The address bytes with an IPv4-mapped IPv6 address (`::ffff:0:0/96`, RFC 4291 section 2.5.5.2) as its 4 IPv4 bytes, as
+ * java.net makes it and Kotlin/Native does not; null for a name. Never a resolver call.
+ */
+internal fun InetSocketAddress.unmappedIpBytesNoDns(): ByteArray? {
+    val b = ipBytesNoDns() ?: return null
+    if (b.size != 16) return b
+    for (i in 0 until 10) if (b[i].toInt() != 0) return b
+    if (b[10].toInt() != -1 || b[11].toInt() != -1) return b
+    return b.copyOfRange(12, 16)
+}
+
+/**
+ * This address, an IPv4-mapped IPv6 one (`::ffff:192.0.2.1`, a dual-stack socket's view of IPv4 on Kotlin/Native) as its
+ * IPv4 address with the same port: what a raw IPv4 socket can send from or to. Never a resolver call; a name stays as it is.
+ */
+@InternalKuicksilverApi
+public fun InetSocketAddress.withUnmappedIp(): InetSocketAddress {
+    val b = ipBytesNoDns() ?: return this
+    if (b.size != 16) return this
+    val u = unmappedIpBytesNoDns() ?: return this
+    return if (u.size == 4) InetSocketAddress(ipText(u), port) else this
+}
+
+/**
+ * This address when it names one host address and a port ([withUnmappedIp]); null for a name, port 0 or an unspecified
+ * address in any spelling (`0.0.0.0`, `::`, a zoned `::%1`, `::ffff:0.0.0.0`): all its address bytes zero. Never a resolver call.
+ */
+@InternalKuicksilverApi
+public fun InetSocketAddress.specificIpOrNull(): InetSocketAddress? {
+    if (port == 0) return null
+    val b = unmappedIpBytesNoDns() ?: return null
+    if (b.all { it.toInt() == 0 }) return null
+    return withUnmappedIp()
+}
+
+/**
  * Whether both addresses have the same IPv6 zone ID (or none), as [ipZoneNoDns] writes it: the text decides, so
  * `fe80::1%en0` and `fe80::1%4` (en0's index) are two zones here, as their literals differ, and an explicit `%0` is not
  * the absence of a zone. On the JVM and Android an address with no zone builds no text unless both have scope 0 and no

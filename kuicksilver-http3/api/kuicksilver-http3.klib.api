@@ -625,6 +625,8 @@ final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProx
         final fun <get-ignoredUnreachable>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.ignoredUnreachable.<get-ignoredUnreachable>|<get-ignoredUnreachable>(){}[0]
     final val packetTooBig // io.kuicksilver.http3/UdpProxyStats.packetTooBig|{}packetTooBig[0]
         final fun <get-packetTooBig>(): io.kuicksilver.http3/PacketTooBigStatus // io.kuicksilver.http3/UdpProxyStats.packetTooBig.<get-packetTooBig>|<get-packetTooBig>(){}[0]
+    final val packetTooBigFailed // io.kuicksilver.http3/UdpProxyStats.packetTooBigFailed|{}packetTooBigFailed[0]
+        final fun <get-packetTooBigFailed>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.packetTooBigFailed.<get-packetTooBigFailed>|<get-packetTooBigFailed>(){}[0]
     final val packetTooBigNoSource // io.kuicksilver.http3/UdpProxyStats.packetTooBigNoSource|{}packetTooBigNoSource[0]
         final fun <get-packetTooBigNoSource>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.packetTooBigNoSource.<get-packetTooBigNoSource>|<get-packetTooBigNoSource>(){}[0]
     final val packetTooBigSent // io.kuicksilver.http3/UdpProxyStats.packetTooBigSent|{}packetTooBigSent[0]

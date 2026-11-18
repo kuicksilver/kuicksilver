@@ -415,7 +415,7 @@ with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per targe
 does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). The
 message leaves from the address the target sent to: the default sockets (wildcard, accelerated) report it per datagram,
 and a `socketFactory` binding one address answers from it; a wildcard portable socket cannot, so it sends none
-(`stats.packetTooBigNoSource`). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
+(`stats.packetTooBigNoSource`); one the kernel refuses is counted in `stats.packetTooBigFailed`. Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
 tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
 its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
 across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with

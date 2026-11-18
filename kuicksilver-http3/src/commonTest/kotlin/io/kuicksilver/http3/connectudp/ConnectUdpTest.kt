@@ -850,7 +850,9 @@ class ConnectUdpTest {
         }
 
     /** A recording [PtbSink] for the tests: what was sent, how often it was closed. */
-    private class RecordingSink : PtbSink {
+    private class RecordingSink(
+        private val accept: Boolean = true,
+    ) : PtbSink {
         val sent = Channel<InetSocketAddress>(Channel.UNLIMITED)
 
         /** The source address of each message sent: the address the target sent to. */
@@ -866,7 +868,7 @@ class ConnectUdpTest {
         ): Boolean {
             sent.trySend(target)
             locals.trySend(local)
-            return true
+            return accept
         }
 
         override fun close() {
@@ -1005,15 +1007,88 @@ class ConnectUdpTest {
                 }
                 assertEquals(0, rig.proxy.stats.packetTooBigSent)
                 assertEquals(null, sink.sent.tryReceive().getOrNull(), "nothing sent")
-                assertEquals(0, rig.proxy.impl.ptbSinksOpened.load(), "no sender opened")
+                assertEquals(
+                    0,
+                    rig.proxy.impl.ptbSinksOpened
+                        .load(),
+                    "no sender opened",
+                )
                 t.close()
             }
-            // an IPv6 wildcard alike
+            // a wildcard in any spelling: all its address bytes zero
+            assertEquals(null, sourceOf(null, InetSocketAddress("0.0.0.0", 4433)))
             assertEquals(null, sourceOf(null, InetSocketAddress("::", 4433)))
+            assertEquals(null, sourceOf(null, InetSocketAddress("::ffff:0.0.0.0", 1)))
+            assertEquals(null, sourceOf(null, InetSocketAddress("::%1", 4433)), "a zoned IPv6 wildcard")
             assertEquals(null, sourceOf(null, InetSocketAddress("10.0.0.2", 0)), "a port not known")
+            // a dual-stack socket's IPv4-mapped address is its IPv4 address, the family of an IPv4 target's raw socket
+            assertEquals("10.0.0.2", sourceOf(null, InetSocketAddress("::ffff:10.0.0.2", 4433))?.ipLiteral())
+            assertEquals("10.0.0.2", sourceOf(InetSocketAddress("::ffff:10.0.0.2", 4433), InetSocketAddress("::", 4433))?.ipLiteral())
             val v6 = InetSocketAddress("2001:db8::1", 4433)
             assertEquals(v6, sourceOf(null, v6))
             assertEquals(v6, sourceOf(v6, InetSocketAddress("0.0.0.0", 4433)), "the datagram's own destination first")
+        }
+
+    /**
+     * RFC 9298 section 6.1 from a dual-stack socket bound to an IPv4-mapped address (`::ffff:10.0.0.2`, which Kotlin/Native
+     * keeps as IPv6): the sender is handed the IPv4 address, the family of the IPv4 target, not one it would refuse.
+     */
+    @Test fun packetTooBigFromAnIpv4MappedBindIsSentAsIpv4() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink()
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val port = rig.proxySocket(1).port
+                rig.sockets.single().boundTo = InetSocketAddress("::ffff:10.0.0.2", port)
+                t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400)))
+                assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size)
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.packetTooBigSent == 1L }
+                }
+                assertEquals("192.0.2.50", sink.sent.receive().ipLiteral())
+                val local = sink.locals.receive()
+                assertEquals("10.0.0.2", local.ipLiteral(), "IPv4, as the target")
+                assertEquals(port, local.port)
+                t.close()
+            }
+        }
+
+    /** A Packet Too Big the sender refuses (no socket for the family, the kernel) is counted, not taken for one sent. */
+    @Test fun negative_aPacketTooBigTheSenderRefusesIsCounted() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink(accept = false)
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                repeat(2) { t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(2) { assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size) }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.packetTooBigFailed == 2L }
+                }
+                assertEquals(0, rig.proxy.stats.packetTooBigSent)
+                assertEquals(0, rig.proxy.stats.packetTooBigNoSource)
+                assertTrue("packetTooBigFailed=2" in rig.proxy.stats.toString())
+                t.close()
+            }
         }
 
     /** One client has at most 4 name lookups at once (a blocked one counts until it returns); a fifth is refused 503. */

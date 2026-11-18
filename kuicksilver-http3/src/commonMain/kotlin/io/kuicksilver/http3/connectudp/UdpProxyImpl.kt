@@ -30,6 +30,8 @@ import io.kuicksilver.quic.PacketTooBigSender
 import io.kuicksilver.quic.UnreachableReports
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.sameIpAs
+import io.kuicksilver.quic.specificIpOrNull
+import io.kuicksilver.quic.withUnmappedIp
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -132,6 +134,7 @@ internal class UdpProxyImpl(
     internal val ignoredUnreachable = AtomicLong(0)
     internal val packetTooBigSent = AtomicLong(0)
     internal val packetTooBigNoSource = AtomicLong(0)
+    internal val packetTooBigFailed = AtomicLong(0)
 
     /** RFC 9298 section 6.1: probed once, at the first tunnel, when the configuration asks for it. */
     private val packetTooBig =
@@ -174,33 +177,38 @@ internal class UdpProxyImpl(
     /** Tests: how many senders were opened. */
     internal val ptbSinksOpened = AtomicLong(0)
 
-    /** Sends the Packet Too Big for a payload [target] sent to [local]; true when it went out. */
+    /** What became of a Packet Too Big [sendPacketTooBig] was asked for. */
+    internal enum class PtbOutcome { Sent, Unavailable, Limited, Failed }
+
+    /** Sends the Packet Too Big for a payload [target] sent to [local]. */
     internal suspend fun sendPacketTooBig(
         target: InetSocketAddress,
         local: InetSocketAddress,
         payload: ByteArray,
         len: Int,
         mtu: Int,
-    ): Boolean {
-        if (!packetTooBigAvailable()) return false
+    ): PtbOutcome {
+        if (!packetTooBigAvailable()) return PtbOutcome.Unavailable
         return ptbLock.withLock {
             val key = target.ipLiteral()
             val bucket = ptbTargets.remove(key) ?: TokenBucket(PTB_RATE, PTB_BURST) { clockStart.elapsedNow().inWholeNanoseconds }
             ptbTargets[key] = bucket // the most recent last
             if (ptbTargets.size > MAX_PTB_TARGETS) ptbTargets.remove(ptbTargets.keys.first())
             val all = ptbAll ?: TokenBucket(ptbTotalRate, ptbTotalBurst) { clockStart.elapsedNow().inWholeNanoseconds }.also { ptbAll = it }
-            if (!bucket.tryTake()) return@withLock false
+            if (!bucket.tryTake()) return@withLock PtbOutcome.Limited
             // the target's token goes back when the proxy's limit refuses: it was not spent on a message
             if (!all.tryTake()) {
                 bucket.refund()
-                return@withLock false
+                return@withLock PtbOutcome.Limited
             }
             val sink =
                 ptbSink ?: (senderForTest?.invoke() ?: RawPtbSink(PacketTooBigSender.create())).also {
                     ptbSink = it
                     ptbSinksOpened.incrementAndFetch()
                 }
-            sink.send(target, local, payload, len, mtu)
+            // a message the sender refused (a family whose socket did not open, arguments it rules out, the kernel) is
+            // counted; its tokens stay spent, so a sender that keeps failing is tried no faster than one that works
+            if (sink.send(target, local, payload, len, mtu)) PtbOutcome.Sent else PtbOutcome.Failed
         }
     }
 
@@ -223,6 +231,7 @@ internal class UdpProxyImpl(
             packetTooBig.load(),
             packetTooBigSent.load(),
             packetTooBigNoSource.load(),
+            packetTooBigFailed.load(),
         )
 
     suspend fun serve(
@@ -681,9 +690,15 @@ private class ProxyTunnel(
             if (proxy.packetTooBigAvailable()) proxy.count(proxy.packetTooBigNoSource)
             return
         }
+        // an IPv4-mapped target (Kotlin/Native keeps the dual-stack spelling) is IPv4 on the wire: its headers and its socket
+        val to = target.withUnmappedIp()
         // the largest UDP payload that fits (the datagram less its one-byte Context ID) and the headers it would travel in
-        val mtu = (maxDatagram - 1).coerceAtLeast(0) + if (':' in target.ipLiteral()) IPV6_UDP_OVERHEAD else IPV4_UDP_OVERHEAD
-        if (proxy.sendPacketTooBig(target, from, d.copyOfRange(1, d.size), d.size - 1, mtu)) proxy.count(proxy.packetTooBigSent)
+        val mtu = (maxDatagram - 1).coerceAtLeast(0) + if (':' in to.ipLiteral()) IPV6_UDP_OVERHEAD else IPV4_UDP_OVERHEAD
+        when (proxy.sendPacketTooBig(to, from, d.copyOfRange(1, d.size), d.size - 1, mtu)) {
+            UdpProxyImpl.PtbOutcome.Sent -> proxy.count(proxy.packetTooBigSent)
+            UdpProxyImpl.PtbOutcome.Failed -> proxy.count(proxy.packetTooBigFailed)
+            UdpProxyImpl.PtbOutcome.Unavailable, UdpProxyImpl.PtbOutcome.Limited -> Unit // dropped and counted only
+        }
     }
 
     /** Datagrams from the socket: only the target's (section 3.1), each one an HTTP datagram with Context ID 0. */
@@ -737,19 +752,19 @@ private class ProxyTunnel(
 /**
  * The address a target's datagram was sent to, the source of the Packet Too Big that answers it: [local], the destination
  * the socket reported for the datagram, else [bound], the socket's own address, when it names one address and port (a
- * socket bound to one address takes only datagrams sent to it). Null for a wildcard socket that reported none.
+ * socket bound to one address takes only datagrams sent to it). Null for a wildcard socket that reported none: all its
+ * address bytes zero, in any spelling ([specificIpOrNull]). An IPv4-mapped address (a dual-stack socket on Kotlin/Native)
+ * is its IPv4 address, the family of the raw socket that sends to an IPv4 target.
+ *
+ * A socket bound to one address can still be handed datagrams sent to another: TPROXY (`IP_TRANSPARENT`) or a BPF
+ * `sk_lookup` program steer traffic for other addresses to it. Its Packet Too Big then leaves from the bound address, not
+ * the one the target sent to; the target's kernel matches the message to a socket by the quoted addresses and ports, finds
+ * none, and drops it. Harmless, and such deployments use a wildcard bind with each datagram's destination reported.
  */
 internal fun sourceOf(
     local: InetSocketAddress?,
     bound: InetSocketAddress,
-): InetSocketAddress? {
-    if (local != null) return local
-    if (bound.port == 0) return null
-    return when (bound.ipLiteral()) {
-        "0.0.0.0", "::", "::ffff:0.0.0.0" -> null
-        else -> bound
-    }
-}
+): InetSocketAddress? = local?.withUnmappedIp() ?: bound.specificIpOrNull()
 
 /** Packet Too Big messages per second and per target address (RFC 4443 section 2.4 (f)), and the burst before the rate applies. */
 private const val PTB_RATE = 10

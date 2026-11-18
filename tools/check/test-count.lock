@@ -380,6 +380,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.ipv6Target
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.largestPayloadWithALongContextIdIsDelivered
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aClientsTunnelsShareOneRate
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aPacketTooBigTheSenderRefusesIsCounted
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientRefusesBeforeSending
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientResetFreesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientThatDisappearsFreesTheTunnel
@@ -408,6 +409,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_withoutThePrivilegeAnOversizedTargetPayloadIsOnlyDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.noUdpGoesToTheTargetBeforeTheAnswer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromASpecificBindLeavesFromTheSocketsAddress
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromAnIpv4MappedBindIsSentAsIpv4
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
@@ -1195,6 +1197,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransport
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransportSamples
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.aForgedPortUnreachableIsIgnored
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.aRealPortUnreachableClosesTheTunnel
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.packetTooBigFromAWildcardSocketReachesTheTarget
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.packetTooBigReachesTheTarget
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.PacketTooBigProbeTest.probeMatchesThePlatform
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.http3ThroughTheProxyOverRealUdp
@@ -3495,6 +3498,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.loopbackPe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.negative_lookalikesAreNoLoopback
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.aFailedSlotAllocationFreesTheSlotsMadeBeforeIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.closeFreesEverySlot
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketTooBigAddressTest.anIpv4MappedAddressIsEncodedAsIpv4
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketTooBigAddressTest.specificIpOrNull
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.defaultControllerIsCubic
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.defaultsMatchSpec
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.initialVersionSeparatesFirstFlightFromPreference

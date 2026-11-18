@@ -375,6 +375,8 @@ public class UdpProxyConfig(
  *   because the address the target sent to is unknown: a socket of [UdpProxyConfig.socketFactory] bound to a wildcard address
  *   that does not report each datagram's destination (the portable socket; the accelerated one reports it). A socket bound
  *   to one address answers from that address.
+ * @property packetTooBigFailed ICMP Packet Too Big messages the raw socket did not send (the family's socket did not open,
+ *   the kernel refused the message, or the sender ruled out its addresses); their rate-limit tokens stay spent.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyStats internal constructor(
@@ -395,6 +397,7 @@ public class UdpProxyStats internal constructor(
     public val packetTooBig: PacketTooBigStatus,
     public val packetTooBigSent: Long,
     public val packetTooBigNoSource: Long,
+    public val packetTooBigFailed: Long,
 ) {
     /** The counters, for logs. */
     override fun toString(): String =
@@ -403,7 +406,8 @@ public class UdpProxyStats internal constructor(
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
             "ignoredUnreachable=$ignoredUnreachable, " +
-            "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent, packetTooBigNoSource=$packetTooBigNoSource)"
+            "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent, packetTooBigNoSource=$packetTooBigNoSource, " +
+            "packetTooBigFailed=$packetTooBigFailed)"
 }
 
 /** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */

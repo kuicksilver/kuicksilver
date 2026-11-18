@@ -83,9 +83,13 @@ public class PacketTooBigSender private constructor() : AutoCloseable {
         /** A sender; call only after [probe] said one can be opened. */
         public fun create(): PacketTooBigSender = PacketTooBigSender()
 
-        /** A `ksl` address (family, port, 16 address bytes, pad) from an IP literal; null for a name. */
-        private fun encode(a: InetSocketAddress): ByteArray? {
-            val b = a.ipBytesNoDns() ?: return null
+        /**
+         * A `ksl` address (family, port, 16 address bytes, pad) from an IP literal; null for a name. An IPv4-mapped IPv6
+         * address is family 4 (Kotlin/Native keeps it 16 bytes): an IPv4 target and a dual-stack proxy socket's address
+         * meet in one family, which the message's IPv4 header carries.
+         */
+        internal fun encode(a: InetSocketAddress): ByteArray? {
+            val b = a.unmappedIpBytesNoDns() ?: return null
             val out = ByteArray(KslIcmp.ADDR_LEN)
             out[0] = if (b.size == 4) 4 else 6
             out[1] = (a.port shr 8).toByte()
