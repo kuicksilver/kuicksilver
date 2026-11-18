@@ -208,6 +208,43 @@ class EchTest {
         }
     }
 
+    /**
+     * RFC 9849 section 10.7: the platform verifier fetches nothing over the network (OCSP, CRL, AIA) for a name ECH hid. It
+     * is asked offline exactly when ECH was accepted; for a rejection (the public_name, visible anyway), GREASE and no ECH
+     * it may go online as before.
+     */
+    @Test fun platformVerifierIsOfflineForAHiddenName() {
+        val asked = ArrayList<Pair<String, Boolean>>()
+        platformForTest = { chain, host, _, offline ->
+            asked += host.value to offline
+            PlatformVerdict(VerifyResult.Accepted(chain), chain)
+        }
+        try {
+            fun run(
+                list: EchConfigList?,
+                key: EchKey,
+            ): EchStatus {
+                val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { echConfigList = list })
+                val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(key)) })
+                c.setTransportParameters(Fixtures.tp)
+                s.setTransportParameters(Fixtures.tp)
+                val p = Pump(c, s)
+                p.run(onVerify = { runBlocking { c.verifyPeer(it.chain) } })
+                p.close()
+                return p.c.echStatus
+            }
+            assertEquals(EchStatus.Accepted, run(listA, keyA))
+            assertEquals(EchStatus.Rejected, run(listA, keyB))
+            assertEquals(EchStatus.Grease, run(null, keyA))
+            assertEquals(
+                kotlin.collections.listOf("server.test" to true, EchTestKeys.PUBLIC_NAME to false, "server.test" to false),
+                asked,
+            )
+        } finally {
+            platformForTest = null
+        }
+    }
+
     /** A client whose rejection goes through the paused path with [trust]: the pump after a server with key B. */
     private fun rejectedThrough(trust: TrustConfig): Pump {
         val c = KslQuicCrypto.newSession(Fixtures.client(trust = trust) { echConfigList = listA })
@@ -229,7 +266,7 @@ class EchTest {
         runBlocking {
             val chain = listOf(Certificate(TestCerts.server))
             val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32) { 7 }))))
-            val v = Verification(config, platform = { c, _, _ -> PlatformVerdict(VerifyResult.Accepted(c), c) })
+            val v = Verification(config, platform = { c, _, _, _ -> PlatformVerdict(VerifyResult.Accepted(c), c) })
             assertIs<VerifyResult.Accepted>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))
             // the origin's own certificate is held to them as always
             assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize("server.test")))
@@ -252,7 +289,7 @@ class EchTest {
             val chain = listOf(Certificate(TestCerts.server))
             val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(chain[0].spkiSha256)))
             val v =
-                Verification(config, platform = { _, h, _ ->
+                Verification(config, platform = { _, h, _, _ ->
                     PlatformVerdict(VerifyResult.Rejected(VerifyReason.HostnameMismatch(h.value, emptyList())), null)
                 })
             assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))

@@ -342,7 +342,8 @@ public class TlsConnection private constructor(
                     presented = chain()
                     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
                     val name = verifyNameOf(s(), reference!!, echOffered)
-                    val r = verification.verify(presented, name, echPublicName = name != reference)
+                    // ECH offered and not rejected: accepted (decided by the ServerHello), the name is hidden
+                    val r = verification.verify(presented, name, echPublicName = name != reference, hiddenName = echOffered && name == reference)
                     lock.withLock { resume(r) }
                 }
 
@@ -433,7 +434,8 @@ public class TlsConnection private constructor(
                     ) {
                         verification.pinCheck(cached.validated)
                     } else {
-                        verification.verify(cached.chain, reference!!)
+                        // a ticket of the ECH partition resumes only under ECH: its name is hidden
+                        verification.verify(cached.chain, reference!!, hiddenName = echOffered)
                     }
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             } else if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) {
@@ -1444,7 +1446,7 @@ public class SessionCache(
                 if (KslContext.verifyModeFor(config) == KslConst.VERIFY_OPENSSL) {
                     v.pinCheck(e.validated)
                 } else {
-                    v.verify(e.chain, HostName.normalize(referenceOf(config)))
+                    v.verify(e.chain, HostName.normalize(referenceOf(config)), hiddenName = config.echConfigList?.isUsable == true)
                 }
             } catch (t: Throwable) {
                 e.close()

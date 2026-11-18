@@ -23,6 +23,7 @@ internal actual object PlatformVerifier {
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
+        offline: Boolean,
     ): PlatformVerdict {
         if (role ==
             TlsRole.Server

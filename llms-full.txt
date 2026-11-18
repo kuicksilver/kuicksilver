@@ -1899,6 +1899,23 @@ val client = tlsConfig(TlsRole.Client) {
 }
 ```
 
+When ECH is accepted, verifying the certificate must not reveal the hidden name through the network either (RFC 9849
+section 10.7: "clients SHOULD take steps to minimize or protect such requests during certificate validation"). Under
+`TrustConfig.Platform` (also beneath `Pinned` or `ExpectedName`) the platform verifier is then asked to stay offline, and
+a resumption's re-verification under ECH too:
+
+- **Windows**: chain building retrieves URLs (AIA intermediates, CRLs, OCSP) and revocation answers from the cache only
+  (`CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL`, `CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY`); an uncached status is unknown, which
+  is a soft fail as always, and a missing intermediate that is not cached fails the chain.
+- **Apple**: `SecTrustSetNetworkFetchAllowed(false)`: no OCSP, CRL or intermediate fetch.
+- **JVM**: the default trust manager fetches nothing unless the process enabled it (`com.sun.net.ssl.checkRevocation`
+  with `ocsp.enable` or CRL distribution points, `com.sun.security.enableAIAcaIssuers`); those settings are process-wide
+  and are not turned off per connection, so leave them off where ECH matters.
+- **Android**: the platform trust manager makes no revocation or AIA requests during the handshake.
+- **Linux Native** (`Platform` is OpenSSL with the system directory) and `AnchoredCa`: `ksl` fetches nothing; revocation
+  comes from stapled OCSP and configured CRLs only. A `TrustConfig.Custom` verifier is the application's code and must
+  take the same care.
+
 ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
 remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
 the DNS query itself unless DNS is protected, stay visible.

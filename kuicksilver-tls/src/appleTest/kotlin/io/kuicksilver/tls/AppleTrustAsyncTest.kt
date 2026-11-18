@@ -6,6 +6,11 @@ package io.kuicksilver.tls
 
 import io.kuicksilver.native.KslLoader
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.invoke
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.value
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -122,6 +127,42 @@ class AppleTrustAsyncTest {
             val release = stalled.load()
             for (s in release) dispatch_async(s.queue) { defaultEvaluator(s.trust, s.queue, "slow.test", s.done) }
             withTimeout(30.seconds) { slow.awaitAll() }.forEach { assertIs<VerifyResult.Rejected>(it) }
+        }
+
+    /**
+     * RFC 9849 section 10.7: for a name ECH hid (`offline`) SecTrust may fetch nothing over the network (OCSP, CRL, AIA);
+     * otherwise its default (fetching allowed) stays. Read from the SecTrust each evaluation is given.
+     */
+    @Test fun offlineEvaluationAllowsNoNetworkFetch() =
+        runBlocking<Unit> {
+            val seen = AtomicReference<List<Boolean>>(emptyList())
+            PlatformVerifier.evaluator = { trust, q, host, done ->
+                val allowed = networkFetchAllowed(trust)
+                while (true) {
+                    val old = seen.load()
+                    if (seen.compareAndSet(old, old + allowed)) break
+                }
+                defaultEvaluator(trust, q, host, done)
+            }
+            val host = HostName.normalize("server.test")
+            PlatformVerifier.evaluate(chain, host, TlsRole.Client, offline = true)
+            PlatformVerifier.evaluate(chain, host, TlsRole.Client, offline = false)
+            assertEquals(listOf(false, true), seen.load(), "offline: no network fetch; online: the default")
+        }
+
+    /**
+     * `SecTrustGetNetworkFetchAllowed(trust, Boolean *)`: the binding takes a `BooleanVar`, which Kotlin/Native does not import
+     * (Darwin's `Boolean` is an unsigned char), so the symbol is called through its C type with a byte to write to.
+     */
+    private fun networkFetchAllowed(trust: platform.Security.SecTrustRef): Boolean =
+        kotlinx.cinterop.memScoped {
+            val f =
+                platform.posix.dlsym(platform.posix.RTLD_DEFAULT, "SecTrustGetNetworkFetchAllowed")
+                    ?.reinterpret<kotlinx.cinterop.CFunction<(platform.Security.SecTrustRef?, kotlinx.cinterop.CPointer<kotlinx.cinterop.UByteVar>?) -> Int>>()
+                    ?: error("SecTrustGetNetworkFetchAllowed not found")
+            val b = alloc<kotlinx.cinterop.UByteVar>()
+            check(f(trust, b.ptr) == 0)
+            b.value.toInt() != 0
         }
 
     @Test fun platformTrustsARootInstalledBesideTheSystemStore() =

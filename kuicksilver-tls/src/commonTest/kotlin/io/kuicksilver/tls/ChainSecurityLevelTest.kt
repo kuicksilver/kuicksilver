@@ -73,7 +73,7 @@ class ChainSecurityLevelTest {
     ): (QuicTlsSession, List<Certificate>) -> VerifyResult =
         { _, presented ->
             val built = path?.map(::Certificate)
-            val v = Verification(config) { _, _, _ -> PlatformVerdict(VerifyResult.Accepted(built ?: presented), built) }
+            val v = Verification(config) { _, _, _, _ -> PlatformVerdict(VerifyResult.Accepted(built ?: presented), built) }
             immediate { v.verify(presented, HostName.normalize("server.test")) }
         }
 
@@ -248,7 +248,7 @@ class ChainSecurityLevelTest {
         config: TlsConfig = platform(),
     ): (QuicTlsSession, List<Certificate>) -> VerifyResult =
         { _, presented ->
-            val v = Verification(config) { _, _, _ -> PlatformVerdict(VerifyResult.Rejected(reason), null) }
+            val v = Verification(config) { _, _, _, _ -> PlatformVerdict(VerifyResult.Rejected(reason), null) }
             immediate { v.verify(presented, HostName.normalize("server.test")) }
         }
 
@@ -295,7 +295,7 @@ class ChainSecurityLevelTest {
         if (!platformPauses) return
         val chain = listOf(WeakCerts.leafViaSha1, WeakCerts.midSha1).map(::Certificate)
         val path = chain + Certificate(WeakCerts.weakRoot)
-        val v = Verification(platform()) { _, _, _ -> PlatformVerdict(VerifyResult.Accepted(path), path) }
+        val v = Verification(platform()) { _, _, _, _ -> PlatformVerdict(VerifyResult.Accepted(path), path) }
         val r = immediate { v.verify(chain, HostName.normalize("server.test")) }
         assertEquals(VerifyReason.WeakSignature, assertIs<VerifyResult.Rejected>(r).reason)
     }

@@ -10,6 +10,7 @@ internal actual object PlatformVerifier {
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
+        offline: Boolean,
     ): PlatformVerdict =
         PlatformVerdict(
             VerifyResult.Rejected(VerifyReason.Custom("unreachable: Linux platform trust is verified by OpenSSL inside ksl")),
