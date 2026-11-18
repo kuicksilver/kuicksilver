@@ -250,6 +250,11 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    update `gh-pages` one at a time and a later run can cancel one still waiting: re-run a cancelled `pages` run. Each
    version adds about 30 MB (0.3.0-SNAPSHOT: 29 MB) and `/latest/` is a copy of one (stored once in git); GitHub Pages allows a
    1 GB site, so past about 30 versions the oldest ones are removed from `gh-pages` by hand.
+   The same run builds the version's "How we verify" pages (`/<version>/verify/`, in Russian under `ru/verify/` and in
+   Simplified Chinese under `zh/verify/`; `tools/docs/verify.py`) from the newest successful `build.yml` run of the
+   tag's commit and its `verify-*` artifacts, which are kept 30 days: publish the GitHub release within 30 days of that
+   run, or re-run `build.yml` on the commit first, else the pages say "no data". A run or record of another commit fails
+   the `verify` job and with it the publication.
 
 ## Releasing from a maintenance branch
 

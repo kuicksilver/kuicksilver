@@ -300,6 +300,12 @@ local publication); and, weekly or on request, the QUIC Interop Runner against t
 signs or reads a secret, and pull requests from forks run with read-only rights; a maintainer approves the workflow
 runs of every pull request from an outside contributor before they start (repository setting).
 
+Every job that runs tests or builds an artifact also uploads a `verify-<job>` artifact: the test counts, outcomes and
+artifact sizes of that job and nothing of the runner (`tools/docs/verify.py collect`). For a release, `pages.yml` turns
+the artifacts of the release commit's green run into the "How we verify" pages of the documentation site (platform matrix,
+engine interop, conformance suites, fuzzing, sizes, benchmarks, the RFC compliance summary), and refuses data of any
+other commit or run ([release.md](release.md), "Every release", step 9).
+
 Hosted CI is not the release gate: a release needs the local gate record (stage 5). A repository ruleset (id 27195213)
 covers the default branch and `refs/heads/release/*`: they cannot be deleted and take no non-fast-forward push, and
 nobody can bypass it. It requires no status check or pull request, so nothing requires a hosted run to be green before a
