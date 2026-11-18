@@ -15,8 +15,9 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 @InternalKuicksilverApi
 public interface QlogRecorder {
     /**
-     * True while the trace takes events: false once it ended (connection released, size cap, failing sink). Check it before
-     * building an event, so a connection whose trace is gone formats nothing.
+     * True while the trace takes HTTP/3 events: its header names HTTP3 (the connection's ALPN list offers `h3`;
+     * draft-ietf-quic-qlog-h3-events-04 section 2) and it has not ended (connection released, size cap, failing sink).
+     * Check it before building an event, so a connection whose trace does not take them formats nothing.
      */
     public val enabled: Boolean
 

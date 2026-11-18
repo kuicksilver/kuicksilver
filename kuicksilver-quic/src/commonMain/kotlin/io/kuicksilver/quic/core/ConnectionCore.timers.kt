@@ -313,7 +313,7 @@ internal class ConnectionLossListener(
     ) {
         core.lostPackets++
         if (p.inFlight && !p.pmtuProbe) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
-        core.qlog?.packetLost(space, p.pn, "time_or_packet_threshold", core.now)
+        core.qlog?.packetLost(space, p.pn, core.now)
         if (p.ecnMarked) {
             core.paths.byId(PathId(p.pathId))?.let { path ->
                 // a packet sent to the address before the path's last IP change says nothing about the new one (RFC 9000 section 13.4.2)

@@ -46,7 +46,90 @@ class QlogExternalRecordsTest {
     private fun writer(
         sink: QlogSink,
         maxBytes: Long = 1L shl 20,
-    ) = QlogWriter(sink, maxBytes, TimeMark(1_000_000_000L), TlsRole.Client, "0a0b")
+        http3: Boolean = true,
+    ) = QlogWriter(sink, maxBytes, TimeMark(1_000_000_000L), TlsRole.Client, "0a0b", http3)
+
+    /**
+     * draft-ietf-quic-qlog-main-schema-05 section 3.4.4 and 3.4.7: `protocol_type` in `common_fields` names the stacks of
+     * the trace; quic-events-04 section 2 requires "QUIC", h3-events-04 section 2 "HTTP3" once one of its events is in
+     * the trace. Section 3.4.1: a relative trace gives its `reference_time` (here the trace's start: 0 ms).
+     */
+    @Test fun theHeaderNamesTheProtocolsAndTheReferenceTime() {
+        val h3 = Sink()
+        writer(h3).connectionStateUpdated(ConnectionState.Handshaking, TimeMark(1_000_000_000L))
+        assertTrue(
+            h3.records[0].contains(
+                "\"common_fields\":{\"ODCID\":\"0a0b\",\"protocol_type\":[\"QUIC\",\"HTTP3\"],\"time_format\":\"relative\"," +
+                    "\"reference_time\":0.0}",
+            ),
+            h3.records[0],
+        )
+        val quic = Sink()
+        writer(quic, http3 = false).connectionStateUpdated(ConnectionState.Handshaking, TimeMark(1_000_000_000L))
+        assertTrue(quic.records[0].contains("\"protocol_type\":[\"QUIC\"],"), quic.records[0])
+    }
+
+    /**
+     * The transport events' enumerations are those of draft-ietf-quic-qlog-quic-events-04: connection states of section
+     * 4.6 (Figure 7), packet_dropped triggers of section 5.7 (Figure 15), connection_closed triggers of section 4.3
+     * (Figure 4); a packet_lost trigger is left out, as section 7.5 has none for "time or packet threshold".
+     */
+    @Test fun transportEnumerationsAreTheDrafts() {
+        val sink = Sink()
+        val w = writer(sink)
+        val t = TimeMark(1_000_000_000L)
+        for (st in ConnectionState.entries) w.connectionStateUpdated(st, t)
+        w.packetDropped(io.kuicksilver.quic.recovery.SpaceId.Application, 3, 50, "rejected", "left_address", t)
+        w.packetLost(io.kuicksilver.quic.recovery.SpaceId.Application, 4, t)
+        w.connectionClosed(
+            io.kuicksilver.quic.QuicException.ConnectionLost
+                .StatelessReset(),
+            t,
+        )
+        val states = sink.records.mapNotNull { Regex("\"new\":\"([a-z_]+)\"").find(it)?.groupValues?.get(1) }
+        val drafts =
+            setOf(
+                "attempted",
+                "peer_validated",
+                "handshake_started",
+                "early_write",
+                "handshake_complete",
+                "handshake_confirmed",
+                "closing",
+                "draining",
+                "closed",
+            )
+        assertEquals(ConnectionState.entries.size, states.size)
+        assertTrue(drafts.containsAll(states), "$states")
+        assertTrue(sink.records.any { "\"trigger\":\"rejected\"" in it && "packet_dropped" in it })
+        assertTrue(sink.records.single { "packet_lost" in it }.let { "trigger" !in it })
+        assertTrue(sink.records.single { "connection_closed" in it }.contains("\"trigger\":\"stateless_reset\""))
+    }
+
+    /** A trace whose header does not name HTTP3 takes no HTTP/3 event: h3-events-04 section 2 would be broken. */
+    @Test fun negative_aTraceWithoutHttp3TakesNoHttp3Event() {
+        val sink = Sink()
+        val w = writer(sink, http3 = false)
+        assertFalse(w.takesHttp3Events)
+        assertFalse(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_000_000_000L)))
+        w.drainExternal()
+        assertTrue(sink.records.none { "http:" in it })
+    }
+
+    /**
+     * main-schema-05 section 3.4.1: "Events in each individual trace SHOULD be logged in strictly ascending timestamp
+     * order". An event of the layer above stamped on its own thread after a transport event the loop writes later gets
+     * no earlier time than that one: times never go back in the file.
+     */
+    @Test fun timesNeverGoBackInTheFile() {
+        val sink = Sink()
+        val w = writer(sink)
+        assertTrue(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_005_000_000L)))
+        w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_003_000_000L)) // the loop's older clock reading
+        w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_007_000_000L))
+        val times = sink.records.drop(1).map { it.substringAfter("\"time\":").substringBefore(",").toDouble() }
+        assertEquals(listOf(5.0, 5.0, 7.0), times)
+    }
 
     @Test fun queuedEventsPrecedeTheNextTransportEvent() {
         val sink = Sink()

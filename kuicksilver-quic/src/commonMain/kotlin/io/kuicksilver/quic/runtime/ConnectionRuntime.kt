@@ -156,7 +156,7 @@ internal class ConnectionRuntime(
         private val writer: io.kuicksilver.quic.qlog.QlogWriter,
     ) : io.kuicksilver.quic.QlogRecorder {
         private val drainScheduled = kotlin.concurrent.atomics.AtomicInt(0)
-        override val enabled: Boolean get() = writer.enabled
+        override val enabled: Boolean get() = writer.takesHttp3Events
         override val logHeaderValues: Boolean = core.config.qlog?.logHeaderValues == true
 
         override fun record(

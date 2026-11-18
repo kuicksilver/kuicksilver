@@ -633,7 +633,9 @@ public class ConnectionCore internal constructor(
 
     internal val qlog: QlogWriter? =
         config.qlog?.let {
-            QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString())
+            // HTTP/3 needs ALPN "h3" (RFC 9114 section 3.1): a connection that may carry it names HTTP3 in its trace
+            val http3 = tlsConfig.alpn.any { a -> a == "h3" || a.startsWith("h3-") }
+            QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString(), http3)
         } // opens its trace at the first event, closed in release()
     internal val receiver = PacketReceiver(this)
     internal val builder = PacketBuilder(this)

@@ -382,7 +382,7 @@ internal class PacketReceiver(
             c.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET
         ) {
             c.leftAddressDropped++
-            c.qlog?.packetDropped(space, pn, hv.packetEnd - headerStart(), "unexpected_packet", "left_address", now)
+            c.qlog?.packetDropped(space, pn, hv.packetEnd - headerStart(), "rejected", "left_address", now)
             lastOutcome = OUTCOME_LEFT_ADDRESS
             return false
         }

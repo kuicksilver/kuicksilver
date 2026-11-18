@@ -39,6 +39,12 @@ internal class QlogWriter(
     private val start: TimeMark,
     private val role: TlsRole,
     private val odcidHex: String,
+    /**
+     * The connection may carry HTTP/3 (its ALPN list offers `h3`): the header's `protocol_type` names "HTTP3" next to
+     * "QUIC" (draft-ietf-quic-qlog-quic-events-04 and -h3-events-04, section 2: MUST once an event of theirs is in the
+     * trace), and only then are HTTP/3 events taken ([takesHttp3Events]).
+     */
+    private val http3: Boolean = false,
 ) {
     private var written = 0L
     private var closed = false
@@ -48,8 +54,20 @@ internal class QlogWriter(
     @Volatile var enabled: Boolean = true
         private set
 
+    /** Whether the layer above's HTTP/3 events are taken: the trace names HTTP3 and has not ended. */
+    val takesHttp3Events: Boolean get() = http3 && enabled
+
+    /** An event of the layer above: its clock reading and its `"name":...,"data":{...}` members. */
+    private class Pending(
+        val nanos: Long,
+        val body: String,
+    )
+
     /** Events of the layer above, formatted and waiting for the loop; at most [MAX_QUEUED] ([queued] counts them). */
-    private val external = Channel<String>(Channel.UNLIMITED)
+    private val external = Channel<Pending>(Channel.UNLIMITED)
+
+    /** The time of the last record written: no record gets an earlier one (main-schema-05 section 3.4.1). */
+    private var lastNanos = Long.MIN_VALUE
     private val queued = AtomicInt(0)
     private val dropped = AtomicLong(0)
 
@@ -87,13 +105,13 @@ internal class QlogWriter(
         data: String,
         now: TimeMark,
     ): Boolean {
-        if (!enabled) return false
+        if (!takesHttp3Events) return false
         if (queued.incrementAndFetch() > MAX_QUEUED) {
             queued.decrementAndFetch()
             dropped.incrementAndFetch()
             return false
         }
-        if (external.trySend("{\"time\":${time(now)},\"name\":\"$name\",\"data\":{$data}}").isFailure) {
+        if (external.trySend(Pending(now.nanos, "\"name\":\"$name\",\"data\":{$data}")).isFailure) {
             queued.decrementAndFetch()
             return false
         }
@@ -105,19 +123,30 @@ internal class QlogWriter(
         while (!closed) {
             val r = external.tryReceive().getOrNull() ?: return
             queued.decrementAndFetch()
-            write(r)
+            write(r.nanos, r.body)
         }
     }
 
-    private fun emit(json: String) {
+    private fun emit(
+        nanos: Long,
+        body: String,
+    ) {
         drainExternal() // what the layer above logged before this event comes first
-        write(json)
+        write(nanos, body)
     }
 
-    private fun write(json: String) {
+    /**
+     * Writes one event. Its time is never before the last one written: an event of the layer above is stamped on its own
+     * thread, and the loop's transport events carry the clock reading of their loop turn, which may be older.
+     */
+    private fun write(
+        nanos: Long,
+        body: String,
+    ) {
         if (closed) return
         val t = trace ?: open() ?: return
-        val record = "\u001e$json\n"
+        if (nanos > lastNanos) lastNanos = nanos
+        val record = "\u001e{\"time\":${time(TimeMark(lastNanos))},$body}\n"
         written += record.length
         try {
             t.write(record)
@@ -150,7 +179,10 @@ internal class QlogWriter(
         val header =
             "\u001e{\"qlog_format\":\"JSON-SEQ\",\"qlog_version\":\"0.3\",\"title\":\"kuicksilver\"," +
                 "\"trace\":{\"vantage_point\":{\"type\":\"${role.name.lowercase()}\"}," +
-                "\"common_fields\":{\"ODCID\":\"$odcidHex\",\"time_format\":\"relative\"}}}\n"
+                "\"common_fields\":{\"ODCID\":\"$odcidHex\",\"protocol_type\":${if (http3) "[\"QUIC\",\"HTTP3\"]" else "[\"QUIC\"]"}," +
+                // main-schema-05 section 3.4.1: relative times count from the reference_time, here the trace's start
+                // (section 3.4.1 allows such a reference instead of the Unix epoch, and no wall clock enters the trace)
+                "\"time_format\":\"relative\",\"reference_time\":0.0}}}\n"
         written += header.length
         try {
             t.write(header)
@@ -173,7 +205,7 @@ internal class QlogWriter(
         now: TimeMark,
         name: String,
         data: String,
-    ) = emit("{\"time\":${time(now)},\"name\":\"$name\",\"data\":{$data}}")
+    ) = emit(now.nanos, "\"name\":\"$name\",\"data\":{$data}")
 
     private fun packetType(space: SpaceId) =
         when (space) {
@@ -225,15 +257,18 @@ internal class QlogWriter(
             "\"trigger\":\"$trigger\",\"details\":{\"reason\":\"$reason\"}",
     )
 
+    /**
+     * `recovery:packet_lost`, without a trigger: quic-events-04 section 7.5 names "reordering_threshold", "time_threshold"
+     * and "pto_expired" apart, and the loss detector does not tell which of the first two declared the packet lost.
+     */
     fun packetLost(
         space: SpaceId,
         pn: Long,
-        trigger: String,
         now: TimeMark,
     ) = event(
         now,
         "recovery:packet_lost",
-        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"trigger\":\"$trigger\"",
+        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn}",
     )
 
     fun metricsUpdated(
@@ -248,7 +283,18 @@ internal class QlogWriter(
     fun connectionStateUpdated(
         state: ConnectionState,
         now: TimeMark,
-    ) = event(now, "connectivity:connection_state_updated", "\"new\":\"${state.name.lowercase()}\"")
+    ) = event(now, "connectivity:connection_state_updated", "\"new\":\"${stateName(state)}\"")
+
+    /** The ConnectionState of quic-events-04 section 4.6 (Figure 7) each of ours is. */
+    private fun stateName(state: ConnectionState): String =
+        when (state) {
+            ConnectionState.Handshaking -> "handshake_started"
+            ConnectionState.Established -> "handshake_complete"
+            ConnectionState.Confirmed -> "handshake_confirmed"
+            ConnectionState.Closing -> "closing"
+            ConnectionState.Draining -> "draining"
+            ConnectionState.Closed -> "closed"
+        }
 
     fun connectionClosed(
         reason: QuicException.ConnectionLost,
@@ -274,8 +320,17 @@ internal class QlogWriter(
                     "\"owner\":\"local\",\"trigger\":\"${reason.kind.name.lowercase()}_timeout\""
                 }
 
+                // quic-events-04 section 4.3 (Figure 4): the trigger is one of its values, the rest goes in "reason"
+                is QuicException.ConnectionLost.StatelessReset -> {
+                    "\"owner\":\"remote\",\"trigger\":\"stateless_reset\""
+                }
+
+                is QuicException.ConnectionLost.VersionNegotiation -> {
+                    "\"owner\":\"remote\",\"trigger\":\"version_mismatch\",\"reason\":\"${escape(reason.message ?: "")}\""
+                }
+
                 else -> {
-                    "\"owner\":\"local\",\"trigger\":\"${escape(reason.message ?: "")}\""
+                    "\"owner\":\"local\",\"trigger\":\"error\",\"reason\":\"${escape(reason.message ?: "")}\""
                 }
             }
         event(now, "connectivity:connection_closed", d)
