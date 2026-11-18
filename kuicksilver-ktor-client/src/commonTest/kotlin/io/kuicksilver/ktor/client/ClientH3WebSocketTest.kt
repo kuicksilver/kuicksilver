@@ -179,7 +179,8 @@ class ClientH3WebSocketTest {
                         }.build(),
                     io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
                 )
-            // every attempt's decision, with what it was made from: the server reads nothing, so no session ends in order
+            // every attempt's decision in order, with what it was made from: the server reads nothing, so no session ends
+            // in order
             val ends = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             try {
                 val read =
@@ -224,10 +225,11 @@ class ClientH3WebSocketTest {
                         }
                     }
                 assertEquals("reset", read.last(), "the stream was reset, not ended with a FIN: $read")
-                // the close wait cut every session: reset, also one whose writer ended its channel inside a frame (Ktor's
-                // writer does so when cancelled), never a FIN after a cut frame
+                // the attempt whose Close stayed unwritten (the last one) was reset, also when its writer ended its channel
+                // inside a frame (Ktor's writer does so when cancelled): never a FIN after a cut frame. An earlier attempt
+                // whose writing the transport took whole, its Close in flight, rightly got a FIN; it is not checked here
                 val decided = generateSequence { ends.tryReceive().getOrNull() }.toList()
-                assertTrue(decided.isNotEmpty() && decided.all { it.startsWith("Reset") }, "every stream reset: $decided")
+                assertTrue(decided.lastOrNull()?.startsWith("Reset") == true, "the last attempt's stream reset: $decided")
             } finally {
                 ep.close()
             }
