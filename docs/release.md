@@ -254,7 +254,20 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    Simplified Chinese under `zh/verify/`; `tools/docs/verify.py`) from the newest successful `build.yml` run of the
    tag's commit and its `verify-*` artifacts, which are kept 30 days: publish the GitHub release within 30 days of that
    run, or re-run `build.yml` on the commit first, else the pages say "no data". A run or record of another commit fails
-   the `verify` job and with it the publication.
+   the `verify` job and with it the publication. A later rebuild of the version after the artifacts expired keeps its
+   published verification pages (`tools/docs/verify.py keep`) and fails if there are none to keep.
+   After the first publication (0.3.0), once <https://kuicksilver.github.io/kuicksilver/latest/verify/index.html> loads,
+   add the site link and three badges to the README's badge block, in a commit of their own (they would be broken
+   images before):
+
+   ```html
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/platforms.html"><img alt="Tests of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/tests.svg"></a>
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/platforms.html"><img alt="Platforms of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/platforms.svg"></a>
+   <a href="https://kuicksilver.github.io/kuicksilver/latest/verify/interop.html"><img alt="Engine interop of the latest release" src="https://kuicksilver.github.io/kuicksilver/latest/verify/badges/engine-interop.svg"></a>
+   ```
+
+   and below it: `<a href="https://kuicksilver.github.io/kuicksilver/">Documentation site</a> · <a
+   href="https://kuicksilver.github.io/kuicksilver/latest/verify/index.html">How we verify</a>`.
 
 ## Releasing from a maintenance branch
 
