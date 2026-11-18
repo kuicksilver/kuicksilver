@@ -4003,6 +4003,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.tlsFailur
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.transportParametersCidAuthentication
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.verifyPauseRoundTrip
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.aHelloRetryRequestCompletesTheConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.negative_aStreamResetInZeroRttIsDroppedWhenAHelloRetryRequestRejectsIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.negative_noCommonGroupCloses0x0128
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.negative_zeroRttAfterAHelloRetryRequestIsRejectedAndTheConnectionCompletes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.ackOfNewPhaseCarriedWithNewKeysIsFine

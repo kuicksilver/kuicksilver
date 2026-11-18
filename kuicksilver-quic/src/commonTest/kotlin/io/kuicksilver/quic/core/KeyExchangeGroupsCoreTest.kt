@@ -122,4 +122,53 @@ class KeyExchangeGroupsCoreTest {
             assertTrue(p.serverEvents.none { it is ConnectionEvent.StreamReadable && it.id == id }, "no 0-RTT stream reached the server")
         }
     }
+
+    /**
+     * A 0-RTT stream retired by our reset before the server answered, its size held for that answer, and the answer a
+     * HelloRetryRequest, which rejects 0-RTT (RFC 9001 section 4.6.2): the rejection drops the stream with the rest of our
+     * 0-RTT streams. Nothing of it is offered again as at an acceptance, no size is reported, and no reset waits for an
+     * acknowledgment the server, which discarded our 0-RTT packets, will never send.
+     */
+    @Test fun negative_aStreamResetInZeroRttIsDroppedWhenAHelloRetryRequestRejectsIt() {
+        val t = ticket()
+        var id = -1L
+        val server: TlsConfig = CoreFixtures.server { keyExchangeGroups = groups(KeyExchangeGroups.SECP384R1) }
+        val p =
+            CorePair(
+                serverTls = server,
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = ServerEarlyData.of(QuicConfig.Default, server.alpn, null, register),
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(t), "0-RTT available with this ticket")
+                    id = c.openStream(bidi = false)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        p.use { _ ->
+            p.filterToClient = { _, _ -> false } // the HelloRetryRequest waits until the reset went out
+            p.step() // the ClientHello and the 0-RTT bytes go out
+            p.client.resetStream(id, 4)
+            p.step() // the RESET_STREAM goes out in 0-RTT, which the server discards
+            p.filterToClient = { _, _ -> true }
+            assertEquals(listOf(id), p.client.streams.takeRetiredAwaitingAck(), "retired at the reset")
+            assertTrue(p.client.streams.heldForAnswer(id), "its size is held for the answer")
+            assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
+            assertEquals(false, p.client.earlyDataAccepted)
+            assertTrue(p.clientEvents.any { it is ConnectionEvent.EarlyDataRejected }, p.clientEvents.toString())
+            assertFalse(p.client.streams.heldForAnswer(id))
+            assertEquals(null, p.client.streams.takeRetiredAwaitingAck(), "a rejection offers nothing again")
+            assertEquals(
+                listOf(0, 0),
+                p.client.streams
+                    .resetAcksPendingForTest()
+                    .toList(),
+                "no reset waits for its acknowledgment",
+            )
+            assertTrue(
+                p.clientEvents.none { (it is ConnectionEvent.StreamFinished && it.id == id) },
+                "the dropped stream is never reported finished",
+            )
+        }
+    }
 }
