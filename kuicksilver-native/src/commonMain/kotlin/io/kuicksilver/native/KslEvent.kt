@@ -126,7 +126,7 @@ public object KslConst {
      * 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with, bit 0 zlib, bit 1 brotli
      * (RFC 8879; the bundled OpenSSL of Android and iOS: zlib only, ADR-0025). Additive in ABI 7.
      */
-    public const val GET_CERT_COMPRESSORS: Int = 15
+    public const val GET_CERT_COMPRESSORS: Int = 18
 
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2

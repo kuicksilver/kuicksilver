@@ -41,7 +41,7 @@ extern "C" {
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
    ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
    KSL_OPT_CERT_COMPRESSION, KSL_GET_CERT_COMPRESSION and KSL_GET_CERT_COMPRESSORS (TLS certificate compression, RFC 8879;
-   14 and 15, after the 13 of KSL_GET_GROUP that another 0.3.0 addition takes) */
+   14 and 18, after the 13 of KSL_GET_GROUP and the 15 to 17 of ECH that other 0.3.0 additions take) */
 
 /* return codes */
 #define KSL_OK 0
@@ -146,7 +146,7 @@ extern "C" {
 #define KSL_GET_CERT_COMPRESSION 14 /* 2 bytes big-endian: the algorithm of the CompressedCertificate (RFC 8879) the peer sent its
                                       certificate in (1 zlib, 2 brotli), 0 when it came as a plain Certificate or has not come (a
                                       server: no client certificate). Additive in ABI 7 */
-#define KSL_GET_CERT_COMPRESSORS 15 /* 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with,
+#define KSL_GET_CERT_COMPRESSORS 18 /* 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with,
                                       bit 0 zlib, bit 1 brotli (RFC 8879). A build with either decompresses both; the bundled
                                       OpenSSL of Android and iOS compresses with zlib only (ADR-0025). Additive in ABI 7 */
 /* clang-format on */
