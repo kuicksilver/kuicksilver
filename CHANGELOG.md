@@ -709,6 +709,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tests that had been renamed, or named them after the wrong class; those names are corrected, four ✅ sections
   that named no test now name theirs, and the RFC 9460 section 9.3 text says that a cached Alt-Svc alternative does not
   skip the HTTPS records (it shares the origin's lookup), as the client has done since 0.3.0.
+- Fuzzing: the 120 committed `quic.connectionNull` and `quic.connectionTls` inputs that lost their early server
+  application operations when the connection fuzzer moved to endpoints are refreshed: each decodes again to the operations
+  it was kept for (463 server application operations instead of 216); 110 old versions that a Jazzer merge found redundant
+  are removed, and every corpus input is named by the SHA-1 of its bytes again, which `CommittedCorpusReplayTest` checks.
 - Build: `tools/fuzz/formats/flags.txt` names every flag bit, setup bit and outcome of the traced connection fuzz
   programs (`ConnProgram`, `ZeroRttProgram`) by its constant, value and trace name. `tools/check/fuzz-formats.py` checks
   it against the programs' sources and KDoc (no gap, no duplicate, no stale or unlisted name, the trace name the
