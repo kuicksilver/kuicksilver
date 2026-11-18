@@ -449,6 +449,36 @@ class ConnectionEndTest {
             }
         }
 
+    /**
+     * The connection ends while the server's handler has a response open and its writer's pump waits for content: the
+     * pump is cancelled with the session's coroutines, the handler's answer then fails, and the request still ends with
+     * nothing of it registered. A pump cancelled so used to end without ending the request, which stayed in the session's
+     * map for good: EarlyDataTest.earlyRequestEndsWhenTheConnectionIsLostBeforeTheAnswer failed so on a Windows VM, where
+     * the client's close reached the server between the handler's respond and its write.
+     */
+    @Test fun responseOpenWhenTheConnectionEndsLeavesNoRequest() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val response = async { runCatching { p.client.request(get()) } }
+                val req = withTimeout(5.seconds) { p.server.acceptRequest() }
+                val w = req.respond(200)
+                val s = p.server.session
+                p.client.close()
+                withTimeout(5.seconds) { p.server.closed.await() }
+                // the order behind the bug: the session's coroutines, the waiting pump among them, are cancelled before the write
+                while (!s.job.isCancelled) kotlinx.coroutines.yield()
+                val answer =
+                    runCatching {
+                        w.output.writeFully("GET ok".encodeToByteArray())
+                        w.finish()
+                    }
+                assertTrue(answer.isFailure, "the answer on a lost connection failed: $answer")
+                // a wait that must succeed: bounded by the test's own timeout, not a short one of its own
+                while (withContext(s.dispatcher) { s.activeServerRequests.isNotEmpty() }) kotlinx.coroutines.yield()
+                response.join()
+            }
+        }
+
     /** Likewise for a request body: the connection ends while the application still writes it, and its writes fail. */
     @Test fun requestBodyWriteAfterTheConnectionEndedFails() =
         h3Test {

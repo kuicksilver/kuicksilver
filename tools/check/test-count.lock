@@ -591,6 +591,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyThenFinThenCloseReadsWhole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyWriteAfterTheConnectionEndedFails
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.responseAfterTheConnectionEndedNeverHangs
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.responseOpenWhenTheConnectionEndsLeavesNoRequest
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.responseWriteAfterTheConnectionEndedFails
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.unreadBodyIsCutAfterTheGrace
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.unreadBodyWholeOnlyAfterALocalCloseLetsTheSessionEnd

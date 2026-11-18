@@ -990,6 +990,15 @@ internal class ResponseWriterImpl(
     init {
         // cancelled with the connection, before it ran or while it waited: the application's writes fail, never hang
         session.onCancelled(pump) { e -> channel.cancel(e) }
+        // and the request ends with it: a handler whose write then failed may never call finish, and nothing else would
+        // take it out of the session's maps. done() runs on the session's dispatcher; its scope is gone, afterEnd is not
+        if (request != null) {
+            pump.invokeOnCompletion { e ->
+                if (e == null) return@invokeOnCompletion
+                request.applicationDone()
+                session.afterEnd.launch { request.done() }
+            }
+        }
     }
 
     override suspend fun finish(trailers: Http3Headers?) {

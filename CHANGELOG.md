@@ -1280,6 +1280,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a request whose response was open when the connection was lost, its writer waiting for content, stayed
+  registered on the connection for as long as the connection object lived: the writer, cancelled with the connection,
+  ended without ending the request, and a handler whose write then failed never called `finish`. The request now ends
+  with its writer. Pinned by `ConnectionEndTest.responseOpenWhenTheConnectionEndsLeavesNoRequest` (seen as
+  `EarlyDataTest.earlyRequestEndsWhenTheConnectionIsLostBeforeTheAnswer` failing on Windows).
 - Ktor server, HTTP/1.1: a request whose first bytes arrived just as the server began to stop could be dropped: the wait
   for the next request head raced the stop, and when the stop won, the connection closed over the head without reading
   or answering it (and a close over unread input may reset the connection). The stop's side now ends the wait and looks
