@@ -154,10 +154,10 @@ internal class ClosingIo(
     private val onClose: () -> Unit,
 ) : io.kuicksilver.quic.DatagramIo by io,
     io.kuicksilver.quic.UnreachableReports {
-    /** What the next [takeUnreachable] answers, as a socket whose error queue held an ICMP unreachable. */
-    @kotlin.concurrent.Volatile var unreachable: InetSocketAddress? = null
+    /** What [takeUnreachable] answers, oldest first, as a socket whose error queue held ICMP unreachable messages. */
+    val unreachable = Channel<io.kuicksilver.quic.Unreachable>(Channel.UNLIMITED)
 
-    override fun takeUnreachable(): InetSocketAddress? = unreachable.also { unreachable = null }
+    override fun takeUnreachable(): io.kuicksilver.quic.Unreachable? = unreachable.tryReceive().getOrNull()
 
     val ecnSent = ArrayList<io.kuicksilver.quic.Ecn>()
     var ecnMarkingDisabled = false
@@ -844,6 +844,156 @@ class ConnectUdpTest {
             assertEquals(1, closed, "the tunnel's sender is closed with it")
         }
 
+    /** A recording [PtbSink] for the tests: what was sent, how often it was closed. */
+    private class RecordingSink : PtbSink {
+        val sent = Channel<InetSocketAddress>(Channel.UNLIMITED)
+        var closed = 0
+
+        override fun send(
+            target: InetSocketAddress,
+            local: InetSocketAddress,
+            payload: ByteArray,
+            len: Int,
+            mtu: Int,
+        ): Boolean {
+            sent.trySend(target)
+            return true
+        }
+
+        override fun close() {
+            closed++
+        }
+    }
+
+    /**
+     * RFC 4443 section 2.4 (f): the Packet Too Big limit is the target's, over every tunnel to it (two tunnels to one target
+     * share its burst of 5), and the proxy's (a burst of 3 here, over two targets); one sender (two raw sockets at most)
+     * serves every tunnel, closed when the last one ends.
+     */
+    @Test fun negative_packetTooBigLimitsArePerTargetAndProxyWide() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink()
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val a = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val b = p.client.connectUdp(template, "192.0.2.50", 5000)
+                rig.sockets.forEach { it.reportLocal = true }
+                repeat(4) { a.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(4) { b.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(8) { got.receive() }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedTooLargeForClient == 8L }
+                }
+                assertEquals(5, rig.proxy.stats.packetTooBigSent, "the target's burst of 5 over both tunnels")
+                assertEquals(
+                    1,
+                    rig.proxy.impl.ptbSinksOpened
+                        .load(),
+                    "one sender for the proxy",
+                )
+                a.close()
+                b.close()
+                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+                assertEquals(1, sink.closed, "closed with the last tunnel")
+            }
+            // the proxy-wide limit: two targets, each with a burst of 5 of its own, get 3 together
+            val capped = rig()
+            val sink2 = RecordingSink()
+            capped.proxy.impl.clock = TestTimeSource()
+            capped.proxy.impl.ptbTotalBurst = 3
+            capped.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            capped.proxy.impl.senderForTest = { sink2 }
+            capped.use { r ->
+                val p = r.pair
+                val other = InetSocketAddress("192.0.2.51", 5000)
+                val got1 = capped.echo(echoAt)
+                val got2 = capped.echo(other)
+                val a = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val b = p.client.connectUdp(template, "192.0.2.51", 5000)
+                capped.sockets.forEach { it.reportLocal = true }
+                repeat(3) { a.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(3) { b.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(3) { got1.receive() }
+                repeat(3) { got2.receive() }
+                withTimeout(5.seconds) {
+                    capped.proxy.impl.changes
+                        .first { capped.proxy.stats.droppedTooLargeForClient == 6L }
+                }
+                assertEquals(3, capped.proxy.stats.packetTooBigSent, "the proxy's burst of 3 over both targets")
+                a.close()
+                b.close()
+            }
+        }
+
+    /** One client has at most 4 name lookups at once (a blocked one counts until it returns); a fifth is refused 503. */
+    @Test fun negative_oneClientCannotTakeEveryLookup() =
+        h3Test {
+            val gate = CompletableDeferred<Unit>()
+            val started = Channel<Unit>(Channel.UNLIMITED)
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        resolver = {
+                            started.send(Unit)
+                            gate.await()
+                            listOf(byteArrayOf(192.toByte(), 0, 2, 50))
+                        },
+                        resolveTimeout = 30.seconds,
+                        socketFactory = f,
+                    )
+                }
+            rig.use { r ->
+                val p = r.pair
+                val slow = List(SystemResolver.MAX_PER_CLIENT) { async { p.client.connectUdp(template, "slow$it.example", 5000) } }
+                repeat(SystemResolver.MAX_PER_CLIENT) { withTimeout(5.seconds) { started.receive() } }
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "one-more.example", 5000) }
+                assertEquals(503, e.status)
+                gate.complete(Unit)
+                slow.forEach { it.await().close() }
+            }
+            // the system resolver counts a client's lookups until they return, given up or not
+            val owner = kotlin.concurrent.atomics.AtomicInt(0)
+            val gate2 = CompletableDeferred<Unit>()
+            try {
+                SystemResolver.lookupForTest =
+                    {
+                        kotlinx.coroutines.runBlocking { gate2.await() }
+                        listOf(byteArrayOf(192.toByte(), 0, 2, 1))
+                    }
+                repeat(SystemResolver.MAX_PER_CLIENT) {
+                    assertEquals(
+                        null,
+                        kotlinx.coroutines.withTimeoutOrNull(20.milliseconds) { SystemResolver.resolveFor("x.example", owner) },
+                    )
+                }
+                assertEquals(SystemResolver.MAX_PER_CLIENT, owner.load())
+                assertFailsWith<ResolverBusyException> { SystemResolver.resolveFor("y.example", owner) }
+                // another client is not held back by this one's cap
+                val owner2 = kotlin.concurrent.atomics.AtomicInt(0)
+                val other = async { SystemResolver.resolveFor("other-client.example", owner2) }
+                withTimeout(5.seconds) { while (owner2.load() != 1) kotlinx.coroutines.yield() }
+                gate2.complete(Unit)
+                assertEquals(1, other.await().size)
+                withTimeout(5.seconds) { while (owner.load() > 0) kotlinx.coroutines.yield() }
+            } finally {
+                gate2.complete(Unit)
+                SystemResolver.lookupForTest = null
+            }
+        }
+
     /** `packetTooBig = false`: no probe, no raw socket; the status says so. */
     @Test fun packetTooBigOffNeverProbes() =
         h3Test {
@@ -857,8 +1007,10 @@ class ConnectUdpTest {
         }
 
     /**
-     * Section 3.1: an ICMP port or host unreachable for the tunnel's target is the operating system saying the socket is no
-     * longer usable: the request stream is reset and stopped with H3_CONNECT_ERROR. One for another destination is ignored.
+     * Section 3.1: an ICMP port unreachable for the tunnel's target is the operating system saying the socket is no longer
+     * usable: the request stream is reset and stopped with H3_CONNECT_ERROR. RFC 8085 section 5.2: only one that quotes the
+     * start of a payload the tunnel sent; a forged one (another destination, a payload never sent, the headers only) and a
+     * host unreachable (often transient) are ignored and counted.
      */
     @Test fun negative_targetUnreachableClosesTheTunnel() =
         h3Test {
@@ -867,19 +1019,49 @@ class ConnectUdpTest {
                 rig.proxy.impl.unreachablePoll = 20.milliseconds
                 rig.echo(echoAt)
                 val t = p.client.connectUdp(template, "192.0.2.50", 5000)
-                t.send("x".encodeToByteArray())
-                assertContentEquals("echo:x".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                t.send("hello".encodeToByteArray())
+                assertContentEquals("echo:hello".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
                 val socket = rig.sockets.single()
-                socket.unreachable = InetSocketAddress("192.0.2.99", 5000) // another destination: not this tunnel's
-                withTimeout(5.seconds) { while (socket.unreachable != null) kotlinx.coroutines.yield() }
+
+                fun report(
+                    to: InetSocketAddress,
+                    port: Boolean,
+                    quote: String,
+                ) = socket.unreachable.trySend(io.kuicksilver.quic.Unreachable(to, port, quote.encodeToByteArray()))
+                report(InetSocketAddress("192.0.2.99", 5000), true, "hello") // another destination
+                report(InetSocketAddress("192.0.2.50", 5001), true, "hello") // another port
+                report(echoAt, false, "hello") // host unreachable
+                report(echoAt, true, "") // the headers only: nothing to check
+                report(echoAt, true, "spoof") // a payload never sent
+                report(echoAt, true, "hello!") // longer than what was sent
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.ignoredUnreachable == 6L }
+                }
                 assertEquals(1, rig.proxy.activeTunnels.value)
-                socket.unreachable = echoAt
+                report(echoAt, true, "hel") // the start of what was sent
                 val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
                 assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
                 assertEquals(1, rig.proxy.stats.closedUnreachable)
                 withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
             }
         }
+
+    /** The prefixes a tunnel keeps: the latest 16 payloads, 64 bytes of each. */
+    @Test fun sentPrefixes() {
+        val s = SentPrefixes()
+        assertFalse(s.matches("a".encodeToByteArray()))
+        val long = ByteArray(100) { it.toByte() }
+        s.record(long, 0, 100)
+        assertTrue(s.matches(long.copyOf(64)))
+        assertFalse(s.matches(long.copyOf(65)), "64 bytes kept")
+        assertFalse(s.matches(ByteArray(0)), "an empty quote matches nothing")
+        s.record(byteArrayOf(9, 1, 2, 3), 1, 2)
+        assertTrue(s.matches(byteArrayOf(1, 2)))
+        assertFalse(s.matches(byteArrayOf(1, 2, 3)), "only the recorded range")
+        repeat(SentPrefixes.SLOTS) { s.record(byteArrayOf(7), 0, 1) }
+        assertFalse(s.matches(byteArrayOf(1, 2)), "the oldest forgotten")
+    }
 
     /** Section 7: the proxy's own address (the one this request's connection reached) is refused, whatever the filter allows. */
     @Test fun negative_theProxysOwnAddressIsRefused() =
@@ -890,6 +1072,14 @@ class ConnectUdpTest {
                 val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "10.0.0.2", 53) }
                 assertEquals(403, e.status)
                 assertEquals("proxy; error=destination_ip_prohibited", e.headers["proxy-status"])
+                assertEquals(0, rig.socketsOpened.load())
+            }
+            // the same address as IPv4-mapped, NAT64 (64:ff9b::/96) and 6to4 (2002::/16) forms: delivered to it all the same
+            rig().use { rig ->
+                for (form in listOf("::ffff:10.0.0.2", "64:ff9b::a00:2", "2002:a00:2::1")) {
+                    val e = assertFailsWith<Http3Exception.ConnectRejected>(form) { rig.pair.client.connectUdp(template, form, 53) }
+                    assertEquals(403, e.status, form)
+                }
                 assertEquals(0, rig.socketsOpened.load())
             }
             val allowed =

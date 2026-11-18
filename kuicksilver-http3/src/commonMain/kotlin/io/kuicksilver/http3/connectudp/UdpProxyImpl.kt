@@ -48,6 +48,7 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -128,6 +129,7 @@ internal class UdpProxyImpl(
     internal val clientBusy = AtomicLong(0)
     internal val tooLargeFromTarget = AtomicLong(0)
     internal val closedUnreachable = AtomicLong(0)
+    internal val ignoredUnreachable = AtomicLong(0)
     internal val packetTooBigSent = AtomicLong(0)
 
     /** RFC 9298 section 6.1: probed once, at the first tunnel, when the configuration asks for it. */
@@ -152,9 +154,50 @@ internal class UdpProxyImpl(
         return packetTooBig.load() == PacketTooBigStatus.Available
     }
 
-    /** A sender for one tunnel, or null when this proxy sends none. */
-    internal fun newSender(): PtbSink? =
-        if (packetTooBigAvailable()) senderForTest?.invoke() ?: RawPtbSink(PacketTooBigSender.create()) else null
+    /**
+     * One sender for every tunnel (two raw sockets at most, one per family: Linux hands each ICMP message the host receives
+     * to every raw ICMP socket, so a socket per tunnel would multiply that work), opened at the first message and closed
+     * when the last tunnel ends; [ptbLock] serialises its use. Messages are limited per target address over all tunnels
+     * ([PTB_RATE] a second, a burst of [PTB_BURST]; the [MAX_PTB_TARGETS] latest targets kept) and over the proxy
+     * ([ptbTotalRate], burst [ptbTotalBurst]), RFC 4443 section 2.4 (f); each answers one dropped payload.
+     */
+    private val ptbLock = Mutex()
+    private var ptbSink: PtbSink? = null
+    private val ptbTargets = LinkedHashMap<String, TokenBucket>()
+
+    /** Tests: the proxy-wide limit of Packet Too Big messages (a second, and the burst). */
+    internal var ptbTotalRate: Int = PTB_TOTAL_RATE
+    internal var ptbTotalBurst: Int = PTB_TOTAL_BURST
+    private var ptbAll: TokenBucket? = null
+
+    /** Tests: how many senders were opened. */
+    internal val ptbSinksOpened = AtomicLong(0)
+
+    /** Sends the Packet Too Big for a payload [target] sent to [local]; true when it went out. */
+    internal suspend fun sendPacketTooBig(
+        target: InetSocketAddress,
+        local: InetSocketAddress,
+        payload: ByteArray,
+        len: Int,
+        mtu: Int,
+    ): Boolean {
+        if (!packetTooBigAvailable()) return false
+        return ptbLock.withLock {
+            val key = target.ipLiteral()
+            val bucket = ptbTargets.remove(key) ?: TokenBucket(PTB_RATE, PTB_BURST) { clockStart.elapsedNow().inWholeNanoseconds }
+            ptbTargets[key] = bucket // the most recent last
+            if (ptbTargets.size > MAX_PTB_TARGETS) ptbTargets.remove(ptbTargets.keys.first())
+            if (!bucket.tryTake()) return@withLock false
+            val all = ptbAll ?: TokenBucket(ptbTotalRate, ptbTotalBurst) { clockStart.elapsedNow().inWholeNanoseconds }.also { ptbAll = it }
+            if (!all.tryTake()) return@withLock false
+            val sink =
+                ptbSink ?: (senderForTest?.invoke() ?: RawPtbSink(PacketTooBigSender.create())).also {
+                    ptbSink = it
+                    ptbSinksOpened.incrementAndFetch()
+                }
+            sink.send(target, local, payload, len, mtu)
+        }
+    }
 
     fun snapshot(): UdpProxyStats =
         UdpProxyStats(
@@ -171,6 +214,7 @@ internal class UdpProxyImpl(
             clientBusy.load(),
             tooLargeFromTarget.load(),
             closedUnreachable.load(),
+            ignoredUnreachable.load(),
             packetTooBig.load(),
             packetTooBigSent.load(),
         )
@@ -231,7 +275,7 @@ internal class UdpProxyImpl(
                     val r =
                         completedWithin(config.resolveTimeout) {
                             try {
-                                Result.success(config.resolver.resolve(h.name))
+                                Result.success(resolve(h.name, client))
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Throwable) {
@@ -251,7 +295,7 @@ internal class UdpProxyImpl(
                     ?.connectionOwnAddresses
                     ?.mapNotNull { UdpHost.parse(it.ipLiteral().substringBefore('%')) }
                     ?.map { if (it is UdpHost.Ipv4) it.bytes else (it as UdpHost.Ipv6).bytes }
-                    ?.map(::unmapped)
+                    ?.map(::canonical)
                     .orEmpty()
             } else {
                 emptyList()
@@ -259,7 +303,9 @@ internal class UdpProxyImpl(
         val address =
             candidates
                 .map(::unmapped)
-                .firstOrNull { a -> own.none { it.contentEquals(a) } && config.targetFilter.allows(target.host.text, a, target.port) }
+                .firstOrNull { a ->
+                    own.none { it.contentEquals(canonical(a)) } && config.targetFilter.allows(target.host.text, a, target.port)
+                }
                 ?: return refuse(request, answered, 403, "destination_ip_prohibited")
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)
@@ -342,6 +388,26 @@ internal class UdpProxyImpl(
         }
     }
 
+    /**
+     * [host]'s addresses from the configured resolver, [SystemResolver.MAX_PER_CLIENT] lookups of one client at once: the
+     * system one counts a lookup until its blocking call returns, another resolver until its call does.
+     */
+    private suspend fun resolve(
+        host: String,
+        client: ClientState,
+    ): List<ByteArray> {
+        if (config.resolver === io.kuicksilver.http3.UdpProxyResolver.System) return SystemResolver.resolveFor(host, client.lookups)
+        if (client.lookups.incrementAndFetch() > SystemResolver.MAX_PER_CLIENT) {
+            client.lookups.decrementAndFetch()
+            throw ResolverBusyException()
+        }
+        try {
+            return config.resolver.resolve(host)
+        } finally {
+            client.lookups.decrementAndFetch()
+        }
+    }
+
     /** Takes a slot for [client]: its [ClientState], or the status that refuses the request (an Int). */
     private suspend fun reserve(client: String): Any =
         lock.withLock {
@@ -364,6 +430,13 @@ internal class UdpProxyImpl(
             clients[client]?.let {
                 it.tunnels--
                 if (it.tunnels <= 0) it.idleSince = nowMs()
+            }
+            // the last tunnel closes the Packet Too Big sender (lock order: lock, then ptbLock; a send takes ptbLock only)
+            if (active.value == 1) {
+                ptbLock.withLock {
+                    ptbSink?.close()
+                    ptbSink = null
+                }
             }
             active.value -= 1
         }
@@ -393,6 +466,12 @@ internal class UdpProxyImpl(
     private val clockStart by lazy { clock.markNow() }
 
     /** An IPv4-mapped IPv6 address (`::ffff:0:0/96`) as its IPv4 address: it is one, and an IPv4 socket sends to it. */
+
+    /** The IPv4 address an IPv6 one is delivered to (mapped, NAT64, 6to4: [UdpAddressClass.embeddedV4]), else the address. */
+    private fun canonical(a: ByteArray): ByteArray =
+        io.kuicksilver.http3.message.UdpAddressClass
+            .embeddedV4(a) ?: a
+
     private fun unmapped(a: ByteArray): ByteArray {
         if (a.size != 16) return a
         for (i in 0 until 10) if (a[i] != 0.toByte()) return a
@@ -424,12 +503,8 @@ private class ProxyTunnel(
     private val receiveSlot = linkMtu + 1
     private val bucket = TokenBucket(config.packetRate, config.packetBurst) { start.elapsedNow().inWholeNanoseconds }
 
-    /**
-     * RFC 9298 section 6.1 by way of RFC 4443 section 2.4 (f): Packet Too Big messages to this tunnel's target, at most
-     * [PTB_RATE] a second after a burst of [PTB_BURST]; each answers one dropped payload, so never more than the drops.
-     */
-    private val ptbBucket = TokenBucket(PTB_RATE, PTB_BURST) { start.elapsedNow().inWholeNanoseconds }
-    private val sender: PtbSink? = proxy.newSender()
+    // what was sent lately, for the check of an ICMP unreachable; only on a socket that reports them
+    private val sent: SentPrefixes? = if (io.io is UnreachableReports) SentPrefixes() else null
     private val sendBatch = PacketBatch(1, linkMtu)
     private val receiveBatch = PacketBatch(RECEIVE_BATCH, receiveSlot)
 
@@ -493,7 +568,6 @@ private class ProxyTunnel(
             withContext(NonCancellable) { finish(why) }
             // every coroutine that used them has ended with the scope
             sendBatch.close()
-            sender?.close()
             receiveBatch.close()
         }
     }
@@ -524,18 +598,25 @@ private class ProxyTunnel(
     /**
      * RFC 9298 section 3.1: "If a UDP proxy is notified by its operating system that its socket is no longer usable, it
      * MUST close the request stream", for example on "an ICMP Destination Unreachable message". The accelerated socket on
-     * Linux and Android reports port and host unreachable for the datagrams it sent (its error queue); one for this
-     * tunnel's target ends the tunnel. Polled every [UdpProxyImpl.unreachablePoll]; true when one came. Other sockets report
+     * Linux and Android reports port and host unreachable for the datagrams it sent (its error queue). An off-path sender
+     * can forge them, guessing only the socket's port, so a report ends the tunnel only when it is a port unreachable for
+     * this tunnel's target address and port whose quote carries the start of a payload the tunnel sent lately (RFC 8085
+     * section 5.2). A host unreachable (often transient, a route that comes back) and a report quoting the headers only are
+     * ignored and counted. Polled every [UdpProxyImpl.unreachablePoll]; true when one ends the tunnel. Other sockets report
      * none: an unconnected socket is told nothing on Apple platforms, Windows and the portable sockets.
      */
     private suspend fun unreachable(): Boolean {
         val reports = io.io as? UnreachableReports ?: return false
+        val sent = sent ?: return false
         while (true) {
             delay(proxy.unreachablePoll)
-            val dst = reports.takeUnreachable() ?: continue
-            if (dst.sameIpAs(target)) {
-                proxy.count(proxy.closedUnreachable)
-                return true
+            while (true) {
+                val r = reports.takeUnreachable() ?: break
+                if (r.destination.sameIpAs(target) && r.destination.port == target.port && r.port && sent.matches(r.quote)) {
+                    proxy.count(proxy.closedUnreachable)
+                    return true
+                }
+                proxy.count(proxy.ignoredUnreachable)
             }
         }
     }
@@ -569,6 +650,7 @@ private class ProxyTunnel(
         sendBatch.setLength(0, len)
         sendBatch.setAddress(0, target)
         sendBatch.setEcn(0, Ecn.NotEct)
+        sent?.record(d, n, len)
         if (io.io.send(sendBatch) == 1) proxy.count(proxy.toTargets)
         answer.sent.incrementAndFetch()
         touch()
@@ -578,20 +660,18 @@ private class ProxyTunnel(
      * RFC 9298 section 6.1: "the UDP proxy SHOULD drop the UDP payload and send an ICMP Packet Too Big message to the
      * target". [d] is the HTTP datagram that did not fit (Context ID 0, then the payload); [maxDatagram] the largest that
      * does, from which the MTU to report follows (the UDP and IP headers on top of the largest payload). Needs the address
-     * the target sent to ([local], which the accelerated socket reports; the portable one does not), a sender (the
-     * privilege) and a token of [ptbBucket].
+     * the target sent to ([local], which the accelerated socket reports; the portable one does not), the privilege, and a
+     * token of the target's and of the proxy's limits ([UdpProxyImpl.sendPacketTooBig]).
      */
-    private fun packetTooBig(
+    private suspend fun packetTooBig(
         local: InetSocketAddress?,
         d: ByteArray,
         maxDatagram: Int,
     ) {
-        val s = sender ?: return
         if (local == null) return
         // the largest UDP payload that fits (the datagram less its one-byte Context ID) and the headers it would travel in
         val mtu = (maxDatagram - 1).coerceAtLeast(0) + if (':' in target.ipLiteral()) IPV6_UDP_OVERHEAD else IPV4_UDP_OVERHEAD
-        if (!ptbBucket.tryTake()) return
-        if (s.send(target, local, d.copyOfRange(1, d.size), d.size - 1, mtu)) proxy.count(proxy.packetTooBigSent)
+        if (proxy.sendPacketTooBig(target, local, d.copyOfRange(1, d.size), d.size - 1, mtu)) proxy.count(proxy.packetTooBigSent)
     }
 
     /** Datagrams from the socket: only the target's (section 3.1), each one an HTTP datagram with Context ID 0. */
@@ -642,11 +722,18 @@ private class ProxyTunnel(
     }
 }
 
-/** Packet Too Big messages per second and per tunnel (RFC 4443 section 2.4 (f)), and the burst before the rate applies. */
+/** Packet Too Big messages per second and per target address (RFC 4443 section 2.4 (f)), and the burst before the rate applies. */
 private const val PTB_RATE = 10
 private const val PTB_BURST = 5
 
-/** Where a tunnel's Packet Too Big messages go: the raw socket, or a test's recorder. */
+/** Packet Too Big messages per second over the whole proxy, and the burst. */
+private const val PTB_TOTAL_RATE = 100
+private const val PTB_TOTAL_BURST = 50
+
+/** Target addresses whose Packet Too Big limit a proxy keeps (the least recently used go first). */
+private const val MAX_PTB_TARGETS = 4096
+
+/** Where a proxy's Packet Too Big messages go: the raw socket, or a test's recorder; used under the proxy's lock. */
 internal interface PtbSink {
     /** Sends the message for `payload[0, len)` from [target] to [local] that does not fit [mtu]; true when it went out. */
     fun send(

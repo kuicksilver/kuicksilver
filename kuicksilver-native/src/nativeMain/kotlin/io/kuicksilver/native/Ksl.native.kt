@@ -953,9 +953,34 @@ public actual object Ksl {
     public actual fun udpTakeUnreachable(
         udp: Long,
         dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
     ): Boolean {
-        require(dst.size >= KslConst.UDP_ADDR_LEN) { "udpTakeUnreachable buffer too small" }
-        return dst.usePinned { d -> ksl_udp_take_unreachable(udp(udp), d.addressOf(0).reinterpret()) == 1 }
+        require(dst.size >= KslConst.UDP_ADDR_LEN && quote.size >= KslConst.UDP_PTB_QUOTE && info.size >= 2) {
+            "udpTakeUnreachable buffer too small"
+        }
+        return memScoped {
+            val ql = alloc<UIntVar>()
+            val kind = alloc<UIntVar>()
+            val taken =
+                dst.usePinned { d ->
+                    quote.usePinned { q ->
+                        ksl_udp_take_unreachable(
+                            udp(udp),
+                            d.addressOf(0).reinterpret(),
+                            q.addressOf(0).reinterpret(),
+                            KslConst.UDP_PTB_QUOTE.toUInt(),
+                            ql.ptr,
+                            kind.ptr,
+                        ) == 1
+                    }
+                }
+            if (taken) {
+                info[0] = ql.value.toInt()
+                info[1] = kind.value.toInt()
+            }
+            taken
+        }
     }
 
     public actual fun icmpPtbBuild(

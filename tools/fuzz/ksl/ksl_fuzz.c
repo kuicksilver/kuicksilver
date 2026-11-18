@@ -258,6 +258,40 @@ static void ticket_program(const uint8_t *p, size_t n) {
     fake_now = 1000000;   /* the generated keys of mode 7 stay valid: every input starts at the same clock */
 }
 
+/* mode 0xfc: ksl_icmp_ptb_build (RFC 9298 section 6.1) on [flags][mtu:2][cap:2][target port:2][local port:2][target 16]
+   [local 16][payload]: flags bit 0 picks IPv6. A message is no longer than cap and KSL_ICMP_PTB_MAX, its ICMP checksum is
+   right (RFC 1071; over the ICMPv6 pseudo-header, RFC 4443 section 2.3) and it quotes the payload's start unchanged. */
+static uint32_t fz_sum(uint32_t s, const uint8_t *p, size_t n) {
+    for (size_t i = 0; i + 1 < n; i += 2) s += (uint32_t)p[i] << 8 | p[i + 1];
+    if (n & 1) s += (uint32_t)p[n - 1] << 8;
+    return s;
+}
+static void icmp_ptb(const uint8_t *p, size_t n) {
+    if (n < 41) return;
+    int v6 = p[0] & 1;
+    uint32_t mtu = (uint32_t)p[1] << 8 | p[2], cap = (uint32_t)p[3] << 8 | p[4];
+    if (cap > KSL_ICMP_PTB_MAX) cap = KSL_ICMP_PTB_MAX;
+    uint8_t t[KSL_UDP_ADDR_LEN] = {0}, l[KSL_UDP_ADDR_LEN] = {0};
+    t[0] = l[0] = v6 ? 6 : 4;
+    memcpy(t + 1, p + 5, 2); memcpy(l + 1, p + 7, 2);
+    memcpy(t + 3, p + 9, v6 ? 16 : 4); memcpy(l + 3, p + 25, v6 ? 16 : 4);
+    const uint8_t *pl = p + 41; size_t pn = n - 41;
+    uint8_t *payload = malloc(pn ? pn : 1); memcpy(payload, pl, pn); /* its own allocation: ASan sees a read past pn */
+    uint8_t *out = malloc(cap ? cap : 1);
+    uint32_t m = ksl_icmp_ptb_build(out, cap, t, l, payload, (uint32_t)pn, mtu);
+    if (m > cap || m > KSL_ICMP_PTB_MAX) abort();
+    if (m) {
+        uint32_t s = fz_sum(0, out, m);
+        if (v6) { s = fz_sum(s, l + 3, 16); s = fz_sum(s, t + 3, 16); s += 58; s += m >> 16; s += m & 0xffff; }
+        while (s >> 16) s = (s & 0xffff) + (s >> 16);
+        if (s != 0xffff) abort();
+        if (out[0] != (v6 ? 2 : 3)) abort();
+        uint32_t hdr = 8 + (v6 ? 40 : 20) + 8; /* ICMP, the quoted IP and UDP headers */
+        if (m > hdr && memcmp(out + hdr, payload, m - hdr) != 0) abort();
+    }
+    free(out); free(payload);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     init();
     if (size < 1) return 0;
@@ -266,6 +300,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         uint8_t *copy = malloc(n ? n : 1); memcpy(copy, rest, n); /* its own allocation: ASan sees a read past n */
         int r = ksl_nst_has_early_data(copy, n); free(copy);
         if (r != 0 && r != 1) abort();
+        return 0;
+    }
+    if (data[0] == 0xfc) {
+        icmp_ptb(rest, n);
         return 0;
     }
     if (data[0] == 0xfd) {
@@ -353,6 +391,16 @@ int ksl_fuzz_write_seeds(const char *dir) {
     static const uint8_t NST[] = {4, 0, 0, 0x1a, 0, 0, 0x1c, 0x20, 1, 2, 3, 4, 2, 0xaa, 0xbb, 0, 3, 1, 2, 3, 0, 8,
                                   0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
     PUT("new-session-ticket", 0xfe, NST, sizeof NST);
+    {   /* ksl_icmp_ptb_build: an IPv4 and an IPv6 message, each from a 1400-byte payload */
+        uint8_t ptb[41 + 1400]; memset(ptb, 0, sizeof ptb); memset(ptb + 41, 0x42, 1400);
+        ptb[1] = 0x05; ptb[2] = 0x00; ptb[3] = 0x04; ptb[4] = 0xd8; /* mtu 1280, cap 1240 */
+        ptb[5] = 0x13; ptb[6] = 0x88; ptb[7] = 0x01; ptb[8] = 0xbb; /* ports 5000, 443 */
+        ptb[9] = 192; ptb[10] = 0; ptb[11] = 2; ptb[12] = 50; ptb[25] = 10; ptb[28] = 2;
+        PUT("icmp-ptb-v4", 0xfc, ptb, sizeof ptb);
+        ptb[0] = 1; ptb[9] = 0x20; ptb[10] = 0x01; ptb[11] = 0x0d; ptb[12] = 0xb8; ptb[24] = 1;
+        ptb[25] = 0x20; ptb[26] = 0x01; ptb[27] = 0x0d; ptb[28] = 0xb8; ptb[40] = 2;
+        PUT("icmp-ptb-v6", 0xfc, ptb, sizeof ptb);
+    }
     /* mode 0xfd: a TCP client's first records offering x1 or no ALPN, under each policy (with an override: cfg 3..), and the
        records of a client that went through a HelloRetryRequest (its first ClientHello, then the second) */
     for (int alpn = 0; alpn < 2; alpn++) {

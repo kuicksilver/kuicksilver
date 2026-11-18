@@ -388,8 +388,10 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_forbiddenTargetsAreRefusedByDefault
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_invalidTargetValuesAndPathsAreRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_missingCapsuleProtocolFieldIsRefused
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oneClientCannotTakeEveryLookup
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_otherProtocolIsRefused
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oversizedUdpPayloadAbortsTheStream
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_packetTooBigLimitsArePerTargetAndProxyWide
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadAboveTheLinkMtuIsDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_rateLimitDropsBeyondTheBurst
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_reopeningATunnelDoesNotResetTheUnansweredLimit
@@ -405,6 +407,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_withoutThePrivilegeAnOversizedTargetPayloadIsOnlyDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.noUdpGoesToTheTargetBeforeTheAnswer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.PortableTruncationTest.negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut
@@ -1188,6 +1191,9 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.guideHasEver
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.qpackAndConnectSamples
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransportEchoSample
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransportSamples
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.aForgedPortUnreachableIsIgnored
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.aRealPortUnreachableClosesTheTunnel
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.LinuxIcmpCheckTest.packetTooBigReachesTheTarget
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.PacketTooBigProbeTest.probeMatchesThePlatform
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.http3ThroughTheProxyOverRealUdp
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.udpEchoThroughTheProxy

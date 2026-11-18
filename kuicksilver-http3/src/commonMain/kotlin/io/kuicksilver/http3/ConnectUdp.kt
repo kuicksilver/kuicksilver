@@ -360,7 +360,10 @@ public class UdpProxyConfig(
  * @property droppedTooLargeForClient UDP payloads from targets too large for the client's QUIC DATAGRAM frames (section 6.1).
  * @property droppedClientBusy UDP payloads from targets dropped because the connection's datagram queue was full.
  * @property droppedTooLargeFromTarget datagrams from targets above [UdpProxyConfig.linkMtu] bytes, dropped whole.
- * @property closedUnreachable tunnels closed because an ICMP port or host unreachable came for their target (section 3.1).
+ * @property closedUnreachable tunnels closed because an ICMP port unreachable came for their target that quoted a payload
+ *   they sent (section 3.1; RFC 8085 section 5.2).
+ * @property ignoredUnreachable ICMP unreachable reports not acted on: host unreachable, for another destination, quoting
+ *   the headers only or a payload the tunnel did not send lately (possibly forged).
  * @property packetTooBig whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its
  *   first tunnel.
  * @property packetTooBigSent ICMP Packet Too Big messages sent to targets.
@@ -380,6 +383,7 @@ public class UdpProxyStats internal constructor(
     public val droppedClientBusy: Long,
     public val droppedTooLargeFromTarget: Long,
     public val closedUnreachable: Long,
+    public val ignoredUnreachable: Long,
     public val packetTooBig: PacketTooBigStatus,
     public val packetTooBigSent: Long,
 ) {
@@ -389,6 +393,7 @@ public class UdpProxyStats internal constructor(
             "unknownContext=$droppedUnknownContext, tooLargeForLink=$droppedTooLargeForLink, rateLimited=$droppedRateLimited, " +
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
+            "ignoredUnreachable=$ignoredUnreachable, " +
             "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent)"
 }
 

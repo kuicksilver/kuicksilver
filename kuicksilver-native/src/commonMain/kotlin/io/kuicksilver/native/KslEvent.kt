@@ -207,6 +207,12 @@ public object KslConst {
 
     /** Bytes of the quoted datagram a Packet Too Big keeps (`KSL_UDP_PTB_QUOTE`, ABI 7). */
     public const val UDP_PTB_QUOTE: Int = 64
+
+    /** An ICMP port unreachable (`KSL_UNREACH_PORT`, `ksl_udp_take_unreachable`). */
+    public const val UNREACH_PORT: Int = 1
+
+    /** An ICMP host (ICMPv6 address) unreachable (`KSL_UNREACH_HOST`, `ksl_udp_take_unreachable`). */
+    public const val UNREACH_HOST: Int = 2
     public const val E_TRUNCATED: Int = 0xff0009
     public const val E_TOO_LATE: Int = 0xff000a
 

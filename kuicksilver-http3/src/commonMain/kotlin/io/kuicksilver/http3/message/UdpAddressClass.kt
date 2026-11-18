@@ -66,6 +66,17 @@ internal object UdpAddressClass {
         return v6Refused.none { (net, len) -> hasPrefix(b, net, len) }
     }
 
+    /**
+     * The IPv4 address an IPv6 one carries and is delivered to: IPv4-mapped `::ffff:0:0/96`, the NAT64 well-known prefix
+     * `64:ff9b::/96` (RFC 6052) and 6to4 `2002::/16` (RFC 3056); null for any other address (an IPv4 one included).
+     */
+    fun embeddedV4(b: ByteArray): ByteArray? {
+        if (b.size != 16) return null
+        if (hasPrefix(b, MAPPED, 96) || hasPrefix(b, NAT64, 96)) return b.copyOfRange(12, 16)
+        if ((b[0].toInt() and 0xff) == 0x20 && (b[1].toInt() and 0xff) == 0x02) return b.copyOfRange(2, 6)
+        return null
+    }
+
     private val MAPPED = UdpHost.parseIpv6("::ffff:0:0")!!
     private val NAT64 = UdpHost.parseIpv6("64:ff9b::")!!
 

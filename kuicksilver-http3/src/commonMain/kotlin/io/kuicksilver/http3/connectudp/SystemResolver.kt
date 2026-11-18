@@ -27,11 +27,15 @@ internal class ResolverBusyException : Exception("the system resolver has too ma
  * missing). A lookup blocks a thread and no deadline interrupts it, so a client that names slow names could hold every
  * thread of `Dispatchers.IO`: the lookups run on a dispatcher of [MAX_IN_FLIGHT] threads of their own, the caller waits
  * cancellably (its `resolveTimeout` returns at once), and a lookup counts until its blocking call has returned, given up
- * or not; one more than [MAX_IN_FLIGHT] fails at once with [ResolverBusyException]. A resolver of the application's (the
+ * or not; one more than [MAX_IN_FLIGHT], or than [MAX_PER_CLIENT] of one client, fails at once with
+ * [ResolverBusyException]. A resolver of the application's (the
  * engine's pluggable DNS, say) replaces it through [io.kuicksilver.http3.UdpProxyConfig.resolver].
  */
 internal object SystemResolver {
     const val MAX_IN_FLIGHT = 16
+
+    /** Lookups one client may have running at once, so one cannot take every thread (a lookup counts until it returns). */
+    const val MAX_PER_CLIENT = 4
     private val inFlight = AtomicInt(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(MAX_IN_FLIGHT))
 
@@ -41,9 +45,21 @@ internal object SystemResolver {
     /** Replaces the blocking lookup (tests: one that never returns on its own). */
     internal var lookupForTest: ((String) -> List<ByteArray>)? = null
 
-    suspend fun resolve(host: String): List<ByteArray> {
+    /** [host]'s addresses. */
+    suspend fun resolve(host: String): List<ByteArray> = resolveFor(host, null)
+
+    /** [host]'s addresses; [owner], when given, counts the client's lookups up to [MAX_PER_CLIENT] until each returns. */
+    suspend fun resolveFor(
+        host: String,
+        owner: AtomicInt?,
+    ): List<ByteArray> {
+        if (owner != null && owner.incrementAndFetch() > MAX_PER_CLIENT) {
+            owner.decrementAndFetch()
+            throw ResolverBusyException()
+        }
         if (inFlight.incrementAndFetch() > MAX_IN_FLIGHT) {
             inFlight.decrementAndFetch()
+            owner?.decrementAndFetch()
             throw ResolverBusyException()
         }
         val lookup =
@@ -53,10 +69,12 @@ internal object SystemResolver {
                         (lookupForTest ?: ::blockingLookup)(host)
                     } finally {
                         inFlight.decrementAndFetch()
+                        owner?.decrementAndFetch()
                     }
                 }
             } catch (e: Throwable) {
                 inFlight.decrementAndFetch()
+                owner?.decrementAndFetch()
                 throw e
             }
         return lookup.await() // cancellable: the caller's deadline ends the wait, not the lookup

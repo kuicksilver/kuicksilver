@@ -859,15 +859,22 @@ static void j_icmp_close(JNIEnv *e, jclass c, jint fd) {
     (void)c;
     ksl_icmp_close(fd);
 }
-/* ksl_udp_take_unreachable: dst (KSL_UDP_ADDR_LEN bytes) the latest unreachable destination when one is new */
-static jboolean j_udp_take_unreachable(JNIEnv *e, jclass c, jlong h, jbyteArray dst) {
+/* ksl_udp_take_unreachable: dst (KSL_UDP_ADDR_LEN bytes) the destination, quote (KSL_UDP_PTB_QUOTE bytes) the quoted payload,
+   info[0] its length and info[1] the kind, when an entry was queued */
+static jboolean j_udp_take_unreachable(JNIEnv *e, jclass c, jlong h, jbyteArray dst, jbyteArray quote, jintArray info) {
     (void)c;
-    if (!dst || (*e)->GetArrayLength(e, dst) < KSL_UDP_ADDR_LEN)
+    if (!dst || !quote || !info || (*e)->GetArrayLength(e, dst) < KSL_UDP_ADDR_LEN ||
+        (*e)->GetArrayLength(e, quote) < KSL_UDP_PTB_QUOTE || (*e)->GetArrayLength(e, info) < 2)
         return JNI_FALSE;
-    uint8_t d[KSL_UDP_ADDR_LEN];
-    if (!ksl_udp_take_unreachable(P(ksl_udp, h), d))
+    uint8_t d[KSL_UDP_ADDR_LEN], q[KSL_UDP_PTB_QUOTE];
+    uint32_t ql = 0, kind = 0;
+    if (!ksl_udp_take_unreachable(P(ksl_udp, h), d, q, sizeof q, &ql, &kind))
         return JNI_FALSE;
+    jint i[2] = {(jint)ql, (jint)kind};
     (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
+    if (ql)
+        (*e)->SetByteArrayRegion(e, quote, 0, (jsize)ql, (const jbyte *)q);
+    (*e)->SetIntArrayRegion(e, info, 0, 2, i);
     return JNI_TRUE;
 }
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
@@ -1067,7 +1074,7 @@ static const JNINativeMethod methods[] = {
     {"udpShutdown", "(J)V", (void *)j_udp_shutdown},
     {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},
-    {"udpTakeUnreachable", "(J[B)Z", (void *)j_udp_take_unreachable},
+    {"udpTakeUnreachable", "(J[B[B[I)Z", (void *)j_udp_take_unreachable},
     {"icmpPtbBuild", "([B[B[B[BII)I", (void *)j_icmp_ptb_build},
     {"icmpOpen", "(I[I)I", (void *)j_icmp_open},
     {"icmpSend", "(I[BI[B[B)Z", (void *)j_icmp_send},

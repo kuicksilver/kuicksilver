@@ -457,12 +457,16 @@ public expect object Ksl {
     public fun udpClose(udp: Long)
 
     /**
-     * `ksl_udp_take_unreachable`: true when an ICMP port or host unreachable for a datagram this socket sent arrived since the
-     * last call (Linux and Android with DF only; ABI 7, additive), [dst] (`UDP_ADDR_LEN` bytes) then the latest one's destination.
+     * `ksl_udp_take_unreachable`: true when an ICMP port or host unreachable for a datagram this socket sent was queued (the
+     * oldest of a ring of 8; Linux and Android with DF only; ABI 7, additive). Then [dst] (`UDP_ADDR_LEN` bytes) holds that
+     * datagram's destination, [quote] (at least [KslConst.UDP_PTB_QUOTE] bytes) the start of its payload as quoted, `info[0]`
+     * its length (0: the headers only) and `info[1]` the kind ([KslConst.UNREACH_PORT] or [KslConst.UNREACH_HOST]).
      */
     public fun udpTakeUnreachable(
         udp: Long,
         dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
     ): Boolean
 
     /**

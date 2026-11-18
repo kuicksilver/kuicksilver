@@ -546,6 +546,7 @@ public final class io/kuicksilver/http3/UdpProxyStats {
 	public final fun getDroppedUnanswered ()J
 	public final fun getDroppedUnknownContext ()J
 	public final fun getFromTargets ()J
+	public final fun getIgnoredUnreachable ()J
 	public final fun getPacketTooBig ()Lio/kuicksilver/http3/PacketTooBigStatus;
 	public final fun getPacketTooBigSent ()J
 	public final fun getRequestsRefused ()J

@@ -621,6 +621,8 @@ final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProx
         final fun <get-droppedUnknownContext>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedUnknownContext.<get-droppedUnknownContext>|<get-droppedUnknownContext>(){}[0]
     final val fromTargets // io.kuicksilver.http3/UdpProxyStats.fromTargets|{}fromTargets[0]
         final fun <get-fromTargets>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.fromTargets.<get-fromTargets>|<get-fromTargets>(){}[0]
+    final val ignoredUnreachable // io.kuicksilver.http3/UdpProxyStats.ignoredUnreachable|{}ignoredUnreachable[0]
+        final fun <get-ignoredUnreachable>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.ignoredUnreachable.<get-ignoredUnreachable>|<get-ignoredUnreachable>(){}[0]
     final val packetTooBig // io.kuicksilver.http3/UdpProxyStats.packetTooBig|{}packetTooBig[0]
         final fun <get-packetTooBig>(): io.kuicksilver.http3/PacketTooBigStatus // io.kuicksilver.http3/UdpProxyStats.packetTooBig.<get-packetTooBig>|<get-packetTooBig>(){}[0]
     final val packetTooBigSent // io.kuicksilver.http3/UdpProxyStats.packetTooBigSent|{}packetTooBigSent[0]

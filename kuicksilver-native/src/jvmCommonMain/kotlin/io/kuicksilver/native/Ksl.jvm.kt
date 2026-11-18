@@ -646,9 +646,13 @@ public actual object Ksl {
     public actual fun udpTakeUnreachable(
         udp: Long,
         dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
     ): Boolean {
-        require(dst.size >= KslConst.UDP_ADDR_LEN) { "udpTakeUnreachable buffer too small" }
-        return KslNative.udpTakeUnreachable(udp, dst)
+        require(dst.size >= KslConst.UDP_ADDR_LEN && quote.size >= KslConst.UDP_PTB_QUOTE && info.size >= 2) {
+            "udpTakeUnreachable buffer too small"
+        }
+        return KslNative.udpTakeUnreachable(udp, dst, quote, info)
     }
 
     public actual fun icmpPtbBuild(

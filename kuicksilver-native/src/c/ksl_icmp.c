@@ -1,7 +1,7 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
 /* ICMP Packet Too Big for a CONNECT-UDP proxy (RFC 9298 section 6.1): ksl_icmp_ptb_build writes the message (pure, every
- * platform, fuzzed and tested), ksl_icmp_open / ksl_icmp_send / ksl_icmp_close send it through a raw socket, which needs
+ * platform, fuzzed by tools/fuzz/ksl mode 0xfc and tested), ksl_icmp_open / ksl_icmp_send / ksl_icmp_close send it through a raw socket, which needs
  * CAP_NET_RAW (or root) on Linux and Android; elsewhere ksl_icmp_open answers KSL_E_NOT_SUPPORTED. The raw socket only
  * sends: it never reads (a raw ICMP socket would see every ICMP message of the host), so nothing from the network is
  * parsed here. No allocation, no state beyond the descriptor. */
@@ -150,15 +150,22 @@ int ksl_icmp_open(int family, int *err) {
         return -1;
     }
     /* sends only: a receive filter that admits nothing, so the socket never queues the host's ICMP traffic */
+    int rc;
     if (family == 6) {
         struct icmp6_filter_ {
             uint32_t data[8];
         } f;
         memset(&f, 0xff, sizeof f); /* ICMP6_FILTER_SETBLOCKALL */
-        (void)setsockopt(fd, IPPROTO_ICMPV6, 1 /* ICMP6_FILTER */, &f, sizeof f);
+        rc = setsockopt(fd, IPPROTO_ICMPV6, 1 /* ICMP6_FILTER */, &f, sizeof f);
     } else {
         uint32_t mask = 0xffffffffu; /* ICMP_FILTER: every type blocked */
-        (void)setsockopt(fd, IPPROTO_RAW /* SOL_RAW */, 1 /* ICMP_FILTER */, &mask, sizeof mask);
+        rc = setsockopt(fd, IPPROTO_RAW /* SOL_RAW */, 1 /* ICMP_FILTER */, &mask, sizeof mask);
+    }
+    if (rc != 0) { /* a socket that would queue every ICMP message of the host is not handed out */
+        if (err)
+            *err = errno;
+        close(fd);
+        return -1;
     }
     return fd;
 }

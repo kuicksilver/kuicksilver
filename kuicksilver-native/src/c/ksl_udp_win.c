@@ -1158,9 +1158,14 @@ int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_l
     return 0;
 }
 /* no ICMP unreachable reported per destination here either (see ksl_udp_take_ptb) */
-int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN]) {
+int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN], uint8_t *quote, uint32_t cap,
+                             uint32_t *quote_len, uint32_t *kind) {
     (void)u;
     (void)dst;
+    (void)quote;
+    (void)cap;
+    (void)quote_len;
+    (void)kind;
     return 0;
 }
 uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {

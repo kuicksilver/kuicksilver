@@ -167,7 +167,10 @@ JNI `KslNative.icmpPtbBuild` / `icmpOpen` / `icmpSend` / `icmpClose`, cinterop `
 `icmpOpen` / `icmpSend` / `icmpClose`. 92 functions.
 
 The proxy's notice of an ICMP unreachable, additive under 7 (RFC 9298 section 3.1, ADR-0024):
-`ksl_udp_take_unreachable(u, dst)` answers 1 and the destination of the latest datagram an ICMP port or host unreachable was
-received for (the accelerated socket's error queue on Linux and Android, read with the DF probe), once; 0 when none came or
-the platform reports none (Apple platforms, Windows). New function, no `KSL_OPT` or `KSL_GET` number. JNI
+`ksl_udp_take_unreachable(u, dst, quote, cap, quote_len, kind)` answers 1 and the oldest of a ring of 8 ICMP port or host
+unreachable reports for datagrams the socket sent (the accelerated socket's error queue on Linux and Android, read with the
+DF probe): the datagram's destination, the start of its payload as the message quoted it (at most `KSL_UDP_PTB_QUOTE`
+bytes, none when the headers only were quoted) for the caller's RFC 8085 section 5.2 check, and `KSL_UNREACH_PORT` or
+`KSL_UNREACH_HOST`; a full ring keeps the older reports; 0 when none is queued or the platform reports none (Apple
+platforms, Windows). New function, no `KSL_OPT` or `KSL_GET` number. JNI
 `KslNative.udpTakeUnreachable`, Kotlin `Ksl.udpTakeUnreachable`. 93 functions.

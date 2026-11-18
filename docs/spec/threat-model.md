@@ -778,7 +778,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   blocks; mapped, NAT64 and 6to4 addresses judged by their IPv4 address), applied to every resolved address, and the socket
   sends only to the address that passed, so a second DNS answer is never used. A refusal comes before any socket exists.
   The proxy's own addresses are refused by default (`refuseOwnAddresses`: the address the request's connection reached and
-  the listener's own); other addresses of the host (NAT aliases, other interfaces) are added by the operator
+  the listener's own, also in their IPv4-mapped, NAT64 and 6to4 forms); other addresses of the host (NAT aliases, other interfaces) are added by the operator
   (`UdpTargetFilter.excluding`); `AllowAll` is `@DelicateKuicksilverApi`. Strict parsing: the template (RFC 9298 §2) and the target (§3: IP literal or LDH DNS name,
   last label not numeric, ports 1..65535) in one bounded pass; a DATAGRAM capsule is judged by its Context ID before its
   value is buffered, an unknown context or a payload above the link's limit is skipped as it arrives, more than 65527 bytes
@@ -786,9 +786,12 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `maxTunnels` (4096), `maxTunnelsPerClient` (64 per client: an IPv4 address or an IPv6 /64), `packetRate` and
   `packetBurst` per tunnel and `clientPacketRate` and `clientPacketBurst` per client over all its tunnels,
   `unansweredLimit` (256 payloads a client sends to a target that never answered, across its tunnels), `idleTimeout`
-  (two minutes), 16 blocking name lookups at once (one more is refused, an abandoned one keeps its thread until it
-  returns); a target datagram above the link MTU is dropped whole, never forwarded cut; an ICMP unreachable for the
-  target closes the tunnel (Linux and Android); every tunnel's socket and
+  (two minutes), 16 blocking name lookups at once and 4 per client (one more is refused, an abandoned one keeps its
+  thread, and counts, until it returns); a target datagram above the link MTU is dropped whole, never forwarded cut; an
+  ICMP port unreachable for the target closes the tunnel (Linux and Android) only when it quotes the start of a payload
+  the tunnel sent lately (RFC 8085 §5.2): host unreachable and reports quoting the headers only or another payload are
+  ignored, so an off-path forger who sprays port unreachables over the proxy's ephemeral ports closes nothing without
+  having seen the traffic; every tunnel's socket and
   slot are released on every end (FIN, reset, lost connection, socket failure, idle, cancellation). Only the target's
   address and port are read from the socket. Authentication is the application's, before `serve`; the Ktor route goes through the pipeline, so an
   `authenticate` block or an interceptor answers first, and the engine takes CONNECT-UDP only with `connectUdp = true`.
@@ -796,18 +799,24 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   resolves the origin's name itself (the proxy does).
 - **Raw ICMP socket (RFC 9298 §6.1, `UdpProxyConfig.packetTooBig`):** a proxy run with `CAP_NET_RAW` holds a raw ICMP
   socket in a server process, which could forge any ICMP message to anyone (CWE-250, CWE-406) and, reading, would see the
-  host's ICMP traffic. Mitigations: the socket only sends (every type filtered on receive, never read), is non-blocking,
-  per tunnel, opened at its first message and closed with it; the only message `ksl` builds is a Packet Too Big to the
+  host's ICMP traffic; a raw socket per tunnel would make the kernel hand every incoming ICMP message to each (thousands
+  at `maxTunnels`). Mitigations: the socket only sends (every type filtered on receive, never read; one whose filter
+  cannot be set is closed), is non-blocking, one per family for the whole proxy, opened at its first message and closed
+  when the last tunnel ends; the only message `ksl` builds is a Packet Too Big to the
   tunnel's own target (already allowed by the filter), from the address that target sent to, quoting a datagram that
   target sent; `ksl_icmp_ptb_build` is a fixed-size, bounds-checked writer (lengths checked before any byte is written, at
   most `KSL_ICMP_PTB_MAX` bytes, refusing mismatched families and out-of-range MTUs; C tests under ASan and UBSan); at
-  most 5 at once and 10 a second per tunnel, one per dropped payload. The privilege is the operator's choice: without it
+  most 5 at once and 10 a second per target address over all its tunnels, 50 at once and 100 a second over the proxy,
+  one per dropped payload. The privilege is the operator's choice: without it
   the probe fails, nothing changes but the counter; `packetTooBig = false` never probes. Residual: a process that holds
   `CAP_NET_RAW` for this has it for everything else it runs too.
 - **Residual:** a target that answers (an open UDP service) passes `unansweredLimit`, as RFC 9298 §7 notes; the host's
   addresses other than the one a request reached and the listener's (NAT aliases, other interfaces) are not refused
   unless configured; a client that sends from many /64s or IPv4 addresses is limited by `maxTunnels` only; a client that
-  stays away two minutes gets a fresh `unansweredLimit`. The Ktor client keeps tunnelled connections' session tickets
+  stays away two minutes gets a fresh `unansweredLimit`. An on-path attacker who sees a tunnel's payloads can still
+  forge a port unreachable that closes it (it can drop the traffic anyway), and a target whose stack quotes the headers
+  only never has its tunnel closed by ICMP (it ends idle); a flood of reports fills the ring of 8 and hides a genuine one
+  until the next poll. The Ktor client keeps tunnelled connections' session tickets
   apart from direct ones', per proxy route.
 - **Tests:** `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`,
   `negative_invalidTargetValuesAndPathsAreRefused`, `negative_unknownContextIdIsDroppedByTheProxy`,

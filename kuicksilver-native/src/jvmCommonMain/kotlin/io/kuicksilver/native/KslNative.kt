@@ -402,6 +402,8 @@ internal object KslNative {
     @JvmStatic external fun udpTakeUnreachable(
         udp: Long,
         dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
     ): Boolean
 
     /** message length, 0 for bad arguments (ksl_icmp_ptb_build); out has at least ICMP_PTB_MAX bytes */

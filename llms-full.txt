@@ -2221,14 +2221,15 @@ bytes aborts the stream with `H3_DATAGRAM_ERROR` (section 5), a payload above wh
 from the target's address and port are taken from the socket (section 3.1). Packets to the target are marked Not-ECT
 (section 6.2). A target payload too large for the client's QUIC DATAGRAM frames is dropped rather than sent as a capsule
 (section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
-with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per tunnel); `stats.packetTooBig` says whether it
+with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per target and 100 over the proxy); `stats.packetTooBig` says whether it
 does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
 tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
 its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
 across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
-`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port or
-host unreachable for the target closes the tunnel (Linux and Android). The system resolver runs 16 lookups at once at most
-(a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
+`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port
+unreachable for the target that quotes a payload the tunnel sent closes the tunnel (Linux and Android; a forged or host
+unreachable is ignored and counted in `stats.ignoredUnreachable`). The system resolver runs 16 lookups at once at most,
+4 of one client (a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
 with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
 socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
 minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.

@@ -9,8 +9,11 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.message.UdpHost
 import io.kuicksilver.quic.ipLiteral
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.fetchAndIncrement
 
 /**
  * The key a client's limits are kept under: its IPv4 address, or its IPv6 address cut to [ipv6Prefix] bits (a /64 is one
@@ -57,6 +60,39 @@ internal class SharedTokenBucket(
     }
 }
 
+/**
+ * The starts of the latest payloads a tunnel sent to its target, for the RFC 8085 section 5.2 check of an ICMP unreachable:
+ * one that quotes none of them did not answer this tunnel's traffic. Written by the tunnel's sender, read by its watcher.
+ */
+internal class SentPrefixes {
+    private val slots = Array(SLOTS) { AtomicReference<ByteArray?>(null) }
+    private val next = AtomicInt(0)
+
+    /** Keeps the start of `d[off, off + len)`. */
+    fun record(
+        d: ByteArray,
+        off: Int,
+        len: Int,
+    ) {
+        val i = (next.fetchAndIncrement() and Int.MAX_VALUE) % SLOTS
+        slots[i].store(d.copyOfRange(off, off + minOf(len, PREFIX)))
+    }
+
+    /** Whether [quote] (non-empty) is the start of one of the kept payloads. */
+    fun matches(quote: ByteArray): Boolean {
+        if (quote.isEmpty()) return false
+        return slots.any { s ->
+            val p = s.load() ?: return@any false
+            quote.size <= p.size && (quote.indices).all { quote[it] == p[it] }
+        }
+    }
+
+    companion object {
+        const val SLOTS = 16
+        const val PREFIX = 64
+    }
+}
+
 /** How many payloads a client sent to one target and whether that target ever answered (RFC 9298 section 7). */
 internal class TargetAnswer {
     val sent = AtomicLong(0)
@@ -73,6 +109,9 @@ internal class ClientState(
 ) {
     var tunnels = 0
     var idleSince = 0L
+
+    /** Name lookups of this client not returned yet (a blocking one counts until its call returns). */
+    val lookups = AtomicInt(0)
 
     /** At most [MAX_TARGETS] targets, the oldest forgotten first. */
     private val targets = LinkedHashMap<String, TargetAnswer>()

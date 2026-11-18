@@ -26,10 +26,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   HTTP/1.1 (sections 3.2, 3.3) and HTTP/2 (sections 3.4, 3.5) are not offered (ADR-0024). The ICMP Packet Too Big of
   section 6.1 is sent where the process may open a raw ICMP socket (Linux and Android with CAP_NET_RAW; `ksl_icmp_*`,
   additive under ABI 7; `UdpProxyConfig.packetTooBig`, on by default, `UdpProxyStats.packetTooBig` says whether it
-  applies), rate-limited per target; without the privilege the payload is dropped and counted only. The proxy refuses its own
+  applies), through one raw socket per family for the proxy, rate-limited per target address across tunnels and over
+  the proxy; without the privilege the payload is dropped and counted only. The proxy refuses its own
   addresses by default, keys clients by IPv4 address or IPv6 /64 with a rate shared by a client's tunnels and an
-  unanswered budget per client and target, runs at most 16 blocking name lookups, drops a target datagram above the link
-  MTU whole and closes a tunnel on an ICMP unreachable for its target (Linux and Android). The Ktor client keeps
+  unanswered budget per client and target, runs at most 16 blocking name lookups (4 per client), drops a target datagram above the
+  link MTU whole and closes a tunnel on an ICMP port unreachable for its target that quotes a payload it sent (Linux and
+  Android; RFC 8085 section 5.2). The Ktor client keeps
   tunnelled connections' session tickets apart from direct ones and has its own WebTransport switch for the CONNECT-UDP
   proxy (`webTransportIgnoresConnectUdpProxy`); the Ktor
   engines use it: the client's `connectUdpProxy = ConnectUdpProxy(template)` sends the `https` requests it applies to
