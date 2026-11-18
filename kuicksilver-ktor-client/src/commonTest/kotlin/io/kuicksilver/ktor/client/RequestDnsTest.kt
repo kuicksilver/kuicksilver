@@ -232,6 +232,12 @@ class RequestDnsTest {
                 }
             }
             assertEquals(listOf("127.0.0.1:443"), dns.texts("127.0.0.1"))
+            // no false positives: loopback, private and scoped link-local literals are destinations
+            for (good in listOf("[::1]", "10.0.0.1", "[fe80::1%1]")) {
+                dns.resolution(good, 443)
+                kotlin.test.assertTrue(dns.lookup(good, 443).isNotEmpty(), good)
+                kotlin.test.assertTrue(dns.answered(good, 443).isNotEmpty(), good)
+            }
         }
 
     /**

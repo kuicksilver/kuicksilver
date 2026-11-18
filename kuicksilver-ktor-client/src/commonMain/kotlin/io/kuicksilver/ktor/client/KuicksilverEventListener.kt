@@ -15,7 +15,9 @@ import kotlin.time.Duration
  * `EventListener`: set it with `engine { eventListener = ... }`. Every method has an empty default; override the ones you
  * need. The order for one call is [callStart], then for each attempt the protocol decision ([protocolSelected], with
  * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply), the name lookups it makes ([dnsStart] and [dnsEnd],
- * before the connection they serve; none when the request reuses a connection) and [connectionAcquired], and finally
+ * before the connection they serve; usually none when the request reuses a pooled connection, except that a WebSocket's
+ * keys are looked up before the pool is asked, and an HTTP/3 request whose origin has a connection under another name
+ * (its host and an alternative) resolves first to decide whether to share it) and [connectionAcquired], and finally
  * [callEnd] or [callFailed]; [connectionReleased] follows when the call's response is done with.
  *
  * Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without
