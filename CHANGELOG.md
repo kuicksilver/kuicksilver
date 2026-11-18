@@ -713,6 +713,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   application operations when the connection fuzzer moved to endpoints are refreshed: each decodes again to the operations
   it was kept for (463 server application operations instead of 216); 110 old versions that a Jazzer merge found redundant
   are removed, and every corpus input is named by the SHA-1 of its bytes again, which `CommittedCorpusReplayTest` checks.
+- Fuzzing: the ksl harness's driver names its inputs by the standard FNV-1a 64 (its offset basis was missing a digit), the
+  `ksl.parsers` corpus is renamed accordingly, and `tools/c-test.sh` fails on an input whose name is not the FNV-1a 64 of
+  its bytes (`tools/fuzz/ksl/corpus-names.c`, with reference values and negative controls).
 - Build: `tools/fuzz/formats/flags.txt` names every flag bit, setup bit and outcome of the traced connection fuzz
   programs (`ConnProgram`, `ZeroRttProgram`) by its constant, value and trace name. `tools/check/fuzz-formats.py` checks
   it against the programs' sources and KDoc (no gap, no duplicate, no stale or unlisted name, the trace name the

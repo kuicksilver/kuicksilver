@@ -21,6 +21,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "fnv.h"
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 int ksl_fuzz_write_seeds(const char *dir);
 void __sanitizer_set_death_callback(void (*callback)(void));
@@ -47,7 +49,8 @@ static const uint8_t *cur; static size_t curlen;
 static const char *prefix = "";
 static char outdir[4096];
 
-static uint64_t fnv(const uint8_t *d, size_t n) { uint64_t h = 1469598103934665603ull; for (size_t i = 0; i < n; i++) { h ^= d[i]; h *= 1099511628211ull; } return h; }
+/* an input is named by the FNV-1a 64 of its bytes (fnv.h: the standard offset basis, with reference values) */
+static uint64_t fnv(const uint8_t *d, size_t n) { return ksl_fnv1a64(d, n); }
 static void save(const char *dir_or_prefix, const char *kind, const uint8_t *d, size_t n, int is_dir) {
     char path[4400];
     if (is_dir) snprintf(path, sizeof path, "%s/%016llx", dir_or_prefix, (unsigned long long)fnv(d, n));
