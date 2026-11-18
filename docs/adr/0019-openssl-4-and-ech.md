@@ -171,3 +171,36 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **Upstream.** The report for OpenSSL (bug B, with the reproducer of the spike) is written but not filed from the
   build host; filing it, and bug A's report, is a maintainer's step.
 
+### ECH in `ksl` (2026-11-18)
+
+- **API** (additive under ABI 7, numbered from 15 so that the other 0.3.0 additions keep the numbers below):
+  `KSL_OPT_ECH_GREASE` (15), `KSL_SET_ECH_CONFIG_LIST` (15), `KSL_GET_ECH_STATUS` (15), `KSL_GET_ECH_RETRY_CONFIGS` (16),
+  `KSL_GET_VERIFY_NAME` (17), `ksl_ech_config_list_check` and `ksl_ctx_set_ech_keys` (`kuicksilver-native/src/c/ksl.h`,
+  `ksl_ech.c`).
+- **Bug A, worked around in `ksl`.** `ksl_tcp_abort`'s ClientHello extension is registered only on a client context that
+  allows TLS 1.2 (`KSL_OPT_MIN_VERSION KSL_TLS1_2`), the only one where a renegotiation can happen; such a context takes
+  no ECH configuration (`KSL_E_NOT_SUPPORTED`). ECH never needs TLS 1.2, and GREASE ECH is not affected (OpenSSL does not
+  build an inner ClientHello for it). Kuicksilver contexts are TLS 1.3 only unless `TlsVersions.Tls12And13` is chosen
+  for TCP.
+- **The ECHConfigList is checked entry by entry.** OpenSSL refuses a whole list for one ECHConfig it cannot use (another
+  version is skipped, but an unsupported KEM, suite or mandatory extension, or a bad `public_name`, fails the list),
+  where RFC 9849 ignores that ECHConfig alone; `ksl_ech_config_list_check` hands each entry to OpenSSL as a list of one
+  and keeps those it takes. It is the one ECH parser of `ksl` (fuzz mode `0xfc`).
+- **The name on rejection.** `ksl_match_leaf` takes the name OpenSSL verifies (`X509_VERIFY_PARAM` host, which OpenSSL
+  replaces by the `public_name` on rejection), and `KSL_GET_VERIFY_NAME` hands it to the paused path.
+- **Rotation.** The keys are an `OSSL_ECHSTORE` held by the context and replaced whole under a lock, also on a frozen
+  context; every session takes its own copy when it is made (`SSL_set1_echstore`), so `SSL_CTX_set1_echstore`, which
+  swaps the context's store without a lock, is never used.
+- **System OpenSSL.** ECH is compiled only with the bundled OpenSSL 4 (`KSL_HAS_ECH`): the system-OpenSSL build mode keeps
+  its range of 3.5 to 3.x, which has no ECH, and a system 4.x would lack the carried patch. Such a build reports ECH
+  unavailable.
+- **Bug C (found 2026-11-18, not patched; needs a decision).** After a HelloRetryRequest, OpenSSL 4.1.0's client takes any
+  `encrypted_client_hello` extension in the HelloRetryRequest for an acceptance (`statem_clnt.c`: `hrrsignal_p != NULL`),
+  and a server that rejects ECH may send one with eight random bytes (RFC 9849 lets it, and OpenSSL's own server does:
+  `extensions_srvr.c`, `tls_construct_stoc_ech`). The client then ends the handshake with `illegal_parameter` at the
+  ServerHello instead of authenticating the `public_name` and sending `ech_required` with the retry configurations. It
+  fails closed (no connection, nothing accepted, nothing revealed), but a client whose configuration is out of date
+  cannot recover through `retry_configs` when the server also asks for another key share. The fix is a few lines in
+  `statem_clnt.c` (compare the HelloRetryRequest's confirmation, not its presence); carrying it would be a second patch,
+  which this ADR does not allow without a new decision. `test_ech.c` pins the fail-closed outcome.
+

@@ -909,6 +909,38 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   listener as IPv4-mapped (the tests bind loopback addresses only; the mapping itself is unit-tested), and a proxy that
   is trusted but lies.
 
+### 3.28 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20)
+
+- **Threats:** without ECH the server name of every connection is on the path in the clear (CWE-200, exposure to an
+  unauthorized actor). With ECH: an ECHConfigList from DNS or from a server's `retry_configs` is input from the network
+  that the client parses (CWE-20); an active attacker can strip or corrupt the extension to make the client fall back to
+  a plaintext ClientHello (a downgrade), answer as the client-facing server with a certificate for the inner name, or
+  feed `retry_configs` it chose so that the next connection goes to its key; a server's outer ClientHello comes from
+  anyone and is decrypted with the server's keys; a client that does not check the certificate against the
+  `public_name` after a rejection would take any certificate for that name as the origin's (CWE-295).
+- **Mitigations (`ksl`, ADR-0019):** an ECHConfigList is split by `ksl_ech_config_list_check`, whose framing checks
+  refuse a length that does not match, an entry that overruns and a list over 65,537 bytes, before OpenSSL reads each
+  entry alone; entries of another version, with an unsupported KEM, suite or mandatory extension, or a `public_name`
+  that is no DNS name or reads as IPv4, are ignored one by one (RFC 9849 §4, §4.2, §6.1.7). A rejected ECH is never a
+  success: OpenSSL authenticates the outer handshake for the `public_name` (`ksl_match_leaf` and the paused path take
+  that name, `KSL_GET_VERIFY_NAME`) and ends it with `ech_required`, so nothing of it reaches the application, and its
+  session tickets never arrive; `retry_configs` are reported only after that authentication and never after GREASE
+  (§6.1.6, §6.2.1). An ECH client offers TLS 1.3 only, so a server that answers TLS 1.2 gets no connection. The server's
+  keys are replaced whole under a lock (rotation), each session copying the set it starts with. GREASE ECH hides
+  whether a client has a configuration. OpenSSL 4.1.0 needs a carried patch for ECH after a HelloRetryRequest (QUIC's
+  transport parameters), and fails closed with `illegal_parameter` when a server rejects ECH after one (bug C of
+  ADR-0019).
+- **Verification:** C `test_ech.c`: `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`,
+  `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`,
+  `negative_ech_rejected` (QUIC, TCP), `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`,
+  `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`,
+  `negative_ech_rejected_after_hrr`, the `negative_ech_keys_*` and `negative_ech_config_*` refusals, and the accepted,
+  HelloRetryRequest, rotation (three threads under ThreadSanitizer) and resumption cases; fuzzing: the ksl harness's
+  modes `0xfc` (the list check) and `0xfb` (an ECH server's decryption of an attacker's ClientHello).
+- **Not covered:** the name of the origin is still visible in the plaintext DNS query for its HTTPS record unless DNS is
+  protected (RFC 9849 §10.2: ECH is meaningful with authenticated, protected DNS), the destination address, and the
+  traffic's size and timing; split mode (a client-facing server forwarding to a backend) is not implemented.
+
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
@@ -1030,6 +1062,7 @@ weakness appears in different protocols.
 | 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |
 | 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
+| 3.28 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection | CWE-200, CWE-20, CWE-295 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and
