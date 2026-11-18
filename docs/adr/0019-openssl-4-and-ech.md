@@ -66,14 +66,17 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and nothing else.
   The build carries two minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
-     extension, which every QUIC client has; from the spike's `ech-hrr-custom-ext.patch`); dropped with the first 4.1.x
-     or 4.2 release whose `tls_construct_extensions` resets the custom extensions' flags at every inner ClientHello;
+     extension, which every QUIC client has). Upstream code: the `ssl/statem/extensions.c` hunk of OpenSSL commit
+     openssl/openssl@981f976bb0 (pull request #33246, issue #33231), merged to master, openssl-4.1 and openssl-4.0 on 2026-11-13;
+     dropped with 4.1.1, the first release that has it;
   2. `openssl-4.1.0-ech-hrr-rejection.patch` (bug C: a rejection after a HelloRetryRequest ends with `illegal_parameter`
-     instead of the rejection path of RFC 9849 section 6.1.6); dropped with the first release whose
-     `tls_process_server_hello` aborts only when the HelloRetryRequest's confirmation matched (RFC 9849 section 6.1.4).
+     instead of the rejection path of RFC 9849 section 6.1.6). Upstream code until it merges: the
+     `ssl/statem/statem_clnt.c` hunk of OpenSSL pull request #33233 (open, in review; the patch header records the PR
+     head commit it was taken from); dropped with the first release that merges it.
   The rules for both:
-  - each bug is reported to OpenSSL with a minimal reproducer (`upstream-issue-B.md`, `upstream-issue-C.md` of the spike
-    folder; the maintainers file them), and each patch is dropped on its own condition above;
+  - both bugs are known upstream (B: issue #33231, fixed; C: pull request #33233), so nothing is filed; the patches carry
+    upstream's code verbatim (source hunks only, the build has no tests), and each is dropped on its own condition
+    above;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
     `patch_sha256`, then `patch_2`, `patch_2_sha256`); `tools/openssl/build.sh` applies them in that order to the
     verified tarball (`apply-patch.pl`, exactly, both or neither) and refuses a patch whose hash differs, and a second
@@ -163,8 +166,9 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **The patch.** `tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch`, one hunk in
   `ssl/statem/extensions.c` (`tls_construct_extensions`): the SENT and RECEIVED flags of the custom extensions are reset
   at the start of every inner ClientHello (`ch_depth == 1`), the second one after a HelloRetryRequest included, where
-  4.1.0 resets them only without ECH. It is the bug-B half of the spike's patch, made again against the 4.1.0 tarball;
-  bug A is not patched (below). Its text starts with a description of the bug and the fix.
+  4.1.0 resets them only without ECH. Since 2026-11-18 it is upstream's hunk of commit openssl/openssl@981f976bb0 verbatim (it replaced
+  the bug-B half of the spike's patch, which differed only in its comment; both compile to the same `extensions.o`);
+  bug A is not patched (below). Its text starts with a description naming the commit, the bug and the fix.
 - **Pinned and applied.** `gradle/openssl.toml` names the file (`patch`) and its SHA-256 (`patch_sha256`).
   `tools/openssl/build.sh` refuses a patch whose hash differs before it looks at anything else, copies the verified
   tree and applies the patch with `tools/openssl/apply-patch.pl` (Perl, which every build image has; no fuzz, no
@@ -175,10 +179,10 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   `kuicksilver:openssl:patch`. The double build and `verify-release.sh` run the same `build.sh`, so they apply it too.
   `tools/openssl/apply-patch-test.sh` (CI lint) keeps the applier exact and the hash check in place.
 - **Leaving.** Renovate's note for an OpenSSL update says to check the release for the fix: the patch, its two pin
-  lines and the file go with the first release that has it. `gradle/openssl-next.toml` carries the same lines while it
+  lines and the file go with 4.1.1 (`patch_2` then becomes `patch`). `gradle/openssl-next.toml` carries the same lines while it
   names a release without the fix, so the `openssl-next` job tests what would ship.
-- **Upstream.** The report for OpenSSL (bug B, with the reproducer of the spike) is written but not filed from the
-  build host; filing it, and bug A's report, is a maintainer's step.
+- **Upstream.** Bug B is OpenSSL issue #33231, fixed by openssl/openssl@981f976bb0; bug A is issue #33487 with pull request #33532 in
+  review. Nothing is filed from here.
 
 ### ECH in `ksl` (2026-11-18)
 
@@ -210,7 +214,12 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   handshake with `illegal_parameter` at the ServerHello instead of authenticating the `public_name` and sending
   `ech_required` with the retry configurations, so a client whose configuration was out of date could not recover when
   the server also asked for another key share. The same path ran the fallback to the `public_name` twice, the second time
-  overwriting (and leaking) the saved inner name. `openssl-4.1.0-ech-hrr-rejection.patch` remembers whether the
-  HelloRetryRequest's confirmation matched before the ServerHello's check, aborts only then, and falls back once.
-  `test_ech.c` (`ech_rejected_after_hrr`, QUIC and TCP, and the retry) fails without it.
+  overwriting (and leaking) the saved inner name. `openssl-4.1.0-ech-hrr-rejection.patch` carries the
+  `statem_clnt.c` hunk of OpenSSL pull request #33233 (since 2026-11-18; it replaced our own fix of the same branch):
+  after a HelloRetryRequest the client keeps that message's verdict and aborts with `illegal_parameter` whenever the
+  ServerHello's confirmation disagrees with it, in either direction (RFC 9849 section 6.1.4: acceptance "is determined
+  by the server's initial message"; our fix covered only an accepting HelloRetryRequest followed by a rejecting
+  ServerHello), and falls back to the `public_name` only at the first message. `test_ech.c` (`ech_rejected_after_hrr`,
+  QUIC and TCP, and the retry) fails without it. While the pull request is open, every OpenSSL update re-checks it
+  against the patch.
 

@@ -8,10 +8,12 @@ version = "4.1.0"
 sha256 = "50c17baf54cb008f6ce42d50deb4b28050a1aad711636cabd4b241c7e90cc2fd"
 pgp_fingerprint = "B146647E45A7B33947AB226B2A2C87D161692D40"
 configure_flags = "tools/openssl/configure-flags.txt"
-# The one OpenSSL patch carried under ADR-0019 (ECH after a HelloRetryRequest with a client's own custom extension, which every
-# QUIC client has), applied by tools/openssl/build.sh after the tarball's checks; dropped with the first release that fixes it.
+# The first OpenSSL patch carried under ADR-0019 (bug B: ECH after a HelloRetryRequest with a client's own custom extension,
+# which every QUIC client has), applied by tools/openssl/build.sh after the tarball's checks. Upstream code (commit
+# openssl/openssl@981f976bb0, on the openssl-4.1 branch); dropped with 4.1.1.
 patch = "tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch"
-patch_sha256 = "1bdce1d99addf8667ebc735daede776fff00c0bc9dd7e3bd3f131f8d98fe5b6c"
-# The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first
+patch_sha256 = "948946d06b17dc0344e4b6db9ff792917d9c1a40ed533e3f2cc9f56c00335e41"
+# The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first. Upstream
+# code (pull request #33233, in review); dropped with the first release that merges it.
 patch_2 = "tools/openssl/patches/openssl-4.1.0-ech-hrr-rejection.patch"
-patch_2_sha256 = "8457f3f84a1e78d9c05918078f63216fb4d923ecce380d41377fb7d2e4a57403"
+patch_2_sha256 = "544283df8aebbfd156da5ae7a0e68814be5748b0eb1b827c73a05442211c6681"

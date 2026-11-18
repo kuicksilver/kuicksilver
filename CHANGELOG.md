@@ -869,7 +869,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   patches (`tools/openssl/patches/`) are pinned by their SHA-256 in `gradle/openssl.toml` (`patch`, `patch_2`), applied in
   that order and exactly by `tools/openssl/build.sh` (`apply-patch.pl`: no fuzz, no offset, both or neither), part of the
   build cache key, the target line and `provenance.txt`, listed in the release provenance and in the SBOM
-  (`kuicksilver:openssl:patch`), and each dropped with the first OpenSSL release that fixes its bug.
+  (`kuicksilver:openssl:patch`), and each dropped with the first OpenSSL release that fixes its bug. Both patches are
+  upstream code: the first is the `ssl/statem/extensions.c` hunk of OpenSSL commit openssl/openssl@981f976bb0 (on the openssl-4.1 branch,
+  so it goes with 4.1.1), the second the `ssl/statem/statem_clnt.c` hunk of OpenSSL pull request #33233 (in review; it
+  goes with the first release that merges it). The second also aborts with illegal_parameter when a HelloRetryRequest
+  rejected ECH and the ServerHello then confirms it (RFC 9849 section 6.1.4: acceptance is decided by the server's first
+  message).
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

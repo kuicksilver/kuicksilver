@@ -12,7 +12,8 @@ pgp_fingerprint = "B146647E45A7B33947AB226B2A2C87D161692D40"
 configure_flags = "tools/openssl/configure-flags.txt"
 # The carried patch of gradle/openssl.toml (ADR-0019), as long as this pin names the same release or one the bug is not fixed in
 patch = "tools/openssl/patches/openssl-4.1.0-ech-hrr-custom-ext.patch"
-patch_sha256 = "1bdce1d99addf8667ebc735daede776fff00c0bc9dd7e3bd3f131f8d98fe5b6c"
-# The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first
+patch_sha256 = "948946d06b17dc0344e4b6db9ff792917d9c1a40ed533e3f2cc9f56c00335e41"
+# The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first. Upstream
+# code (pull request #33233, in review); dropped with the first release that merges it.
 patch_2 = "tools/openssl/patches/openssl-4.1.0-ech-hrr-rejection.patch"
-patch_2_sha256 = "8457f3f84a1e78d9c05918078f63216fb4d923ecce380d41377fb7d2e4a57403"
+patch_2_sha256 = "544283df8aebbfd156da5ae7a0e68814be5748b0eb1b827c73a05442211c6681"
