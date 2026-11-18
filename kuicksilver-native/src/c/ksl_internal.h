@@ -47,6 +47,7 @@ struct ksl_ctx {
     int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
     int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
     int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int abort_ext; /* client: ksl_tcp_abort's ClientHello extension is registered (only on contexts that allow TLS 1.2) */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
     uint8_t ocsp_hash[32];
@@ -197,6 +198,8 @@ int ksl_ssl_fail(ksl_ssl *s, uint32_t code, const char *msg); /* records, marks 
 /* event queue (ksl_quic.c) */
 ksl_event *ksl_push_event(ksl_ssl *s, int type, const uint8_t *copy_from, size_t len);
 size_t ksl_quic_pending(const ksl_ssl *s, int level); /* CRYPTO bytes provided at level and not yet read by TLS */
+
+int ksl_ctx_register_abort_ext(ksl_ctx *c); /* ksl_ctx.c: once, when a client context allows TLS 1.2 */
 
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);

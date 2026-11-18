@@ -338,7 +338,11 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
 /* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
    and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the Private Use
    range (RFC 9846 section 11: "Values with the first byte 255 (decimal) are reserved for Private Use"); OpenSSL refuses a server's
-   answer to an extension the client did not send (RFC 9846 section 4.3). */
+   answer to an extension the client did not send (RFC 9846 section 4.3).
+   Registered only on a client context that allows TLS 1.2 (KSL_OPT_MIN_VERSION KSL_TLS1_2), the only one where it can matter: a
+   renegotiation is TLS 1.2's. OpenSSL 4.1.0 cannot build an ECH ClientHello next to a custom extension whose callback declines to
+   send it (bug A of ADR-0019: extensions_cust.c custom_ext_add marks it for the outer ClientHello, which then fails with
+   internal_error), so a context that has it can take no ECH configuration; ECH never needs TLS 1.2. */
 #define KSL_ABORT_EXT_TYPE 0xff5a
 static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al,
                             void *arg) {
@@ -654,12 +658,6 @@ ksl_ctx *ksl_ctx_new(int role) {
     if (role == KSL_SERVER)
         c->ocsp_lock = CRYPTO_THREAD_lock_new(); /* NULL: no verdict cache, every handshake checks the response */
 #endif
-    if (role == KSL_CLIENT &&
-        SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1) {
-        SSL_CTX_free(c->ctx);
-        free(c);
-        return NULL;
-    }
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
@@ -674,6 +672,14 @@ void ksl_ctx_free(ksl_ctx *c) {
         free(c->ticket_keys);
     }
     free(c);
+}
+int ksl_ctx_register_abort_ext(ksl_ctx *c) {
+    if (c->role != KSL_CLIENT || c->abort_ext)
+        return 1;
+    if (SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1)
+        return 0;
+    c->abort_ext = 1;
+    return 1;
 }
 static int frozen(ksl_ctx *c) {
     if (c->frozen) {
@@ -1092,6 +1098,11 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     case KSL_OPT_MAX_VERSION:
         if (value != KSL_TLS1_2 && value != KSL_TLS1_3) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: versions are KSL_TLS1_2 or KSL_TLS1_3");
+            return KSL_ERROR;
+        }
+        /* a client that may negotiate TLS 1.2 gets ksl_tcp_abort's extension (abort_ext_add_cb), kept if the bound rises again */
+        if (option == KSL_OPT_MIN_VERSION && value == KSL_TLS1_2 && !ksl_ctx_register_abort_ext(c)) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ClientHello extension refused");
             return KSL_ERROR;
         }
         return (option == KSL_OPT_MIN_VERSION ? SSL_CTX_set_min_proto_version(c->ctx, value)
