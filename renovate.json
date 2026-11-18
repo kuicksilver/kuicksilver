@@ -40,10 +40,10 @@
       "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"]
     },
     {
-      "description": "OpenSSL: stay on the 3.5 LTS branch, never auto-merge, open the PR immediately (security releases have a 72-hour SLA, see SECURITY.md).",
+      "description": "OpenSSL: stay on the 4.1 branch until the 4.2 LTS branch (ADR-0019), never auto-merge, open the PR immediately (security releases have a 72-hour SLA, see SECURITY.md).",
       "matchManagers": ["custom.regex"],
       "matchDepNames": ["openssl/openssl"],
-      "allowedVersions": "/^3\\.5\\./",
+      "allowedVersions": "/^4\\.[12]\\./",
       "schedule": ["at any time"],
       "automerge": false,
       "labels": ["dependencies", "openssl", "security-review"],

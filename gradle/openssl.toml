@@ -1,8 +1,10 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # OpenSSL pin: the build downloads exactly this release and verifies its hash and signature. Update together: version, tarball SHA-256, signing key fingerprint.
+# 4.1.0 (ADR-0019): signed by the subkey C46ED3F2CBEFDA1FDAADA44264ED7B1DCCE71CB2 of the pinned release key; the SHA-256 is that of the
+# release's own .sha256 file.
 [openssl]
-version = "3.5.9"
-sha256 = "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+version = "4.1.0"
+sha256 = "50c17baf54cb008f6ce42d50deb4b28050a1aad711636cabd4b241c7e90cc2fd"
 pgp_fingerprint = "B146647E45A7B33947AB226B2A2C87D161692D40"
 configure_flags = "tools/openssl/configure-flags.txt"

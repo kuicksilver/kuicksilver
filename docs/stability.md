@@ -154,18 +154,17 @@ when it links. The check (in `kuicksilver-ktor-network`):
 Every artifact links OpenSSL statically; applications get OpenSSL fixes from Kuicksilver releases, not from their
 operating system.
 
-- **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is not supported yet (it is built and tested in CI only, below). The pin, **3.5.9** today, is in
-  `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
-  build verifies both before compiling (`tools/openssl/fetch.sh`).
-  `ksl` has a code path for OpenSSL 4.1, where `X509_check_host` and `X509_check_ip_asc` are deprecated
-  (`ksl_match_name` in `kuicksilver-native/src/c/ksl_verify.c`). No artifact is built with 4.x. The CI job
-  `openssl-next` (weekly, or `only=openssl-next` by hand; never required, never a source of release artifacts) builds the
-  newest 4.x release on linux-x64 and macos-arm64 and runs the C tests and a JVM smoke test against it. Its pin is
-  `gradle/openssl-next.toml` (version, tarball SHA-256 and signing key, verified like the 3.5 pin); the build scripts
-  take it from `KSL_OPENSSL_PIN` and Gradle from `-Pkuicksilver.openssl.pin=gradle/openssl-next.toml`. One C test
-  assertion is relaxed against 4.x: the 4.x GCM and ChaCha20-Poly1305 providers raise an error on a rejected AEAD tag, which
-  allocates the error record's file and function names (freed by `ksl_open`), so "a rejected packet allocates nothing"
-  holds on 3.5 and "at most two allocations" on 4.x.
+- **Branch.** OpenSSL 4.1.x from 0.3.0, and the 4.2 LTS branch once it is released (planned by OpenSSL for April 2027;
+  [ADR-0019](adr/0019-openssl-4-and-ech.md)): Encrypted Client Hello needs OpenSSL 4, and 3.5 LTS has none. The pin,
+  **4.1.0** today, is in `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL
+  release signing key; the build verifies both before compiling (`tools/openssl/fetch.sh`). 4.1 is supported by OpenSSL
+  until 2027-11-23; the move to 4.2 LTS is a planned patch release. The CI job `openssl-next` (weekly, or
+  `only=openssl-next` by hand; never required, never a source of release artifacts) builds the release named in
+  `gradle/openssl-next.toml` on linux-x64 and macos-arm64 and runs the C tests and a JVM smoke test against it (the build
+  scripts take that pin from `KSL_OPENSSL_PIN`, Gradle from `-Pkuicksilver.openssl.pin=gradle/openssl-next.toml`); it
+  tracks the next 4.x release before the pin moves. One C test assertion depends on the major version: the 4.x GCM and
+  ChaCha20-Poly1305 providers raise an error on a rejected AEAD tag, which allocates the error record's file and function
+  names (freed by `ksl_open`), so "a rejected packet allocates nothing" holds on 3.5 and "at most two allocations" on 4.x.
 - **System OpenSSL (Linux, `KSL_SYSTEM_OPENSSL` builds).** The accepted range is OpenSSL 3.5 up to the major version
   `KSL_SYSTEM_OPENSSL_MAX_MAJOR` (`kuicksilver-native/src/c/ksl_internal.h`), **3** by default: a `libssl.so.4` is
   refused with `KslException.Version` (`KSL_INIT_VERSION`), and the C test `negative_system4_0RefusedByDefault` keeps it
@@ -175,7 +174,7 @@ operating system.
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
   fixed OpenSSL within 72 hours of an OpenSSL advisory for a Critical or High issue reachable through Kuicksilver,
   within 7 days for a reachable Moderate or Low one, in the next planned release for issues that are not reachable, and
-  within 30 days for a non-security 3.5.x patch release, with a GitHub Security Advisory for each reachable issue.
+  within 30 days for a non-security 4.1.x patch release, with a GitHub Security Advisory for each reachable issue.
   Such a release is a patch release (0.2.x) when nothing else changes.
 - **Visibility.** The version stays visible in the native libraries; the JVM jar's manifest names it as
   `OpenSSL-Version` and `OpenSSL-SHA256`.

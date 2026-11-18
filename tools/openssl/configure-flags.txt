@@ -2,17 +2,13 @@ no-shared
 no-pinshared
 no-module
 no-dso
-no-engine
 no-legacy
 no-deprecated
 no-apps
 no-tests
 no-docs
 no-autoload-config
-no-atexit
 no-filenames
-no-ssl3
-no-ssl3-method
 no-tls1
 no-tls1-method
 no-tls1_1

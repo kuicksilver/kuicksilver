@@ -1,6 +1,6 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
-/* ksl: the C shim between Kuicksilver and OpenSSL 3.5 (ADR-0003).
+/* ksl: the C shim between Kuicksilver and OpenSSL 4.1 (ADR-0003, ADR-0019).
  *
  * Contract:
  *  - stable C ABI, KSL_ABI_VERSION bumps on any incompatible change;
@@ -230,7 +230,7 @@ typedef struct ksl_client_hello {
 #define KSL_INIT_MISSING_SYMBOL (-3) /* no SSL_set_quic_tls_cbs */
 #define KSL_INIT_KEYLOG_ENV (-4)     /* SSLKEYLOGFILE set with a system libssl: refused */
 int ksl_init(void);                  /* idempotent */
-const char *ksl_version(void);       /* "ksl abi 6 / OpenSSL 3.5.9 ..." */
+const char *ksl_version(void);       /* "ksl abi 6 / OpenSSL 4.1.0 ..." */
 uint32_t ksl_abi_version(void);
 /* Live-object counters, process-wide (soak and churn tests; additive in ABI 6, see ADR-0003): objects ksl made and has not
  * freed yet. A handle-reference counter (pkey, session) counts the references ksl handed out and the caller has not dropped;
@@ -341,7 +341,9 @@ int ksl_ocsp_check(const uint8_t *resp, size_t resp_len, const uint8_t *chain, s
    has no configured CRL is not checked, while one whose issuer has a configured CRL that does not cover it fails (a distribution
    point it does not name: X509_V_ERR_DIFFERENT_CRL_SCOPE; a CRL OpenSSL cannot use for it: X509_V_ERR_UNABLE_TO_GET_CRL). So does a
    certificate whose issuer has a configured CRL that cannot be verified because that issuer is not among the roots or the
-   path (AnchoredCa roots = [an intermediate] with the root's CRL configured: the intermediate fails, fail closed). A list that does not parse, or holds a delta, indirect or
+   path (AnchoredCa roots = [an intermediate] with the root's CRL configured: the intermediate fails, fail closed). A trust anchor
+   that is not self-signed is itself checked against its issuer's configured CRL (ksl does it: OpenSSL 4 checks a partial
+   chain only below its anchor; ADR-0019). A list that does not parse, or holds a delta, indirect or
    reason-limited CRL or an issuingDistributionPoint that does not decode, is refused whole (KSL_E_BAD_ARG). On a client the
    CRLs also apply to a delegated OCSP responder (ksl_ocsp_check rules). */
 int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);

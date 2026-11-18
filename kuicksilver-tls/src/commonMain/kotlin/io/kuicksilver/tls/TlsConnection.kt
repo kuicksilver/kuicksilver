@@ -1056,7 +1056,7 @@ public class TlsConnection private constructor(
         /**
          * Whether [e], a read's failure on an established connection of [version], is OpenSSL refusing a post-handshake
          * message: TLS 1.3, unexpected_message (10) sent by us, OpenSSL's SSL_R_UNEXPECTED_MESSAGE (ERR_LIB_SSL 20, reason 244).
-         * Tied to OpenSSL 3.5 (the pinned 3.5.9, gradle/openssl.toml): in `ssl/statem/statem_clnt.c`,
+         * Tied to the pinned OpenSSL (4.1.0, gradle/openssl.toml; checked again on the move from 3.5): in `ssl/statem/statem_clnt.c`,
          * `ossl_statem_client13_read_transition` accepts in TLS_ST_OK only NewSessionTicket, KeyUpdate and a CertificateRequest
          * after post_handshake_auth was sent (`s->post_handshake_auth == SSL_PHA_EXT_SENT`, which ksl never sends), and
          * `ossl_statem_client_read_transition` ends any other message with `SSLfatal(s, SSL3_AD_UNEXPECTED_MESSAGE,

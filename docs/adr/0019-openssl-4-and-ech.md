@@ -1,6 +1,6 @@
 # ADR-0019. OpenSSL 4.x and Encrypted Client Hello
 
-Date: 2026-11-18. Status: accepted (owner decision 2026-11-18); implementation pending. Supersedes in part
+Date: 2026-11-18. Status: accepted (owner decision 2026-11-18); the move to OpenSSL 4.1.0 is implemented (below, Implementation). Supersedes in part
 [ADR-0002](0002-openssl-first-backend.md): its pin of the OpenSSL 3.5 LTS branch. The rest of ADR-0002 (OpenSSL as the
 first backend, linked statically; the transport behind the `QuicCrypto` interface; BoringSSL as a possible fallback)
 stands.
@@ -112,3 +112,40 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **Shipping 4.1.x unpatched and documenting the failure after a HelloRetryRequest.** ECH over QUIC would fail whenever
   a server answers with a HelloRetryRequest (another key exchange group), and retrying without ECH would reveal the
   server name; the owner chose the patch.
+
+## Implementation
+
+### The move to 4.1.0 (2026-11-18)
+
+- **Pin.** `gradle/openssl.toml` names 4.1.0: the tarball's SHA-256 is the one of the release's own `.sha256` file, and its
+  signature verifies with the vendored release key (`tools/openssl/openssl-release-key.asc`), made by the signing subkey
+  `C46ED3F2CBEFDA1FDAADA44264ED7B1DCCE71CB2` of the pinned primary `B146647E45A7B33947AB226B2A2C87D161692D40`.
+- **Build.** `build.sh` removes the read-only `crypto/buildinf.h` before rewriting it; `configure-flags.txt` no longer names
+  `no-engine`, `no-atexit`, `no-ssl3` and `no-ssl3-method` (removed in 4.0: engines, `OPENSSL_atexit` and SSLv3 are gone),
+  and does not name `no-ech`.
+- **`ksl`.** `ksl_ocsp.c` takes the CRLs of the store with `X509_STORE_get1_objects`, which takes the store's lock itself,
+  so the lock `ksl` held around the call is gone (holding it would deadlock); a snapshot that cannot be made counts as
+  "listed", so the delegated responder in question is refused (fail closed). A responder certificate's validity is read
+  with `ASN1_TIME_cmp_time_t`; a time that does not parse refuses the responder (`X509_cmp_time` answered 0 for it, which
+  passed).
+- **The two revocation negatives.** Both are changes in OpenSSL, not in `ksl`'s client checks:
+  - `negative_client_mismatch`: since 3.6 an OpenSSL server staples a response only when one of its single responses
+    names the certificate it sends by serial number and issuer name hash (`ssl/statem/statem_srvr.c`,
+    `ossl_get_ocsp_response`, the TLS 1.3 multi-stapling support), so the test server, which forced another
+    certificate's response, sent none and the client had nothing to refuse. The test now forces a response for the
+    leaf's serial and issuer name under another issuer key (`ocsp-other-issuer-key`, from the regenerated revocation
+    PKI): the OpenSSL server staples it and the client refuses it, as before, because it compares the whole certID (RFC
+    6960 section 3.2, 1). A response for another serial is asserted not to be stapled at all.
+  - `negative_crl_issuer_outside_path`: OpenSSL 4 checks the CRLs of a partial chain only below its trust anchor
+    (`crypto/x509/x509_vfy.c`, `revocation_check_end`: `num_untrusted - 1` under `X509_V_FLAG_PARTIAL_CHAIN`), where 3.5
+    checked the anchor too under `X509_V_FLAG_CRL_CHECK_ALL`. So an `AnchoredCa` whose root is an intermediate was no
+    longer checked against its issuer's configured CRL: neither the documented fail-closed case (the CRL's issuer is
+    not among the roots) nor an intermediate that the root's CRL revokes (`negative_crl_anchor_revoked`, new). `ksl`
+    now checks such an anchor itself (`ksl_ocsp.c`, `anchor_status`): when a configured CRL names the anchor's issuer, the
+    anchor is verified on its own as the target of a path without `PARTIAL_CHAIN` against the same store, time and
+    security level with `X509_V_FLAG_CRL_CHECK`, and a CRL error of that check fails the handshake; a path that does not
+    build leaves the CRL unverifiable (`X509_V_ERR_CRL_SIGNATURE_FAILURE`, decrypt_error, as before).
+- **Size** (macOS arm64, the JNI library of the JVM artifact, `-Os`, stripped as released): 2,544,072 bytes on 3.5.9,
+  2,809,416 on 4.1.0 (+265,344, +10.4 %); `libcrypto.a` 5,170,512 → 5,539,528 (+7.1 %), `libssl.a` 804,048 → 926,824
+  (+15.3 %). The size gates are measured again on the matrix; their limits change only by decision.
+

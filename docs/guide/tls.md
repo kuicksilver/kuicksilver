@@ -56,7 +56,7 @@ import kotlin.time.Duration.Companion.seconds
 ```
 
 Kuicksilver's TLS layer (`io.kuicksilver:kuicksilver-tls`) runs TLS 1.3 (RFC 9846; the default, as RFC 9852 asks) and,
-when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 3.5 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
+when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 4.1 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
 TLS over TCP and the `ktor-network` socket wrapper. The code blocks below compile and run as `GuideSamplesTest`.
 
 ## Native library availability
@@ -388,7 +388,8 @@ experimental in 0.3.0:
   not cover it (a distribution point it does not name, alert 46) fails with `VerifyReason.UnknownRevocationStatus` as
   well. So does a configured CRL whose issuer is neither among the roots nor on the path: with
   `AnchoredCa(roots = [intermediate], crls = [the root's CRL, ...])` the intermediate's own status cannot be verified,
-  and its certificates fail (fail closed; leave that CRL out, or anchor at the root). A certificate whose issuer has none
+  and its certificates fail (fail closed; leave that CRL out, or anchor at the root); with the root among the roots too,
+  the intermediate is checked against the root's CRL and fails when it is revoked. A certificate whose issuer has none
   of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
   indirect CRLs and CRLs limited to some revocation reasons are refused when the trust is made (`TlsException.Config`). On a server, a
   `TrustConfig.ReloadableCa` reload to the same roots with new CRLs applies them to the next handshakes, as a CA reload

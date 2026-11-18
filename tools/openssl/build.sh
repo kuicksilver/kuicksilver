@@ -150,6 +150,7 @@ KSL_V="$version" perl -0777 -ne '
   $s =~ s/^compiler: // or die "$fmt: compiler_flags[] does not start with compiler:\n";
   my @t = grep { !m{/} } split /\s+/, $s; unshift @t, "cc" if !@t || $t[0] =~ /^-/;
   print join(" ", @t), "\n", $plat, "\n";' crypto/buildinf.h > "$out/build/$target.buildinf.txt"
+rm -f crypto/buildinf.h   # OpenSSL 4 generates it read-only (util/file-from-stdout.pl); rewritten below
 perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
 make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"

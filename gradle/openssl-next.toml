@@ -1,8 +1,8 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Pin profile of the non-blocking CI job `openssl-next` (.github/workflows/build.yml): the newest OpenSSL 4.x release, built and
-# tested beside the 3.5 LTS pin of gradle/openssl.toml. Never used for a release or any published artifact; 0.3.0 stays on
-# 3.5 (docs/stability.md, OpenSSL). Selected by KSL_OPENSSL_PIN=gradle/openssl-next.toml (tools/openssl/fetch.sh, build.sh) and
+# Pin profile of the non-blocking CI job `openssl-next` (.github/workflows/build.yml): the next OpenSSL 4.x release, built and
+# tested beside the pin of gradle/openssl.toml before that pin moves to it (the same release until a newer one is pinned
+# here). Never used for a release or any published artifact (docs/stability.md, OpenSSL). Selected by KSL_OPENSSL_PIN=gradle/openssl-next.toml (tools/openssl/fetch.sh, build.sh) and
 # -Pkuicksilver.openssl.pin=gradle/openssl-next.toml (kuicksilver-native/openssl.gradle.kts). The same rules as the main pin:
 # version, tarball SHA-256 and signing key fingerprint are updated together (4.1.0 is signed by a subkey of the same release key).
 [openssl]

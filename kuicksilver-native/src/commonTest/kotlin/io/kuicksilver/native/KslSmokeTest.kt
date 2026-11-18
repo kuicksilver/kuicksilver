@@ -60,7 +60,7 @@ class KslSmokeTest {
         }
     }
 
-    @Test fun versionStringMentionsOpenSsl359() = assertTrue(Ksl.version().contains("OpenSSL 3.5.9"), Ksl.version())
+    @Test fun versionStringMentionsOpenSsl410() = assertTrue(Ksl.version().contains("OpenSSL 4.1.0"), Ksl.version())
 
     // the shim is versioned by its ABI (the library file names carry it too), not by the Maven version it ships in
     @Test fun versionStringNamesTheKslAbi() = assertTrue(Ksl.version().startsWith("ksl abi ${Ksl.abiVersion()} / OpenSSL "), Ksl.version())

@@ -849,6 +849,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- The bundled OpenSSL moves from 3.5.9 (the 3.5 LTS branch) to **4.1.0**, and to the 4.2 LTS branch once it is released
+  (ADR-0019): Encrypted Client Hello needs OpenSSL 4. The pin keeps its form (version, tarball SHA-256 and signing key,
+  verified before every build); `configure-flags.txt` drops the four options 4.0 removed (`no-engine`, `no-atexit`,
+  `no-ssl3`, `no-ssl3-method`), and `tools/openssl/build.sh` rewrites the read-only `crypto/buildinf.h` that 4.x makes.
+  The native libraries grow by about 10 % (the macOS arm64 JNI library: 2,544,072 to 2,809,416 bytes). `Ksl.version()`
+  names OpenSSL 4.1.0. Building `ksl` against a system OpenSSL (Linux, `KSL_SYSTEM_OPENSSL`) still takes 3.5 to 3.x.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.
@@ -2542,6 +2548,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- Certificate revocation on OpenSSL 4: an `AnchoredCa` whose root is an intermediate CA is checked against its issuer's
+  configured CRL again (OpenSSL 4 stops a partial chain's CRL checks below its trust anchor, where 3.5 checked the anchor
+  as well): an intermediate that the root's CRL revokes fails with `VerifyReason.Revoked` (alert 44), and a configured
+  CRL of an issuer that is not among the roots still fails closed (alert 51), as documented. A responder certificate
+  whose validity time does not parse is refused (OpenSSL's `X509_cmp_time` reported it as neither before nor after).
 - HTTP/2 (RFC 9113 section 10.5; CVE-2019-9514, CVE-2019-9516, MadeYouReset CVE-2025-8671): two kinds of streams the
   peer makes us reset cost it nothing. A malformed request or response (section 8.1.1: missing or invalid pseudo-header
   fields, a zero-length field block, connection-specific fields, a content-length that does not match) is reset by the

@@ -3456,7 +3456,7 @@ kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.pkeyHandleS
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.quicHandshakeInMemory
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.sealOpenRoundTripAndWrongTag
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.serverPauseModeIsRejected
-kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStringMentionsOpenSsl359
+kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStringMentionsOpenSsl410
 kuicksilver-native/src/commonTest	io.kuicksilver.native.KslSmokeTest.versionStringNamesTheKslAbi
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.boundsAreChecked
 kuicksilver-native/src/commonTest	io.kuicksilver.native.PacketBufferTest.copyInAndOut
