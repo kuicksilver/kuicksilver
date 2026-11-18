@@ -118,6 +118,12 @@ and only on the loop's own dispatcher, where it starts none while a task other t
 is queued (`runtime/LoopDispatcher.kt` counts them): on one the caller supplies (a UI one, or one shared by two
 endpoints) the loop takes what is queued and never waits.
 
+**Architecture Invariant:** an idle timer closes a connection only after the loop drained its sockets: a connection whose
+idle deadline passed is held with all its timers while each receiver interrupts its receive in flight, takes what its
+socket holds without waiting (at most 64 datagrams) and the loop processes it (`runtime/EndpointLoop.idle.kt`,
+`runtime/BatchReceiver.kt`; RFC 9000 section 10.1); a hold ends after 500 ms whatever the receivers did. The receiver
+stays the socket's only reader.
+
 **Architecture Invariant:** memory per connection is bounded by explicit ceilings (windows, queues, ranges), each refused
 before allocation; there is no separate byte budget.
 

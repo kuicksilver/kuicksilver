@@ -80,6 +80,7 @@ internal suspend fun EndpointLoop.receivePreferred(p: DatagramIo) {
     val batch = PacketBatch(16, SLOT_SIZE)
     val limiter = WorkLimiter()
     val receiver = BatchReceiver(p, clock, directWait, dispatcher as? LoopDispatcher)
+    registerReceiver(receiver)
     try {
         limiter.start(now())
         while (true) {
@@ -111,6 +112,7 @@ internal suspend fun EndpointLoop.receivePreferred(p: DatagramIo) {
     } catch (e: Throwable) {
         if (!closing) preferredFailed(p, e)
     } finally {
+        unregisterReceiver(receiver)
         batch.close()
     }
 }

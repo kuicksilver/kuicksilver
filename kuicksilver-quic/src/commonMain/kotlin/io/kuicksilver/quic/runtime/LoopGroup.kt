@@ -215,7 +215,7 @@ internal class LoopGroup private constructor(
         if (to >= loops.size || length > EndpointLoop.FORWARD_MAX) return true // not a queue drop: no loop takes it
         val bytes = ByteArray(length)
         buf.copyTo(bytes, 0, 0, length)
-        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket, local)).isSuccess
+        return loops[to].forward(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket, local))
     }
 
     private val preferredFailed = AtomicInt(0)

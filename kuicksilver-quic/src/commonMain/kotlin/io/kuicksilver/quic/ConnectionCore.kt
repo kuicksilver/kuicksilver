@@ -41,6 +41,7 @@ import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.finishPathResponses
 import io.kuicksilver.quic.core.glitch
+import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
@@ -590,6 +591,12 @@ public class ConnectionCore internal constructor(
     internal var dirty: Boolean = false
     internal var heapIndex: Int = -1
     internal var heapDeadline: TimeMark = TimeMark.NEVER
+
+    /**
+     * Endpoint bookkeeping: the idle deadline passed and the loop holds every timer of this connection until its sockets were
+     * drained (RFC 9000 section 10.1; `runtime/EndpointLoop.idle.kt`). The core itself never reads it.
+     */
+    internal var idleHeld: Boolean = false
     internal val cids =
         ConnectionIdManager(
             config.activeConnectionIdLimit,
@@ -1019,12 +1026,20 @@ public class ConnectionCore internal constructor(
         afterInput(now)
     }
 
-    /** Fills [out] with datagrams to send now; returns their number (at most one send quantum). */
+    /**
+     * Fills [out] with datagrams to send now; returns their number (at most one send quantum). Once the idle deadline has
+     * passed it sends nothing, queued data included, until [onTimeout] runs and closes the connection: a packet sent then
+     * would restart the idle timer (RFC 9000 section 10.1).
+     */
     public fun poll(
         out: PacketBatch,
         now: TimeMark,
     ): Int {
         if (state == ConnectionState.Closed || state == ConnectionState.Draining) return 0
+        // past the idle deadline the connection is idle whatever is queued (RFC 9000 section 10.1): a packet sent now would
+        // restart the timer ("when sending an ack-eliciting packet if no other ack-eliciting packets have been sent since
+        // last receiving and processing a packet") and keep it; onTimeout closes it. NEVER while closing: the close goes out
+        if (idleDeadline() <= now) return 0
         this.now = now
         // a reverted path with no connection ID of the peer it may use: nothing can go out (RFC 9000 sections 9.3, 9.5)
         if (paths.active.waitsForPeerCid) return 0

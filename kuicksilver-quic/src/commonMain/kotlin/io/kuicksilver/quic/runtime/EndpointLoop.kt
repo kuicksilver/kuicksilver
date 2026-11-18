@@ -148,6 +148,29 @@ internal class EndpointLoop private constructor(
 
     /** Late timer wake-ups that let the loop's queued work run first ([timerLoop]); loop dispatcher only. */
     internal var lateTimerYieldsForTest = 0L
+
+    /** Drain rounds asked of the receivers before an idle close (test hook). */
+    @Volatile internal var idleDrainRoundsForTest = 0L
+
+    /** The receivers of this loop's sockets, the connections held for a drain and the drain rounds ([holdForDrain]); loop dispatcher only. */
+    internal val receivers = ArrayList<BatchReceiver>(2)
+    internal val held = ArrayList<HeldForDrain>()
+    internal var drainRound = 0L
+    internal var drainRoundWanted = false
+
+    /** The forwarded queue's part in the drain rounds ([forwardRoundDone]). */
+    internal var forwardDrainRequested = 0L
+    internal var forwardDrainServed = 0L
+    internal var forwardDrainTaken = 0
+
+    /** A receiver finished a drain round: the timer coroutine looks at the held connections. */
+    internal val drainedSignal: () -> Unit = { wake.trySend(Unit) }
+
+    /** Test hook: runs on the loop each time a connection is held for a drain, with the number now held. */
+    internal var onIdleHeldForTest: ((Int) -> Unit)? = null
+
+    /** Test hook: runs on the loop for each held connection once its timers ran again (the drain's verdict is its state). */
+    internal var onIdleReleasedForTest: ((ConnectionCore) -> Unit)? = null
     internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()
@@ -179,6 +202,21 @@ internal class EndpointLoop private constructor(
     )
 
     internal val forwarded = Channel<Forwarded>(FORWARD_QUEUE)
+
+    /**
+     * Forwarded datagrams handed to this loop and not processed yet. Not the channel's emptiness: one handed straight to the
+     * forward loop waiting in its receive has left the channel before it is processed (the drain rounds, [startDrainRound]).
+     */
+    internal val forwardedPending = AtomicInt(0)
+
+    /** Hands [f] to this loop's [forwarded] queue (any thread); false when the queue does not take it. */
+    internal fun forward(f: Forwarded): Boolean {
+        forwardedPending.incrementAndFetch() // before the hand-over: the forward loop may process it at once
+        if (forwarded.trySend(f).isSuccess) return true
+        forwardedPending.decrementAndFetch()
+        return false
+    }
+
     internal val forwardedCount = AtomicLong(0)
 
     /** Test hook: every datagram received on this socket is handed to loop [testMisrouteTo] as if the kernel had hashed it there. */
@@ -259,6 +297,7 @@ internal class EndpointLoop private constructor(
                 }
             }
         }
+        registerReceiver(receiver)
         receiveJob = scope.launch { receiveLoop() }
         timerJob = scope.launch(LoopDispatcher.Batched) { timerLoop() } // the receiver yields when a timer is due
         scope.launch { followCapabilities(io, PathId.Initial) }
@@ -300,6 +339,7 @@ internal class EndpointLoop private constructor(
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
             val receiver = BatchReceiver(io, clock, directWait, dispatcher as? LoopDispatcher)
+            registerReceiver(receiver)
             try {
                 limiter.start(now())
                 while (true) {
@@ -338,6 +378,7 @@ internal class EndpointLoop private constructor(
                     flush(core)
                 }
             } finally {
+                unregisterReceiver(receiver)
                 caps.cancel()
                 batch.close()
             } // a cancelled path closes its socket: not a failure
@@ -715,6 +756,8 @@ internal class EndpointLoop private constructor(
                     // the timer coroutine is gone: the heap would otherwise keep every released connection reachable through
                     // this endpoint for as long as the application holds it
                     timers.clear()
+                    for (h in held) h.core.idleHeld = false
+                    held.clear()
                     r.release { inBatch.close() }
                     r.release { outBatch.close() }
                     r.release { single.close() }
@@ -728,6 +771,9 @@ internal class EndpointLoop private constructor(
     companion object {
         /** Forwarded datagrams a loop may hold unprocessed; more are dropped (a burst after a rebind, never steady state). */
         const val FORWARD_QUEUE: Int = 1024
+
+        /** The longest an idle close waits for the receivers' drain (a receive that does not hand back). */
+        internal val IDLE_HOLD_LIMIT: Duration = Duration.parse("500ms")
 
         /** Bytes per datagram slot of the runtime's batches: the largest UDP payload it sends or receives. */
         const val SLOT_SIZE: Int = 1500

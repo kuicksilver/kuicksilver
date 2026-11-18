@@ -15,6 +15,7 @@ import io.kuicksilver.quic.KslDatagramIo
 import io.kuicksilver.quic.NonSuspendingSend
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PacketTooBigSource
+import io.kuicksilver.quic.QueuedReceive
 import io.kuicksilver.quic.endpoint.CidRoute
 import io.kuicksilver.quic.endpoint.DispatchRoute
 import io.kuicksilver.quic.endpoint.ResetTokenIndex
@@ -194,6 +195,7 @@ internal open class LoopInbox(
     protected val sender: DatagramIo,
 ) : DatagramIo,
     DirectReceive,
+    QueuedReceive,
     PacketTooBigSource {
     private val size = SocketDispatcher.RING
     private val data: Array<ByteArray> = Array(size) { ByteArray(EndpointLoop.SLOT_SIZE) }
@@ -307,8 +309,12 @@ internal open class LoopInbox(
         return n
     }
 
+    /** Set by [interruptReceive]: the receive in flight returns 0. */
+    private val interrupted = AtomicInt(0)
+
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
+        interrupted.store(0) // left by a receive that returned with datagrams before it looked
         holdForTest?.await()
         while (true) {
             if (closed.load() != 0) throw IllegalStateException("datagram io closed")
@@ -317,8 +323,21 @@ internal open class LoopInbox(
             // a Packet Too Big waits: an empty round, after which the loop drains it (EndpointLoop.afterReceive)
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             if (n > 0 || !ptbs.isEmpty) return n
+            if (interrupted.exchange(0) != 0) return 0
             signal.receive() // a wake after the slots it announces were published: none is missed
         }
+    }
+
+    /**
+     * What the ring holds now ([receiveNow] without a wait). The shared socket's own queue is the dispatcher's to read: what
+     * it has not taken yet is not reached.
+     */
+    override fun receiveQueued(into: PacketBatch): Int = receiveNow(into, 0)
+
+    /** The receive in flight wakes and returns what the ring holds, or 0. */
+    override fun interruptReceive() {
+        interrupted.store(1)
+        signal.trySend(Unit)
     }
 
     override fun receiveNow(

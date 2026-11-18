@@ -103,6 +103,36 @@ class LifecycleTest {
         }
     }
 
+    /**
+     * RFC 9000 section 10.1: past the idle deadline the connection is idle whatever the application does next. A write that
+     * reaches the core before its `onTimeout` (an endpoint whose timer was overdue, a sans-IO driver that polls first) sends
+     * nothing: an ack-eliciting packet would restart the timer ("when sending an ack-eliciting packet if no other ack-eliciting
+     * packets have been sent since last receiving and processing a packet") and keep a connection that already timed out.
+     */
+    @Test fun negative_nothingIsSentPastTheIdleDeadline() {
+        val p =
+            CorePair(
+                serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
+                clientQuic = quicConfig { maxIdleTimeout = 2.seconds },
+            )
+        p.use { _ ->
+            assertTrue(p.handshake())
+            silence(p, 500.milliseconds)
+            assertNull(p.closedReason(p.clientEvents))
+            p.advance(3.seconds) // past the deadline; no timer has run yet
+            val id = p.client.openStream(bidi = true)
+            assertEquals(1, p.client.writeStream(id, byteArrayOf(1), 0, 1, false))
+            val out = io.kuicksilver.quic.PacketBatch(8)
+            try {
+                assertEquals(0, p.client.poll(out, p.now), "nothing goes out once the idle deadline passed")
+            } finally {
+                out.close()
+            }
+            p.client.onTimeout(p.now)
+            assertEquals(ConnectionState.Closed, p.client.state, "the idle timer still closes it")
+        }
+    }
+
     @Test fun handshakeTimeout10s() {
         val p = CorePair(crypto = ksl)
         p.filterToClient = { _, _ -> false }

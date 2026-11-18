@@ -310,6 +310,42 @@ order were cross-checked with msquic `src/platform/datapath_winuser.c`.
   `WSANOTINITIALISED`, forgets its once-state, starts Winsock once more and retries the socket once; sockets the cleanup
   already closed are not revived, and a lookup in between still fails until then.
 
+### Draining before an idle close (0.3.0)
+
+RFC 9000 section 10.1 restarts the idle timer "when a packet from its peer is received and processed successfully". A
+process frozen past a connection's idle deadline wakes with the timer overdue and the peer's datagrams waiting in the
+socket, or in a receive on a `Dispatchers.IO` thread that has not handed them back; fired first, the timer closed the
+connection. Every socket of the library therefore implements the internal `QueuedReceive`: `receiveQueued` takes what is
+queued without waiting (`ksl_udp_recv` with a zero timeout; the non-blocking `DatagramChannel`; the shared socket's
+per-loop ring; ktor-network's channel), and `interruptReceive` ends a receive in flight (the NIO selector's `wakeup`, the
+ring's signal, a select clause beside ktor-network's channel, and on `ksl` a flag looked at between the 100 ms wait
+slices). The endpoint loop holds a connection whose idle deadline passed, with all its timers, until each receiver ran a
+drain round (at most 64 datagrams) begun after the hold, and processed it; then the idle timer decides
+(`runtime/EndpointLoop.idle.kt`).
+
+The receiver itself drains, on the loop's thread, after its receive in flight returned: the socket keeps a single reader,
+which `ksl_udp` requires (one receiving thread; the GRO scratch and its leftover segments belong to it), and no datagram
+can sit in a receive's hands unseen while the decision is made. Rejected:
+
+- **The timer reads the socket itself.** On `ksl` it would be a second reader beside the blocked receive on the I/O
+  thread, and a datagram that receive already took (copied into its slots, not yet handed back) is in neither place
+  the timer looks.
+- **A non-consuming readiness probe** (`poll` with no timeout, `FIONREAD`). It is safe beside the blocked receive, but
+  the same datagram taken a moment earlier by that receive escapes it; closing that gap needs `ksl` to publish when it
+  takes a datagram and when the caller has it, new native API for each platform.
+- **A native wake-up for the blocked receive** (writing the shutdown pipe or wake socket without closing). It would end
+  the wait at once instead of with its slice, but the pipe and the Windows wake socket stand for a shutdown today, and a
+  second meaning needs new native API on three receive paths. The cost of not doing it is bounded: an idle close on the
+  accelerated socket can come up to one slice (100 ms) after the drain was asked, and a hold ends after 500 ms anyway.
+- **Waiting for the receive in flight without interrupting it.** NIO and ktor-network wait without limit on an idle
+  socket, and while one connection's close waited, every other connection's timers would have waited too.
+
+Accepted limits: the kernel queue of a socket the loops share in process (`loops > 1` on Darwin and Windows; the
+dispatcher's thread reads it, the loop drains only its ring), the kernel queue behind ktor-network's receiver on Native
+(only its channel is drained), another loop's socket of a group, a caller's own `DatagramIo`, and on `ksl` an idle close up
+to one 100 ms wait slice late. Nothing is sent past the idle deadline meanwhile, an application write included
+(`ConnectionCore.poll` sends nothing then), so the hold cannot keep a connection the timer already ended.
+
 ### Servers on Kotlin/Native
 
 The portable Native socket (`KtorDatagramIo`, `ktor-network`) stays client-only: its `capabilities` restrict it to the
@@ -384,3 +420,5 @@ Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLo
   accelerated socket falls back to the portable one instead of failing the bind.
 - **0.3.0, `loops > 1` everywhere.** Without the grant the loops share one socket with in-process routing by connection
   ID and a `ksl_udp_sender` clone per loop, instead of `bind` throwing `UnsupportedOperationException`.
+- **0.3.0, draining before an idle close.** `QueuedReceive` on every socket of the library; the endpoint drains its sockets
+  before an idle timer closes a connection (see the design section of that name).

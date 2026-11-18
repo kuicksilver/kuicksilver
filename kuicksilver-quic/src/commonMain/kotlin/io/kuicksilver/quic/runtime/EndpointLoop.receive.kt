@@ -27,6 +27,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
 
@@ -96,6 +97,8 @@ internal suspend fun EndpointLoop.receiveLoop() {
         if (clientOnly) socketLost(io, e) else fatal("transport failed", e)
     } catch (e: Throwable) {
         if (!closing) fatal("transport failed", e)
+    } finally {
+        unregisterReceiver(receiver) // a lost client socket: the drain rounds before an idle close stop waiting for it
     } // a dead socket ends the endpoint: accept() and connect() must not hang
 }
 
@@ -154,11 +157,14 @@ internal suspend fun EndpointLoop.forwardLoop() {
             } else {
                 core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket, f.local)
             }
+            forwardedPending.decrementAndFetch() // processed
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             val drained = forwarded.isEmpty
             if (++sinceRound == FORWARD_BATCH || drained) {
+                val taken = sinceRound
                 sinceRound = 0
                 afterReceive(now)
+                forwardRoundDone(taken, dry = forwardedPending.load() == 0)
                 yield()
             }
         }
@@ -183,7 +189,12 @@ internal suspend fun EndpointLoop.timerLoop() {
 private suspend fun EndpointLoop.timerTicks() {
     while (true) {
         val head = timers.peek()
-        val wait = head?.let { it.heapDeadline - now() }
+        var wait = head?.let { it.heapDeadline - now() }
+        val holdEnd = idleHoldEnd() // a held connection is decided by then whatever its receivers did
+        if (holdEnd != TimeMark.NEVER) {
+            val w = holdEnd - now()
+            if (wait == null || w < wait) wait = w
+        }
         if (wait == null) {
             wake.receive()
         } else if (wait > Duration.ZERO) {
@@ -197,16 +208,19 @@ private suspend fun EndpointLoop.timerTicks() {
         // a wake-up later than a due deadline (the loop was held up: a GC pause, a stopped VM, a loaded host) lets what is
         // queued on the loop run first: datagrams received meanwhile are processed before the timers they restart (RFC 9000
         // section 10.1: the idle timer restarts "when a packet from its peer is received and processed successfully"), as
-        // quic-go handles its queued packets before its timers. On time, nothing waits here.
+        // quic-go handles its queued packets before its timers. On time, nothing waits here. What is still in the sockets is
+        // drained before an idle close (holdForDrain, EndpointLoop.idle.kt)
         if (timers.peek()?.let { now() - it.heapDeadline >= LATE_TIMER } == true) {
             lateTimerYieldsForTest++
             yield()
         }
         val now = now()
+        releaseHeld(now)
         while (true) {
             val c = timers.peek() ?: break
             if (c.heapDeadline > now) break
             timers.remove(c)
+            if (holdForDrain(c, now)) continue // its idle deadline passed: none of its timers runs before the drain
             core.markDirty(c)
             try {
                 c.onTimeout(now)
@@ -214,6 +228,7 @@ private suspend fun EndpointLoop.timerTicks() {
                 c.failInternal(e) // sans-IO, not suspending: even a CancellationException is the connection's failure
             }
         }
+        startDrainRound()
         flush(signalTimer = false) // the timer loop re-reads the heap itself; signalling itself here would spin
     }
 }

@@ -32,6 +32,7 @@ internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
 ) : DatagramIo,
     DirectReceive,
+    QueuedReceive,
     NonSuspendingSend,
     PacketTooBigSource {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
@@ -208,15 +209,34 @@ internal class KslDatagramIo private constructor(
         out.fill(0, off, off + KslUdpSocket.ADDR_LEN)
     }
 
+    /** Set by [interruptReceive]: the receive in flight returns 0 after its current wait slice. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val interrupted = kotlin.concurrent.atomics.AtomicInt(0)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
+        interrupted.store(0) // left by a receive that returned with datagrams before it looked
         val s = rxSlots(into)
         val n =
             receiveInSlices(
                 Dispatchers.IO,
                 { socket.isClosed },
+                stop = { interrupted.exchange(0) != 0 },
             ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100, if (pktinfo) s.locals else null) } }
         return handOut(into, s, n)
+    }
+
+    /** What the kernel queued, on the calling thread, never waiting ([receiveNow] with no wait). */
+    override fun receiveQueued(into: PacketBatch): Int = receiveNow(into, 0)
+
+    /**
+     * The receive in flight returns 0 once its current native wait (a slice of at most 100 ms) ends without a datagram; one
+     * that brings datagrams returns them at once, as always. `ksl` has no wake-up for a blocked receive short of a shutdown.
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    override fun interruptReceive() {
+        interrupted.store(1)
     }
 
     /** On the calling thread: the loop's direct path (runtime.BatchReceiver), so no hand-off to `Dispatchers.IO` and back. */
@@ -423,16 +443,19 @@ internal class KslDatagramIo private constructor(
 
         /**
          * Runs blocking [slice]s (each waits at most ~100 ms and answers 0 when nothing arrived) on [blocking] until one returns
-         * a count. Each slice is its own dispatch, so an idle socket hands its thread back between slices instead of pinning one
-         * `Dispatchers.IO` thread for its lifetime (past ~64 endpoints new receivers never ran).
+         * a count, or answers 0 once [stop] says so between slices. Each slice is its own dispatch, so an idle socket hands its
+         * thread back between slices instead of pinning one `Dispatchers.IO` thread for its lifetime (past ~64 endpoints new
+         * receivers never ran).
          */
         internal suspend fun receiveInSlices(
             blocking: kotlinx.coroutines.CoroutineDispatcher,
             closed: () -> Boolean,
+            stop: () -> Boolean = { false },
             slice: () -> Int,
         ): Int {
             while (true) {
                 if (closed()) throw IllegalStateException("datagram io closed")
+                if (stop()) return 0
                 val r = withContext(blocking) { slice() }
                 if (r != 0) return r
             }
