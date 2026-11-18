@@ -136,6 +136,7 @@ public actual object Ksl {
     public actual fun echConfigListCheck(list: ByteArray): ByteArray? {
         val out = IntArray(2)
         val kept = KslNative.echConfigListCheck(list, out)
+        if (out[0] == -2) throw KslException.Internal(KslConst.E_NO_MEMORY, 0, "ksl: out of memory checking an ECHConfigList")
         return if (out[0] != 0) null else kept ?: ByteArray(0)
     }
 

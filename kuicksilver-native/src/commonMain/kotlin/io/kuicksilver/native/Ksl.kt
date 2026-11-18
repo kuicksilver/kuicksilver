@@ -172,6 +172,8 @@ public expect object Ksl {
     /**
      * The usable ECHConfigs of the ECHConfigList [list] (`ksl_ech_config_list_check`, ABI 7 additive), as an ECHConfigList:
      * empty when it parses but holds none this OpenSSL can use (or ECH is not in this build), null when it does not parse.
+     *
+     * @throws KslException.Internal when memory runs out before the list is read (never reported as a list that does not parse).
      */
     public fun echConfigListCheck(list: ByteArray): ByteArray?
 

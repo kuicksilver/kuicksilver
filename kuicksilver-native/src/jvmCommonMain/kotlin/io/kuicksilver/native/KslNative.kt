@@ -96,7 +96,10 @@ internal object KslNative {
         out: IntArray,
     ): ByteArray?
 
-    /** KSL_OK (0) with out[0] = the length written into the returned array, or KSL_ERROR (-1); null array when nothing kept */
+    /**
+     * The usable ECHConfigs of [list] (null when none is kept); out[0] is a status: 0 the list parses, -1 it does not parse, -2
+     * memory ran out before it was read.
+     */
     @JvmStatic external fun echConfigListCheck(
         list: ByteArray,
         out: IntArray,

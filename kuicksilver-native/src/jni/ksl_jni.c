@@ -217,7 +217,7 @@ static jint j_ctx_set_crls(JNIEnv *e, jclass c, jlong h, jbyteArray a) {
     drop(&b);
     return r;
 }
-/* KSL_OK with out[0] 0 and the kept list (NULL when empty), or out[0] -1 when the list does not parse */
+/* out[0]: 0 and the kept list (NULL when empty), -1 when the list does not parse, -2 when memory ran out (the list was not read) */
 static jbyteArray j_ech_config_list_check(JNIEnv *e, jclass c, jbyteArray list, jintArray out) {
     (void)c;
     bytes b = get_bytes(e, list);
@@ -225,7 +225,7 @@ static jbyteArray j_ech_config_list_check(JNIEnv *e, jclass c, jbyteArray list, 
     uint8_t *kept = malloc(cap);
     int r = kept ? ksl_ech_config_list_check(b.p, b.n, kept, cap, &n) : KSL_ERROR;
     drop(&b);
-    jint status = r == KSL_OK ? 0 : -1;
+    jint status = kept == NULL ? -2 : r == KSL_OK ? 0 : -1;
     (*e)->SetIntArrayRegion(e, out, 0, 1, &status);
     jbyteArray a = r == KSL_OK && n > 0 ? new_bytes(e, kept, n) : NULL;
     free(kept);
