@@ -105,6 +105,24 @@ internal inline fun fuzzOp(text: () -> String) {
     if (FuzzTrace.on) FuzzTrace.add(text())
 }
 
+/**
+ * Why the committed corpus input [name] with [bytes] is misnamed, or null: a file of `tools/fuzz/corpus/<target>/` is named by
+ * the SHA-1 of its bytes in hex, as Jazzer's merge (`tools/fuzz/campaign.sh minimize`) names it, so a rewrite that changed the
+ * bytes renames the file too, and two inputs with the same bytes are one file. The regression inputs (`seed-*`, `crash-*`) are
+ * named by what they test, not checked here.
+ */
+internal fun corpusNameFinding(
+    name: String,
+    bytes: ByteArray,
+): String? {
+    val sha1 =
+        java.security.MessageDigest
+            .getInstance("SHA-1")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+    return if (name == sha1) null else "named $name, but the SHA-1 of its bytes is $sha1: rename it to that"
+}
+
 private fun sha16(b: ByteArray): String =
     java.security.MessageDigest
         .getInstance("SHA-256")
@@ -201,6 +219,23 @@ class CampaignTableTest {
     }
 
     @org.junit.jupiter.api.Test
+    fun aCorpusInputNamedByTheSha1OfItsBytesPasses() {
+        // SHA-1("abc"), FIPS 180-1 appendix A
+        org.junit.jupiter.api.Assertions
+            .assertNull(corpusNameFinding("a9993e364706816aba3e25717850c26c9cd0d89d", "abc".toByteArray()))
+    }
+
+    @org.junit.jupiter.api.Test
+    fun negative_aCorpusInputWhoseBytesChangedUnderItsNameFails() {
+        val finding = corpusNameFinding("a9993e364706816aba3e25717850c26c9cd0d89d", "abd".toByteArray())
+        org.junit.jupiter.api.Assertions
+            .assertTrue(finding?.contains("cb4cc28df0fdbe0ecf9d9662e294b118092a5735") == true, finding.toString())
+        // the FNV-1a 64 of the bytes (the ksl harness's naming) is no SHA-1 name either
+        org.junit.jupiter.api.Assertions
+            .assertNotNull(corpusNameFinding("e71fa2190541574b", "abc".toByteArray()))
+    }
+
+    @org.junit.jupiter.api.Test
     fun negative_aNoCorpusEntryThatIsNoTargetFails() {
         val failures = ArrayList<String>()
         noCorpusList(listOf("quic.a", "quic.renamed"), campaignTable(table(good), failures), failures)
@@ -216,7 +251,8 @@ class CampaignTableTest {
  * inputs went unnoticed. The targets are the `jvm` rows of campaign.sh's table for this module; every row's target method
  * must resolve, whether or not it has a corpus; each input runs once, as the target runs it, and every failure is listed.
  * Nothing passes silently: the script must be found, the module must have rows, and a target without a committed corpus
- * must be listed in `tools/fuzz/no-corpus.txt` (and one listed there must have none).
+ * must be listed in `tools/fuzz/no-corpus.txt` (and one listed there must have none). Every corpus input must be named by the
+ * SHA-1 of its bytes ([corpusNameFinding]).
  *
  * Each run is recorded with [FuzzTrace]: a target whose program traces its operations has a lock,
  * `tools/fuzz/formats/<target>.lock`, with one line per committed input (`<path>`, the SHA-256 of its bytes and of its
@@ -279,6 +315,7 @@ class CommittedCorpusReplayTest {
                 inputs++
                 val bytes = f.readBytes()
                 val path = f.absoluteFile.relativeTo(root).invariantSeparatorsPath
+                if (f in corpus) corpusNameFinding(f.name, bytes)?.let { failures += "$path: $it" }
                 val (fp, text, thrown) = FuzzTrace.record(dump != null) { target.invoke(instance, bytes) }
                 if (thrown != null) {
                     val c = (thrown as? java.lang.reflect.InvocationTargetException)?.targetException ?: thrown

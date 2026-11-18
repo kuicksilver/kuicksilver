@@ -4,6 +4,7 @@
 # Rewrites connection fuzzer inputs recorded before operation kind 7 named PATH operations (0.3.0) so that they keep their
 # meaning: every PATH operation a run reaches becomes "one round" (ConnectionProgramRewriter in kuicksilver-quic's jvmTest, which
 # runs each program; ConnectionProgramRewriterTest holds its cases). Inputs under a path containing connectionTls run over TLS.
+# A corpus input, named by the SHA-1 of its bytes, is renamed to the SHA-1 of its new bytes (removed when another input has them).
 # Inputs in this repository recorded since the change that named kind 7 (found by its subject, below, in HEAD's history: hashes
 # change with a rebase) already speak the new format: rewriting them would change what they test, so the script refuses them
 # (also untracked or changed ones there). Inputs outside the repository are taken as old ones.

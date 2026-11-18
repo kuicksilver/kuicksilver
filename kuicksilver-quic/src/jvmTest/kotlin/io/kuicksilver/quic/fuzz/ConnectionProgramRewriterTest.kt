@@ -5,6 +5,7 @@ package io.kuicksilver.quic.fuzz
 import io.kuicksilver.quic.NullCryptoProvider
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 
 /** [ConnectionProgramRewriter] on hand-made programs: what it must turn into one round, and what it must leave alone. */
 class ConnectionProgramRewriterTest {
@@ -37,6 +38,21 @@ class ConnectionProgramRewriterTest {
         val once = ConnectionProgramRewriter.rewrite(hex("ff37c705171f12"), NullCryptoProvider)
         assertContentEquals(once, ConnectionProgramRewriter.rewrite(once, NullCryptoProvider), "idempotent")
     }
+
+    /** A corpus input is named by the SHA-1 of its bytes: rewritten, it is named by the SHA-1 of the new ones. */
+    @Test fun aRewrittenCorpusInputIsNamedByItsNewBytes() {
+        // SHA-1 of "abc" and of "abd"
+        assertEquals(
+            "cb4cc28df0fdbe0ecf9d9662e294b118092a5735",
+            rewrittenName("a9993e364706816aba3e25717850c26c9cd0d89d", hex("616263"), hex("616264")),
+        )
+    }
+
+    @Test fun aRegressionInputKeepsItsName() =
+        assertEquals(
+            "seed-path-retry",
+            rewrittenName("seed-path-retry", hex("616263"), hex("616264")),
+        )
 
     /** Live handshake: the server's connection does not exist yet, so its application call reads no argument, and 0x17 after it is a PATH operation. */
     @Test fun anApplicationCallThatReadsNothingIsFollowed() = check("014b17", "014b07")

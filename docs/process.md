@@ -338,7 +338,10 @@ These run by hand on the maintainer's machine; each has a computed verdict, not 
 - **Fuzzing campaigns.** [`tools/fuzz/campaign.sh`](../tools/fuzz/campaign.sh) fuzzes every Jazzer target (TLS, QUIC,
   HTTP/3, QPACK, HTTP/2, HPACK, HTTP/1.1, WebSocket, HTTPS records, and stateful fuzzers of QUIC and HTTP/2 connections; `campaign.sh list`) and the libFuzzer harness of the `ksl` C parsing
   code, resumably and in slices, locally and in the weekly hosted run (stage 6); the grown corpora are minimized into
-  `tools/fuzz/corpus/`, which the gate replays. A crash becomes a committed input, a unit test and a fix, and is
+  `tools/fuzz/corpus/`, which the gate replays. A Jazzer target's corpus input is named by the SHA-1 of its bytes, as the
+  merge names it, and `CommittedCorpusReplayTest` fails on one that is not (a rewrite renames the file); the ksl harness
+  names its inputs by the 64-bit FNV-1a-style hash of `tools/fuzz/ksl/driver.c`, whose offset basis is
+  1469598103934665603, not the standard 14695981039346656037, so a standard FNV-1a 64 does not reproduce those names. A crash becomes a committed input, a unit test and a fix, and is
   handled as a private vulnerability report until it is fixed when it may be reachable by a peer. For 0.2.1: 2 hours per target.
   The weekly hosted run is `fuzz.yml`, whose findings stay private; ClusterFuzzLite is not enabled, because it would
   publish a finding's input (an artifact) and stack trace (the job log). `.clusterfuzzlite/` is kept OSS-Fuzz-compatible

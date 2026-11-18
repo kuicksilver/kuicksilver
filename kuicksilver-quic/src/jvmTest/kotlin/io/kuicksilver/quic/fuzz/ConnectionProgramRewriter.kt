@@ -50,23 +50,47 @@ internal object ConnectionProgramRewriter {
 }
 
 /**
+ * Where a rewritten input goes: an input named by the SHA-1 of its [old] bytes (a campaign corpus input, [corpusNameFinding]) is
+ * named by the SHA-1 of its [new] ones, any other one (`seed-*`, `crash-*`) keeps its [name].
+ */
+internal fun rewrittenName(
+    name: String,
+    old: ByteArray,
+    new: ByteArray,
+): String {
+    if (corpusNameFinding(name, old) != null) return name
+    return java.security.MessageDigest
+        .getInstance("SHA-1")
+        .digest(new)
+        .joinToString("") { "%02x".format(it) }
+}
+
+/**
  * `KUICKSILVER_FUZZ_REWRITE=<file listing input paths, one per line>` (tools/fuzz/rewrite-conn-path-ops.sh): rewrites those inputs
- * in place with [ConnectionProgramRewriter], over real TLS for a path containing `connectionTls`, else over NullCryptoProvider.
+ * in place with [ConnectionProgramRewriter], over real TLS for a path containing `connectionTls`, else over NullCryptoProvider. A
+ * corpus input is renamed to the SHA-1 of its new bytes ([rewrittenName]); one whose new name is taken (the same bytes) is removed.
  */
 class ConnectionProgramRewriterTool {
     @Test fun rewriteListedFiles() {
         val list = System.getenv("KUICKSILVER_FUZZ_REWRITE") ?: return
         var changed = 0
+        var duplicates = 0
         val files = File(list).readLines().filter { it.isNotBlank() }
         for (name in files) {
             val f = File(name)
             val old = f.readBytes()
             val new = ConnectionProgramRewriter.rewrite(old, if (name.contains("connectionTls")) ksl else NullCryptoProvider)
             if (!new.contentEquals(old)) {
-                f.writeBytes(new)
+                val to = File(f.parentFile, rewrittenName(f.name, old, new))
+                if (to != f && to.exists()) {
+                    duplicates++
+                } else {
+                    to.writeBytes(new)
+                }
+                if (to != f) f.delete()
                 changed++
             }
         }
-        println("rewrite-conn-path-ops: $changed of ${files.size} file(s) rewritten")
+        println("rewrite-conn-path-ops: $changed of ${files.size} file(s) rewritten ($duplicates the same as another input, removed)")
     }
 }
