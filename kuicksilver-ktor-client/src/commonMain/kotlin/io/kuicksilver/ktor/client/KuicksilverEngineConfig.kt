@@ -40,7 +40,7 @@ public enum class Http3DiscoveryMode {
 }
 
 /**
- * A host and port, for [Http3ClientConfig.quicHints] and [KuicksilverEngineConfig.http11Hints].
+ * A host and port, for [Http3ClientConfig.quicHints], [Http2ClientConfig.priorKnowledge] and [KuicksilverEngineConfig.http11Hints].
  *
  * @property host the host exactly as in request URLs (compared as is, no case folding or resolution).
  * @property port the port, the scheme's default (443 for `https`, 80 for `http`) for URLs without one.
@@ -230,7 +230,8 @@ public class Http3ClientConfig {
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
- * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c). A `wss://` WebSocket goes
+ * `maxConnectionsPerRoute` HTTP/1.1 connections. An `http://` request uses HTTP/1.1, unless its origin is listed in
+ * [priorKnowledge] (h2c, HTTP/2 over cleartext TCP). A `wss://` WebSocket goes
  * over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin that is there already and whose server allows it
  * (SETTINGS_ENABLE_CONNECT_PROTOCOL); otherwise it opens a connection of its own that offers `http/1.1` only, as in 0.2
  * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch
@@ -260,6 +261,26 @@ public class Http2ClientConfig {
      * next (OkHttp's `pingInterval`); its calls fail. [Duration.INFINITE] (the default) sends none. At least 100 ms.
      */
     public var pingInterval: Duration = Duration.INFINITE
+
+    /**
+     * The `http://` origins (host and port, as in request URLs) whose server is known to speak HTTP/2 over cleartext TCP:
+     * their requests go over h2c with prior knowledge (RFC 9113 section 3.3), the client connection preface right after
+     * the TCP connect, without TLS, without ALPN and without `Upgrade: h2c` (deprecated by section 3.1, never sent). Empty
+     * by default: every other `http://` request stays HTTP/1.1, and nothing is learned (a server that once spoke h2c is not
+     * assumed to again, section 3.3). The list is per origin on purpose (OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a
+     * whole client to h2c): h2c is cleartext (CWE-319), so name only servers on a trusted network or behind a sidecar that
+     * protects the hop, as a TLS-terminating proxy, a service mesh or a gRPC back end are (docs/guide/ktor.md, "h2c").
+     *
+     * No fallback: a listed server that does not speak h2c fails the call with the connection error (an HTTP/1.1-only
+     * server's answer is no SETTINGS frame), and a TLS port fails its TLS handshake the same way; only a server that ends
+     * the connection with HTTP_1_1_REQUIRED gets HTTP/1.1 from then on, as over TLS. An `https://` URL never uses this
+     * (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), nor HTTP/3 (an `http://` origin never learns
+     * an alternative, `Alt-Svc` field or ALTSVC frame). Through an HTTP proxy the connection goes in a CONNECT tunnel
+     * (absolute-form requests are HTTP/1.1), through SOCKS5 as any other. A `ws://` WebSocket to a listed origin takes an
+     * h2c connection that is open already and allows Extended CONNECT (RFC 8441), else HTTP/1.1, as `wss://` does. On
+     * Android the app's cleartext policy applies as to any `http://` request. Ignored when [enabled] is false.
+     */
+    public var priorKnowledge: Set<HostPort> = emptySet()
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */

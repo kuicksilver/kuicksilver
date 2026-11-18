@@ -214,8 +214,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
         tcpLimitsForProbe += limits
         val tlsConfig = l.tls?.let { tcpTlsConfig(it) }
         l.tls?.let { warnTls12H2WithoutRsa(it, configuration.http2, environment.log) }
-        // RFC 9113 section 3.2: `h2` only over TLS, and only where it was offered (no h2c on a plain connector)
+        // RFC 9113 section 3.2: `h2` over TLS only where it was offered; section 3.3: h2c on a plain connector only with its opt-in
         val h2Offered = tlsConfig != null && H2_ALPN in tlsConfig.alpn
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val h2c = if (tlsConfig == null) l.h2c else H2cMode.Off
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
@@ -372,13 +375,59 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         draining,
                                     )
                                 }
+                                // RFC 9113 section 3.3: HTTP/2 with prior knowledge on a plain connector that serves it. The
+                                // input is opened here, once, so the HTTP/1.1 parser gets the octets the preface check
+                                // looked at (it consumes none)
+                                var input: io.ktor.utils.io.ByteReadChannel? = null
+                                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                                if (h2c != H2cMode.Off) {
+                                    val isH2 =
+                                        try {
+                                            val i = sock.openDeliveringReadChannel()
+                                            input = i
+                                            // section 3.4: the preface, within the first request head's deadline; a client
+                                            // still sending it then goes to HTTP/1.1, whose own deadline has passed too
+                                            h2c == H2cMode.Only ||
+                                                withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
+                                                    i.startsWithH2Preface()
+                                                } == true
+                                        } catch (e: Throwable) {
+                                            if (e is CancellationException) {
+                                                sock.abort()
+                                            } else {
+                                                closeWithin(
+                                                    sock,
+                                                    { sock.abort() },
+                                                    sendTimeout,
+                                                )
+                                            }
+                                            if (e is CancellationException) throw e
+                                            return@launchOrElse
+                                        }
+                                    if (isH2) {
+                                        return@launchOrElse serveH2(
+                                            sock,
+                                            remote,
+                                            peer,
+                                            authorityCheck,
+                                            altSvc,
+                                            (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
+                                            timeout,
+                                            headerTimeout,
+                                            sendTimeout,
+                                            draining,
+                                            input = input,
+                                            scheme = scheme,
+                                        )
+                                    }
+                                }
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 var connection: H1Connection? = null
                                 try {
                                     // inside the try: a socket whose channels cannot be opened is still closed below
                                     connection =
                                         H1Connection(
-                                            sock.openDeliveringReadChannel(),
+                                            input ?: sock.openDeliveringReadChannel(),
                                             sock.openWriteChannel(),
                                             sock.remoteAddress.toH1Address(),
                                             sock.localAddress.toH1Address(),

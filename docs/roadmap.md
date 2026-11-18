@@ -169,7 +169,7 @@ what the peers really do, and is delivered whole or not at all.
   it).
 - h2c (HTTP/2 with prior knowledge over cleartext TCP), opt-in on the client and the server, for deployments behind
   TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
-  ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)).
+  ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)). Done (2026-11-18).
 - Connection coalescing across origins for HTTP/2 and HTTP/3, off by default and opt-in ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md)): the address matches and the certificate covers the name,
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:

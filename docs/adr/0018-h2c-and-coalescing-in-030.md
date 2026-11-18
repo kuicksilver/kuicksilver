@@ -1,7 +1,7 @@
 # ADR-0018. h2c (opt-in) and connection coalescing across origins (opt-in) in 0.3.0
 
 Date: 2026-11-16. Status: accepted (owner decision 2026-11-16, recorded 2026-11-18; coalescing off by default, owner
-decision 2026-11-18); not implemented yet. Supersedes in
+decision 2026-11-18); h2c implemented 2026-11-18 (see "Implementation: h2c" below), coalescing not implemented yet. Supersedes in
 part [ADR-0017](0017-http2.md): its decision "No h2c" and its decision "No connection coalescing (RFC 9113 section 9.1.1)
 in 0.3.0". Everything else in ADR-0017 stands.
 
@@ -56,6 +56,28 @@ ADR-0017's own decisions:
   gets its own connections) unless the application asks for it: an application that does not know about coalescing is
   not exposed to its trust coupling, and one that wants the saved handshakes opts in. The peers that coalesce by
   default (browsers, OkHttp) differ here on purpose.
+
+## Implementation: h2c (2026-11-18)
+
+The decisions the ADR left to the implementation, with the peers they were weighed against
+([RFC 9113 §3.1, §3.3](../spec/rfc/9113.md#s3-1-h2c)):
+
+- **Client: a list of origins, no loopback rule.** `http2 { priorKnowledge: Set<HostPort> }` names the `http://`
+  origins; OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a whole client to h2c (and fails `https` URLs), grpc-go asks for
+  `insecure.NewCredentials()` per channel. None of them restricts cleartext to loopback, and neither do we: a sidecar or
+  a private network is the use case, and the explicit per-origin entry is the decision that the hop is trusted. No
+  fallback from a listed origin, nothing learned, `https://` always by ALPN. Through an HTTP proxy a CONNECT tunnel
+  (OkHttp's `Route.requiresTunnel`). No ALTSVC frame is heard on h2c and no `Alt-Svc` of an `http` origin learned, so a
+  cleartext hop cannot move requests to HTTP/3.
+- **Server: one port, told apart by the preface, or h2c alone.** `plainConnector { h2c = H2cMode.WithHttp11 }` looks
+  at the first octets as they arrive (nothing consumed; the first that differs from the preface means HTTP/1.1, so a
+  short HTTP/1.1 request is never held; the wait is inside the request-head deadline) as Go's
+  `golang.org/x/net/http2/h2c` and Netty's `CleartextHttp2ServerUpgradeHandler` serve both on one port;
+  `H2cMode.Only` (a gRPC port; grpc-go's server reads and compares the 24 octets) treats anything else as an invalid
+  preface (PROTOCOL_ERROR). A dedicated port is two connectors. `EngineMain`: `kuicksilver.h2c`.
+- **`Upgrade: h2c`.** Not implemented, as decided; a server that receives it serves the request as HTTP/1.1 (RFC 9110
+  section 7.8 lets it ignore the upgrade), never 101. The JDK's HttpClient, which has only the upgrade, is thus served
+  HTTP/1.1 on a `WithHttp11` port.
 
 ## Alternatives rejected
 

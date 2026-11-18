@@ -107,9 +107,11 @@ public final class io/kuicksilver/ktor/client/Http2ClientConfig {
 	public fun <init> ()V
 	public final fun getEnabled ()Z
 	public final fun getPingInterval-UwyO8pc ()J
+	public final fun getPriorKnowledge ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http2/Http2Settings;
 	public final fun setEnabled (Z)V
 	public final fun setPingInterval-LRDsOJo (J)V
+	public final fun setPriorKnowledge (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http2/Http2Settings;)V
 }
 

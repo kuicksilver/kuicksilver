@@ -359,8 +359,9 @@ arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
 
 `http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
 offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
-`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
-is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
+`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors serve HTTP/2 only with
+their own opt-in ([h2c on the server](#h2c-on-the-server)); without it a client's `PRI * HTTP/2.0` preface is refused with
+`505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
 section 9.2).
 
@@ -434,7 +435,56 @@ the source address). Never behind a NAT, CGNAT, an L4 load balancer or Kubernete
 addresses (`externalTrafficPolicy: Cluster`) or a TCP proxy such as HAProxy in TCP mode: every client there shares one
 address, and one flooder would lock them all out.
 
-The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`, over TLS and over h2c). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+
+### h2c on the server
+
+HTTP/2 over cleartext TCP with prior knowledge (h2c, RFC 9113 section 3.3; experimental, off by default; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md))
+is for a server behind a TLS-terminating proxy or load balancer, inside a service mesh whose sidecar does the TLS, and
+for gRPC between services: the hop from the proxy to the server keeps HTTP/2's multiplexing instead of falling back to
+HTTP/1.1. It is turned on per plain connector:
+
+```kotlin
+// guide:ktor:h2c-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    plainConnector {
+        port = 8080
+        h2c = H2cMode.WithHttp11      // HTTP/1.1 and h2c (prior knowledge) on this cleartext port; H2cMode.Only: h2c alone
+    }
+}, module = Application::module)
+```
+
+`EngineMain` takes `kuicksilver.h2c = off | withHttp11 | only` for the cleartext deployment port (not together with the
+`kuicksilver.tls.*` identity files: a TLS port negotiates `h2` by ALPN, `kuicksilver.http2`). A connector that the
+configuration's `identity` turns into a TLS one refuses h2c at the start (IllegalArgumentException).
+
+- **One port or two.** `WithHttp11` tells the two apart by the client connection preface (`PRI * HTTP/2.0
+
+SM
+
+`,
+  RFC 9113 section 3.4), as Go's `golang.org/x/net/http2/h2c` handler and Netty's `CleartextHttp2ServerUpgradeHandler`
+  do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
+  hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
+  of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
+  stops is closed then, as a slow HTTP/1.1 head is. `Only` (a gRPC port) skips the check: a client that sends anything
+  else, an HTTP/1.1 request included, gets the connection error of an invalid preface (GOAWAY with PROTOCOL_ERROR, then
+  the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
+- **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers
+  it is served as HTTP/1.1, as any `Upgrade` the server does not take (RFC 9110 section 7.8), never answered 101.
+- **Everything else is HTTP/2 on the server, unchanged**: `http2Settings`, the deadlines, the flood defences and
+  `http2RepeatOffenderPenalty`, RFC 9218 priorities, WebSockets over HTTP/2 (`ws://`, RFC 8441, with
+  `webSocketsOverHttp2`), the two-step GOAWAY at a stop, `maxTcpConnections`, the event listener and the probe. The
+  call's `request.local.scheme` is `http`. No `Alt-Svc` and no ALTSVC frame: HTTP/3 is for `https` origins.
+- **`:scheme https` over h2c** (a proxy that terminated TLS and forwards the original scheme) is a misdirected request
+  on a plain connection (RFC 9110 section 7.4): 421, unless the connector's clients are trusted gateways
+  (`trustedGateway = true`, [Misdirected requests](#misdirected-requests)).
+
+**Cleartext.** Nothing authenticates the client or protects the bytes (CWE-319): serve h2c only behind a trusted network
+or proxy (a loopback hop, a private network, a sidecar that does mTLS), never on a port the internet reaches. When the
+front is an HTTP/1.1 proxy that turns requests into h2c, the server's HTTP/2 message checks (connection-specific fields,
+`content-length` against the content) reject what would smuggle a second request ([threat model 3.23.1](../spec/threat-model.md#3-23-1-h2c)).
 
 ### Turning HTTP/3 off on the server
 
@@ -868,6 +918,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.h2c` | HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port: `off` (unset), `withHttp11` (both on one port, told apart by the preface) or `only`; refused with the identity files; see [h2c on the server](#h2c-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
@@ -997,7 +1048,7 @@ This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is 
 as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
 switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
 
-- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c). A WebSocket opens no HTTP/2 connection of its own: see
+- **Not HTTP/2.** `http://`, unless its origin is listed for h2c ([h2c on the client](#h2c-on-the-client)). A WebSocket opens no HTTP/2 connection of its own: see
   WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
   ends the connection), and no connection coalescing across origins. `priority(...)` goes as the end-to-end `priority`
   field, with an RFC 7540 weight in the HEADERS until the server says it ignores those (RFC 9218 section 2.1.1).
@@ -1066,6 +1117,44 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   was cancelled once the session was open closes it with a Close (1001 Going Away, or the application's own code) as one
   cancelled after its Close does (see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
+
+### h2c on the client
+
+```kotlin
+// guide:ktor:h2c-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        http2 {
+            // these http:// origins speak HTTP/2 over cleartext TCP (h2c, prior knowledge); every other stays HTTP/1.1
+            priorKnowledge = setOf(HostPort("backend.internal", 8080))
+        }
+    }
+}
+```
+
+An `http://` request whose origin (host and port as in the URL) is in `http2 { priorKnowledge }` goes over HTTP/2 on
+cleartext TCP (RFC 9113 section 3.3, experimental; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)): the client
+connection preface right after the TCP connect, no TLS, no ALPN, never `Upgrade: h2c` (deprecated by section 3.1). The
+list is per origin, where OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a whole client to h2c: the application names the
+servers it knows, and every other `http://` request stays HTTP/1.1. Nothing is learned (section 3.3: a server that once
+spoke h2c may not again), and a listed origin does not have to be on loopback; the per-origin opt-in is the gate, as
+grpc-go's `insecure.NewCredentials()` is per channel.
+
+- **No fallback.** A listed server that speaks HTTP/1.1 only, or a TLS port, fails the call (its answer is no SETTINGS
+  frame); only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1, as over TLS.
+- **Never for `https://`** (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), and never HTTP/3: an
+  `http://` origin learns no alternative, neither from `Alt-Svc` fields nor from ALTSVC frames on an h2c connection.
+  With `http3 { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
+- **Proxies.** Through an HTTP proxy the h2c connection goes in a CONNECT tunnel (an absolute-form request would be
+  HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The pool keeps h2c connections per route (origin
+  and proxy), apart from the `https://` ones of the same host.
+- **The rest is HTTP/2 on the client**: one multiplexed connection per route, repeats, deadlines (the server's SETTINGS
+  within the connect timeout), `pingInterval`, `settings` and diagnostics (`HTTP_2_0`; `fallback` says `NotSecure`,
+  why not HTTP/3). A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (`:scheme http`, RFC 8441 section
+  5) on an h2c connection that is open and whose server allows it, else over HTTP/1.1, as `wss://` does over TLS.
+- **Cleartext** (CWE-319): list only servers on a trusted network or behind a sidecar that protects the hop. On Android
+  the app's cleartext policy applies as to any `http://` request.
 
 ### Connection pool
 

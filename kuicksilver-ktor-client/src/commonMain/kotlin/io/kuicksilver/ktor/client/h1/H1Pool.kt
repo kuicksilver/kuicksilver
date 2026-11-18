@@ -253,7 +253,8 @@ private suspend fun drainToEnd(input: ByteReadChannel) {
 private val DONE: Job = Job().also { it.complete() }
 
 /**
- * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3.
+ * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3, or
+ * over cleartext TCP with prior knowledge for the origins in `http2 { priorKnowledge }` (h2c, section 3.3; ADR-0018).
  * An HTTP/2 connection takes one slot of the limits below and serves its route's requests as streams ([H2Pool]): one
  * connection per route while it has a free stream, a second only when it is full. HTTP/1.1 keeps keep-alive and the
  * connection limits ([ConnectionPool]): at most
@@ -281,14 +282,14 @@ internal class H1Pool(
     private val closers = CoroutineScope(selector.coroutineContext.minusKey(Job) + SupervisorJob() + CoroutineName("kuicksilver-close"))
 
     /**
-     * Ends [tls] in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
+     * Ends [tls] (none for h2c) in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
      * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
      * FIN. Bounded by [ORDERLY_CLOSE_TIMEOUT]; past it, and when the engine is closed meanwhile, the connection is closed
      * hard. Runs in [closers], never in the caller.
      */
     private fun closeOrderly(
-        tls: TlsConnection,
+        tls: TlsConnection?,
         rawOut: ByteWriteChannel,
         tcp: Socket,
     ) {
@@ -297,11 +298,11 @@ internal class H1Pool(
         closers.launch(start = CoroutineStart.ATOMIC) {
             try {
                 withTimeoutOrNull(ORDERLY_CLOSE_TIMEOUT) {
-                    tls.shutdown(drainTimeout = ORDERLY_CLOSE_TIMEOUT)
+                    tls?.shutdown(drainTimeout = ORDERLY_CLOSE_TIMEOUT)
                     rawOut.flushAndClose()
                 }
             } finally {
-                tls.close()
+                tls?.close()
                 tcp.close()
             }
         }
@@ -499,7 +500,7 @@ internal class H1Pool(
     )
 
     /**
-     * Whether [data] may open or use an HTTP/2 connection on [key]: enabled, `https` (no h2c, ADR-0017), not a WebSocket
+     * Whether [data] may open or use an HTTP/2 connection on [key]: enabled, `https` or an h2c origin ([h2cPriorKnowledge]), not a WebSocket
      * (one takes HTTP/2 only on a connection that is there already, [webSocketConnection]: a new connection for it
      * offers `http/1.1` only, as Chromium's) and the route did not answer HTTP_1_1_REQUIRED lately.
      */
@@ -509,12 +510,25 @@ internal class H1Pool(
         key: String,
     ): Boolean = h2Usable(data, key) && !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body)
 
-    /** HTTP/2 is enabled, the request is `https` (no h2c) and the route did not answer HTTP_1_1_REQUIRED lately. */
+    /**
+     * HTTP/2 is enabled, the request is `https` or for an h2c origin ([h2cPriorKnowledge]) and the route did not answer
+     * HTTP_1_1_REQUIRED lately.
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun h2Usable(
         data: HttpRequestData,
         key: String,
-    ): Boolean = config.http2.enabled && data.url.protocol.isSecure() && !h2Refused.isRefused(key)
+    ): Boolean = config.http2.enabled && (data.url.protocol.isSecure() || h2cPriorKnowledge(data.url)) && !h2Refused.isRefused(key)
+
+    /**
+     * RFC 9113 section 3.3: [url] is `http`/`ws` and its origin is in `http2 { priorKnowledge }`, so its connections are
+     * h2c (HTTP/2 over cleartext TCP, the preface at once). Never for `https`/`wss`, which negotiate `h2` by ALPN.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun h2cPriorKnowledge(url: Url): Boolean =
+        !url.protocol.isSecure() && config.http2.priorKnowledge.isNotEmpty() &&
+            io.kuicksilver.ktor.client
+                .HostPort(url.host, url.port) in config.http2.priorKnowledge
 
     /** How long a WebSocket waits for the SETTINGS of a new HTTP/2 connection before it goes over HTTP/1.1 (tests lower it). */
     internal var h2WebSocketSettingsWaitMillis: Long = 1_000
@@ -952,7 +966,7 @@ internal class H1Pool(
             // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             if (h2c == null && diagnostics != null && webSocketKeys == null && !h2Allowed(data, key) &&
-                config.http2.enabled && secure && h2Refused.isRefused(h2RouteOf(key))
+                config.http2.enabled && (secure || h2cPriorKnowledge(url)) && h2Refused.isRefused(h2RouteOf(key))
             ) {
                 diagnostics.h2Refused = true
             }
@@ -1481,7 +1495,9 @@ internal class H1Pool(
                         }
                     }
 
-                    proxy.tunnels(data) -> {
+                    // h2c through an HTTP proxy goes in a tunnel too: an absolute-form request is HTTP/1.1 (OkHttp's
+                    // Route.requiresTunnel does the same for H2_PRIOR_KNOWLEDGE)
+                    proxy.tunnels(data) || (h2Ok && !secure) -> {
                         startTunnel(
                             url,
                             data.headers[HttpHeaders.UserAgent],
@@ -1596,6 +1612,43 @@ internal class H1Pool(
                         tcpIn = rawIn,
                         tcpOut = rawOut,
                     )
+                } else if (h2Ok) {
+                    // RFC 9113 section 3.3: h2c with prior knowledge, for an origin the application listed
+                    // (http2 { priorKnowledge }): the preface and our SETTINGS go out at once, the request right after them
+                    // (section 3.4); the server's preface must arrive within what the connect timeout left
+                    val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
+
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    val client =
+                        H2ClientConnection.start(
+                            rawIn,
+                            rawOut,
+                            config.http2.settings,
+                            h2Scope,
+                            config.http2.pingInterval,
+                            closeTransport = { tcp.close() },
+                            // the last GOAWAY is in rawOut: it goes out, then the FIN (RFC 9113 sections 5.4.1 and 6.8)
+                            closeTransportGracefully = { closeOrderly(null, rawOut, tcp) },
+                            onChange = { h2.bump(key) },
+                            prefaceTimeout =
+                                (data.connectTimeoutMillis(config).milliseconds - connectStarted.elapsedNow())
+                                    .coerceAtLeast(1.milliseconds),
+                            // no ALTSVC frame is heard: nothing authenticates a cleartext server, and an http origin never
+                            // learns an alternative (threat model 3.18), as its Alt-Svc fields are not
+                            onAltSvc = null,
+                        )
+                    h2Owned = true
+                    try {
+                        afterH2StartForTest?.invoke(client, tcp)
+                        H2Conn(client, key, clock(), peerIp)
+                    } catch (e: Throwable) {
+                        try {
+                            client.abortInOrder(e)
+                        } catch (s: Throwable) {
+                            if (s !== e) e.addSuppressed(s)
+                        }
+                        throw e
+                    }
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }

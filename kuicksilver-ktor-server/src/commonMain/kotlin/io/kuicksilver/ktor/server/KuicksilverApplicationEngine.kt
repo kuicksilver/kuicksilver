@@ -201,6 +201,13 @@ public class KuicksilverApplicationEngine(
         internal var tlsTrustedGateway: Boolean = false
 
         /**
+         * Set by `EngineMain` (`kuicksilver.h2c`): cleartext HTTP/2 on the plain deployment port (a Ktor `connector`), as
+         * [KuicksilverPlainConnector.Builder.h2c] does for a plain connector of ours.
+         */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        internal var h2cDeploymentPort: H2cMode = H2cMode.Off
+
+        /**
          * Announce HTTP/3 with `h3=":<port>"; ma=86400` over TLS (on by default): an `Alt-Svc` field on HTTP/1.1 and HTTP/2
          * responses, and on HTTP/2 also an ALTSVC frame per origin and value on each connection, refreshed every 12 hours
          * (RFC 7838 sections 3 and 4).
@@ -213,8 +220,9 @@ public class KuicksilverApplicationEngine(
         /**
          * Serve HTTP/2 (RFC 9113) on TLS connectors: ALPN offers `h2` before `http/1.1`, so a client that offers both gets
          * HTTP/2 (docs/guide/ktor.md, "HTTP/2 on the server"). Off by default in 0.3.0, so the ALPN of a TLS connector stays
-         * `http/1.1` unless this is set. Plain connectors never serve HTTP/2 (no h2c: a client's `PRI *` preface is
-         * answered `505 HTTP Version Not Supported`, as before). Over TLS 1.3, and over TLS 1.2 on a connector that allows it
+         * `http/1.1` unless this is set. Plain connectors are not affected: they serve HTTP/2 only with their own opt-in,
+         * h2c ([KuicksilverPlainConnector.Builder.h2c]); without it a client's `PRI *` preface is answered `505 HTTP Version
+         * Not Supported`, as before. Over TLS 1.3, and over TLS 1.2 on a connector that allows it
          * (`versions = TlsVersions.Tls12And13`; RFC 9113 section 9.2).
          * WebSockets come over HTTP/2 too (RFC 8441), unless [webSocketsOverHttp2] is turned off.
          */
@@ -452,7 +460,8 @@ public class KuicksilverApplicationEngine(
 
         /**
          * Adds a plain HTTP/1.1 connector, as Ktor's `connector { }`, with the option of marking its clients trusted gateways
-         * ([KuicksilverPlainConnector.Builder.trustedGateway]).
+         * ([KuicksilverPlainConnector.Builder.trustedGateway]) and of serving HTTP/2 over cleartext TCP
+         * ([KuicksilverPlainConnector.Builder.h2c]).
          */
         @ExperimentalKuicksilverApi
         public fun plainConnector(block: KuicksilverPlainConnector.Builder.() -> Unit = {}) {
@@ -632,10 +641,17 @@ public class KuicksilverApplicationEngine(
         val tls: KuicksilverTlsConnector?,
         /** `EngineMain`'s `kuicksilver.tls.trustedGateway` for the plain deployment port (a Ktor connector, not a plain one of ours). */
         gateway: Boolean = false,
+        /** `EngineMain`'s `kuicksilver.h2c` for the plain deployment port (a Ktor connector, not a plain one of ours). */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        deploymentH2c: H2cMode = H2cMode.Off,
     ) {
         /** Every client is a trusted gateway: no request is rejected as misdirected (RFC 9110 section 7.4). */
         @OptIn(ExperimentalKuicksilverApi::class)
         val trustedGateway: Boolean = tls?.trustedGateway ?: (((config as? KuicksilverPlainConnector)?.trustedGateway ?: false) || gateway)
+
+        /** Cleartext HTTP/2 on this connector (RFC 9113 section 3.3); always [H2cMode.Off] on a TLS one. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val h2c: H2cMode = if (tls != null) H2cMode.Off else (config as? KuicksilverPlainConnector)?.h2c ?: deploymentH2c
     }
 
     private fun resolve(c: EngineConnectorConfig): Listener =
@@ -645,6 +661,15 @@ public class KuicksilverApplicationEngine(
             }
 
             c.type == ConnectorType.HTTP -> {
+                // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS"; a plain connector
+                // the identity turns into a TLS one cannot keep its h2c, and dropping it silently would hide the mistake
+                @OptIn(ExperimentalKuicksilverApi::class)
+                val h2c = (c as? KuicksilverPlainConnector)?.h2c ?: configuration.h2cDeploymentPort
+                @OptIn(ExperimentalKuicksilverApi::class)
+                require(configuration.identity == null || h2c == H2cMode.Off) {
+                    "h2c ($h2c) needs a plain connector, but $c serves TLS with the configuration's identity: drop the identity " +
+                        "(kuicksilver.tls.*) for that port, or serve HTTP/2 there over TLS (http2 = true)"
+                }
                 configuration.identity?.let { id ->
                     KuicksilverTlsConnector
                         .Builder(id)
@@ -663,7 +688,7 @@ public class KuicksilverApplicationEngine(
                         }.build()
                         .let { Listener(it, it) }
                 }
-                    ?: Listener(c, null, configuration.tlsTrustedGateway)
+                    ?: Listener(c, null, configuration.tlsTrustedGateway, configuration.h2cDeploymentPort)
             }
 
             else -> {

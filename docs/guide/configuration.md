@@ -343,6 +343,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `enabled` | `Boolean` | `true` | 0.3.0 | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets), over TLS 1.3 and, when `tls` allows it, TLS 1.2 (a server's renegotiation request then ends the connection with PROTOCOL_ERROR, RFC 9113 section 9.2.1); `false` offers only `http/1.1`, as in 0.2 |
 | `settings` | `Http2Settings` | `Http2Settings()` | 0.3.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
+| `priorKnowledge` | `Set<HostPort>` | empty | 0.3.0 | the `http://` origins (host and port as in the URL) whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for `https://`, through an HTTP proxy in a CONNECT tunnel; cleartext, so only servers on a trusted network ([h2c on the client](ktor.md#h2c-on-the-client)) |
 
 ### HTTP/3 client options
 
@@ -384,7 +385,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](ktor.md#connection-limits)) |
 | `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](ktor.md#connection-limits)) |
 | `http3` | `Boolean` | `true` | 0.2.0 | serve HTTP/3 on every TLS connector |
-| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; no h2c on plain connectors) ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
+| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; plain connectors serve h2c only with their own `h2c`) ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
 | `webSocketsOverHttp2` (*experimental*) | `Boolean` | `true` | 0.3.0 | with `http2`: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](ktor.md#websockets-over-http2)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | 0.3.0 | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
 | `http2RepeatOffenderPenalty` (*experimental*) | `Duration` | `Duration.ZERO` (off) | 0.3.0 | not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer ([HTTP/2 on the server](ktor.md#http2-on-the-server)) |
@@ -437,20 +438,22 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 client certificates are verified against; set together), `kuicksilver.tls.versions` (`tls13` or `tls12And13`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
-`kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
+`kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.h2c` (`off`, `withHttp11` or
+`only`: h2c on the cleartext deployment port; refused with the identity files), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`, and
 `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ### Plain connector
 
-`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with one more option:
+`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with two more options:
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
 | `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
 | `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
+| `h2c` | `H2cMode` | `H2cMode.Off` |  | 0.3.0 | HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): `WithHttp11` serves HTTP/1.1 and h2c on the port, told apart by the client preface within the request-head deadline; `Only` serves h2c alone (anything else is a PROTOCOL_ERROR); `Upgrade: h2c` is never taken; cleartext, so only behind a trusted network or proxy; a connector the configuration's `identity` makes TLS refuses it at start ([h2c on the server](ktor.md#h2c-on-the-server)) |
 
 ## ktor-network
 

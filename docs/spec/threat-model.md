@@ -571,7 +571,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   6.9.1 requires us to serve).
   Field lists are HPACK-encoded when written, never when queued, so the encoder follows the wire order and a dropped list
   never touched it.
-- **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 only over TLS after ALPN `h2` (no h2c), TLS 1.3,
+- **Client side (the Ktor engine, a hostile or broken server):** HTTP/2 over TLS after ALPN `h2`, or over cleartext TCP
+  only to an origin the application listed for h2c (3.23.1), TLS 1.3,
   or TLS 1.2 when the client allows it, with the same trust and pins as HTTP/1.1 and HTTP/3; over TLS 1.2 a server's
   renegotiation request is refused and ends the connection with PROTOCOL_ERROR (RFC 9113 §9.2.1). Waits on the server: its preface within the connect
   timeout, our SETTINGS acknowledged within `settingsAckTimeout`, a health PING (bounded, one per connection at a time) before a
@@ -588,8 +589,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   pool keeps one connection per route while it has free streams, so a server's concurrency limit cannot multiply TCP
   connections past `maxConnectionsPerRoute`; the map of routes is bounded by the live connections and the waiting
   requests, the HTTP_1_1_REQUIRED marks by 1000 routes.
-- **Server side (the Ktor engine, a hostile client; `http2 = true`):** HTTP/2 only after ALPN `h2` on a TLS 1.3
-  connector, never on a plain one (no h2c). The core's limits above hold per connection. Waits on the client have the
+- **Server side (the Ktor engine, a hostile client; `http2 = true`):** HTTP/2 after ALPN `h2` on a TLS 1.3
+  connector, and on a plain connector only with its own `h2c` opt-in (3.23.1). The core's limits above hold per connection. Waits on the client have the
   engine's deadlines: its preface within the request-head deadline (`requestHeaderTimeoutSeconds`, from the accepted
   connection), each field block within that deadline too (ENHANCE_YOUR_CALM), each wait for request content within the
   idle timeout (408), each wait for its window within the send-stall deadline (the stream is reset), a connection without
@@ -753,6 +754,49 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `connectionServer` within 7 s, three of them with no seeds at all; the targets as they were before missed all four in
   60 s each (2.2 million executions per run).
 
+#### <a id="3-23-1-h2c"></a>3.23.1 h2c: HTTP/2 over cleartext TCP (RFC 9113 §3.3, §10; CWE-319)
+
+h2c (0.3.0, opt-in on both engines, [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)) has no TLS and no ALPN, so
+nothing authenticates either end and nothing protects the bytes: anyone on the path reads and changes requests and
+responses (CWE-319), and a client cannot tell that the cleartext peer is the server it meant. That is accepted only for
+deployments where the hop is trusted or protected by other means (a loopback hop, a private network, a sidecar that does
+mTLS): the guide and the KDoc say "only behind a trusted network or proxy", and nothing becomes cleartext HTTP/2 by
+default.
+
+- **Opt-in, per origin and per connector.** The client sends the preface only to `http://` origins in
+  `http2 { priorKnowledge }`; every other `http://` request stays HTTP/1.1, `https://` always negotiates `h2` by ALPN
+  (§3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS"), a failed TLS handshake never falls back
+  to cleartext, and nothing is learned from a past connection. The list, not the address, is the gate: an application
+  that lists a host on another machine has decided that the path to it is trusted (OkHttp's `H2_PRIOR_KNOWLEDGE` and
+  grpc-go's `insecure.NewCredentials()` make the same decision for a whole client or channel). The server speaks h2c
+  only on a plain connector with `h2c` set (`kuicksilver.h2c`), never on a TLS connector (refused at start).
+- **No upgrade from cleartext.** An h2c connection hears no ALTSVC frame and an `http://` origin learns no `Alt-Svc`
+  (3.18): a cleartext server cannot move the client's requests to HTTP/3 or another host. The server sends neither on a
+  plain connector. `Upgrade: h2c` is never sent nor taken (deprecated, §3.1).
+- **`https` over a cleartext hop.** A request with `:scheme https` on an h2c connection is misdirected (RFC 9110 §7.4,
+  421) unless the connector's clients are trusted gateways; `request.local.scheme` is `http`.
+- **Request smuggling between an HTTP/1.1 front and an h2c back end.** A front that turns HTTP/1.1 into HTTP/2 must not
+  let a body carry a second request: the server's HTTP/2 message checks hold on h2c unchanged (a connection-specific
+  field such as `transfer-encoding`, a `content-length` the DATA does not match, a `host` that differs from `:authority`
+  are malformed, §8.1.1, §8.2.2, reset before the application). Framing comes from HTTP/2 frames only.
+- **Preface detection** (`H2cMode.WithHttp11`): the first octets are compared as they arrive and none is consumed; the
+  first that differs hands the connection to HTTP/1.1, so the check reads at most 24 octets and never holds a short
+  HTTP/1.1 request; the wait is inside the request-head deadline, so a slowloris on the preface is closed as one on an
+  HTTP/1.1 head (3.22). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
+  HTTP/1.1 answer. Every limit of 3.23 (flood defences, field sections, deadlines, `http2RepeatOffenderPenalty`,
+  `maxTcpConnections`) holds on h2c as on TLS.
+- **Client to the wrong port.** A listed origin that answers HTTP/1.1 or TLS fails the call (its answer is no SETTINGS
+  frame, the connect timeout bounds the wait for one); there is no silent retry in another protocol.
+
+Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_invalidPrefaceOnAnH2cOnlyConnectorIsAProtocolError`,
+`.negative_slowPrefaceIsCutAtTheHeaderDeadline`, `.negative_shortHttp11RequestIsNotHeldForThePreface`,
+`.negative_aPrefixOfThePrefaceIsHttp11`, `.negative_brokenPrefaceWithHttp11Gets505`, `.negative_httpsSchemeOverH2cIsMisdirected`,
+`.negative_smugglingFieldsOverH2cAreMalformed`, `.negative_rapidResetOverH2cEndsCalm`,
+`.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused`, `.upgradeH2cIsServedAsHttp11`; `H2cPrefaceCheckTest.negative_theFirstOctetThatDiffersDecides`,
+`.negative_anInputThatEndsInsideThePreface`; `ClientH2cTest.negative_anUnlistedHttpOriginStaysHttp11`,
+`.negative_httpsNeverUsesPriorKnowledge`, `.negative_h2cToAnHttp11OnlyServerFails`, `.negative_h2cToATlsPortFails`,
+`.negative_altSvcFrameOverH2cIsNotLearned`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default).
+
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 
 - **Threats:** on a network the client takes for IPv6-only (a global IPv6 source address, no IPv4 one), the Ktor client engine synthesizes IPv6 addresses for IPv4 literals and A-only names from the Pref64::/n that the AAAA answer for `ipv4only.arpa` gives (RFC 7050 section 3). Whoever forges that answer (the network's resolver, or an on-path attacker on an unencrypted DNS path) chooses where those connections go: "This may result in denial-of-service, redirection, man-in-the-middle, or other attacks" (section 3.1). The same attacker can already forge the AAAA records of any name on that path.
@@ -872,6 +916,7 @@ weakness appears in different protocols.
 | 3.21, 3.21.1 | slow TCP peers, a stalled resolver | CWE-400 |
 | 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
+| 3.23.1 | h2c: cleartext HTTP/2, request smuggling from an HTTP/1.1 front | CWE-319, CWE-444 |
 | 3.24 | forged NAT64 prefix | CWE-345 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,

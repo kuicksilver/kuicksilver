@@ -38,6 +38,8 @@ internal class H2Request(
     method: HttpMethod,
     /** The body's waits are bounded by [bodyIdle]; not for a WebSocket, whose stream may stay quiet for as long as it likes. */
     idleBounded: Boolean = true,
+    /** The connection's scheme: `https` over TLS, `http` over h2c. */
+    scheme: String = "https",
 ) : BaseApplicationRequest(call) {
     override val cookies: RequestCookies by lazy { RequestCookies(this) }
     override val engineReceiveChannel: ByteReadChannel = if (idleBounded) IdleBoundedBody(h2.body, bodyIdle) else h2.body
@@ -52,7 +54,7 @@ internal class H2Request(
     override val queryParameters: Parameters by lazy {
         encodeParameters(rawQueryParameters).withEmptyStringForValuelessKeys()
     } // as the CIO request: `?auto` gives ""
-    override val local: RequestConnectionPoint = H2ConnectionPoint(h2, local, remote, method)
+    override val local: RequestConnectionPoint = H2ConnectionPoint(h2, local, remote, method, scheme)
 }
 
 internal class H2ConnectionPoint(
@@ -60,14 +62,15 @@ internal class H2ConnectionPoint(
     private val localAddr: InetSocketAddress?,
     private val remoteAddr: InetSocketAddress?,
     override val method: HttpMethod,
-) : RequestConnectionPoint {
     /**
-     * The connection's scheme, `https` (HTTP/2 runs only on TLS connectors), whatever the request's `:scheme` says: RFC
-     * 9113 section 8.3.1 lets `:scheme` name another scheme (a gateway's request for an `http` URI, say), and Ktor's
-     * connection point describes the connection, as on HTTP/1.1, where the scheme is the connector's too. The request's
-     * own `:scheme` is not taken as proof that the request arrived secured or not.
+     * The connection's scheme: `https` over TLS, `http` over h2c (RFC 9113 section 3.3, a plain connector), whatever the
+     * request's `:scheme` says: RFC 9113 section 8.3.1 lets `:scheme` name another scheme (a gateway's request for an
+     * `http` URI over TLS, an `https` one over h2c behind a TLS-terminating proxy), and Ktor's connection point describes
+     * the connection, as on HTTP/1.1, where the scheme is the connector's too. The request's own `:scheme` is not taken as
+     * proof that the request arrived secured or not.
      */
-    override val scheme: String get() = "https"
+    override val scheme: String = "https",
+) : RequestConnectionPoint {
     override val version: String get() = "HTTP/2"
     override val uri: String get() = h2.path.ifEmpty { "/" }
 

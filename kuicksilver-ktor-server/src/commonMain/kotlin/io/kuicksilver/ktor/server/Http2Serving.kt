@@ -98,7 +98,9 @@ internal fun h2SettingsWithin(
 }
 
 /**
- * Serves one TLS connection that negotiated ALPN `h2` (RFC 9113 section 3.2) until it is over, then closes [sock] within
+ * Serves one TLS connection that negotiated ALPN `h2` (RFC 9113 section 3.2), or one cleartext connection of a plain
+ * connector with h2c (section 3.3; [input] is then the socket's read channel, opened for the preface check, and [scheme]
+ * `http`), until it is over, then closes [sock] within
  * [sendTimeout] of no progress. Deadlines on the client: its connection preface by [prefaceWithin] (what is left of the
  * request-head deadline after the TLS handshake), each field block by `requestHeaderTimeout` (the core's
  * `maxHeaderBlockTime`), each wait for request content by [idle], each wait for window by [sendTimeout]; a connection
@@ -116,6 +118,8 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
     headerTimeout: Duration,
     sendTimeout: Duration,
     draining: Job,
+    input: io.ktor.utils.io.ByteReadChannel? = null,
+    scheme: String = "https",
 ) {
     val local = sock.localAddress as? InetSocketAddress
     val connAltSvc = H2AltSvc(altSvc) // RFC 7838 sections 3, 4: the field on every response, a frame per origin and value
@@ -124,7 +128,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         coroutineScope {
             val c =
                 H2ServerConnection.start(
-                    sock.openDeliveringReadChannel(),
+                    input ?: sock.openDeliveringReadChannel(),
                     sock.openWriteChannel(),
                     h2SettingsWithin(configuration.http2Settings, headerTimeout),
                     this,
@@ -190,7 +194,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                 // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
                 supervisorScope {
                     for (r in c.requests) {
-                        launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout) }
+                        launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout, scheme) }
                     }
                 }
             }
@@ -308,6 +312,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
     altSvc: H2AltSvc,
     bodyIdle: Duration,
     sendTimeout: Duration,
+    scheme: String,
 ) {
     val job = currentCoroutineContext().job
     r.invokeOnFailure { job.cancel(CancellationException("HTTP/2 stream ${r.id} ended: ${it.message}", it)) }
@@ -352,6 +357,7 @@ private suspend fun KuicksilverApplicationEngine.handleH2(
                     engineDispatcher,
                     userDispatcher,
                     configuration.webSocketMaxMessageSize,
+                    scheme,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_2_0, call) }
             var failure: Throwable? = null

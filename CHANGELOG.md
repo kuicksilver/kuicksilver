@@ -14,6 +14,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- h2c: HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3), opt-in on both Ktor engines (experimental;
+  ADR-0018, which supersedes ADR-0017's "no h2c"). Client: `http2 { priorKnowledge = setOf(HostPort(host, port)) }`
+  sends the connection preface at once to the `http://` origins listed, without TLS, ALPN or `Upgrade: h2c`; every other
+  `http://` request stays HTTP/1.1, `https://` always negotiates by ALPN, a listed server that does not answer with
+  SETTINGS fails the call (no fallback), an HTTP proxy is passed in a CONNECT tunnel, and no ALTSVC frame or `Alt-Svc`
+  of an `http` origin is learned. Server: `plainConnector { h2c = H2cMode.WithHttp11 }` serves HTTP/1.1 and h2c on one
+  port, told apart by the 24-octet client preface (looked at as it arrives, nothing consumed, a request shorter than the
+  preface never held back, the wait within the request-head deadline), `H2cMode.Only` h2c alone (anything else is a
+  PROTOCOL_ERROR); `EngineMain` key `kuicksilver.h2c` (`off`, `withHttp11`, `only`), refused with the TLS identity
+  files, as h2c is on a connector the configuration's identity turns into TLS. Every HTTP/2 setting, limit, deadline,
+  flood defence, RFC 9218 priority and RFC 8441 WebSocket applies as over TLS; the call's scheme is `http`, and
+  `:scheme https` over h2c gets 421 unless the connector's clients are trusted gateways. `Upgrade: h2c` (deprecated by
+  section 3.1) is never sent, and a request that offers it is served as HTTP/1.1. Cleartext: only behind a trusted
+  network or proxy (threat model 3.23.1, CWE-319). Interop: OkHttp's `H2_PRIOR_KNOWLEDGE`, Ktor's OkHttp engine and
+  curl `--http2-prior-knowledge` against the server, the client against Netty and Ktor's Netty engine (`enableH2c`);
+  `tools/interop/h2spec.sh` runs h2spec over h2c too (`--tls`, `--h2c`; both by default).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
