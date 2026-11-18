@@ -98,7 +98,6 @@ kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/KslUdpSocketCloseTest.k
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/TicketKeysTest.kt	1
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/Tls12ResumptionWindowTest.kt	1
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/TlsConnectionTest.kt	13
-kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/KslUdpSocketTest.kt	1
 kuicksilver-tls/src/jvmTest/kotlin/io/kuicksilver/tls/SecretsJvmTest.kt	2
 samples/compose-demo/androidApp/src/androidTest/kotlin/io/kuicksilver/sample/compose/android/MigrationDemoAndroidTest.kt	2
 samples/realtime-telemetry/src/commonTest/kotlin/io/kuicksilver/sample/telemetry/TelemetryMemoryTest.kt	1

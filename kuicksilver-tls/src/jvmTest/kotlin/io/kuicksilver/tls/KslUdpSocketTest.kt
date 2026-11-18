@@ -11,6 +11,7 @@ import kotlin.concurrent.thread
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -139,25 +140,34 @@ class KslUdpSocketTest {
         }
     }
 
+    /**
+     * A close ends a receive that waits for a datagram: the receive returns 0 well before its timeout. The close comes once
+     * the receiving thread is about to receive; whether the receive was already waiting (woken) or not yet inside (closed
+     * before: it answers 0 at once) is left to the scheduler, and both are the right answer. The timeout of 30 s against a
+     * bound of 10 s tells either from a receive that waited its timeout out.
+     */
     @Test fun closeUnblocksReceive() {
         if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
         val s = KslUdpSocket.open(loopback(), 0)
         val bufs = Array(1) { PacketBuffer.allocate(64) }
+        val receiving = java.util.concurrent.CountDownLatch(1)
         var result = -2
         var elapsed = 0L
         val t =
             thread {
                 val t0 = System.nanoTime()
+                receiving.countDown()
                 result =
-                    s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 5000)
+                    s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 30_000)
                 elapsed =
                     (System.nanoTime() - t0) / 1_000_000
             }
-        Thread.sleep(50)
+        assertTrue(receiving.await(10, java.util.concurrent.TimeUnit.SECONDS), "the receiving thread never started")
         s.close()
-        t.join(2000)
-        assertEquals(0, result, "a woken receive answers 0")
-        assertTrue(elapsed < 1000, "woke after $elapsed ms")
+        t.join(20_000)
+        assertFalse(t.isAlive, "the receive still waits after the close")
+        assertEquals(0, result, "a woken receive, or one after the close, answers 0")
+        assertTrue(elapsed < 10_000, "the receive returned after $elapsed ms, as at its timeout of 30 s")
         assertTrue(s.isClosed)
         assertEquals(0, s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 10))
     }
