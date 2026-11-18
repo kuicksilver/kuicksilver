@@ -152,7 +152,8 @@ class ClientH1Test {
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                runCatching { aSocket(selector).tcp().bind("::1", 0).close() }.onFailure {
+                // bindTcp binds ::1 itself; ktor-network on Native binds ::1 as the wildcard :: (KTOR-10017)
+                runCatching { bindTcp(selector, "::1", 0).close() }.onFailure {
                     println("negative_h1ToIpv6LiteralReachesThatAddressOnly skipped: needs an IPv6 loopback ($it)")
                     return@clientTest
                 }
