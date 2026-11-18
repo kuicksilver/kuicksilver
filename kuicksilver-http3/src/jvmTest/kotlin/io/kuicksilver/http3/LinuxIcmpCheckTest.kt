@@ -13,6 +13,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.KslIcmp
 import io.kuicksilver.tls.KslUdpSocket
 import kotlinx.coroutines.CoroutineScope
@@ -60,7 +61,10 @@ class LinuxIcmpCheckTest {
         return true
     }
 
-    /** A proxy on 127.0.0.1 reaching 127.0.0.1 only, its target sockets in [opened]; a client connection to it. */
+    /**
+     * A proxy on 127.0.0.1 reaching 127.0.0.1 only, its target sockets bound to [targetBind] and kept in [opened]; a client
+     * connection to it.
+     */
     private class Rig(
         val endpoint: Http3Endpoint,
         val proxy: UdpProxy,
@@ -68,7 +72,10 @@ class LinuxIcmpCheckTest {
         val opened: java.util.concurrent.CopyOnWriteArrayList<DatagramIo>,
     )
 
-    private suspend fun <T> withProxy(block: suspend CoroutineScope.(Rig, Http3Connection) -> T): T {
+    private suspend fun <T> withProxy(
+        targetBind: InetSocketAddress = loopback,
+        block: suspend CoroutineScope.(Rig, Http3Connection) -> T,
+    ): T {
         val opened = java.util.concurrent.CopyOnWriteArrayList<DatagramIo>()
         val endpoint =
             Http3Endpoint.bind(
@@ -84,7 +91,7 @@ class LinuxIcmpCheckTest {
                 UdpProxyConfig(
                     targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
                     refuseOwnAddresses = false, // proxy and target share this host's loopback by construction
-                    socketFactory = { DatagramIo.open(loopback).also { opened += it } },
+                    socketFactory = { DatagramIo.open(targetBind).also { opened += it } },
                 ),
             )
         proxy.impl.unreachablePoll = 50.milliseconds
@@ -140,47 +147,66 @@ class LinuxIcmpCheckTest {
     /**
      * Section 6.1: a target datagram too large for the client's DATAGRAM frames is dropped and answered with a Packet Too
      * Big from the proxy socket's address; the target's kernel takes it as one for the datagram it sent (so its checksum,
-     * quote and addresses are right), with the MTU the client can carry.
+     * quote and addresses are right), with the MTU the client can carry. The proxy socket here is bound to 127.0.0.1, so
+     * the message leaves from the socket's own address.
      */
     @Test fun packetTooBigReachesTheTarget() =
         runBlocking {
             if (!enabled("packetTooBigReachesTheTarget")) return@runBlocking
-            withTimeout(60.seconds) {
-                withProxy { rig, conn ->
-                    val t = target()
-                    try {
-                        val tunnel = conn.connectUdp(UdpProxyTemplate.wellKnown("server.test"), "127.0.0.1", t.port())
-                        tunnel.send("hi".encodeToByteArray()) // the proxy's socket exists once the tunnel carried one
-                        val proxySocket = rig.opened.single().localAddress
-                        val payload = ByteArray(1400) { (0x40 + it % 64).toByte() }
-                        t.sendTo(proxySocket, payload)
-                        val quote = ByteArray(KslUdpSocket.PTB_QUOTE)
-                        val meta = IntArray(2)
-                        val dst = ByteArray(KslUdpSocket.ADDR_LEN)
-                        // off the runBlocking thread: the receive blocks, and the proxy and both endpoints run there
-                        val took =
-                            withContext(Dispatchers.IO) {
-                                withTimeoutOrNull(20.seconds) {
-                                    while (!t.takePacketTooBig(quote, meta, dst)) {
-                                        ensureActive() // the receives do not suspend: the timeout ends the loop here
-                                        t.pump(50)
-                                    }
-                                    true
-                                } ?: false
-                            }
-                        assertTrue(took, "no Packet Too Big reached the target; proxy stats: ${rig.proxy.stats}")
-                        assertEquals(1, rig.proxy.stats.packetTooBigSent)
-                        assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
-                        assertTrue(meta[1] in 1200 until payload.size + 28, "the MTU the client carries: ${meta[1]}")
-                        assertContentEquals(payload.copyOf(meta[0]), quote.copyOf(meta[0]), "the quote: our datagram's start")
-                        assertEquals(proxySocket.port, KslUdpSocket.portOf(dst), "for the datagram sent to the proxy socket")
-                        tunnel.close()
-                    } finally {
-                        t.close()
-                    }
+            packetTooBigReaches(loopback)
+        }
+
+    /**
+     * The same from a proxy socket on the wildcard address, as the default socketFactory binds: the message leaves from the
+     * destination the socket reported for the datagram (IP_PKTINFO), 127.0.0.1.
+     */
+    @Test fun packetTooBigFromAWildcardSocketReachesTheTarget() =
+        runBlocking {
+            if (!enabled("packetTooBigFromAWildcardSocketReachesTheTarget")) return@runBlocking
+            packetTooBigReaches(InetSocketAddress("0.0.0.0", 0))
+        }
+
+    private suspend fun packetTooBigReaches(targetBind: InetSocketAddress) {
+        withTimeout(60.seconds) {
+            withProxy(targetBind) { rig, conn ->
+                val t = target()
+                try {
+                    val tunnel = conn.connectUdp(UdpProxyTemplate.wellKnown("server.test"), "127.0.0.1", t.port())
+                    tunnel.send("hi".encodeToByteArray()) // the proxy's socket exists once the tunnel carried one
+                    val proxySocket = rig.opened.single().localAddress
+                    // a wildcard socket has no address of its own to answer from: what arrives came from the datagram's
+                    assertEquals(targetBind.ipLiteral(), proxySocket.ipLiteral(), "the proxy socket bound as asked")
+                    val payload = ByteArray(1400) { (0x40 + it % 64).toByte() }
+                    t.sendTo(proxySocket, payload)
+                    val quote = ByteArray(KslUdpSocket.PTB_QUOTE)
+                    val meta = IntArray(2)
+                    val dst = ByteArray(KslUdpSocket.ADDR_LEN)
+                    // off the runBlocking thread: the receive blocks, and the proxy and both endpoints run there
+                    val took =
+                        withContext(Dispatchers.IO) {
+                            withTimeoutOrNull(20.seconds) {
+                                while (!t.takePacketTooBig(quote, meta, dst)) {
+                                    ensureActive() // the receives do not suspend: the timeout ends the loop here
+                                    t.pump(50)
+                                }
+                                true
+                            } ?: false
+                        }
+                    assertTrue(took, "no Packet Too Big reached the target; proxy stats: ${rig.proxy.stats}")
+                    assertEquals(1, rig.proxy.stats.packetTooBigSent)
+                    assertEquals(0, rig.proxy.stats.packetTooBigNoSource)
+                    assertEquals(0, rig.proxy.stats.packetTooBigFailed)
+                    assertEquals(PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
+                    assertTrue(meta[1] in 1200 until payload.size + 28, "the MTU the client carries: ${meta[1]}")
+                    assertContentEquals(payload.copyOf(meta[0]), quote.copyOf(meta[0]), "the quote: our datagram's start")
+                    assertEquals(proxySocket.port, KslUdpSocket.portOf(dst), "for the datagram sent to the proxy socket")
+                    tunnel.close()
+                } finally {
+                    t.close()
                 }
             }
         }
+    }
 
     /** Section 3.1: the kernel's port unreachable for a closed target port (quoting what the tunnel sent) closes the tunnel. */
     @Test fun aRealPortUnreachableClosesTheTunnel() =
