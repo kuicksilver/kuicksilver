@@ -529,6 +529,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest.negative_templatesBreakingSection2AreRejected
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest.pathThatDoesNotFitTheTemplateIsNoMatch
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest.rfcExamplesExpand
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest.valueEndsAtTheLiteralAfterEmptyExpressions
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.message.UdpUriTemplateTest.wellKnownDefaultTemplate
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.qpack.DynamicTableTest.evictsOldestAndCountsInserts
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.qpack.HuffmanTableParityTest.tableMatchesGenerator

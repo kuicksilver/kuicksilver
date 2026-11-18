@@ -134,8 +134,17 @@ internal class UdpUriTemplate private constructor(
         return target(raw)
     }
 
-    /** The first character of the literal after part [i], or null when an expression or the end follows. */
-    private fun stopChar(i: Int): Char? = (parts.getOrNull(i + 1) as? Part.Literal)?.text?.first()
+    /**
+     * The first character of the next literal after part [i], past the expressions in between (they may have expanded to
+     * nothing: an undefined variable, RFC 6570 section 3.2.1), or null when the template ends first.
+     */
+    private fun stopChar(i: Int): Char? {
+        for (j in i + 1 until parts.size) {
+            val p = parts[j]
+            if (p is Part.Literal) return p.text.first()
+        }
+        return null
+    }
 
     /** Where a value starting at [from] ends: at [stop], at a query or form separator, or at the end. */
     private fun valueEnd(

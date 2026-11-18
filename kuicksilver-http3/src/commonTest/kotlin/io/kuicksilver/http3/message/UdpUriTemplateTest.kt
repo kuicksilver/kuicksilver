@@ -161,6 +161,21 @@ class UdpUriTemplateTest {
         }
     }
 
+    /**
+     * A query expression's value ends where the next literal starts even when expressions that expanded to nothing lie
+     * between (fuzz target udpTemplate): `{?target_port}{&other}(` read `443(` as the port and missed the `(`.
+     */
+    @Test fun valueEndsAtTheLiteralAfterEmptyExpressions() {
+        val text = "https://p.example/m{?target_port}{&other}(/{unset}?{target_host}/"
+        val client = UdpUriTemplate.parseAbsolute(text)
+        val server = UdpUriTemplate.parsePath("/m{?target_port}{&other}(/{unset}?{target_host}/")
+        val e = client.expand("a.example", 443)
+        assertEquals("/m?target_port=443(/?a.example/", e.pathAndQuery)
+        val m = target(server.match(e.pathAndQuery))
+        assertEquals(443, m.port)
+        assertEquals("a.example", m.host.text)
+    }
+
     @Test fun pathThatDoesNotFitTheTemplateIsNoMatch() {
         val t = UdpUriTemplate.parsePath(UdpUriTemplate.WELL_KNOWN_PATH)
         for (p in listOf(
