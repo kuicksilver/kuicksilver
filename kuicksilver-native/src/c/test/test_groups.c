@@ -150,7 +150,9 @@ static void observe(int write_p, int version, int content_type, const void *buf,
             w->bad = 1;
             return;
         }
-        read_group_list(find_ext(exts, el, 10, &gl), gl, w->groups, 16, &w->ngroups, &w->bad);
+        /* found first: C leaves the order of a call's arguments open, and gcc reads gl before find_ext sets it */
+        const uint8_t *sg = find_ext(exts, el, 10, &gl);
+        read_group_list(sg, gl, w->groups, 16, &w->ngroups, &w->bad);
         const uint8_t *ks = find_ext(exts, el, 51, &kl);
         w->nshares = 0;
         if (!ks || kl < 2 || (size_t)u16(ks) != kl - 2) {
