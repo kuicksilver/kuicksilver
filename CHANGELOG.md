@@ -1339,10 +1339,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client and server: a WebSocket session cut inside a frame (a large frame behind a peer that does not read, its
   writer cancelled) could still get a clean end after the part of the frame that went out, as if the stream were whole:
   Ktor's `WebSocketWriter` ends its channel with `flushAndClose()` also when it is cancelled, and that end counted as a
-  finished writer. The frame guard now resets the transport in place of such a close (a TCP reset, RST_STREAM CANCEL,
-  RESET_STREAM H3_REQUEST_CANCELLED), counts a frame as started before its header is handed on, and every engine checks
-  that the guard is between frames before a FIN, close_notify or END_STREAM; the HTTP/1.1 client's end decision takes
-  only the guard's position for a whole stream. Seen in Docker as a server reading a 16 MiB frame cut after about 5 MB
+  finished writer. The frame guard now resets the transport in place of such a close (a TCP reset; over TLS the fatal
+  alert internal_error where one can be sent, then a FIN, never close_notify; RST_STREAM CANCEL; RESET_STREAM
+  H3_REQUEST_CANCELLED), counts a frame as started before its header (or a compressed frame's tail) is handed on, and
+  every engine checks for a cut frame before a FIN, close_notify or END_STREAM (the clients that the guard is between
+  frames); the HTTP/1.1 client's end decision takes only the guard's position for a whole stream. Seen in Docker as a server reading a 16 MiB frame cut after about 5 MB
   and then a clean end (HTTP/1.1 client). Over HTTP/3 the client now follows the HTTP/1.1 rule: a session its close wait
   cut with frames still queued in front of QUIC's send buffer is reset, as documented, where before a finished writer
   ended it with a FIN and the queued frames went on after the close wait; one whose writing was all handed to the
