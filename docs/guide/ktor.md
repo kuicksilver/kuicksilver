@@ -712,7 +712,7 @@ on a TCP-mode backend). The rules ([ADR-0022](../adr/0022-proxy-protocol.md), th
   matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
   `0.0.0.0/0` and `::/0`: every peer must then send a header.
 - Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
-  spec's bound for a TCP retransmit); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  spec's bound for a TCP retransmit; `requestHeaderTimeoutSeconds` must then be at least 3 too, or the start fails); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
   must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
   an `UNKNOWN` one leaves the origin as the connection's.
 - `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and

@@ -3042,7 +3042,7 @@ on a TCP-mode backend). The rules ([ADR-0022](https://github.com/kuicksilver/kui
   matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
   `0.0.0.0/0` and `::/0`: every peer must then send a header.
 - Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
-  spec's bound for a TCP retransmit); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  spec's bound for a TCP retransmit; `requestHeaderTimeoutSeconds` must then be at least 3 too, or the start fails); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
   must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
   an `UNKNOWN` one leaves the origin as the connection's.
 - `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and
@@ -5833,7 +5833,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
 | `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
-| `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, never below 3 s | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
+| `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, which must be at least 3 on a PROXY connector (the start fails below) | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
 | `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
 
 ### ktor-network

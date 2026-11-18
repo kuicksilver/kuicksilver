@@ -2668,7 +2668,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolC
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2ProxyUnixPaths
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2Tlvs
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.addressesAndBlocksMatch
-kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.headerWaitIsNeverBelowThreeSeconds
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.headerWaitIsTheTimeoutCutToTheRequestHeadDeadline
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.ipv4MappedPeersMatchIpv4Blocks
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.negative_invalidConfigurationsAreRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.negative_ipv6BlocksDoNotTakeMappedIpv4Peers
@@ -2936,6 +2936,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyPro
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_headerFromAnUntrustedSourceIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_headerNotCompleteWithinTheTimeoutIsCut
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_malformedHeadersAreClosed
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.pipelinedRequestsAfterTheHeaderAreServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.repeatOffendersAreTheClientsBehindTheProxy
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.tlsConnectorReadsTheHeaderBeforeTheClientHello
@@ -3236,6 +3237,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.ne
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_clientCaKeysWithSslPortRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_combinedPemRefusedAtStartupWithReloadInterval
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_ocspStaplingAndTrustedGatewayKeysWithSslPortRefused
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_proxyProtocolKeysWithSslPortRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_reloadIntervalWithoutPemFilesRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_tlsVersionsKeyWithSslPortRefused

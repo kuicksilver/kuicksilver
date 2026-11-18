@@ -623,6 +623,29 @@ class EngineMainTest {
             }
         }
 
+    /** The deployment port's PROXY protocol with a request-head deadline below 3 s does not start, naming both settings. */
+    @Test fun negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused() =
+        serverTest {
+            val server =
+                EngineMain.createServer(
+                    arrayOf(
+                        "-host=127.0.0.1",
+                        "-port=0",
+                        "-P:ktor.application.modules.size=1",
+                        "-P:ktor.application.modules.0=$module",
+                        "-P:kuicksilver.proxyProtocol.trustedSources=127.0.0.1",
+                    ),
+                )
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            server.engine.configuration.requestHeaderTimeoutSeconds = 1
+            val e = assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
+            assertTrue(
+                "kuicksilver.proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeoutSeconds" in e.message.orEmpty(),
+                e.message,
+            )
+            server.stop(0, 0)
+        }
+
     /** Ktor's `-sslPort` connector cannot take the PROXY protocol: the keys are refused next to it, naming the way out. */
     @Test fun negative_proxyProtocolKeysWithSslPortRefused() =
         serverTest {

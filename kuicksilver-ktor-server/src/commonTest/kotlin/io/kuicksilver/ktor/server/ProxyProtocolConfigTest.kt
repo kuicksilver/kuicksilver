@@ -105,10 +105,11 @@ class ProxyProtocolConfigTest {
     }
 
     /**
-     * The header's wait is `headerTimeout`, cut to what is left of the request-head deadline, but never below the 3 s the
-     * spec asks for ("at least 3 seconds to cover a TCP retransmit").
+     * The header's wait is `headerTimeout`, cut to what is left of the request-head deadline. The engine refuses to start a
+     * PROXY connector whose request-head deadline is below 3 s, so at accept the wait is never below the spec's "at least 3
+     * seconds to cover a TCP retransmit".
      */
-    @Test fun headerWaitIsNeverBelowThreeSeconds() {
+    @Test fun headerWaitIsTheTimeoutCutToTheRequestHeadDeadline() {
         val c =
             ProxyProtocolConfig
                 .Builder()
@@ -118,7 +119,7 @@ class ProxyProtocolConfigTest {
                 }.build()
         assertEquals(5.seconds, c.headerWait(30.seconds))
         assertEquals(4.seconds, c.headerWait(4.seconds))
-        assertEquals(3.seconds, c.headerWait(1.seconds), "a request-head deadline of 1 s still gives the header 3 s")
-        assertEquals(3.seconds, c.headerWait(Duration.ZERO))
+        assertEquals(3.seconds, c.headerWait(3.seconds))
+        assertEquals(Duration.ZERO, c.headerWait((-1).seconds), "a deadline already past leaves nothing")
     }
 }

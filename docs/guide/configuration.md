@@ -463,7 +463,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
 | `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
-| `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, never below 3 s | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
+| `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, which must be at least 3 on a PROXY connector (the start fails below) | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
 | `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
 
 ## ktor-network

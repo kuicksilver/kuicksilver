@@ -835,8 +835,8 @@ internal const val REFUSED_PROXY_HEADER = "PROXY protocol header"
 
 /**
  * Reads the PROXY protocol header of [client] from [input] within [ProxyProtocolConfig.headerWait]: [config]'s
- * `headerTimeout`, cut to what is left of the request-head deadline [headerTimeout] counted from [accepted], never below
- * 3 s; null after closing the connection when it has no valid header in time (section 2.1: "Any sequence which does not
+ * `headerTimeout`, cut to what is left of the request-head deadline [headerTimeout] counted from [accepted] (at least 3 s at
+ * accept: the engine starts a PROXY connector only with such a deadline); null after closing the connection when it has no valid header in time (section 2.1: "Any sequence which does not
  * exactly match the protocol must be discarded and cause the receiver to abort the connection."). The abort resets the connection: a proxy sees the refusal at once, and nothing
  * the peer sent is answered.
  */

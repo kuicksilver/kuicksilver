@@ -393,6 +393,33 @@ class ServerProxyProtocolTest {
         assertEquals("127.0.0.1", offenderToStrike(peer, null)?.let { describeIp(it) }, "no PROXY connector: the TCP peer")
     }
 
+    /**
+     * A request-head deadline below 3 s would cut the header's wait below the spec's "at least 3 seconds to cover a TCP
+     * retransmit": the engine refuses to start such a PROXY connector, naming both settings.
+     */
+    @Test fun negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart() =
+        serverTest {
+            val server =
+                kuicksilverServer(null, configure = {
+                    plainConnector {
+                        host = "127.0.0.1"
+                        port = 0
+                        proxyProtocol { trust("127.0.0.1") }
+                    }
+                    requestHeaderTimeoutSeconds = 2
+                }) { reportOrigin() }
+            val e = kotlin.test.assertFailsWith<IllegalArgumentException> { server.startSuspend(wait = false) }
+            assertTrue("proxyProtocol" in e.message.orEmpty() && "requestHeaderTimeoutSeconds" in e.message.orEmpty(), e.message)
+            runCatching { server.stopSuspend(0, 0) }
+            // 3 s is enough
+            val (ok, port) = plainServer({ requestHeaderTimeoutSeconds = 3 })
+            try {
+                assertTrue(viaProxy(port, v1).startsWith("HTTP/1.1 200"))
+            } finally {
+                ok.stopSuspend(0, 1000)
+            }
+        }
+
     /** A closed connection with no bytes reads as "", a reset as "<reset>": both are no answer. */
     private fun emptyIfClosed(s: String): String = if (s.isEmpty()) "<reset>" else s
 }

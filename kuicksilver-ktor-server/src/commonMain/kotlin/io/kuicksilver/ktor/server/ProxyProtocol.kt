@@ -44,8 +44,12 @@ public class ProxyProtocolConfig private constructor(
         return blocks.any { it.contains(ip) }
     }
 
-    /** How long a connection may take to send its header, with [remaining] of the request-head deadline left. */
-    internal fun headerWait(remaining: Duration): Duration = minOf(headerTimeout, remaining).coerceAtLeast(MIN_HEADER_TIMEOUT)
+    /**
+     * How long a connection may take to send its header, with [remaining] of the request-head deadline left: [headerTimeout]
+     * cut to it. The engine starts a PROXY connector only with `requestHeaderTimeoutSeconds` of at least 3, so at accept
+     * this is at least the 3 s section 2 asks for.
+     */
+    internal fun headerWait(remaining: Duration): Duration = minOf(headerTimeout, remaining).coerceAtLeast(Duration.ZERO)
 
     /** For logs. */
     override fun toString(): String = "PROXY protocol from $trustedSources"
@@ -72,7 +76,7 @@ public class ProxyProtocolConfig private constructor(
          * "The receiver may apply a short timeout and decide to abort the connection if the protocol header is not seen within
          * a few seconds (at least 3 seconds to cover a TCP retransmit)."). The wait is also cut to what is left of the engine's
          * `requestHeaderTimeoutSeconds`, which goes on counting from accept through the TLS handshake and the first request
-         * head, but never below 3 s. A proxy sends the header at once ("The sender must always ensure that the header is sent
+         * head; the engine does not start a PROXY connector with `requestHeaderTimeoutSeconds` below 3. A proxy sends the header at once ("The sender must always ensure that the header is sent
          * at once"), so a short bound cuts a peer that trickles it without hurting a proxy. Throws at [build] below 3 s.
          */
         public var headerTimeout: Duration = 5.seconds
@@ -84,7 +88,7 @@ public class ProxyProtocolConfig private constructor(
          */
         public var maxHeaderSize: Int = 4096
 
-        /** The configuration; throws [IllegalArgumentException] for no or an invalid trusted source, a timeout that is not positive, or a size out of range. */
+        /** The configuration; throws [IllegalArgumentException] for no or an invalid trusted source, a timeout below 3 s, or a size out of range. */
         public fun build(): ProxyProtocolConfig {
             require(trustedSources.isNotEmpty()) { "proxyProtocol needs at least one trusted source" }
             require(headerTimeout >= MIN_HEADER_TIMEOUT) { "proxyProtocol.headerTimeout must be at least $MIN_HEADER_TIMEOUT" }

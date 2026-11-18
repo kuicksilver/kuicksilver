@@ -86,6 +86,9 @@ public class KuicksilverApplicationEngine(
          * keep-alive connection, or a connection that never spoke) is closed without a response. It also bounds the
          * field-block deadline `maxHeaderBlockTime` of [http2Settings] and [http3Settings]. Positive; default 30.
          *
+         * A connector with `proxyProtocol` needs at least 3: the PROXY protocol header's wait is cut to this deadline, and the
+         * start fails below it.
+         *
          * @throws IllegalArgumentException when set to zero or less.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -740,6 +743,20 @@ public class KuicksilverApplicationEngine(
                         }
                     }
                     val listeners = configuration.connectors.map { resolve(it) }
+
+                    // the PROXY protocol header's wait is cut to the request-head deadline: below 3 s it would be shorter than
+                    // the spec's "at least 3 seconds to cover a TCP retransmit" (section 2)
+                    @OptIn(ExperimentalKuicksilverApi::class)
+                    val headDeadline = configuration.requestHeaderTimeoutSeconds
+                    if (headDeadline < ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds &&
+                        listeners.any { it.proxyProtocol != null }
+                    ) {
+                        val key = if (configuration.deploymentProxyProtocol != null) "kuicksilver.proxyProtocol" else "proxyProtocol"
+                        throw IllegalArgumentException(
+                            "$key needs requestHeaderTimeoutSeconds of at least ${ProxyProtocolConfig.MIN_HEADER_TIMEOUT.inWholeSeconds} " +
+                                "(it is $headDeadline): the PROXY protocol header's wait is cut to the request-head deadline",
+                        )
+                    }
                     // TCP accepting waits for the HTTP/3 listeners: h3Ports is complete (and published) before any connection reads it
                     val h3Ready = Job()
                     // one at a time: a connector whose set-up throws leaves those before it in [servers], so the failure path
