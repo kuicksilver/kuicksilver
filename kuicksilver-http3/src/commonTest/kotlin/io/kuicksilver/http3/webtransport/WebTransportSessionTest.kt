@@ -154,10 +154,10 @@ class WebTransportSessionTest {
                     vararg parts: String,
                 ) = sink.trace(role).records.any { r -> parts.all { it in r } }
                 io.kuicksilver.http3.runtime.awaitCondition("both streams logged at both ends") {
-                    has(TlsRole.Client, "http:frame_created", "\"raw_frame_type\":65,\"session_id\":$sid") &&
-                        has(TlsRole.Server, "http:frame_parsed", "\"raw_frame_type\":65,\"session_id\":$sid") &&
-                        has(TlsRole.Client, "\"owner\":\"local\"", "\"raw_stream_type\":84,\"session_id\":$sid") &&
-                        has(TlsRole.Server, "\"owner\":\"remote\"", "\"raw_stream_type\":84,\"session_id\":$sid")
+                    has(TlsRole.Client, "http:frame_created", "\"frame_type_value\":65,\"session_id\":$sid") &&
+                        has(TlsRole.Server, "http:frame_parsed", "\"frame_type_value\":65,\"session_id\":$sid") &&
+                        has(TlsRole.Client, "\"owner\":\"local\"", "\"stream_type_value\":84,\"session_id\":$sid") &&
+                        has(TlsRole.Server, "\"owner\":\"remote\"", "\"stream_type_value\":84,\"session_id\":$sid")
                 }
                 for (t in sink.traces) {
                     io.kuicksilver.http3.runtime.QlogSchema

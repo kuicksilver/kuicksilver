@@ -199,16 +199,22 @@ internal class StrictJson private constructor(
 }
 
 /**
- * The qlog schema the traces follow, checked offline (no qvis here): qlog 0.3 JSON-SEQ (draft-ietf-quic-qlog-main-schema-05)
- * with the HTTP/3 event definitions of draft-ietf-quic-qlog-h3-events-04 as their CDDL gives them (required members, types
- * and enumerations), and the extension members Kuicksilver adds, listed here; any other member fails. QUIC events
- * (`transport:`, `recovery:`, `connectivity:`) are checked for the event envelope only.
+ * The qlog schema the traces follow, checked offline (no qvis here), as the drafts' text gives it:
+ * draft-ietf-quic-qlog-main-schema-05 (JSON-SEQ file, section 6.2, Figures 38 and 39: `qlog_format` "JSON-SEQ",
+ * `qlog_version` "0.3" per section 3; `common_fields`, section 3.4.7; times section 3.4.1) and the CDDL of
+ * draft-ietf-quic-qlog-h3-events-04 (sections 4 to 7), cited at each check. The members Kuicksilver adds through the
+ * drafts' extension points are listed where they are allowed; any other member fails. QUIC events (`transport:`,
+ * `recovery:`, `connectivity:`) are checked for the event envelope only.
  */
 internal object QlogSchema {
+    // h3-events-04 section 4.3, Figure 4
     private val streamTypes = setOf("request", "control", "push", "reserved", "unknown", "qpack_encode", "qpack_decode")
+
+    // section 5.1, Figure 8
     private val owners = setOf("local", "remote")
-    private val parameters =
-        setOf("max_field_section_size", "max_table_capacity", "blocked_streams_count", "enable_connect_protocol", "h3_datagram")
+
+    // section 4.1, Figure 2: the named HTTPParameters; any other member is "* text => uint64"
+    private val parameters = setOf("max_field_section_size", "max_table_capacity", "blocked_streams_count")
 
     /** One trace: every record framed as JSON-SEQ (RFC 7464), the header first; returns the events, parsed. */
     fun check(records: List<String>): List<Map<String, Any?>> {
@@ -222,23 +228,36 @@ internal object QlogSchema {
                 val m = v as? Map<*, *> ?: throw IllegalArgumentException("record $n is not an object")
                 m.entries.associate { (k, x) -> k as String to x }
             }
-        header(parsed[0])
+        val protocols = header(parsed[0])
         val events = parsed.drop(1)
-        var last = -1.0
+        var last = 0.0
         for (e in events) {
             event(e)
-            last = e["time"] as Double
-            require(last >= 0) { "negative time" }
+            val t = e["time"] as Double
+            // main-schema-05 section 3.4.1: "SHOULD be logged in strictly ascending timestamp order"; events of one loop
+            // turn share a time, so the check is that time never goes back
+            require(t >= last) { "time goes back from $last to $t: $e" }
+            last = t
+            val category = (e["name"] as String).substringBefore(':')
+            // quic-events-04 and h3-events-04, section 2: protocol_type MUST contain "QUIC" / "HTTP3" with their events
+            if (category == "http" || category == "qpack") require("HTTP3" in protocols) { "an HTTP/3 event without HTTP3: $protocols" }
         }
         return events
     }
 
-    private fun header(h: Map<String, Any?>) {
+    /** The header (main-schema-05 Figures 38, 39 and 27); returns its protocol_type. */
+    private fun header(h: Map<String, Any?>): List<*> {
         require(h["qlog_format"] == "JSON-SEQ") { "qlog_format: $h" }
         require(h["qlog_version"] == "0.3") { "qlog_version: $h" }
         val trace = h["trace"] as Map<*, *>
         require((trace["vantage_point"] as Map<*, *>)["type"] in setOf("client", "server")) { "vantage_point: $h" }
-        require((trace["common_fields"] as Map<*, *>)["time_format"] == "relative") { "time_format: $h" }
+        val common = trace["common_fields"] as Map<*, *>
+        require(common["time_format"] == "relative") { "time_format: $h" }
+        // section 3.4.1: a relative time counts from the reference_time ("Specify a full reference_time timestamp")
+        require(common["reference_time"] is Double) { "reference_time: $h" }
+        val protocols = common["protocol_type"] as? List<*> ?: error("protocol_type: $h")
+        require(protocols.isNotEmpty() && protocols.all { it is String } && "QUIC" in protocols) { "protocol_type: $h" }
+        return protocols
     }
 
     private fun event(e: Map<String, Any?>) {
@@ -247,56 +266,66 @@ internal object QlogSchema {
         val name = e["name"] as? String ?: error("name: $e")
         val data = e["data"] as? Map<*, *> ?: error("data: $e")
         val (category, type) = name.split(':').also { require(it.size == 2) { "name $name" } }
-        if (category == "qpack") {
-            qpack(type, data)
-            return
-        }
-        if (category != "http") {
-            require(category in setOf("transport", "recovery", "connectivity")) { "category of $name" }
-            return
-        }
         try {
-            when (type) {
-                "parameters_set" -> {
-                    members(data, required = emptySet(), optional = parameters + "owner" + "waits_for_settings")
-                    data["owner"]?.let { require(it in owners) { "owner $it" } }
-                    for (p in parameters) data[p]?.let { uint(it) }
-                }
-
-                "parameters_restored" -> {
-                    members(data, required = emptySet(), optional = parameters)
-                    for (p in parameters) data[p]?.let { uint(it) }
-                }
-
-                "stream_type_set" -> {
-                    // raw_stream_type and session_id: Kuicksilver's extension members
-                    members(data, setOf("stream_id", "new"), setOf("owner", "old", "associated_push_id", "raw_stream_type", "session_id"))
-                    uint(data["stream_id"])
-                    require(data["new"] in streamTypes) { "stream type ${data["new"]}" }
-                    data["owner"]?.let { require(it in owners) }
-                    data["raw_stream_type"]?.let { uint(it) }
-                    if (data["new"] == "unknown" || data["new"] == "reserved") require(data["raw_stream_type"] != null) { "no raw type" }
-                }
-
-                "frame_created", "frame_parsed" -> {
-                    members(data, setOf("stream_id", "frame"), setOf("length", "raw"))
-                    uint(data["stream_id"])
-                    data["length"]?.let { uint(it) }
-                    (data["raw"] as Map<*, *>?)?.let { raw ->
-                        members(raw, emptySet(), setOf("length", "payload_length", "data"))
-                        raw["length"]?.let { uint(it) }
-                        raw["payload_length"]?.let { uint(it) }
-                    }
-                    frame(data["frame"] as Map<*, *>)
-                }
-
-                else -> {
-                    error("an http event the draft does not define")
-                }
+            when (category) {
+                "qpack" -> qpack(type, data)
+                "http" -> http(type, data)
+                else -> require(category in setOf("transport", "recovery", "connectivity")) { "category of $name" }
             }
         } catch (t: Throwable) {
             throw IllegalArgumentException("$name: ${t.message}: $e", t)
         }
+    }
+
+    private fun http(
+        type: String,
+        data: Map<*, *>,
+    ) {
+        when (type) {
+            // section 4.1, Figure 2
+            "parameters_set" -> {
+                data["owner"]?.let { require(it in owners) { "owner $it" } }
+                data["waits_for_settings"]?.let { require(it is Boolean) }
+                for ((k, v) in data) if (k != "owner" && k != "waits_for_settings") uint(v)
+            }
+
+            // section 4.2, Figure 3
+            "parameters_restored" -> {
+                for (v in data.values) uint(v)
+            }
+
+            // section 4.3, Figure 4; session_id: Kuicksilver's, on a WebTransport stream
+            "stream_type_set" -> {
+                members(data, setOf("stream_id", "stream_type"), setOf("owner", "stream_type_value", "associated_push_id", "session_id"))
+                uint(data["stream_id"])
+                require(data["stream_type"] in streamTypes) { "stream type ${data["stream_type"]}" }
+                data["owner"]?.let { require(it in owners) }
+                // "only when stream_type === "unknown"" (we always give it then)
+                if (data["stream_type"] == "unknown") uint(data["stream_type_value"]) else require("stream_type_value" !in data)
+                if (data["stream_type"] != "push") require("associated_push_id" !in data)
+            }
+
+            // sections 4.4 and 4.5, Figures 5 and 6
+            "frame_created", "frame_parsed" -> {
+                members(data, setOf("stream_id", "frame"), setOf("length", "raw"))
+                uint(data["stream_id"])
+                data["length"]?.let { uint(it) }
+                (data["raw"] as Map<*, *>?)?.let { raw(it) }
+                frame(data["frame"] as Map<*, *>)
+            }
+
+            // section 4.6 (push_resolved) is not written: no server push
+            else -> {
+                error("an http event we do not write")
+            }
+        }
+    }
+
+    /** RawInfo (main-schema-05 section 5.1, Figure 28): length, payload_length, data, all optional. */
+    private fun raw(r: Map<*, *>) {
+        members(r, emptySet(), setOf("length", "payload_length", "data"))
+        r["length"]?.let { uint(it) }
+        r["payload_length"]?.let { uint(it) }
     }
 
     private fun qpack(
@@ -304,13 +333,15 @@ internal object QlogSchema {
         data: Map<*, *>,
     ) {
         when (type) {
+            // section 6.1, Figure 24
             "state_updated" -> {
-                val counts = setOf("dynamic_table_capacity", "dynamic_table_size", "known_received_count", "current_insertion_count")
+                val counts = setOf("dynamic_table_capacity", "dynamic_table_size", "known_received_count", "current_insert_count")
                 members(data, setOf("owner"), counts)
                 require(data["owner"] in owners) { "owner ${data["owner"]}" }
                 for (c in counts) data[c]?.let { uint(it) }
             }
 
+            // section 6.2, Figure 25
             "stream_state_updated" -> {
                 members(data, setOf("stream_id", "state"), emptySet())
                 uint(data["stream_id"])
@@ -325,10 +356,12 @@ internal object QlogSchema {
 
     private fun frame(f: Map<*, *>) {
         when (f["frame_type"]) {
+            // section 5.2.1, Figure 11
             "data" -> {
                 members(f, setOf("frame_type"), setOf("raw"))
             }
 
+            // section 5.2.2, Figures 13 and 14
             "headers" -> {
                 members(f, setOf("frame_type", "headers"), emptySet())
                 for (h in f["headers"] as List<*>) {
@@ -338,6 +371,13 @@ internal object QlogSchema {
                 }
             }
 
+            // section 5.2.3, Figure 15; section 5.2.7, Figure 19
+            "cancel_push", "max_push_id" -> {
+                members(f, setOf("frame_type", "push_id"), emptySet())
+                uint(f["push_id"])
+            }
+
+            // section 5.2.4, Figure 16
             "settings" -> {
                 members(f, setOf("frame_type", "settings"), emptySet())
                 for (s in f["settings"] as List<*>) {
@@ -348,28 +388,37 @@ internal object QlogSchema {
                 }
             }
 
+            // section 5.2.5, Figure 17
+            "push_promise" -> {
+                members(f, setOf("frame_type", "push_id", "headers"), emptySet())
+            }
+
+            // section 5.2.6, Figure 18
             "goaway" -> {
                 members(f, setOf("frame_type", "id"), emptySet())
                 uint(f["id"])
             }
 
-            "cancel_push", "max_push_id" -> {
-                members(f, setOf("frame_type", "push_id"), emptySet())
-                uint(f["push_id"])
-            }
-
-            "push_promise" -> {
-                members(f, setOf("frame_type", "push_id", "headers"), emptySet())
-            }
-
-            // raw_frame_type on a reserved frame, and the PRIORITY_UPDATE and WT_STREAM members on an unknown one: extensions
+            // section 5.2.8, Figure 20
             "reserved" -> {
-                members(f, setOf("frame_type"), setOf("length", "raw_frame_type"))
+                members(f, setOf("frame_type"), setOf("length"))
+                f["length"]?.let { uint(it) }
             }
 
+            // section 5.2.9, Figure 21; session_id: Kuicksilver's, on WebTransport's WT_STREAM signal
             "unknown" -> {
-                members(f, setOf("frame_type", "raw_frame_type"), setOf("stream_id", "push_id", "priority_field_value", "session_id"))
-                uint(f["raw_frame_type"])
+                members(f, setOf("frame_type", "frame_type_value"), setOf("raw", "session_id"))
+                uint(f["frame_type_value"])
+                (f["raw"] as Map<*, *>?)?.let { raw(it) }
+            }
+
+            // RFC 9218 PRIORITY_UPDATE through the $HTTPFrame extension point (section 5.2, Figure 9), with the members of
+            // the later drafts: stream_id or push_id, and priority_field_value
+            "priority_update" -> {
+                members(f, setOf("frame_type", "priority_field_value"), setOf("stream_id", "push_id"))
+                require(("stream_id" in f) != ("push_id" in f)) { "stream_id or push_id" }
+                (f["stream_id"] ?: f["push_id"]).let { uint(it) }
+                require(f["priority_field_value"] is String)
             }
 
             else -> {

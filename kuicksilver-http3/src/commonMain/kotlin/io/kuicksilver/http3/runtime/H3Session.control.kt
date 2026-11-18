@@ -305,7 +305,7 @@ private suspend fun H3Session.readControl(st: QuicStream) {
                     freeGrease > 0 -> freeGrease--
                     else -> glitch("reserved frames on the control stream")
                 }
-                qlog { it.frameParsed(st.id, type, len, it.other(type)) }
+                qlog { it.frameParsed(st.id, type, len, it.other(type, len)) }
                 st.input.skipExact(len)
             }
 

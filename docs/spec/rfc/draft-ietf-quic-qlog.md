@@ -26,6 +26,15 @@ Original row: draft-ietf-quic-qlog-*.
 - the transport's trace takes the events of the layer above (HTTP/3) from any thread through one queue the endpoint
   loop writes: records whole and never interleaved, at most 4096 queued, nothing written after the trace ended or its
   sink failed (0.3.0) — `qlog.QlogExternalRecordsTest.*`
+- the header's `common_fields` name the stacks (`protocol_type`, quic-events-04 section 2: MUST contain "QUIC"; "HTTP3"
+  with an ALPN list that offers `h3`) and the `reference_time` of the relative times (main-schema-05 section 3.4.1:
+  0, the trace's start); times never go back from one record to the next (section 3.4.1, SHOULD); the transport
+  events' enumerations are quic-events-04's: connection states (section 4.6), the `packet_dropped` trigger (section
+  5.7), `connection_closed` triggers (section 4.3), no `packet_lost` trigger the loss detector cannot tell (section
+  7.5) (0.3.0; before, no `protocol_type` or `reference_time`, and the states, two triggers and free-text close
+  triggers were our own) — `qlog.QlogExternalRecordsTest.theHeaderNamesTheProtocolsAndTheReferenceTime`,
+  `qlog.QlogExternalRecordsTest.timesNeverGoBackInTheFile`, `qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts`,
+  `qlog.QlogExternalRecordsTest.negative_aTraceWithoutHttp3TakesNoHttp3Event`
 
 ## <a id="qlog-h3"></a>qlog HTTP/3 and QPACK events
 
@@ -33,8 +42,8 @@ Status: ✅ since 0.3.0 · [summary](../rfc-compliance.md#quic)
 
 Original row: draft-ietf-quic-qlog-h3-events-04.
 
-**Requirement.** The HTTP/3 and QPACK events of draft-ietf-quic-qlog-h3-events-04, the revision of the batch whose
-main-schema-05 and quic-events-04 define the trace's qlog 0.3 ([ADR-0021](../../adr/0021-qlog-http3-events.md)): in
+**Requirement.** The HTTP/3 and QPACK events of draft-ietf-quic-qlog-h3-events-04, dated like main-schema-05 and
+quic-events-04 (13 February 2023), whose section 3 fixes `qlog_version` "0.3" (h3-events-04 itself cites main-schema-04) ([ADR-0021](../../adr/0021-qlog-http3-events.md)): in
 the `http` category `parameters_set`, `parameters_restored`, `stream_type_set`, `frame_created` and `frame_parsed`; in
 the `qpack` category `state_updated` and `stream_state_updated`. The drafts define the events, not when an
 implementation must write one: qlog's MUSTs are about the format, which `runtime.QlogSchema` checks.
@@ -44,16 +53,23 @@ events; `QlogRecorder` (`kuicksilver-quic`, internal API) queues them into the c
 loop writes. Every frame we send or read is logged: DATA, HEADERS (request, response and trailer field sections, with
 their fields once decoded; one that is too large or does not decode with an empty list), SETTINGS (each setting by its
 IANA name, others by number), GOAWAY, MAX_PUSH_ID and CANCEL_PUSH with their identifiers, reserved (GREASE) frames
-with their number, and frames the draft has no type for as `unknown` with `raw_frame_type`: PRIORITY_UPDATE (with
-`stream_id` or `push_id` and `priority_field_value`, members of the later drafts) and WebTransport's `WT_STREAM`
-signal (with `session_id`). A frame refused by the stream it arrived on is logged before the error. Unidirectional
-stream types are logged as sent and as read (`control`, `qpack_encode`, `qpack_decode`, `reserved`, `unknown` with
-`raw_stream_type`; WebTransport streams with `session_id`). SETTINGS give `parameters_set` (`owner` local or remote),
+with their `length` (section 5.2.8), unknown ones and frames whose payload was not read with `frame_type_value`
+(section 5.2.9), PRIORITY_UPDATE as a `priority_update` frame through the `$HTTPFrame` extension point (section 5.2;
+`stream_id` or `push_id` and `priority_field_value`, the members of the later drafts), and WebTransport's
+`WT_STREAM` signal as an unknown frame with a `session_id` of ours. A frame refused by the stream it arrived on is
+logged before the error. Unidirectional stream types are logged as sent and as read in `stream_type` (section 4.3:
+`control`, `qpack_encode`, `qpack_decode`, `reserved`, `unknown` with `stream_type_value`; WebTransport streams with
+`session_id`). SETTINGS give `parameters_set` (`owner` local or remote; settings beyond the three section 4.1 names
+as `name => value`),
 the server SETTINGS a 0-RTT client remembered `parameters_restored`. QPACK: `state_updated` for our encoder's table
 (`owner` local) and the peer's (remote) when capacity, size, known received count or insert count change, and
-`stream_state_updated` when a field section blocks on an insert and when it is unblocked. Field values are
+`stream_state_updated` when a field section blocks on an insert and when it is unblocked (section 6.1 counts
+`current_insert_count`). The header's `common_fields` give `protocol_type` `["QUIC","HTTP3"]` when the connection's
+ALPN list offers `h3` (otherwise `["QUIC"]`, and the trace takes no HTTP/3 event; section 2 of quic-events-04 and of
+h3-events-04), `time_format` "relative" and `reference_time` 0, the trace's start (main-schema-05 sections 3.4.1 and
+3.4.7); no record gets an earlier time than the one before it (section 3.4.1, SHOULD). Field values are
 `[redacted]` (except `:method`, `:scheme`, `:status`, `:protocol`) unless `QlogSink.logHeaderValues` is set (threat
-model 3.25).
+model 3.26).
 
 **Tests that pin it.**
 
@@ -87,6 +103,8 @@ supports up to 0.3" (`net/quic/qlog/qlog.go:192-196`).
 
 - not loaded in qvis: the traces were validated offline against the draft's definitions as `runtime.QlogSchema`
   encodes them (no network here); opening a trace in qvis is a manual check still to do.
+- the transport events log their frames by type alone: valid through quic-events-04's `$QuicFrame` extension point,
+  but without the members section 8.11 defines for each type (`stream_id`, `offset`, `length` of a STREAM frame, ...).
 - the move to the current drafts (main-schema/quic-events/h3-events -12, `http3:` names) is one change for both layers.
 - not written: `http:push_resolved` (no server push), `qpack:dynamic_table_updated`, `qpack:headers_encoded`,
   `qpack:headers_decoded`, `qpack:instruction_created` and `qpack:instruction_parsed` (the QPACK codecs do not expose

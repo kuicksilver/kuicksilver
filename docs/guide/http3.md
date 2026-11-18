@@ -265,14 +265,16 @@ trace as the transport's, in the schema of that trace: qlog 0.3 with the events 
 `http:frame_parsed` with its stream, its length and its contents (the fields of a HEADERS frame, the settings of a
 SETTINGS frame, the identifier of a GOAWAY); unidirectional streams as `http:stream_type_set`; SETTINGS also as
 `http:parameters_set` and, for a 0-RTT client, the remembered ones as `http:parameters_restored`; the QPACK dynamic
-tables as `qpack:state_updated`, and a field section waiting for an insert as `qpack:stream_state_updated`. Frames the
-draft has no type for (PRIORITY_UPDATE, WebTransport's stream signal) are `unknown` frames with their type number and
-their own members; reserved (GREASE) frames are `reserved`.
+tables as `qpack:state_updated`, and a field section waiting for an insert as `qpack:stream_state_updated`.
+PRIORITY_UPDATE, which the draft does not define, is a `priority_update` frame; WebTransport's stream signals are
+`unknown` frames and stream types with their number (`frame_type_value`, `stream_type_value`) and a `session_id`;
+reserved (GREASE) frames are `reserved`. The trace's header names `["QUIC","HTTP3"]` as its `protocol_type` when the
+connection's ALPN list offers `h3`; a connection without it gets no HTTP/3 events.
 
 Header and trailer values are not written: each field has its name and the value `[redacted]`, except `:method`,
 `:scheme`, `:status` and `:protocol`. A sink whose `logHeaderValues` is true (`DirectoryQlogSink(dir, maxOpenTraces,
 maxTotalBytes, logHeaderValues = true)`, *experimental*; `AsyncQlogSink` asks its delegate) gets every value as sent and
-received, cookies and credentials included: keep such traces as secrets (threat model 3.25). A connection without a
+received, cookies and credentials included: keep such traces as secrets (threat model 3.26). A connection without a
 sink formats no event; with one, events are queued (at most 4096 per connection) and written by the endpoint loop, so a
 sink is still called on the loop only.
 

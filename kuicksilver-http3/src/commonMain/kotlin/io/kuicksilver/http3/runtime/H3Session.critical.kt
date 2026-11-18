@@ -273,7 +273,7 @@ internal suspend fun H3Session.openCriticalStreams(
                 val type = FrameType.grease(Random.nextLong(0, 1000))
                 val payload = Random.nextBytes(Random.nextInt(0, 8))
                 control.output.writeFully(FrameHeaders.frame(type, payload))
-                qlog { it.frameCreated(control.id, type, payload.size.toLong(), it.other(type)) }
+                qlog { it.frameCreated(control.id, type, payload.size.toLong(), it.other(type, payload.size.toLong())) }
             }
             // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
             if (gen > 0) {

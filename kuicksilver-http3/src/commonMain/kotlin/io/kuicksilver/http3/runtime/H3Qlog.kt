@@ -18,9 +18,12 @@ import io.kuicksilver.quic.QlogRecorder
  * `http:parameters_set`, `http:parameters_restored`, `http:stream_type_set`, `http:frame_created`, `http:frame_parsed`,
  * `qpack:state_updated` and `qpack:stream_state_updated`.
  *
- * Frames and stream types that draft does not define (PRIORITY_UPDATE, WebTransport's signals) are its `unknown` with their
- * `raw_frame_type` (or `raw_stream_type`), plus members of their own that qlog tools ignore. Field values are redacted
- * unless the sink opted in ([QlogRecorder.logHeaderValues]; CWE-532).
+ * Member names are the draft's (section 4 and 5 for `http`, section 6 for `qpack`). PRIORITY_UPDATE (RFC 9218), which the
+ * draft does not define, is a `priority_update` frame through its `$HTTPFrame` extension point (section 5.2), with the
+ * members of the later drafts; WebTransport's stream signals are the draft's `unknown` frame (section 5.2.9) and stream
+ * type (section 4.3) with their `frame_type_value` or `stream_type_value` and a `session_id` of their own (main-schema-05
+ * section 3.4: tools allow unknown fields). Field values are redacted unless the sink opted in
+ * ([QlogRecorder.logHeaderValues]; CWE-532).
  *
  * Every method formats on the caller's thread; callers check [enabled] first (or call through [H3Session.qlog]), so a
  * connection without a trace formats nothing. Never throws for any input: names and values are escaped here.
@@ -49,8 +52,16 @@ internal class H3Qlog(
         m[SettingsId.MAX_FIELD_SECTION_SIZE]?.let { sb.append(",\"max_field_section_size\":").append(it) }
         m[SettingsId.QPACK_MAX_TABLE_CAPACITY]?.let { sb.append(",\"max_table_capacity\":").append(it) }
         m[SettingsId.QPACK_BLOCKED_STREAMS]?.let { sb.append(",\"blocked_streams_count\":").append(it) }
-        m[SettingsId.ENABLE_CONNECT_PROTOCOL]?.let { sb.append(",\"enable_connect_protocol\":").append(it) }
-        m[SettingsId.H3_DATAGRAM]?.let { sb.append(",\"h3_datagram\":").append(it) }
+        // section 4.1: "* text => uint64", additional settings for grease and extensions, here by their IANA names
+        for ((id, v) in m) {
+            if (id == SettingsId.MAX_FIELD_SECTION_SIZE || id == SettingsId.QPACK_MAX_TABLE_CAPACITY) continue
+            if (id == SettingsId.QPACK_BLOCKED_STREAMS) continue
+            sb
+                .append(",\"")
+                .append(SETTING_NAMES[id] ?: id.toString())
+                .append("\":")
+                .append(v)
+        }
         return sb.toString()
     }
 
@@ -67,7 +78,7 @@ internal class H3Qlog(
             .append(owner)
             .append("\",\"stream_id\":")
             .append(streamId)
-            .append(",\"new\":\"")
+            .append(",\"stream_type\":\"")
         val name =
             when {
                 type == StreamType.CONTROL -> "control"
@@ -78,7 +89,8 @@ internal class H3Qlog(
                 else -> "unknown"
             }
         sb.append(name).append('"')
-        if (name == "unknown" || name == "reserved") sb.append(",\"raw_stream_type\":").append(type)
+        // section 4.3: "only when stream_type === "unknown""
+        if (name == "unknown") sb.append(",\"stream_type_value\":").append(type)
         if (sessionId != null) sb.append(",\"session_id\":").append(sessionId)
         recorder.record("http:stream_type_set", sb.toString())
     }
@@ -145,7 +157,7 @@ internal class H3Qlog(
     ) {
         recorder.record(
             name,
-            "\"stream_id\":$streamId,\"frame\":{\"frame_type\":\"unknown\",\"raw_frame_type\":${FrameType.WT_STREAM}," +
+            "\"stream_id\":$streamId,\"frame\":{\"frame_type\":\"unknown\",\"frame_type_value\":${FrameType.WT_STREAM}," +
                 "\"session_id\":$sessionId}",
         )
     }
@@ -219,7 +231,7 @@ internal class H3Qlog(
                 }
 
                 else -> {
-                    other(type)
+                    other(type, payload?.size?.toLong())
                 }
             }
         } catch (_: Exception) {
@@ -227,31 +239,35 @@ internal class H3Qlog(
             controlFrame(type, null)
         }
 
-    /** A frame we skipped unread: reserved (GREASE) or of a type we do not know (RFC 9114 section 9). */
-    fun other(type: Long): String =
+    /**
+     * A frame we skipped unread: reserved (GREASE, h3-events-04 section 5.2.8: `length` only) or of a type we do not know
+     * (section 5.2.9: `frame_type_value`; RFC 9114 section 9).
+     */
+    fun other(
+        type: Long,
+        length: Long?,
+    ): String =
         if (FrameType.isGrease(type)) {
-            "{\"frame_type\":\"reserved\",\"raw_frame_type\":$type}"
+            if (length == null) "{\"frame_type\":\"reserved\"}" else "{\"frame_type\":\"reserved\",\"length\":$length}"
         } else {
-            "{\"frame_type\":\"unknown\",\"raw_frame_type\":$type}"
+            unread(type)
         }
 
-    /** A frame whose payload was not read: its type number only. */
-    private fun unread(type: Long): String = "{\"frame_type\":\"unknown\",\"raw_frame_type\":$type}"
+    /** A frame whose payload was not read: section 5.2.9's `unknown` with its type number, as no other frame type allows that. */
+    private fun unread(type: Long): String = "{\"frame_type\":\"unknown\",\"frame_type_value\":$type}"
 
     private fun priorityUpdate(
         type: Long,
         payload: ByteArray?,
     ): String {
+        if (payload == null) return unread(type)
+        val (id, value) = ControlFrames.parsePriorityUpdate(payload)
         val sb = StringBuilder(64)
-        sb.append("{\"frame_type\":\"unknown\",\"raw_frame_type\":").append(type)
-        if (payload != null) {
-            val (id, value) = ControlFrames.parsePriorityUpdate(payload)
-            sb.append(if (type == FrameType.PRIORITY_UPDATE_REQUEST) ",\"stream_id\":" else ",\"push_id\":").append(id)
-            sb.append(",\"priority_field_value\":\"")
-            escape(value, sb)
-            sb.append('"')
-        }
-        return sb.append('}').toString()
+        sb.append("{\"frame_type\":\"priority_update\"")
+        sb.append(if (type == FrameType.PRIORITY_UPDATE_REQUEST) ",\"stream_id\":" else ",\"push_id\":").append(id)
+        sb.append(",\"priority_field_value\":\"")
+        escape(value, sb)
+        return sb.append("\"}").toString()
     }
 
     private fun settings(m: Map<Long, Long>): String {
@@ -282,7 +298,7 @@ internal class H3Qlog(
             inserts: Long,
         ): String =
             "\"dynamic_table_capacity\":$capacity,\"dynamic_table_size\":$size,\"known_received_count\":$knownReceived," +
-                "\"current_insertion_count\":$inserts"
+                "\"current_insert_count\":$inserts"
 
         /** What a redacted field value reads as. */
         const val REDACTED: String = "[redacted]"

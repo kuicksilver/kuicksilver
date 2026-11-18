@@ -16,14 +16,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - qlog: HTTP/3 and QPACK events in the connection's trace, in the schema of its transport events (qlog 0.3,
   draft-ietf-quic-qlog-h3-events-04; ADR-0021): `http:frame_created`/`frame_parsed` for every frame sent and read (field
-  sections with their fields, SETTINGS, GOAWAY, push identifiers, reserved and unknown frames by number,
-  PRIORITY_UPDATE and WebTransport's stream signal as unknown frames with their own members), `http:stream_type_set`,
+  sections with their fields, SETTINGS, GOAWAY, push identifiers, reserved and unknown frames, PRIORITY_UPDATE as a
+  `priority_update` frame, WebTransport's stream signal as an unknown frame with its Session ID), `http:stream_type_set`,
   `http:parameters_set`, `http:parameters_restored`, `qpack:state_updated` and `qpack:stream_state_updated`. Header and
   trailer values are written as `[redacted]` (except `:method`, `:scheme`, `:status`, `:protocol`) unless the sink sets
   the new `QlogSink.logHeaderValues` (*experimental*; `DirectoryQlogSink(..., logHeaderValues = true)`, forwarded by
-  `AsyncQlogSink`); threat model 3.25 (CWE-532). The HTTP/3 layer queues its events (at most 4096 per connection) and the
+  `AsyncQlogSink`); threat model 3.26 (CWE-532). The HTTP/3 layer queues its events (at most 4096 per connection) and the
   endpoint loop writes them, so sinks are still called on the loop only; a connection without a sink formats nothing.
   The traces are checked offline against the draft's definitions; loading them in qvis was not part of the tests.
+- qlog: the trace header's `common_fields` give `protocol_type` (`["QUIC"]`, or `["QUIC","HTTP3"]` when the ALPN list
+  offers `h3`) and `reference_time` (0, the trace's start), and times never go back from one record to the next
+  (draft-ietf-quic-qlog-main-schema-05 sections 3.4.1 and 3.4.7, quic-events-04 section 2).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -784,6 +787,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   "Prereleases on GitHub only").
 
 ### Changed
+
+- qlog transport events use the enumerations of draft-ietf-quic-qlog-quic-events-04: `connection_state_updated`
+  reports `handshake_started`, `handshake_complete`, `handshake_confirmed`, `closing`, `draining`, `closed` (before:
+  `handshaking`, `established`, `confirmed`, ...); a `packet_dropped` for a packet on an address the connection left has
+  the trigger `rejected` (before: `unexpected_packet`); `packet_lost` has no trigger (before: `time_or_packet_threshold`,
+  not one of the draft's); a `connection_closed` that is not a peer's close or a timeout has the trigger
+  `stateless_reset`, `version_mismatch` or `error`, its message in `reason` (before: the message as the trigger).
 
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once

@@ -114,7 +114,7 @@ class H3QlogTest {
                 val e = events(sink, role)
                 // the critical streams, ours and the peer's (RFC 9114 section 6.2)
                 for (owner in listOf("local", "remote")) {
-                    val types = e.named("http:stream_type_set").filter { it["owner"] == owner }.map { it["new"] }
+                    val types = e.named("http:stream_type_set").filter { it["owner"] == owner }.map { it["stream_type"] }
                     assertTrue(types.containsAll(listOf("control", "qpack_encode", "qpack_decode")), "$role $owner: $types")
                     assertTrue(e.named("http:parameters_set").any { it["owner"] == owner }, "$role parameters_set $owner")
                 }
@@ -145,12 +145,8 @@ class H3QlogTest {
                 assertTrue(h.num("length") > 0 && (h["raw"] as Map<*, *>).num("length") > h.num("length"), "$h")
             }
             assertTrue("\"name\":\":status\",\"value\":\"200\"" in sink.trace(TlsRole.Client).records.joinToString(""), "the status kept")
-            // PRIORITY_UPDATE (RFC 9218): not in the draft, so an unknown frame with its type and members of its own
-            val prio =
-                client.named("http:frame_created").single {
-                    (it.frame()["raw_frame_type"] as Double?)?.toLong() ==
-                        FrameType.PRIORITY_UPDATE_REQUEST
-                }
+            // PRIORITY_UPDATE (RFC 9218): not in the draft, so a frame type of its own through the $HTTPFrame extension point
+            val prio = client.named("http:frame_created").single { it.frame()["frame_type"] == "priority_update" }
             assertEquals(4.0, prio.frame()["stream_id"])
             assertEquals("u=2, i", prio.frame()["priority_field_value"])
             assertTrue(server.named("http:frame_parsed").any { it.frame()["priority_field_value"] == "u=2, i" })
@@ -253,15 +249,20 @@ class H3QlogTest {
                 raw.uni(FrameType.grease(2), ByteArray(0))
                 awaitCondition("the frames and streams logged") {
                     val all = sink.trace(TlsRole.Server).records.joinToString("")
-                    "\"raw_frame_type\":${0x2abc}" in all && "\"raw_frame_type\":${FrameType.grease(7)}" in all &&
-                        "\"raw_stream_type\":${0x3fff}" in all && "\"raw_stream_type\":${FrameType.grease(2)}" in all
+                    "\"frame_type_value\":${0x2abc}" in all && "{\"frame_type\":\"reserved\",\"length\":0}" in all &&
+                        "\"stream_type_value\":${0x3fff}" in all && "\"stream_type\":\"reserved\"" in all
                 }
                 server.close()
             }
             val e = events(sink, TlsRole.Server).named("http:frame_parsed").map { it.frame() }
-            assertTrue(e.any { it["frame_type"] == "unknown" && it["raw_frame_type"] == 0x2abc.toDouble() }, "$e")
-            assertTrue(e.any { it["frame_type"] == "reserved" && it["raw_frame_type"] == FrameType.grease(7).toDouble() }, "$e")
-            val types = events(sink, TlsRole.Server).named("http:stream_type_set").filter { it["owner"] == "remote" }.map { it["new"] }
+            // h3-events-04 section 5.2.9 (frame_type_value) and 5.2.8 (a reserved frame has its length only)
+            assertTrue(e.any { it["frame_type"] == "unknown" && it["frame_type_value"] == 0x2abc.toDouble() }, "$e")
+            assertTrue(e.any { it["frame_type"] == "reserved" && it["length"] == 0.0 }, "$e")
+            val types =
+                events(
+                    sink,
+                    TlsRole.Server,
+                ).named("http:stream_type_set").filter { it["owner"] == "remote" }.map { it["stream_type"] }
             assertTrue(types.containsAll(listOf("unknown", "reserved")), "$types")
         }
 
@@ -334,7 +335,7 @@ class H3QlogTest {
                 server.close()
             }
             val e = events(sink, TlsRole.Server).named("qpack:state_updated").filter { it["owner"] == "remote" }
-            assertTrue(e.any { it.num("current_insertion_count") >= 1 }, "$e")
+            assertTrue(e.any { it.num("current_insert_count") >= 1 }, "$e")
         }
 
     /** Many streams at once on several threads: every record whole, one per line, each frame once. */
@@ -494,7 +495,8 @@ class H3QlogTest {
         q.frameParsed(2, FrameType.GOAWAY, 1, q.controlFrame(FrameType.GOAWAY, byteArrayOf(0x40))) // a truncated varint
         val header =
             "\u001e{\"qlog_format\":\"JSON-SEQ\",\"qlog_version\":\"0.3\"," +
-                "\"trace\":{\"vantage_point\":{\"type\":\"server\"},\"common_fields\":{\"time_format\":\"relative\"}}}\n"
+                "\"trace\":{\"vantage_point\":{\"type\":\"server\"},\"common_fields\":{\"protocol_type\":[\"QUIC\",\"HTTP3\"]," +
+                "\"time_format\":\"relative\",\"reference_time\":0.0}}}\n"
         val events = QlogSchema.check(listOf(header) + recorded.map { "\u001e$it\n" })
         val field = ((events[0]["data"] as Map<*, *>).frame()["headers"] as List<*>).single() as Map<*, *>
         assertEquals(nasty, field["name"])
@@ -507,7 +509,8 @@ class H3QlogTest {
     @Test fun negative_theSchemaCheckRefusesWhatQvisWouldNot() {
         val header =
             "\u001e{\"qlog_format\":\"JSON-SEQ\",\"qlog_version\":\"0.3\"," +
-                "\"trace\":{\"vantage_point\":{\"type\":\"client\"},\"common_fields\":{\"time_format\":\"relative\"}}}\n"
+                "\"trace\":{\"vantage_point\":{\"type\":\"client\"},\"common_fields\":{\"protocol_type\":[\"QUIC\",\"HTTP3\"]," +
+                "\"time_format\":\"relative\",\"reference_time\":0.0}}}\n"
         val ok = "\u001e{\"time\":1.0,\"name\":\"http:frame_created\",\"data\":{\"stream_id\":0,\"frame\":{\"frame_type\":\"data\"}}}\n"
         QlogSchema.check(listOf(header, ok))
         val bad =
@@ -520,7 +523,16 @@ class H3QlogTest {
                 ok.replace("\"stream_id\":0", "\"stream_id\":-1"), // not a uint
                 ok.substring(1), // no RS
                 ok + ok, // two records in one
+                ok.replace("{\"frame_type\":\"data\"}", "{\"frame_type\":\"unknown\",\"raw_frame_type\":33}"), // h3-events-03's name
+                ok.replace("{\"frame_type\":\"data\"}", "{\"frame_type\":\"reserved\",\"frame_type_value\":33}"), // 5.2.8 has none
             )
         for (b in bad) assertTrue(runCatching { QlogSchema.check(listOf(header, b)) }.isFailure, "accepted: $b")
+        val badStream = "\u001e{\"time\":1.0,\"name\":\"http:stream_type_set\",\"data\":{\"stream_id\":2,\"new\":\"control\"}}\n"
+        assertTrue(runCatching { QlogSchema.check(listOf(header, badStream)) }.isFailure, "section 4.3 names it stream_type")
+        val later = ok.replace("\"time\":1.0", "\"time\":2.0")
+        assertTrue(runCatching { QlogSchema.check(listOf(header, later, ok)) }.isFailure, "a time that goes back")
+        for (h in listOf(header.replace(",\"HTTP3\"", ""), header.replace(",\"reference_time\":0.0", ""))) {
+            assertTrue(runCatching { QlogSchema.check(listOf(h, ok)) }.isFailure, "accepted header: $h")
+        }
     }
 }

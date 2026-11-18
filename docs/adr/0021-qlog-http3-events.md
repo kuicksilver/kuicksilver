@@ -20,19 +20,30 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
 
 ## Decision
 
-- **The draft that matches the trace.** The HTTP/3 events follow draft-ietf-quic-qlog-h3-events-04, the HTTP/3
-  revision of the batch that brought main-schema-05 and quic-events-04, which OpenSSL documents as "qlog version 0.3"
-  (`doc/man7/openssl-qlog.pod`) and which the transport events already follow. The events are `http:parameters_set`,
+- **The draft that matches the trace.** The HTTP/3 events follow draft-ietf-quic-qlog-h3-events-04, published on 13
+  February 2023 together with main-schema-05 and quic-events-04 (the date on all three). main-schema-05 section 3 says
+  "the required "qlog_version" field MUST have a value of "0.3"", the value the transport events were already
+  written with; OpenSSL documents main-schema-05 with quic-events-04 as "qlog version 0.3" (`doc/man7/openssl-qlog.pod`).
+  The drafts do not name each other as a set: h3-events-04 section 10 and quic-events-04 cite main-schema-04 (and
+  h3-events-04 quic-events-03) of 24 October 2022, so the pairing rests on the common date and the version main-schema-05
+  fixes. The events are `http:parameters_set`,
   `http:parameters_restored`, `http:stream_type_set`, `http:frame_created`, `http:frame_parsed`,
   `qpack:state_updated` and `qpack:stream_state_updated`. quic-go (`urn:ietf:params:qlog:events:http3-12`) and
   quiche (`http3:` names) write the current drafts, whose names and members differ (`http3:` for `http:`,
-  `initiator` for `owner`, `frame_type_bytes` for `raw_frame_type`, `header_fields` for `headers`); mixing the two in
+  `initiator` for `owner`, `frame_type_bytes` for `frame_type_value`, `header_fields` for `headers`); mixing the two in
   one file would give a trace no tool reads whole. qvis, the viewer these traces are for, reads 0.3 (quic-go and Go's
   x/net write `qlog_version` 0.3 for that reason). The move to the current drafts is one change for both layers, later.
-- **What the draft has no type for** is its `unknown` frame or stream type with the number (`raw_frame_type`,
-  `raw_stream_type`), plus members of its own that tools ignore: PRIORITY_UPDATE (RFC 9218) with `stream_id` or
-  `push_id` and `priority_field_value` (the names of the later drafts), WebTransport's `WT_STREAM` signal and stream type
-  with `session_id`. GREASE frames are `reserved`, with their number. No `http:push_resolved`: there is no server push.
+- **Names as the draft's CDDL gives them.** `stream_type_set` has `stream_type` and, for an unknown type,
+  `stream_type_value` (h3-events-04 section 4.3); an unknown frame has `frame_type_value` (section 5.2.9); a reserved
+  (GREASE) frame has its `length` only (section 5.2.8); `qpack:state_updated` counts `current_insert_count` (section
+  6.1); settings beyond the three the draft names go into `parameters_set` as `name => value` (section 4.1, "* text =>
+  uint64").
+- **What the draft has no type for.** PRIORITY_UPDATE (RFC 9218) is a frame type of its own, `priority_update` with
+  `stream_id` or `push_id` and `priority_field_value` (the members of the later drafts), through the `$HTTPFrame`
+  extension point, which section 5.2 provides "to support additional HTTP/3 frame types". WebTransport's `WT_STREAM`
+  signal and stream type are the draft's `unknown` frame and stream type with their number and a `session_id` member
+  of our own (main-schema-05 section 3.4: "tools SHOULD allow for the presence of unknown event fields"). No
+  `http:push_resolved`: there is no server push.
   No `qpack:headers_encoded`/`headers_decoded`/`instruction_*`/`dynamic_table_updated`: the field sections are in
   `http:frame_*` already, and the QPACK codecs are sans-IO and do not expose their instructions one by one.
 - **One trace, written by the loop.** The HTTP/3 layer formats an event on its own thread and hands it to the
@@ -41,6 +52,17 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
   `QlogSink` is therefore still called on the loop only, records never interleave, and a slow or failing sink costs what
   it cost before (tracing stops for that connection). The queue holds 4096 events per connection; more are dropped.
   A connection without a sink has no recorder: the HTTP/3 layer checks one nullable field and formats nothing.
+- **The header names the stacks.** quic-events-04 and h3-events-04 section 2 require `protocol_type` to contain
+  "QUIC" and, once an HTTP/3 or QPACK event is in the trace, "HTTP3"; main-schema-05 section 3.4.7 does not allow a value
+  that differs between events in `common_fields`. The header is written at a connection's first event, before HTTP/3
+  runs, so it is decided from the connection's ALPN list: when it offers `h3` (RFC 9114 section 3.1) the header says
+  `["QUIC","HTTP3"]`, otherwise `["QUIC"]`, and such a trace takes no HTTP/3 event. `reference_time` is 0 with
+  `time_format` "relative": times count from the trace's start, which main-schema-05 section 3.4.1 allows ("time since
+  connection start in ms"), and no wall clock enters the trace.
+- **Times never go back.** main-schema-05 section 3.4.1: events "SHOULD be logged in strictly ascending timestamp
+  order". An HTTP/3 event is stamped on its own thread and a transport event with its loop turn's clock reading, which
+  may be older; the writer gives no record an earlier time than the one before it (events of one loop turn share a
+  time, as they did before).
 - **Field values redacted by default (CWE-532).** Every header and trailer field is written with its name; its value is
   `[redacted]` unless the sink sets `QlogSink.logHeaderValues`, except `:method`, `:scheme`, `:status` and
   `:protocol`, tokens the protocol defines. quic-go logs values and offers a redaction wrapper
@@ -49,8 +71,12 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
 
 ## Consequences
 
-- A trace holds both layers in time order of their writing; an HTTP/3 event's time is read on its own thread, so an
-  event may carry a time a few microseconds after the transport event written after it.
+- A trace holds both layers in the order of their writing. A transport event written after an HTTP/3 event stamped
+  later carries that later time: it can move by at most the time a loop turn takes.
+- The transport events changed with the header: their enumerations are now quic-events-04's (connection states of
+  section 4.6, a `packet_dropped` trigger of section 5.7, `connection_closed` triggers of section 4.3; `packet_lost`
+  without a trigger, as section 7.5 has none for "time or packet threshold"). Their frames are still logged by type
+  alone, valid through the `$QuicFrame` extension point but without the members section 8.11 defines for each type.
 - Traces of 0.3.0 are read by the qvis builds that read 0.3, and by tools that read the h3-events-04 names.
 - The traces were validated offline against the drafts' definitions as the tests encode them (`runtime.QlogSchema`);
   loading them in qvis is a manual step.

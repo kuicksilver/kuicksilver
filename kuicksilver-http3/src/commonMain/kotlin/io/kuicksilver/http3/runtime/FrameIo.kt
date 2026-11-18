@@ -251,7 +251,7 @@ internal class RequestFrames(
             val len = input.readVarInt()
             when (action) {
                 FrameAction.Skip -> {
-                    parsed(type, len) { it.other(type) }
+                    parsed(type, len) { it.other(type, len) }
                     if (FrameType.isGrease(
                             type,
                         )
