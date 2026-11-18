@@ -102,7 +102,8 @@ internal actual object PlatformVerifier {
         val owned = ArrayList<CFTypeRef?>() // released once the evaluation answered (or could not start)
         val trust =
             try {
-                createTrust(chain, host, role, owned, offline) ?: return PlatformVerdict(VerifyResult.Rejected(VerifyReason.BadEncoding), null)
+                createTrust(chain, host, role, owned, offline)
+                    ?: return PlatformVerdict(VerifyResult.Rejected(VerifyReason.BadEncoding), null)
             } catch (e: IllegalStateException) {
                 owned.forEach { it?.let(::CFRelease) }
                 return PlatformVerdict(

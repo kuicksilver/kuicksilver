@@ -157,8 +157,16 @@ class AppleTrustAsyncTest {
     private fun networkFetchAllowed(trust: platform.Security.SecTrustRef): Boolean =
         kotlinx.cinterop.memScoped {
             val f =
-                platform.posix.dlsym(platform.posix.RTLD_DEFAULT, "SecTrustGetNetworkFetchAllowed")
-                    ?.reinterpret<kotlinx.cinterop.CFunction<(platform.Security.SecTrustRef?, kotlinx.cinterop.CPointer<kotlinx.cinterop.UByteVar>?) -> Int>>()
+                platform.posix
+                    .dlsym(platform.posix.RTLD_DEFAULT, "SecTrustGetNetworkFetchAllowed")
+                    ?.reinterpret<
+                        kotlinx.cinterop.CFunction<
+                            (
+                                platform.Security.SecTrustRef?,
+                                kotlinx.cinterop.CPointer<kotlinx.cinterop.UByteVar>?,
+                            ) -> Int,
+                        >,
+                    >()
                     ?: error("SecTrustGetNetworkFetchAllowed not found")
             val b = alloc<kotlinx.cinterop.UByteVar>()
             check(f(trust, b.ptr) == 0)

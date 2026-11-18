@@ -864,7 +864,10 @@ class GuideSamplesTest {
             // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
             keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))
 
-            assertTrue(server.engine.configuration.connectors.single() is KuicksilverTlsConnector)
+            assertTrue(
+                server.engine.configuration.connectors
+                    .single() is KuicksilverTlsConnector,
+            )
         } finally {
             dir.deleteRecursively()
         }

@@ -4,9 +4,9 @@
 
 package io.kuicksilver.tls
 
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
-import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.io.encoding.Base64

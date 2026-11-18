@@ -479,7 +479,10 @@ internal fun serviceEndpoints(
     supported: Set<String>,
     random: Random = Random,
     ech: Boolean = false,
-    echUsable: (ByteArray) -> Boolean = { io.kuicksilver.ktor.client.parsedEch(it) != null },
+    echUsable: (ByteArray) -> Boolean = {
+        io.kuicksilver.ktor.client
+            .parsedEch(it) != null
+    },
 ): List<HttpsEndpoint> {
     if (records.any { it.isAlias }) return emptyList()
     return records

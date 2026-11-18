@@ -343,7 +343,14 @@ public class TlsConnection private constructor(
                     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
                     val name = verifyNameOf(s(), reference!!, echOffered)
                     // ECH offered and not rejected: accepted (decided by the ServerHello), the name is hidden
-                    val r = verification.verify(presented, name, echPublicName = name != reference, hiddenName = echOffered && name == reference)
+                    val r =
+                        verification.verify(
+                            presented,
+                            name,
+                            echPublicName = name != reference,
+                            hiddenName =
+                                echOffered && name == reference,
+                        )
                     lock.withLock { resume(r) }
                 }
 
