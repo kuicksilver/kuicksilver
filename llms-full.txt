@@ -3032,25 +3032,29 @@ get("/") {
 ```
 
 `tlsConnector(identity) { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
-on a TCP-mode backend). The rules ([ADR-0020](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0020-proxy-protocol.md), the details in
+on a TCP-mode backend). The rules ([ADR-0022](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0022-proxy-protocol.md), the details in
 [spec-haproxy-proxy-protocol.md](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/rfc/spec-haproxy-proxy-protocol.md)):
 
 - Only the `trustedSources` may send the header, and every connection to the connector must come from one of them: any
   other peer is closed at accept, before a byte is read (an event `connectionRefused` with the reason
   `PROXY protocol untrusted source`, and a warning at most every 10 s). A client that reaches the port around the proxy
   can therefore not choose its own address. List the proxies' own addresses, as the server sees them; an IPv4 proxy
-  matches an IPv4 entry also on a dual-stack listener.
-- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s); otherwise it is
-  reset (reason `PROXY protocol header`). Health checks of the proxy must send one too (HAProxy sends LOCAL with
-  `send-proxy-v2`); a LOCAL or `UNKNOWN` header leaves the origin as the connection's.
-- `call.request.local` stays the TCP connection, for logs that need the real hop; `XForwardedHeaders` or
-  `ForwardedHeaders`, when installed, start from the PROXY client. `call.request.proxyHeader` gives the whole header:
+  matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
+  `0.0.0.0/0` and `::/0`: every peer must then send a header.
+- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
+  spec's bound for a TCP retransmit); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
+  an `UNKNOWN` one leaves the origin as the connection's.
+- `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and
+  `ForwardedHeaders` overwrite the origin whenever their fields are present, and behind an L4 proxy those fields come
+  from the client: install them only when an HTTP proxy in front of the server sets or strips them. `call.request.proxyHeader` gives the whole header:
   version, command, family, both addresses and ports, and the version 2 TLVs (`alpn`, `authority`, `uniqueId`, `ssl`,
   `netns`, any other by type); a CRC32c TLV is verified before the connection is served.
-- `http2RepeatOffenderPenalty` counts the client the header names; `maxTcpConnectionsPerIp` counts TCP peers, so on such
-  a connector it limits each proxy.
-- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Behind an L4 proxy that
-  forwards TCP only, set `altSvc = false`.
+- `http2RepeatOffenderPenalty` counts the client the header names and never the proxy (a flood behind a header that names
+  no client strikes nobody); `maxTcpConnectionsPerIp` counts TCP peers, so on such a connector it limits each proxy's
+  connections: leave it off there, or size it for a proxy.
+- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Set `altSvc = false`
+  unless the proxy forwards UDP on the same port number.
 - `EngineMain`: `kuicksilver.proxyProtocol.trustedSources` (a list or a comma-separated string),
   `kuicksilver.proxyProtocol.headerTimeout` and `kuicksilver.proxyProtocol.maxHeaderSize` turn it on for the deployment
   port; next to Ktor's `-sslPort` connector the start fails.
@@ -5748,7 +5752,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `connectionIdleTimeoutSeconds` | `Int` | 45 | 0.2.0 | an HTTP/1.1 connection without requests for this long is closed (both directions), a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least), and a closing connection that sends nothing for as long is aborted; a request body that sends no byte for this long gets 408 and the connection closes |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | 0.2.1 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)); it also bounds `maxHeaderBlockTime` of `http2Settings` and `http3Settings` |
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
-| `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
+| `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)); on a connector with `proxyProtocol` the address is the proxy's, so it limits each proxy |
 | `http3` | `Boolean` | `true` | 0.2.0 | serve HTTP/3 on every TLS connector |
 | `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
 | `webSocketsOverHttp2` (*experimental*) | `Boolean` | `true` | 0.3.0 | with `http2`: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#websockets-over-http2)) |
@@ -5796,7 +5800,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
-| `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; HTTP/3 takes none ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
+| `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy; HTTP/3 takes none ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -5820,7 +5824,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | `host` | `String` | `"0.0.0.0"` |  | 0.3.0 | bind address |
 | `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
-| `proxyProtocol` | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes `call.request.origin` ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
+| `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
 
 #### PROXY protocol
 
@@ -5829,7 +5833,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
 | `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
-| `headerTimeout` | `Duration` | 5 s | positive; at most what is left of `requestHeaderTimeoutSeconds` | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
+| `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, never below 3 s | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
 | `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
 
 ### ktor-network

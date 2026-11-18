@@ -702,25 +702,29 @@ get("/") {
 ```
 
 `tlsConnector(identity) { proxyProtocol { … } }` takes the header before the TLS handshake (HAProxy `send-proxy-v2`
-on a TCP-mode backend). The rules ([ADR-0020](../adr/0020-proxy-protocol.md), the details in
+on a TCP-mode backend). The rules ([ADR-0022](../adr/0022-proxy-protocol.md), the details in
 [spec-haproxy-proxy-protocol.md](../spec/rfc/spec-haproxy-proxy-protocol.md)):
 
 - Only the `trustedSources` may send the header, and every connection to the connector must come from one of them: any
   other peer is closed at accept, before a byte is read (an event `connectionRefused` with the reason
   `PROXY protocol untrusted source`, and a warning at most every 10 s). A client that reaches the port around the proxy
   can therefore not choose its own address. List the proxies' own addresses, as the server sees them; an IPv4 proxy
-  matches an IPv4 entry also on a dual-stack listener.
-- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s); otherwise it is
-  reset (reason `PROXY protocol header`). Health checks of the proxy must send one too (HAProxy sends LOCAL with
-  `send-proxy-v2`); a LOCAL or `UNKNOWN` header leaves the origin as the connection's.
-- `call.request.local` stays the TCP connection, for logs that need the real hop; `XForwardedHeaders` or
-  `ForwardedHeaders`, when installed, start from the PROXY client. `call.request.proxyHeader` gives the whole header:
+  matches an IPv4 entry also on a dual-stack listener. Where a firewall alone decides who reaches the port, list
+  `0.0.0.0/0` and `::/0`: every peer must then send a header.
+- Every connection must start with a valid version 1 or 2 header, complete within `headerTimeout` (5 s, at least 3 s, the
+  spec's bound for a TCP retransmit); otherwise it is reset (reason `PROXY protocol header`). Health checks of the proxy
+  must send one too (HAProxy sends LOCAL with `send-proxy-v2`); a LOCAL header, whatever family and length it carries, or
+  an `UNKNOWN` one leaves the origin as the connection's.
+- `call.request.local` stays the TCP connection, for logs that need the real hop. `XForwardedHeaders` and
+  `ForwardedHeaders` overwrite the origin whenever their fields are present, and behind an L4 proxy those fields come
+  from the client: install them only when an HTTP proxy in front of the server sets or strips them. `call.request.proxyHeader` gives the whole header:
   version, command, family, both addresses and ports, and the version 2 TLVs (`alpn`, `authority`, `uniqueId`, `ssl`,
   `netns`, any other by type); a CRC32c TLV is verified before the connection is served.
-- `http2RepeatOffenderPenalty` counts the client the header names; `maxTcpConnectionsPerIp` counts TCP peers, so on such
-  a connector it limits each proxy.
-- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Behind an L4 proxy that
-  forwards TCP only, set `altSvc = false`.
+- `http2RepeatOffenderPenalty` counts the client the header names and never the proxy (a flood behind a header that names
+  no client strikes nobody); `maxTcpConnectionsPerIp` counts TCP peers, so on such a connector it limits each proxy's
+  connections: leave it off there, or size it for a proxy.
+- HTTP/3 on a TLS connector's port takes no header (UDP): its requests report their UDP peer. Set `altSvc = false`
+  unless the proxy forwards UDP on the same port number.
 - `EngineMain`: `kuicksilver.proxyProtocol.trustedSources` (a list or a comma-separated string),
   `kuicksilver.proxyProtocol.headerTimeout` and `kuicksilver.proxyProtocol.maxHeaderSize` turn it on for the deployment
   port; next to Ktor's `-sslPort` connector the start fails.
