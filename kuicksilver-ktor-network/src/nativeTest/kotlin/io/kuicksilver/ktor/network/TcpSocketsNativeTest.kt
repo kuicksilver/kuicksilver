@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.selector.SelectInterest
@@ -15,6 +17,7 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeFully
+import kotlinx.cinterop.toKString
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -38,6 +41,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -442,14 +446,18 @@ class TcpSocketsNativeTest {
             try {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
                 val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
-                if (faked?.isSuccess == true) {
-                    faked.getOrThrow().close()
-                    println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")
-                    return@runBlocking
-                }
-                // a TUN that refuses the connect at once ("Failed to connect") answers it too: nothing stays undecided there
+                // a TUN that refuses the connect at once ("Failed to connect") answers it too: nothing stays undecided there.
+                // Where the network is known to leave it undecided (the Linux containers, KSL_REQUIRE_UNDECIDED_CONNECT=1),
+                // such an answer fails the test instead of skipping it
                 if (faked != null) {
-                    println("skipped: this network refuses TCP connects to TEST-NET-1 at once: ${faked.exceptionOrNull()}")
+                    faked.getOrNull()?.close()
+                    val why =
+                        faked.exceptionOrNull()?.let { "refuses TCP connects to TEST-NET-1 at once: $it" }
+                            ?: "answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)"
+                    if (platform.posix.getenv("KSL_REQUIRE_UNDECIDED_CONNECT")?.toKString() == "1") {
+                        fail("this network $why, and KSL_REQUIRE_UNDECIDED_CONNECT=1 requires the undecided path")
+                    }
+                    println("SKIPPED negative_anUndecidedConnectEndsAtItsLimit: this network $why")
                     return@runBlocking
                 }
                 val failure =
