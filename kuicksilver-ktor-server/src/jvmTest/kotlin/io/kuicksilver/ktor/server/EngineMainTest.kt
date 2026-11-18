@@ -754,6 +754,35 @@ class EngineMainTest {
             server.stop(0, 0)
         }
 
+    /** Ktor's `-sslPort` connector has no key-exchange group setting: the key next to it fails the start instead of not applying. */
+    @Test fun negative_keyExchangeGroupsKeyWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "groups-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:kuicksilver.tls.keyExchangeGroups=secp384r1",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue(
+                "kuicksilver.tls.keyExchangeGroups applies to the port of kuicksilver.tls.certificateChain" in e.message.orEmpty(),
+                e.message,
+            )
+            server.stop(0, 0)
+        }
+
     @Test fun clientAuthKeyParsed() {
         assertEquals(ClientAuth.None, EngineMain.parseClientAuth(null))
         assertEquals(ClientAuth.None, EngineMain.parseClientAuth("none"))

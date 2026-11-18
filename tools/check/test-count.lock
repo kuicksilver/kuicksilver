@@ -3192,6 +3192,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.ne
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_clientCaKeysWithSslPortRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_combinedPemRefusedAtStartupWithReloadInterval
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_keyExchangeGroupsKeyRefusesAnInvalidListOrNoIdentity
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_keyExchangeGroupsKeyWithSslPortRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_ocspStaplingAndTrustedGatewayKeysWithSslPortRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_reloadIntervalWithoutPemFilesRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_tlsVersionsKeyWithSslPortRefused
