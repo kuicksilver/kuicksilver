@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -155,6 +156,9 @@ class LinuxIcmpCheckTest {
                         val dst = ByteArray(KslUdpSocket.ADDR_LEN)
                         var took = false
                         while (!took) {
+                            // the receive blocks this thread, which also runs the proxy: let it forward between them
+                            // (and let the timeout end the loop)
+                            yield()
                             t.pump(50)
                             took = t.takePacketTooBig(quote, meta, dst)
                         }
