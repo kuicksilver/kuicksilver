@@ -4,7 +4,6 @@
 
 package io.kuicksilver.http3.webtransport
 
-import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
@@ -26,11 +25,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -44,6 +41,14 @@ import kotlin.time.Duration.Companion.seconds
  */
 class WtCreditOrderTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private companion object {
+        /** The session's data limit of the busy-stream tests. */
+        const val WINDOW = 8000L
+
+        /** What the busy first stream queues at once: many times [WINDOW]. */
+        const val BUSY = 256 * 1024
+    }
 
     /** The test of 8d9d11739 as it was: twelve streams of 1000 bytes under a limit of 4000, read one after another. */
     @Test fun negative_sequentialReaderUnderATightLimitNeverStalls() = sequential(streams = 12, size = 1000, limit = 4000)
@@ -204,57 +209,79 @@ class WtCreditOrderTest {
 
     /**
      * RFC 9218 section 10 for an incremental session: a stream that keeps writing shares the credit with the others. The
-     * review's case: the first stream writes without end, the second 100 bytes, the server reads both as they come, the
-     * limit is 8000; the second stream's bytes arrive. In a non-incremental session the first stream would hold them as
-     * long as it writes (the cost of the order, [negative_aBusyFirstStreamHoldsTheNextInANonIncrementalSession]).
+     * review's case: the first stream has far more queued than the limit of 8000, the second 100 bytes; once the server
+     * reads one step of the first, the second gets credit and its bytes arrive while the first still has most of its bytes
+     * queued. In a non-incremental session the first stream holds them as long as it has bytes to send (the cost of the
+     * order, [negative_aBusyFirstStreamHoldsTheNextInANonIncrementalSession]).
      */
     @Test fun negative_aBusyStreamDoesNotHoldTheOthersInAnIncrementalSession() = busyFirst(incremental = true)
 
-    /** The same in a non-incremental session: the second stream waits while the first writes, and moves once it stops. */
+    /**
+     * The same in a non-incremental session: the second stream gets no credit at all while the first has bytes queued
+     * (read from a record of every grant, not from what the streams hold at one instant), and moves once the first ends.
+     */
     @Test fun negative_aBusyFirstStreamHoldsTheNextInANonIncrementalSession() = busyFirst(incremental = false)
 
+    /**
+     * The first stream's [BUSY] bytes are queued with one flush (ktor's channel flushes by itself only from 1 MiB on), so
+     * its pump finds them all at once, never waits for the application and never goes idle before they are sent: a slow
+     * writer cannot let the second stream in early. The server reads them in explicit steps, so the credit moves only when
+     * the test lets it, and every state waited for holds until the test's next step. What the second stream got is read
+     * from a record of every grant, never from what the streams hold at one instant.
+     */
     private fun busyFirst(incremental: Boolean) =
         h3Test {
-            H3Pair.open(clientSettings = wtLimits(data = 8000), serverSettings = wtLimits(data = 8000)).useScoped { p ->
+            H3Pair.open(clientSettings = wtLimits(data = WINDOW), serverSettings = wtLimits(data = WINDOW)).useScoped { p ->
                 val (client, server) = pair(p, incremental)
                 val a = client.openUni()
                 val b = client.openUni()
-                val writing =
-                    launch {
-                        val chunk = ByteArray(4096)
-                        while (true) {
-                            a.output.writeFully(chunk)
-                            a.output.flush()
-                        }
-                    }
+                launch {
+                    a.output.writeFully(ByteArray(BUSY) { 1 })
+                    a.output.flushAndClose()
+                }
                 val sa = server.acceptUni()
+                // a took the whole limit and nothing of it is read: it stays so until the server reads
+                p.client.awaitFlow(client) { it.sendDataForTest.let { (max, sent) -> sent == max } }
                 launch {
                     b.output.writeFully(ByteArray(100) { 5 })
                     b.output.flushAndClose()
                 }
-                val sb = server.acceptUni()
-                val reading =
-                    launch {
-                        val buf = ByteArray(4096)
-                        while (sa.input.readAvailable(buf, 0, buf.size) >= 0) yield()
-                    }
+                // b asks for credit; none comes before the server reads
+                p.client.awaitFlow(client) { f -> f.sendersForTest.size == 2 && !f.sendersForTest[1].substringAfter(':').startsWith("0/") }
+                val (aOrder, bOrder) =
+                    withContext(p.client.session.dispatcher) {
+                        assertNotNull(client.flow).sendersForTest.map { it.substringBefore(':').toLong() }
+                    }.let { it[0] to it[1] }
+                val step = ByteArray(4096)
                 if (incremental) {
-                    val got = withTimeoutOrNull(5.seconds) { sb.input.readAllBytes() }
-                    writing.cancel()
-                    reading.cancel()
-                    assertEquals(100, assertNotNull(got, "the second stream starved: ${client.flow?.sendersForTest}").size)
-                } else {
-                    // held while the first writes: a strict order, by request
-                    p.client.awaitFlow(client) { f ->
-                        f.sendersForTest.size == 2 &&
-                            f.sendersForTest[1]
-                                .substringAfter(':')
-                                .startsWith("0/")
-                                .not()
+                    // one step read: the limit moves once, and the session shares the new credit
+                    sa.input.readFully(step)
+                    assertEquals(100, withTimeout(10.seconds) { server.acceptUni().input.readAllBytes() }.size, "b's bytes")
+                    withContext(p.client.session.dispatcher) {
+                        val f = assertNotNull(client.flow)
+                        // the server read 4096 bytes of a, so at most 4096 + the window of a were sent: most of it is queued
+                        assertTrue(f.sendDataForTest.second < BUSY / 2, "a still has bytes queued: ${f.sendDataForTest}")
+                        assertTrue((f.grantedByOrderForTest[bOrder] ?: 0L) > 0, "b got credit: ${f.grantedByOrderForTest}")
                     }
-                    writing.cancel()
-                    a.output.flushAndClose()
-                    assertEquals(100, withTimeout(10.seconds) { sb.input.readAllBytes() }.size)
+                    assertEquals(BUSY - step.size, withTimeout(10.seconds) { sa.input.readAllBytes() }.size, "the rest of a")
+                } else {
+                    // half of a read in steps: the limit moved many times, every raise went to a
+                    var read = 0
+                    while (read < BUSY / 2) {
+                        sa.input.readFully(step)
+                        read += step.size
+                    }
+                    p.client.awaitFlow(client) { it.sendDataForTest.first >= BUSY / 2 }
+                    withContext(p.client.session.dispatcher) {
+                        val f = assertNotNull(client.flow)
+                        // the server stopped reading at BUSY / 2: at most that plus the window of a was sent
+                        assertTrue(f.sendDataForTest.second < BUSY, "a still has bytes queued: ${f.sendDataForTest}")
+                        assertTrue((f.grantedByOrderForTest[aOrder] ?: 0L) >= BUSY / 2, "a got the raises: ${f.grantedByOrderForTest}")
+                        assertEquals(0L, f.grantedByOrderForTest[bOrder] ?: 0L, "b got credit while a had bytes queued: ${f.sendersForTest}")
+                    }
+                    // a ends, then b moves
+                    assertEquals(BUSY - read, withTimeout(10.seconds) { sa.input.readAllBytes() }.size, "the rest of a")
+                    assertEquals(100, withTimeout(10.seconds) { server.acceptUni().input.readAllBytes() }.size, "b's bytes")
                 }
             }
         }
