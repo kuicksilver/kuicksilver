@@ -129,8 +129,9 @@ extern "C" {
                                       KSL_OCSP_UNKNOWN), 0xff when none was checked, then 8 bytes big-endian: the epoch second until which
                                       that response is fresh (its nextUpdate plus 5 minutes of clock skew), 0 with none. Additive in ABI 7 */
 #define KSL_GET_GROUP 13 /* 2 bytes big-endian: the IANA code point of the key-exchange group the handshake used (RFC 9846 section
-                                      4.3.7), once the ServerHello is sent or read; 0 bytes before, and for a resumption without key
-                                      exchange (psk_ke). Additive in ABI 7 */
+                                      4.3.7), once the ServerHello is sent or read; 0 bytes before, and for a handshake without key
+                                      exchange: a TLS 1.2 abbreviated (resumed) handshake, a TLS 1.3 psk_ke resumption (which ksl
+                                      never allows). Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -285,7 +286,8 @@ int ksl_ctx_set_option(ksl_ctx *, int option, int value);
    its first ClientHello for the groups marked '*' (1 to 4 of them; none marked: the first group). A server takes no '*': among the
    groups the client sent a key share for, it takes the first of its list; with none of them, it answers with a HelloRetryRequest
    for the first of its list the client supports (RFC 9846 section 4.2.1); with no group in common, handshake_failure. TLS 1.2
-   takes the elliptic curves of the list in the same order. KSL_E_BAD_ARG for NULL, an empty list or name, an unknown name, a
+   takes the elliptic curves of the list in the same order, and there a client's list also names the curves of ECDSA
+   certificates it accepts (RFC 8422 section 5.1): without P-256 a P-256 certificate is refused with handshake_failure. KSL_E_BAD_ARG for NULL, an empty list or name, an unknown name, a
    duplicate, any other syntax of OpenSSL's group lists, a '*' on a server or more than 4 of them, and KSL_E_NOT_SUPPORTED for a
    group this OpenSSL does not provide; a refused call changes nothing. The default: X25519MLKEM768, X25519, secp256r1, X448,
    secp384r1, secp521r1, a client sending shares for the first two. */

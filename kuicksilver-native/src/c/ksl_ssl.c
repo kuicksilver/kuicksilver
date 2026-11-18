@@ -358,10 +358,13 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
         return copy_out(out, cap, len, b, sizeof b);
     }
     case KSL_GET_GROUP: {
-        /* the group of this handshake's key exchange (OpenSSL: the TLS 1.3 key share once taken, else the session's), none for a
-           psk_ke resumption or before the ServerHello */
+        /* the group of this handshake's key exchange (OpenSSL: the TLS 1.3 key share once taken, else the session's), none before the
+           ServerHello. A TLS 1.2 abbreviated handshake runs no key exchange, but OpenSSL reports the group of the full handshake the
+           session came from (kept in the session): none then. (TLS 1.3 psk_ke would do the same; ksl never allows it, OpenSSL's
+           default without SSL_OP_ALLOW_NO_DHE_KEX.) */
         int nid = SSL_get_negotiated_group(s->ssl);
-        int id = nid ? ksl_group_id_of_name(SSL_get0_group_name(s->ssl)) : 0;
+        int abbreviated = SSL_version(s->ssl) < TLS1_3_VERSION && SSL_session_reused(s->ssl);
+        int id = nid && !abbreviated ? ksl_group_id_of_name(SSL_get0_group_name(s->ssl)) : 0;
         uint8_t b[2] = {(uint8_t)(id >> 8), (uint8_t)id};
         return copy_out(out, cap, len, b, id ? 2 : 0);
     }

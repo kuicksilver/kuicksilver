@@ -504,6 +504,33 @@ static void test_tls12_groups(void) {
     ksl_ssl_free(s);
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
+    /* RFC 8422 section 5.1: in TLS 1.2 supported_groups also names the curves a client accepts in ECDSA certificates, so a list
+       without P-256 refuses the server's P-256 certificate (handshake_failure); TLS 1.3 negotiates signatures apart (RFC 9846
+       section 4.3.7: "Signature algorithms are now negotiated independently") */
+    cc = groups_client("*X25519:secp384r1");
+    sc = groups_server("secp384r1:X25519");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    c = new_client(cc, 1);
+    s = new_server(sc, 1);
+    int sent = 0;
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_ERROR, "negative: TLS 1.2 without P-256 refuses a P-256 ECDSA certificate");
+    last_code(s, &sent);
+    CHECK(sent == SSL_AD_HANDSHAKE_FAILURE, "with handshake_failure");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    cc = groups_client("*X25519:secp384r1");
+    sc = groups_server("secp384r1:X25519");
+    c = new_client(cc, 1);
+    s = new_server(sc, 1);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "control: the same lists in TLS 1.3 accept it");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
     END();
 }
 
@@ -541,6 +568,44 @@ static void test_negative_key_share_scan(void) {
     END();
 }
 
+/* A TLS 1.2 abbreviated handshake (a resumption) runs no key exchange: KSL_GET_GROUP reports none on both sides, not the group of
+   the full handshake the session came from (OpenSSL keeps that one in the session, SSL_get_negotiated_group) */
+static void test_tls12_resumption_reports_no_group(void) {
+    SECTION("groups_tls12_resumption_reports_no_group");
+    uint8_t keys[80];
+    for (int i = 0; i < 80; i++)
+        keys[i] = (uint8_t)(i * 3 + 7);
+    /* secp256r1 too: in TLS 1.2 the list also names the curves of ECDSA certificates the client accepts (the server's is P-256) */
+    ksl_ctx *cc = groups_client("*X25519:secp384r1:secp256r1"), *sc = groups_server("secp384r1:X25519");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1);
+    ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_ssl *c = new_client(cc, 1), *s = new_server(sc, 1);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && group_of(c) == G_P384 && group_of(s) == G_P384,
+          "TLS 1.2 full handshake: ECDHE over secp384r1");
+    ksl_session *sess = ksl_ssl_get1_session(c);
+    CHECK(sess != NULL, "a TLS 1.2 session");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    c = new_client(cc, 1);
+    s = new_server(sc, 1);
+    ksl_ssl_set_session(c, sess);
+    uint8_t re = 0;
+    size_t n;
+    int rc = tcp_pump(c, s, NULL, NULL);
+    ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &re, 1, &n);
+    CHECK(rc == KSL_OK && re == 1, "the session resumes (abbreviated handshake)");
+    CHECK(group_of(c) == 0 && group_of(s) == 0, "no key exchange ran: no group on either side");
+    ksl_session_free(sess);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    END();
+}
+
 void run_groups(void) {
     test_negative_key_share_scan();
     test_negative_group_list_checks();
@@ -552,4 +617,5 @@ void run_groups(void) {
     test_sni_override_groups();
     test_resumption_with_other_groups();
     test_tls12_groups();
+    test_tls12_resumption_reports_no_group();
 }
