@@ -709,6 +709,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tests that had been renamed, or named them after the wrong class; those names are corrected, four ✅ sections
   that named no test now name theirs, and the RFC 9460 section 9.3 text says that a cached Alt-Svc alternative does not
   skip the HTTPS records (it shares the origin's lookup), as the client has done since 0.3.0.
+- Build: `tools/fuzz/formats/flags.txt` names every flag bit, setup bit and outcome of the traced connection fuzz
+  programs (`ConnProgram`, `ZeroRttProgram`) by its constant, value and trace name. `tools/check/fuzz-formats.py` checks
+  it against the programs' sources and KDoc (no gap, no duplicate, no stale or unlisted name, the trace name the
+  constant's in lowerCamelCase; a renamed or moved flag needs a reason in `changes.txt`), and `FuzzTraceTest` against the
+  compiled programs, each with negative controls.
 - Build: `tools/check/commit-msg.sh` also checks the commit hashes a message cites: each must name a commit in the
   history of the branch (`--range`, step 3 of the local gate) or of `HEAD` (the hook). After a rebase or a rewrite of the
   dates, messages kept citing the old hashes, which name nothing. A 7 to 40 digit hex word counts when it names a commit

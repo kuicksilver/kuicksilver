@@ -215,6 +215,11 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
             .withPropertyName("fuzzFormats")
         inputs.files(campaign, rootProject.file("tools/fuzz/no-corpus.txt")).withPathSensitivity(PathSensitivity.RELATIVE)
             .withPropertyName("fuzzTargets")
+        // the flag manifest of the traced programs (FuzzTraceTest), for a module whose targets it names
+        val flags = rootProject.file("tools/fuzz/formats/flags.txt")
+        if (flags.isFile && flags.readLines().any { l -> l.startsWith("program ") && l.trim().split(Regex("\\s+")).getOrNull(3).orEmpty().split(",").any { it in targets } }) {
+            inputs.files(flags).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("fuzzFlags")
+        }
         inputs.property("fuzzFormatsMode", providers.environmentVariable("KUICKSILVER_FUZZ_FORMATS").orElse(""))
     }
 }

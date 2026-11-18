@@ -7,6 +7,7 @@ import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.core.sizesForTest
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.QuicCrypto
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -23,7 +24,9 @@ import kotlin.test.assertTrue
  * none (so a target whose trace calls are gone is found). And the trace states everything the decoder makes of a byte:
  * over every value of the flags byte, of an operation byte (with the same argument bytes after it) and of the 0-RTT
  * outcome byte, two inputs whose traces are equal end in the same state, so a flag, an operation or an argument given a
- * meaning its trace does not state fails here.
+ * meaning its trace does not state fails here. Every flag bit, setup bit and outcome has the constant, value and trace name
+ * tools/fuzz/formats/flags.txt gives it ([flagTableFindings]): a renamed, moved or duplicated flag fails here, as it fails
+ * tools/check/fuzz-formats.py, which checks the same table against the sources.
  */
 class FuzzTraceTest {
     private fun conn(
@@ -277,8 +280,204 @@ class FuzzTraceTest {
         }
     }
 
+    /** The tables of the compiled programs, as [flagTableFindings] reads them. */
+    private fun compiled(): Map<String, ProgramTable> =
+        mapOf(
+            "ConnProgram" to
+                ProgramTable(
+                    constants(ConnProgram),
+                    mapOf(
+                        "flags" to ConnProgram.FLAG_NAMES.entries.map { it.key to it.value },
+                        "setup" to ConnProgram.SETUP_NAMES.entries.map { it.key to it.value },
+                    ),
+                ),
+            "ZeroRttProgram" to
+                ProgramTable(
+                    constants(ZeroRttProgram),
+                    mapOf(
+                        "flags" to ZeroRttProgram.FLAG_NAMES.entries.map { it.key to it.value },
+                        "outcome" to ZeroRttProgram.OUTCOME_NAMES.mapIndexed { i, n -> i to n },
+                    ),
+                ),
+        )
+
+    private val manifest: List<FlagRow> by lazy {
+        val start = File(System.getProperty("user.dir")).absoluteFile
+        val root =
+            generateSequence(start) { it.parentFile }.firstOrNull { File(it, "tools/fuzz/campaign.sh").isFile }
+                ?: throw AssertionError("tools/fuzz/campaign.sh not found above $start")
+        parseFlagRows(File(root, "tools/fuzz/formats/flags.txt").readLines())
+    }
+
+    @Test fun everyFlagHasTheConstantBitAndTraceNameOfFlagsTxt() {
+        val programs = compiled()
+        assertEquals(programs.keys, manifest.map { it.program }.toSet(), "flags.txt lists other programs than the traced ones")
+        val findings = programs.flatMap { (name, table) -> flagTableFindings(manifest, name, table) }
+        assertEquals(emptyList(), findings, "the flags of the programs disagree with tools/fuzz/formats/flags.txt")
+    }
+
+    /** One finding of [flagTableFindings] on [table] and [rows] changed from what they are, containing [expected]. */
+    private fun assertFinds(
+        expected: String,
+        rows: List<FlagRow> = manifest,
+        program: String = "ConnProgram",
+        table: ProgramTable = compiled().getValue(program),
+    ) {
+        val findings = flagTableFindings(rows, program, table)
+        assertTrue(findings.any { expected in it }, "expected a finding with `$expected`, got $findings")
+    }
+
+    private fun ProgramTable.withNames(
+        field: String,
+        change: (List<Pair<Int, String>>) -> List<Pair<Int, String>>,
+    ) = ProgramTable(constants, names + (field to change(names.getValue(field))))
+
+    @Test fun negative_aTraceNameRenamedInTheProgramFails() =
+        assertFinds(
+            "ConnProgram flags 4: the program traces it as `pmtudOff`, flags.txt as `noPmtud`",
+            table = compiled().getValue("ConnProgram").withNames("flags") { l -> l.map { if (it.first == 4) 4 to "pmtudOff" else it } },
+        )
+
+    @Test fun negative_aTraceNameRenamedInFlagsTxtFails() =
+        assertFinds(
+            "ConnProgram flags NO_PMTUD is traced as `pmtudOff` in flags.txt, not `noPmtud`",
+            rows = manifest.map { if (it.constant == "NO_PMTUD") it.copy(trace = "pmtudOff") else it },
+        )
+
+    @Test fun negative_aConstantRenamedFails() {
+        val t = compiled().getValue("ConnProgram")
+        assertFinds("ConnProgram has no constant NO_PMTUD", table = ProgramTable(t.constants - "NO_PMTUD" + ("PMTUD_OFF" to 4), t.names))
+    }
+
+    @Test fun negative_aFlagMovedToAnotherBitFails() {
+        val t = compiled().getValue("ConnProgram")
+        assertFinds("ConnProgram.NO_PMTUD is 8, flags.txt says 4", table = ProgramTable(t.constants + ("NO_PMTUD" to 8), t.names))
+    }
+
+    @Test fun negative_aDuplicatedBitFails() =
+        assertFinds(
+            "ConnProgram flags: value 4 is listed twice",
+            rows = manifest.map { if (it.constant == "DF" && it.program == "ConnProgram") it.copy(value = 4) else it },
+        )
+
+    @Test fun negative_aDuplicatedTraceNameFails() =
+        assertFinds(
+            "ConnProgram flags: the program gives trace name `df` twice",
+            table = compiled().getValue("ConnProgram").withNames("flags") { l -> l.map { if (it.first == 16) 16 to "df" else it } },
+        )
+
+    @Test fun negative_aGapFails() {
+        val rows = manifest.filterNot { it.program == "ZeroRttProgram" && it.constant == "SMALL" }
+        assertFinds("ZeroRttProgram flags: the values are [1, 2, 8, 16, 32, 64], not [1, 2, 4, 8, 16, 32]", rows, "ZeroRttProgram")
+    }
+
+    @Test fun negative_aFlagWithoutARowFails() =
+        assertFinds(
+            "ZeroRttProgram outcome 6 `lost` has no row in flags.txt",
+            rows = manifest.filterNot { it.program == "ZeroRttProgram" && it.constant == "LOST" },
+            program = "ZeroRttProgram",
+        )
+
+    @Test fun negative_aRowWithoutItsFlagFails() =
+        assertFinds(
+            "ConnProgram setup 256 `extra`: the program has no such name",
+            rows = manifest + FlagRow("ConnProgram", "setup", 256, "EXTRA", "extra"),
+        )
+
     @Test fun negative_aRunThatDecodesNothingHasNoFingerprint() {
         assertNull(FuzzTrace.record(false) { }.first)
         assertNull(FuzzTrace.record(false) { ConnectionFuzz(ByteArray(0), NullCryptoProvider).run() }.first)
     }
+}
+
+/** One row of tools/fuzz/formats/flags.txt: a flag bit, setup bit or outcome of [program], its [constant] and its [trace] name. */
+internal data class FlagRow(
+    val program: String,
+    val field: String,
+    val value: Int,
+    val constant: String,
+    val trace: String,
+)
+
+/** A compiled program's Int [constants] and, per field of flags.txt, the values and trace names its name tables give. */
+internal class ProgramTable(
+    val constants: Map<String, Int>,
+    val names: Map<String, List<Pair<Int, String>>>,
+)
+
+/** The rows of flags.txt in [lines] (comments and `program` lines left out); a malformed row throws. */
+internal fun parseFlagRows(lines: List<String>): List<FlagRow> =
+    lines.filter { it.isNotBlank() && !it.startsWith("#") && !it.startsWith("program ") }.map { line ->
+        val f = line.trim().split(Regex("\\s+"))
+        require(f.size == 5) { "flags.txt: a row needs <program> <field> <value> <CONSTANT> <trace name>: $line" }
+        FlagRow(f[0], f[1], f[2].toInt(), f[3], f[4])
+    }
+
+/** NO_PMTUD -> noPmtud: the trace name of a flag constant. */
+internal fun lowerCamel(constant: String): String =
+    constant.lowercase().split('_').let { p -> p.first() + p.drop(1).joinToString("") { it.replaceFirstChar(Char::uppercase) } }
+
+/**
+ * How [program]'s compiled [table] disagrees with its [rows] of flags.txt: a row whose constant is missing or has another value,
+ * whose trace name is not the constant's in lowerCamelCase or not what the program traces for that value; a value, constant or
+ * trace name listed twice; bits that are not 1, 2, 4, ... and outcomes not 0, 1, 2, ... without a gap; a name the program
+ * gives that no row lists, or gives twice.
+ */
+internal fun flagTableFindings(
+    rows: List<FlagRow>,
+    program: String,
+    table: ProgramTable,
+): List<String> {
+    val out = ArrayList<String>()
+    val mine = rows.filter { it.program == program }
+    if (mine.isEmpty()) out += "$program has no row in flags.txt"
+    for (r in mine) {
+        val v = table.constants[r.constant]
+        when {
+            v == null -> out += "$program has no constant ${r.constant} (flags.txt: ${r.field} ${r.value} ${r.trace})"
+            v != r.value -> out += "$program.${r.constant} is $v, flags.txt says ${r.value}"
+        }
+        if (r.trace != lowerCamel(r.constant)) {
+            out += "$program ${r.field} ${r.constant} is traced as `${r.trace}` in flags.txt, not `${lowerCamel(r.constant)}`"
+        }
+    }
+    for (field in (mine.map { it.field } + table.names.keys).toSortedSet()) {
+        val listed = mine.filter { it.field == field }
+        val given = table.names[field].orEmpty()
+        for ((what, key) in listOf<Pair<String, (FlagRow) -> Any>>(
+            "value" to { it.value },
+            "constant" to { it.constant },
+            "trace name" to { it.trace },
+        )) {
+            for ((k, n) in listed.groupingBy(key).eachCount()) if (n > 1) out += "$program $field: $what $k is listed twice in flags.txt"
+        }
+        for ((k, n) in given.groupingBy { it.second }.eachCount()) {
+            if (n >
+                1
+            ) {
+                out += "$program $field: the program gives trace name `$k` twice"
+            }
+        }
+        for ((k, n) in given.groupingBy { it.first }.eachCount()) if (n > 1) out += "$program $field: the program names value $k twice"
+        val values = listed.map { it.value }.toSortedSet().toList()
+        val want = if (field == "outcome") values.indices.toList() else values.indices.map { 1 shl it }
+        if (values != want) out += "$program $field: the values are $values, not $want (a gap, or a bit that is not one bit)"
+        val traced = given.groupBy({ it.first }, { it.second })
+        for (r in listed) {
+            val t = traced[r.value]
+            when {
+                t == null -> {
+                    out += "$program $field ${r.value} `${r.trace}`: the program has no such name"
+                }
+
+                r.trace !in t -> {
+                    out +=
+                        "$program $field ${r.value}: the program traces it as `${t.joinToString()}`, flags.txt as `${r.trace}`"
+                }
+            }
+        }
+        val rowValues = listed.map { it.value }.toSet()
+        for ((value, trace) in given) if (value !in rowValues) out += "$program $field $value `$trace` has no row in flags.txt"
+    }
+    return out
 }
