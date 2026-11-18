@@ -11,8 +11,8 @@
 # ServerSocket(0, 50, null), embeddedServer(Netty, port = 0) and embeddedServer(Netty, 0) (also a port variable) without host, bindTcp(selector, "0.0.0.0", 0), a wildcard
 # val written over several lines, a file whose only loopback mention is [::1]; an allowlist entry that matches nothing
 # (stale), one without a reason; in a common or native test set a ktor-network socket bound to an IPv6 address (udp and tcp,
-# a literal, an InetSocketAddress, a named localAddress or hostname, a val, a chain over several lines, a file without
-# loopback). Pass: the same binds on 127.0.0.1 or ::1,
+# a literal, an InetSocketAddress, a named localAddress or hostname (also after the port), a val, a chain over several
+# lines, a .configure { } before .udp(), a zone ID, a raw string, a file without loopback; a ktor "::" reported once). Pass: the same binds on 127.0.0.1 or ::1,
 # a host set inside a nested block, embeddedServer(Netty, 0, "127.0.0.1"), embeddedServer(Netty, environment), a null
 # that is not the address, a wildcard bind in a file that never talks to loopback, a main source set, binds named
 # in comments, KDoc and strings, the function definitions, another function named connector(...), a judged line, a
@@ -168,6 +168,11 @@ class BadKtor6 {
             .tcp()
             .bind("[::1]", 0)
     suspend fun f() = aSocket(selector).udp().bind(InetSocketAddress(hostname = "fe80::1", port = 0))     // BAD-k6-hostname
+    suspend fun g() = aSocket(selector).configure { reuseAddress = true }.udp().bind(InetSocketAddress("::1", 0)) // BAD-k6-configure
+    suspend fun h() = aSocket(selector).udp().bind(InetSocketAddress(port = 0, hostname = "::1"))         // BAD-k6-hostname-late
+    suspend fun i() = aSocket(selector).udp().bind(InetSocketAddress("fe80::1%en0", 0))                   // BAD-k6-zone
+    suspend fun j() = aSocket(selector).tcp().bind("""::1""", 0)                                          // BAD-k6-raw
+    suspend fun k() = aSocket(selector).udp().bind(InetSocketAddress("::", 0))                            // BAD-k6-wild
 }
 EOF
 cat > "$r/kuicksilver-x/src/nativeTest/kotlin/x/BadKtor6Far.kt" <<'EOF'
@@ -228,7 +233,11 @@ expect "kuicksilver-x/src/androidDeviceTest/kotlin/x/BadDevice.kt" BAD-device
 expect "kuicksilver-bench/src/commonMain/kotlin/x/BadBench.kt" BAD-bench
 expect "$t/OnlyBracketed.kt" BAD-bracketed
 k6=$(grep -c -- "BAD-k6-" "$r/$ct/BadKtor6.kt")
-for m in BAD-k6-udp BAD-k6-tcp BAD-k6-named BAD-k6-val BAD-k6-multiline BAD-k6-hostname; do expect "$ct/BadKtor6.kt" "$m"; done
+for m in BAD-k6-udp BAD-k6-tcp BAD-k6-named BAD-k6-val BAD-k6-multiline BAD-k6-hostname BAD-k6-configure BAD-k6-hostname-late \
+  BAD-k6-zone BAD-k6-raw BAD-k6-wild; do expect "$ct/BadKtor6.kt" "$m"; done
+line=$(grep -n -- "BAD-k6-wild" "$r/$ct/BadKtor6.kt" | cut -d: -f1)
+n=$(grep -c "^$ct/BadKtor6.kt:$line: " <<< "$out")
+[ "$n" -eq 1 ] || { echo "FAIL: a ktor-network bind to \"::\" is reported $n times, want once"; rc=1; }
 expect "kuicksilver-x/src/nativeTest/kotlin/x/BadKtor6Far.kt" BAD-k6-noloop
 grep -q "^$ct/BadKtor6.kt:.*KTOR-10017" <<< "$out" || { echo "FAIL: the ktor IPv6 finding does not name KTOR-10017"; rc=1; }
 for f in "$ct/GoodKtor6.kt" "kuicksilver-x/src/androidHostTest/kotlin/x/GoodKtor6Host.kt"; do
