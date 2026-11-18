@@ -255,7 +255,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    tag's commit and its `verify-*` artifacts, which are kept 30 days: publish the GitHub release within 30 days of that
    run, or re-run `build.yml` on the commit first, else the pages say "no data". A run or record of another commit fails
    the `verify` job and with it the publication. A later rebuild of the version after the artifacts expired keeps its
-   published verification pages (`tools/docs/verify.py keep`) and fails if there are none to keep.
+   published verification data (`tools/docs/verify.py keep`); with none to keep, the pages say "no data" and the run
+   warns, while the guide and the API reference are published as usual.
    After the first publication (0.3.0), once <https://kuicksilver.github.io/kuicksilver/latest/verify/index.html> loads,
    add the site link and three badges to the README's badge block, in a commit of their own (they would be broken
    images before):

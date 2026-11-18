@@ -222,8 +222,9 @@ jobs:
           name: site-verify
           path: ${{ runner.temp }}/new
       - name: 'pages: add the version to gh-pages'
-        # a rebuild whose verify job found no CI data (the build.yml artifacts expired) keeps the version's published
-        # verification pages of the same commit; with none to keep, the publication fails (tools/docs/verify.py keep)
+        # a rebuild whose verify job found no CI data (the build.yml artifacts expired) keeps the published verification
+        # data of the same commit, rendered in every language; with none, the "no data" pages go out with a warning. Only
+        # the verify section is decided there: the guide and the API reference are published either way (verify.py keep)
         env:
           VERSION: ${{ needs.build.outputs.version }}
           GH_TOKEN: ${{ github.token }}

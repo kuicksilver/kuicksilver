@@ -245,22 +245,58 @@ refused "a record of an attempt the run does not have" "$fx/meta.json" "$tmp/dat
 cp -R "$data/verify-apple" "$tmp/data-att/verify-apple-copy"
 refused "the same lane twice in one attempt" "$tmp/meta-a2.json" "$tmp/data-att"
 
-# keep: a rebuild without CI data keeps the published pages of the commit, and fails when there are none
-kp="$tmp/keep"; mkdir -p "$kp"
+# keep: decides the verify section only. A rebuild without CI data keeps the published data of the commit (every language
+# rendered again, together); with nothing to keep the honest no-data pages go out and keep still succeeds (the guide and
+# API reference are never held back); new pages with data are never replaced
+kp="$tmp/keep"; mkdir -p "$kp"; site_dir "$kp/site"
 cp -R "$out/0.3.0" "$kp/old"; cp -R "$o3/0.3.0" "$kp/new"
 if "${py[@]}" keep --new "$kp/new" --old "$kp/old" 2> /dev/null && has "$kp/new/verify/platforms.html" 'Data from the successful' \
-  && has "$kp/new/zh/verify/platforms.html" '数据来自提交' && has "$kp/new/ru/verify/index.html" 'Данные из успешного'; then
-  pass "keep: no data in the rebuild: the published pages with data are kept in every language"
-else fail "keep: no data in the rebuild: the published pages with data are kept in every language"; fi
+  && has "$kp/new/zh/verify/platforms.html" '数据来自提交' && has "$kp/new/ru/verify/index.html" 'Данные из успешного' \
+  && has "$kp/new/verify/badges/platforms.svg" '/8 green'; then
+  pass "keep: no data in the rebuild: the published data is kept in every language"
+else fail "keep: no data in the rebuild: the published data is kept in every language"; fi
+# the published version lacks ru/ and zh/ (a language added since, or pages lost): all languages come from its data
+rm -rf "$kp/new" "$kp/old/ru" "$kp/old/zh"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/old" 2> /dev/null && has "$kp/new/ru/verify/platforms.html" 'Данные из успешного' \
+  && has "$kp/new/zh/verify/interop.html" '数据来自提交' && ! grep -rlq 'its results are no longer available' "$kp/new" \
+  && rm -rf "$kp/site/0.3.0" && cp -R "$kp/new" "$kp/site/0.3.0" && mkdir -p "$kp/site/0.3.0/guide" "$kp/site/0.3.0/api" \
+  && echo '<html></html>' | tee "$kp/site/0.3.0/guide/index.html" > "$kp/site/0.3.0/api/index.html" \
+  && python3 -I tools/docs/site.py check "$kp/site" > /dev/null 2>&1; then
+  pass "keep: published pages missing a language: every language from the kept data, none mixed with no-data pages"
+else fail "keep: published pages missing a language: every language from the kept data, none mixed with no-data pages"; fi
 rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
-if "${py[@]}" keep --new "$kp/new" --old "$kp/missing" 2> /dev/null; then fail "negative: keep with no data anywhere fails"
-else pass "negative: keep with no data anywhere fails"; fi
-python3 -I -c 'import json, sys; f = sys.argv[1]; d = json.load(open(f)); d["sha"] = sys.argv[2]; json.dump(d, open(f, "w"))' "$kp/old/verify/data.json" "$OTHER"
-if "${py[@]}" keep --new "$kp/new" --old "$kp/old" 2> /dev/null; then fail "negative: keep never takes pages of another commit"
-else pass "negative: keep never takes pages of another commit"; fi
+if "${py[@]}" keep --new "$kp/new" --old "$kp/missing" 2> "$tmp/keep.err" && has "$kp/new/verify/platforms.html" 'its results are no longer available' \
+  && grep -q 'say no data' "$tmp/keep.err"; then
+  pass "keep: no data and nothing published: the no-data pages go out, with a warning, and the site is not stopped"
+else fail "keep: no data and nothing published: the no-data pages go out, with a warning, and the site is not stopped"; fi
+rm -rf "$kp/new"; cp -R "$o2/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/missing" 2> /dev/null && has "$kp/new/verify/platforms.html" 'No successful CI run was found'; then
+  pass "keep: no run at all and nothing published: the no-data pages go out"
+else fail "keep: no run at all and nothing published: the no-data pages go out"; fi
+cp -R "$out/0.3.0" "$kp/other"
+python3 -I -c 'import json, sys; f = sys.argv[1]; d = json.load(open(f)); d["sha"] = sys.argv[2]; json.dump(d, open(f, "w"))' "$kp/other/verify/data.json" "$OTHER"
+rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/other" 2> /dev/null && has "$kp/new/verify/platforms.html" 'its results are no longer available'; then
+  pass "negative: keep never takes the pages of another commit"
+else fail "negative: keep never takes the pages of another commit"; fi
 cp -R "$out/0.3.0" "$kp/fresh"
-if "${py[@]}" keep --new "$kp/fresh" --old "$kp/old" 2> /dev/null && has "$kp/fresh/verify/platforms.html" 'Data from the successful'; then
+before=$(cat "$kp/fresh/verify/data.json")
+if "${py[@]}" keep --new "$kp/fresh" --old "$o3/0.3.0" 2> /dev/null && [ "$(cat "$kp/fresh/verify/data.json")" = "$before" ] \
+  && has "$kp/fresh/verify/platforms.html" 'Data from the successful'; then
   pass "keep: new pages with data are left as they are"; else fail "keep: new pages with data are left as they are"; fi
+if "${py[@]}" keep --new "$kp/missing" --old "$kp/fresh" 2> /dev/null; then fail "negative: keep without new pages fails"
+else pass "negative: keep without new pages fails"; fi
+
+# h2spec.sh clears its manifest and old reports before anything can stop it (here: no h2spec image)
+hs="$tmp/h2specrepo"; mkdir -p "$hs/tools/interop" "$hs/build/h2spec/linux-x64" "$hs/bin"
+cp tools/interop/h2spec.sh "$hs/tools/interop/"
+printf 'jvm tls build/h2spec/jvm\nlinux-x64 h2c build/h2spec/linux-x64-h2c\n' > "$hs/build/h2spec/variants.txt"
+printf '146 tests, 146 passed, 0 skipped, 0 failed\n' > "$hs/build/h2spec/linux-x64/h2spec.txt"
+printf '#!/bin/sh\nexit 1\n' > "$hs/bin/docker"; chmod +x "$hs/bin/docker"
+if ! PATH="$hs/bin:$PATH" bash "$hs/tools/interop/h2spec.sh" --no-build linux-x64 > /dev/null 2>&1 \
+  && [ "$(cat "$hs/build/h2spec/variants.txt")" = "linux-x64 tls build/h2spec/linux-x64" ] && [ ! -e "$hs/build/h2spec/linux-x64/h2spec.txt" ]; then
+  pass "negative: h2spec.sh without its image leaves a fresh manifest and no old report"
+else fail "negative: h2spec.sh without its image leaves a fresh manifest and no old report"; fi
 
 if "${py[@]}" build --sha "${SHA:0:12}" --version 0.3.0 --ref v0.3.0 --src "$src" --out "$tmp/short" > /dev/null 2>&1; then
   fail "negative: a short SHA is refused"; else pass "negative: a short SHA is refused"; fi
@@ -302,7 +338,7 @@ p = {x["target"]: x for x in d["platforms"]}
 assert p["jvm"]["status"] == "fail" and "kuicksilver-tls" in p["jvm"]["hosts"][0]["problems"], p["jvm"]   # truncated report
 assert p["mingwX64"]["status"] == "pass" and p["mingwX64"]["hosts"][0]["tests"] == 2, p["mingwX64"]      # UTF-16 log
 c = {x["variant"]: x for x in d["conformance"]}
-assert c["tls"]["status"] == "pass" and c["tls"]["host"] == "linux-x64" and c["h2c"]["status"] == "error", c   # declared, missing
+assert c["tls"]["status"] == "pass" and c["tls"]["host"] == "h (linux-x64 server)" and c["h2c"]["status"] == "error", c   # declared, missing
 assert '<span class="fail">incomplete</span>' in open(f"{v}/verify/conformance.html", encoding="utf-8").read()
 fw = sorted((x["target"], x["bytes"]) for x in d["sizes"] if x["kind"] == "framework")
 assert fw == [("ios-arm64", 7000), ("ios-arm64_x86_64-simulator", 7000)], d["sizes"]

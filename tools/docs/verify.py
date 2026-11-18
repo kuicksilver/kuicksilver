@@ -35,10 +35,10 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
       expire), is "no data" on the page, never a failure; data.json then has no lanes. The fuzzing
       campaign (fuzz.yml, weekly) and perf.yml run on other commits: they are shown with their own commit and date, never
       as this commit's. REPO is the published commit's checkout (RFC table, committed corpora and benchmarks).
-  verify.py keep --new VERSION_DIR --old VERSION_DIR
+  verify.py keep --new VERSION_DIR --old VERSION_DIR [--base-url URL]
       the Pages workflow, before it replaces a published version: when the new pages have no CI data (data.json without
-      lanes), the old version's pages of the same commit with data are kept (copied over the new ones); exit 1 when
-      neither has data, so a rebuild never replaces good pages with empty ones and no release goes out without them
+      lanes), the published data of the same commit is kept, rendered again in every language together; with none, the
+      new "no data" pages stay (a warning). It decides the verify section only and never stops the rest of the site.
   verify.py check-pairs --sources DIR
       every test class of the engine interop sources (DIR) has a row in tools/docs/engine-pairs.tsv (exit 1 otherwise)
 
@@ -267,7 +267,7 @@ def collect(args):
             if len(cols) != 3:
                 continue
             kind, variant, d = cols
-            entry = {"suite": "h2spec", "variant": variant, "host": kind, "tests": 0, "passed": 0, "skipped": 0, "failed": 0,
+            entry = {"suite": "h2spec", "variant": variant, "host": f"{args.host} ({kind} server)", "tests": 0, "passed": 0, "skipped": 0, "failed": 0,
                      "status": "error"}
             report = os.path.join(d, "h2spec.txt")   # the report directory, relative to the repository root as h2spec.sh writes it
             m = None
@@ -990,36 +990,42 @@ def build(args):
     return 0
 
 
-def _lanes(version_dir):
+def _model_of(version_dir):
     try:
-        d = load_json(os.path.join(version_dir, "verify", "data.json"))
+        return load_json(os.path.join(version_dir, "verify", "data.json"))
     except (OSError, ValueError):
-        return None, []
-    return d.get("sha"), d.get("lanes") or []
+        return None
+
+
+def _note(text):
+    # a warning annotation in the Actions log, plain text elsewhere
+    print(("::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "verify.py keep: ") + text, file=sys.stderr)
 
 
 def keep(args):
-    import shutil
-    sha, lanes = _lanes(args.new)
-    if sha is None:
+    """Only the verify section is decided here; the rest of the version's site is published either way. The new pages
+    stay when they have CI data. Without it, the published pages of the same commit with data are kept: re-rendered from
+    their data.json in every language at once (never some languages copied and others not, and a language added since
+    gets them too). With nothing to keep, the new pages with their honest "no data" go out."""
+    new = _model_of(args.new)
+    if new is None:
         print(f"verify.py keep: {args.new} has no verify/data.json", file=sys.stderr)
         return 1
-    if lanes:
-        print(f"verify.py keep: the new pages have CI data ({len(lanes)} lanes)", file=sys.stderr)
+    if new.get("lanes"):
+        print(f"verify.py keep: the new pages have CI data ({len(new['lanes'])} lanes)", file=sys.stderr)
         return 0
-    old_sha, old_lanes = _lanes(args.old)
-    if not old_lanes or old_sha != sha:
-        print(f"verify.py keep: the new pages of {sha} have no CI data and there are no earlier pages of that commit with "
-              "data to keep: run build.yml on the commit and publish again", file=sys.stderr)
-        return 1
-    for code, prefix, _, _ in i18n.LANGUAGES:
-        src = os.path.join(args.old, prefix, "verify")
-        dst = os.path.join(args.new, prefix, "verify")
-        if os.path.isdir(src):
-            shutil.rmtree(dst, ignore_errors=True)
-            shutil.copytree(src, dst)
-    print(f"verify.py keep: no CI data in the new pages; kept the published pages of {sha} ({len(old_lanes)} lanes)",
-          file=sys.stderr)
+    old = _model_of(args.old)
+    if not old or not old.get("lanes") or old.get("sha") != new.get("sha"):
+        _note(f"no CI data for {new.get('sha')} and no published pages of that commit with data: the verification pages "
+              "say no data (run build.yml on the commit and publish the version again to fill them)")
+        return 0
+    import shutil
+    langs = i18n.load(args.messages)
+    for code, m in langs.items():
+        shutil.rmtree(os.path.join(args.new, m.prefix, "verify"), ignore_errors=True)
+    render(old, langs, args.new, args.base_url or f"{SITE_URL}{old['version']}/")
+    print(f"verify.py keep: no CI data in the new pages; kept the published data of {old['sha']} ({len(old['lanes'])} "
+          f"lanes), rendered in all {len(langs)} languages", file=sys.stderr)
     return 0
 
 
@@ -1055,6 +1061,8 @@ def main():
     k = sub.add_parser("keep")
     k.add_argument("--new", required=True)
     k.add_argument("--old", required=True)
+    k.add_argument("--base-url")
+    k.add_argument("--messages", default=os.path.join(HERE, "messages"))
     p = sub.add_parser("check-pairs")
     p.add_argument("--sources", required=True)
     p.add_argument("--pairs", default=os.path.join(HERE, "engine-pairs.tsv"))

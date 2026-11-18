@@ -104,15 +104,10 @@ linux_run() { # the linuxX64 server and h2spec in one linux/amd64 container
   verdict linux-x64 "$dir/h2spec.txt"
 }
 
-# No implicit pull in the middle of a gate: the image must be there (docker pull it once; it is 32 MB).
-if ! docker image inspect "$image" > /dev/null 2>&1; then
-  echo "h2spec: the image $image is not available locally; pull it first: docker pull $image" >&2
-  exit 1
-fi
-
 # The runs of this invocation, declared before any of them starts: build/h2spec/variants.txt, one "<kind> <variant> <report
 # directory>" per run (tools/docs/verify.py collect --h2spec-manifest reads it, and a declared run without a report fails
-# there). A report left from an earlier invocation is removed first, so it cannot stand in for a run that did not happen.
+# there). A report or manifest left from an earlier invocation is cleared first, before anything can stop this one, so it
+# cannot stand in for a run that did not happen.
 mkdir -p build/h2spec
 manifest=build/h2spec/variants.txt
 : > "$manifest"
@@ -120,6 +115,12 @@ for kind in "${kinds[@]}"; do
   echo "$kind tls build/h2spec/$kind" >> "$manifest"
   rm -f "build/h2spec/$kind/h2spec.txt"
 done
+
+# No implicit pull in the middle of a gate: the image must be there (docker pull it once; it is 32 MB).
+if ! docker image inspect "$image" > /dev/null 2>&1; then
+  echo "h2spec: the image $image is not available locally; pull it first: docker pull $image" >&2
+  exit 1
+fi
 
 failed=0
 for kind in "${kinds[@]}"; do
