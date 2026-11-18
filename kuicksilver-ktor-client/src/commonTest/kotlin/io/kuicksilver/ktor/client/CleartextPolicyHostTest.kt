@@ -3,8 +3,11 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.http.Url
+import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 /**
  * The host the cleartext policy is asked about ([cleartextPolicyHost]): one spelling per address, so that a rule for an
@@ -42,12 +45,23 @@ class CleartextPolicyHostTest {
         assertEquals("1::", cleartextPolicyHost("1:0:0:0:0:0:0:0"))
     }
 
-    /** RFC 5952 section 5: an IPv4-mapped address is `::ffff:` and the dotted quad, however it was written. */
-    @Test fun aMappedIpv4AddressIsAskedAboutInMixedNotation() {
-        assertEquals("::ffff:127.0.0.1", cleartextPolicyHost("[::ffff:127.0.0.1]"))
-        assertEquals("::ffff:127.0.0.1", cleartextPolicyHost("::FFFF:7f00:1"))
-        assertEquals("::ffff:127.0.0.1", cleartextPolicyHost("0:0:0:0:0:ffff:7f00:0001"))
-        assertEquals("::ffff:192.0.2.1", cleartextPolicyHost("0:0:0:0:0:FFFF:192.0.2.1"))
+    /**
+     * An IPv4-mapped literal (`::ffff:0:0/96`, RFC 4291 section 2.5.5.2) is asked about as the dotted quad it connects to,
+     * however it was written, so a rule for the IPv4 address holds for it.
+     */
+    @Test fun aMappedIpv4AddressIsAskedAboutAsItsDottedQuad() {
+        assertEquals("127.0.0.1", cleartextPolicyHost("[::ffff:127.0.0.1]"))
+        assertEquals("127.0.0.1", cleartextPolicyHost("::FFFF:7f00:1"))
+        assertEquals("127.0.0.1", cleartextPolicyHost("0:0:0:0:0:ffff:7f00:0001"))
+        assertEquals("192.168.1.1", cleartextPolicyHost("[0:0:0:0:0:FFFF:192.168.1.1]"))
+        assertEquals("192.168.1.1", cleartextPolicyHost(Url("http://[::ffff:192.168.1.1]:8080/").host))
+    }
+
+    /** Only `::ffff:0:0/96` is mapped: an IPv4-translated (`::ffff:0:0:0/96`) or IPv4-compatible address stays IPv6. */
+    @Test fun negative_otherIpv4EmbeddingsStayIpv6() {
+        assertEquals("::ffff:0:7f00:1", cleartextPolicyHost("[::ffff:0:127.0.0.1]"))
+        assertEquals("::7f00:1", cleartextPolicyHost("[::127.0.0.1]"))
+        assertEquals("64:ff9b::7f00:1", cleartextPolicyHost("[64:ff9b::127.0.0.1]"))
     }
 
     /** The policy knows no interfaces: the zone is dropped, and a rule for the address holds on every link. */
@@ -57,10 +71,28 @@ class CleartextPolicyHostTest {
         assertEquals("fe80::1", cleartextPolicyHost("[FE80::1%3]"))
     }
 
-    /** A literal that does not parse is asked about as written, lower case and without its zone (its connection fails anyway). */
-    @Test fun negative_aLiteralThatDoesNotParseIsAskedAboutAsWritten() {
-        assertEquals("fe80::g", cleartextPolicyHost("[FE80::G%eth0]"))
-        assertEquals("1:2:3:4:5:6:7:8:9", cleartextPolicyHost("1:2:3:4:5:6:7:8:9"))
+    /** An IP literal that is no IPv6 address fails closed, before the policy is asked (its connection could go nowhere). */
+    @Test fun negative_aLiteralThatDoesNotParseFails() {
+        for (h in listOf("[FE80::G%eth0]", "1:2:3:4:5:6:7:8:9", "[1::2::3]", "[127.0.0.1]", "[]", "[::ffff:256.0.0.1]")) {
+            val e = assertFailsWith<IOException>(h) { cleartextPolicyHost(h) }
+            assertEquals("$h is not an IP address", e.message)
+        }
+    }
+
+    /**
+     * The engine does not map an internationalised name to its A-label: the policy's rules name A-labels, so a Unicode
+     * name is refused before the policy is asked; its A-label is asked about as it is.
+     */
+    @Test fun negative_aNonAsciiNameIsRefused() {
+        val e = assertFailsWith<IOException> { cleartextPolicyHost("b\u00fccher.example") }
+        assertTrue("A-label" in e.message.orEmpty(), "${e.message}")
+        assertEquals("xn--bcher-kva.example", cleartextPolicyHost("xn--bcher-kva.example"))
+    }
+
+    /** Android's policy throws IllegalArgumentException for a host beginning with a dot: it is refused before it. */
+    @Test fun negative_aHostBeginningWithADotIsRefused() {
+        val e = assertFailsWith<IOException> { cleartextPolicyHost(".example.test") }
+        assertEquals(".example.test is not a host name: it begins with a dot", e.message)
     }
 
     @Test fun namesAndDottedQuadsStayAsTheyAre() {

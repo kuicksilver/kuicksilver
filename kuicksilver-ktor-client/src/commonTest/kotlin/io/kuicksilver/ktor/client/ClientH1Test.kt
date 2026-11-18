@@ -118,7 +118,7 @@ class ClientH1Test {
                     assertEquals("ok", client.get("http://2130706433:$port/").bodyAsText())
                     assertEquals(listOf("127.0.0.1", "127.0.0.1"), asked)
                     engine.h1.cleartextPermitted = { host -> host != "127.0.0.1" }
-                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get("http://127.1:$port/") }
+                    val e = assertFailsWith<kotlinx.io.IOException> { client.get("http://127.1:$port/") }
                     assertEquals("CLEARTEXT communication to 127.0.0.1 not permitted by network security policy", e.message)
                     assertEquals(2, served)
                 }
@@ -138,10 +138,52 @@ class ClientH1Test {
                     host != "::1"
                 }
                 for (url in listOf("http://[0:0:0:0:0:0:0:1]:1/", "http://[0000::0001]:1/", "http://[::1]:1/")) {
-                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get(url) }
+                    val e = assertFailsWith<kotlinx.io.IOException> { client.get(url) }
                     assertEquals("CLEARTEXT communication to ::1 not permitted by network security policy", e.message, url)
                 }
                 assertEquals(listOf("::1", "::1", "::1"), asked)
+            }
+        }
+
+    /**
+     * The connection to an IPv4-mapped literal goes to the IPv4 address, so a rule for that address holds for it: the
+     * policy is asked about the dotted quad, never about `::ffff:127.0.0.1`.
+     */
+    @Test fun negative_aRuleForAnIpv4AddressHoldsForItsMappedLiteral() =
+        clientTest {
+            var served = 0
+            val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok").also { served++ } } } }
+            try {
+                testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    val asked = mutableListOf<String>()
+                    engine.h1.cleartextPermitted = { host ->
+                        asked += host
+                        host != "127.0.0.1"
+                    }
+                    val e = assertFailsWith<kotlinx.io.IOException> { client.get("http://[::ffff:127.0.0.1]:$port/") }
+                    assertEquals("CLEARTEXT communication to 127.0.0.1 not permitted by network security policy", e.message)
+                    assertEquals(listOf("127.0.0.1"), asked)
+                    assertEquals(0, served)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A name in Unicode is refused before the policy is asked: the engine does not map it to the A-label the rules name. */
+    @Test fun negative_aNonAsciiHostIsRefusedBeforeThePolicyIsAsked() =
+        clientTest {
+            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                val engine = client.engine as KuicksilverEngine
+                var asked = 0
+                engine.h1.cleartextPermitted = {
+                    asked++
+                    true
+                }
+                val e = assertFailsWith<kotlinx.io.IOException> { client.get("http://b\u00fccher.test:1/") }
+                assertTrue(generateSequence<Throwable>(e) { it.cause }.any { "A-label" in it.message.orEmpty() }, "$e")
+                assertEquals(0, asked)
             }
         }
 
@@ -158,7 +200,7 @@ class ClientH1Test {
                     asked++
                     false
                 }
-                val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get("http://010.0.0.1:1/") }
+                val e = assertFailsWith<kotlinx.io.IOException> { client.get("http://010.0.0.1:1/") }
                 assertTrue(
                     generateSequence<Throwable>(e) { it.cause }.any { "neither a host name" in it.message.orEmpty() },
                     "$e",

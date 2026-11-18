@@ -46,7 +46,7 @@ public class KeyExchangeGroups(
     /** The groups a client sends a key share for in its first ClientHello, in the order of [KeyExchangeGroups.groups]. */
     public val keyShares: List<String>
 
-    /** Whether [KeyExchangeGroups.keyShares] was given (a server refuses that), not derived from [KeyExchangeGroups.groups]. */
+    /** Whether `keyShares` was given (a server refuses that), not derived from [KeyExchangeGroups.groups]. */
     internal val sharesGiven: Boolean = keyShares != null
 
     init {
