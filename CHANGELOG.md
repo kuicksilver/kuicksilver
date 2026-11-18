@@ -61,6 +61,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   list and key shares are unchanged; a client that sends several key shares now gets the server's first of them, where
   OpenSSL took the client's order among them before. `ksl`: `ksl_ctx_set_groups` and `KSL_GET_GROUP`, additive under ABI
   7. Docs: [TLS: Key exchange groups](docs/guide/tls.md#key-exchange-groups).
+- qlog: HTTP/3 and QPACK events in the connection's trace, in the schema of its transport events (qlog 0.3,
+  draft-ietf-quic-qlog-h3-events-04; ADR-0021): `http:frame_created`/`frame_parsed` for every frame sent and read (field
+  sections with their fields, SETTINGS, GOAWAY, push identifiers, reserved and unknown frames, PRIORITY_UPDATE as a
+  `priority_update` frame, WebTransport's stream signal as an unknown frame with its Session ID), `http:stream_type_set`,
+  `http:parameters_set`, `http:parameters_restored`, `qpack:state_updated` and `qpack:stream_state_updated`. Header and
+  trailer values are written as `[redacted]` (except `:method`, `:scheme`, `:status`, `:protocol`) unless the sink sets
+  the new `QlogSink.logHeaderValues` (*experimental*; `DirectoryQlogSink(..., logHeaderValues = true)`, forwarded by
+  `AsyncQlogSink`); threat model 3.26 (CWE-532). The HTTP/3 layer queues its events (at most 4096 per connection) and the
+  endpoint loop writes them, so sinks are still called on the loop only; a connection without a sink formats nothing.
+  The traces are checked offline against the draft's definitions; loading them in qvis was not part of the tests.
+- qlog: the trace header's `common_fields` give `protocol_type` (`["QUIC"]`, or `["QUIC","HTTP3"]` when the ALPN list
+  offers `h3`) and `reference_time` (0, the trace's start), and times never go back from one record to the next
+  (draft-ietf-quic-qlog-main-schema-05 sections 3.4.1 and 3.4.7, quic-events-04 section 2).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -851,6 +864,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Initials to the group. A host with the form of an IPv4 address that is not a dotted quad is read by the engine, with
   the system's resolver too: `127.1` is still 127.0.0.1, while one platforms read differently (`010.0.0.1`, octal
   8.0.0.1 to getaddrinfo; `0x7f.1`) or that is no address fails without a lookup (RFC 1123 section 2.1; threat model 3.25).
+- qlog transport events use the enumerations of draft-ietf-quic-qlog-quic-events-04: `connection_state_updated` is
+  written for every state change with `old` and `new`, `handshake_complete`, `handshake_confirmed`, `closing`,
+  `draining` and `closed` (before: only `established`, the handshake's completion); `connection_closed` names its
+  owner `local` or `remote` (before: `peer` for the peer's close); a lost or dropped 0-RTT packet is `0RTT` (before:
+  `1RTT`); a `packet_dropped` for a packet on an address the connection left has
+  the trigger `rejected` (before: `unexpected_packet`); `packet_lost` has no trigger (before: `time_or_packet_threshold`,
+  not one of the draft's); a `connection_closed` that is not a peer's close or a timeout has the trigger
+  `stateless_reset`, `version_mismatch` or `error`, its message in `reason` (before: the message as the trigger).
+- qlog `packet_sent` and `packet_received` carry every frame with the members of draft-ietf-quic-qlog-quic-events-04
+  section 8.11 (before: the frame type alone, and no frames for received packets or close packets): ACK ranges,
+  `ack_delay` and ECN counts, STREAM and CRYPTO offsets and lengths, limits, connection IDs, path data, CONNECTION_CLOSE
+  codes and reason; RESET_STREAM_AT and DATAGRAM through the draft's extension point. Tokens, stateless reset tokens and
+  payloads are never written. 0-RTT packets are `0RTT` (before: `1RTT`). `connection_closed` is written once and the
+  trace stays open through the closing period, until the connection releases it (before: it ended at the first
+  `connection_closed`). HTTP/3 events queued for the loop take its time when they were stamped later, so transport
+  events keep theirs. `http:frame_created` is logged once the frame's write call returned, and not for a write that throws (before,
+  HEADERS and DATA were logged ahead of it). `tools/interop/prohibited-port-rebind.py` counts a CONNECTION_CLOSE as not
+  ack-eliciting and reads a trace up to its `connection_closed`.
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets

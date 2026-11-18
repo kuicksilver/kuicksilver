@@ -122,6 +122,26 @@ class AsyncQlogSinkTest {
         }
     }
 
+    /** The HTTP/3 field-value opt-in is the delegate's: off by default, and a wrapper never turns it on or off (CWE-532). */
+    @Test fun headerValuesAreTheDelegatesChoice() {
+        val off =
+            object : QlogSink {
+                override fun open(
+                    odcidHex: String,
+                    role: TlsRole,
+                ): QlogTrace? = null
+            }
+        val on =
+            object : QlogSink by off {
+                override val logHeaderValues: Boolean get() = true
+            }
+        assertEquals(false, off.logHeaderValues, "the default")
+        AsyncQlogSink(off).use { assertEquals(false, it.logHeaderValues) }
+        AsyncQlogSink(on).use { assertEquals(true, it.logHeaderValues) }
+        assertEquals(false, DirectoryQlogSink("unused").logHeaderValues)
+        assertEquals(true, DirectoryQlogSink("unused", 1, 1, logHeaderValues = true).logHeaderValues)
+    }
+
     @Test fun sampleEveryTracesOneConnectionInN(): Unit =
         runBlocking {
             val mem = MemorySink()

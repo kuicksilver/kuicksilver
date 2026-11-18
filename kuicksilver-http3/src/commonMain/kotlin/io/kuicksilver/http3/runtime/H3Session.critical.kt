@@ -54,6 +54,8 @@ internal suspend fun H3Session.writeCritical(
     b: ByteArray,
     again: (() -> Boolean)? = null,
     madeFor: Int? = null,
+    /** Runs with the stream once [b] was written on it (each time: a frame sent again after a rejected 0-RTT too). */
+    written: ((QuicStream) -> Unit)? = null,
 ): Unit =
     withContext(dispatcher) {
         checkOnDispatcher()
@@ -67,6 +69,8 @@ internal suspend fun H3Session.writeCritical(
                     if (gen != criticalGen || c == null) return@withLock false
                     try {
                         pick(c).output.writeFully(b)
+                        // the write returned: its qlog frame_created, as for every frame (a later flush failure does not retract it)
+                        written?.invoke(pick(c))
                         pick(c).output.flush()
                         if (again != null && gen == 0) earlyControl?.add(b to again)
                         true
@@ -252,16 +256,34 @@ internal suspend fun H3Session.openCriticalStreams(
         controlLock.withLock {
             if (gen != criticalGen) return false
             typedStreams += control
+            val ours = ourSettings()
+            val settingsPayload = SettingsCodec.encode(ours)
             control.output.writeFully(VarInt.encode(StreamType.CONTROL))
-            control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
-            if (settings.grease) {
-                control.output.writeFully(
-                    FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
+            control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, settingsPayload))
+            qlog {
+                it.streamTypeSet("local", control.id, StreamType.CONTROL)
+                it.frameCreated(
+                    control.id,
+                    FrameType.SETTINGS,
+                    settingsPayload.size.toLong(),
+                    it.controlFrame(FrameType.SETTINGS, settingsPayload),
                 )
+                it.parametersSet("local", ours.toMap())
+            }
+            if (settings.grease) {
+                val type = FrameType.grease(Random.nextLong(0, 1000))
+                val payload = Random.nextBytes(Random.nextInt(0, 8))
+                control.output.writeFully(FrameHeaders.frame(type, payload))
+                qlog { it.frameCreated(control.id, type, payload.size.toLong(), it.other(type, payload.size.toLong())) }
             }
             // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
             if (gen > 0) {
-                earlyControl?.forEach { (frame, wanted) -> if (wanted()) control.output.writeFully(frame) }
+                earlyControl?.forEach { (frame, wanted) ->
+                    if (wanted()) {
+                        control.output.writeFully(frame)
+                        qlog { q -> logWholeFrameCreated(q, control.id, frame) }
+                    }
+                }
                 earlyControl = null
             }
             control.output.flush()
@@ -271,12 +293,14 @@ internal suspend fun H3Session.openCriticalStreams(
             if (gen != criticalGen) return false
             typedStreams += encoder
             encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
+            qlog { it.streamTypeSet("local", encoder.id, StreamType.QPACK_ENCODER) }
             encoder.output.flush()
         }
         decoderLock.withLock {
             if (gen != criticalGen) return false
             typedStreams += decoder
             decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
+            qlog { it.streamTypeSet("local", decoder.id, StreamType.QPACK_DECODER) }
             decoder.output.flush()
         }
         if (gen != criticalGen) return false
@@ -341,7 +365,9 @@ internal suspend fun H3Session.openCriticalStreams(
         scope.launch {
             try {
                 val g = quic.openUni()
-                g.output.writeFully(VarInt.encode(FrameType.grease(Random.nextLong(0, 1000))) + Random.nextBytes(Random.nextInt(0, 8)))
+                val type = FrameType.grease(Random.nextLong(0, 1000))
+                g.output.writeFully(VarInt.encode(type) + Random.nextBytes(Random.nextInt(0, 8)))
+                qlog { it.streamTypeSet("local", g.id, type) }
                 g.output.flushAndClose()
             } catch (
                 e: CancellationException,
@@ -361,4 +387,15 @@ internal suspend fun H3Session.awaitCriticalStreams() {
         criticalStreams.onAwait { }
         closed.onAwait { throw it }
     }
+}
+
+/** `http:frame_created` for a whole frame [frame] (header and payload) written on [streamId]: one sent again after a rejected 0-RTT. */
+internal fun logWholeFrameCreated(
+    q: H3Qlog,
+    streamId: Long,
+    frame: ByteArray,
+) {
+    val h = FrameHeaders.parse(frame, 0, frame.size) ?: return
+    val payload = frame.copyOfRange(h.headerSize, frame.size)
+    q.frameCreated(streamId, h.type, payload.size.toLong(), q.controlFrame(h.type, payload))
 }

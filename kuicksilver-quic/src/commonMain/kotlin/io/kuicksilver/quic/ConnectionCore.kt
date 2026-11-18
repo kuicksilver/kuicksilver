@@ -114,7 +114,13 @@ public class ConnectionCore internal constructor(
 ) {
     /** Where the connection is in its life (RFC 9000 section 10); [ConnectionState.Closed] once its TLS session and keys are freed. */
     public var state: ConnectionState = ConnectionState.Handshaking
-        internal set
+        internal set(v) {
+            val old = field
+            field = v
+            // qlog connectivity:connection_state_updated (quic-events-04 section 4.6) for every change. The first state is not
+            // logged: a server connection is created for an Initial before it is known to decrypt, and a forged one opens no trace
+            if (old != v) qlog?.connectionStateUpdated(old, v, now)
+        }
 
     /** The QUIC version in use; may change once during a compatible upgrade (RFC 9368). */
     public var version: VersionProfile = startVersion
@@ -640,7 +646,9 @@ public class ConnectionCore internal constructor(
 
     internal val qlog: QlogWriter? =
         config.qlog?.let {
-            QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString())
+            // HTTP/3 needs ALPN "h3" (RFC 9114 section 3.1): a connection that may carry it names HTTP3 in its trace
+            val http3 = tlsConfig.alpn.any { a -> a == "h3" || a.startsWith("h3-") }
+            QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString(), http3)
         } // opens its trace at the first event, closed in release()
     internal val receiver = PacketReceiver(this)
     internal val builder = PacketBuilder(this)

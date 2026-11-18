@@ -6,8 +6,10 @@ package io.kuicksilver.http3.webtransport
 
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.IncompleteFrame
+import io.kuicksilver.http3.runtime.qlog
 import io.kuicksilver.http3.runtime.readVarIntSizedOrNull
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -146,6 +148,17 @@ internal class WtStreamRouter(
             }
         }
         val headerLength = typeLength + idLength
+        session.qlog { q ->
+            if (bidi) {
+                q.wtStreamSignal(
+                    "http:frame_parsed",
+                    st.id,
+                    sessionId,
+                )
+            } else {
+                q.streamTypeSet("remote", st.id, StreamType.WT_UNI, sessionId)
+            }
+        }
         sinks[sessionId]?.let {
             it.onStream(st, bidi, headerLength)
             return

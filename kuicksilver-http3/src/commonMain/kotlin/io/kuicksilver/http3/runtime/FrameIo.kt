@@ -13,6 +13,7 @@ import io.kuicksilver.http3.frame.FrameAction
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameRules
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.tls.completedWithin
@@ -195,7 +196,23 @@ internal class RequestFrames(
     private val budgetWatch: (() -> EndWatch)? = null,
     /** Test hook: runs once a HEADERS section under [sectionDeadline] was read whole, with the job of the deadline's scope. */
     private val afterSectionForTest: (suspend (kotlinx.coroutines.Job) -> Unit)? = null,
+    /**
+     * The connection's qlog events, null when it is not traced: DATA, skipped and refused frames are logged here as they
+     * are parsed (with [streamId]); a HEADERS frame once its section was decoded (`decodeSection`), with its fields.
+     */
+    private val qlog: H3Qlog? = null,
 ) {
+    // inline: an untraced connection allocates nothing here, not even the lambda
+    private inline fun parsed(
+        type: Long,
+        length: Long?,
+        frame: (H3Qlog) -> String,
+    ) {
+        val q = qlog ?: return
+        val id = streamId ?: return
+        if (q.enabled) q.frameParsed(id, type, length, frame(q))
+    }
+
     private fun ahead(bytes: Long) {
         limitReadAhead?.invoke(bytes.coerceAtLeast(1))
     }
@@ -223,10 +240,18 @@ internal class RequestFrames(
             ahead(FRAME_HEADER_AHEAD)
             val type = pendingType?.also { pendingType = null } ?: input.readVarIntOrNull() ?: return RequestFrame.End
             // checked before the length is read: after the WT_STREAM signal comes a Session ID, not a length
-            val action = FrameRules.checkRequest(type, isServerSide, webTransport)
+            val action =
+                try {
+                    FrameRules.checkRequest(type, isServerSide, webTransport)
+                } catch (e: H3ProtocolError) {
+                    // a frame a request stream must not carry; its length is not read (WT_STREAM has none)
+                    parsed(type, null) { it.controlFrame(type, null) }
+                    throw e
+                }
             val len = input.readVarInt()
             when (action) {
                 FrameAction.Skip -> {
+                    parsed(type, len) { it.other(type, len) }
                     if (FrameType.isGrease(
                             type,
                         )
@@ -242,6 +267,9 @@ internal class RequestFrames(
                 FrameAction.Process -> {
                     if (type != FrameType.HEADERS) aheadPayload(len) // DATA: its payload, which the caller reads next
                     if (type == FrameType.DATA && len == 0L) useless("empty DATA frames")
+                    if (type == FrameType.DATA) parsed(type, len) { H3Qlog.DATA }
+                    // too large to read: logged without its fields, as quic-go logs a HEADERS frame it cannot decode
+                    if (type == FrameType.HEADERS && len > headersLimit) parsed(type, len) { it.headers(emptyList()) }
                     return when {
                         type == FrameType.HEADERS && len > headersLimit -> RequestFrame.HeadersTooLarge(len)
                         type == FrameType.HEADERS -> RequestFrame.Headers(readSectionInTime(len.toInt()))

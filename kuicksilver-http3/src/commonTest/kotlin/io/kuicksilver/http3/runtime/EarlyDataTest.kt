@@ -790,6 +790,48 @@ class EarlyDataTest {
         }
 
     /**
+     * The server SETTINGS a 0-RTT client complies with before the new connection's arrive (RFC 9114 section 7.2.4.2) are in
+     * its qlog trace as `http:parameters_restored` (draft-ietf-quic-qlog-h3-events-04).
+     */
+    @Test fun storedSettingsAreLoggedAsRestored(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()) { maxFieldSectionSize = 1_000 }.use { f ->
+                withTimeout(20.seconds) {
+                    f.start()
+                    f.warmUp()
+                    val sink = MemoryQlogSink()
+                    val c =
+                        f.client.connectEarly(
+                            f.server.localAddress,
+                            H3Fixtures.client(),
+                            quic =
+                                io.kuicksilver.quic.quicConfig {
+                                    qlog =
+                                        sink
+                                },
+                        )
+                    assertEquals(
+                        "GET ok",
+                        c
+                            .request(f.get(early = true))
+                            .body
+                            .readAllBytes()
+                            .decodeToString(),
+                    )
+                    awaitCondition("parameters_restored written") {
+                        sink.traces
+                            .singleOrNull()
+                            ?.records
+                            ?.any { "\"name\":\"http:parameters_restored\"" in it } == true
+                    }
+                    val e = QlogSchema.check(sink.traces.single().records).filter { it["name"] == "http:parameters_restored" }
+                    assertEquals(1_000.0, (e.single()["data"] as Map<*, *>)["max_field_section_size"])
+                    c.close()
+                }
+            }
+        }
+
+    /**
      * RFC 9114 section 7.2.4.2: "Clients SHOULD store the settings the server provided in the HTTP/3 connection where
      * resumption information was provided", and "MUST comply with stored settings ... when attempting 0-RTT". The ticket
      * keeps the server's SETTINGS; a 0-RTT request above the stored SETTINGS_MAX_FIELD_SECTION_SIZE fails locally before

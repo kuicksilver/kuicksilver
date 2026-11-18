@@ -138,8 +138,10 @@ def client_log(cell):
 
 
 def ack_only(frames):
-    """Whether a qlog packet_sent's frames are ACK and PADDING at most: neither ack-eliciting nor in flight."""
-    return all(isinstance(f, dict) and f.get("frame_type") in ("ack", "padding") for f in frames)
+    """Whether a qlog packet_sent's frames are ACK, PADDING and CONNECTION_CLOSE at most: not ack-eliciting (RFC 9002 section
+    2), so nothing recovery tracks or a PTO waits for. Since 0.3.0 our qlog lists every frame a packet carries (before, a
+    PATH_CHALLENGE or a DATAGRAM was left out, and a packet carrying only those read as ACK-only)."""
+    return all(isinstance(f, dict) and f.get("frame_type") in ("ack", "padding", "connection_close") for f in frames)
 
 
 def client_qlogs(cell):
@@ -160,16 +162,20 @@ def client_qlogs(cell):
                     except ValueError: continue
                     if not isinstance(e, dict) or "time" not in e: continue
                     t, ev = round(float(e["time"]) / 1000.0, 6), e.get("name")  # qlog ms, to s (µs, no float noise)
+                    # since 0.3.0 the trace goes on through the closing or draining period after connection_closed: what the
+                    # connection sent and received while it was alive is what counts here
+                    if q["closed"] is not None and ev != "connectivity:connection_closed": continue
                     if ev == "transport:packet_sent":
                         q["last_sent"] = t
-                        # ACK-only: no frame but ACK and PADDING (RFC 9002 section 2), whether the qlog lists them or, as
-                        # QlogWriter does today for a packet recovery does not track, leaves the list empty
+                        # ACK-only: no ack-eliciting frame (RFC 9002 section 2), whether the qlog lists the frames or, as
+                        # QlogWriter did before 0.3.0 for a packet recovery does not track, leaves the list empty
                         if not ack_only(e.get("data", {}).get("frames") or []): q["tracked_after"] += 1; q["lost_after"] = 0
                     elif ev == "recovery:metrics_updated":
                         q["bytes_in_flight"], q["tracked_after"] = e.get("data", {}).get("bytes_in_flight"), 0
                     elif ev == "recovery:packet_lost": q["lost_after"] += 1
                     elif ev == "transport:packet_received": q["last_received"] = t
-                    elif ev == "connectivity:connection_closed": q["closed"], q["trigger"] = t, e.get("data", {}).get("trigger")
+                    elif ev == "connectivity:connection_closed" and q["closed"] is None:
+                        q["closed"], q["trigger"] = t, e.get("data", {}).get("trigger")
             result.append(q)
     return result
 

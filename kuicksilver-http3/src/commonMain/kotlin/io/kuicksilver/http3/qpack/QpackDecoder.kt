@@ -64,6 +64,10 @@ internal class QpackDecoder(
     internal fun tableForTest() = table.snapshotForTest()
 
     val tableSize: Long get() = table.size
+
+    /** The dynamic table's capacity, and the inserts our acknowledgments and increments told the encoder of (qlog's QPACK state). */
+    val tableCapacity: Long get() = table.capacity
+    val knownReceivedCount: Long get() = knownReceived
     val blockedCount: Int get() = blocked.size
 
     /** Bytes the encoder-stream parser walked over plus bytes copied while reassembling (a test hook for the reassembly cost). */

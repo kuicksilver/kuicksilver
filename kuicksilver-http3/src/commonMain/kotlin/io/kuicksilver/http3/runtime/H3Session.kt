@@ -33,6 +33,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.holdPeerStreamCredit
+import io.kuicksilver.quic.qlogRecorder
 import io.kuicksilver.quic.receiveAborted
 import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.rememberedApplicationData
@@ -145,6 +146,9 @@ internal class H3Session(
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
 
+    /** The HTTP/3 events of the connection's qlog trace; null when the connection is not traced (see [qlog]). */
+    internal val qlog: H3Qlog? = quic.qlogRecorder?.let { H3Qlog(it) }
+
     /**
      * Client: the server SETTINGS kept with the ticket this connection resumed for 0-RTT (RFC 9114 section 7.2.4.2), or
      * null: no 0-RTT, or nothing stored. Complied with until the server's own SETTINGS arrive, and checked against them.
@@ -154,7 +158,7 @@ internal class H3Session(
             null
         } else {
             quic.rememberedApplicationData?.let { runCatching { SettingsCodec.decode(it) }.getOrNull() }
-        }
+        }.also { stored -> if (stored != null) qlog { it.parametersRestored(stored) } }
 
     /** Test hook: what a server sends as its SETTINGS instead of [ourSettings] (a server that breaks section 7.2.4.2). */
     internal var ourSettingsForTest: ((List<Pair<Long, Long>>) -> List<Pair<Long, Long>>)? = null
@@ -352,6 +356,7 @@ internal class H3Session(
             settings,
             { b -> writeCritical(encoderLock, { it.encoder }, b) },
             { b -> queueDecoderBytes(b) },
+            qlog,
             // no encoder stream yet: no credit known, so no insert
             { critical?.encoder?.sendCredit() ?: 0L },
         )
@@ -931,7 +936,9 @@ internal class H3Session(
         payload: ByteArray,
         again: () -> Boolean = { true },
     ) {
-        writeCritical(controlLock, { it.control }, FrameHeaders.frame(type, payload), again)
+        writeCritical(controlLock, { it.control }, FrameHeaders.frame(type, payload), again) { control ->
+            qlog { it.frameCreated(control.id, type, payload.size.toLong(), it.controlFrame(type, payload)) }
+        }
     }
 
     /** What a stream operation throws once the connection is gone. */

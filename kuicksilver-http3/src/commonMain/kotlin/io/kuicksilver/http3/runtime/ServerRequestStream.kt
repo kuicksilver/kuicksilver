@@ -188,6 +188,7 @@ private suspend fun H3Session.handleArmedRequestStream(
                 budget = headerBudget,
                 budgetWatch = { budgetWatch(st) },
                 streamId = st.id,
+                qlog = qlog,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =
@@ -390,7 +391,7 @@ internal suspend fun H3Session.wtAdmits(draft02: Boolean): Boolean {
 private suspend fun H3Session.reject425(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.NO_ERROR)
-        st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(425, Http3Headers.Empty)))
+        writeHeadersFrame(st, PseudoHeaders.buildResponse(425, Http3Headers.Empty))
         st.output.flushAndClose()
     }
     runCatching { cancelSections(st) }
@@ -406,7 +407,7 @@ private suspend fun H3Session.reject431(
 ) {
     runCatching {
         st.stopSending(stopCode)
-        st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(431, Http3Headers.Empty)))
+        writeHeadersFrame(st, PseudoHeaders.buildResponse(431, Http3Headers.Empty))
         afterReject431HeadersForTest?.invoke(st)
         st.output.flushAndClose()
     }
@@ -896,7 +897,7 @@ internal class ServerRequestImpl(
         val fields = PseudoHeaders.buildResponse(status, headers)
         session.checkPeerFieldLimit(st.id, fields)
         try {
-            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, fields, headers.neverIndexNames()))
+            session.writeHeadersFrame(st, fields, headers.neverIndexNames())
         } catch (
             e: CancellationException,
         ) {
@@ -959,6 +960,7 @@ internal class ResponseWriterImpl(
                             throw ContentLengthMismatch(declaredLength, sent + n, more = true)
                         }
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
+                        session.qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                         st.output.flush()
                         sent += n
                         handedToTransport = sent
@@ -1029,7 +1031,7 @@ internal class ResponseWriterImpl(
             }
             try {
                 if (trailers != null) {
-                    st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields, trailers.neverIndexNames()))
+                    session.writeHeadersFrame(st, trailers.fields, trailers.neverIndexNames())
                 }
                 st.output.flushAndClose()
             } catch (

@@ -583,7 +583,6 @@ internal class ConnectionHandshakeSink(
             if (core.readKeys[1] == null) core.receiver.dropBufferedLevel(1) // refused 0-RTT is never processed (RFC 9001 section 4.6.2)
         }
         core.state = ConnectionState.Established
-        core.qlog?.connectionStateUpdated(core.state, core.now)
         core.events += ConnectionEvent.HandshakeCompleted
         if (core.role == TlsRole.Server) {
             core.sendHandshakeDone = true

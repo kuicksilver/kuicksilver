@@ -149,9 +149,10 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `DatagramIo.open(local, prefer)` | `prefer: IoPreference` | `Accelerated` | `Accelerated`: the `ksl` socket where it exists, `Portable`: NIO on the JVM, `ktor-network` on Kotlin/Native |
 | `Cubic(maxDatagramSize, hystart)`, `NewReno(maxDatagramSize)` | | 1200, `true` | the stable congestion controllers |
 | `Bbr(maxDatagramSize, random)` (*experimental*) | | 1200, `null` (jitter from send and ACK times) | BBRv3 ([Choosing a congestion controller](quic.md#choosing-a-congestion-controller)) |
-| `DirectoryQlogSink(directory)`, `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)` (*experimental*) | | 256 open traces, 1 GiB in all | one `<odcid>_<client\|server>_<random>.sqlog` file per connection, created exclusively, never through a link; creates the directory owner-only and refuses one another user could change |
+| `DirectoryQlogSink(directory)`, `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes, logHeaderValues)` (*experimental*) | | 256 open traces, 1 GiB in all, `logHeaderValues = false` | one `<odcid>_<client\|server>_<random>.sqlog` file per connection, created exclusively, never through a link; creates the directory owner-only and refuses one another user could change; `logHeaderValues` writes HTTP field values into the trace ([HTTP/3: qlog](http3.md#qlog)) |
 | `qlogDirectory(context, name)` (Android, *experimental*) | | `name = "kuicksilver-qlog"` | a `DirectoryQlogSink` in the app's cache directory, created owner-only at once; API 26 and up (refused below) |
 | `AsyncQlogSink(delegate, queueCapacity, sampleEvery, dispatcher)` (*experimental*) | | 8192 records, 1 (every connection), `Dispatchers.IO.limitedParallelism(1)` | runs a sink off the endpoint loop; a full queue drops records (`dropped`) |
+| `QlogSink.logHeaderValues` (*experimental*, 0.3.0) | | `false` | HTTP/3 events carry header and trailer values; otherwise `[redacted]` except `:method`, `:scheme`, `:status`, `:protocol` (threat model 3.26) |
 | `NetworkMigrator(connection, networks, openIo, scope)` (*experimental*) | | no defaults; client connections only | follows a `Flow` of networks ([Network changes](quic.md#network-changes)) |
 | `QuicConnection.rebind(local, prefer)` (*experimental*) | | `null` (loopback of a loopback peer's family, else the wildcard of the peer's family), `Accelerated` | moves the connection to a fresh socket |
 | `followDefaultNetwork(connectivity, scope, local, prefer)` (Android), `followDefaultNetwork(scope, local, prefer)` (Apple) (*experimental*) | | `null`, `Accelerated` | a started `NetworkMigrator` on the default network |
@@ -496,7 +497,7 @@ Not configurable, listed so you can plan around them:
 | Glitch bucket | 1000 tokens, 33 back per second (QUIC and HTTP/3) |
 | Connection ID rotation | every migration and every 10 000 1-RTT packets |
 | Reassembly | 256 gaps per stream, 4096 per connection |
-| qlog per connection | 64 MiB; after that the connection is not traced further |
+| qlog per connection | 64 MiB; after that the connection is not traced further; at most 4096 HTTP/3 events queued for the endpoint loop (more are dropped) |
 | TCP client session cache | 384 sessions (six tickets for each of 64 origins) per Ktor client engine (one process-wide cache for `Socket.tls` and `TlsConnection.client`) |
 | Alt-Svc | 8 alternatives per origin, 1000 origins; default `ma` 86 400 s; broken marks 5 min doubling up to 2 days |
 | Ktor client race head start | 100 ms..2 s when derived from the RTT |

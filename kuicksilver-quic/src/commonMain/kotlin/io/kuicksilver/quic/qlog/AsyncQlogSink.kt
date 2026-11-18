@@ -73,6 +73,9 @@ public class AsyncQlogSink(
     private val connections = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
+    /** The delegate's: whether HTTP/3 events carry field values. */
+    override val logHeaderValues: Boolean get() = delegate.logHeaderValues
+
     /** Records dropped because the queue was full. */
     public val dropped: Long get() = droppedCount.load()
 

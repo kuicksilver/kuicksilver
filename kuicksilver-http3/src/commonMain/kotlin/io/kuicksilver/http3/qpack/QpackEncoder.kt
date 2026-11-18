@@ -36,6 +36,11 @@ internal class QpackEncoder(
 
     val insertCount: Long get() = table.insertCount
 
+    /** The dynamic table's capacity and size now, and the inserts the peer's decoder is known to have (qlog's QPACK state). */
+    val tableCapacity: Long get() = table.capacity
+    val tableSize: Long get() = table.size
+    val knownReceivedCount: Long get() = knownReceived
+
     /** Test and fuzzing probe: see [DynamicTable.snapshotForTest]. */
     internal fun tableForTest() = table.snapshotForTest()
 
