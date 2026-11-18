@@ -4,9 +4,7 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.InternalKuicksilverApi
-import io.kuicksilver.native.Ksl
-import io.kuicksilver.native.KslConst
-import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.KslIcmp
 
 /**
  * ICMP Packet Too Big through a send-only raw socket (`ksl_icmp_*`), for a CONNECT-UDP proxy (RFC 9298 section 6.1): IPv4
@@ -19,7 +17,7 @@ public class PacketTooBigSender private constructor() : AutoCloseable {
     private var v4 = -1
     private var v6 = -1
     private var closed = false
-    private val out = ByteArray(KslConst.ICMP_PTB_MAX)
+    private val out = ByteArray(KslIcmp.PTB_MAX)
     private val err = IntArray(1)
 
     /**
@@ -41,16 +39,16 @@ public class PacketTooBigSender private constructor() : AutoCloseable {
         val v6Family = t[0].toInt() == 6
         val fd = if (v6Family) v6.takeIf { it >= 0 } ?: open(6).also { v6 = it } else v4.takeIf { it >= 0 } ?: open(4).also { v4 = it }
         if (fd < 0) return false
-        val n = Ksl.icmpPtbBuild(out, t, l, payload, len, mtu)
-        return n > 0 && Ksl.icmpSend(fd, out, n, t, l)
+        val n = KslIcmp.ptbBuild(out, t, l, payload, len, mtu)
+        return n > 0 && KslIcmp.send(fd, out, n, t, l)
     }
 
-    private fun open(family: Int): Int = Ksl.icmpOpen(family, err)
+    private fun open(family: Int): Int = KslIcmp.open(family, err)
 
     override fun close() {
         closed = true
-        if (v4 >= 0) Ksl.icmpClose(v4)
-        if (v6 >= 0) Ksl.icmpClose(v6)
+        if (v4 >= 0) KslIcmp.close(v4)
+        if (v6 >= 0) KslIcmp.close(v6)
         v4 = -1
         v6 = -1
     }
@@ -63,19 +61,19 @@ public class PacketTooBigSender private constructor() : AutoCloseable {
          */
         public fun probe(): Probe {
             try {
-                KslLoader.ensureLoaded()
+                KslIcmp.ensureLoaded()
             } catch (e: Throwable) {
                 return Probe(false, "no native library: ${e.message}")
             }
             val e = IntArray(1)
             for (family in intArrayOf(4, 6)) {
-                val fd = Ksl.icmpOpen(family, e)
+                val fd = KslIcmp.open(family, e)
                 if (fd >= 0) {
-                    Ksl.icmpClose(fd)
+                    KslIcmp.close(fd)
                     return Probe(true, "raw ICMP sockets open")
                 }
             }
-            return if (e[0] == KslConst.E_NOT_SUPPORTED) {
+            return if (e[0] == KslIcmp.E_NOT_SUPPORTED) {
                 Probe(false, "not supported on this platform")
             } else {
                 Probe(false, "no privilege to open a raw ICMP socket (errno ${e[0]}; Linux needs CAP_NET_RAW)")
@@ -88,7 +86,7 @@ public class PacketTooBigSender private constructor() : AutoCloseable {
         /** A `ksl` address (family, port, 16 address bytes, pad) from an IP literal; null for a name. */
         private fun encode(a: InetSocketAddress): ByteArray? {
             val b = a.ipBytesNoDns() ?: return null
-            val out = ByteArray(KslConst.UDP_ADDR_LEN)
+            val out = ByteArray(KslIcmp.ADDR_LEN)
             out[0] = if (b.size == 4) 4 else 6
             out[1] = (a.port shr 8).toByte()
             out[2] = a.port.toByte()
