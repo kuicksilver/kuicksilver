@@ -573,11 +573,12 @@ class ClientH2WebSocketTest {
 
     /**
      * T2 counts from the end of the closing handshake, not from the client's own Close: a slow server answers the
-     * client's Close late (1.6 s, within T1 of 2 s) and never ends the stream. The client's END_STREAM comes about one
-     * close wait (2 s) after the server's Close, not 0.4 s after it (what was left of a deadline counted from the
+     * client's Close late (2 s, within T1 of 3 s) and never ends the stream. The client's END_STREAM comes about one
+     * close wait (3 s) after the server's Close, not 1 s after it (what was left of a deadline counted from the
      * client's own Close), and the reset with CANCEL only one close wait after that END_STREAM (RFC 8441 section 5: the
-     * orderly close first). The server's 1.6 s is the slow peer under test, not a synchronisation; the bounds keep a
-     * 0.5 s margin on either side.
+     * orderly close first). The server's 2 s is the slow peer under test, not a synchronisation. The bounds: END_STREAM
+     * after 2 s (1 s from either path) and before 6 s (two close waits), the reset more than 1.5 s after it (1.5 s from
+     * either path).
      */
     @Test fun negative_theTransportWaitCountsFromBothCloses() =
         clientTest {
@@ -598,7 +599,7 @@ class ClientH2WebSocketTest {
                     val out = ByteChannel()
                     launch { runCatching { r.sendBody(out, end = false) } }
                     readClientFrames(r.body)
-                    delay(1_600) // a slow server: its Close comes late, and it never ends the stream
+                    delay(2_000) // a slow server: its Close comes late, and it never ends the stream
                     out.writeFully(byteArrayOf(0x88.toByte(), 0))
                     out.flush()
                     serverClosed.complete(
@@ -616,7 +617,7 @@ class ClientH2WebSocketTest {
                 },
             ) { port, _ ->
                 client().use { c ->
-                    engine(c).h1.webSocketCloseWaitMillis = 2_000
+                    engine(c).h1.webSocketCloseWaitMillis = 3_000
                     c.get("https://127.0.0.1:$port/")
                     withTimeout(10.seconds) {
                         c.webSocket("wss://127.0.0.1:$port/ws") {
@@ -627,7 +628,7 @@ class ClientH2WebSocketTest {
                     val endedAt = withTimeout(10.seconds) { clientEnded.await() }
                     val resetAt = withTimeout(10.seconds) { reset.await() }
                     val t2 = endedAt - closedAt
-                    assertTrue(t2 > 1_500.milliseconds && t2 < 3_500.milliseconds, "END_STREAM $t2 after the server's Close")
+                    assertTrue(t2 > 2_000.milliseconds && t2 < 6_000.milliseconds, "END_STREAM $t2 after the server's Close")
                     val more = resetAt - endedAt
                     assertTrue(more > 1_500.milliseconds, "the reset $more after END_STREAM")
                 }

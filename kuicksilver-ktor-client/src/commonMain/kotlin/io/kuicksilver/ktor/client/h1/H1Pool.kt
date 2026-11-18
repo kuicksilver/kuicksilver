@@ -339,6 +339,18 @@ internal class H1Pool(
     /** Test hook: runs once a request obtained its connection or stream, still inside the connect timeout. */
     internal var obtainedForTest: (suspend () -> Unit)? = null
 
+    /**
+     * Test hook: gets what is left of the connect timeout, in milliseconds, as a request starts to obtain its connection
+     * (for a WebSocket, after its name resolution took its part): a test reads the budget the step got instead of timing it.
+     */
+    internal var obtainBudgetForTest: ((Long) -> Unit)? = null
+
+    /**
+     * Test hook: gets the deadline of a new HTTP/2 connection's wait for the server's preface (what TCP, the proxy and TLS
+     * left of the connect timeout): a test reads the budget the step got instead of timing it.
+     */
+    internal var prefaceTimeoutForTest: ((Duration) -> Unit)? = null
+
     /** Test hook: runs once a WebSocket's addresses (its connecting keys) were resolved, still inside the connect timeout. */
     internal var remoteHostsForTest: (suspend () -> Unit)? = null
 
@@ -634,7 +646,9 @@ internal class H1Pool(
             kotlin.time.TimeSource.Monotonic
                 .markNow()
         try {
-            withTimeout((data.connectTimeoutMillis(config) - resolvedMillis).coerceAtLeast(1)) {
+            val budget = (data.connectTimeoutMillis(config) - resolvedMillis).coerceAtLeast(1)
+            obtainBudgetForTest?.invoke(budget)
+            withTimeout(budget) {
                 run attempt@{
                     // RFC 8441: a WebSocket on an HTTP/2 connection there already, when its server allows Extended CONNECT
                     if (webSocketOverH2) {
@@ -1552,7 +1566,8 @@ internal class H1Pool(
                                     // what the connect timeout left after TCP, the proxy and TLS (at least 1 ms)
                                     prefaceTimeout =
                                         (data.connectTimeoutMillis(config).milliseconds - connectStarted.elapsedNow())
-                                            .coerceAtLeast(1.milliseconds),
+                                            .coerceAtLeast(1.milliseconds)
+                                            .also { prefaceTimeoutForTest?.invoke(it) },
                                     // RFC 7838 section 4: one on a request stream is for this connection's origin; one on
                                     // stream 0 only when its Origin is that origin. Never through a proxy
                                     onAltSvc =
