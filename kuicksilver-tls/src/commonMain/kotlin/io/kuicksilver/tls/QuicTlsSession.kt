@@ -326,6 +326,10 @@ public interface QuicTlsSession : AutoCloseable {
     @ExperimentalKuicksilverApi
     public val keyExchangeGroup: String? get() = null
 
+    /** The Encrypted Client Hello outcome ([EchStatus]) once the handshake completed or failed; [EchStatus.None] before. */
+    @ExperimentalKuicksilverApi
+    public val echStatus: EchStatus get() = EchStatus.None
+
     /**
      * Client: true when the server accepted our 0-RTT, false when it rejected it, null when none was attempted or the
      * answer has not arrived (RFC 9001 section 4.6.2). Server: true when 0-RTT of this connection was accepted, false

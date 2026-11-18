@@ -51,6 +51,18 @@ internal class KslContext private constructor(
      */
     val trustSnapshot: TrustConfig.AnchoredCa?,
 ) {
+    /** The version of [TlsConfig.echKeys] this server context decrypts with (0: none applied yet). */
+    private val echApplied = AtomicInt(0)
+
+    /**
+     * Server: gives this context the current set of [TlsConfig.echKeys] when it has not got it yet, before a session is made
+     * from it; a rotation of those keys reaches contexts already built this way (ksl takes a new set on a frozen context).
+     */
+    fun ensureEchKeys() {
+        val keys = config.echKeys ?: return
+        if (echApplied.load() != keys.version) echApplied.store(keys.applyTo(handle))
+    }
+
     /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
     class Lease internal constructor(
         val ctx: KslContext,
@@ -341,6 +353,8 @@ internal class KslContext private constructor(
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             // the context starts with the default groups; build() checked that this OpenSSL provides the configured ones
             if (config.keyExchangeGroups != KeyExchangeGroups.Default) Ksl.ctxSetGroups(h, config.keyExchangeGroups.kslList(config.role))
+            // RFC 9849 section 6.2.1: a client without a configuration for this connection sends GREASE ECH
+            if (config.role == TlsRole.Client && config.echGrease) Ksl.ctxSetOption(h, KslConst.OPT_ECH_GREASE, 1)
             val chain =
                 if (snapshot != null) {
                     Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)

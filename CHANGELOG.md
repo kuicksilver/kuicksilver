@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- TLS: Encrypted Client Hello (RFC 9849; experimental, `kuicksilver-tls` only so far, the Ktor engines do not use it yet).
+  Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
+  RFC 9848; unusable ECHConfigs are ignored one by one), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
+  with the server's retry configurations after an authenticated rejection, the certificate checked against the
+  `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
+  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory)
+  with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. OpenSSL 4.1.0 ends a rejection after a
+  HelloRetryRequest with `illegal_parameter` (ADR-0019, bug C).
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
   resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller

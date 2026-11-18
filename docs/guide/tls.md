@@ -553,3 +553,49 @@ and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other
 `TlsConnection.keyExchangeGroup`, `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the
 group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none.
 
+
+## Encrypted Client Hello
+
+Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a connection from the path: the ClientHello
+the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
+needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
+The Ktor engines do not use it yet; through `TlsConfig` it works over QUIC and TCP.
+
+A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
+record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
+extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one; a list with none
+usable offers nothing. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
+stand out. ECH is TLS 1.3 only: `echConfigList` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
+
+When the server rejects ECH (its key changed, or it no longer has one), the client checks the certificate against the
+`public_name` (also through a platform or custom verifier, which is asked for that name), ends the handshake with
+`ech_required` and throws `TlsException.EchRejected`, whose `retryConfigs` are the server's current configurations: retry
+once, on a new connection, with them. Nothing of the rejected connection is used, and a second rejection is not retried.
+Without `retryConfigs` the server has stopped supporting ECH; connecting without it reveals the name, so it is the
+caller's choice. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
+`Offered`.
+
+A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ech -public_name <name> -out key.pem`
+writes (the private key and the `ECHCONFIG` block whose base64 goes into the HTTPS record), at least one of them marked for
+`retry_configs`. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
+previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). A client whose ECH is
+rejected verifies the certificate against the `public_name`, so the server must present one valid for it then (an
+`sniSelector` sees the `public_name` as the server name of such a handshake).
+
+```text
+val keys = EchServerKeys(listOf(EchKey(pemText)))
+val server = tlsConfig(TlsRole.Server) {
+    identity = TlsIdentity.fromPem(chainPem, keyPem)   // valid for the inner names and for the public_name
+    echKeys = keys
+}
+val client = tlsConfig(TlsRole.Client) {
+    serverName = "inner.example"
+    echConfigList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord)
+}
+```
+
+ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
+remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
+the DNS query itself unless DNS is protected, stay visible. OpenSSL 4.1.0 ends a rejection that follows a
+HelloRetryRequest with `illegal_parameter` instead of the rejection path, so no retry configurations come back then
+(ADR-0019, bug C).

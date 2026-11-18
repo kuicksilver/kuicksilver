@@ -59,7 +59,9 @@ public class TlsConnection private constructor(
 ) : AutoCloseable {
     private val ctx = lease.ctx
     private val config = ctx.config
-    private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
+
+    // a server's ECH keys go into its context first: a session copies them when it is made (TlsConfig.echKeys, rotation)
+    private var ssl: Long = ctx.ensureEchKeys().let { Ksl.sslNew(ctx.handle, KslConst.MODE_TCP) }
     private val lock = Mutex()
 
     /** The transport this connection reads (tests tell their connection's hooks apart by it). */
@@ -195,6 +197,14 @@ public class TlsConnection private constructor(
     public var keyExchangeGroup: String? = null
         private set
 
+    /** The Encrypted Client Hello outcome ([EchStatus]); [EchStatus.None] until the handshake completed. */
+    @ExperimentalKuicksilverApi
+    public var echStatus: EchStatus = EchStatus.None
+        private set
+
+    /** Client: an ECH configuration was set on this connection ([TlsConfig.echConfigList]). */
+    private var echOffered = false
+
     private fun s(): Long {
         if (closed || ssl == 0L) throw IllegalStateException("connection closed")
         return ssl
@@ -237,6 +247,7 @@ public class TlsConnection private constructor(
             reference = host
             sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
             Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
+            echOffered = offerEch(ssl, config)
             cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity)
         } else {
             stapleFor(ssl, config)
@@ -329,7 +340,8 @@ public class TlsConnection private constructor(
 
                 KslConst.WANT_VERIFY -> {
                     presented = chain()
-                    val r = verification.verify(presented, reference!!)
+                    // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
+                    val r = verification.verify(presented, verifyNameOf(s(), reference!!, echOffered))
                     lock.withLock { resume(r) }
                 }
 
@@ -344,8 +356,10 @@ public class TlsConnection private constructor(
         }
     }
 
+    @OptIn(ExperimentalKuicksilverApi::class)
     private fun failWith(e: KslException.Internal): Nothing {
         rejection?.let { throw TlsException.Verify(it, presented) }
+        if (echOffered) echRejection(s(), e)?.let { throw it }
         val (ex, _) = e.toTlsFailure(presented)
         throw ex
     }
@@ -403,6 +417,7 @@ public class TlsConnection private constructor(
         protocolVersion = if (Ksl.sslGet(s(), KslConst.GET_VERSION)[1].toInt() == 0x03) TlsVersion.Tls12 else TlsVersion.Tls13
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
         keyExchangeGroup = groupOf(s())
+        echStatus = echStatusOf(s())
         presented = chain()
         val effective = overrideCtx?.ctx?.config ?: config
         if (effective.role == TlsRole.Client) {
