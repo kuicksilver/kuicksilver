@@ -112,8 +112,10 @@ static int do_move(const char *from, const char *to) {
 }
 
 /* An error: every move undone, newest first, then exit 2; a move that cannot be undone is named. */
-static int fail(const char *what, const char *path) {
+static int fail_hint(const char *what, const char *path, const char *hint) {
     fprintf(stderr, "corpus-names: %s %s: %s\n", what, path, strerror(errno));
+    if (hint) fprintf(stderr, "corpus-names: %s\n", hint);
+    else if (errno == ENAMETOOLONG) fprintf(stderr, "corpus-names: shorten the input's name (or the directory's path)\n");
     for (size_t i = nmoves; i-- > 0;) {
         if (move_excl(moves[i].to, moves[i].from) != 0) {
             fprintf(stderr, "corpus-names: could not move %s back to %s: %s (the file is still at %s)\n", moves[i].to,
@@ -122,6 +124,8 @@ static int fail(const char *what, const char *path) {
     }
     return 2;
 }
+
+static int fail(const char *what, const char *path) { return fail_hint(what, path, NULL); }
 
 /* [dir]/[name][suffix] into [out]; -1 with ENAMETOOLONG when it does not fit (never a cut name). */
 static int join(char *out, size_t cap, const char *dir, const char *name, const char *suffix) {
@@ -142,7 +146,7 @@ int main(int argc, char **argv) {
     for (int a = first; a < argc; a++) {
         /* the names first, then the checks and renames: renaming while readdir iterates may skip or repeat entries */
         DIR *dir = opendir(argv[a]);
-        if (!dir) { fprintf(stderr, "corpus-names: %s: %s\n", argv[a], strerror(errno)); return 2; }
+        if (!dir) return fail("reading", argv[a]);
         char **names = NULL;
         size_t count = 0, cap = 0;
         struct dirent *e;
@@ -188,7 +192,12 @@ int main(int argc, char **argv) {
             if (join(path, sizeof path, argv[a], plans[k].entry, "") != 0 ||
                 join(plans[k].tmp, sizeof plans[k].tmp, argv[a], plans[k].entry, ".corpus-names-tmp") != 0)
                 return fail("naming", plans[k].entry);
-            if (do_move(path, plans[k].tmp) != 0) return fail("moving aside", path);
+            if (do_move(path, plans[k].tmp) != 0) {
+                if (errno != EEXIST) return fail("moving aside", path);
+                char hint[4300];
+                snprintf(hint, sizeof hint, "remove or rename the stale %s left by an earlier run", plans[k].tmp);
+                return fail_hint("moving aside", path, hint);
+            }
         }
         /* then each to its name, never over another file, pass after pass while one places an input (a name another of
            them held is free once that one moved on); only then do the rest go back */

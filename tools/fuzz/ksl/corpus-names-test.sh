@@ -6,7 +6,8 @@
 # or by anything else fails; --rename gives it its name and then it passes; a rename onto a name another file holds (the
 # same bytes twice) is refused, while a chain or a cycle of misnamed inputs holding each other's names is resolved; no
 # input is ever overwritten (one that cannot go back is left as <name>.unresolved); an error part way, or a directory that
-# cannot be written, leaves every input under its old name; the
+# cannot be written, leaves every input under its old name; a stale temporary name and a name too long fail with a message
+# that says what to do; the
 # reference values fail for a hash built with the old basis. Run by tools/c-test.sh.
 # Usage: corpus-names-test.sh [compiler, may be several words]   (default: $CC, else cc)
 set -uo pipefail
@@ -58,9 +59,20 @@ got="$(cat "$l/$fq")|$(cat "$l/$fh")|$(cat "$l/$fd")|$(cat "$l/$fh.unresolved" 2
 # an error part way (the second input's temporary name is taken by a directory) undoes the moves made: exit 2, both
 # inputs under their old names, no temporary name left
 w="$tmp/undo"; mkdir -p "$w/m2.corpus-names-tmp"; printf 'one' > "$w/m1"; printf 'two' > "$w/m2"
-expect 2 "negative: an error part way undoes every move" "moving aside" --rename "$w"
+expect 2 "negative: an error part way undoes every move" "remove or rename the stale $w/m2.corpus-names-tmp left by an earlier run" --rename "$w"
 [ "$(cat "$w/m1")|$(cat "$w/m2")" = "one|two" ] && [ ! -e "$w/m1.corpus-names-tmp" ] && echo "ok:   both inputs back under their names" \
   || { echo "FAIL: the moves were not undone"; ls -la "$w"; rc=1; }
+# a stale temporary file of an earlier run: exit 2, and the message says what to do
+t2="$tmp/stale"; mkdir -p "$t2"; printf 'abc' > "$t2/misnamed"; printf 'old' > "$t2/misnamed.corpus-names-tmp"
+expect 2 "negative: a stale temporary name says to remove or rename it" "remove or rename the stale $t2/misnamed.corpus-names-tmp left by an earlier run" --rename "$t2"
+[ "$(cat "$t2/misnamed")|$(cat "$t2/misnamed.corpus-names-tmp")" = "abc|old" ] && echo "ok:   neither file changed" || { echo "FAIL: the stale case changed a file"; rc=1; }
+# a name too long for a path (a directory up to about 4000 characters, made one level at a time while the system lets a
+# path that long be used, and a 250-character name; on macOS the directory's path is already too long at about 1000):
+# exit 2, and the message says to shorten it
+long="$tmp"; seg=$(printf 'd%.0s' $(seq 1 200))
+for i in $(seq 1 20); do (cd "$long" 2>/dev/null && mkdir "$seg") || break; long="$long/$seg"; done
+(cd "$long" && printf 'x' > "$(printf 'n%.0s' $(seq 1 250))") 2>/dev/null
+expect 2 "negative: a name too long says to shorten it" "shorten the input's name" --rename "$long"
 # a directory that cannot be written: nothing moves, exit 2
 o="$tmp/readonly"; mkdir -p "$o"; printf 'abc' > "$o/misnamed"; chmod 555 "$o"
 expect 2 "negative: a directory that cannot be written fails and changes nothing" "moving aside" --rename "$o"
