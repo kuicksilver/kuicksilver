@@ -180,7 +180,7 @@ what the peers really do, and is delivered whole or not at all.
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)) (done: on by default on both sides, brotli
-  then zlib, built into libcrypto from pinned and verified releases, [ADR-0020](adr/0020-zlib-and-brotli-in-libcrypto.md)).
+  then zlib, built into libcrypto from pinned and verified releases, [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
 - Configurable key exchange groups.
 - qlog: HTTP/3 events, checked against qvis.
 - h3spec and the Autobahn WebSocket suite in the gate.

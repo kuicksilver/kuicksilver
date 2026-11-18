@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell what the
   peer's chain came in. What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an
   announced length above it, a length that does not match or data that does not decompress is `bad_certificate`, an
-  algorithm not offered `illegal_parameter` (threat model 3.25, CWE-409). A server session that staples an OCSP response
+  algorithm not offered `illegal_parameter` (threat model 3.30, CWE-409). A server session that staples an OCSP response
   sends its Certificate uncompressed, since the chain compressed beforehand has no response in it. ksl ABI 7, additive:
   `KSL_OPT_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSION`.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
@@ -787,17 +787,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- The bundled OpenSSL now contains zlib 1.4 and brotli 1.2.1, for TLS certificate compression (RFC 8879; ADR-0020):
+- The bundled OpenSSL now contains zlib 1.4 and brotli 1.2.1, for TLS certificate compression (RFC 8879; ADR-0025):
   both are pinned in `gradle/compression-libs.toml` and verified by `tools/openssl/fetch.sh` before they are compiled
   (zlib by SHA-256 and its release key's signature, `tools/openssl/zlib-release-key.asc`; brotli, which signs no release,
   by SHA-256 and the tag's commit), with OpenSSL's own compiler and flags, into `libcrypto.a`
   (`tools/openssl/compression.mk`), so their symbols carry the `ksl_ossl_` prefix on Kotlin/Native and nothing of them is
   exported from the JNI libraries. OpenSSL is configured `enable-zlib enable-brotli no-zstd` instead of `no-comp`; TLS
   record compression stays off (`SSL_OP_NO_COMPRESSION`), and so does certificate compression until `ksl` configures it
-  (`SSL_OP_NO_RX_CERTIFICATE_COMPRESSION`, `SSL_OP_NO_TX_CERTIFICATE_COMPRESSION`). The native libraries grow by about 0.8 MB per target (Android
-  arm64 `libksl.so` 2,898,576 to 3,704,880 bytes, macOS arm64 JNI 2,544,056 to 3,337,496), and the Android size gate
-  (`tools/check/size.sh`) moves up by 800,000 bytes to a limit of 3,800,000. brotli's encoder needs `libm`: the Linux and
-  Android libraries link it (`libm.so.6` joins the Linux import whitelist of the release). `provenance.txt` of every
+  (`SSL_OP_NO_RX_CERTIFICATE_COMPRESSION`, `SSL_OP_NO_TX_CERTIFICATE_COMPRESSION`). Android and iOS get brotli's
+  decoder only (the encoder's entry points are stubs that fail), the other targets the encoder with its static tables
+  computed on first use (`BROTLI_STATIC_INIT_LAZY`, run once by `tools/openssl/brotli/ksl_static_init.c`): the Android
+  arm64 `libksl.so` grows from 2,898,576 to 3,127,568 bytes, the macOS arm64 JNI library from 2,544,056 to 3,056,792
+  (ADR-0025 has every option measured), and the Android size gate (`tools/check/size.sh`) moves up by 200,000 bytes to a
+  limit of 3,200,000. brotli's encoder needs `libm`: the Linux libraries link it (`libm.so.6` joins the Linux import
+  whitelist of the release; the glibc floor stays 2.17); the Android library, without the encoder, does not. `provenance.txt` of every
   OpenSSL build names the two tarballs' SHA-256, which `-Pkuicksilver.openssl.prebuilt` checks; the SBOM lists zlib (Zlib
   license) and brotli (MIT) as components inside OpenSSL, the provenance statement as resolved dependencies; NOTICE and
   every published artifact carry their licenses (`licenses/LICENSE.zlib.txt`, `licenses/LICENSE.brotli.txt`); Renovate

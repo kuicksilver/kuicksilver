@@ -24,4 +24,4 @@ Documents and identifiers are in English.
 | [0017](0017-http2.md) | HTTP/2 in 0.3.0: a sans-IO `kuicksilver-http2` module next to `kuicksilver-http3`, no h2c, no server push | accepted; h2c and coalescing superseded by 0018 |
 | [0018](0018-h2c-and-coalescing-in-030.md) | h2c (prior knowledge, opt-in) and connection coalescing across origins in 0.3.0 | accepted, not implemented yet |
 | [0019](0019-openssl-4-and-ech.md) | OpenSSL 4.1.x, then 4.2 LTS, for Encrypted Client Hello in 0.3.0 | accepted, implementation pending |
-| [0020](0020-zlib-and-brotli-in-libcrypto.md) | zlib and brotli, pinned and verified, compiled into libcrypto for TLS certificate compression | accepted |
+| [0025](0025-zlib-and-brotli-in-libcrypto.md) | zlib and brotli, pinned and verified, compiled into libcrypto for TLS certificate compression | accepted |

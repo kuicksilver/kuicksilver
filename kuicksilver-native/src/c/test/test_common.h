@@ -182,6 +182,8 @@ void ksl_ssl_msg_observer_for_test(ksl_ssl *, void (*cb)(int, int, int, const vo
                                    void *arg);
 void ksl_trust_paths_for_test(const char *const *files,
                               const char *const *dirs); /* ksl_ctx.c: NULL restores the distribution paths */
+void ksl_brotli_compresses_for_test(
+    int compresses); /* ksl_ctx.c: the brotli probe's answer (0: a decoder-only build) */
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *);
 uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *);
 void ksl_udp_fail_next_gso_for_test(ksl_udp *, int err);

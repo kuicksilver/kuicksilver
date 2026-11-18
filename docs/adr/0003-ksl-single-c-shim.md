@@ -156,7 +156,7 @@ of it, and before the SNI pause, a present ALPN extension that is malformed gets
 `ksl` and not at the SNI pause because only `ksl` sees whether the extension is there at all (`ksl_ssl_client_hello` hands out
 the list without its length) and every ClientHello, which the pause sees once. No new function.
 
-TLS certificate compression, additive under 7 (RFC 8879; [ADR-0020](0020-zlib-and-brotli-in-libcrypto.md)):
+TLS certificate compression, additive under 7 (RFC 8879; [ADR-0025](0025-zlib-and-brotli-in-libcrypto.md)):
 `KSL_OPT_CERT_COMPRESSION` on either context, 1 (the default) to offer brotli, then zlib, and to compress a server's chain once
 at `ksl_ctx_freeze`, 0 for neither; `KSL_GET_CERT_COMPRESSION` (2 bytes) for the algorithm the peer's certificate came in,
 noted by `ksl_msg_cb` (installed on a QUIC server session too when it asks for a client certificate). A server session that

@@ -1835,7 +1835,9 @@ WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes
   certificate from the peer is an `unexpected_message` (10).
 
 The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
-([ADR-0020](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0020-zlib-and-brotli-in-libcrypto.md)); they add about 0.8 MB to each native library.
+([ADR-0025](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0025-zlib-and-brotli-in-libcrypto.md)). On Android and iOS only brotli's decoder is built, to keep the
+library small (about 230 KB added, against about 510 KB with the encoder elsewhere): there a server compresses its chain with
+zlib, and a client sends its own certificate uncompressed; both still take brotli and zlib from the peer.
 
 ## HTTP/3 with Kuicksilver
 

@@ -10,6 +10,9 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <limits.h>
+#ifndef OPENSSL_NO_COMP
+#include <openssl/comp.h>
+#endif
 
 /* The TLS 1.2 profile (RFC 9325 sections 4.1-4.2, RFC 10015): ECDHE, an AEAD, nothing else. RFC 9325 section 4.2.1: "Clients SHOULD
    include TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 as the first proposal to any server", and a server "SHOULD prefer the stronger cipher
@@ -460,6 +463,42 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
    refused with bad_certificate before anything is decompressed (section 5), the decompression output is capped at
    uncompressed_length, and any other length is bad_certificate too (section 4); the compressed message itself is held to the same
    bound. */
+/* Whether this OpenSSL can compress with brotli: the bundled one ships brotli's decoder only on Android and iOS (ADR-0025), where
+   the encoder's entry points fail. Probed once, by compressing a few bytes (on a full build this also makes the encoder compute
+   its lazily built tables, which only a context about to compress needs). */
+static CRYPTO_ONCE brotli_probe_once = CRYPTO_ONCE_STATIC_INIT;
+static int brotli_compresses, brotli_probed;
+static void brotli_probe(void) {
+#ifndef OPENSSL_NO_COMP
+    COMP_METHOD *m = COMP_brotli_oneshot();
+    COMP_CTX *z = m ? COMP_CTX_new(m) : NULL;
+    unsigned char in[32] = {0}, out[128];
+    brotli_compresses = brotli_probed =
+        z != NULL && COMP_compress_block(z, out, (int)sizeof out, in, (int)sizeof in) > 0;
+    COMP_CTX_free(z);
+#endif
+    ERR_clear_error();
+}
+static int brotli_can_compress(void) {
+    return CRYPTO_THREAD_run_once(&brotli_probe_once, brotli_probe) == 1 && brotli_compresses;
+}
+#ifdef KSL_TEST
+/* Test hook: the probe's answer, as on a build with brotli's decoder only (0) or a full one (1); -1 restores what it found */
+void ksl_brotli_compresses_for_test(int compresses) {
+    CRYPTO_THREAD_run_once(&brotli_probe_once, brotli_probe);
+    brotli_compresses = compresses < 0 ? brotli_probed : compresses;
+}
+#endif
+/* A client compresses its certificate per handshake with the first algorithm of the server's list it shares, brotli from every
+   peer that offers it first, and a failed compression ends the handshake (statem_clnt.c): where brotli cannot compress, a client
+   with a certificate sends it uncompressed (OpenSSL has one list for what an endpoint decompresses and compresses; it still
+   offers and decompresses brotli and zlib). */
+static void client_tx_check(ksl_ctx *c) {
+    if (c->role != KSL_CLIENT || !c->cert_compression || !c->has_leaf)
+        return;
+    if (!brotli_can_compress())
+        SSL_CTX_set_options(c->ctx, SSL_OP_NO_TX_CERTIFICATE_COMPRESSION);
+}
 static int cert_compression_set(ksl_ctx *c, int on) {
     static int prefs[] = {TLSEXT_comp_cert_brotli, TLSEXT_comp_cert_zlib};
     const uint64_t both = SSL_OP_NO_RX_CERTIFICATE_COMPRESSION | SSL_OP_NO_TX_CERTIFICATE_COMPRESSION;
@@ -471,6 +510,7 @@ static int cert_compression_set(ksl_ctx *c, int on) {
     } else
         SSL_CTX_set_options(c->ctx, both);
     c->cert_compression = on;
+    client_tx_check(c);
     return 1;
 }
 ksl_ctx *ksl_ctx_new(int role) {
@@ -694,6 +734,8 @@ int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len
              ASN1_TIME_diff(&days, &secs, NULL, X509_get0_notAfter(leaf)) == 1;
         c->leaf_not_after = (int64_t)time(NULL) + (int64_t)days * 86400 + secs;
         c->has_leaf = ok;
+        if (ok)
+            client_tx_check(c);
     }
     sk_X509_pop_free(sk, X509_free);
     if (!ok) {
@@ -1083,9 +1125,15 @@ int ksl_ctx_freeze(ksl_ctx *c) {
        the output is smaller than the input, and returns 0 when none is: that chain then goes out as a plain Certificate (RFC 8879
        section 3 never obliges a sender to compress). A client compresses its certificate per handshake, as the server's
        CertificateRequest context is part of the message. */
+    /* Where brotli cannot compress (Android and iOS, ADR-0025) the chain is compressed with zlib alone, which every client that
+       offers both gets; OpenSSL would stop at brotli's failure without trying zlib. A failure of all of them is retried with zlib
+       too. */
     if (!c->frozen && c->role == KSL_SERVER && c->cert_compression && c->has_leaf &&
-        SSL_CTX_compress_certs(c->ctx, 0) != 1)
+        SSL_CTX_compress_certs(c->ctx, brotli_can_compress() ? 0 : TLSEXT_comp_cert_zlib) != 1) {
         ERR_clear_error();
+        if (SSL_CTX_compress_certs(c->ctx, TLSEXT_comp_cert_zlib) != 1)
+            ERR_clear_error();
+    }
     c->frozen = 1;
     return KSL_OK;
 }

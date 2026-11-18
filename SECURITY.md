@@ -82,7 +82,7 @@ from us, so we commit to the following.
   not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
   logging, and more), which removes a large part of OpenSSL's attack surface.
 - **zlib and brotli inside OpenSSL.** OpenSSL's libcrypto contains zlib and brotli, for TLS certificate compression
-  (RFC 8879; [ADR-0020](docs/adr/0020-zlib-and-brotli-in-libcrypto.md)). Their releases are pinned in
+  (RFC 8879; [ADR-0025](docs/adr/0025-zlib-and-brotli-in-libcrypto.md)). Their releases are pinned in
   [`gradle/compression-libs.toml`](gradle/compression-libs.toml) and verified before compiling (`tools/openssl/fetch.sh`):
   zlib by its tarball's SHA-256 and the signature of its release key (`tools/openssl/zlib-release-key.asc`); brotli,
   which signs no release, by its tarball's SHA-256 and the commit of its release tag. An advisory for zlib or brotli is

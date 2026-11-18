@@ -649,6 +649,50 @@ static void test_client_hello_extension(void) {
     END();
 }
 
+/* whether this build's brotli compresses (a decoder-only build of OpenSSL fails here) */
+static int brotli_here(void) {
+    uint8_t in[32] = {0}, out[128];
+    return compress_with(ALG_BROTLI, in, sizeof in, out, sizeof out) > 0;
+}
+/* A build with brotli's decoder only (Android and iOS, ADR-0025), as the probe answers there: the server's chain is compressed with
+   zlib, which a client offering brotli then zlib gets; a client still decompresses brotli (from a full build's server) but sends
+   its own certificate uncompressed (OpenSSL would pick brotli for it, fail, and end the handshake). */
+static void test_decoder_only(void) {
+    SECTION("negative_aDecoderOnlyClientSendsItsCertificateUncompressed");
+    ksl_brotli_compresses_for_test(0);
+    ksl_ctx *cc = cli(1, 1), *sc = srv("server", NULL, 1, 1), *full = NULL;
+    ksl_ssl *c = qclient(cc), *s = qserver(sc);
+    side cs = {0}, ss = {0};
+    tamper t = {TM_NONE, 0, 0, {0, 0}, 0, NULL, 0, 0, 0, 0};
+    int rc = qpump(c, s, &cs, &ss, &t);
+    CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs.done && ss.done, "handshake");
+    CHECK(peer_alg(c) == ALG_ZLIB, "the server's chain in zlib");
+    CHECK(peer_alg(s) == 0, "the client's certificate uncompressed");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_brotli_compresses_for_test(-1);
+    /* a server of this build (brotli where brotli compresses): the decoder-only client takes what it sends */
+    full = srv("server", NULL, 1, 1);
+    ksl_brotli_compresses_for_test(0);
+    cc = cli(1, 1);
+    c = qclient(cc);
+    s = qserver(full);
+    side cs2 = {0}, ss2 = {0};
+    rc = qpump(c, s, &cs2, &ss2, &t);
+    CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs2.done && ss2.done, "handshake with a full server");
+    CHECK(peer_alg(c) == (brotli_here() ? ALG_BROTLI : ALG_ZLIB),
+          "a decoder-only client decompresses what a server sends");
+    CHECK(peer_alg(s) == 0, "and sends its certificate uncompressed");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    ksl_ctx_free(full);
+    ksl_brotli_compresses_for_test(-1);
+    END();
+}
+
 void run_certcomp(void) {
     test_option_values();
     test_quic_default();
@@ -656,6 +700,7 @@ void run_certcomp(void) {
     test_tampered();
     test_tampered_client_certificate();
     test_client_hello_extension();
+    test_decoder_only();
 #ifdef KSL_TEST_TCP
     test_tcp_default();
     test_default_is_on();

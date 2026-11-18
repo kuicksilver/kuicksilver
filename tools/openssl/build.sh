@@ -23,11 +23,14 @@
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
 # zlib and brotli (gradle/compression-libs.toml, verified by fetch.sh) are compiled with libcrypto's compiler and flags and
 # appended to libcrypto.a (tools/openssl/compression.mk): OpenSSL's certificate compression (RFC 8879) needs them, and as
-# members of libcrypto.a they are linked, symbol-prefixed and export-checked exactly like OpenSSL.
+# members of libcrypto.a they are linked, symbol-prefixed and export-checked exactly like OpenSSL. Android and iOS get brotli's
+# decoder only (ksl-brotli-encoder=0 in the target line; ADR-0025).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
 target="${1:?target}"
+# brotli's encoder: not on the client-mostly targets, where it was most of the 0.8 MB the libraries grew by (ADR-0025)
+case "$target" in android-*|ios-*) brotli_encoder=0; ksl_tag="ksl-brotli-encoder=0" ;; *) brotli_encoder=1; ksl_tag="" ;; esac
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
 # KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
 pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
@@ -126,11 +129,11 @@ esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
-if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id" | portable; echo; exit 0; fi
+if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $ksl_tag" | portable; echo; exit 0; fi
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
-ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$zlib_sha|$brotli_sha"
+ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder"
 key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
@@ -147,6 +150,7 @@ fi
 work="$out/build/$target"
 rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
 mkdir -p "$work/ksl-zlib" "$work/ksl-brotli"; cp -R "$zlib_src/." "$work/ksl-zlib/"; cp -R "$brotli_src/." "$work/ksl-brotli/"
+cp "$here"/brotli/*.c "$work/ksl-brotli/c/enc/"
 cd "$work"
 # the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
@@ -170,10 +174,10 @@ KSL_V="$version" perl -0777 -ne '
   print join(" ", @t), "\n", $plat, "\n";' crypto/buildinf.h > "$out/build/$target.buildinf.txt"
 perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
 make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
-make -j"$JOBS" -f Makefile -f "$here/compression.mk" ksl-compression >>"$out/build/$target.make.log" 2>&1
+make -j"$JOBS" -f Makefile -f "$here/compression.mk" KSL_BROTLI_ENCODER="$brotli_encoder" ksl-compression >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"
 cp libcrypto.a libssl.a "$cache/lib/"
 cp -R include/openssl "$cache/include/"
-cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}" > "$cache/configure-target.txt"; provenance "$cache"
+cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}${ksl_tag:+ $ksl_tag}" > "$cache/configure-target.txt"; provenance "$cache"
 rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"
 echo "built $target -> $dest (cache $key)"

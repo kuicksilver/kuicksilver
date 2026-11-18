@@ -111,6 +111,8 @@ extern "C" {
                                       uncompressed_length above it, an output of another length than uncompressed_length, or data
                                       that does not decompress: bad_certificate (42); an algorithm we did not offer: illegal_parameter
                                       (47). 0 = no extension, and a CompressedCertificate from the peer is an unexpected_message (10).
+                                      Where brotli only decompresses (the bundled OpenSSL of Android and iOS, ADR-0025; probed once),
+                                      a server's chain is compressed with zlib and a client's certificate is sent uncompressed.
                                       KSL_E_BAD_ARG for any other value */
 /* clang-format on */
 #define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */

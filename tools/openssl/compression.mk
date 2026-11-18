@@ -6,14 +6,25 @@
 #   make -f Makefile -f compression.mk ksl-compression
 # The sources are copies under ksl-zlib/ and ksl-brotli/ in that tree (relative paths: no machine path reaches an object).
 # Only what OpenSSL's c_zlib.c and c_brotli.c call is compiled: zlib without its gz* file API and infback, brotli's
-# common, decoder and encoder.
+# common, decoder and encoder (ADR-0025):
+#   KSL_BROTLI_ENCODER=1 (build.sh's default): the encoder, built with BROTLI_STATIC_INIT_LAZY (its static dictionary lookup
+#     tables are computed on first use, not shipped) and with ksl's static_init (ksl_static_init.c) in place of brotli's, which
+#     runs that computation once when the first encoder is created;
+#   KSL_BROTLI_ENCODER=0 (Android and iOS): no encoder; the entry points OpenSSL calls fail (ksl_encoder_stub.c), so brotli is
+#     decompressed but never compressed there.
+# build.sh copies both ksl files next to brotli's encoder sources (ksl-brotli/c/enc/), whose relative includes they use.
+KSL_BROTLI_ENCODER ?= 1
 
 KSL_ZLIB_SRCS := adler32 compress crc32 deflate inffast inflate inftrees trees uncompr zutil
 KSL_BROTLI_COMMON_SRCS := constants context dictionary platform shared_dictionary transform
 KSL_BROTLI_DEC_SRCS := bit_reader decode huffman prefix state static_init
+ifeq ($(KSL_BROTLI_ENCODER),1)
 KSL_BROTLI_ENC_SRCS := backward_references backward_references_hq bit_cost block_splitter brotli_bit_stream cluster command \
   compound_dictionary compress_fragment compress_fragment_two_pass dictionary_hash encode encoder_dict entropy_encode \
-  fast_log histogram literal_cost memory metablock static_dict static_dict_lut static_init utf8_util
+  fast_log histogram literal_cost memory metablock static_dict static_dict_lut utf8_util ksl_static_init
+else
+KSL_BROTLI_ENC_SRCS := ksl_encoder_stub
+endif
 
 KSL_COMPRESSION_OBJS := $(KSL_ZLIB_SRCS:%=ksl-compression/zlib-%.o) \
   $(KSL_BROTLI_COMMON_SRCS:%=ksl-compression/brotli-common-%.o) \
@@ -35,7 +46,7 @@ ksl-compression/brotli-dec-%.o: ksl-brotli/c/dec/%.c
 	$(CC) $(KSL_COMPRESSION_CFLAGS) -Iksl-brotli/c/include -c -o $@ $<
 ksl-compression/brotli-enc-%.o: ksl-brotli/c/enc/%.c
 	@mkdir -p ksl-compression
-	$(CC) $(KSL_COMPRESSION_CFLAGS) -Iksl-brotli/c/include -c -o $@ $<
+	$(CC) $(KSL_COMPRESSION_CFLAGS) -DBROTLI_STATIC_INIT=BROTLI_STATIC_INIT_LAZY -Iksl-brotli/c/include -Iinclude -c -o $@ $<
 
 # appended in a fixed order (reproducible archives); the archive's index is rebuilt after
 .PHONY: ksl-compression

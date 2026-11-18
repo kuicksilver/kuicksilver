@@ -171,7 +171,7 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
-export SIZE_LIMIT="${SIZE_LIMIT:-3800000}"
+export SIZE_LIMIT="${SIZE_LIMIT:-3200000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .

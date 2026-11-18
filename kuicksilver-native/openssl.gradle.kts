@@ -72,7 +72,7 @@ val builderFlags = listOf("CPPFLAGS", "CFLAGS", "LDFLAGS").associateWith { provi
 opensslTargets.forEach { t ->
     tasks.register<Exec>("opensslBuild${t.camel()}") {
         group = "openssl"; description = "Builds static OpenSSL for $t"; dependsOn(opensslFetch)
-        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
+        inputs.files(root.resolve("tools/openssl/build.sh"), root.resolve("tools/openssl/compression.mk"), fileTree(root.resolve("tools/openssl/brotli")), root.resolve("tools/openssl/configure-flags.txt"), pinFile, compressionPin)
         if (t in dockerTargets) inputs.files(root.resolve("tools/openssl/build-docker.sh"), fileTree(root.resolve("tools/openssl/docker")))   // review M11: the image is part of the toolchain
         builderFlags.forEach { (name, value) -> inputs.property("env.$name", value) }
         // CC: only the macOS builds use the builder's (tools/openssl/build.sh); the others drop it or set their own

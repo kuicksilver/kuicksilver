@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Negative controls of tools/openssl/fetch.sh for the compression libraries (gradle/compression-libs.toml, ADR-0020): with
+# Negative controls of tools/openssl/fetch.sh for the compression libraries (gradle/compression-libs.toml, ADR-0025): with
 # the verified tarballs it passes; a zlib tarball with one byte changed, a zlib signature from another key or none, a
 # brotli tarball with one byte changed and a pin whose brotli commit is not the one the tarball archives are each refused,
 # and nothing is unpacked. Runs a copy of tools/openssl and gradle/ in a temporary directory against copies of the tarballs

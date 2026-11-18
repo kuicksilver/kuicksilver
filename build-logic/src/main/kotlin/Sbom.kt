@@ -227,6 +227,8 @@ abstract class CyclonedxSbomTask : DefaultTask() {
             distribution = url
             license = licenseId
             properties += "kuicksilver:linkage" to "static"
+            // ADR-0025: the client-mostly platforms ship brotli's decoder only
+            if (name == "brotli") properties += "kuicksilver:brotli:encoder" to "built on JVM, macOS, Linux and Windows (static tables computed on first use); not on Android and iOS (decoder only)"
         }
     }
 
