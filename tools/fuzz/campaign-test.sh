@@ -4,7 +4,8 @@
 # Cases for tools/fuzz/campaign.sh on stubs (no Gradle, no Jazzer): a copy of the script runs from a repository path, a state
 # directory, a home and a Gradle cache that all contain spaces. A stub quiet-gradle prints the classpath lines, a stub java
 # records its arguments and leaves a reproducer, so one slice runs end to end and the target is marked crashed. A stub ksl
-# harness merges as libFuzzer does (SHA-1 names), and a ksl.parsers minimize must rename its output to FNV-1a 64 names.
+# harness merges as libFuzzer does (SHA-1 names), and a ksl.parsers minimize or prune must rename its output to FNV-1a 64
+# names.
 # Usage: tools/fuzz/campaign-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -149,8 +150,16 @@ printf 'x' > "$state/corpus/ksl.parsers/grown"
 check "a ksl.parsers minimize names the merged inputs by their FNV-1a 64" 0 "1 grown inputs -> 1" -- campaign minimize --no-build ksl.parsers
 check "  the input is named e71fa2190541574b" 0 "" -- test -f "$repo/tools/fuzz/corpus/ksl.parsers/e71fa2190541574b"
 check "  and no SHA-1 name is left" 1 "" -- test -e "$repo/tools/fuzz/corpus/ksl.parsers/a9993e364706816aba3e25717850c26c9cd0d89d"
+# prune: the grown corpus is the merge's output, renamed the same way
+rm -f "$state/corpus/ksl.parsers"/*; printf 'y' > "$state/corpus/ksl.parsers/grown"
+check "a ksl.parsers prune names the merged inputs by their FNV-1a 64" 0 "1 grown inputs -> 1" -- campaign prune --no-build ksl.parsers
+check "  the grown input is named e71fa2190541574b" 0 "" -- test -f "$state/corpus/ksl.parsers/e71fa2190541574b"
+check "  and no SHA-1 name is left" 1 "" -- test -e "$state/corpus/ksl.parsers/a9993e364706816aba3e25717850c26c9cd0d89d"
 rm "$repo/tools/fuzz/ksl/corpus-names.c"
 check "negative_aKslMinimizeWithoutTheNamerFails" 1 "could not be named by their FNV-1a 64" -- campaign minimize --no-build ksl.parsers
+printf 'y' > "$state/corpus/ksl.parsers/grown-again"
+check "negative_aKslPruneWithoutTheNamerFails" 1 "could not be named by their FNV-1a 64" -- campaign prune --no-build ksl.parsers
+check "  and leaves the grown corpus as it was" 0 "" -- test -f "$state/corpus/ksl.parsers/grown-again"
 
 [ $fails -eq 0 ] && echo "all cases passed"
 [ $fails -eq 0 ]

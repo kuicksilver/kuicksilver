@@ -263,7 +263,7 @@ snapshot_classpath() {
 ksl_names() {
   local bin="$state/bin/corpus-names"
   mkdir -p "$state/bin"
-  "${CC:-cc}" -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$bin" || return 1
+  ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$bin" || return 1   # CC may hold words (ccache clang), as in build.sh
   echo "$bin"
 }
 

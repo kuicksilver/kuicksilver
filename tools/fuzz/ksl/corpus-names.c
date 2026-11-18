@@ -30,19 +30,36 @@ static int reference_values(void) {
     return bad;
 }
 
+static int by_name(const void *x, const void *y) { return strcmp(*(char *const *)x, *(char *const *)y); }
+
 int main(int argc, char **argv) {
     int rename_them = 0, first = 1, bad = 0, renamed = 0, files = 0;
     if (argc > 1 && !strcmp(argv[1], "--rename")) { rename_them = 1; first = 2; }
     if (first >= argc) { fprintf(stderr, "usage: corpus-names [--rename] DIR...\n"); return 2; }
     if (reference_values()) return 1;
     for (int a = first; a < argc; a++) {
+        /* the names first, then the checks and renames: renaming while readdir iterates may skip or repeat entries */
         DIR *dir = opendir(argv[a]);
         if (!dir) { fprintf(stderr, "corpus-names: %s: %s\n", argv[a], strerror(errno)); return 2; }
+        char **names = NULL;
+        size_t count = 0, cap = 0;
         struct dirent *e;
         while ((e = readdir(dir))) {
             if (e->d_name[0] == '.') continue;
+            if (count == cap) {
+                cap = cap ? 2 * cap : 64;
+                char **grown = realloc(names, cap * sizeof *names);
+                if (!grown) { fprintf(stderr, "corpus-names: out of memory\n"); return 2; }
+                names = grown;
+            }
+            if (!(names[count++] = strdup(e->d_name))) { fprintf(stderr, "corpus-names: out of memory\n"); return 2; }
+        }
+        closedir(dir);
+        qsort(names, count, sizeof *names, by_name);
+        for (size_t k = 0; k < count; k++) {
+            const char *entry = names[k];
             char path[4096], name[17], to[4096];
-            snprintf(path, sizeof path, "%s/%s", argv[a], e->d_name);
+            snprintf(path, sizeof path, "%s/%s", argv[a], entry);
             struct stat st;
             if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode)) { fprintf(stderr, "corpus-names: %s is no regular file\n", path); bad = 1; continue; }
             FILE *f = fopen(path, "rb");
@@ -54,15 +71,16 @@ int main(int argc, char **argv) {
             snprintf(name, sizeof name, "%016llx", (unsigned long long)ksl_fnv1a64(buf, n));
             free(buf);
             files++;
-            if (!strcmp(e->d_name, name)) continue;
+            if (!strcmp(entry, name)) continue;
             snprintf(to, sizeof to, "%s/%s", argv[a], name);
-            if (!rename_them) { printf("%s: named %s, but the FNV-1a 64 of its bytes is %s\n", path, e->d_name, name); bad = 1; continue; }
+            if (!rename_them) { printf("%s: named %s, but the FNV-1a 64 of its bytes is %s\n", path, entry, name); bad = 1; continue; }
             if (lstat(to, &st) == 0) { printf("%s: its name %s is taken (the same bytes twice)\n", path, name); bad = 1; continue; }
             if (rename(path, to) != 0) { fprintf(stderr, "corpus-names: %s -> %s: %s\n", path, to, strerror(errno)); return 2; }
-            printf("%s -> %s\n", e->d_name, name);
+            printf("%s -> %s\n", entry, name);
             renamed++;
         }
-        closedir(dir);
+        for (size_t k = 0; k < count; k++) free(names[k]);
+        free(names);
     }
     fprintf(stderr, "corpus-names: %d file(s), %d renamed, %s\n", files, renamed, bad ? "misnamed ones left" : "every name is its bytes' FNV-1a 64");
     return bad;

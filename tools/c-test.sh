@@ -33,9 +33,9 @@ esac
 # name the driver gives it (tools/fuzz/ksl/corpus-names.c, with its negative controls; `corpus-names --rename` renames).
 host="$( [ "$(uname)" = Darwin ] && echo "macos-$( [ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)" || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )"
 if [ "$target" = "$host" ] && [ -n "$san" ] && [ "${KSL_TSAN:-0}" != 1 ] && [ -z "${KSL_OPENSSL_OUT:-}" ] && [ -d tools/fuzz/corpus/ksl.parsers ]; then
-  bash "$root/tools/fuzz/ksl/corpus-names-test.sh" > "$out/ksl-corpus-names-test.log" 2>&1 \
+  bash "$root/tools/fuzz/ksl/corpus-names-test.sh" "$CC" > "$out/ksl-corpus-names-test.log" 2>&1 \
     || { cat "$out/ksl-corpus-names-test.log"; echo "ksl corpus-names negative controls failed"; exit 1; }
-  cc -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$out/ksl-corpus-names"
+  $CC -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$out/ksl-corpus-names"
   "$out/ksl-corpus-names" tools/fuzz/corpus/ksl.parsers || { echo "ksl corpus: misnamed inputs (tools/fuzz/ksl/corpus-names.c --rename)"; exit 1; }
   bash "$root/tools/fuzz/ksl/build.sh" >/dev/null
   replay="$out/ksl-corpus-replay"; rm -rf "$replay"; mkdir -p "$replay"

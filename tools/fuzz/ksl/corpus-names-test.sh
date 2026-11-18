@@ -5,10 +5,10 @@
 # pass ("abc" is e71fa2190541574b); one named by the old offset basis 1469598103934665603 (e16801510db89efd), by its SHA-1
 # or by anything else fails; --rename gives it its name and then it passes; a rename onto a name another file holds (the
 # same bytes twice) is refused; the reference values fail for a hash built with the old basis. Run by tools/c-test.sh.
-# Usage: corpus-names-test.sh [cc]
+# Usage: corpus-names-test.sh [compiler, may be several words]   (default: $CC, else cc)
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cc="${1:-cc}"
+cc="${1:-${CC:-cc}}"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 rc=0
 $cc -std=c11 -O1 -Wall -Wextra -Werror "$here/corpus-names.c" -o "$tmp/cn" || { echo "FAIL: corpus-names.c does not build"; exit 1; }
@@ -28,6 +28,10 @@ rm "$d/e16801510db89efd"; printf 'abd' > "$d/cb4cc28df0fdbe0ecf9d9662e294b118092
 expect 1 "negative: an input named by its SHA-1" "named cb4cc28df0fdbe0ecf9d9662e294b118092a5735" "$d"
 expect 0 "--rename gives it its name" "1 renamed" --rename "$d"
 expect 0 "and then it passes" "3 file(s), 0 renamed" "$d"
+# many misnamed inputs renamed in one run: each exactly once, none skipped or renamed twice (names read before renaming)
+m="$tmp/many"; mkdir -p "$m"; for i in $(seq 1 300); do printf 'input %s' "$i" > "$m/misnamed-$i"; done
+expect 0 "--rename renames 300 misnamed inputs, each once" "300 file(s), 300 renamed" --rename "$m"
+expect 0 "  and all 300 then pass" "300 file(s), 0 renamed" "$m"
 printf 'x' > "$d/seed-x"
 expect 1 "negative: any other name" "named seed-x" "$d"
 rm "$d/seed-x"
