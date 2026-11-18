@@ -358,7 +358,7 @@ internal suspend fun <T> probing(
     }
 
 /** How long, in ticks of 100 ms without a byte read, [probing] waits before it probes. */
-private const val PROBE_STALL_TICKS = 10
+private const val PROBE_STALL_TICKS = 30
 
 /** The bytes [readClientFrames] has read so far, for [probing]. */
 internal class ReadProgress {
