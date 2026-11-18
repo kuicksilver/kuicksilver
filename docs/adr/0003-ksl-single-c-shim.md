@@ -155,3 +155,18 @@ ClientHello, the second one after a HelloRetryRequest included, and `ksl_drive` 
 of it, and before the SNI pause, a present ALPN extension that is malformed gets decode_error in both modes. It is decided in
 `ksl` and not at the SNI pause because only `ksl` sees whether the extension is there at all (`ksl_ssl_client_hello` hands out
 the list without its length) and every ClientHello, which the pause sees once. No new function.
+
+Key-exchange groups, additive under 7 (RFC 9846 sections 4.2.1, 4.3.7 and 4.3.8): `ksl_ctx_set_groups(ctx, list)` takes the
+groups most preferred first, separated by `:`, from a table of eight (`X25519MLKEM768`, `SecP256r1MLKEM768`,
+`SecP384r1MLKEM1024`, `X25519`, `X448`, `secp256r1`, `secp384r1`, `secp521r1`); a client marks with `*` the one to four
+groups it sends key shares for. None of the rest of OpenSSL's group-list syntax (`?`, `-`, `/` tuples, `DEFAULT`) passes, nor
+a duplicate, which OpenSSL would drop silently (RFC 9846 section 4.3.7: "The "named_group_list" MUST NOT contain any
+duplicate entries"); a group this OpenSSL does not provide is `KSL_E_NOT_SUPPORTED`, named in the message. A server picks by
+its own order, a group with a key share first: `ksl_client_hello_cb` reads the ClientHello's key_share
+(`ksl_key_share_choice`, every length bounded; a malformed extension is left to OpenSSL's decode_error) and sets the
+session's list as tuples (`ksl_prefer_server_groups`): up to the first group of the list the client sent a share for, so it
+is taken in one flight, or one tuple per group, so the HelloRetryRequest asks for the first of the list the client
+supports. OpenSSL's own way to the server's order, `SSL_OP_CIPHER_SERVER_PREFERENCE`, would reorder the TLS 1.3 cipher
+suites too, which keep the client's order (`tcp_tls12_server_suite_choice`). The session context's list (an SNI override's
+once applied) is the one used. `KSL_GET_GROUP` reports the group's IANA code point. JNI `KslNative.ctxSetGroups`, cinterop
+`ksl_ctx_set_groups`, Kotlin `Ksl.ctxSetGroups`. 89 functions.

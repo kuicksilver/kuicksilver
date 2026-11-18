@@ -41,6 +41,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.PinScope
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsIdentity
@@ -214,10 +215,11 @@ The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tl
 A server's `sniSelector` chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
 (`TlsConnection`) and QUIC (`QuicTlsSession`, HTTP/3) alike. It sees a `ClientHelloInfo` (the server name, null without
 SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
-`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
+`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling` and `keyExchangeGroups`, experimental) or
+null:
 
-- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
-  for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
+- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust`, staple and key-exchange groups replace
+  the configuration's for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
   identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of `h3` alone serves the name over QUIC only, and its
   TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2), as does that of a client without ALPN
   where `alpnFallback` is set and the list leaves it out ([Configuration](#configuration));
@@ -239,7 +241,7 @@ Session tickets are bound to the server name and to the certificate they were is
 under another name than its own.
 
 The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
-trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
+trust and `OcspStapling` objects, equal `alpn`, `clientAuth` and `keyExchangeGroups`), so a selector that returns `ServerTlsOverride(identity)`
 for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
 reload. Hand out the same `TrustConfig` and `OcspStapling` objects for a name: a new object per call is a new answer
 and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
@@ -509,10 +511,44 @@ val debugClient = tlsConfig(TlsRole.Client) {
 
 ## Key exchange groups
 
-Both roles negotiate TLS 1.3 key exchange from one list: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`,
-`secp521r1`. A client sends key shares for the post-quantum hybrid and for X25519, so a server of either kind picks its
-group in one flight. A server takes the client's X25519 share when that is all the client sent, even if the client also
-lists the hybrid as supported: OpenSSL's default would answer with a HelloRetryRequest for `X25519MLKEM768`, and that
-extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche (interop `handshakeloss`). The
-list is not configurable.
+By default both roles negotiate key exchange from one list: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`,
+`secp384r1`, `secp521r1` (`KeyExchangeGroups.Default`). A client sends key shares for the post-quantum hybrid and for
+X25519, so a server of either kind picks its group in one flight.
+
+A server picks by its own order, a group the client sent a key share for first: among the client's shares it takes the
+first group of its list, so it takes the client's X25519 share when that is all the client sent, even if the client
+also lists the hybrid as supported (OpenSSL's default would answer with a HelloRetryRequest for `X25519MLKEM768`, and that
+extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche, interop `handshakeloss`). With no
+usable share it asks with a HelloRetryRequest for the first group of its list the client supports (RFC 9846 section
+4.2.1); with no group in common the handshake ends with `handshake_failure` (40; over QUIC, CRYPTO_ERROR 0x0128). A
+server that took another group than its first names its list in its EncryptedExtensions (RFC 9846 section 4.3.7).
+
+`keyExchangeGroups` (experimental) replaces the list, most preferred first, for clients, servers and `sniSelector`
+answers (`ServerTlsOverride.keyExchangeGroups`). A client's `keyShares` are the groups it sends shares for in its first
+ClientHello, 1 to 4 of them; left out, the first group and the first later one of the other kind (hybrid or classical),
+as BoringSSL does:
+
+```kotlin
+// guide:tls:key-exchange-groups
+val client = tlsConfig(TlsRole.Client) {
+    serverName = "server.test"
+    keyExchangeGroups = KeyExchangeGroups(
+        groups = listOf(KeyExchangeGroups.X25519MLKEM768, KeyExchangeGroups.X25519, KeyExchangeGroups.SECP256R1),
+        keyShares = setOf(KeyExchangeGroups.X25519),   // one small share; a server that wants the hybrid asks again
+    )
+}
+```
+
+The names are `X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`, `x25519`, `x448`, `secp256r1`, `secp384r1` and
+`secp521r1` (the constants of `KeyExchangeGroups`, case ignored). An unknown name, a duplicate, an empty list or key shares
+outside the list throw `TlsException.Config` when the `KeyExchangeGroups` is made; `build()` throws it for a group the
+OpenSSL in use does not provide (a system OpenSSL built without one, a FIPS provider), for `keyShares` on a server and
+for `Tls12And13` without an elliptic curve in the list (TLS 1.2 has no hybrid). In TLS 1.2 the list also names the
+curves of the peer's ECDSA certificates an endpoint accepts (RFC 8422 section 5.1): a client without `secp256r1` refuses a
+TLS 1.2 server's P-256 certificate with `handshake_failure`, and a server without it refuses a TLS 1.2 client's P-256
+certificate with `illegal_parameter` (47; OpenSSL holds client certificates to the server's own list). TLS 1.3 negotiates
+signatures apart. A HelloRetryRequest costs a round trip
+and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other groups, its key exchange being fresh.
+`TlsConnection.keyExchangeGroup`, `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the
+group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none.
 

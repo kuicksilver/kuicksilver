@@ -44,6 +44,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   channel the caller already opened and read a prefix from.
 - `tools/check/rfc-table.sh` takes `spec-<name>` in the RFC column for a specification outside the IETF;
   `tools/check/rfc-table-test.sh` holds its negative controls (in the gate and the hosted lint job).
+- Configurable key-exchange groups (RFC 9846 sections 4.3.7 and 4.3.8): `TlsConfig.Builder.keyExchangeGroups`
+  (`KeyExchangeGroups`, experimental) takes the groups most preferred first, from `X25519MLKEM768`,
+  `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`, `x25519`, `x448`, `secp256r1`, `secp384r1` and `secp521r1`, and a client's
+  `keyShares` (1 to 4; left out, the first group and the first later one of the other kind, hybrid or classical, as
+  BoringSSL does). An unknown name, a duplicate, an empty list or shares outside it throw `TlsException.Config` when made;
+  a group the OpenSSL in use lacks, shares on a server and `Tls12And13` without an elliptic curve when the configuration
+  is built. A server picks by its own order: the first of its list the client sent a key share for, else a
+  HelloRetryRequest for the first of its list the client supports, `handshake_failure` (40; over QUIC CRYPTO_ERROR
+  0x0128) with none in common; an `sniSelector` answer may bring its own list (`ServerTlsOverride.keyExchangeGroups`), and
+  the Ktor TLS connector has `keyExchangeGroups` for TCP and HTTP/3 (and `EngineMain` the key
+  `kuicksilver.tls.keyExchangeGroups`, a list of names, for the deployment port). In TLS 1.2 a client's list also names
+  the curves of ECDSA certificates it accepts (RFC 8422 section 5.1). `TlsConnection.keyExchangeGroup`,
+  `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the group a handshake used (none for
+  a TLS 1.2 abbreviated handshake). The default
+  list and key shares are unchanged; a client that sends several key shares now gets the server's first of them, where
+  OpenSSL took the client's order among them before. `ksl`: `ksl_ctx_set_groups` and `KSL_GET_GROUP`, additive under ABI
+  7. Docs: [TLS: Key exchange groups](docs/guide/tls.md#key-exchange-groups).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -1237,6 +1254,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `ZeroRttApiTest.acceptedEarlyStreamsResetAndNeverAcknowledgedLetTheirWrappersGo`,
   `ZeroRttTest.earlyStreamRetiredBeforeTheAnswerIsOfferedAgainAtTheAcceptance` and
   `StreamStateTest.cancelledEarlyRequestWhoseResponseEndedBeforeTheAnswerIsOfferedAgainAtTheAcceptance`.
+- QUIC client: a 0-RTT attempt answered with a HelloRetryRequest (a server whose key-exchange groups did not include
+  any the client sent a key share for) never completed. The second ClientHello was handed to the transport at the 0-RTT
+  level, where a server reads no CRYPTO frame (RFC 9000 section 12.4; RFC 9001 section 4.1.4 puts every ClientHello in
+  Initial packets), and it offered `early_data` again, which RFC 9846 section 4.2.2 removes and the server answered with
+  `illegal_parameter`; the client also got a second 0-RTT key from it. `ksl` now gives a ClientHello the Initial level,
+  hands out no 0-RTT key after a HelloRetryRequest, and has each 0-RTT connection offer a copy of its session, whose
+  0-RTT allowance a HelloRetryRequest clears (OpenSSL 3.5's QUIC client otherwise keeps offering it). The handshake
+  completes with 0-RTT rejected (RFC 9001 section 4.6.2: "A server will always reject 0-RTT if it sends a TLS
+  HelloRetryRequest") and the session resumed.
 - HTTP/3 client (ktor-client) and `QuicConnection.rebind`: a local process could take the replies of an HTTP/3
   connection to a server on localhost on macOS (and the other BSD-socket systems, iOS included). The client's endpoint was
   bound to the wildcard address, which shares its port with a socket another process binds to 127.0.0.1 or ::1, and the

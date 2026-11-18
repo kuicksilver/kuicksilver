@@ -110,6 +110,12 @@ public object KslConst {
      */
     public const val GET_OCSP_STATUS: Int = 12
 
+    /**
+     * 2 bytes big-endian: the IANA code point of the key-exchange group the handshake used, once the ServerHello is sent or read;
+     * 0 bytes before, and for a resumption without key exchange (additive in ABI 7; RFC 9846 section 4.3.7).
+     */
+    public const val GET_GROUP: Int = 13
+
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3

@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.server
 
 import io.ktor.server.config.ApplicationConfig
+import io.ktor.server.config.ApplicationConfigValue
 import io.ktor.server.engine.CommandLineConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
@@ -10,6 +11,8 @@ import io.ktor.util.logging.KtorSimpleLogger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.KeyExchangeGroups
+import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsVersions
 import io.kuicksilver.tls.TrustConfig
@@ -24,6 +27,8 @@ import kotlin.time.Duration.Companion.seconds
  * and HTTP/3), `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`: ask for a client certificate) and
  * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
  * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
+ * `kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's order of preference, e.g.
+ * `["X25519MLKEM768", "x25519", "secp256r1"]`, or one string of them separated by `:` or `,`; the default list when absent),
  * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
  * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
@@ -52,6 +57,8 @@ public object EngineMain {
      * at least 1 second (or `0`), `kuicksilver.tls.clientAuth` is not `none`, `optional` or `required`, or is not `none`
      * exactly when `kuicksilver.tls.clientCa` is set, `kuicksilver.tls.clientCa` is set without the identity files,
      * `kuicksilver.tls.versions` is not `tls13` or `tls12And13` or is set without the identity files,
+     * `kuicksilver.tls.keyExchangeGroups` is not a list `KeyExchangeGroups` takes (an unknown name, a duplicate, an empty list)
+     * or is set without the identity files,
      * `kuicksilver.tls.ocspStapling` is set without the identity files, a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
      * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, or a
@@ -87,6 +94,12 @@ public object EngineMain {
         val versions = parseTlsVersions(config.propertyOrNull("kuicksilver.tls.versions")?.getString())
         require(versions == null || chain != null) { "kuicksilver.tls.versions needs kuicksilver.tls.certificateChain and privateKey" }
         versions?.let { tlsVersions = it }
+        val groups = config.propertyOrNull("kuicksilver.tls.keyExchangeGroups")?.let { parseKeyExchangeGroups(groupNames(it)) }
+        require(groups == null || chain != null) {
+            "kuicksilver.tls.keyExchangeGroups needs kuicksilver.tls.certificateChain and privateKey"
+        }
+        @OptIn(ExperimentalKuicksilverApi::class)
+        groups?.let { tlsKeyExchangeGroups = it }
         val gateway =
             config
                 .propertyOrNull("kuicksilver.tls.trustedGateway")
@@ -280,6 +293,27 @@ public object EngineMain {
             "tls13" -> TlsVersions.Tls13
             "tls12and13" -> TlsVersions.Tls12And13
             else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
+        }
+
+    /**
+     * The names of `kuicksilver.tls.keyExchangeGroups`: a list, or one value (a `-P:` key, a `${?ENV}` substitution) of names
+     * separated by `:` or `,`. Throws [IllegalArgumentException] naming the key for a value that is neither.
+     */
+    private fun groupNames(value: ApplicationConfigValue): List<String> =
+        runCatching { value.getList() }.getOrNull()
+            ?: runCatching { value.getString() }.getOrNull()?.split(':', ',')
+            ?: throw IllegalArgumentException("kuicksilver.tls.keyExchangeGroups: a list of group names, or one string of them")
+
+    /**
+     * `kuicksilver.tls.keyExchangeGroups`: the group names, the server's most preferred first (`KeyExchangeGroups`, case ignored).
+     * Throws [IllegalArgumentException] with the reason `KeyExchangeGroups` gives (an unknown name, a duplicate, an empty list).
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    internal fun parseKeyExchangeGroups(names: List<String>): KeyExchangeGroups =
+        try {
+            KeyExchangeGroups(names.map { it.trim() })
+        } catch (e: TlsException.Config) {
+            throw IllegalArgumentException("kuicksilver.tls.keyExchangeGroups: ${e.message}", e)
         }
 
     /** `kuicksilver.tls.clientAuth`: `none` (or absent), `optional` or `required`. */

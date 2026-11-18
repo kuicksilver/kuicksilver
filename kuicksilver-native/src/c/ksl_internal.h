@@ -24,6 +24,10 @@
  * Always compiled, so the C tests cover the range without a system libssl. */
 int ksl_system_openssl_version_ok(unsigned long num, unsigned max_major);
 
+#define KSL_GROUPS_MAX 8        /* entries of ksl_group_table: a list names each at most once */
+#define KSL_GROUPS_LIST_MAX 192 /* the longest list: every group of the table, each with '*' and ':' (fits with room) */
+#define KSL_GROUP_SHARES_MAX 4  /* key shares a client sends (OpenSSL's OPENSSL_CLIENT_MAX_KEY_SHARES) */
+
 #define KSL_EVQ 32
 #define KSL_NLEVELS 4
 #define KSL_QUIC_LEVEL_MAX (256u * 1024u) /* unread CRYPTO bytes ksl holds per level (ksl_quic_provide) */
@@ -53,7 +57,11 @@ struct ksl_ctx {
     size_t alpn_len;
     /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
     char suites13[256], list12[512];
-    const char *groups;
+    /* the key-exchange groups (ksl_ctx_set_groups) as OpenSSL takes them: names of ksl_group_table, a client's key shares marked
+       '*'; group_idx: the same groups in order, as indexes into the table (the server's choice, ksl_prefer_server_groups) */
+    char groups[KSL_GROUPS_LIST_MAX];
+    uint8_t group_idx[KSL_GROUPS_MAX];
+    size_t group_count;
     uint8_t sid_ctx[32];
     size_t sid_ctx_len;
     uint8_t *ticket_keys;
@@ -78,6 +86,7 @@ struct ksl_ssl {
     size_t tp_len; /* must outlive the handshake: OpenSSL keeps the pointer */
     uint32_t quic_version;
     int hs_keys; /* version whose labels derive Handshake/1-RTT keys; set once Handshake keys exist */
+    int client_hellos; /* QUIC client: ClientHellos written; a second one follows a HelloRetryRequest (ksl_quic.c cb_crypto_send) */
     uint32_t
         orig_version; /* server: the client's original version (0 until negotiated); labels of 0-RTT keys (RFC 9369 4.1) */
     ksl_inbuf in[KSL_NLEVELS], stash[KSL_NLEVELS]; /* stash receives bytes while a record is outstanding */
@@ -118,6 +127,9 @@ struct ksl_ssl {
     SSL_SESSION *new_sessions[KSL_CLIENT_TICKETS];
     int new_sessions_n;           /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
     SSL_SESSION *offered_session; /* client: the session set by ksl_ssl_set_session (a reference), for own_alpn */
+    SSL_SESSION *
+        early_session; /* QUIC client with 0-RTT: this session's own copy of the offered one (OpenSSL's reference), whose
+                                     max_early_data a HelloRetryRequest clears (ksl_msg_cb) */
     uint64_t key_updates_sent,
         key_update_limit; /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted,
@@ -214,6 +226,11 @@ X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
 /* 0-RTT (ksl_ctx.c) */
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
+/* key-exchange groups (ksl_ctx.c): the IANA code point of a group name of ksl's table (0 for none); the index in o's list of the first
+   group a ClientHello key_share extension has a share for (-1 none, -2 malformed); the server's choice by o's order (ksl_client_hello_cb) */
+int ksl_group_id_of_name(const char *name);
+int ksl_key_share_choice(const ksl_ctx *o, const uint8_t *p, size_t len);
+int ksl_prefer_server_groups(const ksl_ctx *o, SSL *ssl, int choice);
 
 /* the process's generated ticket keys (ksl_tickets.c): 1 found, 0 no such key, -1 failure */
 int ksl_default_ticket_key(uint32_t rotate_seconds, const uint8_t *name, uint8_t out[80], int *current);

@@ -131,7 +131,7 @@ internal const val ALERT_INTERNAL_ERROR = 80
  * answer gets the same [TlsConfig] object and so the native context its identity's registry already holds
  * ([KslContext.acquire], [SharedServerContexts], which keeps these apart from the base configuration's own contexts): building
  * one cost about 60 µs, an eighth of a QUIC handshake. An answer is the same when it names the same identity, trust and staple
- * objects and equal ALPN and client-certificate settings, so a selector should hand out the same `TrustConfig` and
+ * objects and equal ALPN, client-certificate and key-exchange group settings, so a selector should hand out the same `TrustConfig` and
  * `OcspStapling` objects for a name (a new one per call is a new answer); a `TlsIdentity.Reloadable` stays one key, and the
  * registry gives each of its snapshots its own context, so a reload reaches the next handshake as without the cache. At most
  * [MAX] answers are kept, the least recently used going first: a hit in the older half moves its entry to the young end (best
@@ -144,10 +144,11 @@ internal class OverrideConfigs {
         val clientAuth: ClientAuth?,
         val trust: TrustConfig?,
         val ocsp: Any?,
+        val groups: Any?,
     ) {
         override fun equals(other: Any?): Boolean =
             other is Key && other.identity === identity && other.alpn == alpn && other.clientAuth == clientAuth &&
-                other.trust === trust && other.ocsp === ocsp
+                other.trust === trust && other.ocsp === ocsp && other.groups == groups
 
         override fun hashCode(): Int = ((identity.hashCode() * 31 + (alpn?.hashCode() ?: 0)) * 31 + (clientAuth?.hashCode() ?: 0)) * 31
     }
@@ -169,7 +170,7 @@ internal class OverrideConfigs {
         base: TlsConfig,
         o: ServerTlsOverride,
     ): TlsConfig {
-        val key = Key(o.identity, o.alpn?.toList(), o.clientAuth, o.trust, o.ocspStapling)
+        val key = Key(o.identity, o.alpn?.toList(), o.clientAuth, o.trust, o.ocspStapling, o.keyExchangeGroups)
         val first = entries.load()
         val i = first.indexOfFirst { it.key == key }
         if (i >= 0) {

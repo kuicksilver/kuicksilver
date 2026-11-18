@@ -64,6 +64,16 @@ public expect object Ksl {
     )
 
     /**
+     * The key-exchange groups of `ksl_ctx_set_groups` (ABI 7, additive): names separated by `:`, most preferred first, a client's
+     * key shares marked `*`. Throws [KslException.Internal] with `KSL_E_BAD_ARG` for a list `ksl` refuses and `KSL_E_NOT_SUPPORTED`
+     * for a group this OpenSSL does not provide.
+     */
+    public fun ctxSetGroups(
+        ctx: Long,
+        groups: String,
+    )
+
+    /**
      * Server: session tickets with the process-wide keys generated and rotated inside `ksl` (the current key encrypts, the
      * previous one still decrypts; they rotate when the current one is [rotateSeconds] old). The keys never reach Kotlin.
      */

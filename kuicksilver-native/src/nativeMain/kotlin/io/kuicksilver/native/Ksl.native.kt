@@ -114,6 +114,11 @@ public actual object Ksl {
         tls12: String?,
     ): Unit = ctxCheck(ctx, ksl_ctx_set_ciphers(ctx(ctx), tls13, tls12))
 
+    public actual fun ctxSetGroups(
+        ctx: Long,
+        groups: String,
+    ): Unit = ctxCheck(ctx, ksl_ctx_set_groups(ctx(ctx), groups))
+
     public actual fun ctxUseDefaultTicketKeys(
         ctx: Long,
         rotateSeconds: Int,

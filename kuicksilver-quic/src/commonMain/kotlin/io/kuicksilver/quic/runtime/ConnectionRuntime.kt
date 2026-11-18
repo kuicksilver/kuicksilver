@@ -563,6 +563,7 @@ internal class ConnectionRuntime(
                     earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     ownCertificates = core.localCertificates
+                    group = core.keyExchangeGroup
                     handshake.complete(Unit)
                     try {
                         loop.observer.handshakeCompleted(this)
@@ -982,6 +983,9 @@ internal class ConnectionRuntime(
 
     @Volatile private var alpn: String? = null
     override val negotiatedAlpn: String? get() = alpn ?: core.negotiatedAlpn
+
+    @Volatile private var group: String? = null // read on the loop when the handshake completes, as the certificates
+    override val keyExchangeGroup: String? get() = group
 
     override suspend fun exportKeyingMaterial(
         label: String,

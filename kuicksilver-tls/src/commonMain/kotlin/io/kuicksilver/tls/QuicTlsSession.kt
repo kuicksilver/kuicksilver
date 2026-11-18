@@ -320,6 +320,13 @@ public interface QuicTlsSession : AutoCloseable {
     public val negotiatedAlpn: String?
 
     /**
+     * The key-exchange group of the handshake ([KeyExchangeGroups] names, e.g. [KeyExchangeGroups.X25519MLKEM768]) once it
+     * completed; null before, and for a session that is not the OpenSSL-backed one.
+     */
+    @ExperimentalKuicksilverApi
+    public val keyExchangeGroup: String? get() = null
+
+    /**
      * Client: true when the server accepted our 0-RTT, false when it rejected it, null when none was attempted or the
      * answer has not arrived (RFC 9001 section 4.6.2). Server: true when 0-RTT of this connection was accepted, false
      * when the client offered it and we refused, null otherwise.

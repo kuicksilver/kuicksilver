@@ -339,6 +339,8 @@ internal class KslContext private constructor(
             if (alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
+            // the context starts with the default groups; build() checked that this OpenSSL provides the configured ones
+            if (config.keyExchangeGroups != KeyExchangeGroups.Default) Ksl.ctxSetGroups(h, config.keyExchangeGroups.kslList(config.role))
             val chain =
                 if (snapshot != null) {
                     Ksl.ctxSetIdentityKey(h, snapshot.chain.map { it.encoded }, snapshot.keyHandle)

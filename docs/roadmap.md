@@ -183,7 +183,6 @@ what the peers really do, and is delivered whole or not at all.
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)). Prerequisite: OpenSSL is built `no-comp`
   and without zlib, brotli or zstd, and RFC 8879 needs at least one compression algorithm, so the item starts with the
   decision which library to bundle (brotli, zlib or both), its pin and supply-chain checks, and dropping `no-comp`.
-- Configurable key exchange groups.
 - qlog: HTTP/3 events, checked against qvis.
 - h3spec and the Autobahn WebSocket suite in the gate.
 - OpenSSL 4.1.x instead of the 3.5 LTS, and 4.2 LTS once it is released (planned by OpenSSL for April 2027): the 3.5

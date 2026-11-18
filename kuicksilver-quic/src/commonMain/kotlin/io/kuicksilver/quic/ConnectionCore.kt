@@ -917,6 +917,10 @@ public class ConnectionCore internal constructor(
     /** The ALPN protocol agreed in the handshake (RFC 9001 section 8.1); null until the handshake settled it. */
     public val negotiatedAlpn: String? get() = handshake.session.negotiatedAlpn
 
+    /** The key-exchange group of the handshake (a `KeyExchangeGroups` name); null until it completed. */
+    @ExperimentalKuicksilverApi
+    public val keyExchangeGroup: String? get() = handshake.session.keyExchangeGroup
+
     /**
      * Keying material from the TLS exporter (RFC 5705, RFC 9846 section 7.5) for [label] and [context], [length] bytes; usable once the
      * handshake completed.

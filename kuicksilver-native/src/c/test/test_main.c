@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
     run_tcp();
     run_verify();
     run_revocation();
+    run_groups();
 #endif
     if (failures) {
         printf("%d FAILURES\n", failures);

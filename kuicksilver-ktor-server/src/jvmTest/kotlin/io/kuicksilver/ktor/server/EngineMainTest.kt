@@ -734,6 +734,121 @@ class EngineMainTest {
             assertTrue("certificateChain" in e.message.orEmpty(), e.message)
         }
 
+    /** A TLS 1.3 handshake of the JDK's client offering only [group] (its named groups) with the server on [port]; null when it worked. */
+    private suspend fun jdkHandshakeFails(
+        port: Int,
+        group: String,
+    ): Throwable? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            runCatching {
+                (jdkContext().socketFactory.createSocket(java.net.InetAddress.getLoopbackAddress(), port) as javax.net.ssl.SSLSocket)
+                    .use { s ->
+                        s.soTimeout = 20_000
+                        s.sslParameters =
+                            s.sslParameters.apply {
+                                protocols = arrayOf("TLSv1.3")
+                                namedGroups = arrayOf(group)
+                            }
+                        s.startHandshake()
+                    }
+            }.exceptionOrNull()
+        }
+
+    /**
+     * `kuicksilver.tls.keyExchangeGroups` (a list) sets the deployment port's groups: a server of secp384r1 alone serves a client
+     * of secp384r1 and refuses one of x25519 (RFC 9846 section 4.2.1, handshake_failure); names are case-insensitive.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun keyExchangeGroupsKeySetsTheServersGroups() =
+        serverTest {
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups.size=1", "-P:kuicksilver.tls.keyExchangeGroups.0=SECP384R1"),
+                )
+            assertEquals(
+                io.kuicksilver.tls.KeyExchangeGroups(listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP384R1)),
+                server.engine.configuration.tlsKeyExchangeGroups,
+            )
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                assertEquals(null, jdkHandshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
+                assertTrue(jdkHandshakeFails(port, "x25519") is javax.net.ssl.SSLException, "a client of x25519 alone is refused")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A single value (a `-P:` key, or a `${?ENV}` substitution in HOCON) is read as names separated by `:` or `,`; a bad one is
+     * refused with the key named, as a bad list is.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun keyExchangeGroupsKeyTakesASeparatedString() {
+        val one = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=x25519")).engine
+        assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), one.configuration.tlsKeyExchangeGroups.groups)
+        val two = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=secp384r1:x25519, secp256r1")).engine
+        assertEquals(
+            listOf(
+                io.kuicksilver.tls.KeyExchangeGroups.SECP384R1,
+                io.kuicksilver.tls.KeyExchangeGroups.X25519,
+                io.kuicksilver.tls.KeyExchangeGroups.SECP256R1,
+            ),
+            two.configuration.tlsKeyExchangeGroups.groups,
+        )
+        for (bad in listOf("nope", "", "x25519::secp256r1")) {
+            val e =
+                assertFailsWith<IllegalArgumentException>("\"$bad\"") {
+                    EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=$bad")).engine
+                }
+            assertTrue(e.message.orEmpty().startsWith("kuicksilver.tls.keyExchangeGroups: "), "\"$bad\": ${e.message}")
+        }
+    }
+
+    @Test fun negative_keyExchangeGroupsKeyRefusesAnInvalidListOrNoIdentity() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups.size=1", "-P:kuicksilver.tls.keyExchangeGroups.0=P-256"),
+                    ).engine
+            }
+        assertTrue("kuicksilver.tls.keyExchangeGroups" in e.message.orEmpty() && "P-256" in e.message.orEmpty(), e.message)
+        val dup =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        clientCaArgs(
+                            "-P:kuicksilver.tls.keyExchangeGroups.size=2",
+                            "-P:kuicksilver.tls.keyExchangeGroups.0=x25519",
+                            "-P:kuicksilver.tls.keyExchangeGroups.1=X25519",
+                        ),
+                    ).engine
+            }
+        assertTrue("twice" in dup.message.orEmpty(), dup.message)
+        val noIdentity =
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        arrayOf(
+                            "-host=127.0.0.1",
+                            "-port=0",
+                            "-P:ktor.application.modules.size=1",
+                            "-P:ktor.application.modules.0=$module",
+                            "-P:kuicksilver.tls.keyExchangeGroups.size=1",
+                            "-P:kuicksilver.tls.keyExchangeGroups.0=x25519",
+                        ),
+                    ).engine
+            }
+        assertTrue("certificateChain" in noIdentity.message.orEmpty(), noIdentity.message)
+    }
+
     @Test fun negative_tlsVersionsKeyWithSslPortRefused() =
         serverTest {
             val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
@@ -756,6 +871,35 @@ class EngineMainTest {
                 )
             val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
             assertTrue("ktor.security.ssl.enabledProtocols" in e.message.orEmpty(), e.message)
+            server.stop(0, 0)
+        }
+
+    /** Ktor's `-sslPort` connector has no key-exchange group setting: the key next to it fails the start instead of not applying. */
+    @Test fun negative_keyExchangeGroupsKeyWithSslPortRefused() =
+        serverTest {
+            val cert = CertificateFactory.getInstance("X.509").generateCertificate(TestCerts.server.inputStream())
+            val pk = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(TestCerts.serverKey))
+            val ksFile = File(dir, "groups-server.p12")
+            KeyStore.getInstance("PKCS12").apply {
+                load(null, null)
+                setKeyEntry("mykey", pk, "pw".toCharArray(), arrayOf(cert))
+                ksFile.outputStream().use { store(it, "pw".toCharArray()) }
+            }
+            val server =
+                EngineMain.createServer(
+                    clientCaArgs(
+                        "-sslPort=0",
+                        "-sslKeyStore=${ksFile.path}",
+                        "-P:ktor.security.ssl.keyStorePassword=pw",
+                        "-P:ktor.security.ssl.privateKeyPassword=pw",
+                        "-P:kuicksilver.tls.keyExchangeGroups=secp384r1",
+                    ),
+                )
+            val e = assertFailsWith<io.kuicksilver.tls.TlsException.Config> { server.startSuspend(false) }
+            assertTrue(
+                "kuicksilver.tls.keyExchangeGroups applies to the port of kuicksilver.tls.certificateChain" in e.message.orEmpty(),
+                e.message,
+            )
             server.stop(0, 0)
         }
 

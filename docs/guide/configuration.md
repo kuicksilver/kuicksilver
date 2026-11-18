@@ -179,6 +179,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `revocation` (*experimental*) | `RevocationPolicy` | `StapledIfPresent` | clients; `RequireStapled` only with a trust `ksl` verifies (`AnchoredCa`, `Platform` on Linux Native) | 0.3.0 | how the OCSP response the server staples is checked: `Off`, `StapledIfPresent` (soft-fail without one), `RequireStapled`; a must-staple certificate needs one under every policy but `Off`. Alerts: 113 for every failed staple check (also with `genericAlerts`); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) ([Certificate revocation](tls.md#certificate-revocation)) |
 | `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](tls.md#configuration)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](tls.md#certificate-revocation)) |
+| `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two) | 1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with `Tls12And13` at least one elliptic curve | 0.3.0 | key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, `handshake_failure` with none in common; in TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (without `secp256r1`, a P-256 certificate is refused) ([Key exchange groups](tls.md#key-exchange-groups)) |
 
 ### SessionTicketConfig
 
@@ -193,9 +194,6 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 The keys stay in native memory: generated keys never reach Kotlin, explicit keys are
 copied there when the configuration is built and the given arrays are zeroed (keep the keys in your secret store, not
 in the arrays).
-
-Key exchange groups are not configurable: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`, `secp521r1`
-([Key exchange groups](tls.md#key-exchange-groups)).
 
 ## TrustConfig
 
@@ -431,12 +429,15 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |
+| `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | no key shares; with `versions` `Tls12And13` at least one elliptic curve | 0.3.0 | the server's key-exchange groups for TCP and HTTP/3, in its order of preference; with `Tls12And13` and client certificates, a TLS 1.2 client's P-256 certificate needs `secp256r1` in the list ([Key exchange groups](tls.md#key-exchange-groups)) |
 | `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy; HTTP/3 takes none ([PROXY protocol](ktor.md#proxy-protocol)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`) and `kuicksilver.tls.clientCa` (the PEM file of the CAs
 client certificates are verified against; set together), `kuicksilver.tls.versions` (`tls13` or `tls12And13`),
+`kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's most preferred first, or one string
+of them separated by `:` or `,`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,

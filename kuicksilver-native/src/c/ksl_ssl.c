@@ -217,6 +217,21 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
                 return KSL_ERROR;
             }
         }
+        /* RFC 9846 section 4.2.2: after a HelloRetryRequest the second ClientHello comes without early_data. An OpenSSL 3.5 QUIC
+           client keeps offering it there (its early data state stays SSL_EARLY_DATA_CONNECTING, so tls_construct_ctos_early_data
+           sends it again, and the server answers illegal_parameter), unless the session's max_early_data is 0. The session offered
+           is shared with other holders and threads: this connection offers a copy of its own, which ksl_msg_cb may clear. */
+        {
+            SSL_SESSION *own = SSL_get_session(s->ssl) ? SSL_SESSION_dup(SSL_get_session(s->ssl)) : NULL;
+            int ok = own && SSL_set_session(s->ssl, own) == 1;
+            SSL_SESSION_free(own);
+            if (!ok) {
+                ERR_clear_error();
+                ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no session of its own for early data");
+                return KSL_ERROR;
+            }
+            s->early_session = own; /* OpenSSL holds it now */
+        }
         if (!SSL_set_quic_tls_early_data_enabled(s->ssl, 1)) {
             ERR_clear_error();
             ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: the session does not allow early data");
@@ -341,6 +356,17 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
         for (int i = 0; i < 8; i++)
             b[1 + i] = (uint8_t)(u >> (56 - 8 * i));
         return copy_out(out, cap, len, b, sizeof b);
+    }
+    case KSL_GET_GROUP: {
+        /* the group of this handshake's key exchange (OpenSSL: the TLS 1.3 key share once taken, else the session's), none before the
+           ServerHello. A TLS 1.2 abbreviated handshake runs no key exchange, but OpenSSL reports the group of the full handshake the
+           session came from (kept in the session): none then. (TLS 1.3 psk_ke would do the same; ksl never allows it, OpenSSL's
+           default without SSL_OP_ALLOW_NO_DHE_KEX.) */
+        int nid = SSL_get_negotiated_group(s->ssl);
+        int abbreviated = SSL_version(s->ssl) < TLS1_3_VERSION && SSL_session_reused(s->ssl);
+        int id = nid && !abbreviated ? ksl_group_id_of_name(SSL_get0_group_name(s->ssl)) : 0;
+        uint8_t b[2] = {(uint8_t)(id >> 8), (uint8_t)id};
+        return copy_out(out, cap, len, b, id ? 2 : 0);
     }
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;
@@ -491,6 +517,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     SSL_SESSION_free(s->offered_session);
     s->offered_session = (SSL_SESSION *)session;
     SSL_SESSION_up_ref(s->offered_session);
+    s->early_session = NULL; /* the copy KSL_SET_EARLY_DATA made went with the session SSL_set_session replaced */
     return KSL_OK;
 }
 void ksl_session_free(ksl_session *session) {
@@ -782,6 +809,15 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
         s->owner->role == KSL_CLIENT)
         s->nst_early_data = ksl_nst_has_early_data(m, len);
+    /* a HelloRetryRequest (RFC 9846 section 4.2.3: a ServerHello whose random is the SHA-256 of "HelloRetryRequest") to a QUIC client
+       that offered 0-RTT: its second ClientHello offers none (KSL_SET_EARLY_DATA) */
+    static const uint8_t hrr_random[32] = {0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c,
+                                           0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb,
+                                           0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c};
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 38 && m[0] == SSL3_MT_SERVER_HELLO &&
+        s->early_session && SSL_get_session(ssl) == s->early_session &&
+        memcmp(m + 6, hrr_random, sizeof hrr_random) == 0)
+        (void)SSL_SESSION_set_max_early_data(s->early_session, 0);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);
