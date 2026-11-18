@@ -222,6 +222,37 @@ class KeyExchangeGroupsTest {
         }
     }
 
+    /**
+     * Given key shares make another list than derived ones, though the shares are the same: an override whose list carries them
+     * (refused) is not the cached answer of an equal list without them (accepted), so the second handshake is still refused.
+     */
+    @Test fun negative_anOverrideWithKeySharesIsRefusedAfterAnEqualListWithout() {
+        assertTrue(groups(X25519) != groups(X25519, shares = setOf(X25519)), "given shares make another value")
+        assertTrue(groups(X25519).hashCode() != groups(X25519, shares = setOf(X25519)).hashCode())
+        val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+        var withShares = false
+        val server =
+            Fixtures.server {
+                sniSelector = {
+                    val g = if (withShares) groups(X25519, shares = setOf(X25519)) else groups(X25519)
+                    ServerTlsOverride(identity, null, null, null, null, g)
+                }
+            }
+        val first = quic(Fixtures.client(), server)
+        try {
+            assertTrue(first.cs.done && first.ss.done, "the list without shares serves: ${first.ss.last}")
+        } finally {
+            first.close()
+        }
+        withShares = true
+        val second = quic(Fixtures.client(), server)
+        try {
+            assertIs<DriveResult.Failed>(second.ss.last, "the list with shares is refused, not served from the cache")
+        } finally {
+            second.close()
+        }
+    }
+
     @Test fun negative_anOverrideWithKeySharesEndsTheHandshake() {
         val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
         val server =

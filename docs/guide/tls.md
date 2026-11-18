@@ -543,8 +543,10 @@ The names are `X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`, `x255
 `secp521r1` (the constants of `KeyExchangeGroups`, case ignored). An unknown name, a duplicate, an empty list or key shares
 outside the list throw `TlsException.Config` when the `KeyExchangeGroups` is made; `build()` throws it for a group the
 OpenSSL in use does not provide (a system OpenSSL built without one, a FIPS provider), for `keyShares` on a server and
-for `Tls12And13` without an elliptic curve in the list (TLS 1.2 has no hybrid). A HelloRetryRequest costs a round trip
+for `Tls12And13` without an elliptic curve in the list (TLS 1.2 has no hybrid). In TLS 1.2 a client's list also names
+the curves of ECDSA certificates it accepts (RFC 8422 section 5.1): without `secp256r1` a TLS 1.2 server's P-256
+certificate is refused with `handshake_failure` (TLS 1.3 negotiates signatures apart). A HelloRetryRequest costs a round trip
 and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other groups, its key exchange being fresh.
 `TlsConnection.keyExchangeGroup`, `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the
-group a handshake used.
+group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none.
 

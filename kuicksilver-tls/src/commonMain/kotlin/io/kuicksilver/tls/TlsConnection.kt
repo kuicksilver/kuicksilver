@@ -188,7 +188,8 @@ public class TlsConnection private constructor(
 
     /**
      * The key-exchange group of the handshake ([KeyExchangeGroups] names, e.g. [KeyExchangeGroups.X25519MLKEM768]; in TLS 1.2
-     * the ECDHE curve); null until the handshake completed.
+     * the ECDHE curve); null until the handshake completed, and for a TLS 1.2 abbreviated handshake (a resumption, [sessionReused]),
+     * which runs no key exchange.
      */
     @ExperimentalKuicksilverApi
     public var keyExchangeGroup: String? = null
