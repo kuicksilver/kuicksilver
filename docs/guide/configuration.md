@@ -282,7 +282,7 @@ How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) 
 
 `UdpProxyConfig(...)` (constructor parameters, immutable): how a `UdpProxy` serves CONNECT-UDP (RFC 9298); a bad value
 throws `IllegalArgumentException` when the object is built. Guide: [HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental);
-threats and limits: threat model 3.25.
+threats and limits: threat model 3.28.
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|

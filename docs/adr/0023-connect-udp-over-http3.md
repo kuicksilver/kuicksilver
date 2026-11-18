@@ -10,8 +10,8 @@ Date: 2026-11-18. Status: proposed (0.3.0 feature-parity item 4).
 ## Context
 
 RFC 9298 tunnels UDP through an HTTP proxy, MASQUE's way of running QUIC and HTTP/3 through a proxy. It defines the
-request for HTTP/1.1 (an `Upgrade: connect-udp` GET, section 3.2), HTTP/2 and HTTP/3 (Extended CONNECT, sections 3.3 and
-3.4), and carries UDP payloads as HTTP datagrams (RFC 9297), which on HTTP/1.1 and HTTP/2 can only be DATAGRAM capsules on
+request for HTTP/1.1 (an `Upgrade: connect-udp` GET, section 3.2), HTTP/2 and HTTP/3 (Extended CONNECT, sections 3.4 and
+3.5), and carries UDP payloads as HTTP datagrams (RFC 9297), which on HTTP/1.1 and HTTP/2 can only be DATAGRAM capsules on
 the stream. The library has Extended CONNECT, HTTP/3 datagrams and the Capsule Protocol on HTTP/3 only; HTTP/2 has
 Extended CONNECT (RFC 8441) for WebSockets but no Capsule Protocol. A proxy is a request-forgery tool unless it filters
 its targets (section 7). A client that wants QUIC through the tunnel needs the tunnel where QUIC reads and writes UDP:
@@ -20,7 +20,7 @@ its targets (section 7). A client that wants QUIC through the tunnel needs the t
 ## Decision
 
 - **HTTP/3 only, both sides.** The client (`Http3Connection.connectUdp` → `UdpTunnel`) and the proxy (`UdpProxy.serve`)
-  speak RFC 9298 sections 3.4 and 3.5. HTTP/1.1 and HTTP/2 (sections 3.2, 3.3) are not offered: section 6 says UDP
+  speak RFC 9298 sections 3.4 and 3.5. HTTP/1.1 (sections 3.2, 3.3) and HTTP/2 (3.4, 3.5) are not offered: section 6 says UDP
   proxying "SHOULD be performed over HTTP/3", over TCP every datagram would be a capsule behind head-of-line blocking,
   and the Capsule Protocol would have to be built for both versions first.
 - **In `kuicksilver-http3`**, next to the capsules and datagrams it uses: the template, the target syntax, the address
