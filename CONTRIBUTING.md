@@ -95,6 +95,7 @@ bash tools/check/links.sh                                        # relative link
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 python3 tools/check/code-refs.py                                 # the File.kt:N lines docs/spec cites (--fix re-points moved ones, --write records new ones)
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
+bash tools/check/rfc-table-test.sh                               # negative controls of rfc-table.sh
 python3 tools/check/rfc-tests.py                                 # the tests a ✅ section of docs/spec/rfc names exist, and it names one
 python3 tools/check/test-discovery.py                            # every @Test can run (not inside a function body, not in an object, ...)
 python3 tools/check/test-bytecode.py                             # the same in the compiled JVM test classes (after compileTestKotlinJvm)

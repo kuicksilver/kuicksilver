@@ -71,7 +71,7 @@ This is a practice of review, not a check a tool runs. The same six QUIC stacks 
 - [docs/spec/rfc-compliance.md](spec/rfc-compliance.md) has one row per requirement or topic (met, feature subset,
   planned, not planned) and links each row to its section in `docs/spec/rfc/<rfc>.md`: the requirement, the files that
   implement it, the tests that pin it, history, notes on peers and open items. A change of behaviour updates the row
-  and its details in the same commit. [`tools/check/rfc-table.sh`](../tools/check/rfc-table.sh) checks the table format
+  and its details in the same commit. [`tools/check/rfc-table.sh`](../tools/check/rfc-table.sh) (negative controls in `rfc-table-test.sh`) checks the table format
   and that every details link and anchor exists; [`tools/check/rfc-tests.py`](../tools/check/rfc-tests.py) that every
   test a ✅ section names exists and that a ✅ section names one ([repository checks](#repository-checks)); whether the
   tests pin what the row claims is a matter of review (stage 2).
