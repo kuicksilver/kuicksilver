@@ -44,12 +44,15 @@ import kotlin.time.Duration.Companion.seconds
  * The 0-RTT invariant through the public runtime API, on a fixed set of seeds: a client resumes over 0-RTT and, before the
  * server's answer, opens streams, writes, finishes, resets, resets at a size, stops, reads and watches for STOP_SENDING
  * (each call that suspends runs as a job of its own); the server accepts, rejects (another configuration; Required mode,
- * which closes), never answers, answers after a Retry, or after a Version Negotiation; or the application closes first.
- * Odd seeds remember small limits, so calls in 0-RTT also wait for stream and flow-control credit.
+ * which closes), never answers, answers after a Retry, or after a Version Negotiation, or accepts while nothing the client
+ * sends after that acceptance arrives until the answer is checked (so no reset of the 0-RTT is acknowledged; the client
+ * also resets a stream of its own then); or the application closes first. Odd seeds remember small limits, so calls in
+ * 0-RTT also wait for stream and flow-control credit.
  *
- * Once the answer is known: after a rejection every stream the application opened before it is failed with
- * [QuicException.StreamError.EarlyDataRejected] on both halves and done, it has left the connection's stream map, and every
- * job on it (reads, writes, finishes, STOP_SENDING watchers) has ended; the map holds no stream a rejection dropped. Once
+ * Once the answer is known: no wrapper stays for a stream retired with its reset unacknowledged; after a rejection every
+ * stream the application opened before it is failed with [QuicException.StreamError.EarlyDataRejected] on both halves and
+ * done, it has left the connection's stream map, and every job on it (reads, writes, finishes, STOP_SENDING watchers) has
+ * ended; the map holds no stream a rejection dropped. Once
  * the connection ended: its handshake and `closed` are complete, every stream the application saw is done, and no job of
  * the application waits on anything of the connection any more; each stream's Deferreds (every getter of [QuicStream] typed
  * Deferred) are awaited by such jobs. `KUICKSILVER_ZRTT_SEEDS` sets the seeds per outcome.
@@ -58,7 +61,8 @@ import kotlin.time.Duration.Companion.seconds
 class ZeroRttRuntimeSeededTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    private enum class Outcome { Accept, Reject, Required, Lost, CloseEarly, Retry, VersionNegotiation }
+    // AcceptUnacked last: the seeds of the others (100 × ordinal) stay as they were
+    private enum class Outcome { Accept, Reject, Required, Lost, CloseEarly, Retry, VersionNegotiation, AcceptUnacked }
 
     private val seeds = System.getenv("KUICKSILVER_ZRTT_SEEDS")?.toIntOrNull() ?: 2
 
@@ -215,40 +219,46 @@ class ZeroRttRuntimeSeededTest {
                 }
         }.build()
 
-    /** Echoes every stream of every connection [server] accepts (closing its half once the peer's ended). */
-    private fun CoroutineScope.echo(server: QuicEndpoint) =
-        launch {
-            while (true) {
-                val c =
-                    try {
-                        server.accept()
-                    } catch (_: Exception) {
-                        return@launch
-                    }
-                launch {
-                    while (true) {
-                        val s =
-                            try {
-                                c.acceptStream()
-                            } catch (_: Exception) {
-                                return@launch
+    /**
+     * Echoes every stream of every connection [server] accepts (closing its half once the peer's ended); [accepted] gets an
+     * element for each connection handed out (a server with early data hands one out at its acceptance of the 0-RTT).
+     */
+    private fun CoroutineScope.echo(
+        server: QuicEndpoint,
+        accepted: kotlinx.coroutines.channels.Channel<Unit>? = null,
+    ) = launch {
+        while (true) {
+            val c =
+                try {
+                    server.accept()
+                } catch (_: Exception) {
+                    return@launch
+                }
+            accepted?.trySend(Unit)
+            launch {
+                while (true) {
+                    val s =
+                        try {
+                            c.acceptStream()
+                        } catch (_: Exception) {
+                            return@launch
+                        }
+                    launch {
+                        try {
+                            val b = ByteArray(4096)
+                            while (true) {
+                                val n = s.input.readAvailable(b, 0, b.size)
+                                if (n < 0) break
+                                if (s.id and 2L == 0L) s.output.writeFully(b, 0, n)
                             }
-                        launch {
-                            try {
-                                val b = ByteArray(4096)
-                                while (true) {
-                                    val n = s.input.readAvailable(b, 0, b.size)
-                                    if (n < 0) break
-                                    if (s.id and 2L == 0L) s.output.writeFully(b, 0, n)
-                                }
-                                if (s.id and 2L == 0L) s.output.flushAndClose()
-                            } catch (_: Exception) {
-                            }
+                            if (s.id and 2L == 0L) s.output.flushAndClose()
+                        } catch (_: Exception) {
                         }
                     }
                 }
             }
         }
+    }
 
     private suspend fun scenario(
         o: Outcome,
@@ -276,7 +286,8 @@ class ZeroRttRuntimeSeededTest {
         var restarted: QuicEndpoint? = null
         try {
             withTimeout(30.seconds) {
-                scope.echo(p.server)
+                val serverAccepted = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                scope.echo(p.server, serverAccepted)
                 val loop = p.client as EndpointLoop
                 // a ticket from a first connection
                 val first = p.client.connect(p.server.localAddress, clientConfig(EarlyDataState.Allowed, vn = false, lost = false))
@@ -300,6 +311,7 @@ class ZeroRttRuntimeSeededTest {
                     restarted = server
                     scope.echo(server)
                 }
+                while (serverAccepted.tryReceive().isSuccess) { /* the first connection's */ }
                 // the server's answers wait until the application made its calls: they all happen in 0-RTT
                 p.net.hold(p.clientIo.localAddress)
                 val mode = if (o == Outcome.Required) EarlyDataState.Required else EarlyDataState.Allowed
@@ -309,6 +321,18 @@ class ZeroRttRuntimeSeededTest {
                         clientConfig(mode, vn = o == Outcome.VersionNegotiation, lost = o == Outcome.Lost),
                     ) as ConnectionRuntime
                 val app = App(conn, rnd, scope)
+                if (o == Outcome.AcceptUnacked) {
+                    // the server accepted our 0-RTT (its answer waits): from now on nothing of ours arrives until the answer is
+                    // checked, so a stream reset now retires with its size held and its reset is never acknowledged
+                    serverAccepted.receive()
+                    p.net.lose = { from, _, _ -> from == p.clientIo.localAddress }
+                    app.open(bidi = false)?.let { s ->
+                        s.reset(7)
+                        withContext(conn.loopDispatcherForTest) {
+                            check(conn.core.streams.heldForAnswer(s.id)) { "stream ${s.id} reset in 0-RTT is not held for the answer" }
+                        }
+                    }
+                }
                 // the connection's Deferreds too (`closed`): the reflection must find at least that one
                 app.awaitDeferreds(QuicConnection::class.java, conn, "")
                 check(app.jobs.any { it.first == "getClosed" }) { "no Deferred of QuicConnection found by reflection" }
@@ -324,6 +348,7 @@ class ZeroRttRuntimeSeededTest {
                         false
                     }
                 if (answered) afterAnswer(app)
+                p.net.lose = null // the connection goes on below
                 if (!conn.closed.isCompleted) {
                     // the connection goes on: a request on a new stream gets its answer (unless the early streams, which the
                     // application never ends, hold every stream credit of a small limit)
@@ -347,9 +372,17 @@ class ZeroRttRuntimeSeededTest {
         }
     }
 
-    /** The answer is known: a rejection failed and removed every stream opened before it, and nothing waits on them. */
+    /**
+     * The answer is known: no wrapper stays for a stream that retired with its reset unacknowledged (one retired before an
+     * acceptance goes at it); a rejection failed and removed every stream opened before it, and nothing waits on them.
+     */
     private suspend fun afterAnswer(app: App) {
         val conn = app.conn
+        withContext(conn.loopDispatcherForTest) {
+            for (id in conn.streams.keys) {
+                check(!conn.core.streams.retiredAndOfferedForTest(id)) { "stream $id retired before the answer keeps its wrapper after it" }
+            }
+        }
         if (conn.earlyDataAccepted != false) return
         val early = app.streams.toList()
         withContext(conn.loopDispatcherForTest) {

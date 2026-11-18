@@ -12,6 +12,7 @@ import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.receiveAborted
@@ -21,6 +22,7 @@ import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -37,6 +39,9 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+
+/** Streams per many-stream case: within the remembered stream limits (100), so every one opens in 0-RTT. */
+private const val MANY_STREAMS = 32
 
 /** 0-RTT through the public runtime API (ADR-0015): tickets kept per endpoint, connectEarly, early accept on the server. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -179,6 +184,187 @@ class ZeroRttApiTest {
                     second.close()
                     assertFailsWith<QuicException.ConnectionLost> { st.sentFinalSize!!.await() }
                     p.net.release(p.clientIo.localAddress)
+                }
+            }
+        }
+
+    /**
+     * Streams sent and reset in 0-RTT whose resets the server never acknowledges (nothing the client sends after its first
+     * flight arrives): once the server accepted the 0-RTT, each stream's final size stands and its wrapper and ticker go, as
+     * for a stream reset in 1-RTT ([StreamRetirementTest.streamResetByUsGoesAtRetirementAndFinishesAtTheAcknowledgment]);
+     * only its `done` waits for the acknowledgment. A wrapper whose size was held for the answer stayed until the connection
+     * ended before.
+     */
+    @Test fun acceptedEarlyStreamsResetAndNeverAcknowledgedLetTheirWrappersGo(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    ticketFrom(p)
+                    val accepted = async { p.server.accept() }
+                    p.net.hold(p.clientIo.localAddress) // the server's answer waits until the resets went out
+                    val second = p.client.connectEarly(p.server.localAddress, clientConfig())
+                    val rt = second as ConnectionRuntime
+                    // the server handed the connection out at its acceptance of the 0-RTT: our ClientHello arrived, and from
+                    // now on nothing of ours does, so no reset is ever acknowledged
+                    accepted.await()
+                    p.net.lose = { from, _, _ -> from == p.clientIo.localAddress }
+                    val streams = List(MANY_STREAMS) { second.openUni() }
+                    for (st in streams) {
+                        st.output.writeFully("early".encodeToByteArray())
+                        st.output.flush()
+                        st.reset(4)
+                    }
+                    // a turn of the loop after the resets' tasks: every stream retired with its size held for the answer
+                    val before =
+                        withContext(rt.loopDispatcherForTest) {
+                            Triple(rt.core.streams.zeroRttPending, rt.core.streams.resetAcksPendingForTest()[1], rt.streamCountForTest)
+                        }
+                    assertEquals(
+                        Triple(true, MANY_STREAMS, MANY_STREAMS),
+                        before,
+                        "(answer pending, retired awaiting the ack, wrappers) before the answer",
+                    )
+                    p.net.release(p.clientIo.localAddress)
+                    second.awaitHandshake()
+                    assertEquals(true, second.earlyDataAccepted)
+                    for (st in streams) assertEquals(5L, st.sentFinalSize!!.await(), "the size stands at the acceptance")
+                    // the drain that reported the sizes retired the streams at its end; one more turn sees its result
+                    val after =
+                        withContext(rt.loopDispatcherForTest) {
+                            // the runtime invariant ZeroRttRuntimeSeededTest checks after every answer
+                            val kept = rt.streamIdsForTest.filter { rt.core.streams.retiredAndOfferedForTest(it) }
+                            assertEquals(emptyList(), kept, "wrappers kept for streams retired and offered")
+                            Triple(rt.streamCountForTest, rt.tickerCountForTest, rt.awaitingResetAck.size)
+                        }
+                    assertEquals(
+                        Triple(0, 0, MANY_STREAMS),
+                        after,
+                        "(wrappers ${rt.streamIdsForTest}, tickers, awaiting the ack) after the answer",
+                    )
+                    // retired as a stream reset in 1-RTT is: both halves done, no STOP_SENDING can come for it any more
+                    assertEquals(null, streams.first().awaitSendStopped())
+                    val finished = streams.map { async { it.awaitFinished() } }
+                    yield()
+                    assertTrue(finished.none { it.isCompleted }, "finished before the resets were acknowledged")
+                    second.close()
+                    finished.awaitAll() // the connection's end completes them
+                    p.net.lose = null
+                }
+            }
+        }
+
+    /**
+     * The same streams when the server rejects the 0-RTT (a restarted server, other ticket keys): it never reads the 0-RTT
+     * packets, so no reset of them is acknowledged either. Each stream fails with EarlyDataRejected and its wrapper goes, its
+     * size never stands and its end comes at the rejection; nothing of them waits for an acknowledgment.
+     */
+    @Test fun negative_rejectedEarlyStreamsResetAndNeverAcknowledgedFailAndGo(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    ticketFrom(p)
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    try {
+                        launch { runCatching { server.accept() } } // ends with the server's close
+                        p.net.hold(p.clientIo.localAddress)
+                        val second = p.client.connectEarly(server.localAddress, clientConfig())
+                        val rt = second as ConnectionRuntime
+                        val streams = List(MANY_STREAMS) { second.openUni() }
+                        for (st in streams) {
+                            st.output.writeFully("early".encodeToByteArray())
+                            st.output.flush()
+                            st.reset(4)
+                        }
+                        val before =
+                            withContext(rt.loopDispatcherForTest) {
+                                rt.core.streams.resetAcksPendingForTest()[1] to
+                                    rt.streamCountForTest
+                            }
+                        assertEquals(MANY_STREAMS to MANY_STREAMS, before, "(retired awaiting the ack, wrappers) before the answer")
+                        p.net.release(p.clientIo.localAddress)
+                        for (st in streams) assertFailsWith<QuicException.StreamError.EarlyDataRejected> { st.sentFinalSize!!.await() }
+                        second.awaitHandshake()
+                        assertEquals(false, second.earlyDataAccepted)
+                        for (st in streams) st.awaitFinished() // at the rejection, not at an acknowledgment
+                        val after =
+                            withContext(rt.loopDispatcherForTest) {
+                                listOf(
+                                    rt.streamCountForTest,
+                                    rt.tickerCountForTest,
+                                    rt.awaitingResetAck.size,
+                                    rt.core.streams
+                                        .resetAcksPendingForTest()
+                                        .sum(),
+                                )
+                            }
+                        assertEquals(
+                            listOf(0, 0, 0, 0),
+                            after,
+                            "(wrappers, tickers, awaiting the ack, resets unacknowledged) after the rejection",
+                        )
+                        assertFailsWith<QuicException.StreamError.EarlyDataRejected> { streams.first().awaitSendStopped() }
+                        second.close()
+                    } finally {
+                        server.close()
+                    }
+                }
+            }
+        }
+
+    /**
+     * Requests sent in 0-RTT and cancelled before the answer, as an HTTP/3 client cancels one (RFC 9114 section 4.1.1: reset
+     * the sending part, abort reading): the server got each request and answered it, the answers wait, and our resets never
+     * arrive. A regression guard, not the fix's test: the response's FIN comes in 1-RTT, which the client reads in the same
+     * core call that settles the answer, so no runtime drain falls between the FIN and the settle and these streams never
+     * take the path the fix changed (it passed before the fix too). The order where the FIN comes first is pinned in the stream manager
+     * (`StreamStateTest.cancelledEarlyRequestWhoseResponseEndedBeforeTheAnswerIsOfferedAgainAtTheAcceptance`). Every wrapper
+     * goes once the server accepted and the response ended, never only at an acknowledgment of the reset.
+     */
+    @Test fun acceptedEarlyRequestsCancelledAndNeverAcknowledgedLetTheirWrappersGo(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    ticketFrom(p)
+                    val answered = CompletableDeferred<Unit>()
+                    launch {
+                        val c = p.server.accept()
+                        repeat(MANY_STREAMS) {
+                            val s = c.acceptStream()
+                            s.input.readAll()
+                            s.output.writeFully("response".encodeToByteArray())
+                            s.output.flushAndClose()
+                        }
+                        answered.complete(Unit)
+                    }
+                    p.net.hold(p.clientIo.localAddress) // the server's answers wait
+                    val second = p.client.connectEarly(p.server.localAddress, clientConfig())
+                    val rt = second as ConnectionRuntime
+                    val streams =
+                        List(MANY_STREAMS) {
+                            second.openBidi().also {
+                                it.output.writeFully("request".encodeToByteArray())
+                                it.output.flushAndClose()
+                            }
+                        }
+                    answered.await() // every request arrived and was answered: from now on nothing of ours arrives
+                    p.net.lose = { from, _, _ -> from == p.clientIo.localAddress }
+                    for (st in streams) {
+                        st.reset(0x10c) // H3_REQUEST_CANCELLED
+                        st.stopSending(0x10c)
+                    }
+                    assertEquals(true, withContext(rt.loopDispatcherForTest) { rt.core.streams.zeroRttPending }, "no answer yet")
+                    p.net.release(p.clientIo.localAddress)
+                    second.awaitHandshake()
+                    assertEquals(true, second.earlyDataAccepted)
+                    for (st in streams) assertEquals(8L, st.receivedFinalSize!!.await(), "the response's end arrived")
+                    val left =
+                        withTimeoutOrNull(10.seconds) {
+                            // each check is a turn of the loop: the response's end may still be on its way
+                            while (withContext(rt.loopDispatcherForTest) { rt.streamCountForTest + rt.tickerCountForTest } > 0) yield()
+                        }
+                    assertTrue(left != null, "wrappers ${withContext(rt.loopDispatcherForTest) { rt.streamIdsForTest }} after the answer")
+                    second.close()
+                    p.net.lose = null
                 }
             }
         }

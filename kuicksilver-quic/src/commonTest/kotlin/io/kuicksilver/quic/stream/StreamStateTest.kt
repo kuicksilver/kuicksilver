@@ -97,6 +97,46 @@ class StreamStateTest {
     }
 
     /**
+     * A bidirectional request of our 0-RTT, cancelled as an HTTP/3 client cancels one (our RESET_STREAM, unacknowledged, and
+     * STOP_SENDING) and whose response's FIN arrives before the answer: it retires then, with both final sizes held. The
+     * runtime takes it at its retirement and keeps the wrapper while they are held; the acceptance offers it once more, so
+     * the wrapper goes then and not at the reset's acknowledgment. In the connection the server's FIN comes in 1-RTT, read
+     * in the same call that settles the answer, so no runtime drain falls between the two there; here the order is fixed.
+     */
+    @Test fun cancelledEarlyRequestWhoseResponseEndedBeforeTheAnswerIsOfferedAgainAtTheAcceptance() {
+        val m = manager()
+        val id = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
+        m.zeroRttPending = true
+        m.write(id, byteArrayOf(1, 2, 3), 0, 3, fin = true)
+        sendOnce(m)
+        m.reset(id, 0x10c)
+        m.stopSending(id, 0x10c)
+        assertNull(m.takeRetiredAwaitingAck(), "the response has not ended yet: the stream is open")
+        recv(m, id, 0, byteArrayOf(9, 9), fin = true)
+        assertEquals(listOf(id), m.takeRetiredAwaitingAck(), "retired at the response's end, before the answer")
+        assertTrue(m.heldForAnswer(id), "both sizes are held: the runtime keeps the wrapper")
+        m.settleHeldUntilAnswer(true)
+        assertEquals(listOf(id), m.takeRetiredAwaitingAck(), "offered again once its sizes stood")
+        assertEquals(1, m.resetAcksPendingForTest()[1], "the report still waits for the reset's acknowledgment")
+        assertTrue(m.events.none { it is io.kuicksilver.quic.ConnectionEvent.StreamFinished && it.id == id })
+    }
+
+    /** At a rejection nothing is offered again: the stream is dropped with the rest of our 0-RTT streams. */
+    @Test fun negative_cancelledEarlyRequestIsNotOfferedAgainAtARejection() {
+        val m = manager()
+        val id = m.open(bidi = true, io.kuicksilver.quic.StreamPriority.Default)
+        m.zeroRttPending = true
+        m.write(id, byteArrayOf(1, 2, 3), 0, 3, fin = true)
+        sendOnce(m)
+        m.reset(id, 0x10c)
+        m.stopSending(id, 0x10c)
+        recv(m, id, 0, byteArrayOf(9, 9), fin = true)
+        assertEquals(listOf(id), m.takeRetiredAwaitingAck())
+        m.settleHeldUntilAnswer(false)
+        assertNull(m.takeRetiredAwaitingAck(), "a rejected or lost 0-RTT offers nothing again")
+    }
+
+    /**
      * An answer or an end with nothing held still ends the hold: a final size that comes later is reported at once, not
      * held for an answer that already came.
      */

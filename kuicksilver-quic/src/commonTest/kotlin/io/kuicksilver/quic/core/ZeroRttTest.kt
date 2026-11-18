@@ -335,6 +335,45 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * A 0-RTT stream retired by our reset before the answer, the reset never acknowledged (nothing of ours reaches the server
+     * after the first flight): the runtime keeps its wrapper while the size is held, so it skips the stream that
+     * `takeRetiredAwaitingAck` offered at the reset. The acceptance reports the size and offers the stream once more, so the
+     * wrapper goes then and not only at the acknowledgment or the connection's end; the reset still waits for its
+     * acknowledgment (RFC 9000 section 13.3), and the stream is reported finished only then.
+     */
+    @Test fun earlyStreamRetiredBeforeTheAnswerIsOfferedAgainAtTheAcceptance() {
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+                clientSetup = { c ->
+                    assertTrue(c.useTicket(ticket()))
+                    id = c.openStream(bidi = false)
+                    c.writeStream(id, "early".encodeToByteArray(), 0, 5, fin = false)
+                },
+            )
+        p.use { _ ->
+            p.step() // the ClientHello and the 0-RTT bytes go out
+            p.filterToServer = { _, _ -> false }
+            p.client.resetStream(id, 4)
+            p.step()
+            assertEquals(listOf(id), p.client.streams.takeRetiredAwaitingAck(), "retired at the reset")
+            assertTrue(p.client.streams.heldForAnswer(id), "its size is held for the answer: the runtime keeps the wrapper")
+            assertTrue(p.runUntil(limit = 2.seconds) { p.client.earlyDataAccepted != null })
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertEquals(listOf("size 5"), p.clientEvents.ofStream(id), "the size stands at the answer")
+            assertFalse(p.client.streams.heldForAnswer(id))
+            assertEquals(listOf(id), p.client.streams.takeRetiredAwaitingAck(), "offered again once its size stood")
+            assertEquals(null, p.client.streams.takeRetiredAwaitingAck(), "offered once")
+            assertEquals(1, p.client.streams.resetAcksPendingForTest()[1], "the report still waits for the acknowledgment")
+            p.runUntil(limit = 1.seconds) { false }
+            assertEquals(listOf("size 5"), p.clientEvents.ofStream(id), "not finished while the reset is unacknowledged")
+        }
+    }
+
     /** Splits a datagram into its long header packets (QUIC v1) and the short header packet that ends it, if any. */
     private fun splitPackets(d: ByteArray): Pair<ByteArray, ByteArray> {
         var off = 0

@@ -225,8 +225,9 @@ bytes in flight and every controller agree with the history), and none of the dr
 manager — no stream, send limit, queued frame or event, connection credit or buffered byte
 (`StreamManager.zeroRttResidueForTest`); the rejection reaches the application once, as `EarlyDataRejected` or as a
 `ZeroRttRejected` close; no event names a stream after its `StreamFinished` or a stream the rejection dropped; and in
-the runtime every stream opened before a rejection is failed and done, and no Deferred, channel or STOP_SENDING watcher
-of a stream or a connection waits once it is gone. The fuzz target `ZeroRttFuzzTest.zeroRttConnection`
+the runtime every stream opened before a rejection is failed and done, after an acceptance no wrapper stays for a stream
+that retired before it with its reset unacknowledged (`StreamManager.retiredAndOfferedForTest`), and no Deferred, channel
+or STOP_SENDING watcher of a stream or a connection waits once it is gone. The fuzz target `ZeroRttFuzzTest.zeroRttConnection`
 (`ZeroRttConnectionFuzz`) checks the core part after every round of every outcome — accepted, rejected (another
 application context, lower limits, `Required`, another ALPN, a server without 0-RTT), no answer — alone or after a Retry
 or a Version Negotiation; `ZeroRttConnectionSeededTest` runs a fixed seed set of it in `jvmTest`,

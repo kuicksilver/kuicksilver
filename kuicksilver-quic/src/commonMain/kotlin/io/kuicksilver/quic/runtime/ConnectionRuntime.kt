@@ -678,9 +678,10 @@ internal class ConnectionRuntime(
         }
         // retired streams whose StreamFinished waits for the acknowledgment of our reset: their channels and ticker go now
         // (a peer that leaves those acknowledgments out must not pile wrappers up), only the completion of `done` stays. A
-        // stream of our 0-RTT whose final size is held for the server's answer keeps its wrapper until StreamFinished: the
-        // answer settles that size on it (reported, or failed by a rejection or the connection's end), and only 0-RTT
-        // streams within the remembered limits can be such
+        // stream of our 0-RTT whose final size is held for the server's answer keeps its wrapper until that answer: the
+        // answer settles the size on it (reported, or failed by a rejection or the connection's end), and only 0-RTT
+        // streams within the remembered limits can be such. An acceptance offers it here again, after its size, and it goes
+        // then (StreamManager.settleHeldUntilAnswer); a rejection or the connection's end fails and removes it
         core.streams.takeRetiredAwaitingAck()?.let { ids ->
             for (id in ids) {
                 if (core.streams.heldForAnswer(id)) continue
