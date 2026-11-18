@@ -396,7 +396,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             }
                                             return@launchOrElse
                                         } // a failed handshake ends only this connection
-                                    t.setCloseTimeout(null)
+                                    t.setCloseTimeout(configuration.tlsCloseTimeoutForTest)
                                     // a stopping server sends its close_notify and closes without waiting up to 3 s for each
                                     // client's (RFC 8446 section 6.1): a pooled idle HTTP/1.1 client never answers
                                     t.stopAwaitingPeerCloseOn(draining)
