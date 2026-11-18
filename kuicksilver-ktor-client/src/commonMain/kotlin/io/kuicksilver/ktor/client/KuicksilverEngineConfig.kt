@@ -176,6 +176,15 @@ public class Http3ClientConfig {
     public var webTransportIgnoresProxy: Boolean = false
 
     /**
+     * WebTransport (`HttpClient.webTransport`) to a URL `connectUdpProxy` applies to connects directly instead of being
+     * refused; false by default. WebTransport sessions do not go through the CONNECT-UDP tunnel, so this exposes the
+     * client's address to the origin, which the proxy otherwise hides. Separate from [webTransportIgnoresProxy], which is
+     * about HTTP and SOCKS proxies only.
+     */
+    @ExperimentalKuicksilverApi
+    public var webTransportIgnoresConnectUdpProxy: Boolean = false
+
+    /**
      * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, over all its connections (they
      * share the pooled ones, up to `settings.webTransportMaxSessions` a connection); one more fails at once with
      * IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-16 section 8: "a
@@ -393,7 +402,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * out. So such a request fails, with the reason, when the origin has no HTTP/3, when the proxy refuses the tunnel
      * (`Http3Exception.ConnectRejected` with its `proxy-status`), under `http3 { discovery = H1Only }` or while
      * `http3Allowed` says no (UnsupportedOperationException). `Alt-Svc` is neither used nor learned for it, and the origin's
-     * name is resolved by the proxy, not here. WebTransport refuses such URLs unless `http3 { webTransportIgnoresProxy }`.
+     * name is resolved by the proxy, not here. WebTransport refuses such URLs unless `http3 { webTransportIgnoresConnectUdpProxy }`.
      * docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
      */
     @ExperimentalKuicksilverApi

@@ -43,11 +43,15 @@ import kotlin.time.Duration.Companion.seconds
 class ClientConnectUdpProxyTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** A `proxy-authorization` the target received, if any (it never should). */
+    @kotlin.concurrent.Volatile private var targetSawAuthorization: String? = null
+
     /** A proxy for these tests: loopback targets only, its sockets on 127.0.0.1. */
     private fun loopbackProxy() =
         UdpProxy(
             UdpProxyConfig(
                 targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
+                refuseOwnAddresses = false, // proxy and target share this host's loopback by construction
                 socketFactory = { DatagramIo.open(InetSocketAddress("127.0.0.1", 0)) },
             ),
         )
@@ -59,10 +63,12 @@ class ClientConnectUdpProxyTest {
         block: suspend (proxyPort: Int, targetPort: Int, served: AtomicInt) -> Unit,
     ) {
         val served = AtomicInt(0)
+        targetSawAuthorization = null
         val (target, targetPort) =
             testServer {
                 routing {
                     get("/") {
+                        call.request.headers["proxy-authorization"]?.let { targetSawAuthorization = it }
                         served.incrementAndFetch()
                         call.respondText("hello over ${call.request.local.version}")
                     }
@@ -121,6 +127,8 @@ class ClientConnectUdpProxyTest {
                 testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = udp }).use { c ->
                     assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText())
                 }
+                // the credentials went on the tunnel's CONNECT to the proxy, never inside the tunnel to the origin
+                assertEquals(null, targetSawAuthorization)
                 val noCreds = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort"))
                 testClient(Http3DiscoveryMode.Auto, engine = { connectUdpProxy = noCreds }).use { c ->
                     val e = assertFailsWith<Http3Exception.ConnectRejected> { c.get("https://127.0.0.1:$targetPort/") }
@@ -155,6 +163,49 @@ class ClientConnectUdpProxyTest {
                 }
                 assertEquals(0, served.load())
             }
+        }
+
+    /**
+     * A tunnelled connection never resumes a session ticket a direct connection got (the origin could link the two, and
+     * so the proxied client to its own address): tunnels keep the tickets of their proxy route apart.
+     */
+    @Test fun negative_tunnelsDoNotShareTicketsWithDirectConnections() =
+        h3Test {
+            val proxy = loopbackProxy()
+            withProxyAndTarget(proxy) { proxyPort, targetPort, _ ->
+                var tunnel = false
+                val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:$proxyPort")) { tunnel }
+                testClient(Http3DiscoveryMode.H3Only, engine = { connectUdpProxy = udp }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText()) // direct
+                    assertEquals(null, engine.h3.tunnelTicketsForTest(udp.routeKey), "no tunnel yet")
+                    tunnel = true
+                    assertEquals("hello over HTTP/3", c.get("https://127.0.0.1:$targetPort/").bodyAsText()) // through the proxy
+                    val tunnelled = engine.h3.tunnelTicketsForTest(udp.routeKey)
+                    assertTrue(tunnelled != null && tunnelled !== engine.h3.directTicketsForTest, "a cache of the route's own")
+                    assertTrue(engine.h3.tunnelTicketsUsedForTest === tunnelled, "the tunnelled endpoint was built with it")
+                }
+                assertEquals(1, proxy.stats.tunnelsOpened)
+            }
+        }
+
+    /** WebTransport does not go through the tunnel: refused for such a URL unless its own switch says to connect directly. */
+    @Test fun negative_webTransportIsRefusedWhereTheConnectUdpProxyApplies() =
+        h3Test {
+            val udp = ConnectUdpProxy(UdpProxyTemplate.wellKnown("127.0.0.1:9"))
+            testClient(Http3DiscoveryMode.Auto, engine = {
+                connectUdpProxy = udp
+                proxyResolver = ProxyResolvers.None
+            }).use { c ->
+                val e = assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:9/wt") }
+                assertTrue("webTransportIgnoresConnectUdpProxy" in (e.message ?: ""), e.message)
+            }
+            // the switch for HTTP and SOCKS proxies does not open the way past this one
+            testClient(Http3DiscoveryMode.Auto, engine = {
+                connectUdpProxy = udp
+                proxyResolver = ProxyResolvers.None
+                http3 { webTransportIgnoresProxy = true }
+            }).use { c -> assertFailsWith<UnsupportedOperationException> { c.webTransport("https://127.0.0.1:9/wt") } }
         }
 
     /** A URL the proxy does not apply to takes the engine's usual path; the proxy sees nothing. */

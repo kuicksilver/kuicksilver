@@ -1697,7 +1697,11 @@ What it changes, for the `https` URLs its `applies` admits (all of them by defau
 - `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
 - `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
   URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
-- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless `http3 { webTransportIgnoresProxy }`.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
+  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
+  HTTP and SOCKS proxies only.
+- Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
+  origin cannot link a proxied connection to the client's own address by the ticket it resumes.
 
 `credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
 must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD

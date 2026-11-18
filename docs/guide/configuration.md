@@ -293,10 +293,14 @@ threats and limits: threat model 3.29.
 | `idleTimeout` | `Duration` | 2 min | at least 2 min | 0.3.0 | a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor) |
 | `linkMtu` | `Int` (bytes) | 1500 | 1280..65 535 | 0.3.0 | UDP payloads above `linkMtu - 28` (IPv4) or `- 48` (IPv6) are dropped rather than sent fragmented |
 | `maxTunnels` | `Int` | 4096 | at least 1 | 0.3.0 | tunnels at once; one more is answered 503 with `connection_limit_reached` |
-| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client IP address; one more is answered 429 |
+| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client (an IPv4 address or an IPv6 `clientIpv6Prefix`); one more is answered 429 |
+| `clientIpv6Prefix` | `Int` | 64 | 1..128 | 0.3.0 | the prefix an IPv6 client is known by for its limits (a /64 is one client); IPv4 and IPv4-mapped clients are their address |
+| `clientPacketRate` | `Int` | 50000 | at least 1 | 0.3.0 | UDP payloads per second all of a client's tunnels together send to targets, on top of each tunnel's `packetRate` |
+| `clientPacketBurst` | `Int` | 5000 | at least 1 | 0.3.0 | the client bucket's size |
 | `packetRate` | `Int` | 20000 | at least 1 | 0.3.0 | UDP payloads per second a tunnel sends to its target; more are dropped |
 | `packetBurst` | `Int` | 2000 | at least 1 | 0.3.0 | payloads a tunnel may send at once (the token bucket's size) |
-| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a tunnel sends before its target answers once; later ones are dropped until it does; 0 turns it off |
+| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a client sends to a target before it answers once, counted across the client's tunnels; later ones are dropped until it does; 0 turns it off |
+| `refuseOwnAddresses` | `Boolean` | `true` |  | 0.3.0 | refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with `destination_ip_prohibited` |
 | `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
 | `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
 | `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per tunnel; without the privilege the payload is only dropped (`stats.packetTooBig`) |
@@ -389,6 +393,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)) |
+| `webTransportIgnoresConnectUdpProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `webTransport` to a URL `connectUdpProxy` applies to connects directly instead of being refused (its sessions do not go through the tunnel) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | 0.3.0 | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | 0.3.0 | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](ktor.md#why-did-this-request-not-use-http3)) |

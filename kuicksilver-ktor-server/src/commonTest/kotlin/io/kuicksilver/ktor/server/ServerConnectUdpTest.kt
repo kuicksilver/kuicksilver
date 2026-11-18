@@ -49,7 +49,11 @@ class ServerConnectUdpTest {
 
     /** A proxy that may reach 127.0.0.1 only (tests), on sockets bound there. */
     private fun loopbackProxy() =
-        UdpProxy(UdpProxyConfig(targetFilter = UdpTargetFilter.addresses("127.0.0.1"), socketFactory = { DatagramIo.open(loopback) }))
+        UdpProxy(
+            UdpProxyConfig(targetFilter = UdpTargetFilter.addresses("127.0.0.1"), refuseOwnAddresses = false, socketFactory = {
+                DatagramIo.open(loopback)
+            }),
+        )
 
     private suspend fun <T> h3(
         port: Int,

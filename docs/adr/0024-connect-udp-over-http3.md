@@ -46,7 +46,11 @@ its targets (section 7). A client that wants QUIC through the tunnel needs the t
 - The ICMP Packet Too Big of section 6.1 is sent only where the process may open a raw ICMP socket (Linux and Android with
   `CAP_NET_RAW`; owner's decision, 2026-11-18): `ksl_icmp_*`, probed once, on by default (`UdpProxyConfig.packetTooBig`),
   rate-limited per target. Without the privilege, and on Apple platforms and Windows, the payload is dropped and counted.
-- A proxy operator must add the proxy's own public addresses to the filter (`UdpTargetFilter.excluding`).
+- The proxy refuses its own addresses by default (the address a request's connection reached, the listener's own); the
+  host's other addresses (NAT aliases, other interfaces) are the operator's to add (`UdpTargetFilter.excluding`).
+- Limits are per client as well as per tunnel: an IPv6 client is its /64, its tunnels share one rate, and a silent
+  target's unanswered budget is the client's across tunnels. The system resolver runs at most 16 blocking lookups.
+- The Ktor client keeps tunnelled connections' session tickets per proxy route, never shared with direct connections.
 
 ## Alternatives rejected
 

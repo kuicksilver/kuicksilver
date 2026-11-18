@@ -27,6 +27,7 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PacketTooBigSender
+import io.kuicksilver.quic.UnreachableReports
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.tls.completedWithin
@@ -49,13 +50,10 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-
-/** The platform resolver of [io.kuicksilver.http3.UdpProxyResolver.System]: one address, looked up off the caller's thread. */
-internal suspend fun systemResolve(host: String): List<ByteArray> =
-    withContext(Dispatchers.IO) { listOfNotNull(InetSocketAddress(host, 0).resolveAddress()) }
 
 /** IPv4 (20) and UDP (8) headers: the largest unfragmented UDP payload on an IPv4 link is its MTU minus 28 (RFC 791, RFC 768). */
 private const val IPV4_UDP_OVERHEAD = 28
@@ -68,6 +66,9 @@ private const val PROXY_STATUS = "proxy-status"
 
 /** The longest Context ID varint (RFC 9000 section 16): the capsule limit leaves room for it on top of the payload. */
 private const val MAX_CONTEXT_ID = 8
+
+/** Clients without tunnels a proxy keeps state for at most (the oldest go first). */
+private const val MAX_IDLE_CLIENTS = 65_536
 
 /** Datagrams taken from a tunnel's socket per receive call. */
 private const val RECEIVE_BATCH = 4
@@ -91,7 +92,16 @@ internal class UdpProxyImpl(
     /** Tunnels open or being set up. */
     val active = MutableStateFlow(0)
     private val lock = Mutex()
-    private val perClient = HashMap<String, Int>()
+    private val clients = HashMap<String, ClientState>()
+
+    /** How long a client's state (its rate and its unanswered targets) outlives its last tunnel. */
+    internal var clientRetention: Duration = 2.minutes
+    private val epoch = TimeSource.Monotonic.markNow()
+
+    private fun nowMs(): Long = epoch.elapsedNow().inWholeMilliseconds
+
+    /** Tests: how often a tunnel looks for an ICMP unreachable its socket reported. */
+    internal var unreachablePoll: Duration = 1.seconds
 
     /** Tests shorten the idle timeout below the two minutes [UdpProxyConfig] allows. */
     internal var idleTimeoutForTest: Duration? = null
@@ -116,6 +126,8 @@ internal class UdpProxyImpl(
     internal val foreignSource = AtomicLong(0)
     internal val tooLargeForClient = AtomicLong(0)
     internal val clientBusy = AtomicLong(0)
+    internal val tooLargeFromTarget = AtomicLong(0)
+    internal val closedUnreachable = AtomicLong(0)
     internal val packetTooBigSent = AtomicLong(0)
 
     /** RFC 9298 section 6.1: probed once, at the first tunnel, when the configuration asks for it. */
@@ -157,6 +169,8 @@ internal class UdpProxyImpl(
             foreignSource.load(),
             tooLargeForClient.load(),
             clientBusy.load(),
+            tooLargeFromTarget.load(),
+            closedUnreachable.load(),
             packetTooBig.load(),
             packetTooBigSent.load(),
         )
@@ -176,10 +190,14 @@ internal class UdpProxyImpl(
         if (config.requireCapsuleProtocolField && !CapsuleProtocol.isEnabled(request.headers)) {
             return refuse(request, answered, 400, "http_request_error")
         }
-        val client = request.remoteAddress.ipLiteral()
-        reserve(client)?.let { status -> return refuse(request, answered, status, "connection_limit_reached") }
+        val client = clientKey(request.remoteAddress, config.clientIpv6Prefix)
+        val state =
+            when (val r = reserve(client)) {
+                is ClientState -> r
+                else -> return refuse(request, answered, r as Int, "connection_limit_reached")
+            }
         try {
-            open(request, target, answered)
+            open(request, target, answered, state)
         } catch (e: CancellationException) {
             // a request the cancelled call leaves unanswered would hold its stream until the connection ends
             request.reset(Http3ErrorCode.REQUEST_CANCELLED)
@@ -194,6 +212,7 @@ internal class UdpProxyImpl(
         request: Http3ServerRequest,
         target: TemplateMatch.Target,
         answered: (Int) -> Unit,
+        client: ClientState,
     ) {
         val candidates =
             when (val h = target.host) {
@@ -219,13 +238,28 @@ internal class UdpProxyImpl(
                                 Result.failure(e)
                             }
                         } ?: return refuse(request, answered, 504, "dns_timeout")
+                    if (r.exceptionOrNull() is ResolverBusyException) return refuse(request, answered, 503, "dns_error")
                     val list = r.getOrNull() ?: return refuse(request, answered, 502, "dns_error")
                     list.filter { it.size == 4 || it.size == 16 }.ifEmpty { return refuse(request, answered, 502, "dns_error") }
                 }
             }
-        // section 7: the filter sees every address; the socket sends to the one it allowed, never to a later answer
+        // section 7: "the UDP proxy's own addresses" are refused (the address this request's connection reached, the
+        // listener's own), then the filter sees every address; the socket sends to the one it allowed, never a later answer
+        val own =
+            if (config.refuseOwnAddresses) {
+                (request as? io.kuicksilver.http3.runtime.ServerRequestImpl)
+                    ?.connectionOwnAddresses
+                    ?.mapNotNull { UdpHost.parse(it.ipLiteral().substringBefore('%')) }
+                    ?.map { if (it is UdpHost.Ipv4) it.bytes else (it as UdpHost.Ipv6).bytes }
+                    ?.map(::unmapped)
+                    .orEmpty()
+            } else {
+                emptyList()
+            }
         val address =
-            candidates.map(::unmapped).firstOrNull { config.targetFilter.allows(target.host.text, it, target.port) }
+            candidates
+                .map(::unmapped)
+                .firstOrNull { a -> own.none { it.contentEquals(a) } && config.targetFilter.allows(target.host.text, a, target.port) }
                 ?: return refuse(request, answered, 403, "destination_ip_prohibited")
         val v4 = address.size == 4
         val targetAddress = InetSocketAddress((if (v4) UdpHost.Ipv4(address) else UdpHost.Ipv6(address)).text, target.port)
@@ -281,7 +315,9 @@ internal class UdpProxyImpl(
                     return // the client's message broke RFC 9297 section 3.2: the stream was reset with H3_MESSAGE_ERROR
                 }
             count(opened)
-            ProxyTunnel(this, impl, capsules, io, targetAddress, config.linkMtu, clock).run(idleTimeoutForTest ?: config.idleTimeout)
+            val answer = lock.withLock { client.answerFor(targetAddress) }
+            ProxyTunnel(this, impl, capsules, io, targetAddress, config.linkMtu, clock, client, answer)
+                .run(idleTimeoutForTest ?: config.idleTimeout)
         } finally {
             io.close()
         }
@@ -306,24 +342,55 @@ internal class UdpProxyImpl(
         }
     }
 
-    /** Takes a slot for [client]; null, or the status that refuses the request. */
-    private suspend fun reserve(client: String): Int? =
+    /** Takes a slot for [client]: its [ClientState], or the status that refuses the request (an Int). */
+    private suspend fun reserve(client: String): Any =
         lock.withLock {
+            forgetIdleClients()
             if (active.value >= config.maxTunnels) return@withLock 503
-            val n = perClient[client] ?: 0
-            if (n >= config.maxTunnelsPerClient) return@withLock 429
-            perClient[client] = n + 1
+            val st =
+                clients.getOrPut(client) {
+                    ClientState(
+                        SharedTokenBucket(config.clientPacketRate, config.clientPacketBurst) { clockStart.elapsedNow().inWholeNanoseconds },
+                    )
+                }
+            if (st.tunnels >= config.maxTunnelsPerClient) return@withLock 429
+            st.tunnels++
             active.value += 1
-            null
+            st
         }
 
     private suspend fun release(client: String) {
         lock.withLock {
-            val n = (perClient[client] ?: 1) - 1
-            if (n <= 0) perClient.remove(client) else perClient[client] = n
+            clients[client]?.let {
+                it.tunnels--
+                if (it.tunnels <= 0) it.idleSince = nowMs()
+            }
             active.value -= 1
         }
     }
+
+    /** Drops clients without tunnels for [clientRetention], and the oldest idle ones beyond [MAX_IDLE_CLIENTS]; under [lock]. */
+    private fun forgetIdleClients() {
+        val now = nowMs()
+        val keep = clientRetention.inWholeMilliseconds
+        val it = clients.entries.iterator()
+        var idle = 0
+        while (it.hasNext()) {
+            val e = it.next().value
+            if (e.tunnels > 0) continue
+            if (now - e.idleSince >= keep) it.remove() else idle++
+        }
+        if (idle > MAX_IDLE_CLIENTS) {
+            clients.entries
+                .filter { it.value.tunnels <= 0 }
+                .sortedBy { it.value.idleSince }
+                .take(idle - MAX_IDLE_CLIENTS)
+                .forEach { clients.remove(it.key) }
+        }
+    }
+
+    /** Nanoseconds of [clock] since this proxy started, for the client buckets (TestTimeSource in tests). */
+    private val clockStart by lazy { clock.markNow() }
 
     /** An IPv4-mapped IPv6 address (`::ffff:0:0/96`) as its IPv4 address: it is one, and an IPv4 socket sends to it. */
     private fun unmapped(a: ByteArray): ByteArray {
@@ -335,7 +402,7 @@ internal class UdpProxyImpl(
 }
 
 /** Why a tunnel ended. */
-private enum class End { ClientFin, ClientGone, SocketFailed, Idle }
+private enum class End { ClientFin, ClientGone, SocketFailed, Idle, Unreachable }
 
 /** One open tunnel: client datagrams to the target and back, until [End]. */
 private class ProxyTunnel(
@@ -344,15 +411,17 @@ private class ProxyTunnel(
     private val capsules: CapsuleStreamImpl,
     private val io: OnceClosed,
     private val target: InetSocketAddress,
-    linkMtu: Int,
+    private val linkMtu: Int,
     clock: TimeSource,
+    private val client: ClientState,
+    private val answer: TargetAnswer,
 ) {
     private val config = proxy.config
     private val start = clock.markNow()
     private val lastActivity = AtomicLong(0)
-    private val answered = AtomicBoolean(false)
-    private val sentUnanswered = AtomicLong(0)
-    private val receiveSlot = linkMtu
+
+    // one byte more than the link carries: a datagram that fills the slot was larger, and is dropped, not forwarded cut
+    private val receiveSlot = linkMtu + 1
     private val bucket = TokenBucket(config.packetRate, config.packetBurst) { start.elapsedNow().inWholeNanoseconds }
 
     /**
@@ -361,7 +430,7 @@ private class ProxyTunnel(
      */
     private val ptbBucket = TokenBucket(PTB_RATE, PTB_BURST) { start.elapsedNow().inWholeNanoseconds }
     private val sender: PtbSink? = proxy.newSender()
-    private val sendBatch = PacketBatch(1, receiveSlot)
+    private val sendBatch = PacketBatch(1, linkMtu)
     private val receiveBatch = PacketBatch(RECEIVE_BATCH, receiveSlot)
 
     private fun now(): Long = start.elapsedNow().inWholeNanoseconds
@@ -410,6 +479,9 @@ private class ProxyTunnel(
                             idle(idleTimeout)
                             end.complete(End.Idle)
                         },
+                        launch {
+                            if (unreachable()) end.complete(End.Unreachable)
+                        },
                     )
                 why = end.await()
                 // closed first: a receive blocked in the socket returns, so the cancelled readers end promptly
@@ -442,9 +514,28 @@ private class ProxyTunnel(
 
             // "If a UDP proxy is notified by its operating system that its socket is no longer usable, it MUST close the
             // request stream"; also a cancelled serve()
-            End.SocketFailed, null -> {
+            End.SocketFailed, End.Unreachable, null -> {
                 impl.reset(Http3ErrorCode.CONNECT_ERROR)
                 impl.stopSending(Http3ErrorCode.CONNECT_ERROR)
+            }
+        }
+    }
+
+    /**
+     * RFC 9298 section 3.1: "If a UDP proxy is notified by its operating system that its socket is no longer usable, it
+     * MUST close the request stream", for example on "an ICMP Destination Unreachable message". The accelerated socket on
+     * Linux and Android reports port and host unreachable for the datagrams it sent (its error queue); one for this
+     * tunnel's target ends the tunnel. Polled every [UdpProxyImpl.unreachablePoll]; true when one came. Other sockets report
+     * none: an unconnected socket is told nothing on Apple platforms, Windows and the portable sockets.
+     */
+    private suspend fun unreachable(): Boolean {
+        val reports = io.io as? UnreachableReports ?: return false
+        while (true) {
+            delay(proxy.unreachablePoll)
+            val dst = reports.takeUnreachable() ?: continue
+            if (dst.sameIpAs(target)) {
+                proxy.count(proxy.closedUnreachable)
+                return true
             }
         }
     }
@@ -464,11 +555,12 @@ private class ProxyTunnel(
         val n = VarInt.encodedLength(d[0])
         val len = d.size - n
         val c = config
-        if (!bucket.tryTake()) {
+        // the tunnel's own rate, then its client's over all its tunnels (CWE-400)
+        if (!bucket.tryTake() || !client.bucket.tryTake()) {
             proxy.count(proxy.rateLimited)
             return
         }
-        if (c.unansweredLimit > 0 && !answered.load() && sentUnanswered.load() >= c.unansweredLimit) {
+        if (c.unansweredLimit > 0 && !answer.answered.load() && answer.sent.load() >= c.unansweredLimit) {
             proxy.count(proxy.unanswered)
             return
         }
@@ -478,7 +570,7 @@ private class ProxyTunnel(
         sendBatch.setAddress(0, target)
         sendBatch.setEcn(0, Ecn.NotEct)
         if (io.io.send(sendBatch) == 1) proxy.count(proxy.toTargets)
-        sentUnanswered.incrementAndFetch()
+        answer.sent.incrementAndFetch()
         touch()
     }
 
@@ -515,9 +607,15 @@ private class ProxyTunnel(
                     proxy.count(proxy.foreignSource)
                     continue
                 }
-                answered.store(true)
+                answer.answered.store(true)
                 touch()
                 val len = batch.length(i)
+                // a datagram above the link's MTU arrived reassembled, or was cut by a socket whose buffer it did not fit:
+                // RFC 9298 section 5 carries "the unmodified payload", so it is dropped whole
+                if (len > linkMtu) {
+                    proxy.count(proxy.tooLargeFromTarget)
+                    continue
+                }
                 val d = ByteArray(len + 1)
                 batch.buffer(i).copyTo(d, 0, 1, len)
                 // section 6.1: one too large for a QUIC DATAGRAM frame is dropped, never sent as a capsule

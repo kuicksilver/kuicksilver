@@ -52,6 +52,7 @@ class RealUdpConnectUdpTest {
             UdpProxy(
                 UdpProxyConfig(
                     targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
+                    refuseOwnAddresses = false, // proxy and target share this host's loopback by construction
                     socketFactory = { DatagramIo.open(loopback).also { opened += it } },
                 ),
             )

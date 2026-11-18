@@ -558,8 +558,14 @@ final class io.kuicksilver.http3/UdpProxy { // io.kuicksilver.http3/UdpProxy|nul
 }
 
 final class io.kuicksilver.http3/UdpProxyConfig { // io.kuicksilver.http3/UdpProxyConfig|null[0]
-    constructor <init>(kotlin/String = ..., io.kuicksilver.http3/UdpTargetFilter = ..., io.kuicksilver.http3/UdpProxyResolver = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/String = ..., kotlin/Boolean = ..., kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo> = ...) // io.kuicksilver.http3/UdpProxyConfig.<init>|<init>(kotlin.String;io.kuicksilver.http3.UdpTargetFilter;io.kuicksilver.http3.UdpProxyResolver;kotlin.time.Duration;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.String;kotlin.Boolean;kotlin.coroutines.SuspendFunction1<io.ktor.network.sockets.InetSocketAddress,io.kuicksilver.quic.DatagramIo>){}[0]
+    constructor <init>(kotlin/String = ..., io.kuicksilver.http3/UdpTargetFilter = ..., io.kuicksilver.http3/UdpProxyResolver = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/String = ..., kotlin/Boolean = ..., kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo> = ...) // io.kuicksilver.http3/UdpProxyConfig.<init>|<init>(kotlin.String;io.kuicksilver.http3.UdpTargetFilter;io.kuicksilver.http3.UdpProxyResolver;kotlin.time.Duration;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Boolean;kotlin.String;kotlin.Boolean;kotlin.coroutines.SuspendFunction1<io.ktor.network.sockets.InetSocketAddress,io.kuicksilver.quic.DatagramIo>){}[0]
 
+    final val clientIpv6Prefix // io.kuicksilver.http3/UdpProxyConfig.clientIpv6Prefix|{}clientIpv6Prefix[0]
+        final fun <get-clientIpv6Prefix>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.clientIpv6Prefix.<get-clientIpv6Prefix>|<get-clientIpv6Prefix>(){}[0]
+    final val clientPacketBurst // io.kuicksilver.http3/UdpProxyConfig.clientPacketBurst|{}clientPacketBurst[0]
+        final fun <get-clientPacketBurst>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.clientPacketBurst.<get-clientPacketBurst>|<get-clientPacketBurst>(){}[0]
+    final val clientPacketRate // io.kuicksilver.http3/UdpProxyConfig.clientPacketRate|{}clientPacketRate[0]
+        final fun <get-clientPacketRate>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.clientPacketRate.<get-clientPacketRate>|<get-clientPacketRate>(){}[0]
     final val idleTimeout // io.kuicksilver.http3/UdpProxyConfig.idleTimeout|{}idleTimeout[0]
         final fun <get-idleTimeout>(): kotlin.time/Duration // io.kuicksilver.http3/UdpProxyConfig.idleTimeout.<get-idleTimeout>|<get-idleTimeout>(){}[0]
     final val linkMtu // io.kuicksilver.http3/UdpProxyConfig.linkMtu|{}linkMtu[0]
@@ -578,6 +584,8 @@ final class io.kuicksilver.http3/UdpProxyConfig { // io.kuicksilver.http3/UdpPro
         final fun <get-pathTemplate>(): kotlin/String // io.kuicksilver.http3/UdpProxyConfig.pathTemplate.<get-pathTemplate>|<get-pathTemplate>(){}[0]
     final val proxyName // io.kuicksilver.http3/UdpProxyConfig.proxyName|{}proxyName[0]
         final fun <get-proxyName>(): kotlin/String // io.kuicksilver.http3/UdpProxyConfig.proxyName.<get-proxyName>|<get-proxyName>(){}[0]
+    final val refuseOwnAddresses // io.kuicksilver.http3/UdpProxyConfig.refuseOwnAddresses|{}refuseOwnAddresses[0]
+        final fun <get-refuseOwnAddresses>(): kotlin/Boolean // io.kuicksilver.http3/UdpProxyConfig.refuseOwnAddresses.<get-refuseOwnAddresses>|<get-refuseOwnAddresses>(){}[0]
     final val requireCapsuleProtocolField // io.kuicksilver.http3/UdpProxyConfig.requireCapsuleProtocolField|{}requireCapsuleProtocolField[0]
         final fun <get-requireCapsuleProtocolField>(): kotlin/Boolean // io.kuicksilver.http3/UdpProxyConfig.requireCapsuleProtocolField.<get-requireCapsuleProtocolField>|<get-requireCapsuleProtocolField>(){}[0]
     final val resolveTimeout // io.kuicksilver.http3/UdpProxyConfig.resolveTimeout|{}resolveTimeout[0]
@@ -593,6 +601,8 @@ final class io.kuicksilver.http3/UdpProxyConfig { // io.kuicksilver.http3/UdpPro
 }
 
 final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProxyStats|null[0]
+    final val closedUnreachable // io.kuicksilver.http3/UdpProxyStats.closedUnreachable|{}closedUnreachable[0]
+        final fun <get-closedUnreachable>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.closedUnreachable.<get-closedUnreachable>|<get-closedUnreachable>(){}[0]
     final val droppedClientBusy // io.kuicksilver.http3/UdpProxyStats.droppedClientBusy|{}droppedClientBusy[0]
         final fun <get-droppedClientBusy>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedClientBusy.<get-droppedClientBusy>|<get-droppedClientBusy>(){}[0]
     final val droppedForeignSource // io.kuicksilver.http3/UdpProxyStats.droppedForeignSource|{}droppedForeignSource[0]
@@ -603,6 +613,8 @@ final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProx
         final fun <get-droppedTooLargeForClient>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForClient.<get-droppedTooLargeForClient>|<get-droppedTooLargeForClient>(){}[0]
     final val droppedTooLargeForLink // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForLink|{}droppedTooLargeForLink[0]
         final fun <get-droppedTooLargeForLink>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForLink.<get-droppedTooLargeForLink>|<get-droppedTooLargeForLink>(){}[0]
+    final val droppedTooLargeFromTarget // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeFromTarget|{}droppedTooLargeFromTarget[0]
+        final fun <get-droppedTooLargeFromTarget>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeFromTarget.<get-droppedTooLargeFromTarget>|<get-droppedTooLargeFromTarget>(){}[0]
     final val droppedUnanswered // io.kuicksilver.http3/UdpProxyStats.droppedUnanswered|{}droppedUnanswered[0]
         final fun <get-droppedUnanswered>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedUnanswered.<get-droppedUnanswered>|<get-droppedUnanswered>(){}[0]
     final val droppedUnknownContext // io.kuicksilver.http3/UdpProxyStats.droppedUnknownContext|{}droppedUnknownContext[0]

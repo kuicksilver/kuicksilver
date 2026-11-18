@@ -5,9 +5,9 @@ package io.kuicksilver.http3
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.connectudp.SystemResolver
 import io.kuicksilver.http3.connectudp.UdpProxyImpl
 import io.kuicksilver.http3.connectudp.connectUdpTunnel
-import io.kuicksilver.http3.connectudp.systemResolve
 import io.kuicksilver.http3.message.UdpAddressClass
 import io.kuicksilver.http3.message.UdpUriTemplate
 import io.kuicksilver.quic.DatagramIo
@@ -255,8 +255,12 @@ public fun interface UdpProxyResolver {
 
     /** The platform's resolver. */
     public companion object {
-        /** The operating system's resolver (`getaddrinfo`, `InetAddress` on the JVM), on `Dispatchers.IO`; one address. */
-        public val System: UdpProxyResolver = UdpProxyResolver { systemResolve(it) }
+        /**
+         * The operating system's resolver (`getaddrinfo`, one family at a time): every IPv4 address, then every IPv6 one. A
+         * lookup blocks a thread no deadline interrupts, so lookups run on 16 threads of their own and a seventeenth at once
+         * is refused (the request gets 503); a lookup the caller gave up on keeps its thread until it returns.
+         */
+        public val System: UdpProxyResolver = UdpProxyResolver { SystemResolver.resolve(it) }
     }
 }
 
@@ -272,9 +276,15 @@ public fun interface UdpProxyResolver {
  * @property idleTimeout a tunnel without a datagram either way for this long is closed (socket and request stream);
  *   at least two minutes, the floor of section 3.1 ("SHOULD NOT use a period lower than two minutes").
  * @property linkMtu the MTU of the proxy's link towards targets, 1280..65535: UDP payloads above `linkMtu - 28` (IPv4) or
- *   `linkMtu - 48` (IPv6) are dropped rather than sent fragmented (section 5), and the proxy receives none larger.
+ *   `linkMtu - 48` (IPv6) are dropped rather than sent fragmented (section 5); a datagram from a target above `linkMtu`
+ *   bytes is dropped whole (never forwarded cut: a socket truncates what does not fit its buffer).
  * @property maxTunnels tunnels open at once; one more is answered 503 with `connection_limit_reached`.
- * @property maxTunnelsPerClient tunnels open at once per client IP address; one more is answered 429.
+ * @property maxTunnelsPerClient tunnels open at once per client ([clientIpv6Prefix]); one more is answered 429.
+ * @property clientIpv6Prefix the prefix an IPv6 client is known by for its limits: 64 by default, so a client with a /64
+ *   cannot pass for 2^64 clients; 1..128 (128: each address). An IPv4 client is its address.
+ * @property clientPacketRate UDP payloads per second all of a client's tunnels together may send to targets, on top of each
+ *   tunnel's [packetRate]: more tunnels do not multiply a client's rate.
+ * @property clientPacketBurst the client bucket's size.
  * @property packetRate UDP payloads per second a tunnel may send to its target, a token bucket refilled at this rate;
  *   payloads beyond it are dropped, as UDP may drop them (section 7, CWE-400).
  * @property packetBurst the bucket's size, the payloads a tunnel may send at once.
@@ -300,9 +310,13 @@ public class UdpProxyConfig(
     public val linkMtu: Int = 1500,
     public val maxTunnels: Int = 4096,
     public val maxTunnelsPerClient: Int = 64,
+    public val clientIpv6Prefix: Int = 64,
+    public val clientPacketRate: Int = 50_000,
+    public val clientPacketBurst: Int = 5_000,
     public val packetRate: Int = 20_000,
     public val packetBurst: Int = 2_000,
     public val unansweredLimit: Int = 256,
+    public val refuseOwnAddresses: Boolean = true,
     public val requireCapsuleProtocolField: Boolean = true,
     public val proxyName: String = "proxy",
     public val packetTooBig: Boolean = true,
@@ -318,6 +332,9 @@ public class UdpProxyConfig(
         require(maxTunnelsPerClient >= 1) { "maxTunnelsPerClient must be at least 1" }
         require(packetRate >= 1) { "packetRate must be at least 1" }
         require(packetBurst >= 1) { "packetBurst must be at least 1" }
+        require(clientIpv6Prefix in 1..128) { "clientIpv6Prefix must be 1..128" }
+        require(clientPacketRate >= 1) { "clientPacketRate must be at least 1" }
+        require(clientPacketBurst >= 1) { "clientPacketBurst must be at least 1" }
         require(unansweredLimit >= 0) { "unansweredLimit must not be negative" }
         require(proxyName.isNotEmpty() && proxyName[0].let { it in 'a'..'z' || it in 'A'..'Z' || it == '*' }) {
             "proxyName must be a Structured Field token (RFC 8941 section 3.3.4)"
@@ -337,11 +354,13 @@ public class UdpProxyConfig(
  * @property fromTargets UDP payloads received from targets and sent on to clients.
  * @property droppedUnknownContext HTTP datagrams from clients with a Context ID other than 0, or none (RFC 9298 section 4).
  * @property droppedTooLargeForLink UDP payloads above what [UdpProxyConfig.linkMtu] carries unfragmented (section 5).
- * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packetRate].
+ * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packetRate] or [UdpProxyConfig.clientPacketRate].
  * @property droppedUnanswered UDP payloads beyond [UdpProxyConfig.unansweredLimit] to a target that never answered.
  * @property droppedForeignSource datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").
  * @property droppedTooLargeForClient UDP payloads from targets too large for the client's QUIC DATAGRAM frames (section 6.1).
  * @property droppedClientBusy UDP payloads from targets dropped because the connection's datagram queue was full.
+ * @property droppedTooLargeFromTarget datagrams from targets above [UdpProxyConfig.linkMtu] bytes, dropped whole.
+ * @property closedUnreachable tunnels closed because an ICMP port or host unreachable came for their target (section 3.1).
  * @property packetTooBig whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its
  *   first tunnel.
  * @property packetTooBigSent ICMP Packet Too Big messages sent to targets.
@@ -359,6 +378,8 @@ public class UdpProxyStats internal constructor(
     public val droppedForeignSource: Long,
     public val droppedTooLargeForClient: Long,
     public val droppedClientBusy: Long,
+    public val droppedTooLargeFromTarget: Long,
+    public val closedUnreachable: Long,
     public val packetTooBig: PacketTooBigStatus,
     public val packetTooBigSent: Long,
 ) {
@@ -367,7 +388,8 @@ public class UdpProxyStats internal constructor(
         "UdpProxyStats(opened=$tunnelsOpened, refused=$requestsRefused, toTargets=$toTargets, fromTargets=$fromTargets, " +
             "unknownContext=$droppedUnknownContext, tooLargeForLink=$droppedTooLargeForLink, rateLimited=$droppedRateLimited, " +
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
-            "clientBusy=$droppedClientBusy, packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent)"
+            "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
+            "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent)"
 }
 
 /** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */

@@ -373,11 +373,13 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.document
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.earlyDataContextCoversEveryValueOfOurSettings
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.Http3SettingsTest.refusalsNameTheOption
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.capsuleProtocolFieldNotRequiredWhenConfigured
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.clientKeys
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.datagramCapsulesWhenHttpDatagramsAreOff
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.dnsNameResolvedBeforeTheAnswer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.idleTunnelIsClosedWithItsStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.ipv6Target
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.largestPayloadWithALongContextIdIsDelivered
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aClientsTunnelsShareOneRate
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientRefusesBeforeSending
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientResetFreesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientThatDisappearsFreesTheTunnel
@@ -390,8 +392,12 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oversizedUdpPayloadAbortsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadAboveTheLinkMtuIsDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_rateLimitDropsBeyondTheBurst
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_reopeningATunnelDoesNotResetTheUnansweredLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_socketFailureClosesTheRequestStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_targetPayloadTooLargeForTheClientIsDropped
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_targetUnreachableClosesTheTunnel
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_theProxysOwnAddressIsRefused
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_theSystemResolverBoundsItsBlockedLookups
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_tunnelLimitsAreEnforced
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unansweredTargetIsNotFlooded
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unknownContextIdIsDroppedByTheClient
@@ -401,6 +407,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.PortableTruncationTest.negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.http3ThroughTheProxy
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.tunnelSocketShape
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.UdpTargetFilterTest.negative_configRefusesAnIdleTimeoutBelowTwoMinutesAndBadValues
@@ -1364,6 +1371,8 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectU
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.http3ThroughTheProxy
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_aRefusedTunnelNeverFallsBackToADirectConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_h1OnlyWithAConnectUdpProxyIsRefused
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_tunnelsDoNotShareTicketsWithDirectConnections
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectUdpProxyTest.negative_webTransportIsRefusedWhereTheConnectUdpProxyApplies
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009H3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_deflateAcceptedWithAnotherRsv1ExtensionFailsHandshake

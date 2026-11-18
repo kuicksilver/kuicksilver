@@ -845,7 +845,26 @@ internal class H3Pool(
     }
 
     /** Drops the pool's session tickets: the engine's cleanup calls it after [close]. */
-    suspend fun closeSessions() = tickets.close()
+    suspend fun closeSessions() {
+        tickets.close()
+        lock.withLock { tunnelTickets.values.toList().also { tunnelTickets.clear() } }.forEach { it.close() }
+    }
+
+    /**
+     * The session tickets of tunnelled connections, one cache per CONNECT-UDP proxy route ([ConnectUdpProxy.routeKey]),
+     * never shared with direct connections: a ticket a direct connection got would let the origin link the proxied
+     * connection that resumes it to the client's own address (RFC 8446 section C.4; RFC 9298 section 7 hides it).
+     */
+    private val tunnelTickets = HashMap<String, io.kuicksilver.tls.SessionCache>()
+
+    /** Tests: the cache of a proxy route, null before its first tunnel; and the direct connections'. */
+    internal suspend fun tunnelTicketsForTest(route: String): io.kuicksilver.tls.SessionCache? = lock.withLock { tunnelTickets[route] }
+
+    internal val directTicketsForTest: io.kuicksilver.tls.SessionCache get() = tickets
+
+    /** Tests: the session cache the latest tunnelled endpoint was built with. */
+    @kotlin.concurrent.Volatile
+    internal var tunnelTicketsUsedForTest: io.kuicksilver.tls.SessionCache? = null
 
     fun close() {
         refusingWebTransport = true
@@ -1265,10 +1284,19 @@ internal class H3Pool(
         try {
             val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
             val tunnel = outer.connectUdp(p.template, t.host, t.port, headers)
+            val cache = lock.withLock { tunnelTickets.getOrPut(p.routeKey) { io.kuicksilver.tls.SessionCache() } }
+            val tunnelConfig =
+                endpointConfig
+                    .toBuilder()
+                    .apply {
+                        io = { tunnel.asDatagramIo() }
+                        sessionCache = cache // never the direct connections' tickets
+                    }.build()
+            tunnelTicketsUsedForTest = tunnelConfig.sessionCache
             val ep =
                 Http3Endpoint.bind(
                     InetSocketAddress("0.0.0.0", 0), // handed to the factory, which gives the tunnel: nothing is bound
-                    endpointConfig.toBuilder().apply { io = { tunnel.asDatagramIo() } }.build(),
+                    tunnelConfig,
                     config.http3.settings,
                 )
             inner = ep

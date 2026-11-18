@@ -2209,7 +2209,8 @@ error=dns_error`, a timeout (`resolveTimeout`, 5 s) 504 with `dns_timeout`. Then
 (`UdpTargetFilter.PublicOnly` by default): loopback, private, link-local, multicast, broadcast and the other special-purpose
 addresses are refused with 403 and `destination_ip_prohibited` before any socket exists, an IPv4-mapped, NAT64 or 6to4
 address is judged by its IPv4 address, and the socket sends to the very address the filter allowed, so a later DNS answer
-cannot move it. A proxy with public addresses of its own adds `and UdpTargetFilter.excluding(...)` with them;
+cannot move it. The proxy's own addresses are refused as well (`refuseOwnAddresses`: the address the request's
+connection reached, the listener's own); other addresses of the host (NAT aliases) go to `and UdpTargetFilter.excluding(...)`;
 `UdpTargetFilter.addresses`, `hosts` and `ports` build allow-lists. Only then the socket is opened (`socketFactory`, on a
 wildcard address of the target's family) and the request answered 200 with `capsule-protocol: ?1`; nothing goes to the
 target before that answer.
@@ -2222,8 +2223,12 @@ from the target's address and port are taken from the socket (section 3.1). Pack
 (section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
 with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per tunnel); `stats.packetTooBig` says whether it
 does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
-tunnel, `unansweredLimit` (256 payloads to a target that has not answered yet), `maxTunnels` (4096; one more is 503) and
-`maxTunnelsPerClient` (64 per client IP address; one more is 429), both with `connection_limit_reached`. The tunnel ends,
+tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
+across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
+`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port or
+host unreachable for the target closes the tunnel (Linux and Android). The system resolver runs 16 lookups at once at most
+(a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
 with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
 socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
 minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.
@@ -4116,7 +4121,11 @@ What it changes, for the `https` URLs its `applies` admits (all of them by defau
 - `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
 - `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
   URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
-- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless `http3 { webTransportIgnoresProxy }`.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
+  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
+  HTTP and SOCKS proxies only.
+- Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
+  origin cannot link a proxied connection to the client's own address by the ticket it resumes.
 
 `credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
 must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
@@ -5767,10 +5776,14 @@ threats and limits: threat model 3.29.
 | `idleTimeout` | `Duration` | 2 min | at least 2 min | 0.3.0 | a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor) |
 | `linkMtu` | `Int` (bytes) | 1500 | 1280..65 535 | 0.3.0 | UDP payloads above `linkMtu - 28` (IPv4) or `- 48` (IPv6) are dropped rather than sent fragmented |
 | `maxTunnels` | `Int` | 4096 | at least 1 | 0.3.0 | tunnels at once; one more is answered 503 with `connection_limit_reached` |
-| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client IP address; one more is answered 429 |
+| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client (an IPv4 address or an IPv6 `clientIpv6Prefix`); one more is answered 429 |
+| `clientIpv6Prefix` | `Int` | 64 | 1..128 | 0.3.0 | the prefix an IPv6 client is known by for its limits (a /64 is one client); IPv4 and IPv4-mapped clients are their address |
+| `clientPacketRate` | `Int` | 50000 | at least 1 | 0.3.0 | UDP payloads per second all of a client's tunnels together send to targets, on top of each tunnel's `packetRate` |
+| `clientPacketBurst` | `Int` | 5000 | at least 1 | 0.3.0 | the client bucket's size |
 | `packetRate` | `Int` | 20000 | at least 1 | 0.3.0 | UDP payloads per second a tunnel sends to its target; more are dropped |
 | `packetBurst` | `Int` | 2000 | at least 1 | 0.3.0 | payloads a tunnel may send at once (the token bucket's size) |
-| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a tunnel sends before its target answers once; later ones are dropped until it does; 0 turns it off |
+| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a client sends to a target before it answers once, counted across the client's tunnels; later ones are dropped until it does; 0 turns it off |
+| `refuseOwnAddresses` | `Boolean` | `true` |  | 0.3.0 | refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with `destination_ip_prohibited` |
 | `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
 | `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
 | `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per tunnel; without the privilege the payload is only dropped (`stats.packetTooBig`) |
@@ -5863,6 +5876,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-on-the-client-experimental)) |
+| `webTransportIgnoresConnectUdpProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `webTransport` to a URL `connectUdpProxy` applies to connects directly instead of being refused (its sessions do not go through the tunnel) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | 0.3.0 | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | 0.3.0 | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#why-did-this-request-not-use-http3)) |

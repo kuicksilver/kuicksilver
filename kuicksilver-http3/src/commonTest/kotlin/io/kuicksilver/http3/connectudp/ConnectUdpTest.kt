@@ -152,7 +152,13 @@ internal class ProxyRig(
 internal class ClosingIo(
     val io: MemoryIo,
     private val onClose: () -> Unit,
-) : io.kuicksilver.quic.DatagramIo by io {
+) : io.kuicksilver.quic.DatagramIo by io,
+    io.kuicksilver.quic.UnreachableReports {
+    /** What the next [takeUnreachable] answers, as a socket whose error queue held an ICMP unreachable. */
+    @kotlin.concurrent.Volatile var unreachable: InetSocketAddress? = null
+
+    override fun takeUnreachable(): InetSocketAddress? = unreachable.also { unreachable = null }
+
     val ecnSent = ArrayList<io.kuicksilver.quic.Ecn>()
     var ecnMarkingDisabled = false
 
@@ -847,6 +853,147 @@ class ConnectUdpTest {
                 val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
                 assertEquals(io.kuicksilver.http3.PacketTooBigStatus.Off, rig.proxy.stats.packetTooBig)
                 t.close()
+            }
+        }
+
+    /**
+     * Section 3.1: an ICMP port or host unreachable for the tunnel's target is the operating system saying the socket is no
+     * longer usable: the request stream is reset and stopped with H3_CONNECT_ERROR. One for another destination is ignored.
+     */
+    @Test fun negative_targetUnreachableClosesTheTunnel() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                rig.proxy.impl.unreachablePoll = 20.milliseconds
+                rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                t.send("x".encodeToByteArray())
+                assertContentEquals("echo:x".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                val socket = rig.sockets.single()
+                socket.unreachable = InetSocketAddress("192.0.2.99", 5000) // another destination: not this tunnel's
+                withTimeout(5.seconds) { while (socket.unreachable != null) kotlinx.coroutines.yield() }
+                assertEquals(1, rig.proxy.activeTunnels.value)
+                socket.unreachable = echoAt
+                val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
+                assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
+                assertEquals(1, rig.proxy.stats.closedUnreachable)
+                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+            }
+        }
+
+    /** Section 7: the proxy's own address (the one this request's connection reached) is refused, whatever the filter allows. */
+    @Test fun negative_theProxysOwnAddressIsRefused() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                // the in-memory server is bound to 10.0.0.2:443, which the AllowAll filter of the rig would let through
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "10.0.0.2", 53) }
+                assertEquals(403, e.status)
+                assertEquals("proxy; error=destination_ip_prohibited", e.headers["proxy-status"])
+                assertEquals(0, rig.socketsOpened.load())
+            }
+            val allowed =
+                rig { f ->
+                    UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, refuseOwnAddresses = false, socketFactory = f)
+                }
+            allowed.use { rig ->
+                rig.pair.client
+                    .connectUdp(template, "10.0.0.2", 53)
+                    .close()
+            }
+        }
+
+    /** CWE-400: a client's tunnels share one rate; more tunnels do not multiply it (a frozen clock refills nothing). */
+    @Test fun negative_aClientsTunnelsShareOneRate() =
+        h3Test {
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, clientPacketRate = 1, clientPacketBurst = 3, socketFactory = f)
+                }
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val a = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val b = p.client.connectUdp(template, "192.0.2.50", 5000)
+                repeat(3) { a.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, 1))) }
+                repeat(3) { b.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, 2))) }
+                withTimeout(
+                    5.seconds,
+                ) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedRateLimited + rig.proxy.stats.toTargets == 6L }
+                }
+                assertEquals(3, rig.proxy.stats.toTargets, "the client's burst of 3 over both tunnels")
+                repeat(3) { got.receive() }
+                a.close()
+                b.close()
+            }
+        }
+
+    /** Section 7: a silent target's unanswered budget is the client's, not each tunnel's: reopening does not start over. */
+    @Test fun negative_reopeningATunnelDoesNotResetTheUnansweredLimit() =
+        h3Test {
+            val rig = rig { f -> UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, unansweredLimit = 3, socketFactory = f) }
+            rig.use { r ->
+                val p = r.pair
+                val silent = p.quic.net.open(echoAt)
+                val first = p.client.connectUdp(template, "192.0.2.50", 5000)
+                repeat(3) { first.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, 1))) }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.toTargets == 3L }
+                }
+                first.close()
+                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+                val second = p.client.connectUdp(template, "192.0.2.50", 5000)
+                second.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0, 2)))
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedUnanswered == 1L }
+                }
+                assertEquals(3, rig.proxy.stats.toTargets)
+                second.close()
+                silent.close()
+            }
+        }
+
+    /** An IPv6 client is known by its /64 for its limits; IPv4 and IPv4-mapped by the address. */
+    @Test fun clientKeys() {
+        assertEquals("2001:db8:1:2::/64", clientKey(InetSocketAddress("2001:db8:1:2:aaaa:bbbb:cccc:dddd", 1), 64))
+        assertEquals(clientKey(InetSocketAddress("2001:db8:1:2::1", 1), 64), clientKey(InetSocketAddress("2001:db8:1:2:ffff::9", 2), 64))
+        assertTrue(clientKey(InetSocketAddress("2001:db8:1:3::1", 1), 64) != clientKey(InetSocketAddress("2001:db8:1:2::1", 1), 64))
+        assertEquals("2001:db8:1:2::1/128", clientKey(InetSocketAddress("2001:db8:1:2::1", 1), 128))
+        assertEquals("192.0.2.7", clientKey(InetSocketAddress("192.0.2.7", 1), 64))
+        assertEquals("192.0.2.7", clientKey(InetSocketAddress("::ffff:192.0.2.7", 1), 64))
+    }
+
+    /**
+     * The system resolver's lookups block threads no deadline interrupts: 16 at most run at once, counted until they
+     * return even when their callers gave up, and one more is refused at once.
+     */
+    @Test fun negative_theSystemResolverBoundsItsBlockedLookups() =
+        h3Test {
+            val gate = CompletableDeferred<Unit>()
+            try {
+                SystemResolver.lookupForTest =
+                    {
+                        kotlinx.coroutines.runBlocking { gate.await() }
+                        listOf(byteArrayOf(192.toByte(), 0, 2, 1))
+                    }
+                val callers =
+                    List(SystemResolver.MAX_IN_FLIGHT) {
+                        async { kotlinx.coroutines.withTimeoutOrNull(50.milliseconds) { SystemResolver.resolve("slow.example") } }
+                    }
+                callers.forEach { assertEquals(null, it.await(), "a caller's deadline ends its wait") }
+                assertEquals(SystemResolver.MAX_IN_FLIGHT, SystemResolver.inFlightNow, "abandoned lookups still count")
+                assertFailsWith<ResolverBusyException> { SystemResolver.resolve("one.more.example") }
+                gate.complete(Unit)
+                withTimeout(5.seconds) { while (SystemResolver.inFlightNow > 0) kotlinx.coroutines.yield() }
+                assertEquals(1, SystemResolver.resolve("fast.example").size)
+            } finally {
+                gate.complete(Unit)
+                SystemResolver.lookupForTest = null
             }
         }
 

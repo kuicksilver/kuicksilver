@@ -399,7 +399,8 @@ error=dns_error`, a timeout (`resolveTimeout`, 5 s) 504 with `dns_timeout`. Then
 (`UdpTargetFilter.PublicOnly` by default): loopback, private, link-local, multicast, broadcast and the other special-purpose
 addresses are refused with 403 and `destination_ip_prohibited` before any socket exists, an IPv4-mapped, NAT64 or 6to4
 address is judged by its IPv4 address, and the socket sends to the very address the filter allowed, so a later DNS answer
-cannot move it. A proxy with public addresses of its own adds `and UdpTargetFilter.excluding(...)` with them;
+cannot move it. The proxy's own addresses are refused as well (`refuseOwnAddresses`: the address the request's
+connection reached, the listener's own); other addresses of the host (NAT aliases) go to `and UdpTargetFilter.excluding(...)`;
 `UdpTargetFilter.addresses`, `hosts` and `ports` build allow-lists. Only then the socket is opened (`socketFactory`, on a
 wildcard address of the target's family) and the request answered 200 with `capsule-protocol: ?1`; nothing goes to the
 target before that answer.
@@ -412,8 +413,12 @@ from the target's address and port are taken from the socket (section 3.1). Pack
 (section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
 with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per tunnel); `stats.packetTooBig` says whether it
 does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
-tunnel, `unansweredLimit` (256 payloads to a target that has not answered yet), `maxTunnels` (4096; one more is 503) and
-`maxTunnelsPerClient` (64 per client IP address; one more is 429), both with `connection_limit_reached`. The tunnel ends,
+tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
+across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
+`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port or
+host unreachable for the target closes the tunnel (Linux and Android). The system resolver runs 16 lookups at once at most
+(a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
 with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
 socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
 minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.
