@@ -108,16 +108,26 @@ jobs:
           python3 -I tools/check/fuzz-formats.py || rc=1  # tools/fuzz/formats/, the reason rule against KSL_FUZZ_FORMATS_BASE
           python3 -I tools/check/deadline-sites.py || rc=1 # every deadline judged in tools/check/deadline-sites.allow
           python3 -I tools/check/test-hooks.py || rc=1    # global *ForTest hooks a test sets are reset
+          python3 -I tools/check/select-races.py || rc=1  # selects racing started work judged in tools/check/select-races.allow
+          python3 -I tools/check/race-tests.py || rc=1    # race tests force their order, or tools/check/race-tests.allow says why not
+          python3 -I tools/check/wall-bounds.py || rc=1   # wall-clock bounds of tests with their numbers in tools/check/wall-bounds.allow
           python3 -I tools/check/tracked-hashes.py || rc=1  # cited hashes in tracked files
           python3 -I tools/check/wildcard-binds.py || rc=1  # test sockets reached over loopback bind loopback
           exit $rc
       - name: 'lint: doc-refs and test-check negative controls'
         run: |
           rc=0
-          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks tracked-hashes wildcard-binds; do
+          for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
             bash "tools/check/$t-test.sh" || rc=1
           done
           exit $rc
+      - name: 'lint: race tests to repeat under load (list) and its negative controls'
+        # the 10 runs under load are the local gate's, before its step 1 (docs/process.md, "Repository checks"); here the
+        # selection is checked on stubs and listed against the same base as fuzz-formats
+        run: |
+          bash tools/ci/race-repeat-test.sh
+          if [ -n "$KSL_FUZZ_FORMATS_BASE" ]; then bash tools/ci/race-repeat.sh --list --base "$KSL_FUZZ_FORMATS_BASE"
+          else echo "race-repeat: no base commit, nothing listed"; fi
       - name: 'lint: fuzz campaign.sh on paths with spaces (stubs)'
         run: bash tools/fuzz/campaign-test.sh
       - name: 'lint: interop peer-image check and environment rules (stubs, fixtures)'
@@ -337,6 +347,9 @@ jobs:
       - name: 'docker: image linux-x64'
         run: bash tools/openssl/build-docker.sh --image linux-x64
       - name: 'docker: test.kexe linux-x64 (all modules)'
+        # a hosted runner leaves a connect to TEST-NET-1 undecided: TcpSocketsNativeTest's test of that path may not skip
+        # itself here (docs/process.md, "Hosted CI"); the owner's Docker sits behind a TUN that answers it, so not there
+        env: { KSL_DOCKER_OPTS: '-e KSL_REQUIRE_UNDECIDED_CONNECT=1' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose
@@ -377,6 +390,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: linux-arm64-test-kexe, path: . }
       - name: 'docker: test.kexe linux-arm64 (all modules)'
+        # a hosted runner leaves a connect to TEST-NET-1 undecided: TcpSocketsNativeTest's test of that path may not skip
+        # itself here (docs/process.md, "Hosted CI"); the owner's Docker sits behind a TUN that answers it, so not there
+        env: { KSL_DOCKER_OPTS: '-e KSL_REQUIRE_UNDECIDED_CONNECT=1' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose

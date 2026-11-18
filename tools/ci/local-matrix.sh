@@ -178,7 +178,8 @@ step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
 # step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
 # never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, the
-# record of every fuzz reproducer, the recorded decoding of the committed fuzz inputs, the judged deadlines, the reset of
+# record of every fuzz reproducer, the recorded decoding of the committed fuzz inputs, the judged deadlines, the judged
+# selects that race started work, the race tests that force their order, the numbers behind wall-clock bounds, the reset of
 # global test hooks, the commit hashes of the tracked files, the loopback binds of test sockets, and the conventional type of every commit of the branch and
 # the commit hashes its messages cite (docs/process.md, "Repository checks")
 step "lint: doc refs, test gates, commit types" bash -c 'rc=0
@@ -188,13 +189,16 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/rfc-tests.py || rc=1; python3 -I tools/check/reproducers.py || rc=1
   python3 -I tools/check/fuzz-formats.py || rc=1
   python3 -I tools/check/deadline-sites.py || rc=1; python3 -I tools/check/test-hooks.py || rc=1
+  python3 -I tools/check/select-races.py || rc=1; python3 -I tools/check/race-tests.py || rc=1
+  python3 -I tools/check/wall-bounds.py || rc=1
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
-  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks tracked-hashes wildcard-binds; do
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
     bash "tools/check/$t-test.sh" || rc=1
   done
+  bash tools/ci/race-repeat-test.sh || rc=1
   exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
@@ -425,6 +429,25 @@ if wants deps; then
     fi
   fi
 fi
+# Before step 1 of a full run: the race tests the branch added or changed since its last passed gate (else since main) run
+# 10 times under load (tools/ci/race-repeat.sh; docs/process.md, "Repository checks"), so a test that passes only in the
+# order a quiet machine picks fails here, not after the gate; a few minutes for a branch's own changes. A selection
+# (--only, --from) leaves it out
+race_repeat=no
+if [ -z "$selection" ]; then
+  if [ "$dry" = 1 ]; then
+    echo "preflight: race tests changed since the last passed gate, 10 runs under load (dry run):"
+    bash tools/ci/race-repeat.sh --list 2>&1 | sed 's/^/  /'
+  else
+    mkdir -p build/ci; printf 'preflight: race tests changed since the last passed gate, 10 runs under load ... '
+    if FLAKE_HUNT_GRADLE_ARGS="--max-workers=${KSL_GATE_WORKERS:-2} -Pkotlin.incremental=false" \
+      bash tools/ci/race-repeat.sh > build/ci/race-repeat.log 2>&1; then echo ok; race_repeat=ran
+    else
+      echo "FAIL (see build/ci/race-repeat.log)"; tail -15 build/ci/race-repeat.log | sed 's/^/     | /'
+      echo "local matrix: refused before step 1: a race test failed under load; reproduce with tools/ci/race-repeat.sh" >&2; exit 1
+    fi
+  fi
+fi
 mode=run; n=0; steps   # the run walk: the selected steps, in order
 if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes a partial record, never the stamp
   head1=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty1=$(git status --porcelain 2>/dev/null | head -5)
@@ -437,7 +460,7 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes
   mkdir -p build/ci/gate
   { echo "commit=$head0"; echo "result=$result"; echo "selection=${selection:-all}"
     [ -z "$selection" ] || echo "selected=$(picked_ranges)"
-    echo "tree=$tree"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "tree=$tree"; echo "race-repeat=$race_repeat"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
     echo "with_windows=$with_windows"; echo "with_browser=$with_browser"; echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
   if [ -z "$selection" ]; then echo "gate record: $record (result=$result, tree $tree)"

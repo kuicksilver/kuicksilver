@@ -146,25 +146,30 @@ class ClientOrderlyCloseTest {
 
     /**
      * The socket timeout fires on time against a hung server that never answers our close_notify: the orderly close runs
-     * behind the call (its reader is cut at once), not in front of its SocketTimeoutException.
+     * behind the call (its reader is cut at once), not in front of its SocketTimeoutException. Counted from the moment the
+     * server read the request (the socket timeout's own start, near enough), the timeout of 300 ms surfaces within 10 s;
+     * the orderly close, whose bound (1 s otherwise) is stretched to 30 s here, would hold it 30 s more in front of it.
      */
     @Test fun negative_socketTimeoutFiresOnTimeAgainstAHungServer() =
         clientTest {
             val clean = CompletableDeferred<Boolean>()
             val release = CompletableDeferred<Unit>()
+            val requestRead = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
             tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, _ ->
                 readRequest(input)
+                requestRead.complete(
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow(),
+                )
                 clean.complete(input.endsCleanly())
                 release.await() // never answers the client's close_notify, holds the connection
             }) { port ->
                 testClient(block = { install(HttpTimeout) { socketTimeoutMillis = 300 } }).use { c ->
-                    val start =
-                        kotlin.time.TimeSource.Monotonic
-                            .markNow()
+                    engine(c).h1.orderlyCloseTimeoutForTest = 30.seconds
                     val e = runCatching { c.get("https://127.0.0.1:$port/") }.exceptionOrNull()
-                    val took = start.elapsedNow()
+                    val took = requestRead.await().elapsedNow()
                     assertTrue(e is io.ktor.client.network.sockets.SocketTimeoutException, "failed with $e")
-                    assertTrue(took < 800.milliseconds, "the timeout of 300 ms surfaced after $took")
+                    assertTrue(took < 10.seconds, "the timeout of 300 ms surfaced $took after the server read the request")
                     assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
                 }
                 release.complete(Unit)

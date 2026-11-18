@@ -5,6 +5,8 @@ package io.kuicksilver.ktor.server
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
@@ -13,7 +15,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
@@ -29,20 +33,35 @@ class ConnectionHandOverTest {
      */
     @Test fun aResultMadeAsTheDeadlineFiresIsReleased(): Unit =
         runBlocking {
-            val released = mutableListOf<String>()
-            val result =
-                withContext(Dispatchers.Default) {
-                    withTimeoutOrRelease(50.milliseconds, { released += it }) {
-                        yield()
-                        val start = TimeSource.Monotonic.markNow()
-                        @Suppress("ControlFlowWithEmptyBody")
-                        while (start.elapsedNow() < 300.milliseconds) {
+            // a run whose deadline fired before the block resumed from its suspension did not reach the race: the next one
+            // tries with the deadline doubled
+            var deadline = 50L
+            repeat(6) {
+                val released = mutableListOf<String>()
+                var reached = false
+                val result =
+                    withContext(Dispatchers.Default) {
+                        withTimeoutOrRelease(deadline.milliseconds, { released += it }) {
+                            yield() // returns through a resumption; throws once the deadline fired
+                            reached = true
+                            // the deadline fires meanwhile, on another thread: the block never suspends again, and finishes
+                            // once its job is cancelled (a state that stays), not after a guess of how long that takes
+                            val job = currentCoroutineContext().job
+                            val giveUp = TimeSource.Monotonic.markNow() + 30.seconds
+                            @Suppress("ControlFlowWithEmptyBody")
+                            while (!job.isCancelled && giveUp.hasNotPassedNow()) {
+                            }
+                            "session"
                         }
-                        "session"
                     }
+                if (reached) {
+                    assertNull(result)
+                    assertEquals(listOf("session"), released)
+                    return@runBlocking
                 }
-            assertNull(result)
-            assertEquals(listOf("session"), released)
+                deadline *= 2
+            }
+            fail("no run reached the race")
         }
 
     @Test fun aResultInTimeIsReturnedNotReleased(): Unit =

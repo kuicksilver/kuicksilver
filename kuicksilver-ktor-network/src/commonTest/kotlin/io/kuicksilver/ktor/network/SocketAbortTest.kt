@@ -8,13 +8,11 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openWriteChannel
-import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -55,20 +53,8 @@ class SocketAbortTest {
                     val client = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                     val peer = server.accept() // reads nothing
                     val out = client.openWriteChannel()
-                    val progress = Channel<Unit>(Channel.CONFLATED)
-                    val writer =
-                        async {
-                            runCatching {
-                                val chunk = ByteArray(64 * 1024)
-                                while (true) {
-                                    out.writeFully(chunk)
-                                    out.flush()
-                                    progress.trySend(Unit)
-                                }
-                            }.exceptionOrNull()
-                        }
-                    // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
-                    while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                    // until the writer is stuck on a full connection: the peer's buffers are full
+                    val writer = fillUntilStuck(out) { kernelBufferBytes(client, peer) }
                     peer.abort()
                     val failure = withTimeoutOrNull(5.seconds) { writer.await() }
                     assertIs<IOException>(
@@ -87,32 +73,25 @@ class SocketAbortTest {
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
             try {
-                withTimeout(30.seconds) {
+                // the TLS variant fills its connection through TLS records, which a slow host makes the longest step
+                withTimeout(if (tls) 60.seconds else 30.seconds) {
                     val server = bindTcp(selector, "127.0.0.1", 0)
                     val port = (server.localAddress as InetSocketAddress).port
                     coroutineScope {
                         // the peer: connects (and handshakes) and never reads
+                        val peerTcp = CompletableDeferred<Socket>()
                         val peer =
                             launch {
                                 val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                                peerTcp.complete(tcp)
                                 if (tls) tcp.tls(clientConfig())
                             }
                         val raw = server.accept()
                         val sock: Socket = if (tls) raw.tlsServer(serverConfig()) else raw
                         val out = sock.openWriteChannel()
-                        val progress = Channel<Unit>(Channel.CONFLATED)
-                        launch {
-                            val chunk = ByteArray(64 * 1024)
-                            runCatching {
-                                while (true) {
-                                    out.writeFully(chunk)
-                                    out.flush()
-                                    progress.trySend(Unit)
-                                }
-                            }
-                        }
-                        // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
-                        while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                        val reader = peerTcp.await()
+                        // until the writer is stuck on a full connection: the peer's buffers are full
+                        fillUntilStuck(out) { kernelBufferBytes(raw, reader) }
                         sock.close()
                         // a bounded look, not a wait for something to happen: a graceful close cannot finish here
                         assertNull(withTimeoutOrNull(500.milliseconds) { raw.socketContext.join() }, "the close finished")

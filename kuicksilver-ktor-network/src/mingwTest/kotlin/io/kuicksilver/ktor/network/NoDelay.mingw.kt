@@ -35,3 +35,14 @@ internal actual fun receiveBufferOf(fd: Int): Int =
         assertEquals(0, getsockopt(fd.convert(), 0xffff, 0x1002, value.ptr.reinterpret(), size.ptr), "getsockopt(SO_RCVBUF)")
         value.value
     }
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun sendBufferOf(fd: Int): Int =
+    memScoped {
+        val value = alloc<IntVar>()
+        val size = alloc<IntVar>()
+        size.value = sizeOf<IntVar>().toInt()
+        // SOL_SOCKET 0xffff, SO_SNDBUF 0x1001 (winsock2.h)
+        assertEquals(0, getsockopt(fd.convert(), 0xffff, 0x1001, value.ptr.reinterpret(), size.ptr), "getsockopt(SO_SNDBUF)")
+        value.value
+    }

@@ -142,6 +142,12 @@ internal class HeadLimitedInput(
 
     override val closedCause: Throwable? get() = source.closedCause
 
+    /**
+     * Whether a read finds a byte at once, buffered here or in [source], or the end of the input: no wait. Only while no
+     * other coroutine reads this channel.
+     */
+    fun hasInput(): Boolean = !buffer.exhausted() || source.closedCause != null || source.isClosedForRead || !source.readBuffer.exhausted()
+
     override val isClosedForRead: Boolean
         get() = buffer.exhausted() && (exceeded || source.isClosedForRead)
 

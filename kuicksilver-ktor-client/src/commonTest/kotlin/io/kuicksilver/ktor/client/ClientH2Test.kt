@@ -653,7 +653,8 @@ class ClientH2Test {
     /**
      * The wait for the server's SETTINGS gets what the connect timeout left after TCP and TLS, not the whole timeout again:
      * a server whose TLS handshake takes 3 s (it accepts late) and that then never sends its SETTINGS fails a call with a
-     * 4 s connect timeout at about 4 s (bound: 5.5 s), not at about 7 s.
+     * 4 s connect timeout at about 4 s, not at about 7 s. The wait's deadline is read from the pool, not timed: about 1 s
+     * (what the 3 s left; a slower host leaves less), against the whole 4 s before; the bound of 2.5 s is 1.5 s from each.
      */
     @Test fun negative_settingsWaitGetsWhatTheConnectTimeoutLeft() =
         clientTest {
@@ -662,9 +663,8 @@ class ClientH2Test {
                 runCatching { input.readBuffer() }
             }) { port ->
                 testClient(engine = { connectTimeout = 4.seconds }).use { c ->
-                    val started =
-                        kotlin.time.TimeSource.Monotonic
-                            .markNow()
+                    val waits = mutableListOf<kotlin.time.Duration>()
+                    engine(c).h1.prefaceTimeoutForTest = { waits += it }
                     kotlinx.coroutines.coroutineScope {
                         // the slow TLS step: the server takes the connection 3 s late (a stand-in for a slow handshake)
                         launch {
@@ -673,8 +673,8 @@ class ClientH2Test {
                         }
                         assertFailsWith<io.ktor.client.network.sockets.ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
                     }
-                    val took = started.elapsedNow()
-                    assertTrue(took < 5_500.milliseconds, "failed after $took: the SETTINGS wait got the whole connect timeout again")
+                    assertEquals(1, waits.size, "one SETTINGS wait: $waits")
+                    assertTrue(waits[0] < 2_500.milliseconds, "the SETTINGS wait got ${waits[0]} of the 4 s connect timeout after TLS")
                 }
             }
         }

@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.selector.SelectInterest
@@ -15,6 +17,7 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeFully
+import kotlinx.cinterop.toKString
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -22,7 +25,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -39,6 +41,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -269,18 +272,8 @@ class TcpSocketsNativeTest {
                     val clientOut = client.openWriteChannel()
                     val serverOut = accepted.openWriteChannel()
                     accepted.openReadChannel()
-                    val progress = Channel<Unit>(Channel.CONFLATED)
-                    val response =
-                        async {
-                            val chunk = ByteArray(64 shl 10) { 7 }
-                            while (true) {
-                                serverOut.writeFully(chunk)
-                                serverOut.flush()
-                                progress.trySend(Unit)
-                            }
-                        }
-                    // until the response is stuck (no chunk for 300 ms): every buffer on the way is full
-                    while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                    // until the response is stuck on a full connection: every buffer on the way is full
+                    val response = fillUntilStuck(serverOut, fill = 7) { kernelBufferBytes(accepted, client) }
                     response.cancelAndJoin()
                     accepted.close() // ends the read loop; the write loop still sends what the channel holds
                     delay(300.milliseconds)
@@ -443,7 +436,8 @@ class TcpSocketsNativeTest {
     /**
      * A connect that stays undecided (no error, no peer: what is left when the event that carried the error was lost) fails
      * once its rechecks add up to the limit, instead of waiting for ever. A SYN to an address that never answers stays
-     * undecided; where the system refuses it at once (no route), the connect fails all the same.
+     * undecided; a network that answers or refuses a connect to it within 500 ms (a VPN in TUN mode, no route) leaves
+     * nothing undecided, and the test skips itself there.
      */
     @Test fun negative_anUndecidedConnectEndsAtItsLimit() =
         runBlocking {
@@ -452,9 +446,18 @@ class TcpSocketsNativeTest {
             try {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
                 val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
-                if (faked?.isSuccess == true) {
-                    faked.getOrThrow().close()
-                    println("skipped: this network answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)")
+                // a TUN that refuses the connect at once ("Failed to connect") answers it too: nothing stays undecided there.
+                // Where the network is known to leave it undecided (the hosted CI's Linux containers set
+                // KSL_REQUIRE_UNDECIDED_CONNECT=1), such an answer fails the test instead of skipping it
+                if (faked != null) {
+                    faked.getOrNull()?.close()
+                    val why =
+                        faked.exceptionOrNull()?.let { "refuses TCP connects to TEST-NET-1 at once: $it" }
+                            ?: "answers TCP connects to TEST-NET-1 (a VPN or proxy in TUN mode)"
+                    if (platform.posix.getenv("KSL_REQUIRE_UNDECIDED_CONNECT")?.toKString() == "1") {
+                        fail("this network $why, and KSL_REQUIRE_UNDECIDED_CONNECT=1 requires the undecided path")
+                    }
+                    println("SKIPPED negative_anUndecidedConnectEndsAtItsLimit: this network $why")
                     return@runBlocking
                 }
                 val failure =
@@ -586,20 +589,8 @@ class TcpSocketsNativeTest {
                 val accepted = server.accept() as NativeTcpSocket // reads nothing
                 val input = client.openReadChannel()
                 val out = client.openWriteChannel()
-                val progress = Channel<Unit>(Channel.CONFLATED)
-                val writer =
-                    async {
-                        runCatching {
-                            val chunk = ByteArray(64 shl 10)
-                            while (true) {
-                                out.writeFully(chunk)
-                                out.flush()
-                                progress.trySend(Unit)
-                            }
-                        }.exceptionOrNull()
-                    }
-                // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
-                while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                // until the writer is stuck on a full connection: the peer's buffers are full
+                val writer = fillUntilStuck(out) { kernelBufferBytes(client, accepted) }
                 if (finFirst) {
                     tcpShutdown(accepted.descriptor, TCP_SHUT_WR)
                     assertEquals(-1, input.readAvailable(ByteArray(1), 0, 1), "the client's read loop saw the peer's end")

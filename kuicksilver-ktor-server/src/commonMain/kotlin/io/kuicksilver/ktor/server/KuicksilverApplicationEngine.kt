@@ -435,6 +435,13 @@ public class KuicksilverApplicationEngine(
         /** Tests shorten the HTTP/1.1 send-stall deadline with this; null keeps the engine's own. */
         internal var sendStallTimeoutForTest: Duration? = null
 
+        /**
+         * Test hook: a bound on the whole close of an accepted TLS socket (`setCloseTimeout`), which also stretches its wait
+         * for the client's close_notify from 3 s to this bound (a test then tells "the FIN went out at once" from "after
+         * that wait" by a wide margin); null keeps the engine's own (no bound of the socket's).
+         */
+        internal var tlsCloseTimeoutForTest: Duration? = null
+
         /** Tests drive the HTTP/2 connections' clock (monotonic nanoseconds: reset budgets, protocol deadlines) with this. */
         internal var h2ClockForTest: (() -> Long)? = null
 

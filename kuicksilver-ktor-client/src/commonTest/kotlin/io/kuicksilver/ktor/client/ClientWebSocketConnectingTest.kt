@@ -449,6 +449,8 @@ class ClientWebSocketConnectingTest {
      * The name resolution a WebSocket runs before it takes the address counts against the connect timeout, as a request's
      * resolution inside connecting does: resolving, then a TLS handshake the server never answers, fail together within one
      * connect timeout. Before, the resolution had a connect timeout of its own and the connection a fresh one after it.
+     * The budget the connection step got is read from the pool, not timed: at most what the 1.5 s resolution left of the
+     * 2 s timeout (0.5 s; a slower host leaves less), against the whole 2 s before.
      */
     @Test fun negative_aWebSocketsResolutionSharesTheConnectTimeout() =
         clientTest {
@@ -463,10 +465,11 @@ class ClientWebSocketConnectingTest {
                     },
                     block = { install(WebSockets) },
                 ).use { c ->
-                    val started = TimeSource.Monotonic.markNow()
+                    val budgets = mutableListOf<Long>()
+                    (c.engine as KuicksilverEngine).h1.obtainBudgetForTest = { budgets += it }
                     assertFailsWith<ConnectTimeoutException> { c.webSocket("wss://ws.test:$port/") {} }
-                    // one connect timeout (2 s) and some slack; two in series took 3.5 s
-                    assertTrue(started.elapsedNow() < 2900.milliseconds, "resolving and connecting took ${started.elapsedNow()}")
+                    assertEquals(1, budgets.size, "one connection step: $budgets")
+                    assertTrue(budgets[0] <= 500, "the connection step got ${budgets[0]} ms of the 2 s connect timeout after resolving")
                 }
             }
         }

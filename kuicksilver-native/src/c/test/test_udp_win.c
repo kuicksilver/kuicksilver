@@ -69,6 +69,10 @@ static ksl_udp *wopen(const uint8_t at[KSL_UDP_ADDR_LEN], int flags, uint8_t loc
           "local address");
     return u;
 }
+/* a 4-byte big-endian value of ksl_udp_get */
+static uint32_t rd32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
 static ksl_udp *wopen_lo(int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
     uint8_t a[KSL_UDP_ADDR_LEN];
     w4(a, 0);
@@ -931,6 +935,29 @@ void run_udp_win(void) {
             ksl_udp_close(c);
         if (d)
             ksl_udp_close(d);
+    }
+    /* udp_win_waits_are_counted_before_the_wait: KSL_UDP_GET_WAITS counts each WSAPoll a receive begins, before it blocks, as
+       ksl_udp_recv.c counts its poll: none for a receive that does not wait, at least one for one that waits out its timeout */
+    {
+        uint8_t lw[KSL_UDP_ADDR_LEN], st[4], buf[64], addr[KSL_UDP_ADDR_LEN], ecn = 0;
+        uint8_t *bufs[1] = {buf};
+        uint32_t cap = sizeof buf, len = 0, got = 0;
+        size_t n = 0;
+        ksl_udp *w = wopen_lo(0, lw);
+        CHECK(w != NULL, "a socket for the wait count");
+        if (w) {
+            CHECK(ksl_udp_get(w, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && n == 4 && rd32(st) == 0,
+                  "no wait yet");
+            CHECK(ksl_udp_recv(w, bufs, &cap, &len, addr, &ecn, 1, &got, 0) == KSL_WANT_READ,
+                  "a receive that does not wait");
+            CHECK(ksl_udp_get(w, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && rd32(st) == 0,
+                  "no wait counted for it");
+            CHECK(ksl_udp_recv(w, bufs, &cap, &len, addr, &ecn, 1, &got, 20) == KSL_WANT_READ,
+                  "a receive that waits 20 ms");
+            CHECK(ksl_udp_get(w, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && rd32(st) >= 1,
+                  "udp_win_waits_are_counted_before_the_wait: the WSAPoll was counted");
+            ksl_udp_close(w);
+        }
     }
     /* udp_win_send_while_recv_blocks: a send on a socket whose receive is blocked in WSAPoll (another thread) leaves at once; a
        socket without WSA_FLAG_OVERLAPPED is synchronous and Windows held the send until the poll returned (1992 ms of a 2 s wait) */

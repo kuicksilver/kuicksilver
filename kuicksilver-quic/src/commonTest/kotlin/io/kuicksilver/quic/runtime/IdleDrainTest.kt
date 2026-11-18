@@ -54,14 +54,17 @@ class IdleDrainTest {
     /** Datagrams the server sent towards the client, in order (written by the server loop's thread alone, copied on write). */
     @Volatile private var toClient: List<ByteArray> = emptyList()
 
-    /** Completed by the next datagram the network delivers towards the client. */
-    @Volatile private var nextToClient: CompletableDeferred<Unit>? = null
-
     /** Datagrams the client sent (the network's count). */
     @Volatile private var clientSends = 0
 
     /** The server's datagrams to the client are lost (nothing it sends reaches the client's queue). */
     @Volatile private var dropToClient = false
+
+    /**
+     * The client connection IDs to take the next short-header datagram for off the network, and where it goes ([captureNext]):
+     * the test queues it itself, so "it waits in the client's queue" is a step the test made, never a delivery it raced.
+     */
+    @Volatile private var capture: Pair<List<ByteArray>, CompletableDeferred<ByteArray>>? = null
 
     private class Endpoints(
         val net: MemoryNetwork,
@@ -74,11 +77,19 @@ class IdleDrainTest {
         val net = MemoryNetwork()
         net.lose = { from, to, bytes ->
             if (from == clientAddr) clientSends++
+            var taken = false
             if (from == serverAddr && to == clientAddr) {
                 record(bytes)
-                nextToClient?.complete(Unit)
+                capture?.let { (cids, into) ->
+                    val short = bytes[0].toInt() and 0x80 == 0
+                    if (short && cids.any { cid -> bytes.size > cid.size && (cid.indices).all { bytes[1 + it] == cid[it] } }) {
+                        capture = null
+                        into.complete(bytes.copyOf())
+                        taken = true
+                    }
+                }
             }
-            from == serverAddr && to == clientAddr && dropToClient
+            taken || (from == serverAddr && to == clientAddr && dropToClient)
         }
         val sio = net.open(serverAddr)
         val cio = net.open(clientAddr)
@@ -159,6 +170,55 @@ class IdleDrainTest {
         return ds
     }
 
+    /**
+     * Drain rounds stay open until the returned gate completes (the client's receive, once interrupted for a round, hands
+     * back only then), and a connection held for a drain stays held as long (the hold limit stretched to a minute): a
+     * connection whose idle deadline passed waits for the test's next step however slow the host, and one drain then decides
+     * on what the test queued, whether the deadline passed before or after it was queued.
+     */
+    private fun holdDrains(e: Endpoints): CompletableDeferred<Unit> {
+        val gate = CompletableDeferred<Unit>()
+        e.client.idleHoldLimitForTest = 60.seconds
+        e.cio.interruptGate = gate
+        return gate
+    }
+
+    /** Completed once [n] connections are held for a drain at once (the hook reports the count as it grows). */
+    private fun heldAtOnce(
+        e: Endpoints,
+        n: Int,
+    ): CompletableDeferred<Unit> {
+        val d = CompletableDeferred<Unit>()
+        e.client.onIdleHeldForTest = { held -> if (held >= n) d.complete(Unit) }
+        return d
+    }
+
+    /** Takes the next datagram the server's connection [s] sends to the client off the network (by the client's CIDs). */
+    private suspend fun captureNext(
+        e: Endpoints,
+        s: QuicConnection,
+    ): CompletableDeferred<ByteArray> {
+        val cids =
+            kotlinx.coroutines.withContext((e.server as EndpointLoop).dispatcher) {
+                (s as ConnectionRuntime)
+                    .core.cids
+                    .peerTokensForTest()
+                    .map { it.first.toByteArray() }
+            }
+        return CompletableDeferred<ByteArray>().also { capture = cids to it }
+    }
+
+    /** Puts [d], from the server, in the client's queue. */
+    private fun queue(
+        e: Endpoints,
+        d: ByteArray,
+    ) = assertTrue(
+        e.cio.inbox
+            .trySend(d to serverAddr)
+            .isSuccess,
+        "the client's queue took the datagram",
+    )
+
     private fun idleTimeout(why: Throwable?) {
         val t = assertIs<QuicException.ConnectionLost.Timeout>(why, "closed by the idle timer: $why")
         assertEquals(TimeoutKind.Idle, t.kind)
@@ -173,12 +233,17 @@ class IdleDrainTest {
                     val (c, s) = connect(e, idle)
                     val down = s.openUni()
                     val (kept) = verdicts(e, c)
+                    val gate = holdDrains(e)
+                    val held = heldAtOnce(e, 1)
                     e.cio.stalled = true // from now on the client's receive hands nothing back
-                    val queued = CompletableDeferred<Unit>().also { nextToClient = it }
+                    val packet = captureNext(e, s)
                     down.output.writeByte(7)
                     down.output.flush()
-                    queued.await() // the server's datagram waits in the client's socket
-                    // the client's idle deadline passes with it unread: the loop takes it first, and it restarts the timer
+                    queue(e, packet.await()) // the server's datagram waits in the client's socket
+                    // the client's idle deadline passes with it unread: the loop holds the connection, takes the datagram
+                    // first once the round may end, and it restarts the timer
+                    held.await()
+                    gate.complete(Unit)
                     assertTrue(kept.await(), "closed: ${runCatching { c.closed.getCompleted() }}")
                     assertEquals(7, c.acceptStream().input.readByte())
                     assertTrue(e.client.idleDrainRoundsForTest >= 1, "the loop drained its socket before the idle close")
@@ -308,14 +373,18 @@ class IdleDrainTest {
                         val (c, s) = connect(e, idle)
                         val down = s.openUni()
                         val (verdict) = verdicts(e, c)
+                        val gate = holdDrains(e)
+                        val held = heldAtOnce(e, 1)
                         e.cio.stalled = true
                         repeat(junk) { i ->
                             e.net.deliver(serverAddr, clientAddr, ByteArray(40) { (it * 7 + i).toByte() }.also { it[0] = 0x43 })
                         }
-                        val queued = CompletableDeferred<Unit>().also { nextToClient = it }
+                        val packet = captureNext(e, s)
                         down.output.writeByte(9)
                         down.output.flush()
-                        queued.await()
+                        queue(e, packet.await()) // behind the junk
+                        held.await()
+                        gate.complete(Unit)
                         assertEquals(kept, verdict.await(), "$junk junk datagrams ahead")
                         if (kept) {
                             assertEquals(9, c.acceptStream().input.readByte(), "$junk junk datagrams ahead")
@@ -341,11 +410,15 @@ class IdleDrainTest {
                     val (spoke, s) = connect(e, idle)
                     val down = s.openUni()
                     val (spokeKept) = verdicts(e, spoke)
+                    val gate = holdDrains(e)
+                    val bothHeld = heldAtOnce(e, 2)
                     e.cio.stalled = true
-                    val queued = CompletableDeferred<Unit>().also { nextToClient = it }
+                    val packet = captureNext(e, s)
                     down.output.writeByte(3)
                     down.output.flush()
-                    queued.await()
+                    queue(e, packet.await()) // the spoken-to connection's datagram waits
+                    bothHeld.await() // both deadlines passed; one drain decides both
+                    gate.complete(Unit)
                     idleTimeout(quiet.closed.await())
                     assertTrue(spokeKept.await(), "closed: ${runCatching { spoke.closed.getCompleted() }}")
                     assertEquals(3, spoke.acceptStream().input.readByte())
@@ -370,15 +443,15 @@ class IdleDrainTest {
                     val (first, _) = connect(e, idle)
                     val (second, s) = connect(e, idle)
                     val down = s.openUni()
-                    val bothHeld = CompletableDeferred<Unit>()
-                    e.client.onIdleHeldForTest = { held -> if (held >= 2) bothHeld.complete(Unit) }
+                    val bothHeld = heldAtOnce(e, 2)
                     val (secondKept) = verdicts(e, second)
+                    e.client.idleHoldLimitForTest = 60.seconds // only the gate ends the first hold, however slow the host
                     e.cio.interruptGate = gate
                     e.cio.stalled = true
-                    val queued = CompletableDeferred<Unit>().also { nextToClient = it }
+                    val packet = captureNext(e, s)
                     down.output.writeByte(5)
                     down.output.flush()
-                    queued.await()
+                    queue(e, packet.await())
                     bothHeld.await() // the first deadline's drain is still open when the second one passes
                     assertFalse(first.closed.isCompleted)
                     gate.complete(Unit)

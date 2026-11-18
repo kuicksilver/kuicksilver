@@ -14,6 +14,7 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.EndpointLoop
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -106,16 +107,23 @@ class ShutdownTest {
                                 }.build(),
                         )
                     try {
+                        // the late client waits 30 s for its handshake: a refusal within 10 s is the server's CONNECTION_REFUSED
+                        // at the Initial, never a client that gave up
+                        val lateConfig =
+                            QuicClientConfig
+                                .Builder(CoreFixtures.client())
+                                .apply { quic = quicConfig { handshakeTimeout = 30.seconds } }
+                                .build()
                         val started = TimeSource.Monotonic.markNow()
                         val lost =
                             assertFailsWith<QuicException.ConnectionLost.TransportClosed> {
                                 late.connect(
                                     p.server.localAddress,
-                                    clientConfig,
+                                    lateConfig,
                                 )
                             }
                         assertEquals(TransportError.CONNECTION_REFUSED, lost.code)
-                        assertTrue(started.elapsedNow() < 2.seconds, "refused at the Initial, not at a handshake timeout")
+                        assertTrue(started.elapsedNow() < 10.seconds, "refused at the Initial, not at a handshake timeout")
                         assertEquals(1, p.server.stats.connectionsRefusedShutdown)
                         assertEquals(1, p.server.stats.connectionsActive, "the live connection is untouched")
                     } finally {

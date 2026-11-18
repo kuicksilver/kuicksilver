@@ -13,6 +13,7 @@ import kotlinx.cinterop.value
 import platform.posix.IPPROTO_TCP
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_RCVBUF
+import platform.posix.SO_SNDBUF
 import platform.posix.TCP_NODELAY
 import platform.posix.getsockopt
 import platform.posix.socklen_tVar
@@ -35,5 +36,15 @@ internal actual fun receiveBufferOf(fd: Int): Int =
         val size = alloc<socklen_tVar>()
         size.value = sizeOf<IntVar>().convert()
         assertEquals(0, getsockopt(fd, SOL_SOCKET, SO_RCVBUF, value.ptr, size.ptr), "getsockopt(SO_RCVBUF)")
+        value.value
+    }
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun sendBufferOf(fd: Int): Int =
+    memScoped {
+        val value = alloc<IntVar>()
+        val size = alloc<socklen_tVar>()
+        size.value = sizeOf<IntVar>().convert()
+        assertEquals(0, getsockopt(fd, SOL_SOCKET, SO_SNDBUF, value.ptr, size.ptr), "getsockopt(SO_SNDBUF)")
         value.value
     }

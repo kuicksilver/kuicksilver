@@ -118,7 +118,7 @@ private fun EndpointLoop.drainedThrough(): Long {
 }
 
 /** When the oldest hold ends whatever the receivers did; [TimeMark.NEVER] when nothing is held. */
-internal fun EndpointLoop.idleHoldEnd(): TimeMark = if (held.isEmpty()) TimeMark.NEVER else held[0].since + EndpointLoop.IDLE_HOLD_LIMIT
+internal fun EndpointLoop.idleHoldEnd(): TimeMark = if (held.isEmpty()) TimeMark.NEVER else held[0].since + idleHoldLimitForTest
 
 /**
  * Runs the timers of the held connections whose round was drained (or whose hold reached its limit, or whose idle deadline
@@ -132,7 +132,7 @@ internal fun EndpointLoop.releaseHeld(now: TimeMark) {
         val h = held[i]
         val c = h.core
         val closed = c.state == ConnectionState.Closed || runtimes[c] == null
-        if (!closed && h.round > through && c.idleDeadline() <= now && now - h.since < EndpointLoop.IDLE_HOLD_LIMIT) {
+        if (!closed && h.round > through && c.idleDeadline() <= now && now - h.since < idleHoldLimitForTest) {
             i++
             continue
         }

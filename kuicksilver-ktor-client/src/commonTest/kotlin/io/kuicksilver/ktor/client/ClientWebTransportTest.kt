@@ -242,13 +242,14 @@ class ClientWebTransportTest {
 
     /**
      * Sessions waiting for an extra connection another one is setting up share its failure: they all fail within one
-     * connect timeout, not one after the other with a timeout each.
+     * connect timeout (4 s), not one after the other with a timeout each (8 s for two in series); the bound of 6 s is
+     * 2 s from each.
      */
     @Test fun negative_sessionsWaitingForAFailedSetupFailWithinOneTimeout() =
         h3Test {
             val (server, port) = testServer(configure = oneSessionServer) { routing { webTransport("/wt") { echo(it) } } }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = { connectTimeout = 2.seconds }).use { client ->
+                testClient(Http3DiscoveryMode.Auto, engine = { connectTimeout = 4.seconds }).use { client ->
                     val engine = client.engine as KuicksilverEngine
                     val a = client.webTransport("https://127.0.0.1:$port/wt")
                     engine.h3.extraConnectForTest = { kotlinx.coroutines.awaitCancellation() } // the server takes no new connection
@@ -261,7 +262,7 @@ class ClientWebTransportTest {
                         }
                     val took = started.elapsedNow()
                     assertTrue(outcomes.all { it.isFailure }, "$outcomes")
-                    assertTrue(took < 3.5.seconds, "six sessions waiting for failed setups took $took")
+                    assertTrue(took < 6.seconds, "six sessions waiting for failed setups took $took")
                     a.close()
                 }
             } finally {

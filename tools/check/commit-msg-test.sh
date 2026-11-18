@@ -70,10 +70,23 @@ range_exit 0 "Git's own revert subject passes over a range" "2 commit(s) in main
 # start. msg_range <want> <what> <message> [<pattern>...]: a commit with this body on top of topic, checked over base..it.
 h="$tmp/hashes"; git init -q -b main "$h"
 hc() { git -C "$h" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty "$@"; }
-hc -m "chore: start"; base=$(git -C "$h" rev-parse HEAD); git -C "$h" checkout -q -b topic
-GIT_COMMITTER_DATE='2026-01-01T00:00:00+0300' hc -m "fix(x): one"; old=$(git -C "$h" rev-parse HEAD)
-git -C "$h" -c user.name=t -c user.email=t@example.invalid commit -q --amend --allow-empty --no-edit --date='2026-01-01T00:00:00+0000'
-new=$(git -C "$h" rev-parse HEAD); old9=${old:0:9}; new9=${new:0:9}
+hc -m "chore: start"; base=$(git -C "$h" rev-parse HEAD)
+# the hashes the negatives cite must be strong words (a digit and a letter: commit-msg.sh takes an all-digit word for a
+# number and does not flag it). Dates are fixed so the hashes do not change with the clock, and a salt in the message is
+# picked until every prefix used below is strong; with the clock in the hash, about 1 run in 10 got an all-digit prefix
+# and its negatives passed
+strong() { [[ $1 =~ [0-9] && $1 =~ [a-f] ]]; }
+for salt in $(seq 0 99); do
+  git -C "$h" checkout -q -B topic "$base"
+  GIT_AUTHOR_DATE='2026-01-01T00:00:00+0300' GIT_COMMITTER_DATE='2026-01-01T00:00:00+0300' hc -m "fix(x): one" -m "salt $salt"
+  old=$(git -C "$h" rev-parse HEAD)
+  GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000' git -C "$h" -c user.name=t -c user.email=t@example.invalid commit -q --amend \
+    --allow-empty --no-edit --date='2026-01-01T00:00:00+0000'
+  new=$(git -C "$h" rev-parse HEAD)
+  strong "${old:0:7}" && strong "${old:0:8}" && strong "${old:0:9}" && strong "${new:0:9}" && break
+done
+old9=${old:0:9}; new9=${new:0:9}
+strong "${old:0:7}" && strong "${old:0:8}" && strong "$old9" && strong "$new9" || { echo "FAIL: no salt gave strong hashes"; rc=1; }
 [ "$old" != "$new" ] || { echo "FAIL: the rewrite kept the hash"; rc=1; }
 msg_range() { # <want> <what> <message> [<pattern>...]
   local want=$1 what=$2 body=$3; shift 3

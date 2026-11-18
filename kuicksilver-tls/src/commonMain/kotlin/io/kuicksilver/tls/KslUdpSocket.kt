@@ -225,6 +225,21 @@ public class KslUdpSocket private constructor(
         Ksl.udpClose(handle)
     }
 
+    /**
+     * The waits [receive] began for a datagram (each poll, counted before it blocks; the same on every platform): a test
+     * knows a receive reached its native wait, where only a [shutdown] or a datagram ends it.
+     */
+    internal val waitsForTest: Long get() =
+        if (!enter()) {
+            -1
+        } else {
+            try {
+                be32(Ksl.udpGet(handle, KslConst.UDP_GET_WAITS), 0).toLong() and 0xffffffffL
+            } finally {
+                leave()
+            }
+        }
+
     /** How often the last [close] looked at a caller still inside (tests). */
     internal var closeLooksForTest = 0
 

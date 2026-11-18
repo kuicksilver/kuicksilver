@@ -374,14 +374,16 @@ class ServerH2Test {
     /**
      * RFC 9113 section 6.8: a stop sends GOAWAY with 2^31-1 and a PING, then (once the PING is answered) GOAWAY with the
      * last stream taken. The request in flight completes; a stream opened after the second GOAWAY gets no answer, and the
-     * connection closes when the first is done.
+     * connection closes when the first is done. The server's wait for the client's close_notify is stretched to 30 s (3 s
+     * otherwise) and the grace period is 30 s, so a stop that returns within 10 s after the client closed took its
+     * close_notify, by 20 s either way.
      */
     @Test fun gracefulStopTwoPhaseGoAway() =
         serverTest {
             val release = CompletableDeferred<Unit>()
             val started = CompletableDeferred<Unit>()
             val (server, port) =
-                h2Server {
+                h2Server(configure = { tlsCloseTimeoutForTest = 30.seconds }) {
                     routing {
                         get("/") {
                             started.complete(Unit)
@@ -395,7 +397,7 @@ class ServerH2Test {
                     raw.preface()
                     raw.headers(1, RawH2Client.get())
                     withTimeout(10.seconds) { started.await() }
-                    val stop = async { server.stopSuspend(10_000, 15_000) }
+                    val stop = async { server.stopSuspend(30_000, 40_000) }
                     val first = assertNotNull(raw.await { it.type == RawFrame.GOAWAY })
                     assertEquals(Int.MAX_VALUE, first.lastStreamId)
                     assertEquals(0L, first.errorCode)
@@ -409,13 +411,13 @@ class ServerH2Test {
                     assertTrue(rest.any { it.stream == 1 && it.type == RawFrame.DATA && it.endStream }, "$rest")
                     assertTrue(rest.none { it.stream == 3 }, "$rest")
                     // the client closes, as a real one does after GOAWAY and the end of the stream: its close_notify ends
-                    // the server's TLS close at once (without it the server waits up to 3 s for it, as on HTTP/1.1)
+                    // the server's TLS close at once (without it the server waits for it, 30 s here, as on HTTP/1.1)
                     raw.close()
                     val t =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
-                    withTimeout(15.seconds) { stop.await() }
-                    assertTrue(t.elapsedNow() < 2.seconds, "the stop waited ${t.elapsedNow()} after the client closed")
+                    withTimeout(40.seconds) { stop.await() }
+                    assertTrue(t.elapsedNow() < 10.seconds, "the stop waited ${t.elapsedNow()} after the client closed")
                 }
             }
         }

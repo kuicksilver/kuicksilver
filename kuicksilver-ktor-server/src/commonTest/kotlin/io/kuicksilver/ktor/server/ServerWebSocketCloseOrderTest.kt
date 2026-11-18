@@ -87,12 +87,13 @@ class ServerWebSocketCloseOrderTest {
 
     /**
      * A raw TLS client that never sends close_notify (nor a FIN) after the closing handshake: the server's close_notify
-     * comes, and its TCP FIN right after it, in well under 500 ms, not after the 3 s the server gives the client's
-     * close_notify. Before, the FIN waited for that close_notify, or for those 3 s.
+     * comes, and its TCP FIN right after it, within [FIN_WITHIN], not after the server's wait for the client's
+     * close_notify, stretched here to [PEER_WAIT] (3 s otherwise) so the two are three times apart. Before, the FIN waited
+     * for that close_notify, or for that wait.
      */
     private fun tlsFinComesAtOnce(path: String) =
         serverTest {
-            val (server, port) = tlsServer { routes() }
+            val (server, port) = tlsServer(configure = { tlsCloseTimeoutForTest = PEER_WAIT }) { routes() }
             val selector = SelectorManager(Dispatchers.IO)
             try {
                 coroutineScope {
@@ -129,9 +130,9 @@ class ServerWebSocketCloseOrderTest {
                     // the server's close_notify: its plaintext ends in order
                     tls.input.discard()
                     assertNull(tls.input.closedCause, "the server's close_notify")
-                    val finAt = withTimeout(10.seconds) { fin.await() }
+                    val finAt = withTimeout(PEER_WAIT * 2) { fin.await() }
                     val took = finAt - closeSent
-                    assertTrue(took < 500.milliseconds, "the server's FIN came $took after the closing handshake")
+                    assertTrue(took < FIN_WITHIN, "the server's FIN came $took after the closing handshake")
                     tls.close()
                     socket.close()
                 }
@@ -299,5 +300,11 @@ class ServerWebSocketCloseOrderTest {
     private companion object {
         /** How long the slow clients hold their FIN back: a behaviour under test, not a wait. */
         val SLOW_CLIENT = 500.milliseconds
+
+        /** The server's wait for the client's close_notify in the TLS tests (its own is 3 s): the slow path, made long. */
+        val PEER_WAIT = 30.seconds
+
+        /** The bound on the server's FIN after the closing handshake: a third of [PEER_WAIT]. */
+        val FIN_WITHIN = 10.seconds
     }
 }

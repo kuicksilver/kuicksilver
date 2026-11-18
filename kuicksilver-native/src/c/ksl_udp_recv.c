@@ -282,6 +282,7 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
                 wait = (int)((left + 999999) / 1000000);
             }
             struct pollfd pf[2] = {{u->fd, POLLIN, 0}, {u->wake[0], POLLIN, 0}};
+            KSL_COUNT(u->waits);
             int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait);
             KSL_COUNT(u->polls);
             if (pr == 0) {

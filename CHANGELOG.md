@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
+  datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
+  socket while its receive is in the native wait on every platform.
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
   resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller
@@ -1277,6 +1280,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a request whose first bytes arrived just as the server began to stop could be dropped: the wait
+  for the next request head raced the stop, and when the stop won, the connection closed over the head without reading
+  or answering it (and a close over unread input may reset the connection). The stop's side now ends the wait and looks
+  at the input again: a head that has started to arrive is read and answered with `Connection: close`, as the stop
+  promised ([Ktor guide](docs/guide/ktor.md)); only a connection with nothing to read closes at once.
 - QUIC client, 0-RTT: a stream sent and reset in 0-RTT before the server answered kept its runtime wrapper (its channels
   and its ticker, which every poll of the connection wakes) after an acceptance until the server acknowledged the reset,
   and until the connection ended when it never did. Its final size stands at the acceptance, and the wrapper now goes

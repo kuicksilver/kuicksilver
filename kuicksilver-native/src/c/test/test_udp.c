@@ -45,6 +45,10 @@ static void v4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) {
 static uint16_t port_of(const uint8_t a[KSL_UDP_ADDR_LEN]) {
     return (uint16_t)((a[1] << 8) | a[2]);
 }
+/* a 4-byte big-endian value of ksl_udp_get */
+static uint32_t rd32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
 static ksl_udp *open_lo(int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
     uint8_t a[KSL_UDP_ADDR_LEN];
     v4(a, 0);
@@ -1154,6 +1158,28 @@ static void udp_sender_cases(void) {
     }
 }
 #endif
+/* udp_waits_are_counted_before_the_wait: KSL_UDP_GET_WAITS counts each wait a receive begins for a datagram, before it blocks:
+   none for a receive that does not wait (timeout 0), at least one for one that waits out its timeout; the same on Windows */
+static void udp_waits_are_counted_before_the_wait(void) {
+    uint8_t l[KSL_UDP_ADDR_LEN], st[4];
+    size_t n = 0;
+    ksl_udp *u = open_lo(0, l);
+    CHECK(u != NULL, "a socket for the wait count");
+    if (!u)
+        return;
+    uint8_t buf[64], addr[KSL_UDP_ADDR_LEN], ecn = 0;
+    uint8_t *bufs[1] = {buf};
+    uint32_t cap = sizeof buf, len = 0, got = 0;
+    CHECK(ksl_udp_get(u, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && n == 4 && rd32(st) == 0, "no wait yet");
+    CHECK(ksl_udp_recv(u, bufs, &cap, &len, addr, &ecn, 1, &got, 0) == KSL_WANT_READ, "a receive that does not wait");
+    CHECK(ksl_udp_get(u, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && rd32(st) == 0, "no wait counted for it");
+    CHECK(ksl_udp_recv(u, bufs, &cap, &len, addr, &ecn, 1, &got, 20) == KSL_WANT_READ, "a receive that waits 20 ms");
+    CHECK(ksl_udp_get(u, KSL_UDP_GET_WAITS, st, sizeof st, &n) == KSL_OK && rd32(st) >= 1,
+          "udp_waits_are_counted_before_the_wait: the wait was counted");
+    CHECK(ksl_udp_get(u, KSL_UDP_GET_WAITS, st, 3, &n) == KSL_ERROR, "a buffer under 4 bytes is refused");
+    ksl_udp_close(u);
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 /* udp_close_waits_for_a_slow_receiver: ksl_udp_close waits for a receiver inside the socket however long it takes to leave; it
    waited 1 s at most and then freed the socket under it (a use after free, which ASan reports) */
@@ -2382,6 +2408,7 @@ void run_udp(void) {
         udp_pktinfo_cases();
         udp_sender_cases();
         udp_close_waits_for_a_slow_receiver();
+        udp_waits_are_counted_before_the_wait();
         ksl_udp_close(a);
         ksl_udp_close(b);
     }
