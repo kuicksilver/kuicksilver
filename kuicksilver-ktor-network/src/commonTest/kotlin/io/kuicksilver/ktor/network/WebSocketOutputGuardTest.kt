@@ -472,10 +472,39 @@ class WebSocketOutputGuardTest {
             assertNull(wire.closedCause, "a writer that ends between frames closes the output in order")
         }
 
-    /** An output that takes writes into its buffer and whose every flush waits for good, once [stalled] is completed. */
+    /**
+     * A writer cancelled while the 0x00 0x00 0xff 0xff tail of a compressed non-final frame (permessage-deflate per frame,
+     * RFC 7692 section 7.2.1) waits for room: the header and the payload are queued, the tail is not all, so the frame is
+     * cut. Before, the payload's end counted as the frame's end before the tail was handed on, and the guard read as at a
+     * frame boundary.
+     */
+    @Test fun negative_aFrameCutInsideItsTailIsNotAtAFrameBoundary() =
+        runTest {
+            val stalled = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val payload = bytes(1, 2, 3)
+            // a 2-byte header (unmasked, length 3 + 4), the payload, then the tail: the flush after the tail stalls
+            val wire = StallingOutput(stalled, stallAt = 2L + payload.size + 4)
+            val guarded = guardWebSocketOutput(wire, masking = false, checkText = false, compression = SentCompression.PerFrame)
+            val writer =
+                launch {
+                    guarded.writeFully(frame(0x42, payload)) // binary, RSV1, not the last frame: its tail goes back on
+                    guarded.flush()
+                }
+            stalled.await()
+            writer.cancel()
+            writer.join()
+            assertEquals(2L + payload.size + 4, wire.queued, "the header, the payload and the tail were handed on")
+            assertEquals(false, guarded.isAtWebSocketFrameBoundary(), "a frame cut inside its tail is not at a frame boundary")
+        }
+
+    /**
+     * An output that takes writes into its buffer; a flush once it holds [stallAt] bytes or more completes [stalled] and
+     * waits for good, an earlier one returns.
+     */
     @OptIn(io.ktor.utils.io.InternalAPI::class)
     private class StallingOutput(
         private val stalled: kotlinx.coroutines.CompletableDeferred<Unit>,
+        private val stallAt: Long = 0,
     ) : io.ktor.utils.io.ByteWriteChannel {
         private val buffer = kotlinx.io.Buffer()
         val queued: Long get() = buffer.size
@@ -485,6 +514,7 @@ class WebSocketOutputGuardTest {
         override val writeBuffer: kotlinx.io.Sink get() = buffer
 
         override suspend fun flush() {
+            if (buffer.size < stallAt) return
             stalled.complete(Unit)
             kotlinx.coroutines.awaitCancellation()
         }

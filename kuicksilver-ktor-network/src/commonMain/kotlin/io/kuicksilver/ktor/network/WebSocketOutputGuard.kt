@@ -97,6 +97,17 @@ public fun ByteWriteChannel.isAtWebSocketFrameBoundary(): Boolean = (this as? Ou
 public class WebSocketFrameCutException :
     kotlinx.io.IOException("the WebSocket writer ended inside a frame; its stream is reset, not closed")
 
+/**
+ * Whether this channel, made by [guardWebSocketOutput], has part of a frame on its output and not the rest: its writer
+ * ended inside a frame (the guard reset the output with [WebSocketFrameCutException]) or stopped there. Unlike
+ * [isAtWebSocketFrameBoundary], a header or a Close still being collected does not count: nothing of it is on the
+ * output, whose stream is whole. A server engine reads it once the session ended, to reset rather than end its stream
+ * cleanly after a cut frame. False for any other channel.
+ */
+@InternalKuicksilverApi
+public fun ByteWriteChannel.isWebSocketFrameCut(): Boolean =
+    closedCause is WebSocketFrameCutException || (this as? OutputGuard)?.frameCutOnOutput == true
+
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
 public enum class SentCompression {
@@ -184,7 +195,7 @@ private class OutputGuard(
      * Part of a frame is on [output] and the rest is not: its header went out and its payload (or tail) did not all. A
      * header or a Close still being collected here is not on [output] yet, nor is a frame being discarded.
      */
-    private val frameCutOnOutput: Boolean get() = payloadLeft >= 0 || tailPending
+    val frameCutOnOutput: Boolean get() = payloadLeft >= 0 || tailPending
 
     override val closedCause: Throwable? get() = output.closedCause
 

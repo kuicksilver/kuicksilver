@@ -14,7 +14,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
-import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
+import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h1.httpDateNow
@@ -175,7 +175,7 @@ internal class H2UpgradeResponse(
             // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client
             // that has not ended by then is stopped when the stream is released (RST_STREAM NO_ERROR after our END_STREAM,
             // RFC 9113 section 8.1)
-            if (!currentCoroutineContext().isActive || output.closedCause != null || sessionOutput?.isAtWebSocketFrameBoundary() == false) {
+            if (!currentCoroutineContext().isActive || output.closedCause != null || sessionOutput?.isWebSocketFrameCut() == true) {
                 // cancelled, or the session failed (its output cancelled) or ended inside a frame (never END_STREAM after a cut
                 // frame), or the stream failed under it: CANCEL, unless the
                 // stream failed already (the client's RST_STREAM, a stream error of ours such as a HEADERS on the tunnel, the

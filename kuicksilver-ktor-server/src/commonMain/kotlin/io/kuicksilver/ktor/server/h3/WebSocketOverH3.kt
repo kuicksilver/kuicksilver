@@ -16,7 +16,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
-import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
+import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h2.WebSocketOverH2
@@ -156,7 +156,7 @@ internal class H3UpgradeResponse(
             // "sending a STOP_SENDING frame is unnecessary")
             // A session whose writer ended inside a frame (the guard resets that already) gets no FIN after the cut frame:
             // the same reset, both directions
-            if (sessionOutput?.isAtWebSocketFrameBoundary() == false) {
+            if (sessionOutput?.isWebSocketFrameCut() == true) {
                 runCatching { stream.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
                 runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 stream.input.cancel()
