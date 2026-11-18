@@ -534,8 +534,8 @@ private suspend fun H3Session.sendBody(
                     0
                 ) {
                     if (declared != null && sent + n > declared) return abandon(ContentLengthMismatch(declared, sent + n, more = true))
-                    qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                     st.output.writeFrame(FrameType.DATA, buf, 0, n)
+                    qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                     st.output.flush()
                     sent += n
                 }

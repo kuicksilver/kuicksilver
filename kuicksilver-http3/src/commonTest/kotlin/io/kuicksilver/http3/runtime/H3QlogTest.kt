@@ -30,8 +30,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -39,6 +42,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The HTTP/3 events of the qlog trace (draft-ietf-quic-qlog-h3-events-04, next to the transport's qlog 0.3 events): a real
@@ -336,6 +340,36 @@ class H3QlogTest {
             }
             val e = events(sink, TlsRole.Server).named("qpack:state_updated").filter { it["owner"] == "remote" }
             assertTrue(e.any { it.num("current_insert_count") >= 1 }, "$e")
+        }
+
+    /**
+     * `http:frame_created` follows the write: a response HEADERS frame whose write failed (the client stopped the request
+     * stream before the server answered) is not in the trace (ADR-0021).
+     */
+    @Test fun negative_aFrameWhoseWriteFailedIsNotCreated() =
+        h3Test {
+            val sink = MemoryQlogSink()
+            QuicPair.open(traced(sink)).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val streams = kotlinx.coroutines.channels.Channel<io.kuicksilver.quic.QuicStream>(1)
+                server.session.beforeRequestHeadersForTest = { st -> streams.send(st) }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flush()
+                val request = withTimeout(5.seconds) { server.acceptRequest() }
+                val serverSide = streams.receive()
+                st.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+                awaitOutputStopped(serverSide)
+                assertTrue(runCatching { request.respond(200) }.isFailure, "the response's write failed")
+                server.close()
+            }
+            awaitCondition("the server's trace closed") { sink.trace(TlsRole.Server).closed }
+            val created = sink.trace(TlsRole.Server).records.filter { "http:frame_created" in it && "\"stream_id\":0," in it }
+            assertTrue(created.isEmpty(), "the HEADERS frame whose write failed: $created")
+            QlogSchema.check(sink.trace(TlsRole.Server).records)
         }
 
     /** Many streams at once on several threads: every record whole, one per line, each frame once. */

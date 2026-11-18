@@ -49,15 +49,18 @@ internal fun Http3Headers.receivedNeverIndexed(decoded: List<Pair<String, String
 internal fun Http3Headers.neverIndexNames(): Set<String> =
     if (neverIndexed.isEmpty()) neverIndexNames else neverIndexNames + neverIndexed.map { it.first }
 
-/** Encodes [fields] and writes them as a HEADERS frame on [st] (RFC 9114 section 7.2.2), in the qlog trace first. */
+/**
+ * Encodes [fields] and writes them as a HEADERS frame on [st] (RFC 9114 section 7.2.2). Its `http:frame_created` follows
+ * the write, as every frame's does: logged once the frame was handed to the stream, never for a write that failed.
+ */
 internal suspend fun H3Session.writeHeadersFrame(
     st: QuicStream,
     fields: List<Pair<String, String>>,
     neverIndexed: Set<String> = emptySet(),
 ) {
     val block = qpack.encode(st.id, fields, neverIndexed)
-    qlog { it.frameCreated(st.id, FrameType.HEADERS, block.size.toLong(), it.headers(fields)) }
     st.output.writeFrame(FrameType.HEADERS, block)
+    qlog { it.frameCreated(st.id, FrameType.HEADERS, block.size.toLong(), it.headers(fields)) }
 }
 
 /** Decodes a field section; TooLarge and malformed sections become [StreamFailure]. */

@@ -69,9 +69,9 @@ internal suspend fun H3Session.writeCritical(
                     if (gen != criticalGen || c == null) return@withLock false
                     try {
                         pick(c).output.writeFully(b)
+                        written?.invoke(pick(c)) // handed to the stream: its qlog frame_created, as for every frame
                         pick(c).output.flush()
                         if (again != null && gen == 0) earlyControl?.add(b to again)
-                        written?.invoke(pick(c))
                         true
                     } catch (e: CancellationException) {
                         throw e
@@ -292,15 +292,15 @@ internal suspend fun H3Session.openCriticalStreams(
             if (gen != criticalGen) return false
             typedStreams += encoder
             encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
-            encoder.output.flush()
             qlog { it.streamTypeSet("local", encoder.id, StreamType.QPACK_ENCODER) }
+            encoder.output.flush()
         }
         decoderLock.withLock {
             if (gen != criticalGen) return false
             typedStreams += decoder
             decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
-            decoder.output.flush()
             qlog { it.streamTypeSet("local", decoder.id, StreamType.QPACK_DECODER) }
+            decoder.output.flush()
         }
         if (gen != criticalGen) return false
         critical = Critical(control, encoder, decoder)
@@ -366,8 +366,8 @@ internal suspend fun H3Session.openCriticalStreams(
                 val g = quic.openUni()
                 val type = FrameType.grease(Random.nextLong(0, 1000))
                 g.output.writeFully(VarInt.encode(type) + Random.nextBytes(Random.nextInt(0, 8)))
-                g.output.flushAndClose()
                 qlog { it.streamTypeSet("local", g.id, type) }
+                g.output.flushAndClose()
             } catch (
                 e: CancellationException,
             ) {

@@ -45,6 +45,14 @@ Original row: draft-ietf-quic-qlog-*.
   `qlog.QlogFramesTest.negative_eachFrameTypeRefusesWhatTheDraftDoesNot`,
   `qlog.QlogFramesTest.negative_tokensAndPayloadsNeverReachTheTrace`,
   `qlog.QlogFramesTest.negative_aPayloadThatDoesNotDecodeLeavesNoFrames`
+- every connection state change with `old` and `new` (section 4.6), one `connection_closed` with an owner of section 8.3,
+  the trace kept through the closing or draining period and ended when the connection is released, after a close, a
+  stateless reset or the endpoint's close; a lost or dropped 0-RTT packet as `0RTT`; a frame that fails to format never
+  touches the connection (0.3.0) — `qlog.QlogLifecycleTest.aCloseIsLoggedOnceAndEveryStateUntilTheTraceEnds`,
+  `qlog.QlogLifecycleTest.anEndpointCloseEndsTheTraces`, `qlog.QlogLifecycleTest.negative_aFrameThatFailsToFormatLeavesTheConnectionAlone`,
+  `qlog.QlogLifecycleTest.aSecondEndWhileClosingLogsNoSecondClose`, `qlog.QlogFramesTest.aPacketSentWhileOneIsReceivedKeepsBothFrameLists`,
+  `endpoint.StatelessResetTest.aStatelessResetEndsTheTraceAfterTheDrainingPeriod`,
+  `qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts`
 
 ## <a id="qlog-h3"></a>qlog HTTP/3 and QPACK events
 
@@ -96,6 +104,7 @@ model 3.26).
 - concurrency, size and failing sinks — `runtime.H3QlogTest.concurrentStreamsNeverInterleaveRecords`,
   `runtime.H3QlogTest.hugeHeadersStayOneValidRecord`, `runtime.H3QlogTest.negative_aThrowingSinkLeavesTheConnectionAlone`,
   `runtime.H3QlogTest.aStalledSinkNeverHoldsTheConnection`, `runtime.H3QlogTest.anUntracedConnectionHasNoRecorder`
+- `http:frame_created` follows the frame's write, never for one that failed — `runtime.H3QlogTest.negative_aFrameWhoseWriteFailedIsNotCreated`
 - peer bytes never break a record; the schema check refuses corrupt and off-schema records —
   `runtime.H3QlogTest.negative_peerBytesNeverBreakARecord`, `runtime.H3QlogTest.negative_theSchemaCheckRefusesWhatQvisWouldNot`
 
@@ -108,6 +117,16 @@ a frame's `length` as its payload length (`quiche/src/h3/mod.rs:1545-1547`), and
 decoded, values included, with no redaction (`mod.rs:3156-3183`). Both write `qlog_version` 0.3 in the header for qvis (quic-go
 `qlogwriter/trace.go:115-121`); Go's x/net writes main-schema-04 and quic-events-03 with 0.3 because "qvis only
 supports up to 0.3" (`net/quic/qlog/qlog.go:192-196`).
+
+**Deviations** ([ADR-0021](../../adr/0021-qlog-http3-events.md)).
+
+- an application error code above 2^32 - 1 (WebTransport's), which `$ApplicationError / uint32` cannot hold
+  (quic-events-04 sections 8.11.4, 8.11.5, 4.3), is written as `application_error_0x<hex>`, our extension of the
+  `$ApplicationError` socket (section 8.11.23); in a CONNECTION_CLOSE frame it is left to `error_code_value`.
+- a peer's NEW_CONNECTION_ID or RETIRE_CONNECTION_ID `sequence_number` or `retire_prior_to` above 2^32 - 1 (uint32 in
+  section 8.11.15, 62 bits in RFC 9000) is written as it came, not clamped.
+- not a deviation, but a reading: a CONNECTION_CLOSE frame's CRYPTO_ERROR goes in `error_code_value` alone, since section
+  8.11.19 does not list the CryptoError that section 8.11.22 points to.
 
 **Open items.**
 

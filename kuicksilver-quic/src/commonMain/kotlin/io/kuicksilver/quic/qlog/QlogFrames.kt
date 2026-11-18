@@ -30,18 +30,36 @@ internal class QlogFrames : FrameHandler {
     private var first = true
     private var delegate: FrameHandler? = null
     private var ackDelayExponent = 3
-    private val reader = WireReader(NO_BYTES, 0, 0)
+    private var reader: WireReader? = null // made with the first packet sent: no buffer of its own
     private val ackView = AckFrameView()
 
-    /** Whether [out] holds the frames of the packet being logged (a decode that failed leaves it false). */
+    /** Whether [out] holds the frames of the packet being logged: false after a decode or a formatting that failed. */
     var ready = false
         private set
+
+    /** Test hook: formatting a frame throws, as a bug in it would. */
+    internal var failFormattingForTest = false
 
     private fun begin(exponent: Int) {
         out.setLength(0)
         first = true
         ackDelayExponent = exponent
         ready = false
+    }
+
+    /**
+     * Formats one frame into [out]. A failure (none is expected) drops what this packet recorded and records nothing more
+     * for it, and never reaches the caller: on the receive path the frame still goes to the connection's handler, which a
+     * throw here would skip and the connection would close for.
+     */
+    private inline fun record(block: () -> Unit) {
+        if (!ready) return
+        try {
+            if (failFormattingForTest) error("formatting failed (test)")
+            block()
+        } catch (_: Exception) {
+            abandon()
+        }
     }
 
     /**
@@ -57,14 +75,15 @@ internal class QlogFrames : FrameHandler {
     ) {
         begin(exponent)
         delegate = null
-        reader.buf = buf
-        reader.pos = from
-        reader.limit = to
+        val r = reader ?: WireReader(buf, from, to).also { reader = it }
+        r.buf = buf
+        r.pos = from
+        r.limit = to
+        ready = true
         try {
-            FrameDecoder.decode(reader, type, this, ackView)
-            ready = true
+            FrameDecoder.decode(r, type, this, ackView)
         } catch (_: Exception) {
-            out.setLength(0)
+            abandon()
         }
     }
 
@@ -97,45 +116,51 @@ internal class QlogFrames : FrameHandler {
     ): StringBuilder = append(",\"").append(key).append("\":").append(v)
 
     override fun padding(count: Int) {
-        // section 8.11.1: one PaddingFrame for the packet's PADDING, its byte count in payload_length
-        open("padding").num("payload_length", count.toLong()).append('}')
+        record {
+            // section 8.11.1: one PaddingFrame for the packet's PADDING, its byte count in payload_length
+            open("padding").num("payload_length", count.toLong()).append('}')
+        }
         delegate?.padding(count)
     }
 
     override fun ping() {
-        open("ping").append('}')
+        record {
+            open("ping").append('}')
+        }
         delegate?.ping()
     }
 
     override fun ack(ack: AckFrameView) {
-        val o = open("ack")
-        // ack_delay in ms: the field times 2^ack_delay_exponent microseconds (RFC 9000 section 19.3)
-        val micros = if (ack.ackDelay > Long.MAX_VALUE shr 20) Long.MAX_VALUE else ack.ackDelay shl ackDelayExponent
-        o
-            .append(",\"ack_delay\":")
-            .append(micros / 1000)
-            .append('.')
-            .append((micros % 1000).toString().padStart(3, '0'))
-        o.append(",\"acked_ranges\":[")
-        for (i in 0 until ack.rangeCount) {
-            if (i > 0) o.append(',')
-            val lo = ack.smallest(i)
-            val hi = ack.largest(i)
-            // section 8.11.3: "[120,120] ... implementers SHOULD log [120] instead"
-            if (lo == hi) {
-                o.append('[').append(lo).append(']')
-            } else {
-                o
-                    .append('[')
-                    .append(lo)
-                    .append(',')
-                    .append(hi)
-                    .append(']')
+        record {
+            val o = open("ack")
+            // ack_delay in ms: the field times 2^ack_delay_exponent microseconds (RFC 9000 section 19.3)
+            val micros = if (ack.ackDelay > Long.MAX_VALUE shr 20) Long.MAX_VALUE else ack.ackDelay shl ackDelayExponent
+            o
+                .append(",\"ack_delay\":")
+                .append(micros / 1000)
+                .append('.')
+                .append((micros % 1000).toString().padStart(3, '0'))
+            o.append(",\"acked_ranges\":[")
+            for (i in 0 until ack.rangeCount) {
+                if (i > 0) o.append(',')
+                val lo = ack.smallest(i)
+                val hi = ack.largest(i)
+                // section 8.11.3: "[120,120] ... implementers SHOULD log [120] instead"
+                if (lo == hi) {
+                    o.append('[').append(lo).append(']')
+                } else {
+                    o
+                        .append('[')
+                        .append(lo)
+                        .append(',')
+                        .append(hi)
+                        .append(']')
+                }
             }
+            o.append(']')
+            ack.ecn?.let { e -> o.num("ect0", e[0]).num("ect1", e[1]).num("ce", e[2]) }
+            o.append('}')
         }
-        o.append(']')
-        ack.ecn?.let { e -> o.num("ect0", e[0]).num("ect1", e[1]).num("ce", e[2]) }
-        o.append('}')
         delegate?.ack(ack)
     }
 
@@ -144,8 +169,10 @@ internal class QlogFrames : FrameHandler {
         code: Long,
         finalSize: Long,
     ) {
-        val o = open("reset_stream").num("stream_id", id)
-        applicationError(o, "error_code", code).num("final_size", finalSize).append('}')
+        record {
+            val o = open("reset_stream").num("stream_id", id)
+            applicationError(o, "error_code", code).num("final_size", finalSize).append('}')
+        }
         delegate?.resetStream(id, code, finalSize)
     }
 
@@ -153,7 +180,9 @@ internal class QlogFrames : FrameHandler {
         id: Long,
         code: Long,
     ) {
-        applicationError(open("stop_sending").num("stream_id", id), "error_code", code).append('}')
+        record {
+            applicationError(open("stop_sending").num("stream_id", id), "error_code", code).append('}')
+        }
         delegate?.stopSending(id, code)
     }
 
@@ -163,9 +192,11 @@ internal class QlogFrames : FrameHandler {
         finalSize: Long,
         reliableSize: Long,
     ) {
-        // draft-ietf-quic-reliable-stream-reset: a frame type through the $QuicFrame extension point (section 8.11)
-        val o = open("reset_stream_at").num("stream_id", id)
-        applicationError(o, "error_code", code).num("final_size", finalSize).num("reliable_size", reliableSize).append('}')
+        record {
+            // draft-ietf-quic-reliable-stream-reset: a frame type through the $QuicFrame extension point (section 8.11)
+            val o = open("reset_stream_at").num("stream_id", id)
+            applicationError(o, "error_code", code).num("final_size", finalSize).num("reliable_size", reliableSize).append('}')
+        }
         delegate?.resetStreamAt(id, code, finalSize, reliableSize)
     }
 
@@ -175,7 +206,9 @@ internal class QlogFrames : FrameHandler {
         off: Int,
         len: Int,
     ) {
-        open("crypto").num("offset", offset).num("length", len.toLong()).append('}')
+        record {
+            open("crypto").num("offset", offset).num("length", len.toLong()).append('}')
+        }
         delegate?.crypto(offset, data, off, len)
     }
 
@@ -184,8 +217,10 @@ internal class QlogFrames : FrameHandler {
         off: Int,
         len: Int,
     ) {
-        // section 8.8: the token by its type and length, never its bytes
-        open("new_token").append(",\"token\":{\"type\":\"resumption\",\"raw\":{\"length\":").append(len).append("}}}")
+        record {
+            // section 8.8: the token by its type and length, never its bytes
+            open("new_token").append(",\"token\":{\"type\":\"resumption\",\"raw\":{\"length\":").append(len).append("}}}")
+        }
         delegate?.newToken(token, off, len)
     }
 
@@ -197,15 +232,19 @@ internal class QlogFrames : FrameHandler {
         len: Int,
         fin: Boolean,
     ) {
-        val o = open("stream").num("stream_id", id).num("offset", offset).num("length", len.toLong())
-        // section 8.11.8: fin "MUST only be set if the value is true"
-        if (fin) o.append(",\"fin\":true")
-        o.append('}')
+        record {
+            val o = open("stream").num("stream_id", id).num("offset", offset).num("length", len.toLong())
+            // section 8.11.8: fin "MUST only be set if the value is true"
+            if (fin) o.append(",\"fin\":true")
+            o.append('}')
+        }
         delegate?.stream(id, offset, data, off, len, fin)
     }
 
     override fun maxData(max: Long) {
-        open("max_data").num("maximum", max).append('}')
+        record {
+            open("max_data").num("maximum", max).append('}')
+        }
         delegate?.maxData(max)
     }
 
@@ -213,7 +252,9 @@ internal class QlogFrames : FrameHandler {
         id: Long,
         max: Long,
     ) {
-        open("max_stream_data").num("stream_id", id).num("maximum", max).append('}')
+        record {
+            open("max_stream_data").num("stream_id", id).num("maximum", max).append('}')
+        }
         delegate?.maxStreamData(id, max)
     }
 
@@ -221,17 +262,21 @@ internal class QlogFrames : FrameHandler {
         bidi: Boolean,
         max: Long,
     ) {
-        open("max_streams")
-            .append(",\"stream_type\":\"")
-            .append(streamType(bidi))
-            .append('"')
-            .num("maximum", max)
-            .append('}')
+        record {
+            open("max_streams")
+                .append(",\"stream_type\":\"")
+                .append(streamType(bidi))
+                .append('"')
+                .num("maximum", max)
+                .append('}')
+        }
         delegate?.maxStreams(bidi, max)
     }
 
     override fun dataBlocked(limit: Long) {
-        open("data_blocked").num("limit", limit).append('}')
+        record {
+            open("data_blocked").num("limit", limit).append('}')
+        }
         delegate?.dataBlocked(limit)
     }
 
@@ -239,7 +284,9 @@ internal class QlogFrames : FrameHandler {
         id: Long,
         limit: Long,
     ) {
-        open("stream_data_blocked").num("stream_id", id).num("limit", limit).append('}')
+        record {
+            open("stream_data_blocked").num("stream_id", id).num("limit", limit).append('}')
+        }
         delegate?.streamDataBlocked(id, limit)
     }
 
@@ -247,12 +294,14 @@ internal class QlogFrames : FrameHandler {
         bidi: Boolean,
         limit: Long,
     ) {
-        open("streams_blocked")
-            .append(",\"stream_type\":\"")
-            .append(streamType(bidi))
-            .append('"')
-            .num("limit", limit)
-            .append('}')
+        record {
+            open("streams_blocked")
+                .append(",\"stream_type\":\"")
+                .append(streamType(bidi))
+                .append('"')
+                .num("limit", limit)
+                .append('}')
+        }
         delegate?.streamsBlocked(bidi, limit)
     }
 
@@ -264,25 +313,33 @@ internal class QlogFrames : FrameHandler {
         cidLen: Int,
         resetTokenOff: Int,
     ) {
-        val o = open("new_connection_id").num("sequence_number", seq).num("retire_prior_to", retirePriorTo)
-        o.num("connection_id_length", cidLen.toLong()).append(",\"connection_id\":\"")
-        hex(cid, cidOff, cidLen)
-        o.append("\"}") // no stateless_reset_token: see the class comment
+        record {
+            val o = open("new_connection_id").num("sequence_number", seq).num("retire_prior_to", retirePriorTo)
+            o.num("connection_id_length", cidLen.toLong()).append(",\"connection_id\":\"")
+            hex(cid, cidOff, cidLen)
+            o.append("\"}") // no stateless_reset_token: see the class comment
+        }
         delegate?.newConnectionId(seq, retirePriorTo, cid, cidOff, cidLen, resetTokenOff)
     }
 
     override fun retireConnectionId(seq: Long) {
-        open("retire_connection_id").num("sequence_number", seq).append('}')
+        record {
+            open("retire_connection_id").num("sequence_number", seq).append('}')
+        }
         delegate?.retireConnectionId(seq)
     }
 
     override fun pathChallenge(data: Long) {
-        open("path_challenge").append(",\"data\":\"").append(hex64(data)).append("\"}")
+        record {
+            open("path_challenge").append(",\"data\":\"").append(hex64(data)).append("\"}")
+        }
         delegate?.pathChallenge(data)
     }
 
     override fun pathResponse(data: Long) {
-        open("path_response").append(",\"data\":\"").append(hex64(data)).append("\"}")
+        record {
+            open("path_response").append(",\"data\":\"").append(hex64(data)).append("\"}")
+        }
         delegate?.pathResponse(data)
     }
 
@@ -294,19 +351,26 @@ internal class QlogFrames : FrameHandler {
         off: Int,
         len: Int,
     ) {
-        val o = open("connection_close").append(",\"error_space\":\"").append(if (application) "application" else "transport").append('"')
-        if (application) applicationError(o, "error_code", code, optional = true) else transportError(o, code)
-        o.num("error_code_value", code)
-        o.append(",\"reason\":\"")
-        QlogWriter.escapeInto(reason.decodeUtf8(off, len), o)
-        o.append('"')
-        if (!application) o.append(",\"trigger_frame_type\":").append(frameTypeName(frameType))
-        o.append('}')
+        record {
+            val o =
+                open(
+                    "connection_close",
+                ).append(",\"error_space\":\"").append(if (application) "application" else "transport").append('"')
+            if (application) applicationError(o, "error_code", code, optional = true) else transportError(o, code)
+            o.num("error_code_value", code)
+            o.append(",\"reason\":\"")
+            QlogWriter.escapeInto(reason.decodeUtf8(off, len), o)
+            o.append('"')
+            if (!application) o.append(",\"trigger_frame_type\":").append(frameTypeName(frameType))
+            o.append('}')
+        }
         delegate?.connectionClose(application, code, frameType, reason, off, len)
     }
 
     override fun handshakeDone() {
-        open("handshake_done").append('}')
+        record {
+            open("handshake_done").append('}')
+        }
         delegate?.handshakeDone()
     }
 
@@ -315,8 +379,10 @@ internal class QlogFrames : FrameHandler {
         off: Int,
         len: Int,
     ) {
-        // RFC 9221 DATAGRAM: a frame type through the $QuicFrame extension point, by its length (as the later drafts define it)
-        open("datagram").num("length", len.toLong()).append('}')
+        record {
+            // RFC 9221 DATAGRAM: a frame type through the $QuicFrame extension point, by its length (as the later drafts define it)
+            open("datagram").num("length", len.toLong()).append('}')
+        }
         delegate?.datagram(data, off, len)
     }
 
@@ -369,10 +435,17 @@ internal class QlogFrames : FrameHandler {
         }
 
         /** TransportError (section 8.11.22), CryptoError (section 8.11.24), or nothing for a code neither names. */
+
+        /**
+         * ConnectionCloseFrame.error_code (section 8.11.19: `TransportError / $ApplicationError / uint32`): a TransportError by
+         * its name; a CRYPTO_ERROR, which that type has no member for, is left to `error_code_value` (section 8.11.22 points to
+         * CryptoError, which 8.11.19 does not list).
+         */
         fun transportError(
             o: StringBuilder,
             code: Long,
         ): StringBuilder {
+            if (code in 0x100L..0x1ffL) return o
             val name = transportErrorName(code) ?: return o
             return o.append(",\"error_code\":\"").append(name).append('"')
         }
@@ -446,6 +519,3 @@ private fun PacketBuffer.decodeUtf8(
     for (i in 0 until len) b[i] = this[off + i]
     return b.decodeToString()
 }
-
-/** The reader's buffer between packets (one for the process, as the packet receiver keeps). */
-private val NO_BYTES = PacketBuffer.allocate(1)

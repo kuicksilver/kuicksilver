@@ -174,8 +174,9 @@ class QlogFramesTest {
             Case(
                 "connection_close",
                 { w, _ -> FrameEncoder.connectionClose(w, false, 0x128, 0x06, ByteArray(0)) },
-                mapOf("error_code" to "crypto_error_0x128", "trigger_frame_type" to "crypto"),
-                bad = listOf("error_code" to "crypto_error_0x99", "error_code_value" to 1.5),
+                // section 8.11.19 has no CryptoError: the code is in error_code_value alone
+                mapOf("error_code" to null, "error_code_value" to 296.0, "trigger_frame_type" to "crypto"),
+                bad = listOf("error_code" to "crypto_error_0x128", "error_code_value" to 1.5),
             ),
             Case(
                 "connection_close",
@@ -255,6 +256,39 @@ class QlogFramesTest {
         assertTrue("0a0b0c0d0e0f1011" in all, "the connection ID itself is required (section 8.11.15)")
     }
 
+    /**
+     * The send and receive paths record into recorders of their own: a packet built while a received one is being decoded
+     * (a frame handler that sends at once) leaves both packets' frames whole.
+     */
+    @Test fun aPacketSentWhileOneIsReceivedKeepsBothFrameLists() {
+        val w = QlogWriter(QlogLifecycleTest.Traces(), 1L shl 20, io.kuicksilver.quic.TimeMark(0), TlsRole.Client, "0a0b", false)
+        val received = PacketBuffer.allocate(64)
+        val sent = PacketBuffer.allocate(64)
+        val data = PacketBuffer.of(byteArrayOf(1, 2, 3))
+        try {
+            val rw = WireWriter(received, 0, 64)
+            FrameEncoder.ping(rw)
+            FrameEncoder.maxData(rw, 77)
+            val sw = WireWriter(sent, 0, 64)
+            FrameEncoder.stream(sw, 4, 0, data, 0, 3, fin = false, withLength = true)
+            val inner = CollectingHandler()
+            val handler =
+                object : io.kuicksilver.quic.wire.FrameHandler by inner {
+                    override fun ping() {
+                        inner.ping()
+                        w.sentFrames.sent(sent, 0, sw.pos, PacketType.OneRtt, 3)
+                    }
+                }
+            FrameDecoder.decode(WireReader(received, 0, rw.pos), PacketType.OneRtt, w.receivedFrames.receiving(handler, 3), AckFrameView())
+            assertEquals(listOf("ping", "max_data"), parse(w.receivedFrames.out).map { it["frame_type"] })
+            assertEquals(listOf("stream"), parse(w.sentFrames.out).map { it["frame_type"] })
+        } finally {
+            received.close()
+            sent.close()
+            data.close()
+        }
+    }
+
     /** A payload the decoder refuses leaves no frames rather than a partial list. */
     @Test fun negative_aPayloadThatDoesNotDecodeLeavesNoFrames() {
         val buf = PacketBuffer.of(byteArrayOf(0x01, 0x40)) // PING, then a truncated varint frame type
@@ -314,6 +348,8 @@ class QlogFramesTest {
                 for (r in records.drop(1)) {
                     val e = StrictJson.parse(r.substring(1, r.length - 1)) as Map<*, *>
                     val name = e["name"] as String
+                    // every transport event, not only the packets (connectivity, recovery)
+                    QuicQlogSchema.event(name, e["data"] as Map<*, *>)
                     if (name != "transport:packet_sent" && name != "transport:packet_received") continue
                     val frames = QuicQlogSchema.packet(e["data"] as Map<*, *>)
                     types.getOrPut(name) { HashSet() } += frames.map { it["frame_type"] as String }

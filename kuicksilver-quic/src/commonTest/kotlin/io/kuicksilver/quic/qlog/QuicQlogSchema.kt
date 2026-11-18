@@ -252,13 +252,128 @@ internal object QuicQlogSchema {
             "datagram",
         )
 
-    /** A `transport:packet_sent` or `packet_received` event's data (sections 5.5, 5.6); returns its frames. */
-    fun packet(data: Map<*, *>): List<Map<*, *>> {
-        members(data, setOf("header"), setOf("frames", "raw"))
-        val h = data["header"] as Map<*, *>
+    private val connectionStates =
+        setOf(
+            "attempted",
+            "peer_validated",
+            "handshake_started",
+            "early_write",
+            "handshake_complete",
+            "handshake_confirmed",
+            "closing",
+            "draining",
+            "closed",
+        )
+    private val owners = setOf("local", "remote")
+
+    /**
+     * Any transport event we write, by its name: connectivity (section 4), transport (section 5) and recovery (section 7)
+     * events, each with its members, types and enumerations; a name not listed fails.
+     */
+    fun event(
+        name: String,
+        data: Map<*, *>,
+    ) {
+        try {
+            when (name) {
+                "transport:packet_sent", "transport:packet_received" -> {
+                    packet(data)
+                }
+
+                // 4.3, Figure 4
+                "connectivity:connection_closed" -> {
+                    members(data, emptySet(), setOf("owner", "connection_code", "application_code", "internal_code", "reason", "trigger"))
+                    data["owner"]?.let { require(it in owners) { "owner $it" } }
+                    data["connection_code"]?.let {
+                        require(
+                            it in transportErrors || (it is String && CRYPTO.matches(it)) || (it is Double && uint32Ok(it)),
+                        ) { "connection_code $it" }
+                    }
+                    data["application_code"]?.let { applicationError(it) }
+                    data["internal_code"]?.let { uint32(it) }
+                    data["reason"]?.let { require(it is String) }
+                    data["trigger"]?.let {
+                        require(
+                            it in
+                                setOf(
+                                    "clean",
+                                    "handshake_timeout",
+                                    "idle_timeout",
+                                    "error",
+                                    "stateless_reset",
+                                    "version_mismatch",
+                                    "application",
+                                ),
+                        ) { "trigger $it" }
+                    }
+                }
+
+                // 4.6, Figure 7
+                "connectivity:connection_state_updated" -> {
+                    members(data, setOf("new"), setOf("old"))
+                    require(data["new"] in connectionStates) { "new ${data["new"]}" }
+                    data["old"]?.let { require(it in connectionStates) { "old $it" } }
+                }
+
+                // 5.7, Figure 15
+                "transport:packet_dropped" -> {
+                    members(data, emptySet(), setOf("header", "raw", "datagram_id", "details", "trigger"))
+                    (data["header"] as Map<*, *>?)?.let { header(it) }
+                    data["details"]?.let { require(it is Map<*, *>) }
+                    data["trigger"]?.let {
+                        require(
+                            it in
+                                setOf(
+                                    "internal_error",
+                                    "rejected",
+                                    "unsupported",
+                                    "invalid",
+                                    "connection_unknown",
+                                    "decryption_failure",
+                                    "general",
+                                ),
+                        ) { "trigger $it" }
+                    }
+                }
+
+                // 7.5, Figure 30
+                "recovery:packet_lost" -> {
+                    members(data, emptySet(), setOf("header", "frames", "is_mtu_probe_packet", "trigger"))
+                    (data["header"] as Map<*, *>?)?.let { header(it) }
+                    data["trigger"]?.let { require(it in setOf("reordering_threshold", "time_threshold", "pto_expired")) { "trigger $it" } }
+                }
+
+                // 7.2, Figure 27
+                "recovery:metrics_updated" -> {
+                    val floats = setOf("min_rtt", "smoothed_rtt", "latest_rtt", "rtt_variance")
+                    val counts = setOf("pto_count", "congestion_window", "bytes_in_flight", "ssthresh", "packets_in_flight", "pacing_rate")
+                    members(data, emptySet(), floats + counts)
+                    require(data.isNotEmpty()) { "at least one metric" }
+                    for (k in floats) data[k]?.let { require(it is Double && it >= 0) { "$k $it" } }
+                    for (k in counts) data[k]?.let { uint(it) }
+                    data["pto_count"]?.let { require((it as Double) <= 65535.0) { "pto_count is uint16" } }
+                }
+
+                else -> {
+                    error("a transport event we do not write")
+                }
+            }
+        } catch (t: Throwable) {
+            throw IllegalArgumentException("$name: ${t.message}: $data", t)
+        }
+    }
+
+    /** PacketHeader (section 8.7) as we write it. */
+    private fun header(h: Map<*, *>) {
         members(h, setOf("packet_type"), setOf("packet_number"))
         require(h["packet_type"] in packetTypes) { "packet_type ${h["packet_type"]}" }
         h["packet_number"]?.let { uint(it) }
+    }
+
+    /** A `transport:packet_sent` or `packet_received` event's data (sections 5.5, 5.6); returns its frames. */
+    fun packet(data: Map<*, *>): List<Map<*, *>> {
+        members(data, setOf("header"), setOf("frames", "raw"))
+        header(data["header"] as Map<*, *>)
         (data["raw"] as Map<*, *>?)?.let {
             members(it, emptySet(), setOf("length", "payload_length", "data"))
             it["length"]?.let { v -> uint(v) }
@@ -411,7 +526,8 @@ internal object QuicQlogSchema {
                     f["error_code"]?.let {
                         if (space == "transport") {
                             require(
-                                it in transportErrors || (it is String && CRYPTO.matches(it)) || (it is Double && uint32Ok(it)),
+                                // TransportError / $ApplicationError / uint32: no CryptoError here (connection_closed has it)
+                                it in transportErrors || (it is Double && uint32Ok(it)),
                             ) { "code $it" }
                         } else {
                             applicationError(it)

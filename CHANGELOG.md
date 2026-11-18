@@ -788,9 +788,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- qlog transport events use the enumerations of draft-ietf-quic-qlog-quic-events-04: `connection_state_updated`
-  reports `handshake_started`, `handshake_complete`, `handshake_confirmed`, `closing`, `draining`, `closed` (before:
-  `handshaking`, `established`, `confirmed`, ...); a `packet_dropped` for a packet on an address the connection left has
+- qlog transport events use the enumerations of draft-ietf-quic-qlog-quic-events-04: `connection_state_updated` is
+  written for every state change with `old` and `new`, `handshake_complete`, `handshake_confirmed`, `closing`,
+  `draining` and `closed` (before: only `established`, the handshake's completion); `connection_closed` names its
+  owner `local` or `remote` (before: `peer` for the peer's close); a lost or dropped 0-RTT packet is `0RTT` (before:
+  `1RTT`); a `packet_dropped` for a packet on an address the connection left has
   the trigger `rejected` (before: `unexpected_packet`); `packet_lost` has no trigger (before: `time_or_packet_threshold`,
   not one of the draft's); a `connection_closed` that is not a peer's close or a timeout has the trigger
   `stateless_reset`, `version_mismatch` or `error`, its message in `reason` (before: the message as the trigger).
@@ -801,7 +803,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   payloads are never written. 0-RTT packets are `0RTT` (before: `1RTT`). `connection_closed` is written once and the
   trace stays open through the closing period, until the connection releases it (before: it ended at the first
   `connection_closed`). HTTP/3 events queued for the loop take its time when they were stamped later, so transport
-  events keep theirs.
+  events keep theirs. `http:frame_created` follows the frame's write and is not logged when the write fails (before,
+  HEADERS and DATA were logged ahead of it). `tools/interop/prohibited-port-rebind.py` counts a CONNECTION_CLOSE as not
+  ack-eliciting and reads a trace up to its `connection_closed`.
 
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once

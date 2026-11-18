@@ -58,7 +58,7 @@ class QlogExternalRecordsTest {
      */
     @Test fun theHeaderNamesTheProtocolsAndTheReferenceTime() {
         val h3 = Sink()
-        writer(h3).connectionStateUpdated(ConnectionState.Handshaking, TimeMark(1_000_000_000L))
+        writer(h3).connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_000_000_000L))
         assertTrue(
             h3.records[0].contains(
                 "\"common_fields\":{\"ODCID\":\"0a0b\",\"protocol_type\":[\"QUIC\",\"HTTP3\"],\"time_format\":\"relative\"," +
@@ -67,45 +67,67 @@ class QlogExternalRecordsTest {
             h3.records[0],
         )
         val quic = Sink()
-        writer(quic, http3 = false).connectionStateUpdated(ConnectionState.Handshaking, TimeMark(1_000_000_000L))
+        writer(
+            quic,
+            http3 = false,
+        ).connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_000_000_000L))
         assertTrue(quic.records[0].contains("\"protocol_type\":[\"QUIC\"],"), quic.records[0])
     }
 
     /**
      * The transport events' enumerations are those of draft-ietf-quic-qlog-quic-events-04: connection states of section
-     * 4.6 (Figure 7), packet_dropped triggers of section 5.7 (Figure 15), connection_closed triggers of section 4.3
-     * (Figure 4); a packet_lost trigger is left out, as section 7.5 has none for "time or packet threshold".
+     * 4.6 (Figure 7, with the state left in "old"), packet_dropped triggers of section 5.7 (Figure 15), connection_closed
+     * owners (section 8.3: "local" / "remote") and triggers of section 4.3 (Figure 4); a packet_lost trigger is left out,
+     * as section 7.5 has none for "time or packet threshold". A lost or dropped 0-RTT packet is a "0RTT" one (section 8.5).
+     * Every event is checked against [QuicQlogSchema.event].
      */
     @Test fun transportEnumerationsAreTheDrafts() {
+        val t = TimeMark(1_000_000_000L)
         val sink = Sink()
         val w = writer(sink)
-        val t = TimeMark(1_000_000_000L)
-        for (st in ConnectionState.entries) w.connectionStateUpdated(st, t)
-        w.packetDropped(io.kuicksilver.quic.recovery.SpaceId.Application, 3, 50, "rejected", "left_address", t)
-        w.packetLost(io.kuicksilver.quic.recovery.SpaceId.Application, 4, t)
-        w.connectionClosed(
-            io.kuicksilver.quic.QuicException.ConnectionLost
-                .StatelessReset(),
-            t,
-        )
-        val states = sink.records.mapNotNull { Regex("\"new\":\"([a-z_]+)\"").find(it)?.groupValues?.get(1) }
-        val drafts =
-            setOf(
-                "attempted",
-                "peer_validated",
-                "handshake_started",
-                "early_write",
-                "handshake_complete",
-                "handshake_confirmed",
-                "closing",
-                "draining",
-                "closed",
+        val all = ConnectionState.entries
+        for ((old, new) in all.zip(all.drop(1))) w.connectionStateUpdated(old, new, t)
+        w.packetDropped(io.kuicksilver.quic.wire.PacketType.ZeroRtt, 3, 50, "rejected", "left_address", t)
+        w.packetLost(io.kuicksilver.quic.recovery.SpaceId.Application, zeroRtt = true, pn = 4, now = t)
+        w.packetLost(io.kuicksilver.quic.recovery.SpaceId.Application, zeroRtt = false, pn = 5, now = t)
+        val closes =
+            listOf(
+                io.kuicksilver.quic.QuicException.ConnectionLost
+                    .StatelessReset() to "\"owner\":\"remote\",\"trigger\":\"stateless_reset\"",
+                io.kuicksilver.quic.QuicException.ConnectionLost.TransportClosed(
+                    0x0a,
+                    0,
+                    "bad",
+                    "bad".encodeToByteArray(),
+                    io.kuicksilver.quic.Initiator.Peer,
+                    null,
+                ) to
+                    "\"owner\":\"remote\",\"connection_code\":\"protocol_violation\"",
+                io.kuicksilver.quic.QuicException.ConnectionLost
+                    .ApplicationClosed(0x100, "bye", io.kuicksilver.quic.Initiator.Peer) to
+                    "\"owner\":\"remote\",\"application_code\":256",
+                io.kuicksilver.quic.QuicException.ConnectionLost
+                    .ApplicationClosed(7, "", io.kuicksilver.quic.Initiator.Local) to
+                    "\"owner\":\"local\",\"application_code\":7",
             )
-        assertEquals(ConnectionState.entries.size, states.size)
-        assertTrue(drafts.containsAll(states), "$states")
-        assertTrue(sink.records.any { "\"trigger\":\"rejected\"" in it && "packet_dropped" in it })
-        assertTrue(sink.records.single { "packet_lost" in it }.let { "trigger" !in it })
-        assertTrue(sink.records.single { "connection_closed" in it }.contains("\"trigger\":\"stateless_reset\""))
+        val closeRecords =
+            closes.map { (reason, _) ->
+                val one = Sink()
+                writer(one).connectionClosed(reason, t)
+                one.records.single { "connection_closed" in it }
+            }
+        for ((r, c) in closeRecords.zip(closes)) assertTrue(c.second in r, "${c.first}: $r")
+        val events = (sink.records.drop(1) + closeRecords).map { StrictJson.parse(it.trim('\u001e', '\n')) as Map<*, *> }
+        for (e in events) QuicQlogSchema.event(e["name"] as String, e["data"] as Map<*, *>)
+        val states = events.filter { it["name"] == "connectivity:connection_state_updated" }.map { (it["data"] as Map<*, *>)["new"] }
+        assertEquals(all.size - 1, states.size)
+        val types =
+            sink.records
+                .filter {
+                    "packet_lost" in it || "packet_dropped" in it
+                }.map { it.substringAfter("\"packet_type\":\"").substringBefore('"') }
+        assertEquals(listOf("0RTT", "0RTT", "1RTT"), types)
+        assertTrue(sink.records.filter { "packet_lost" in it }.none { "trigger" in it })
     }
 
     /** A trace whose header does not name HTTP3 takes no HTTP/3 event: h3-events-04 section 2 would be broken. */
@@ -128,10 +150,11 @@ class QlogExternalRecordsTest {
         val sink = Sink()
         val w = writer(sink)
         assertTrue(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_005_000_000L)))
-        w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_003_000_000L)) // the loop's older clock reading
+        // the loop's older clock reading
+        w.connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_003_000_000L))
         assertTrue(w.enqueue("http:frame_created", "\"stream_id\":4", TimeMark(1_002_000_000L))) // before the last record
         w.drainExternal(TimeMark(1_006_000_000L))
-        w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_007_000_000L))
+        w.connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_007_000_000L))
         val times = sink.records.drop(1).map { it.substringAfter("\"time\":").substringBefore(",").toDouble() }
         assertEquals(listOf(3.0, 3.0, 3.0, 7.0), times)
     }
@@ -139,10 +162,10 @@ class QlogExternalRecordsTest {
     @Test fun queuedEventsPrecedeTheNextTransportEvent() {
         val sink = Sink()
         val w = writer(sink)
-        w.connectionStateUpdated(ConnectionState.Handshaking, TimeMark(1_000_000_000L))
+        w.connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_000_000_000L))
         assertTrue(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_002_500_000L)))
         assertEquals(2, sink.records.size, "queued, not written by the caller")
-        w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_003_000_000L))
+        w.connectionStateUpdated(ConnectionState.Handshaking, ConnectionState.Established, TimeMark(1_003_000_000L))
         assertEquals(4, sink.records.size)
         assertEquals("\u001e{\"time\":2.500,\"name\":\"http:frame_created\",\"data\":{\"stream_id\":0}}\n", sink.records[2])
         assertTrue("connection_state_updated" in sink.records[3], sink.records[3])

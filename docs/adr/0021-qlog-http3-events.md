@@ -69,14 +69,29 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
   instead, which could move such a mapping.)
 - **Typed transport frames.** `packet_sent` and `packet_received` carry every frame with the members quic-events-04
   section 8.11 defines: offsets and lengths of STREAM and CRYPTO frames, ACK ranges with `ack_delay` and ECN counts,
-  stream limits, connection IDs, path data, CONNECTION_CLOSE with `error_space`, `error_code` (TransportError and
-  CryptoError names, section 8.11.22 and 8.11.24), `error_code_value`, `reason` and `trigger_frame_type`, and so on;
+  stream limits, connection IDs, path data, CONNECTION_CLOSE with `error_space`, `error_code` (a TransportError name,
+  section 8.11.22), `error_code_value`, `reason` and `trigger_frame_type`, and so on;
   RESET_STREAM_AT and DATAGRAM through the `$QuicFrame` extension point. A sent packet's frames are read back from its
   plaintext payload before it is sealed, so the trace shows what went on the wire; a received packet's frames are
   recorded as the decoder hands them to the connection. An untraced connection does neither. Packet types are those of
-  section 8.5, 0-RTT packets included. An application error code above 2^32 (WebTransport's), which `$ApplicationError
-  / uint32` cannot hold, is written as `application_error_0x<hex>`, our extension of the `$ApplicationError` socket
-  (section 8.11.23 asks applications to extend it).
+  section 8.5, 0-RTT packets included, also for a lost or dropped 0-RTT packet. Each direction has its own recorder.
+  Formatting a received frame never fails the connection: a failure drops that packet's frames from the trace, and the
+  frame still reaches the connection.
+- **Deviations from the draft's types, as decided.** Three values do not fit the types the drafts give them, and the
+  trace writes them as follows rather than dropping or bending them:
+  - A CRYPTO_ERROR in a CONNECTION_CLOSE frame: section 8.11.19 types `error_code` as `TransportError /
+    $ApplicationError / uint32` while section 8.11.22 says to use CryptoError for it, which 8.11.19 does not list. The
+    frame leaves `error_code` out and gives the code in `error_code_value` (both optional): no deviation in the frame.
+    `connectivity:connection_closed`, whose `connection_code` lists CryptoError (section 4.3), names it there.
+  - An application error code above 2^32 - 1 (WebTransport's, draft-ietf-webtrans-http3 section 4.4), which
+    `$ApplicationError / uint32` cannot hold, in a RESET_STREAM, STOP_SENDING or RESET_STREAM_AT (where `error_code` is
+    required) and in `connection_closed`: written as `application_error_0x<hex>`, our extension of the
+    `$ApplicationError` socket (section 8.11.23 asks applications to extend it, the way CryptoError writes its codes).
+    No tool knows the name; it is a deviation, chosen over losing the code. In a CONNECTION_CLOSE frame such a code is
+    left to `error_code_value`.
+  - A NEW_CONNECTION_ID or RETIRE_CONNECTION_ID `sequence_number` or `retire_prior_to` above 2^32 - 1: section 8.11.15
+    types them uint32, RFC 9000 allows 62 bits. Ours never get there; a peer's is written as it came, not clamped (a
+    clamped value would name another connection ID). A deviation for such a peer only.
 - **Secrets in frames.** Never written: a NEW_TOKEN's token (logged by its length: a token lets its holder skip
   address validation; section 8.8 makes its bytes optional), the stateless reset token of a NEW_CONNECTION_ID
   (optional in section 8.11.15; whoever holds it can end the connection), and STREAM, CRYPTO and DATAGRAM payloads.
@@ -85,7 +100,15 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
   tokens, unlike field values: nothing in a trace needs them.
 - **The trace covers the closing period.** `connectivity:connection_closed` is written once, when the connection
   starts to close, and the trace stays open until the connection releases its resources (RFC 9000 section 10.2), so
-  the packet that carries the close and those that answer it are in it.
+  the packet that carries the close and those that answer it are in it. Every state change is logged with the state
+  left (`old`) and the state entered (`new`, section 4.6): `handshake_complete`, `handshake_confirmed`, `closing`,
+  `draining`, `closed`. The first state, `handshake_started`, is not: a server connection is made for an Initial
+  before it is known to decrypt, and logging then would open a trace for every forged Initial.
+- **When an HTTP/3 frame is `created`.** `http:frame_created` (and `http:stream_type_set` for our streams) is logged once
+  the frame (or the stream type) was handed to its stream, the write call returned, and never for a write that
+  failed: a HEADERS or DATA frame the peer's STOP_SENDING refused, a control frame on a stream that is gone. The same
+  for every frame: request and response heads and trailers, DATA, SETTINGS, GOAWAY, PRIORITY_UPDATE, GREASE, WebTransport
+  signals.
 - **Field values redacted by default (CWE-532).** Every header and trailer field is written with its name; its value is
   `[redacted]` unless the sink sets `QlogSink.logHeaderValues`, except `:method`, `:scheme`, `:status` and
   `:protocol`, tokens the protocol defines. quic-go logs values and offers a redaction wrapper

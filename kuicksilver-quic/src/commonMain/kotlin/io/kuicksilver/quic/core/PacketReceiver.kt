@@ -382,7 +382,7 @@ internal class PacketReceiver(
             c.path.socket == io.kuicksilver.quic.PREFERRED_SOCKET
         ) {
             c.leftAddressDropped++
-            c.qlog?.packetDropped(space, pn, hv.packetEnd - headerStart(), "rejected", "left_address", now)
+            c.qlog?.packetDropped(type, pn, hv.packetEnd - headerStart(), "rejected", "left_address", now)
             lastOutcome = OUTCOME_LEFT_ADDRESS
             return false
         }
@@ -462,10 +462,10 @@ internal class PacketReceiver(
                 val handler = if (closing) closingFrames else frames
                 // qlog: each frame recorded as it is handed over; a connection that is not traced decodes as before
                 val q = c.qlog
-                val recorded = if (q == null || !q.enabled) handler else q.frames.receiving(handler, c.loss.peerAckDelayExponent)
+                val recorded = if (q == null || !q.enabled) handler else q.receivedFrames.receiving(handler, c.loss.peerAckDelayExponent)
                 FrameDecoder.decode(reader, type, recorded, ackView)
             } catch (_: ReassemblyFull) {
-                c.qlog?.frames?.abandon()
+                c.qlog?.receivedFrames?.abandon()
                 // not acknowledged, so the peer resends its frames in a new packet (RFC 9000 section 13.1: all frames must be
                 // processed before a packet is acknowledged). The frames ahead of the refused one were applied (a DATAGRAM delivered, a
                 // PATH_CHALLENGE answered): the packet number counts as seen, so a duplicate or a replay is not processed again (section
@@ -475,7 +475,7 @@ internal class PacketReceiver(
                 c.datagramsDropped++
                 return true
             } catch (e: QuicWireException) {
-                c.qlog?.frames?.abandon()
+                c.qlog?.receivedFrames?.abandon()
                 // RFC 9000 section 19.19: "the type of frame that triggered the error"; the stream and flow-control layers below the
                 // dispatcher do not know which frame called them, the decoder does
                 val frameType = if (reader.frameType != 0L) reader.frameType else e.frameType

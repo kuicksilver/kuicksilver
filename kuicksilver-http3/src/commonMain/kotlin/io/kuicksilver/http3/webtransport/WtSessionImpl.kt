@@ -579,7 +579,6 @@ internal class WtSessionImpl(
                 withContext(NonCancellable) {
                     try {
                         st.output.writeFully(header)
-                        st.output.flush()
                         h3.qlog { q ->
                             if (bidi) {
                                 q.wtStreamSignal(
@@ -591,6 +590,7 @@ internal class WtSessionImpl(
                                 q.streamTypeSet("local", st.id, StreamType.WT_UNI, sessionId)
                             }
                         }
+                        st.output.flush()
                     } catch (e: Throwable) {
                         // only the connection's end gets here (nobody stops a stream it has not seen): the header goes reliably
                         // as far as it was written

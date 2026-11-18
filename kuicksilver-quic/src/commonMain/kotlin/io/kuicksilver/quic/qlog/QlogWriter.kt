@@ -77,8 +77,11 @@ internal class QlogWriter(
 
     private var trace: QlogTrace? = null
 
-    /** The frames of the packet being logged (quic-events-04 section 8.11), filled by the packet builder and receiver. */
-    val frames = QlogFrames()
+    /** The frames of the packet being sent (quic-events-04 section 8.11), filled by the packet builder. */
+    val sentFrames = QlogFrames()
+
+    /** The frames of the packet being received, recorded as the decoder hands them over; apart from [sentFrames]. */
+    val receivedFrames = QlogFrames()
     private var failure: Throwable? = null
 
     /**
@@ -232,6 +235,7 @@ internal class QlogWriter(
 
     /** The packet's header and size, and its frames when [frames] holds them for it (taken, so they are logged once). */
     private fun packet(
+        frames: QlogFrames,
         type: PacketType,
         pn: Long,
         size: Int,
@@ -247,7 +251,7 @@ internal class QlogWriter(
         pn: Long,
         size: Int,
         now: TimeMark,
-    ) = event(now, "transport:packet_sent", packet(type, pn, size))
+    ) = event(now, "transport:packet_sent", packet(sentFrames, type, pn, size))
 
     /** `transport:packet_received` (section 5.6), with the frames [QlogFrames.receiving] recorded as they were processed. */
     fun packetReceived(
@@ -255,14 +259,14 @@ internal class QlogWriter(
         pn: Long,
         size: Int,
         now: TimeMark,
-    ) = event(now, "transport:packet_received", packet(type, pn, size))
+    ) = event(now, "transport:packet_received", packet(receivedFrames, type, pn, size))
 
     /**
      * A packet authenticated and then dropped: qlog `transport:packet_dropped` with one of its [trigger]s and our [reason] in its
      * `details` map (the later quic-events drafts' field; qlog tools that do not know it ignore it).
      */
     fun packetDropped(
-        space: SpaceId,
+        type: PacketType,
         pn: Long,
         size: Int,
         trigger: String,
@@ -271,7 +275,7 @@ internal class QlogWriter(
     ) = event(
         now,
         "transport:packet_dropped",
-        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}," +
+        "\"header\":{\"packet_type\":\"${packetType(type)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}," +
             "\"trigger\":\"$trigger\",\"details\":{\"reason\":\"$reason\"}",
     )
 
@@ -281,12 +285,13 @@ internal class QlogWriter(
      */
     fun packetLost(
         space: SpaceId,
+        zeroRtt: Boolean,
         pn: Long,
         now: TimeMark,
     ) = event(
         now,
         "recovery:packet_lost",
-        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn}",
+        "\"header\":{\"packet_type\":\"${if (zeroRtt) "0RTT" else packetType(space)}\",\"packet_number\":$pn}",
     )
 
     fun metricsUpdated(
@@ -298,12 +303,16 @@ internal class QlogWriter(
         "\"min_rtt\":${stats.minRtt.inWholeMicroseconds / 1000.0},\"smoothed_rtt\":${stats.smoothedRtt.inWholeMicroseconds / 1000.0},\"rtt_variance\":${stats.rttVar.inWholeMicroseconds / 1000.0},\"congestion_window\":${stats.cwnd},\"bytes_in_flight\":${stats.bytesInFlight},\"pto_count\":${stats.ptoCount}",
     )
 
+    /** `connectivity:connection_state_updated` (section 4.6): the state the connection left and the one it entered. */
     fun connectionStateUpdated(
-        state: ConnectionState,
+        old: ConnectionState,
+        new: ConnectionState,
         now: TimeMark,
-    ) = event(now, "connectivity:connection_state_updated", "\"new\":\"${stateName(state)}\"")
+    ) = event(now, "connectivity:connection_state_updated", "\"old\":\"${stateName(old)}\",\"new\":\"${stateName(new)}\"")
 
-    /** The ConnectionState of quic-events-04 section 4.6 (Figure 7) each of ours is. */
+    /** quic-events-04 section 8.3 Owner: "local" or "remote" (our [Initiator.Peer]). */
+    private fun owner(i: io.kuicksilver.quic.Initiator): String = if (i == io.kuicksilver.quic.Initiator.Local) "local" else "remote"
+
     private fun stateName(state: ConnectionState): String =
         when (state) {
             ConnectionState.Handshaking -> "handshake_started"
@@ -323,14 +332,14 @@ internal class QlogWriter(
         val d =
             when (reason) {
                 is QuicException.ConnectionLost.TransportClosed -> {
-                    "\"owner\":\"${reason.initiator.name.lowercase()}\"${connectionCode(reason.code)}," +
+                    "\"owner\":\"${owner(reason.initiator)}\"${connectionCode(reason.code)}," +
                         "\"reason\":\"${escape(
                             reason.reason,
                         )}\""
                 }
 
                 is QuicException.ConnectionLost.ApplicationClosed -> {
-                    "\"owner\":\"${reason.initiator.name.lowercase()}\"" +
+                    "\"owner\":\"${owner(reason.initiator)}\"" +
                         QlogFrames.applicationError(StringBuilder(), "application_code", reason.code) + "," +
                         "\"reason\":\"${escape(
                             reason.reason,

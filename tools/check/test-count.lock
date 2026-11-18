@@ -717,6 +717,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.anUntra
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.concurrentStreamsNeverInterleaveRecords
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.fieldValuesAreLoggedWhenTheSinkOptsIn
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.hugeHeadersStayOneValidRecord
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_aFrameWhoseWriteFailedIsNotCreated
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_aThrowingSinkLeavesTheConnectionAlone
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_fieldValuesNeverReachADefaultTrace
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_peerBytesNeverBreakARecord
@@ -4502,6 +4503,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.SipHashTest.differe
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.SipHashTest.heapSliceHashesAsTheBuffer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.SipHashTest.sipHash24ReferenceVector
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessCloseKeysTest.statelessCloseFreesBothInitialKeys
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.aStatelessResetEndsTheTraceAfterTheDrainingPeriod
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.ackOnlyPacketsGrowWithoutGoingInFlight
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_aResetToThePreferredAddressIsRecognised
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.endpoint.StatelessResetTest.negative_quicLbDecryptionsAreRateLimited
@@ -4579,11 +4581,16 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.theSizeCapEndsQueuedEventsToo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.timesNeverGoBackInTheFile
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.aPacketSentWhileOneIsReceivedKeepsBothFrameLists
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.aRealExchangeLogsTypedFramesBothWays
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.everyFrameTypeIsTypedSentAndReceived
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_aPayloadThatDoesNotDecodeLeavesNoFrames
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_eachFrameTypeRefusesWhatTheDraftDoesNot
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_tokensAndPayloadsNeverReachTheTrace
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.aCloseIsLoggedOnceAndEveryStateUntilTheTraceEnds
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.aSecondEndWhileClosingLogsNoSecondClose
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.anEndpointCloseEndsTheTraces
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogLifecycleTest.negative_aFrameThatFailsToFormatLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aSinkThatCannotOpenLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aTraceThatCannotWriteLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.undecryptableInitialsOpenNoTraceThatStaysOpen

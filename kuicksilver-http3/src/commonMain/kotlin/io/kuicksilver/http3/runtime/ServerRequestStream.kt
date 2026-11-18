@@ -959,8 +959,8 @@ internal class ResponseWriterImpl(
                         ) {
                             throw ContentLengthMismatch(declaredLength, sent + n, more = true)
                         }
-                        session.qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
+                        session.qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                         st.output.flush()
                         sent += n
                         handedToTransport = sent

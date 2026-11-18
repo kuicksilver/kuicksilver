@@ -76,7 +76,8 @@ class StatelessResetTest {
         val events = HashMap<ConnectionCore, MutableList<ConnectionEvent>>()
         val batch = PacketBatch(16)
 
-        fun connect(): ConnectionCore = client.connect(QuicClientConfig.Builder(CoreFixtures.client()).build(), serverAddr, now)
+        fun connect(quic: io.kuicksilver.quic.QuicConfig = io.kuicksilver.quic.QuicConfig.Default): ConnectionCore =
+            client.connect(QuicClientConfig.Builder(CoreFixtures.client()).apply { this.quic = quic }.build(), serverAddr, now)
 
         private fun drain(c: ConnectionCore) {
             val l = events.getOrPut(c) { ArrayList() }
@@ -465,6 +466,52 @@ class StatelessResetTest {
                 assertEquals(ConnectionState.Draining, c.state)
                 p.batch.clear()
                 assertEquals(0, c.poll(p.batch, p.now), "draining: no CONNECTION_CLOSE, nothing at all")
+            } finally {
+                restarted.close()
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A traced client that ends by a stateless reset (RFC 9000 section 10.3) logs one connection_closed with the trigger
+     * "stateless_reset" (quic-events-04 section 4.3), drains, and its trace ends when the draining period is over.
+     */
+    @Test fun aStatelessResetEndsTheTraceAfterTheDrainingPeriod() {
+        val traces =
+            io.kuicksilver.quic.qlog.QlogLifecycleTest
+                .Traces()
+        val p = Pair()
+        try {
+            val c = p.connect(io.kuicksilver.quic.quicConfig { qlog = traces })
+            assertTrue(p.handshake(c))
+            repeat(5) { p.step() }
+            val restarted =
+                EndpointCore(
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                        }.build(),
+                    Random(99),
+                )
+            try {
+                val id = c.openStream(true)
+                c.writeStream(id, ByteArray(100), 0, 100, false)
+                p.batch.clear()
+                assertTrue(c.poll(p.batch, p.now) >= 1)
+                assertNull(p.feed(restarted, p.batch.buffer(0).toByteArray(p.batch.length(0)), clientAddr))
+                p.feed(p.client, p.stateless(restarted).single(), serverAddr)
+                val t = traces.all.single()
+                assertEquals(0, t.closed, "the draining period is still traced")
+                repeat(400) { if (c.state != ConnectionState.Closed) p.step() }
+                assertEquals(ConnectionState.Closed, c.state)
+                assertEquals(1, t.closed, "released after the draining period")
+                val closes = t.records.filter { "connectivity:connection_closed" in it }
+                assertEquals(1, closes.size)
+                assertTrue("\"trigger\":\"stateless_reset\"" in closes.single(), closes.single())
             } finally {
                 restarted.close()
             }
