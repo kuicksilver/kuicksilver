@@ -4,11 +4,9 @@
 
 package io.kuicksilver.ktor.client.pac
 
-import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.allocArrayOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
@@ -16,7 +14,6 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.staticCFunction
-import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.JavaScriptCore.JSContextGetGlobalObject
@@ -32,9 +29,8 @@ import platform.JavaScriptCore.JSObjectMakeFunctionWithCallback
 import platform.JavaScriptCore.JSObjectRef
 import platform.JavaScriptCore.JSObjectSetProperty
 import platform.JavaScriptCore.JSStringCreateWithCharacters
+import platform.JavaScriptCore.JSStringGetCharactersPtr
 import platform.JavaScriptCore.JSStringGetLength
-import platform.JavaScriptCore.JSStringGetMaximumUTF8CStringSize
-import platform.JavaScriptCore.JSStringGetUTF8CString
 import platform.JavaScriptCore.JSStringRef
 import platform.JavaScriptCore.JSStringRelease
 import platform.JavaScriptCore.JSValueIsNull
@@ -155,6 +151,8 @@ internal class PacContext(
             }
             val text = stringText(js)
             if (text.any { it.code > 0x7F }) throw PacScriptException("FindProxyForURL returned a string that is not ASCII")
+            // read whole, a NUL would hide what follows it from the grammar (`PROXY a:1<NUL>junk`): no answer has one
+            if ('\u0000' in text) throw PacScriptException("FindProxyForURL returned a string with a NUL")
             return text
         } finally {
             JSStringRelease(js)
@@ -304,13 +302,15 @@ private fun jsText(
     }
 }
 
+/**
+ * [js]'s UTF-16 characters as they are, the whole string: a NUL in it stays (a copy through a C string ended there, so
+ * `a.test<NUL>x` read as `a.test`).
+ */
 private fun stringText(js: JSStringRef): String {
-    val size = JSStringGetMaximumUTF8CStringSize(js)
-    return memScoped {
-        val buf = allocArray<ByteVar>(size.toLong())
-        JSStringGetUTF8CString(js, buf, size)
-        buf.toKString()
-    }
+    val length = JSStringGetLength(js).toInt()
+    if (length == 0) return ""
+    val chars = JSStringGetCharactersPtr(js) ?: return ""
+    return CharArray(length) { chars[it].toInt().toChar() }.concatToString()
 }
 
 /** The longest thrown value whose text a [PacScriptException] message repeats. */
@@ -319,7 +319,10 @@ private const val MAX_ERROR_CHARS = 512
 /** The longest argument a native function takes (a host name has at most 253 characters). */
 private const val MAX_NATIVE_ARGUMENT = 1024
 
-/** The first argument as a string, or null without one or when it is longer than [MAX_NATIVE_ARGUMENT]. */
+/**
+ * The first argument as a string, or null without one, when it is longer than [MAX_NATIVE_ARGUMENT] or when it holds a
+ * NUL (no host name has one: `a.test<NUL>x` is no lookup of `a.test`).
+ */
 private fun firstArgument(
     ctx: JSContextRef?,
     count: ULong,
@@ -328,7 +331,7 @@ private fun firstArgument(
     if (count == 0uL || args == null) return null
     val js = JSValueToStringCopy(ctx, args[0], null) ?: return null
     try {
-        return if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) null else stringText(js)
+        return if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) null else stringText(js).takeIf { '\u0000' !in it }
     } finally {
         JSStringRelease(js)
     }

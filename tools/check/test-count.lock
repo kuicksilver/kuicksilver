@@ -1187,6 +1187,8 @@ kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAp
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aCallerGoneDuringPreparationLeavesNoRun
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aCancelledLookupDoesNotBreakTheOthers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aNulDoesNotEndTheScript
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aNulInADnsNameResolvesNothing
+kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_aNulInTheAnswerFailsTheRun
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_busyLoopIsAbandonedAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_deepRecursionFailsAndPacRecovers
 kuicksilver-ktor-client/src/appleTest	io.kuicksilver.ktor.client.pac.PacEngineAppleTest.negative_discoveredUrlIsHttpOnly

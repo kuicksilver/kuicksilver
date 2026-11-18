@@ -522,6 +522,30 @@ class PacEngineAppleTest {
         }
 
     /**
+     * A NUL inside an answer fails the run: the answer is read back whole (UTF-16), not up to the NUL, so
+     * `PROXY a.test:1<NUL>junk` is not taken for `PROXY a.test:1`. Before, the copy through a C string cut it there and
+     * the cut answer was used.
+     */
+    @Test fun negative_aNulInTheAnswerFailsTheRun() =
+        runBlocking {
+            val script = "function FindProxyForURL(url, host) { return 'PROXY a.test:1\\u0000junk'; }"
+            assertNull(PacRunner.findProxy("nul-answer", script, "https://x.test:443/", "x.test", 2_000))
+        }
+
+    /**
+     * A name with a NUL resolves to nothing and never reaches the resolver: `dnsResolve('a.test<NUL>x')` is not a lookup
+     * of `a.test` (nor is `isResolvable`'s). Before, the argument was read up to the NUL and `a.test` was resolved.
+     */
+    @Test fun negative_aNulInADnsNameResolvesNothing() =
+        runBlocking {
+            val script =
+                "function FindProxyForURL(url, host) { var n = 'a.test\\u0000x'; " +
+                    "return dnsResolve(n) === null && dnsResolveEx(n) === '' && !isResolvable(n) ? 'PROXY nul.test:1' : 'DIRECT'; }"
+            assertEquals("PROXY nul.test:1", PacRunner.findProxy("nul-dns", script, "https://x.test:443/", "x.test", 2_000))
+            assertEquals(0, host.resolveCalls.value)
+        }
+
+    /**
      * A run that overruns gives no answer and its thread is abandoned; while [PacRunner.MAX_ABANDONED] are, no script
      * runs; once they end, their threads go and scripts run again.
      */
