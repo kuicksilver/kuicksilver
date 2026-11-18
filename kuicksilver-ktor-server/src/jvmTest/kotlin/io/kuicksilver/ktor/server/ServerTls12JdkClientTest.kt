@@ -160,7 +160,8 @@ class ServerTls12JdkClientTest {
                     val outcome =
                         withContext(Dispatchers.IO) {
                             runCatching {
-                                (jdkContext(keys).socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket).use { s ->
+                                val factory = jdkContext(keys).socketFactory
+                                (factory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket).use { s ->
                                     s.soTimeout = 20_000
                                     s.sslParameters =
                                         s.sslParameters.apply {
