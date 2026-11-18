@@ -158,7 +158,7 @@ assert f["regression"]["tests"] == 2
 assert d["benchmarks"]["goodput"][0]["median_kbps"] == 9200 and d["benchmarks"]["handshakes"][0]["median"] == 1745
 html = {n: open(f"{v}/verify/{n}.html", encoding="utf-8").read() for n in ("interop", "fuzzing", "conformance", "benchmarks", "platforms", "index")}
 assert '<span class="fail">h2 ✗</span>' in html["interop"] and "OkHttpToServerH2Test.post1MiB()" in html["interop"]
-assert "on an earlier commit (fedcba987654)" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
+assert "on an earlier commit" in html["fuzzing"] and "(" + "fedcba987654" + ")" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
 assert "h2spec (h2c)" in html["conformance"] and "not run in hosted CI" in html["conformance"] and "h3spec" in html["conformance"]
 assert "9 377" in html["benchmarks"] and "9 200" in html["benchmarks"]
 assert "0123456789abcdef0123456789abcdef01234567" in html["platforms"] and "2026-11-18 09:00 UTC" in html["platforms"]
