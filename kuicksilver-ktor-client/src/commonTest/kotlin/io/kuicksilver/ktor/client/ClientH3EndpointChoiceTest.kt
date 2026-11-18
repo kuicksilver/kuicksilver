@@ -23,6 +23,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -102,7 +103,8 @@ class ClientH3EndpointChoiceTest {
      * or after the store and before it reads `closed`), and checks that the pool keeps no endpoint and the one bound is
      * closed. Nothing may leave the client: no connection is attempted, and a UDP port this test binds (the loopback
      * destination, and the target of the closed endpoint's connect) receives nothing but the test's own marker. False when
-     * the endpoint could not be bound (no IPv6 loopback here).
+     * the sink could not be bound (no IPv6 loopback here); once it is, the pool's endpoint must be bound too, on the same
+     * kind of socket, or the case fails.
      *
      * The sink and the marker are [DatagramIo] sockets, not ktor-network ones: on Native, ktor-network binds `::1` as the
      * wildcard `::` and its datagrams to `::1` never arrive (KTOR-10017, see `KtorDatagramIo`), so the ::1 case would bind a
@@ -132,7 +134,7 @@ class ClientH3EndpointChoiceTest {
             }
             runCatching { c.get("https://$target/") }
             c.close()
-            val ep = bound ?: return false
+            val ep = bound ?: fail("$case: no endpoint was bound")
             assertEquals(0, attempts, "$case: no connection is attempted")
             assertFalse(pool.endpointBoundForTest, "$case: the pool holds no endpoint")
             val tls = (c.engine as KuicksilverEngine).config.tlsConfigFor("server.test", listOf(Http3Endpoint.H3))
@@ -141,16 +143,18 @@ class ClientH3EndpointChoiceTest {
             }
             // the test's own marker, sent last: a datagram of the client would have been queued at the sink before it
             DatagramIo.open(InetSocketAddress(sinkHost, 0)).use { marker ->
-                val out = PacketBatch(1)
-                out.buffer(0)[0] = 42
-                out.setLength(0, 1)
-                out.setAddress(0, sinkAddress)
-                assertEquals(1, marker.send(out), "$case: the marker left")
+                PacketBatch(1).use { out ->
+                    out.buffer(0)[0] = 42
+                    out.setLength(0, 1)
+                    out.setAddress(0, sinkAddress)
+                    assertEquals(1, marker.send(out), "$case: the marker left")
+                }
             }
-            val first = PacketBatch(1)
-            withTimeout(5.seconds) { sink.receive(first) }
-            val got = first.buffer(0).toByteArray(first.length(0))
-            assertContentEquals(byteArrayOf(42), got, "$case: the sink received a datagram of the client")
+            PacketBatch(1).use { first ->
+                withTimeout(5.seconds) { sink.receive(first) }
+                val got = first.buffer(0).toByteArray(first.length(0))
+                assertContentEquals(byteArrayOf(42), got, "$case: the sink received a datagram of the client")
+            }
         }
         return true
     }
