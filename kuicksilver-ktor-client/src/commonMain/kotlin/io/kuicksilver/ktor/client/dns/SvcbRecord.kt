@@ -204,7 +204,7 @@ internal object SvcbCodec {
     }
 
     /**
-     * `ech` (RFC 9848 section 3): "the value of the parameter is an ECHConfigList (Section 4 of [ECH]), including the
+     * `ech` (RFC 9848 section 3): "the value of the parameter is an ECHConfigList (Section 4 of \[ECH\]), including the
      * redundant length prefix", that is `ECHConfig ECHConfigList<4..2^16-1>` (RFC 9849 section 4), each ECHConfig a version
      * and a length-prefixed body (section 4: the framing every version keeps, so one of another version is skipped, not
      * malformed). A value whose framing does not hold is a malformed SvcParamValue (RFC 9460 section 2.2): the RRset is
