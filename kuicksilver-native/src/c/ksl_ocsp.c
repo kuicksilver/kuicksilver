@@ -459,17 +459,17 @@ static int anchor_status(X509_STORE_CTX *x, X509 *anchor) {
         /* the outer path's time, depth and security level; no name, any purpose (a CA certificate), no partial chain */
         if (X509_VERIFY_PARAM_set1(p, X509_STORE_CTX_get0_param(x)) == 1 &&
             X509_VERIFY_PARAM_clear_flags(p, X509_V_FLAG_PARTIAL_CHAIN | X509_V_FLAG_CRL_CHECK_ALL) == 1 &&
-            X509_VERIFY_PARAM_set_flags(p, X509_V_FLAG_CRL_CHECK) == 1 && X509_VERIFY_PARAM_set1_host(p, NULL, 0) == 1 &&
-            X509_VERIFY_PARAM_set1_ip(p, NULL, 0) == 1 && X509_VERIFY_PARAM_set_purpose(p, X509_PURPOSE_ANY) == 1 &&
+            X509_VERIFY_PARAM_set_flags(p, X509_V_FLAG_CRL_CHECK) == 1 &&
+            X509_VERIFY_PARAM_set1_host(p, NULL, 0) == 1 && X509_VERIFY_PARAM_set1_ip(p, NULL, 0) == 1 &&
+            X509_VERIFY_PARAM_set_purpose(p, X509_PURPOSE_ANY) == 1 &&
             X509_STORE_CTX_set_app_data(n, (void *)&anchor_check_mark) == 1) {
             X509_STORE_CTX_set_verify_cb(n, crl_verify_cb);
             if (X509_verify_cert(n) == 1)
                 e = X509_V_OK;
             else {
                 int ne = X509_STORE_CTX_get_error(n);
-                e = crl_error(ne)                                         ? ne
-                    : ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY ||
-                            ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT
+                e = crl_error(ne) ? ne
+                    : ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY || ne == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT
                         ? X509_V_ERR_CRL_SIGNATURE_FAILURE
                         : X509_V_ERR_UNABLE_TO_GET_CRL;
             }

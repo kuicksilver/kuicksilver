@@ -232,7 +232,7 @@ static ksl_ctx *rv_server(const char *leaf, int tls12) {
     return c;
 }
 static const char *client_root = "rv-root"; /* the client's AnchoredCa */
-static const char *client_root2 = NULL;      /* a second root, or NULL */
+static const char *client_root2 = NULL;     /* a second root, or NULL */
 static ksl_ctx *rv_client(int revocation, int verify_mode, int tls12, const char *crl) {
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
     ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
@@ -510,7 +510,8 @@ static void test_crls(void) {
     hs good_tcp = good;
     good_tcp.mode = KSL_MODE_TCP;
     o = handshake_with(&good_tcp, "crl-root-revokes-mid");
-    CHECK(o.rc == KSL_ERROR && o.alert == 44 && o.x509 == X509_V_ERR_CERT_REVOKED, "negative_crl_anchor_revoked over TCP");
+    CHECK(o.rc == KSL_ERROR && o.alert == 44 && o.x509 == X509_V_ERR_CERT_REVOKED,
+          "negative_crl_anchor_revoked over TCP");
     client_root2 = NULL;
     client_root = "rv-root";
     o = handshake_with(&good, "crl-root-revokes-mid");
