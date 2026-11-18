@@ -14,8 +14,9 @@ import io.kuicksilver.quic.QlogRecorder
 
 /**
  * The HTTP/3 events of a connection's qlog trace (docs/guide/http3.md, "qlog"), in the schema of the transport's trace:
- * qlog 0.3, draft-ietf-quic-qlog-main-schema-05, here draft-ietf-quic-qlog-h3-events-04 (category `http`):
- * `http:parameters_set`, `http:parameters_restored`, `http:stream_type_set`, `http:frame_created` and `http:frame_parsed`.
+ * qlog 0.3, draft-ietf-quic-qlog-main-schema-05, here draft-ietf-quic-qlog-h3-events-04 (docs/adr/0021-qlog-http3-events.md):
+ * `http:parameters_set`, `http:parameters_restored`, `http:stream_type_set`, `http:frame_created`, `http:frame_parsed`,
+ * `qpack:state_updated` and `qpack:stream_state_updated`.
  *
  * Frames and stream types that draft does not define (PRIORITY_UPDATE, WebTransport's signals) are its `unknown` with their
  * `raw_frame_type` (or `raw_stream_type`), plus members of their own that qlog tools ignore. Field values are redacted

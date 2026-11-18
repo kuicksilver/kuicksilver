@@ -719,6 +719,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.fieldVa
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.hugeHeadersStayOneValidRecord
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_aThrowingSinkLeavesTheConnectionAlone
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_fieldValuesNeverReachADefaultTrace
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_peerBytesNeverBreakARecord
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.negative_theSchemaCheckRefusesWhatQvisWouldNot
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.qpackStateAndBlockedStreamsAreLogged
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.H3QlogTest.unknownFramesAndStreamTypesAreLoggedByNumber
@@ -4558,6 +4559,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.peerSt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.peerStreamOfWrongInitiatorIsStateError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.flow.StreamLimitsTest.streamsBlockedWhenLocalLimitReached
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.AsyncQlogSinkTest.aStalledSinkDoesNotStallTheLoop
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.AsyncQlogSinkTest.headerValuesAreTheDelegatesChoice
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.AsyncQlogSinkTest.recordsKeepTheirOrderAndCloseClosesLiveTraces
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.AsyncQlogSinkTest.sampleEveryTracesOneConnectionInN
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.DirectoryQlogSinkTest.ceilingsMustBePositive

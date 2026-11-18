@@ -467,6 +467,42 @@ class H3QlogTest {
             for (t in inner.traces) QlogSchema.check(t.records)
         }
 
+    /**
+     * Peer bytes (field names and values, a PRIORITY_UPDATE's value) never end a record or break its JSON: quotes,
+     * backslashes, control characters, the JSON-SEQ record separator and lone surrogates are escaped.
+     */
+    @Test fun negative_peerBytesNeverBreakARecord() {
+        val recorded = ArrayList<String>()
+        val q =
+            H3Qlog(
+                object : io.kuicksilver.quic.QlogRecorder {
+                    override val enabled = true
+                    override val logHeaderValues = true
+
+                    override fun record(
+                        name: String,
+                        data: String,
+                    ) {
+                        recorded += "{\"time\":0.0,\"name\":\"$name\",\"data\":{$data}}"
+                    }
+                },
+            )
+        val nasty = "a\"b\\c\u0000\u001e\n\r\t\u007f\uD800z\uDC00\u2028}]"
+        q.frameParsed(0, FrameType.HEADERS, 10, q.headers(listOf(nasty to nasty)))
+        val prio = VarInt.encode(4) + nasty.encodeToByteArray()
+        q.frameParsed(2, FrameType.PRIORITY_UPDATE_REQUEST, prio.size.toLong(), q.controlFrame(FrameType.PRIORITY_UPDATE_REQUEST, prio))
+        q.frameParsed(2, FrameType.GOAWAY, 1, q.controlFrame(FrameType.GOAWAY, byteArrayOf(0x40))) // a truncated varint
+        val header =
+            "\u001e{\"qlog_format\":\"JSON-SEQ\",\"qlog_version\":\"0.3\"," +
+                "\"trace\":{\"vantage_point\":{\"type\":\"server\"},\"common_fields\":{\"time_format\":\"relative\"}}}\n"
+        val events = QlogSchema.check(listOf(header) + recorded.map { "\u001e$it\n" })
+        val field = ((events[0]["data"] as Map<*, *>).frame()["headers"] as List<*>).single() as Map<*, *>
+        assertEquals(nasty, field["name"])
+        assertEquals(nasty, field["value"])
+        assertEquals(nasty.encodeToByteArray().decodeToString(), (events[1]["data"] as Map<*, *>).frame()["priority_field_value"])
+        assertEquals("unknown", (events[2]["data"] as Map<*, *>).frame()["frame_type"], "an unparsable GOAWAY is logged by its number")
+    }
+
     /** The checker itself: a corrupt or off-schema record fails it. */
     @Test fun negative_theSchemaCheckRefusesWhatQvisWouldNot() {
         val header =

@@ -209,7 +209,8 @@ internal class RequestFrames(
         frame: (H3Qlog) -> String,
     ) {
         val q = qlog ?: return
-        if (q.enabled) q.frameParsed(streamId ?: -1, type, length, frame(q))
+        val id = streamId ?: return
+        if (q.enabled) q.frameParsed(id, type, length, frame(q))
     }
 
     private fun ahead(bytes: Long) {

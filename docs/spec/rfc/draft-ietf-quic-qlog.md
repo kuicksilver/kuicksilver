@@ -70,15 +70,16 @@ model 3.25).
 - concurrency, size and failing sinks — `runtime.H3QlogTest.concurrentStreamsNeverInterleaveRecords`,
   `runtime.H3QlogTest.hugeHeadersStayOneValidRecord`, `runtime.H3QlogTest.negative_aThrowingSinkLeavesTheConnectionAlone`,
   `runtime.H3QlogTest.aStalledSinkNeverHoldsTheConnection`, `runtime.H3QlogTest.anUntracedConnectionHasNoRecorder`
-- the schema check refuses corrupt and off-schema records — `runtime.H3QlogTest.negative_theSchemaCheckRefusesWhatQvisWouldNot`
+- peer bytes never break a record; the schema check refuses corrupt and off-schema records —
+  `runtime.H3QlogTest.negative_peerBytesNeverBreakARecord`, `runtime.H3QlogTest.negative_theSchemaCheckRefusesWhatQvisWouldNot`
 
 **Peers.** quic-go writes `http3:frame_created`/`frame_parsed`, `http3:datagram_*` of h3-events-12
 (`http3/qlog/event.go:13`, frame members `http3/qlog/frame.go:56-79`, `header_fields`) and logs field values unless the
 application wraps its tracer in `RedactHeaders` (`http3/qlog/header_redactor.go:12-29`); a HEADERS frame it cannot
 decode is logged with its length and no fields (`http3/qlog.go:11-19`), as here. quiche writes the `http3:` events of
 the current drafts (`qlog/src/events/mod.rs:549-574`), settings by their IANA names (`quiche/src/h3/frame.rs:370-410`),
-a frame's `length` as its payload length (`quiche/src/h3/mod.rs:1545-1547`), and HEADERS frames it parsed with empty
-`headers` (`frame.rs:343-350`). Both write `qlog_version` 0.3 in the header for qvis (quic-go
+a frame's `length` as its payload length (`quiche/src/h3/mod.rs:1545-1547`), and the fields of a HEADERS frame once
+decoded, values included, with no redaction (`mod.rs:3156-3183`). Both write `qlog_version` 0.3 in the header for qvis (quic-go
 `qlogwriter/trace.go:115-121`); Go's x/net writes main-schema-04 and quic-events-03 with 0.3 because "qvis only
 supports up to 0.3" (`net/quic/qlog/qlog.go:192-196`).
 
@@ -89,4 +90,6 @@ supports up to 0.3" (`net/quic/qlog/qlog.go:192-196`).
 - the move to the current drafts (main-schema/quic-events/h3-events -12, `http3:` names) is one change for both layers.
 - not written: `http:push_resolved` (no server push), `qpack:dynamic_table_updated`, `qpack:headers_encoded`,
   `qpack:headers_decoded`, `qpack:instruction_created` and `qpack:instruction_parsed` (the QPACK codecs do not expose
-  single instructions; the field sections are in `http:frame_*`).
+  single instructions; the field sections are in `http:frame_*`). HTTP/3 datagrams (RFC 9297) have events only in the
+  later drafts (`http3:datagram_created`/`datagram_parsed`); the QUIC DATAGRAM frames that carry them are in the
+  transport's events. Capsules travel in DATA frames and are logged as such; no draft defines capsule events.
