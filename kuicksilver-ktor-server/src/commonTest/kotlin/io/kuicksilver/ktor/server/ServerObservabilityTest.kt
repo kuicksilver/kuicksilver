@@ -20,6 +20,7 @@ import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,14 @@ import kotlin.time.TimeSource
 class ServerObservabilityTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    private companion object {
+        /** How long a client that comes after the stop waits for its handshake: a refusal ends it long before. */
+        val LATE_HANDSHAKE = 30.seconds
+
+        /** The bound on the refusal of a late client: a third of [LATE_HANDSHAKE], ample for a loaded host. */
+        val REFUSED_WITHIN = 10.seconds
+    }
+
     /** Lines appended from any thread. */
     private class Lines {
         private val ref = AtomicReference<List<String>>(emptyList())
@@ -60,15 +69,21 @@ class ServerObservabilityTest {
 
     private suspend fun eventually(cond: () -> Boolean) = withTimeout(5.seconds) { while (!cond()) delay(10) }
 
+    /**
+     * A new HTTP/3 client is refused at its first Initial once the stop began, while the call in flight (held until the
+     * refusal was seen) still finishes. The late clients wait up to [LATE_HANDSHAKE] for their handshake, so a refusal
+     * within [REFUSED_WITHIN] (a third of it) is the server's CONNECTION_REFUSED, never a client that gave up.
+     */
     @Test fun stopRefusesNewHttp3ClientsWhileInFlightCallsFinish() =
         h3ServerTest {
             val arrived = CompletableDeferred<Unit>()
+            val refusedSeen = CompletableDeferred<Unit>()
             val (server, port) =
                 tlsServer {
                     routing {
                         get("/slow") {
                             arrived.complete(Unit)
-                            delay(2000)
+                            refusedSeen.await()
                             call.respondText("done")
                         }
                     }
@@ -80,14 +95,16 @@ class ServerObservabilityTest {
                     val response = async { c.request(get("/slow")).let { it.status to it.body.readFullBody().decodeToString() } }
                     arrived.await()
                     val t0 = TimeSource.Monotonic.markNow()
-                    val stop = async(Dispatchers.Default) { server.stop(5000, 10000) }
-                    // a new client is refused at its first Initial (CONNECTION_REFUSED), long before the slow call ends
+                    // the grace period outlasts the wait for the refusal: the call in flight is never cut short by it
+                    val stop = async(Dispatchers.Default) { server.stop(40_000, 50_000) }
+                    // a new client is refused at its first Initial (CONNECTION_REFUSED) while the call in flight still runs
                     var refused: QuicException.ConnectionLost.TransportClosed? = null
-                    withTimeout(1500) {
+                    val lateQuic = quicConfig { handshakeTimeout = LATE_HANDSHAKE }
+                    withTimeout(REFUSED_WITHIN) {
                         while (refused == null) {
                             val late = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
                             try {
-                                late.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3"))).close()
+                                late.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")), lateQuic).close()
                                 delay(20) // the stop has not reached the endpoint yet
                             } catch (e: QuicException.ConnectionLost.TransportClosed) {
                                 refused = e
@@ -97,7 +114,8 @@ class ServerObservabilityTest {
                         }
                     }
                     assertEquals(TransportError.CONNECTION_REFUSED, refused!!.code)
-                    assertTrue(t0.elapsedNow() < 1500.milliseconds, "refused promptly")
+                    assertTrue(t0.elapsedNow() < REFUSED_WITHIN, "refused at the Initial, not after a handshake timeout")
+                    refusedSeen.complete(Unit)
                     assertEquals(200 to "done", response.await(), "the in-flight call finished in the grace period")
                     stop.await()
                 }
