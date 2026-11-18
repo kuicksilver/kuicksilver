@@ -1171,7 +1171,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and its ticker, which every poll of the connection wakes) after an acceptance until the server acknowledged the reset,
   and until the connection ended when it never did. Its final size stands at the acceptance, and the wrapper now goes
   then, as it does for a stream reset in 1-RTT; only its `awaitFinished` still waits for the acknowledgment (RFC 9000
-  section 3.1), and a lost RESET_STREAM is sent again from the code and final size it carries (section 13.3). Rejected
+  section 3.1), its `awaitSendStopped` now returns null at the acceptance (both halves are done, as for a stream reset in
+  1-RTT) instead of waiting for the acknowledgment or the connection's end, and a lost RESET_STREAM is sent again from the code and final size it carries (section 13.3). Rejected
   and lost 0-RTT keep their behaviour (the streams fail with `EarlyDataRejected` or the connection's loss). Pinned by
   `ZeroRttApiTest.acceptedEarlyStreamsResetAndNeverAcknowledgedLetTheirWrappersGo` and
   `ZeroRttTest.earlyStreamRetiredBeforeTheAnswerIsOfferedAgainAtTheAcceptance`.
