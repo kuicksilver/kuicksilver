@@ -77,8 +77,8 @@ internal class PacSource(
         if (script.length > PAC_MAX_SCRIPT_BYTES || script.encodeToByteArray().size > PAC_MAX_SCRIPT_BYTES) {
             throw PacScriptException("the script is larger than $PAC_MAX_SCRIPT_BYTES bytes")
         }
+        PacRunner.preparedForTest?.invoke() // before the string is made: a hook that throws leaks nothing
         text = jsString(script)
-        PacRunner.preparedForTest?.invoke()
     }
 
     fun close() {

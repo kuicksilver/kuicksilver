@@ -451,9 +451,9 @@ class PacEngineAppleTest {
             }
             try {
                 withTimeout(30.seconds) {
-                    val run = async(Dispatchers.Default) { PacRunner.findProxy("prep", ok, "https://x.test:443/", "x.test", 200) }
+                    val run = async(Dispatchers.Default) { PacRunner.findProxy("prep", ok, "https://x.test:443/", "x.test", 1_000) }
                     prepared.await()
-                    assertNull(withTimeoutOrNull(600) { run.join() }, "the caller waits for the preparation, past the run's limit")
+                    assertNull(withTimeoutOrNull(1_200) { run.join() }, "the caller waits for the preparation, past the run's limit")
                     go.complete(Unit)
                     assertEquals("PROXY ok.test:1", run.await())
                 }
