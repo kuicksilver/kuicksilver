@@ -785,7 +785,8 @@ default.
   first that differs hands the connection to HTTP/1.1, so the check reads at most 24 octets and never holds a short
   HTTP/1.1 request; the wait is inside the request-head deadline, so a slowloris on the preface is closed as one on an
   HTTP/1.1 head (3.22), and a stopping server does not wait for it (on `WithHttp11` the connection goes to HTTP/1.1,
-  closed as idle; on `Only`, and on TLS h2, it gets GOAWAY with last stream 0 and the close). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
+  closed as idle; on `Only`, and on TLS h2, it gets GOAWAY naming the last stream the core took, 0 when none, and
+  the requests taken before it are served, so none is left unanswered under a GOAWAY that names it, RFC 9113 §6.8). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
   HTTP/1.1 answer. Every limit of 3.23 (flood defences, field sections, deadlines, `http2RepeatOffenderPenalty`,
   `maxTcpConnections`) holds on h2c as on TLS.
 - **Proxy credentials.** Through a CONNECT tunnel `Proxy-Authorization` goes on the CONNECT only, never on an HTTP/2
@@ -801,7 +802,7 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
 `.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused`, `.upgradeH2cIsServedAsHttp11`; `H2cPrefaceCheckTest.negative_theFirstOctetThatDiffersDecides`,
 `.negative_anInputThatEndsInsideThePreface`; `ClientH2cTest.negative_anUnlistedHttpOriginStaysHttp11`,
 `.negative_httpsNeverUsesPriorKnowledge`, `.negative_h2cToAnHttp11OnlyServerFails`, `.negative_h2cToATlsPortFails`,
-`.negative_altSvcFrameOverH2cIsNotLearned`, `.negative_proxyAuthorizationNeverReachesTheOriginOverH2`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default), `.negative_aStopDoesNotWaitForAPrefaceInProgress` (TLS h2).
+`.negative_altSvcFrameOverH2cIsNotLearned`, `.negative_proxyAuthorizationNeverReachesTheOriginOverH2`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default), `.negative_aStopDoesNotWaitForAPrefaceInProgress` (TLS h2); `H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c`, `.negative_aRequestTakenAsTheStopWinsIsServedOverTls`.
 
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 

@@ -607,7 +607,8 @@ internal class H1Pool(
      * in the pool for [webSocketConnection] to take, which waits for its SETTINGS within [h2WebSocketSettingsWaitMillis]
      * and uses Extended CONNECT only when the server allows it (RFC 8441 section 3), else the WebSocket goes over HTTP/1.1
      * as on any connection without the setting. False when the route has a connection already (in use, full, or without
-     * the setting: as for `wss://`, no second one is opened for the WebSocket) or got HTTP/1.1 (HTTP_1_1_REQUIRED). A
+     * the setting: as for `wss://`, no second one is opened for the WebSocket), is marked HTTP_1_1_REQUIRED, or got
+     * HTTP/1.1 (HTTP_1_1_REQUIRED on the new connection). A
      * connection that cannot be opened fails the WebSocket, as it fails any request to a listed origin (no fallback).
      */
     @OptIn(io.ktor.utils.io.InternalAPI::class)
@@ -617,7 +618,10 @@ internal class H1Pool(
         dns: RequestDns,
         proxy: ResolvedProxy?,
     ): Boolean {
-        if (h2.usable(route).isNotEmpty()) return false
+        // a route that answered HTTP_1_1_REQUIRED takes no HTTP/2 for a while: the dial below would open an HTTP/1.1
+        // connection the WebSocket does not use (the caller checks it too, through h2Usable; kept here so the function holds
+        // on its own)
+        if (h2Refused.isRefused(route) || h2.usable(route).isNotEmpty()) return false
         val attributes = io.ktor.util.Attributes(concurrent = true)
         for (k in data.attributes.allKeys) {
             if (k == io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) continue

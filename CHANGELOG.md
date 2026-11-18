@@ -1188,8 +1188,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/2 client through a CONNECT tunnel: a request's own `Proxy-Authorization` field went on to the origin in the
   HTTP/2 field section (HTTP/1.1 drops it inside a tunnel); it now goes on the CONNECT only (RFC 9110 section 11.7.2).
 - HTTP/2 server: a stop waited for a client that had sent part of its connection preface, up to the stop's grace period:
-  the preface wait did not watch the stop. A stopping server now ends such a connection at once with GOAWAY (last stream
-  0) and closes it, over TLS and over h2c.
+  the preface wait did not watch the stop. A stopping server now ends such a connection at once with GOAWAY, over TLS
+  and over h2c; its last stream is the last one the core took (0 when none), and requests taken before it (a preface and
+  a request that arrived as the stop came) are served, never left unanswered under a GOAWAY that names them (RFC 9113
+  section 6.8).
 - HTTP/3 client (ktor-client) and `QuicConnection.rebind`: a local process could take the replies of an HTTP/3
   connection to a server on localhost on macOS (and the other BSD-socket systems, iOS included). The client's endpoint was
   bound to the wildcard address, which shares its port with a socket another process binds to 127.0.0.1 or ::1, and the

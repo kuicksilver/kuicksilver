@@ -59,6 +59,9 @@ class ClientH2cTest {
 
     /** HTTP/2 connections the server opened (its event listener's count of `connectionOpened` with HTTP/2). */
     private val h2Opened = MutableStateFlow(0)
+
+    /** HTTP/1.1 connections the server opened. */
+    private val h1Opened = MutableStateFlow(0)
     private val calls = MutableStateFlow(0)
 
     private suspend fun h2cServer(
@@ -79,7 +82,7 @@ class ClientH2cTest {
                     protocol: HttpProtocolVersion,
                     remote: io.ktor.network.sockets.InetSocketAddress?,
                 ) {
-                    if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 }
+                    if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 } else h1Opened.update { it + 1 }
                 }
             }
     }) {
@@ -349,6 +352,33 @@ class ClientH2cTest {
                     assertEquals("echo:cold HTTP/1.1", echo)
                     assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("http://127.0.0.1:$port/").version)
                     assertEquals(1, h2Opened.value)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A route that answered HTTP_1_1_REQUIRED (RFC 9113 section 7) is HTTP/1.1 for a while: a cold `ws://` there opens no
+     * h2c connection first, nor an HTTP/1.1 one it would not use, only its own Upgrade.
+     */
+    @Test fun negative_aColdWebSocketOnARouteThatRequiredHttp11DialsOnce() =
+        clientTest {
+            val (server, port) = h2cServer(H2cMode.WithHttp11)
+            try {
+                h2cClient(port, block = { install(WebSockets) }).use { c ->
+                    (c.engine as KuicksilverEngine).h1.h2Refused.mark("http://127.0.0.1:$port|null")
+                    var version: HttpProtocolVersion? = null
+                    withTimeout(20.seconds) {
+                        c.webSocket("ws://127.0.0.1:$port/ws") {
+                            version = call.response.version
+                            send(Frame.Text("x"))
+                            incoming.receive()
+                        }
+                    }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, version)
+                    assertEquals(0, h2Opened.value)
+                    assertEquals(1, h1Opened.value, "the WebSocket's own connection only")
                 }
             } finally {
                 server.stop(100, 500)

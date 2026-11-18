@@ -156,13 +156,25 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             conn = c
             h2Live.add(c)
             events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_2_0, remote) }
+
+            // each request the core takes is a call: a request's failure is its own (handleH2 catches it; the supervisor is
+            // the second line); the loop ends with the connection
+            fun serveRequests() =
+                launch {
+                    supervisorScope {
+                        for (r in c.requests) {
+                            launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout, scheme) }
+                        }
+                    }
+                }
             // RFC 9113 section 3.4: the client preface, within the request-head deadline (as the first request head on HTTP/1.1)
             // a preface read as the deadline fires is the preface (withTimeoutOrNull drops what the wait returned when its
             // timeout lands after it, and the connection was ended with GOAWAY). A stopping server reads no further request:
-            // a preface still arriving when it starts draining is not waited for (the GOAWAY below, last stream 0, tells the
-            // client nothing was processed), else one slow or silent client held the stop for the whole deadline
+            // a preface still arriving when it starts draining is not waited for, else one slow or silent client held the
+            // stop for the whole deadline
             val preface =
                 completedWithin(prefaceWithin) {
+                    configuration.h2BeforePrefaceRaceForTest?.invoke(c, draining)
                     coroutineScope {
                         val arrived = async { runCatching { c.awaitPreface() }.isSuccess }
                         try {
@@ -176,9 +188,15 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                     }.also { configuration.h2PrefaceForTest?.invoke() }
                 }
             if (preface != true) {
-                // section 9.1: GOAWAY before the close (no stream was taken: its last stream is 0); a client that does not
-                // even read it is cut off after the send-stall deadline
+                // section 9.1: GOAWAY before the close, its last stream the last one the core took. The core reads on its
+                // own, so a preface and requests that arrived as the stop won the wait (or as the deadline fired) may have
+                // been taken: section 6.8, those up to the last stream named "might have been processed" and the client
+                // will not repeat them, so they are served to their end; with nothing taken the last stream is 0 and the
+                // client may repeat everything. Then the close: a client that does not even read the GOAWAY is cut off
+                // after the send-stall deadline
                 c.goAway(Http2ErrorCode.NO_ERROR)
+                serveRequests()
+                c.awaitEnded()
                 if (withTimeoutOrNull(sendTimeout) { c.awaitClosed() } == null) {
                     c.abort(
                         IOException(
@@ -208,14 +226,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
                         }
                     },
                 )
-            launch {
-                // a request's failure is its own (handleH2 catches it; the supervisor is the second line)
-                supervisorScope {
-                    for (r in c.requests) {
-                        launch { handleH2(r, local, remote, peer, authorityCheck, connAltSvc, idle, sendTimeout, scheme) }
-                    }
-                }
-            }
+            serveRequests()
             c.awaitClosed()
             watchers.forEach { it.cancel() }
         }

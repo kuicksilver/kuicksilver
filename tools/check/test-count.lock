@@ -1477,6 +1477,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2WebSoc
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.aColdWebSocketToAnH2cOnlyOriginOpensTheH2cConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.aListedHttpOriginGoesOverH2c
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.h2cThroughAnHttpProxyUsesConnect
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_aColdWebSocketOnARouteThatRequiredHttp11DialsOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_aColdWebSocketWithoutExtendedConnectGoesOverHttp11
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_altSvcFrameOverH2cIsNotLearned
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_anUnlistedHttpOriginStaysHttp11
@@ -3334,6 +3335,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDead
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h1.H1PipelineDeadlineRaceTest.negative_aResponseTakenAsTheIdleTimeoutFiresIsWritten
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.ClientSignalConcurrencyTest.observedOrderIsMonotonic
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDeadlineRaceTest.negative_aPrefaceReadAsItsDeadlineFiresIsThePreface
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverTls
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.NativeServerH3Test.h3ServedAndAdvertisedOnNative
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.contentRoundTrips
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.descriptorIsCloseOnExec
