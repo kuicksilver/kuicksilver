@@ -142,10 +142,11 @@ class KslUdpSocketTest {
     }
 
     /**
-     * A close ends a receive that waits inside the socket: the receive returns 0 well before its timeout. The close comes
-     * once the receiving thread is counted inside the receive (it stays inside until a datagram, which nobody sends, or its
-     * timeout of 30 s), and the test records that it still was when the close began; a run where it was not (it never got
-     * in within 10 s) does not count and the next one tries again with a fresh socket.
+     * A close ends a receive that waits inside the native receive: it returns 0 well before its timeout. The close comes
+     * once the native receive counted its first, empty recvmsg (the socket's receive syscalls): from there it goes
+     * straight to poll on the socket and on its wake pipe, so the close lands either in that poll or just before it, and
+     * either way only the wake pipe, which the close writes, ends it, never a refusal at the door of a receive not yet
+     * entered. A run whose receive never got that far within 10 s does not count, and the next one tries again.
      */
     @Test fun closeUnblocksReceive() {
         if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
@@ -163,8 +164,9 @@ class KslUdpSocketTest {
                         (System.nanoTime() - t0) / 1_000_000
                 }
             val giveUp = System.nanoTime() + 10_000_000_000L
-            while (s.callersInsideForTest == 0 && System.nanoTime() < giveUp) Thread.onSpinWait()
-            val insideAtClose = s.callersInsideForTest == 1
+            while (s.stats.receiveSyscalls == 0L && System.nanoTime() < giveUp) Thread.onSpinWait()
+            // past its first recvmsg, and still in the receive (nothing is sent to it, its timeout is 30 s)
+            val insideAtClose = s.stats.receiveSyscalls > 0 && t.isAlive
             s.close()
             t.join(20_000)
             assertFalse(t.isAlive, "the receive still waits after the close")
@@ -176,7 +178,7 @@ class KslUdpSocketTest {
                 return
             }
         }
-        fail("the receiving thread never got inside the receive")
+        fail("the receive never reached its native wait")
     }
 
     /** A receive error on a socket nobody shut down throws instead of looking like a timeout. */
