@@ -44,6 +44,9 @@ public class ProxyProtocolConfig private constructor(
         return blocks.any { it.contains(ip) }
     }
 
+    /** How long a connection may take to send its header, with [remaining] of the request-head deadline left. */
+    internal fun headerWait(remaining: Duration): Duration = minOf(headerTimeout, remaining).coerceAtLeast(MIN_HEADER_TIMEOUT)
+
     /** For logs. */
     override fun toString(): String = "PROXY protocol from $trustedSources"
 
@@ -65,10 +68,12 @@ public class ProxyProtocolConfig private constructor(
         }
 
         /**
-         * How long a connection may take, from accept, to deliver its whole header; 5 s by default, at most the engine's
+         * How long a connection may take, from accept, to deliver its whole header: 5 s by default, at least 3 s (section 2:
+         * "The receiver may apply a short timeout and decide to abort the connection if the protocol header is not seen within
+         * a few seconds (at least 3 seconds to cover a TCP retransmit)."). The wait is also cut to what is left of the engine's
          * `requestHeaderTimeoutSeconds`, which goes on counting from accept through the TLS handshake and the first request
-         * head. A proxy sends the header at once with the connection ("the sender must always ensure that the header is sent
-         * at once"), so a short bound cuts a peer that trickles it without hurting a proxy.
+         * head, but never below 3 s. A proxy sends the header at once ("The sender must always ensure that the header is sent
+         * at once"), so a short bound cuts a peer that trickles it without hurting a proxy. Throws at [build] below 3 s.
          */
         public var headerTimeout: Duration = 5.seconds
 
@@ -82,7 +87,7 @@ public class ProxyProtocolConfig private constructor(
         /** The configuration; throws [IllegalArgumentException] for no or an invalid trusted source, a timeout that is not positive, or a size out of range. */
         public fun build(): ProxyProtocolConfig {
             require(trustedSources.isNotEmpty()) { "proxyProtocol needs at least one trusted source" }
-            require(headerTimeout.isPositive()) { "proxyProtocol.headerTimeout must be positive" }
+            require(headerTimeout >= MIN_HEADER_TIMEOUT) { "proxyProtocol.headerTimeout must be at least $MIN_HEADER_TIMEOUT" }
             require(maxHeaderSize in MIN_MAX_HEADER_SIZE..ProxyProtocolCodec.V2_MAX) {
                 "proxyProtocol.maxHeaderSize must be $MIN_MAX_HEADER_SIZE..${ProxyProtocolCodec.V2_MAX}"
             }
@@ -92,6 +97,9 @@ public class ProxyProtocolConfig private constructor(
 
     internal companion object {
         const val DEFAULT_MAX_HEADER_SIZE = 4096
+
+        /** Section 2: a timeout of "at least 3 seconds to cover a TCP retransmit". */
+        val MIN_HEADER_TIMEOUT: Duration = 3.seconds
 
         /** 16 fixed bytes and two AF_UNIX addresses of 108 bytes: the smallest limit that takes every family. */
         const val MIN_MAX_HEADER_SIZE = 16 + 216

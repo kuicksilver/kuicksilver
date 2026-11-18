@@ -37,7 +37,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -319,7 +318,7 @@ class ServerProxyProtocolTest {
             val (server, port) =
                 plainServer {
                     trust("127.0.0.1")
-                    headerTimeout = 300.milliseconds
+                    headerTimeout = 3.seconds // the least the spec allows ("at least 3 seconds to cover a TCP retransmit")
                 }
             val selector = SelectorManager(Dispatchers.IO)
             try {
@@ -358,6 +357,41 @@ class ServerProxyProtocolTest {
                 server.stopSuspend(0, 1000)
             }
         }
+
+    /**
+     * On a PROXY connector the HTTP/2 penalty is never the TCP peer's: the proxy carries every client, so a penalty on its
+     * address (struck while a header named no client, LOCAL or UNKNOWN) would refuse them all at accept.
+     */
+    @Test fun negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients() =
+        serverTest {
+            val events = Refusals()
+            val (server, port) =
+                plainServer({
+                    eventListener = events
+                    http2RepeatOffenderPenalty = 60.seconds
+                })
+            try {
+                repeat(3) { server.engine.h2Offenders!!.strike(parseIpLiteral("127.0.0.1")) }
+                val r = viaProxy(port, "PROXY TCP4 192.0.2.67 198.51.100.2 1 443\r\n".encodeToByteArray())
+                assertTrue(r.startsWith("HTTP/1.1 200"), "the proxy's clients are served: $r")
+                assertEquals(emptyList(), events.reasons.value)
+            } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /** What an HTTP/2 flood strikes: on a PROXY connector the client the header names, else nothing; elsewhere the TCP peer. */
+    @Test fun negative_aFloodBehindAHeaderWithoutAClientStrikesNobody() {
+        val peer = parseIpLiteral("127.0.0.1")!!
+        assertEquals(null, offenderToStrike(peer, ProxyProtocolCodec.decode("PROXY UNKNOWN\r\n".encodeToByteArray())))
+        assertEquals(
+            null,
+            offenderToStrike(peer, ProxyProtocolCodec.decode(ProxyV2.header(verCmd = 0x20, fam = 0x00, body = ByteArray(0)))),
+        )
+        val named = ProxyProtocolCodec.decode("PROXY TCP4 192.0.2.66 198.51.100.2 1 443\r\n".encodeToByteArray())
+        assertEquals("192.0.2.66", offenderToStrike(peer, named)?.let { describeIp(it) })
+        assertEquals("127.0.0.1", offenderToStrike(peer, null)?.let { describeIp(it) }, "no PROXY connector: the TCP peer")
+    }
 
     /** A closed connection with no bytes reads as "", a reset as "<reset>": both are no answer. */
     private fun emptyIfClosed(s: String): String = if (s.isEmpty()) "<reset>" else s

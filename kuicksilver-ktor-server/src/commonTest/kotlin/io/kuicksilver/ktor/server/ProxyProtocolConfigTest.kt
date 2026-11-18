@@ -3,10 +3,13 @@
 package io.kuicksilver.ktor.server
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** The trusted sources of `proxyProtocol { }`: who may send a PROXY header ("only trusted proxies are allowed to use this protocol"). */
 class ProxyProtocolConfigTest {
@@ -72,14 +75,23 @@ class ProxyProtocolConfigTest {
             )
         for (s in bad) assertFailsWith<IllegalArgumentException>(s) { config(s) }
         assertFailsWith<IllegalArgumentException>("no source") { config() }
-        assertFailsWith<IllegalArgumentException> {
-            ProxyProtocolConfig
-                .Builder()
-                .apply {
-                    trust("10.0.0.0/8")
-                    headerTimeout = Duration.ZERO
-                }.build()
+        // section 2: a timeout of "at least 3 seconds to cover a TCP retransmit"
+        for (t in listOf(Duration.ZERO, 2999.milliseconds)) {
+            assertFailsWith<IllegalArgumentException>("headerTimeout $t") {
+                ProxyProtocolConfig
+                    .Builder()
+                    .apply {
+                        trust("10.0.0.0/8")
+                        headerTimeout = t
+                    }.build()
+            }
         }
+        ProxyProtocolConfig
+            .Builder()
+            .apply {
+                trust("10.0.0.0/8")
+                headerTimeout = 3.seconds
+            }.build()
         for (size in listOf(231, ProxyProtocolCodec.V2_MAX + 1)) {
             assertFailsWith<IllegalArgumentException>("maxHeaderSize $size") {
                 ProxyProtocolConfig
@@ -90,5 +102,23 @@ class ProxyProtocolConfigTest {
                     }.build()
             }
         }
+    }
+
+    /**
+     * The header's wait is `headerTimeout`, cut to what is left of the request-head deadline, but never below the 3 s the
+     * spec asks for ("at least 3 seconds to cover a TCP retransmit").
+     */
+    @Test fun headerWaitIsNeverBelowThreeSeconds() {
+        val c =
+            ProxyProtocolConfig
+                .Builder()
+                .apply {
+                    trust("10.0.0.0/8")
+                    headerTimeout = 5.seconds
+                }.build()
+        assertEquals(5.seconds, c.headerWait(30.seconds))
+        assertEquals(4.seconds, c.headerWait(4.seconds))
+        assertEquals(3.seconds, c.headerWait(1.seconds), "a request-head deadline of 1 s still gives the header 3 s")
+        assertEquals(3.seconds, c.headerWait(Duration.ZERO))
     }
 }

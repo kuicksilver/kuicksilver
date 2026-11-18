@@ -2668,6 +2668,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolC
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2ProxyUnixPaths
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2Tlvs
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.addressesAndBlocksMatch
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.headerWaitIsNeverBelowThreeSeconds
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.ipv4MappedPeersMatchIpv4Blocks
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.negative_invalidConfigurationsAreRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolConfigTest.negative_ipv6BlocksDoNotTakeMappedIpv4Peers
@@ -2929,6 +2930,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerPriority
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerPriorityTest.responsePriorityAppliedLocally
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.http2CallsReportTheClient
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.localCommandKeepsTheConnectionsOwnAddresses
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_aFloodBehindAHeaderWithoutAClientStrikesNobody
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_connectionWithoutAHeaderIsClosed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_headerFromAnUntrustedSourceIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerProxyProtocolTest.negative_headerNotCompleteWithinTheTimeoutIsCut

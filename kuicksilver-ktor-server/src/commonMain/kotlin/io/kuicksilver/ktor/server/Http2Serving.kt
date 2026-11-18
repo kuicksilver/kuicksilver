@@ -202,7 +202,7 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
         conn?.let { c ->
             h2BytesRead.update { it + c.bytesReceived }
             // behind a PROXY protocol header the client it names is struck, not the proxy all its clients share
-            if (c.endedByFloodDefence) strikeOffender(remote, proxy?.sourceIp)
+            if (c.endedByFloodDefence) strikeOffender(offenderToStrike(remote?.let { peerAddressBytes(it) }, proxy))
         }
         // closeWithin handles a cancelled caller itself (it aborts); the probe's set is left last and without cancellation,
         // so a forced stop neither skips the close nor leaves the entry behind
@@ -248,21 +248,28 @@ private suspend fun drainsWhileMoving(
 }
 
 /**
+ * The address an HTTP/2 flood of a connection strikes: on a PROXY protocol connector ([proxy] not null) the client its header
+ * names, and nobody when it names none (LOCAL, UNKNOWN, UNSPEC, AF_UNIX): the TCP peer there is the proxy, and a penalty on
+ * it would refuse every client it carries. Elsewhere the TCP peer [peer].
+ */
+internal fun offenderToStrike(
+    peer: ByteArray?,
+    proxy: ProxyHeader?,
+): ByteArray? = if (proxy != null) proxy.sourceIp else peer
+
+/**
  * A connection from [remote] ended in a flood defence (we sent GOAWAY ENHANCE_YOUR_CALM for a flood limit): with
  * `http2RepeatOffenderPenalty`, one strike for its address. The
  * strike that starts a penalty is logged at debug level (many addresses may start one at once); the refusals that follow
  * are the warning, rate-limited per connector ([RefusalReporter]).
  */
-private suspend fun KuicksilverApplicationEngine.strikeOffender(
-    remote: InetSocketAddress?,
-    client: ByteArray?,
-) {
+private suspend fun KuicksilverApplicationEngine.strikeOffender(client: ByteArray?) {
     // counted after the strike is recorded: a test that waits for the count then sees the strike's effect at accept
     try {
         val offenders = h2Offenders ?: return // http2RepeatOffenderPenalty off (the default)
-        val struck = withContext(NonCancellable) { if (client != null) offenders.strike(client) else offenders.strike(remote) }
+        val struck = withContext(NonCancellable) { offenders.strike(client) }
         if (struck) {
-            val who = client?.let { RepeatOffenders.describe(it) } ?: RepeatOffenders.describe(remote)
+            val who = client?.let { RepeatOffenders.describe(it) } ?: "an unknown address"
             environment.log.debug(
                 "HTTP/2: connections from $who keep ending in ENHANCE_YOUR_CALM (flood limits); " +
                     "refusing its connections for a while",

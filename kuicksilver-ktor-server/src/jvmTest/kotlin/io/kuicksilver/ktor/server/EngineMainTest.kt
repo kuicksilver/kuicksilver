@@ -578,7 +578,7 @@ class EngineMainTest {
                         "-P:kuicksilver.proxyProtocol.trustedSources.size=2",
                         "-P:kuicksilver.proxyProtocol.trustedSources.0=127.0.0.1",
                         "-P:kuicksilver.proxyProtocol.trustedSources.1=::1",
-                        "-P:kuicksilver.proxyProtocol.headerTimeout=2s",
+                        "-P:kuicksilver.proxyProtocol.headerTimeout=4s",
                         "-P:kuicksilver.proxyProtocol.maxHeaderSize=512",
                     ),
                 )
@@ -586,7 +586,7 @@ class EngineMainTest {
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             val pp = server.engine.configuration.deploymentProxyProtocol!!
             assertEquals(listOf("127.0.0.1", "::1"), pp.trustedSources)
-            assertEquals(2.seconds, pp.headerTimeout)
+            assertEquals(4.seconds, pp.headerTimeout)
             assertEquals(512, pp.maxHeaderSize)
             server.startSuspend(false)
             try {
@@ -616,6 +616,8 @@ class EngineMainTest {
                 arrayOf("-P:kuicksilver.proxyProtocol.headerTimeout=2s"),
                 arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.maxHeaderSize=many"),
                 arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.headerTimeout=soon"),
+                // below the spec's "at least 3 seconds to cover a TCP retransmit"
+                arrayOf("-P:kuicksilver.proxyProtocol.trustedSources=10.0.0.0/8", "-P:kuicksilver.proxyProtocol.headerTimeout=2s"),
             )) {
                 assertFailsWith<IllegalArgumentException>(bad.joinToString()) { EngineMain.createServer(args(*bad)).engine }
             }

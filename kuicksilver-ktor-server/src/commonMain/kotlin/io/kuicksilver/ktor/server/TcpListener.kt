@@ -286,7 +286,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 openTcpSockets.update { it - 1 }
                             }
                             val from = runCatching { client.remoteAddress as? InetSocketAddress }.getOrNull()
-                            // the PROXY protocol: "only trusted proxies are allowed to use this protocol" (threat model 3.25); any
+                            // the PROXY protocol: "only trusted proxies are allowed to use this protocol" (threat model 3.27); any
                             // other peer is closed before a byte is read, so no client that reaches the port can name its own address
                             if (proxyProtocol != null &&
                                 !proxyProtocol.trusts(from?.let { runCatching { peerAddressBytes(it) }.getOrNull() })
@@ -305,7 +305,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             // waits out its penalty: closed here, before the TLS handshake costs anything (threat model 3.23)
                             val refused =
                                 try {
-                                    h2Offenders?.refuses(from) == true
+                                    // on a PROXY protocol connector the peer is the proxy: only the client its header names is refused
+                                    proxyProtocol == null && h2Offenders?.refuses(from) == true
                                 } catch (e: CancellationException) {
                                     client.abort() // the loop stops while the table's lock is awaited: the accepted socket goes too
                                     throw e
@@ -833,10 +834,10 @@ internal const val REFUSED_PROXY_UNTRUSTED = "PROXY protocol untrusted source"
 internal const val REFUSED_PROXY_HEADER = "PROXY protocol header"
 
 /**
- * Reads the PROXY protocol header of [client] from [input] within [config]'s `headerTimeout` and what is left of the
- * request-head deadline [headerTimeout] counted from [accepted], whichever ends first; null after closing the connection
- * when it has no valid header in time ("any sequence which does not exactly match the protocol must be discarded and cause
- * the receiver to abort the connection"). The abort resets the connection: a proxy sees the refusal at once, and nothing
+ * Reads the PROXY protocol header of [client] from [input] within [ProxyProtocolConfig.headerWait]: [config]'s
+ * `headerTimeout`, cut to what is left of the request-head deadline [headerTimeout] counted from [accepted], never below
+ * 3 s; null after closing the connection when it has no valid header in time (section 2.1: "Any sequence which does not
+ * exactly match the protocol must be discarded and cause the receiver to abort the connection."). The abort resets the connection: a proxy sees the refusal at once, and nothing
  * the peer sent is answered.
  */
 private suspend fun KuicksilverApplicationEngine.readProxyHeaderOrClose(
@@ -847,7 +848,7 @@ private suspend fun KuicksilverApplicationEngine.readProxyHeaderOrClose(
     accepted: TimeMark,
     remote: InetSocketAddress?,
 ): ProxyHeader? {
-    val within = minOf(config.headerTimeout, headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)
+    val within = config.headerWait(headerTimeout - accepted.elapsedNow())
     val failure =
         try {
             // a header read as the deadline fires is the header (completedWithin keeps a result that withTimeoutOrNull drops)

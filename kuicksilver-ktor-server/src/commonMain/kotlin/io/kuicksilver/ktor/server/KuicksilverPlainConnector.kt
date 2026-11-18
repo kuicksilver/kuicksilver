@@ -22,6 +22,7 @@ public class KuicksilverPlainConnector private constructor(
     /** Whether every client of this connector is a trusted gateway; see [Builder.trustedGateway]. */
     public val trustedGateway: Boolean,
     /** The PROXY protocol on this connector, or null (the default) for none; see [Builder.proxyProtocol]. */
+    @property:ExperimentalKuicksilverApi
     public val proxyProtocol: ProxyProtocolConfig? = null,
 ) : EngineConnectorConfig {
     /** Always plain HTTP. */
@@ -57,9 +58,11 @@ public class KuicksilverPlainConnector private constructor(
          * one of its trusted sources, which becomes the requests' `origin`; null (the default) takes none. See
          * [ProxyProtocolConfig].
          */
+        @ExperimentalKuicksilverApi
         public var proxyProtocol: ProxyProtocolConfig? = null
 
         /** Sets [proxyProtocol] from [block]. */
+        @ExperimentalKuicksilverApi
         public fun proxyProtocol(block: ProxyProtocolConfig.Builder.() -> Unit) {
             proxyProtocol = ProxyProtocolConfig.Builder().apply(block).build()
         }
