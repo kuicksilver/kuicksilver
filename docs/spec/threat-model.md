@@ -985,7 +985,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   Finished. The connection still fails, and nothing is reported as a rejection (RFC 9849 row "Deviations"; upstream
   issues to be filed). §6.1.7's empty Certificate is not sent (accepted deviation, upstream issue
   https://github.com/openssl/openssl/issues/33831). The inner ALPN list is not padded (§6.1.3 SHOULD; OpenSSL has no
-  hook for it).
+  hook for it). Certificate validation under an accepted ECH stays offline on Windows and Apple (§10.7); on the JVM the
+  default trust manager fetches revocation or AIA data only when the process turned that on, process-wide.
 
 ## 4. What we do not protect against
 
