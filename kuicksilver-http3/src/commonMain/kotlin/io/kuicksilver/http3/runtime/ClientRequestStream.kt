@@ -328,7 +328,7 @@ private suspend fun H3Session.exchange(
     val sendFailure = CompletableDeferred<Unit>()
     try {
         try {
-            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildRequest(r), r.headers.neverIndexNames()))
+            writeHeadersFrame(st, PseudoHeaders.buildRequest(r), r.headers.neverIndexNames())
             afterRequestHeadersForTest?.invoke(st)
             if (keepOpen) {
                 st.output.flush() // Extended CONNECT: the stream carries data both ways after the response
@@ -367,6 +367,7 @@ private suspend fun H3Session.exchange(
                 budgetWatch = { budgetWatch(st) },
                 sectionDeadline = settings.maxHeaderBlockTime,
                 streamId = st.id,
+                qlog = qlog,
             )
         var interimBytes = 0L
         while (true) {
@@ -533,6 +534,7 @@ private suspend fun H3Session.sendBody(
                     0
                 ) {
                     if (declared != null && sent + n > declared) return abandon(ContentLengthMismatch(declared, sent + n, more = true))
+                    qlog { it.frameCreated(st.id, FrameType.DATA, n.toLong(), H3Qlog.DATA) }
                     st.output.writeFrame(FrameType.DATA, buf, 0, n)
                     st.output.flush()
                     sent += n
@@ -556,7 +558,7 @@ private suspend fun H3Session.sendBody(
                 // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
                 return abandon(refused)
             }
-            st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields, t.neverIndexNames()))
+            writeHeadersFrame(st, t.fields, t.neverIndexNames())
         }
         st.output.flushAndClose()
     } catch (e: CancellationException) {

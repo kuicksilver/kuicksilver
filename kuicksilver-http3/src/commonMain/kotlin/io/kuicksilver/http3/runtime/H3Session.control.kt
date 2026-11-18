@@ -203,7 +203,10 @@ private suspend fun H3Session.readUniArmed(
     header.known = true
     uniTypesPending.remove(st.id)
     uniProgress()
-    if (type != StreamType.WT_UNI || !settings.webTransport) headerRead()
+    if (type != StreamType.WT_UNI || !settings.webTransport) {
+        headerRead()
+        qlog { it.streamTypeSet("remote", st.id, type) } // a WebTransport stream is logged with its Session ID ([WtStreamRouter])
+    }
     when (type) {
         StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER -> {
             if (!peerUni.add(type)) throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "second stream of type $type")
@@ -287,20 +290,36 @@ private suspend fun H3Session.readControl(st: QuicStream) {
     while (true) {
         val type = st.input.readVarIntOrNull() ?: return
         val len = st.input.readVarInt()
-        when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
+        val action =
+            try {
+                FrameRules.checkControl(type, first, isServer, settings.webTransport)
+            } catch (e: H3ProtocolError) {
+                // a frame the control stream must not carry: what was parsed of it (its header) is in the trace
+                qlog { it.frameParsed(st.id, type, len, it.controlFrame(type, null)) }
+                throw e
+            }
+        when (action) {
             FrameAction.Skip -> {
                 when {
                     !FrameType.isGrease(type) -> glitch("unknown frame on the control stream")
                     freeGrease > 0 -> freeGrease--
                     else -> glitch("reserved frames on the control stream")
                 }
+                qlog { it.frameParsed(st.id, type, len, it.other(type)) }
                 st.input.skipExact(len)
             }
 
             FrameAction.Process -> {
-                FrameRules.checkControlLength(type, len)
+                try {
+                    FrameRules.checkControlLength(type, len)
+                } catch (e: H3ProtocolError) {
+                    qlog { it.frameParsed(st.id, type, len, it.controlFrame(type, null)) }
+                    throw e
+                }
                 beforeControlFrameForTest?.invoke(this, type)
-                onControlFrame(type, st.input.readExact(len.toInt()))
+                val payload = st.input.readExact(len.toInt())
+                qlog { it.frameParsed(st.id, type, len, it.controlFrame(type, payload)) }
+                onControlFrame(type, payload)
             }
         }
         first = false
@@ -402,6 +421,7 @@ private suspend fun H3Session.applyPeerSettings(m: Map<Long, Long>) {
     qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
     wtCommonVersions = WtVersion.common(m, isServer)
     wtPeerSettings = m.filterKeys { it in WtSettings.ALL }.ifEmpty { emptyMap() } // no map held when the peer has none
+    qlog { it.parametersSet("remote", m) }
     peerSettings.value = ps
     peerSettingsArrived.complete(ps)
 }

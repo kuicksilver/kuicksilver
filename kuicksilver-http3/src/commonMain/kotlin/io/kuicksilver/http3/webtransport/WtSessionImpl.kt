@@ -32,6 +32,7 @@ import io.kuicksilver.http3.runtime.HandOffQueue
 import io.kuicksilver.http3.runtime.close
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.drains
+import io.kuicksilver.http3.runtime.qlog
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -579,6 +580,17 @@ internal class WtSessionImpl(
                     try {
                         st.output.writeFully(header)
                         st.output.flush()
+                        h3.qlog { q ->
+                            if (bidi) {
+                                q.wtStreamSignal(
+                                    "http:frame_created",
+                                    st.id,
+                                    sessionId,
+                                )
+                            } else {
+                                q.streamTypeSet("local", st.id, StreamType.WT_UNI, sessionId)
+                            }
+                        }
                     } catch (e: Throwable) {
                         // only the connection's end gets here (nobody stops a stream it has not seen): the header goes reliably
                         // as far as it was written

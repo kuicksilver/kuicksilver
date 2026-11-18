@@ -123,6 +123,49 @@ private suspend fun assertMessageErrorStop(st: QuicStream) =
 class WebTransportSessionTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /**
+     * WebTransport streams in the qlog trace: the bidirectional stream's `WT_STREAM` signal as an unknown frame of type 0x41
+     * and the unidirectional stream's type 0x54 as an unknown stream type, each with its Session ID, as sent and as read.
+     */
+    @Test fun webTransportStreamsAreInTheQlogTrace() =
+        h3Test {
+            val sink =
+                io.kuicksilver.http3.runtime
+                    .MemoryQlogSink()
+            val traced =
+                quicConfig {
+                    resetStreamAt = true
+                    qlog = sink
+                }
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = traced, clientQuic = traced).useScoped { p ->
+                val (client, server) = sessions(p)
+                val bidi = client.openBidi()
+                bidi.output.writeFully("b".encodeToByteArray())
+                bidi.output.flush()
+                val uni = client.openUni()
+                uni.output.writeFully("u".encodeToByteArray())
+                uni.output.flush()
+                withTimeout(5.seconds) { server.acceptBidi() }
+                withTimeout(5.seconds) { server.acceptUni() }
+                val sid = client.sessionId
+
+                fun has(
+                    role: TlsRole,
+                    vararg parts: String,
+                ) = sink.trace(role).records.any { r -> parts.all { it in r } }
+                io.kuicksilver.http3.runtime.awaitCondition("both streams logged at both ends") {
+                    has(TlsRole.Client, "http:frame_created", "\"raw_frame_type\":65,\"session_id\":$sid") &&
+                        has(TlsRole.Server, "http:frame_parsed", "\"raw_frame_type\":65,\"session_id\":$sid") &&
+                        has(TlsRole.Client, "\"owner\":\"local\"", "\"raw_stream_type\":84,\"session_id\":$sid") &&
+                        has(TlsRole.Server, "\"owner\":\"remote\"", "\"raw_stream_type\":84,\"session_id\":$sid")
+                }
+                for (t in sink.traces) {
+                    io.kuicksilver.http3.runtime.QlogSchema
+                        .check(t.records)
+                }
+            }
+        }
+
     @Test fun establishDraft16() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->

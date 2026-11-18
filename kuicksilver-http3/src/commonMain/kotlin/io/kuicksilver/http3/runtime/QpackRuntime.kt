@@ -26,6 +26,8 @@ internal class QpackRuntime(
     settings: Http3Settings,
     private val encoderOut: suspend (ByteArray) -> Unit,
     private val decoderOut: (ByteArray) -> Unit,
+    /** The connection's qlog events (`qpack:state_updated`, `qpack:stream_state_updated`); null when it is not traced. */
+    private val qlog: H3Qlog? = null,
     /** The encoder stream's send credit now (RFC 9204 section 2.1.3): inserts that would not fit are not made. */
     private val encoderCredit: suspend () -> Long = { Long.MAX_VALUE },
 ) {
@@ -34,6 +36,38 @@ internal class QpackRuntime(
     private val encLock = Mutex()
     private val decLock = Mutex()
     private val inserts = MutableStateFlow(0L)
+
+    /** The QPACK states last logged, ours ([QpackEncoder]) and the peer's ([QpackDecoder]): an event only when one changed. */
+    private var loggedLocal: String? = null
+    private var loggedRemote: String? = null
+
+    private fun logLocalState() {
+        val q = qlog ?: return
+        if (!q.enabled) return
+        val state = H3Qlog.qpackState(encoder.tableCapacity, encoder.tableSize, encoder.knownReceivedCount, encoder.insertCount)
+        if (state != loggedLocal) {
+            loggedLocal = state
+            q.qpackStateUpdated("local", state)
+        }
+    }
+
+    private fun logRemoteState() {
+        val q = qlog ?: return
+        if (!q.enabled) return
+        val state = H3Qlog.qpackState(decoder.tableCapacity, decoder.tableSize, decoder.knownReceivedCount, decoder.insertCount)
+        if (state != loggedRemote) {
+            loggedRemote = state
+            q.qpackStateUpdated("remote", state)
+        }
+    }
+
+    private fun logStream(
+        streamId: Long,
+        blocked: Boolean,
+    ) {
+        val q = qlog ?: return
+        if (q.enabled) q.qpackStreamStateUpdated(streamId, blocked)
+    }
 
     /** Bytes the last field section cost (its block plus the encoder-stream instructions it needed) and inserts made by our encoder. */
     var lastEncodedSize: Int = 0
@@ -52,6 +86,7 @@ internal class QpackRuntime(
     ) = encLock.withLock {
         encoder.onPeerSettings(peerMaxTableCapacity, peerBlockedStreams)
         val b = encoder.drainEncoderStream()
+        logLocalState()
         if (b.isNotEmpty()) encoderOut(b)
     }
 
@@ -65,6 +100,7 @@ internal class QpackRuntime(
             val budget = if (encoder.capacity == 0L) 0L else encoderCredit()
             val block = encoder.encode(streamId, fields, budget, neverIndexed)
             val ins = encoder.drainEncoderStream()
+            if (ins.isNotEmpty()) logLocalState()
             if (ins.isNotEmpty()) encoderOut(ins)
             lastEncodedSize = block.size + ins.size
             block
@@ -84,7 +120,9 @@ internal class QpackRuntime(
             when (val r = decoder.decode(streamId, block)) {
                 is DecodeResult.Blocked -> {
                     decoder.markBlocked(streamId)
+                    logStream(streamId, blocked = true)
                     awaitInsertCount(streamId, r.requiredInsertCount, watch)
+                    logStream(streamId, blocked = false)
                 }
 
                 else -> {
@@ -109,7 +147,9 @@ internal class QpackRuntime(
         val ric = decoder.requiredInsertCount(encodedRic)
         if (ric <= decoder.insertCount) return
         decoder.markBlocked(streamId)
+        logStream(streamId, blocked = true)
         awaitInsertCount(streamId, ric, watch)
+        logStream(streamId, blocked = false)
     }
 
     /** Waits until [count] inserts arrived, or gives [streamId] up (Stream Cancellation, [StreamAbandoned]) by [watch]. */
@@ -137,12 +177,16 @@ internal class QpackRuntime(
         inserts.value =
             decoder.insertCount
         flushDecoder()
+        logRemoteState()
     }
 
     suspend fun onPeerDecoderStream(
         bytes: ByteArray,
         len: Int,
-    ) = encLock.withLock { encoder.onDecoderStream(bytes, 0, len) }
+    ) = encLock.withLock {
+        encoder.onDecoderStream(bytes, 0, len)
+        logLocalState()
+    }
 
     /**
      * Client, the server rejected 0-RTT (RFC 9001 section 4.6.2): what the codecs hold unsent was made for the early streams

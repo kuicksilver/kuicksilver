@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- qlog: HTTP/3 and QPACK events in the connection's trace, in the schema of its transport events (qlog 0.3,
+  draft-ietf-quic-qlog-h3-events-04; ADR-0021): `http:frame_created`/`frame_parsed` for every frame sent and read (field
+  sections with their fields, SETTINGS, GOAWAY, push identifiers, reserved and unknown frames by number,
+  PRIORITY_UPDATE and WebTransport's stream signal as unknown frames with their own members), `http:stream_type_set`,
+  `http:parameters_set`, `http:parameters_restored`, `qpack:state_updated` and `qpack:stream_state_updated`. Header and
+  trailer values are written as `[redacted]` (except `:method`, `:scheme`, `:status`, `:protocol`) unless the sink sets
+  the new `QlogSink.logHeaderValues` (*experimental*; `DirectoryQlogSink(..., logHeaderValues = true)`, forwarded by
+  `AsyncQlogSink`); threat model 3.25 (CWE-532). The HTTP/3 layer queues its events (at most 4096 per connection) and the
+  endpoint loop writes them, so sinks are still called on the loop only; a connection without a sink formats nothing.
+  The traces are checked offline against the draft's definitions; loading them in qvis was not part of the tests.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

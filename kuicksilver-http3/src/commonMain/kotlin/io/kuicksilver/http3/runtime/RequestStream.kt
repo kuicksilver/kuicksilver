@@ -8,6 +8,7 @@ import io.ktor.utils.io.ByteChannel
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PseudoHeaders
@@ -48,16 +49,33 @@ internal fun Http3Headers.receivedNeverIndexed(decoded: List<Pair<String, String
 internal fun Http3Headers.neverIndexNames(): Set<String> =
     if (neverIndexed.isEmpty()) neverIndexNames else neverIndexNames + neverIndexed.map { it.first }
 
+/** Encodes [fields] and writes them as a HEADERS frame on [st] (RFC 9114 section 7.2.2), in the qlog trace first. */
+internal suspend fun H3Session.writeHeadersFrame(
+    st: QuicStream,
+    fields: List<Pair<String, String>>,
+    neverIndexed: Set<String> = emptySet(),
+) {
+    val block = qpack.encode(st.id, fields, neverIndexed)
+    qlog { it.frameCreated(st.id, FrameType.HEADERS, block.size.toLong(), it.headers(fields)) }
+    st.output.writeFrame(FrameType.HEADERS, block)
+}
+
 /** Decodes a field section; TooLarge and malformed sections become [StreamFailure]. */
 internal suspend fun H3Session.decodeSection(
     st: QuicStream,
     block: ByteArray,
-): List<Pair<String, String>> =
-    when (
-        val r =
+): List<Pair<String, String>> {
+    val r =
+        try {
             // the peer reset the stream, or the connection is gone with the inserts the section waits for
             qpack.decode(st.id, block) { insertsWatch(st) }
-    ) {
+        } catch (e: QpackError) {
+            // a section that does not decode (a connection error follows) is in the trace without its fields
+            qlog { it.frameParsed(st.id, FrameType.HEADERS, block.size.toLong(), it.headers(emptyList())) }
+            throw e
+        }
+    qlog { it.frameParsed(st.id, FrameType.HEADERS, block.size.toLong(), it.headers((r as? DecodeResult.Decoded)?.fields.orEmpty())) }
+    return when (r) {
         is DecodeResult.Decoded -> if (r.neverIndexed.isEmpty()) r.fields else DecodedFields(r.fields, r.neverIndexed)
 
         // a value longer than we decode is the stream error QPACK_DECOMPRESSION_FAILED (RFC 9204 section 7.4), fields that
@@ -69,6 +87,7 @@ internal suspend fun H3Session.decodeSection(
 
         is DecodeResult.Blocked -> error("unreachable")
     }
+}
 
 internal fun malformed(
     streamId: Long,
