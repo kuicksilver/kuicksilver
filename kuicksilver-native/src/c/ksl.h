@@ -39,7 +39,9 @@ extern "C" {
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
-   ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2) */
+   ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
+   KSL_OPT_CERT_COMPRESSION and KSL_GET_CERT_COMPRESSION (TLS certificate compression, RFC 8879; numbered 14 for both, after
+   the 13 of KSL_GET_GROUP that another 0.3.0 addition takes) */
 
 /* return codes */
 #define KSL_OK 0
@@ -99,6 +101,17 @@ extern "C" {
                                       A present ALPN extension is validated first, in both modes (RFC 7301 section 3.1: a non-empty
                                       list of non-empty names, lengths exact), else decode_error (50). KSL_E_BAD_ARG on a client
                                       context */
+#define KSL_OPT_CERT_COMPRESSION 14 /* both roles (ABI 7, additive): 1 (the default) = TLS certificate compression (RFC 8879): the
+                                      compress_certificate extension offers brotli, then zlib (a client in its ClientHello, a server
+                                      in its CertificateRequest), a peer's CompressedCertificate in one of them is accepted, and our
+                                      Certificate goes out compressed with the first of the peer's algorithms that is also ours; a
+                                      server's chain is compressed once, at ksl_ctx_freeze (a chain no algorithm makes smaller goes out
+                                      uncompressed), a client's certificate per handshake. TLS 1.3 only: a TLS 1.2 handshake ignores
+                                      the extension. What a peer sends is held to OpenSSL's certificate list bound (100 KiB): an
+                                      uncompressed_length above it, an output of another length than uncompressed_length, or data
+                                      that does not decompress: bad_certificate (42); an algorithm we did not offer: illegal_parameter
+                                      (47). 0 = no extension, and a CompressedCertificate from the peer is an unexpected_message (10).
+                                      KSL_E_BAD_ARG for any other value */
 /* clang-format on */
 #define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */
 #define KSL_ALPN_POLICY_REQUIRED 1 /* a ClientHello without the ALPN extension: no_application_protocol (120) */
@@ -127,6 +140,9 @@ extern "C" {
 #define KSL_GET_OCSP_STATUS 12 /* client, 9 bytes: the KSL_OCSP_* of the stapled response the handshake accepted (KSL_OCSP_GOOD or
                                       KSL_OCSP_UNKNOWN), 0xff when none was checked, then 8 bytes big-endian: the epoch second until which
                                       that response is fresh (its nextUpdate plus 5 minutes of clock skew), 0 with none. Additive in ABI 7 */
+#define KSL_GET_CERT_COMPRESSION 14 /* 2 bytes big-endian: the algorithm of the CompressedCertificate (RFC 8879) the peer sent its
+                                      certificate in (1 zlib, 2 brotli), 0 when it came as a plain Certificate or has not come (a
+                                      server: no client certificate). Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_set keys */

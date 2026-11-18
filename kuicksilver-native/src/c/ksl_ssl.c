@@ -52,8 +52,9 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
            fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
         SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
-    /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data) */
-    if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) {
+    /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data), a
+       server that asks for a client certificate (the CompressedCertificate it may get, KSL_GET_CERT_COMPRESSION) */
+    if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT || c->client_cert_mode != KSL_CLIENT_CERT_NONE) {
         SSL_set_msg_callback(s->ssl, ksl_msg_cb);
         SSL_set_msg_callback_arg(s->ssl, s);
     }
@@ -345,6 +346,10 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;
         return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_CERT_COMPRESSION: {
+        uint8_t b[2] = {(uint8_t)(s->peer_cert_comp >> 8), (uint8_t)s->peer_cert_comp};
+        return copy_out(out, cap, len, b, 2);
     }
     default:
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter");
@@ -782,6 +787,11 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
         s->owner->role == KSL_CLIENT)
         s->nst_early_data = ksl_nst_has_early_data(m, len);
+    /* RFC 8879 section 4: the peer's certificate came as a CompressedCertificate; its algorithm (2 bytes after the 4-byte message
+       header) is noted before OpenSSL processes it, and a message OpenSSL refuses ends the session (KSL_GET_CERT_COMPRESSION is
+       not read on a failed one) */
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_COMPRESSED_CERTIFICATE)
+        s->peer_cert_comp = (uint16_t)((m[4] << 8) | m[5]);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

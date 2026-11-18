@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -178,6 +179,13 @@ public interface QuicConnection : AutoCloseable {
      */
     @ExperimentalKuicksilverApi
     public val earlyDataAccepted: Boolean? get() = null
+
+    /**
+     * The algorithm the peer's certificate chain came compressed with (RFC 8879, `TlsConfig.Builder.certificateCompression`),
+     * null when it came uncompressed or the peer sent none; set once the handshake completed.
+     */
+    @ExperimentalKuicksilverApi
+    public val peerCertificateCompression: CertificateCompression? get() = null
 
     /**
      * Returns once the handshake completed (RFC 9001 section 4.1.1); throws the connection's [QuicException.ConnectionLost]

@@ -412,6 +412,9 @@ internal class KslQuicTlsSession(
         return Ksl.sslGet(ssl, KslConst.GET_EARLY_DATA)[0].toInt().also { earlySeen = it }
     }
 
+    override val peerCertificateCompression: CertificateCompression? get() =
+        if (ssl == 0L || failure != null) null else CertificateCompression.of(Ksl.sslGet(ssl, KslConst.GET_CERT_COMPRESSION))
+
     override val earlyDataAccepted: Boolean? get() {
         // the client counts early data as rejected until EncryptedExtensions says otherwise
         if (ctx.config.role == TlsRole.Client && !done) return null

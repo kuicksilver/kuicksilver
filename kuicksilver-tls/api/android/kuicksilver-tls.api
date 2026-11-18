@@ -26,6 +26,15 @@ public final class io/kuicksilver/tls/Certificate$Companion {
 	public final fun parsePem (Ljava/lang/String;)Ljava/util/List;
 }
 
+public final class io/kuicksilver/tls/CertificateCompression : java/lang/Enum {
+	public static final field Brotli Lio/kuicksilver/tls/CertificateCompression;
+	public static final field Zlib Lio/kuicksilver/tls/CertificateCompression;
+	public final fun getCodePoint ()I
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/CertificateCompression;
+	public static fun values ()[Lio/kuicksilver/tls/CertificateCompression;
+}
+
 public final class io/kuicksilver/tls/CertificateRevocationList {
 	public static final field Companion Lio/kuicksilver/tls/CertificateRevocationList$Companion;
 	public fun <init> ([B)V
@@ -281,6 +290,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
 	public fun getLocalCertificates ()Ljava/util/List;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
+	public fun getPeerCertificateCompression ()Lio/kuicksilver/tls/CertificateCompression;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
 	public fun pendingCryptoBytes (Lio/kuicksilver/tls/EncryptionLevel;)I
@@ -299,6 +309,7 @@ public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
 	public static fun getLocalCertificates (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/util/List;
+	public static fun getPeerCertificateCompression (Lio/kuicksilver/tls/QuicTlsSession;)Lio/kuicksilver/tls/CertificateCompression;
 	public static fun pendingCryptoBytes (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;)I
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z
@@ -372,6 +383,7 @@ public final class io/kuicksilver/tls/SpkiSha256$Companion {
 public final class io/kuicksilver/tls/TlsConfig {
 	public final fun getAlpn ()Ljava/util/List;
 	public final fun getAlpnFallback ()Ljava/lang/String;
+	public final fun getCertificateCompression ()Z
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getGenericAlerts ()Z
@@ -393,6 +405,7 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun build ()Lio/kuicksilver/tls/TlsConfig;
 	public final fun getAlpn ()Ljava/util/List;
 	public final fun getAlpnFallback ()Ljava/lang/String;
+	public final fun getCertificateCompression ()Z
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getGenericAlerts ()Z
@@ -409,6 +422,7 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
 	public final fun setAlpn (Ljava/util/List;)V
 	public final fun setAlpnFallback (Ljava/lang/String;)V
+	public final fun setCertificateCompression (Z)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setGenericAlerts (Z)V
@@ -437,6 +451,7 @@ public final class io/kuicksilver/tls/TlsConnection : java/lang/AutoCloseable {
 	public final fun getLocalCertificates ()Ljava/util/List;
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
 	public final fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
+	public final fun getPeerCertificateCompression ()Lio/kuicksilver/tls/CertificateCompression;
 	public final fun getPeerCertificates ()Ljava/util/List;
 	public final fun getProtocolVersion ()Lio/kuicksilver/tls/TlsVersion;
 	public final fun getSessionReused ()Z

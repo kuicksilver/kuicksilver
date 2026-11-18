@@ -19,6 +19,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.nullDatagramHasAckElicitingInitial
 import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyResult
 import kotlin.test.BeforeTest
@@ -35,8 +36,11 @@ import kotlin.time.Duration.Companion.seconds
 class HandshakeLimitsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    // a plain chain: these tests need a first flight larger than the 3x budget, which the big chain is only uncompressed (RFC 8879)
     private fun bigServer() =
-        CoreFixtures.server(chain = listOf(TestCerts.serverBigChain, TestCerts.intermediate), key = TestCerts.serverBigChainKey)
+        CoreFixtures.server(chain = listOf(TestCerts.serverBigChain, TestCerts.intermediate), key = TestCerts.serverBigChainKey) {
+            certificateCompression = false
+        }
 
     @Test fun negative_amplificationLimit() {
         var received = 0L
@@ -55,6 +59,48 @@ class HandshakeLimitsTest {
         p.use { _ ->
             assertTrue(p.handshake())
             assertTrue(!violated, "server sent $sent after receiving $received before validation")
+        }
+    }
+
+    /**
+     * RFC 9000 section 8.1 with TLS certificate compression (RFC 8879): only the client's first flight (its ClientHello) reaches
+     * the server, and every later client datagram is dropped, so the server's address check never completes and it may send
+     * three times those bytes. The big chain (13.7 KB) does not fit plain: the client never gets the server's whole flight
+     * (Finished) until its datagrams get through again; compressed (brotli) it fits, and the client completes its handshake
+     * from that one flight. Both finish once the network lets the client through, the compressed one with brotli.
+     */
+    @Test fun compressedChainFitsTheFirstFlightInsideTheAmplificationLimit() = firstFlight(compressed = true)
+
+    @Test fun negative_plainBigChainIsHeldByTheAmplificationLimit() = firstFlight(compressed = false)
+
+    private fun firstFlight(compressed: Boolean) {
+        val server =
+            CoreFixtures.server(chain = listOf(TestCerts.serverBigChain, TestCerts.intermediate), key = TestCerts.serverBigChainKey) {
+                certificateCompression = compressed
+            }
+        val p = CorePair(serverTls = server, crypto = ksl)
+        var serverSpoke = false
+        var released = false
+        var received = 0L
+        var sent = 0L
+        p.filterToServer = { _, b ->
+            val keep = released || !serverSpoke
+            if (keep && !released) received += b.size
+            keep
+        }
+        p.filterToClient = { _, b ->
+            serverSpoke = true
+            if (!released) sent += b.size
+            true
+        }
+        p.use { _ ->
+            val whole = p.runUntil(limit = 3.seconds) { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } }
+            println("first flight, big chain ${if (compressed) "compressed" else "plain"}: the server sent $sent bytes for $received")
+            assertTrue(sent <= 3 * received, "inside the limit: $sent after $received")
+            assertEquals(compressed, whole, "the client completed from the server's first flight alone")
+            released = true
+            assertTrue(p.handshake(), "the handshake completes once the client gets through")
+            assertEquals(if (compressed) CertificateCompression.Brotli else null, p.client.peerCertificateCompression)
         }
     }
 

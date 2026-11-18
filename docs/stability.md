@@ -97,8 +97,9 @@ several sender threads on one socket, `ksl_dns_query` for one record type from t
 address, the platform's NAT64 synthesis), `ksl_chain_level` with
 `KSL_OPT_LEVEL_AFTER_PAUSE` for the security level on the path a platform verifier built, `ksl_ctx_verify_chain_path`
 for the path a chain re-verification built, `ksl_ctx_set_crls`, `ksl_ocsp_check`, `KSL_OPT_REVOCATION`,
-`KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation, and `KSL_OPT_ALPN_POLICY` for a TLS-over-TCP
-server's ALPN requirements). It is bumped on
+`KSL_SET_OCSP_RESPONSE` and `KSL_GET_OCSP_STATUS` for certificate revocation, `KSL_OPT_ALPN_POLICY` for a TLS-over-TCP
+server's ALPN requirements, and `KSL_OPT_CERT_COMPRESSION` and `KSL_GET_CERT_COMPRESSION` for TLS certificate
+compression). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the

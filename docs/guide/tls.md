@@ -516,3 +516,26 @@ lists the hybrid as supported: OpenSSL's default would answer with a HelloRetryR
 extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche (interop `handshakeloss`). The
 list is not configurable.
 
+## Certificate compression
+
+Both roles compress certificate chains with TLS certificate compression (RFC 8879) by default, over QUIC and TCP alike,
+TLS 1.3 only: a client offers brotli, then zlib, and a server sends its chain compressed with the first of the client's
+algorithms; a server that asks for a client certificate offers the same two, and the client compresses its certificate.
+A peer without it sends and gets plain certificates. Over QUIC a smaller chain keeps more of a server's first flight
+inside the amplification limit before the client's address is validated (RFC 9000 section 8.1): measured with the test
+chains, a 13.7 KB leaf and its intermediate shrink the server's first flight from 15,523 to 2,689 bytes, and a
+WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes of Certificate message).
+
+- A server compresses its chain once, when the context for its identity is built; a chain neither algorithm makes
+  smaller goes out uncompressed. A session that staples an OCSP response sends its Certificate uncompressed: over TLS
+  1.3 the response is part of the message, and the chain compressed beforehand has none.
+- What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an announced uncompressed
+  length above it, data that does not decompress to exactly that length, or a decompression that runs past it ends the
+  handshake with `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47).
+- `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell which
+  algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).
+- `certificateCompression = false` (experimental) turns it off for a configuration: no offer, and a compressed
+  certificate from the peer is an `unexpected_message` (10).
+
+The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
+([ADR-0020](../adr/0020-zlib-and-brotli-in-libcrypto.md)); they add about 0.8 MB to each native library.

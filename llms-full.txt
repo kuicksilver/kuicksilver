@@ -1813,6 +1813,30 @@ lists the hybrid as supported: OpenSSL's default would answer with a HelloRetryR
 extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche (interop `handshakeloss`). The
 list is not configurable.
 
+### Certificate compression
+
+Both roles compress certificate chains with TLS certificate compression (RFC 8879) by default, over QUIC and TCP alike,
+TLS 1.3 only: a client offers brotli, then zlib, and a server sends its chain compressed with the first of the client's
+algorithms; a server that asks for a client certificate offers the same two, and the client compresses its certificate.
+A peer without it sends and gets plain certificates. Over QUIC a smaller chain keeps more of a server's first flight
+inside the amplification limit before the client's address is validated (RFC 9000 section 8.1): measured with the test
+chains, a 13.7 KB leaf and its intermediate shrink the server's first flight from 15,523 to 2,689 bytes, and a
+WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes of Certificate message).
+
+- A server compresses its chain once, when the context for its identity is built; a chain neither algorithm makes
+  smaller goes out uncompressed. A session that staples an OCSP response sends its Certificate uncompressed: over TLS
+  1.3 the response is part of the message, and the chain compressed beforehand has none.
+- What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an announced uncompressed
+  length above it, data that does not decompress to exactly that length, or a decompression that runs past it ends the
+  handshake with `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47).
+- `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell which
+  algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).
+- `certificateCompression = false` (experimental) turns it off for a configuration: no offer, and a compressed
+  certificate from the peer is an `unexpected_message` (10).
+
+The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
+([ADR-0020](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0020-zlib-and-brotli-in-libcrypto.md)); they add about 0.8 MB to each native library.
+
 ## HTTP/3 with Kuicksilver
 
 **What this page is for.** It explains the HTTP/3 layer on its own, without Ktor: QPACK, requests and responses, endpoints,
@@ -5493,6 +5517,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `genericAlerts` | `Boolean` | `false` |  | 0.2.0 | send `handshake_failure` instead of the specific alert; a failed stapled OCSP check is still sent as `bad_certificate_status_response` (113) |
 | `revocation` (*experimental*) | `RevocationPolicy` | `StapledIfPresent` | clients; `RequireStapled` only with a trust `ksl` verifies (`AnchoredCa`, `Platform` on Linux Native) | 0.3.0 | how the OCSP response the server staples is checked: `Off`, `StapledIfPresent` (soft-fail without one), `RequireStapled`; a must-staple certificate needs one under every policy but `Off`. Alerts: 113 for every failed staple check (also with `genericAlerts`); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#configuration)) |
+| `certificateCompression` (*experimental*) | `Boolean` | `true` | TLS 1.3 only (QUIC and TCP) | 0.3.0 | TLS certificate compression (RFC 8879): offers brotli, then zlib, and sends the chain compressed when the peer offers one of them; a session that staples OCSP sends it uncompressed; `false`: no offer, and a compressed certificate from the peer is `unexpected_message` ([Certificate compression](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-compression)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 
 #### SessionTicketConfig

@@ -436,6 +436,11 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
         return 0;
     if (SSL_set_session_id_context(ssl, o->sid_ctx, (unsigned)o->sid_ctx_len) != 1)
         return 0;
+    /* an override that asks for a client certificate: its CompressedCertificate is noted as under a base that asks (ksl_ssl_new) */
+    if (ks && o->client_cert_mode != KSL_CLIENT_CERT_NONE) {
+        SSL_set_msg_callback(ssl, ksl_msg_cb);
+        SSL_set_msg_callback_arg(ssl, ks);
+    }
     if (quic) {
         if (SSL_set_max_early_data(ssl, o->early_data ? 0xffffffffu : 0) != 1)
             return 0;
@@ -446,6 +451,28 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
     return 1;
 }
 
+/* TLS certificate compression (RFC 8879, KSL_OPT_CERT_COMPRESSION). On: the compress_certificate extension offers brotli, then zlib
+   (a client in its ClientHello, a server in a CertificateRequest), a peer's CompressedCertificate in one of them is accepted, and a
+   Certificate goes out compressed with the first algorithm of the peer's list that is also ours (RFC 8879 section 3; OpenSSL
+   filters the peer's list by ours). Off: no extension, and a CompressedCertificate from the peer is an unexpected_message (OpenSSL
+   reads one only after offering the extension). Only TLS 1.3 compresses; a TLS 1.2 handshake ignores the extension (section 3).
+   The limits on what a peer sends are OpenSSL's certificate list bound (max_cert_list, 100 KiB): an uncompressed_length above it is
+   refused with bad_certificate before anything is decompressed (section 5), the decompression output is capped at
+   uncompressed_length, and any other length is bad_certificate too (section 4); the compressed message itself is held to the same
+   bound. */
+static int cert_compression_set(ksl_ctx *c, int on) {
+    static int prefs[] = {TLSEXT_comp_cert_brotli, TLSEXT_comp_cert_zlib};
+    const uint64_t both = SSL_OP_NO_RX_CERTIFICATE_COMPRESSION | SSL_OP_NO_TX_CERTIFICATE_COMPRESSION;
+    if (on) {
+        /* the count of algorithms, not bytes (ssl_set_cert_comp_pref; the manual page says bytes) */
+        if (SSL_CTX_set1_cert_comp_preference(c->ctx, prefs, sizeof prefs / sizeof prefs[0]) != 1)
+            return 0;
+        SSL_CTX_clear_options(c->ctx, both);
+    } else
+        SSL_CTX_set_options(c->ctx, both);
+    c->cert_compression = on;
+    return 1;
+}
 ksl_ctx *ksl_ctx_new(int role) {
     ksl_ctx *c = calloc(1, sizeof *c);
     if (!c)
@@ -460,9 +487,11 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
-    /* TLS certificate compression (RFC 8879): OpenSSL offers and accepts it by default once it has an algorithm (zlib and brotli,
-       ADR-0020); off until ksl configures it */
-    SSL_CTX_set_options(c->ctx, SSL_OP_NO_RX_CERTIFICATE_COMPRESSION | SSL_OP_NO_TX_CERTIFICATE_COMPRESSION);
+    if (!cert_compression_set(c, 1)) {
+        SSL_CTX_free(c->ctx);
+        free(c);
+        return NULL;
+    }
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
     /* RFC 9846 appendix A.1: "clients may send alerts that derive from post-ServerHello messages in the clear or with the early data
        keys. If clients need to send such alerts, they SHOULD first rekey to the handshake keys if possible." In middlebox
@@ -1024,6 +1053,16 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         }
         c->sni_pause = value != 0;
         return KSL_OK;
+    case KSL_OPT_CERT_COMPRESSION:
+        if (value != 0 && value != 1) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: certificate compression is 0 or 1");
+            return KSL_ERROR;
+        }
+        if (!cert_compression_set(c, value)) {
+            ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, "ksl: certificate compression is not available");
+            return KSL_ERROR;
+        }
+        return KSL_OK;
     case KSL_OPT_ALPN_POLICY:
         if (c->role != KSL_SERVER || value < KSL_ALPN_POLICY_OPEN || value > KSL_ALPN_POLICY_REFUSE) {
             ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ALPN policy is server-only (0..2)");
@@ -1037,6 +1076,16 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     }
 }
 int ksl_ctx_freeze(ksl_ctx *c) {
+    ERR_clear_error();
+    /* An OpenSSL server sends only a certificate chain compressed beforehand (statem_srvr.c, "Server can't compress on-demand"):
+       the identity is final here, so it is compressed once per context, with each algorithm of the list, for every session under
+       it (an SNI override's own chain with its own freeze; SSL_set_SSL_CTX carries it over). OpenSSL keeps an algorithm only where
+       the output is smaller than the input, and returns 0 when none is: that chain then goes out as a plain Certificate (RFC 8879
+       section 3 never obliges a sender to compress). A client compresses its certificate per handshake, as the server's
+       CertificateRequest context is part of the message. */
+    if (!c->frozen && c->role == KSL_SERVER && c->cert_compression && c->has_leaf &&
+        SSL_CTX_compress_certs(c->ctx, 0) != 1)
+        ERR_clear_error();
     c->frozen = 1;
     return KSL_OK;
 }

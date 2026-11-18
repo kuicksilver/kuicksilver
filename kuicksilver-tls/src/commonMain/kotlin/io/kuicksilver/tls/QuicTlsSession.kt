@@ -320,6 +320,13 @@ public interface QuicTlsSession : AutoCloseable {
     public val negotiatedAlpn: String?
 
     /**
+     * The algorithm the peer's certificate chain came compressed with (RFC 8879), null when it came uncompressed, has not come,
+     * or the session failed. The default (an implementation without certificate compression) is null.
+     */
+    @ExperimentalKuicksilverApi
+    public val peerCertificateCompression: CertificateCompression? get() = null
+
+    /**
      * Client: true when the server accepted our 0-RTT, false when it rejected it, null when none was attempted or the
      * answer has not arrived (RFC 9001 section 4.6.2). Server: true when 0-RTT of this connection was accepted, false
      * when the client offered it and we refused, null otherwise.

@@ -155,3 +155,10 @@ ClientHello, the second one after a HelloRetryRequest included, and `ksl_drive` 
 of it, and before the SNI pause, a present ALPN extension that is malformed gets decode_error in both modes. It is decided in
 `ksl` and not at the SNI pause because only `ksl` sees whether the extension is there at all (`ksl_ssl_client_hello` hands out
 the list without its length) and every ClientHello, which the pause sees once. No new function.
+
+TLS certificate compression, additive under 7 (RFC 8879; [ADR-0020](0020-zlib-and-brotli-in-libcrypto.md)):
+`KSL_OPT_CERT_COMPRESSION` on either context, 1 (the default) to offer brotli, then zlib, and to compress a server's chain once
+at `ksl_ctx_freeze`, 0 for neither; `KSL_GET_CERT_COMPRESSION` (2 bytes) for the algorithm the peer's certificate came in,
+noted by `ksl_msg_cb` (installed on a QUIC server session too when it asks for a client certificate). A server session that
+staples an OCSP response sends its Certificate uncompressed. Both take the number 14, after the `KSL_GET_GROUP` 13 of the
+key-exchange groups. No new function.

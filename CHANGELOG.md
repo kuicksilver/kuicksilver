@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- TLS certificate compression (RFC 8879), on by default for clients and servers over QUIC and TCP: a client offers
+  brotli, then zlib, a server sends its chain compressed with the first of the client's algorithms (compressed once per
+  identity, when its context is built) and offers the same for client certificates. Over QUIC the smaller chain keeps
+  more of a server's first flight inside the amplification limit (RFC 9000 section 8.1): the test chain of 13.7 KB goes
+  from a first flight of 15,523 bytes, held at three times the ClientHello until the client is heard again, to 2,689
+  bytes sent at once. `TlsConfig.Builder.certificateCompression` (experimental, default true) turns it off;
+  `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell what the
+  peer's chain came in. What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an
+  announced length above it, a length that does not match or data that does not decompress is `bad_certificate`, an
+  algorithm not offered `illegal_parameter` (threat model 3.25, CWE-409). A server session that staples an OCSP response
+  sends its Certificate uncompressed, since the chain compressed beforehand has no response in it. ksl ABI 7, additive:
+  `KSL_OPT_CERT_COMPRESSION`, `KSL_GET_CERT_COMPRESSION`.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

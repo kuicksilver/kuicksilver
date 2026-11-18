@@ -416,6 +416,7 @@ internal class KslContext private constructor(
                 }
             }
             if (config.keylog != null) Ksl.ctxSetOption(h, KslConst.OPT_KEYLOG, 1)
+            if (!config.certificateCompression) Ksl.ctxSetOption(h, KslConst.OPT_CERT_COMPRESSION, 0)
             if (config.genericAlerts) Ksl.ctxSetOption(h, KslConst.OPT_GENERIC_ALERTS, 1)
             return chain
         }

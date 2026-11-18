@@ -43,6 +43,7 @@ struct ksl_ctx {
     int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
     int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
     int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int cert_compression; /* KSL_OPT_CERT_COMPRESSION: RFC 8879 offered and accepted (brotli, zlib); a server's chain compressed at freeze */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
     uint8_t ocsp_hash[32];
@@ -134,6 +135,7 @@ struct ksl_ssl {
     uint64_t record_limit;  /* records the current keys may protect (RFC 9846 5.5), per AEAD; 0 = not yet known */
     uint32_t
         renegotiations; /* TCP, TLS 1.2: renegotiations the peer attempted on the established session (ksl_msg_cb) */
+    uint16_t peer_cert_comp; /* the algorithm of the peer's CompressedCertificate (RFC 8879), 0 for none (ksl_msg_cb) */
     /* keylog lines */
     char *keylog;
     size_t keylog_len, keylog_cap;

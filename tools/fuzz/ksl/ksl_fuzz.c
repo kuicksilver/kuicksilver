@@ -22,6 +22,11 @@
         policy; cfg / 3 % 4: 0 no SNI pause, 1..3 a pause resumed with an override whose policy is that minus 1; cfg / 12 % 2:
         a server (and override) that takes only P-384, so a ClientHello with another key share draws a HelloRetryRequest and
         the records may carry a second one
+     0xfc  (the whole byte, as 0xfe) a server's Handshake-level CRYPTO (EncryptedExtensions, a Certificate or a
+        CompressedCertificate of RFC 8879, CertificateVerify, Finished) to a client whose ClientHello a real server answered
+        at the Initial level: the client offers certificate compression (brotli, zlib) and verifies nothing, so a
+        CompressedCertificate reaches OpenSSL's checks of its algorithm and lengths, the zlib or brotli decoder and the
+        certificate parser (the transcript is the real server's, so CertificateVerify fails after that)
    Every session is driven until it wants more input; every event is drained and every key freed. */
 #define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
 #define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
@@ -55,6 +60,7 @@ static const uint8_t SERVER_TP[] = {0x01, 0x02, 0x67, 0x10, 0x11, 0x0c, 0, 0, 0,
 static const uint8_t CLIENT_TP[] = {0x01, 0x02, 0x67, 0x10, 0x11, 0x08, 0, 0, 0, 1, 0, 0, 0, 1};
 static uint8_t TICKET_KEYS[80];
 
+static ksl_ctx *server_comp_ctx; /* mode 0xfc: a server that compresses its chain (frozen) */
 static ksl_ctx *server_ctx, *server_sni_ctx, *server_early_ctx, *client_ctx, *server_registered_ctx, *server_default_ctx;
 /* mode 0xfd: TCP servers by [policy][pause][P-384 only], the SNI overrides by policy, and a TCP client for the seeds */
 static const uint8_t ALPN_X1[] = {2, 'x', '1'};
@@ -111,6 +117,7 @@ static void init(void) {
     }
     tcp_client_ctx = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(tcp_client_ctx, ALPN_X1, sizeof ALPN_X1);
     ksl_ctx_set_option(tcp_client_ctx, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+    server_comp_ctx = new_server(0, 0); ksl_ctx_freeze(server_comp_ctx);
 }
 
 static void touch(const uint8_t *p, size_t n);
@@ -138,6 +145,41 @@ static void serve_tcp(uint8_t cfg, const uint8_t *p, size_t n) {
     uint8_t buf[64]; size_t l; ksl_ssl_get(s, KSL_GET_ALPN, buf, sizeof buf, &l);
     if (debug) { uint32_t code; int al; char m[256]; ksl_ssl_last_error(s, &code, &al, m, sizeof m); fprintf(stderr, "tcp served: alert %d %s\n", al, m); }
     ksl_ssl_free(s);
+}
+
+static void drain(ksl_ssl *s, int level, uint8_t **out, size_t *len);
+static uint8_t *client_hello(const uint8_t *tp, size_t tp_len, size_t *len, ksl_ssl **keep);
+
+/* A client that sent its ClientHello and read a real server's ServerHello: it holds the Handshake keys and waits for the server's
+   Handshake flight. The server's own flight is returned (*flight, for the seeds) or dropped. */
+static ksl_ssl *client_after_server_hello(ksl_ctx *sctx, uint8_t **flight, size_t *flight_len) {
+    ksl_ssl *c = NULL; size_t hl; uint8_t *hello = client_hello(CLIENT_TP, sizeof CLIENT_TP, &hl, &c);
+    if (!c) { free(hello); return NULL; }
+    ksl_ssl *s = ksl_ssl_new(sctx, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, SERVER_TP, sizeof SERVER_TP);
+    ksl_quic_provide(s, KSL_LEVEL_INITIAL, hello, hl); ksl_drive(s);
+    uint8_t *sh = NULL; size_t shl = 0; ksl_event ev;
+    if (flight) { *flight = NULL; *flight_len = 0; }
+    while (ksl_quic_next_event(s, &ev)) {
+        if (ev.type == KSL_EV_KEY) ksl_key_free(ev.key);
+        else if (ev.type == KSL_EV_CRYPTO_SEND && ev.level == KSL_LEVEL_INITIAL) {
+            sh = realloc(sh, shl + ev.len + 1); memcpy(sh + shl, ev.buf, ev.len); shl += ev.len;
+        } else if (ev.type == KSL_EV_CRYPTO_SEND && ev.level == KSL_LEVEL_HANDSHAKE && flight) {
+            *flight = realloc(*flight, *flight_len + ev.len + 1); memcpy(*flight + *flight_len, ev.buf, ev.len); *flight_len += ev.len;
+        }
+    }
+    ksl_quic_provide(c, KSL_LEVEL_INITIAL, sh, shl); ksl_drive(c); drain(c, -1, NULL, NULL);
+    free(sh); free(hello); ksl_ssl_free(s);
+    return c;
+}
+
+/* Mode 0xfc: the bytes as the server's Handshake-level CRYPTO to such a client, driven until it wants more input or fails. */
+static void serve_handshake_flight(const uint8_t *p, size_t n) {
+    ksl_ssl *c = client_after_server_hello(server_comp_ctx, NULL, NULL); if (!c) return;
+    ksl_quic_provide(c, KSL_LEVEL_HANDSHAKE, p, n);
+    for (int round = 0; round < 3; round++) { int rc = ksl_drive(c); drain(c, -1, NULL, NULL); if (rc != KSL_OK) break; }
+    uint8_t alg[2]; size_t l; ksl_ssl_get(c, KSL_GET_CERT_COMPRESSION, alg, sizeof alg, &l);
+    if (debug) { uint32_t code; int al; char m[256]; ksl_ssl_last_error(c, &code, &al, m, sizeof m); fprintf(stderr, "flight: alert %d %s\n", al, m); }
+    ksl_ssl_free(c);
 }
 
 /* Drains every event; returns the CRYPTO bytes of [level] (malloc'ed, *len) when out is non-NULL. */
@@ -272,6 +314,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (n >= 1) serve_tcp(rest[0], rest + 1, n - 1);
         return 0;
     }
+    if (data[0] == 0xfc) {
+        serve_handshake_flight(rest, n);
+        return 0;
+    }
     switch (data[0] % 8) {
     case 0: {
         size_t hl; uint8_t *hello = client_hello(rest, n, &hl, NULL);
@@ -379,6 +425,37 @@ int ksl_fuzz_write_seeds(const char *dir) {
             ksl_ssl_free(tc); ksl_ssl_free(ts);
         }
         if (!alpn) ksl_ctx_free(cc);
+    }
+    /* mode 0xfc: a compressing server's Handshake flight (its CompressedCertificate in brotli), the same server's flight without
+       compression, and the brotli one with uncompressed_length one too large, with the algorithm zlib, and with its data replaced
+       by 14 bytes of brotli that expand to 1 MiB of zeros */
+    {
+        ksl_ctx *plain = new_server(0, 0); ksl_ctx_set_option(plain, KSL_OPT_CERT_COMPRESSION, 0); ksl_ctx_freeze(plain);
+        ksl_ctx *ctxs[2] = {server_comp_ctx, plain};
+        for (int k = 0; k < 2; k++) {
+            uint8_t *fl = NULL; size_t fll = 0; ksl_ssl *cc = client_after_server_hello(ctxs[k], &fl, &fll);
+            if (!cc || !fl) { fprintf(stderr, "no server flight\n"); return 1; }
+            PUT(k ? "server-flight-plain" : "server-flight-brotli", 0xfc, fl, fll);
+            if (k == 0) {
+                /* the CompressedCertificate (type 25) after EncryptedExtensions: [25][len3][alg2][ulen3][clen3][data] */
+                size_t q = 0;
+                while (q + 4 <= fll && fl[q] != 25) q += 4 + (size_t)(fl[q + 1] << 16 | fl[q + 2] << 8 | fl[q + 3]);
+                if (q + 12 > fll) { fprintf(stderr, "no CompressedCertificate in the flight\n"); return 1; }
+                uint8_t *v = malloc(fll + 64);
+                memcpy(v, fl, fll); v[q + 8] = (uint8_t)(v[q + 8] + 1); PUT("server-flight-length-off", 0xfc, v, fll);
+                memcpy(v, fl, fll); v[q + 5] = 1; PUT("server-flight-zlib-label", 0xfc, v, fll);
+                static const uint8_t BOMB[] = {0x59, 0xff, 0xff, 0x8f, 0x7f, 0x02, 0x20, 0x1e, 0x0b, 0x04, 0x72, 0xef, 0x1f, 0x00};
+                size_t mlen = 4 + (size_t)(fl[q + 1] << 16 | fl[q + 2] << 8 | fl[q + 3]), bl = 2 + 3 + 3 + sizeof BOMB;
+                memcpy(v, fl, q + 9); memcpy(v + q + 12, BOMB, sizeof BOMB);
+                v[q + 1] = 0; v[q + 2] = (uint8_t)(bl >> 8); v[q + 3] = (uint8_t)bl;
+                v[q + 9] = 0; v[q + 10] = 0; v[q + 11] = sizeof BOMB;
+                memcpy(v + q + 4 + bl, fl + q + mlen, fll - q - mlen);
+                PUT("server-flight-bomb", 0xfc, v, q + 4 + bl + fll - q - mlen);
+                free(v);
+            }
+            free(fl); ksl_ssl_free(cc);
+        }
+        ksl_ctx_free(plain);
     }
     /* mode 0xfd: a client that offers x1 in its first ClientHello and drops ALPN from the second, after the HelloRetryRequest of a
        P-384-only server (RFC 9846 section 4.2.2 forbids it; KSL_OPT_ALPN_POLICY judges the second on its own) */
