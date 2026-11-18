@@ -23,7 +23,7 @@ import org.junit.jupiter.api.TestInfo
 /**
  * Fuzz target `proxyHeader`: input = [mode byte][what a proxy sends first on a connection]. Mode bits 0-3, when not 0, cut
  * the bytes into pieces of that many bytes, each handed over on its own (a header split over many reads), else they come at
- * once; bits 4-7 pick the `maxHeaderSize` (232, 512, 4096 or 65551, by the low two bits).
+ * once; bits 4-5 pick the `maxHeaderSize` (232, 512, 4096 or 65551); bits 6-7 are ignored.
  *
  * The connection's reader ([readProxyHeader]) either refuses the bytes with [ProxyProtocolException] (nothing else may come
  * out) or returns a header, and then: it took exactly the header and not a byte more (the rest of the input, the request a

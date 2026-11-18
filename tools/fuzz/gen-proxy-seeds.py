@@ -53,7 +53,8 @@ SSL = b"\x07\0\0\0\0" + tlv(0x21, b"TLSv1.3") + tlv(0x22, b"client.test") + tlv(
 
 seeds = {
     "v1-tcp4": mode() + b"PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\n" + GET,
-    "v1-tcp6-pieces": mode(3) + b"PROXY TCP6 2001:0db8::1 ::ffff:192.0.2.9 1 65535\r\n" + GET,
+    "v1-tcp6-pieces": mode(3) + b"PROXY TCP6 2001:0db8::1 ::ffff:c000:209 1 65535\r\n" + GET,
+    "v1-tcp6-dotted": mode() + b"PROXY TCP6 ::ffff:192.000.002.001 ::1 1 2\r\n" + GET,
     "v1-unknown": mode(1) + b"PROXY UNKNOWN whatever\r\n" + GET,
     "v1-longest": mode() + b"PROXY UNKNOWN " + b"x" * (107 - 16) + b"\r\n" + GET,
     "v1-no-crlf": mode() + b"PROXY UNKNOWN " + b"x" * 120,
@@ -63,6 +64,9 @@ seeds = {
     "v2-inet6-dgram": mode(limit=1) + v2(INET6, fam=0x22) + GET,
     "v2-unix": mode(limit=0) + v2(UNIX, fam=0x31) + GET,
     "v2-local": mode() + v2(b"", ver_cmd=0x20, fam=0x00) + GET,
+    "v2-local-inet-empty": mode() + v2(b"", ver_cmd=0x20, fam=0x11) + GET,
+    "v2-local-inet-unspec": mode(2) + v2(b"\x00" * 5, ver_cmd=0x20, fam=0x10) + GET,
+    "v2-proxy-inet-unspec": mode() + v2(INET, fam=0x10) + GET,
     "v2-unspec": mode() + v2(b"\x01\x02\x03", fam=0x00) + GET,
     "v2-crc": mode(7) + with_crc(INET + tlv(0x05, bytes(range(16))) + tlv(0x04, b"\0\0")) + HELLO,
     "v2-crc6": mode() + with_crc(INET6, fam=0x21) + GET,

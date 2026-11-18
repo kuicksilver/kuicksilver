@@ -100,7 +100,8 @@ class ProxyProtocolCodecTest {
         assertEquals("::1", h.destinationAddress)
         assertEquals(0, h.sourcePort)
         assertEquals(65535, h.destinationPort)
-        assertEquals("::ffff:192.0.2.9", decode(ascii("PROXY TCP6 ::ffff:192.0.2.9 ::1 1 2\r\n")).sourceAddress)
+        // an IPv4-mapped address in hexadecimal groups, as section 2.1 writes IPv6, is reported in RFC 5952 text
+        assertEquals("::ffff:192.0.2.9", decode(ascii("PROXY TCP6 ::ffff:c000:209 ::1 1 2\r\n")).sourceAddress)
     }
 
     @Test fun v1UnknownIgnoresWhatFollows() {
@@ -144,6 +145,10 @@ class ProxyProtocolCodecTest {
                 "PROXY TCP4 ::1 198.51.100.2 1 2\r\n",
                 "PROXY TCP6 192.0.2.1 ::1 1 2\r\n",
                 "PROXY TCP6 ::ffff:192.0.2.1%eth0 ::1 1 2\r\n",
+                // IPv6 is "sets of 4 hexadecimal digits ... delimited by colons" (section 2.1): no dotted IPv4 tail, which
+                // would also let IPv4's leading zeros in
+                "PROXY TCP6 ::ffff:192.0.2.1 ::1 1 2\r\n",
+                "PROXY TCP6 ::ffff:192.000.002.001 ::1 1 2\r\n",
                 "PROXY TCP6 [::1] ::1 1 2\r\n",
                 "PROXY TCP4 192.0.2.01 198.51.100.2 1 2\r\n",
                 "PROXY TCP4 192.0.2.256 198.51.100.2 1 2\r\n",
@@ -222,11 +227,33 @@ class ProxyProtocolCodecTest {
         refused(ProxyV2.SIG.copyOf().also { it[11] = 0x0B } + byteArrayOf(0x21, 0x11, 0, 12) + ProxyV2.inet())
     }
 
+    /**
+     * LOCAL: "The receiver must accept this connection as valid and must use the real connection endpoints and discard the
+     * protocol block including the family which is ignored", and receivers "must not assume zero is presented for LOCAL
+     * connections" (section 2.2): any length and any family and transport of valid nibbles.
+     */
+    @Test fun v2LocalIsAcceptedWhateverItsFamilyAndLength() {
+        for ((fam, len) in listOf(0x11 to 0, 0x21 to 12, 0x31 to 0, 0x10 to 0, 0x01 to 3, 0x30 to 0, 0x02 to 7, 0x32 to 216)) {
+            val h = decode(ProxyV2.header(verCmd = 0x20, fam = fam, body = ByteArray(len)))
+            assertEquals(ProxyCommand.Local, h.command, "LOCAL with family byte 0x${fam.toString(16)} and $len bytes")
+            assertFalse(h.namesClient)
+        }
+    }
+
+    /** "other values are unspecified ... and must be rejected as invalid by receivers": a family above 3 or a transport above 2. */
+    @Test fun negative_v2LocalWithAnInvalidNibbleIsRefused() {
+        for (fam in listOf(0x41, 0x13, 0xf0, 0x0f)) refused(ProxyV2.header(verCmd = 0x20, fam = fam, body = ByteArray(0)))
+    }
+
+    /** PROXY keeps to the combinations section 2.2 lists: AF_INET with UNSPEC transport is one the receiver may reject. */
+    @Test fun negative_v2ProxyWithAnUnlistedCombinationIsRefused() {
+        for (fam in listOf(0x10, 0x01, 0x30, 0x02)) refused(ProxyV2.header(fam = fam, body = ProxyV2.inet()))
+    }
+
     @Test fun negative_v2AddressBlockShorterThanItsFamilyIsRefused() {
         refused(ProxyV2.header(fam = 0x11, body = ByteArray(11)))
         refused(ProxyV2.header(fam = 0x21, body = ByteArray(35)))
         refused(ProxyV2.header(fam = 0x31, body = ByteArray(215)))
-        refused(ProxyV2.header(verCmd = 0x20, fam = 0x21, body = ByteArray(12)))
     }
 
     @Test fun negative_v2HugeLengthIsRefusedFromTheFixedPartAlone() {

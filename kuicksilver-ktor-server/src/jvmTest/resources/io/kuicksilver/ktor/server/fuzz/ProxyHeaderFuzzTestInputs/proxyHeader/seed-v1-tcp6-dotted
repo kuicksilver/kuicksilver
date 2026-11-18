@@ -1,0 +1,4 @@
+ PROXY TCP6 ::ffff:192.000.002.001 ::1 1 2
+GET / HTTP/1.1
+Host: a.test
+

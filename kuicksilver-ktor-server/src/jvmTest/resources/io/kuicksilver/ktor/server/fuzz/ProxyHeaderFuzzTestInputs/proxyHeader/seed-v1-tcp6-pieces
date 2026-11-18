@@ -1,4 +1,4 @@
-#PROXY TCP6 2001:0db8::1 ::ffff:192.0.2.9 1 65535
+#PROXY TCP6 2001:0db8::1 ::ffff:c000:209 1 65535
 GET / HTTP/1.1
 Host: a.test
 

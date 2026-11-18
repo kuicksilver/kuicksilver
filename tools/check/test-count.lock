@@ -2651,6 +2651,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolC
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2CrcMismatchIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2HugeLengthIsRefusedFromTheFixedPartAlone
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2LocalWithAnInvalidNibbleIsRefused
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2ProxyWithAnUnlistedCombinationIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.negative_v2TlvOverrunningTheHeaderIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.readerLeavesBytesThatCameInTheSameWrite
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.readerTakesAHeaderSplitIntoSingleBytesAndLeavesWhatFollows
@@ -2660,6 +2662,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolC
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v1UnknownIgnoresWhatFollows
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2CrcThatMatchesIsTaken
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2LocalAndUnspecKeepTheRealAddresses
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2LocalIsAcceptedWhateverItsFamilyAndLength
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2ProxyInet
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2ProxyInet6AndDgram
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ProxyProtocolCodecTest.v2ProxyUnixPaths

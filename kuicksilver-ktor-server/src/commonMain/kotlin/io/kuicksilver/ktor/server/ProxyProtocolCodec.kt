@@ -18,13 +18,17 @@ internal class ProxyProtocolException(
 ) : IOException(message)
 
 /**
- * The PROXY protocol header ("The PROXY protocol", HAProxy, versions 1 and 2; quoted below as "the spec"), sans-IO: [frame]
- * tells from the first bytes how long the header is, or that it cannot be one, and [decode] reads a complete header. Every
- * shape the spec does not define is refused ([ProxyProtocolException]): "any sequence which does not exactly match the
- * protocol must be discarded and cause the receiver to abort the connection".
+ * The PROXY protocol header (HAProxy, "The PROXY protocol, Versions 1 & 2", revision 2020/03/05; its sections are cited
+ * below), sans-IO: [frame] tells from the first bytes how long the header is, or that it cannot be one, and [decode] reads
+ * a complete header. Every shape the text does not define is refused ([ProxyProtocolException]), section 2.1: "Any
+ * sequence which does not exactly match the protocol must be discarded and cause the receiver to abort the connection."
  */
 internal object ProxyProtocolCodec {
-    /** Version 1: "a 108-byte buffer is always enough to store all the line and a trailing zero", the line at most 107 bytes. */
+    /**
+     * Version 1, section 2.1: "The maximum line lengths the receiver must support including the CRLF are : [...] worst case
+     * [...] 107 chars" and "So a 108-byte buffer is always enough to store all the line and a trailing zero for string
+     * processing."
+     */
     const val V1_MAX = 107
 
     /** Version 2: the signature, the version and command byte, the family byte and the 16-bit length. */
@@ -63,13 +67,15 @@ internal object ProxyProtocolCodec {
         val i = n - 1
         val b = buf[i]
         if (i < V1_PREFIX.size && b != V1_PREFIX[i]) throw ProxyProtocolException("not a PROXY protocol version 1 line")
-        // the line ends at its first LF, which must follow a CR ("the CRLF sequence"); a CR elsewhere is no valid field byte
+        // section 2.1: "The receiver must not tolerate a single CR or LF character to end the line when a complete CRLF
+        // sequence is expected." The line ends at its first LF, which must follow a CR; a CR elsewhere is no valid field byte
         // of a TCP4 or TCP6 line (decode refuses it there) and is ignored after UNKNOWN, as anything is
         if (b == LF) {
             if (i == 0 || buf[i - 1] != CR) throw ProxyProtocolException("the PROXY line ends with LF instead of CRLF")
             return n
         }
-        // "If the receiver doesn't find the CRLF sequence within the first 107 characters, it must declare the line invalid"
+        // section 2.1: "If the CRLF sequence is not found in the first 107 characters, the receiver should declare the line
+        // invalid."
         if (n >= V1_MAX) throw ProxyProtocolException("no CRLF within the first $V1_MAX bytes of the PROXY line")
         return -1
     }
@@ -86,18 +92,25 @@ internal object ProxyProtocolCodec {
         }
         if (i == 12) {
             val v = buf[12].toInt() and 0xff
-            // "\x2 : this is version 2 of the protocol. Only this value is valid" and "Receivers must only accept this value"
+            // section 2.2: "As of this specification, it must always be sent as \x2 and the receiver must only accept this value."
             if (v ushr 4 != 2) throw ProxyProtocolException("PROXY protocol version ${v ushr 4} in a version 2 header")
-            // commands other than LOCAL and PROXY "MUST NOT be emitted by senders. Receivers MUST drop connections presenting
-            // unexpected values here"
+            // section 2.2: "other values are unassigned and must not be emitted by senders. Receivers must drop connections
+            // presenting unexpected values here."
             if (v and 0xf > 1) throw ProxyProtocolException("PROXY protocol version 2 command ${v and 0xf} is unassigned")
             return -1
         }
         if (i == 13) {
-            // "Other values are unspecified and must not be emitted in version 2 of this protocol and must be rejected as
-            // invalid by receivers"
+            // section 2.2, for the family and for the transport nibble alike: "other values are unspecified and must not be emitted
+            // in version 2 of this protocol and must be rejected as invalid by receivers." LOCAL takes any valid pair: "The
+            // receiver must accept this connection as valid and must use the real connection endpoints and discard the protocol
+            // block including the family which is ignored." PROXY takes the combinations section 2.2 lists ("In practice, the
+            // following protocol bytes are expected"); for an UNSPEC nibble with the other one set "the receiver is free to
+            // accept the connection anyway and use the real endpoint addresses or to reject it", and it is rejected
             val f = buf[13].toInt() and 0xff
-            if (f !in FAMILIES) throw ProxyProtocolException("PROXY protocol version 2 family and transport 0x${f.toString(16)}")
+            val local = buf[12].toInt() and 0xf == 0
+            if (f ushr 4 > 3 || f and 0xf > 2 || (!local && f !in FAMILIES)) {
+                throw ProxyProtocolException("PROXY protocol version 2 family and transport 0x${f.toString(16)}")
+            }
             return -1
         }
         if (n < V2_FIXED) return -1
@@ -126,7 +139,8 @@ internal object ProxyProtocolCodec {
     private fun decodeV1(h: ByteArray): ProxyHeader {
         val line = CharArray(h.size - V1_PREFIX.size - 2) { (h[V1_PREFIX.size + it].toInt() and 0xff).toChar() }.concatToString()
         if (line.startsWith("UNKNOWN") && (line.length == 7 || line[7] == ' ')) {
-            // "the receiver must ignore anything presented before the CRLF is found" and use the real connection's addresses
+            // section 2.1: "the receiver must ignore anything presented before the CRLF is found", and "SHOULD accept the
+            // connection and use the real connection's parameters as if there were no PROXY protocol header on the wire"
             return ProxyHeader(
                 1,
                 ProxyCommand.Proxy,
@@ -145,7 +159,7 @@ internal object ProxyProtocolCodec {
                 line.startsWith("TCP6 ") -> true
                 else -> throw ProxyProtocolException("PROXY line protocol is not TCP4, TCP6 or UNKNOWN")
             }
-        // exactly one space between the fields: "a single space", nothing before the CRLF
+        // section 2.1: "exactly one space" before each field, nothing between the last one and the CRLF
         val fields = line.substring(5).split(' ')
         if (fields.size != 4) throw ProxyProtocolException("PROXY line has ${fields.size} fields after the protocol, not 4")
         val src = if (v6) v1Ipv6(fields[0]) else v1Ipv4(fields[0])
@@ -177,10 +191,15 @@ internal object ProxyProtocolCodec {
         }
     }
 
-    /** An IPv6 address in RFC 4291 section 2.2 text: no brackets, no zone ID. */
+    /**
+     * Section 2.1: "IPv6 addresses must be indicated as series of sets of 4 hexadecimal digits (upper or lower case) delimited
+     * by colons between each other, with the acceptance of one double colon sequence to replace the largest acceptable range
+     * of consecutive zeroes. The total number of decoded bits must exactly be 128." Groups of 1 to 4 digits are taken (what
+     * `inet_ntop` writes, which senders use); a dotted IPv4 tail, brackets and a zone ID are not hexadecimal groups.
+     */
     private fun v1Ipv6(s: String): ByteArray {
         if (':' !in s ||
-            s.any { it == '[' || it == ']' || it == '%' }
+            s.any { it == '[' || it == ']' || it == '%' || it == '.' }
         ) {
             throw ProxyProtocolException("not an IPv6 address in the PROXY line")
         }
@@ -220,15 +239,18 @@ internal object ProxyProtocolCodec {
                 ProxyFamily.Unix -> 216
                 ProxyFamily.Unspecified -> 0
             }
-        // the length "must be at least" the size of the family's addresses: a shorter block is invalid whatever the command
-        if (h.size - V2_FIXED < addressBytes) {
+        // LOCAL: "discard the protocol block including the family which is ignored", whatever its length ("Receivers MUST
+        // always consider this field to skip the appropriate number of bytes and must not assume zero is presented for LOCAL
+        // connections"). PROXY: "The receiver must not start to parse an address before the whole address block is
+        // received. The receiver must also reject incoming connections containing partial protocol headers.": a block
+        // shorter than its family's addresses holds a partial address
+        if (!local && h.size - V2_FIXED < addressBytes) {
             throw ProxyProtocolException(
                 "a PROXY protocol version 2 block of ${h.size - V2_FIXED} bytes for $family addresses of $addressBytes",
             )
         }
-        // LOCAL: "the receiver must accept this connection as valid and must use the real connection endpoints and discard
-        // the protocol block including the family which is ignored"; AF_UNSPEC: "the receiver ... must ignore the address
-        // information" (HAProxy reads TLVs only after INET and INET6 addresses, from memory of its source)
+        // LOCAL: the block is discarded unread, its TLVs (a CRC32c among them) included. PROXY with AF_UNSPEC (only \x00
+        // gets here): "The receiver should ignore address information."; the bytes after it are not read either
         if (local || family == ProxyFamily.Unspecified) {
             return ProxyHeader(
                 2,
@@ -282,8 +304,9 @@ internal object ProxyProtocolCodec {
     }
 
     /**
-     * The TLVs in [from] until [to] of [h]; each must fit there whole ("TLVs ... must not exceed the header length"), else
-     * the header is refused. In the [outer] list: PP2_TYPE_CRC32C must be 4 bytes and match (at most one), PP2_TYPE_UNIQUE_ID
+     * The TLVs in [from] until [to] of [h], which the receiver may "attempt to interpret" (section 2.2); one cut by the end of
+     * its block is a partial header, refused under section 2.2: "The receiver must also reject incoming connections
+     * containing partial protocol headers." In the [outer] list: PP2_TYPE_CRC32C must be 4 bytes and match (at most one), PP2_TYPE_UNIQUE_ID
      * at most 128 bytes, PP2_TYPE_SSL a valid structure; PP2_TYPE_NOOP is left out. Unknown types are kept as they are.
      */
     private fun tlvs(
@@ -304,15 +327,15 @@ internal object ProxyProtocolCodec {
             if (outer) {
                 when (type) {
                     ProxyHeader.PP2_TYPE_CRC32C -> {
-                        // "the value ... is a 32-bit number": another length cannot be checked; a second one would leave which
-                        // field was zeroed while summing undefined
+                        // section 2.2.3: "The value of the type PP2_TYPE_CRC32C is a 32-bit number": another length cannot be
+                        // checked; a second one would leave which field was zeroed while summing undefined
                         if (len != 4) throw ProxyProtocolException("a PROXY protocol CRC32c TLV of $len bytes")
                         if (crcAt >= 0) throw ProxyProtocolException("two PROXY protocol CRC32c TLVs")
                         crcAt = p + 3
                     }
 
                     ProxyHeader.PP2_TYPE_UNIQUE_ID -> {
-                        // "The value of the type PP2_TYPE_UNIQUE_ID is an opaque byte sequence of up to 128 bytes"
+                        // section 2.2.5: "The value of the type PP2_TYPE_UNIQUE_ID is an opaque byte sequence of up to 128 bytes"
                         if (len > 128) throw ProxyProtocolException("a PROXY protocol unique ID of $len bytes")
                     }
 
@@ -329,10 +352,12 @@ internal object ProxyProtocolCodec {
     }
 
     /**
-     * "the receiver MUST: Store the received CRC32c checksum value aside. Replace the 32 bits of the checksum field in the
-     * received PROXY header with all '0's and calculate a CRC32c checksum value of the whole PROXY header. Verify that the
-     * calculated CRC32c checksum is the same as the received CRC32c checksum. If it is not, the receiver MUST treat the TCP
-     * connection providing the header as invalid." The value is in network byte order.
+     * Section 2.2.3: "If the checksum is provided as part of the PROXY header and the checksum functionality is supported by
+     * the receiver, the receiver MUST: - store the received CRC32c checksum value aside. - replace the 32 bits of the
+     * checksum field in the received PROXY header with all '0's and calculate a CRC32c checksum value of the whole PROXY
+     * header. - verify that the calculated CRC32c checksum is the same as the received CRC32c checksum. If it is not, the
+     * receiver MUST treat the TCP connection providing the header as invalid. The default procedure for handling an invalid
+     * TCP connection is to abort it." The value is in network byte order.
      */
     private fun checkCrc(
         h: ByteArray,
@@ -351,7 +376,10 @@ internal object ProxyProtocolCodec {
         return ProxySsl(value[0].toInt() and 0xff, verify, tlvs(value, 5, value.size, outer = false))
     }
 
-    /** CRC32c (Castagnoli, the polynomial 0x1EDC6F41 reflected as 0x82F63B78; RFC 3720 appendix B.4) of [len] bytes at [off]. */
+    /**
+     * CRC32c of [len] bytes at [off], "as described in RFC4960, Appendix B" (section 2.2.3): the Castagnoli polynomial
+     * 0x1EDC6F41, reflected as 0x82F63B78. The test vectors are those of RFC 3720 appendix B.4.
+     */
     fun crc32c(
         b: ByteArray,
         off: Int = 0,
@@ -383,8 +411,8 @@ internal object ProxyProtocolCodec {
 
 /**
  * Reads one PROXY protocol header from the start of this connection's input, and not a byte more: what follows it (the
- * request, the ClientHello), sent in the same segment or later, stays in the channel. The receiver "may be tolerant to
- * partial headers": a header split over any number of reads is taken. Throws [ProxyProtocolException] for a malformed
+ * request, the ClientHello), sent in the same segment or later, stays in the channel. Section 2: "The receiver may be
+ * tolerant to partial headers [...] Recommendation is to be tolerant": a header split over any number of reads is taken. Throws [ProxyProtocolException] for a malformed
  * header, one over [maxSize] bytes (known from the fixed part of version 2, before the rest is read; version 1 is never
  * over 107 bytes), and a connection that ends inside it. Bounding the time is the caller's.
  */
