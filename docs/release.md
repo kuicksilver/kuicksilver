@@ -246,8 +246,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    guide and the API reference of the tag (`tools/docs/site.sh <version>`), adds them to the `gh-pages` branch under
    `/<version>/` (earlier versions stay), points `/latest/` at the newest final release and deploys the branch to
    <https://kuicksilver.github.io/kuicksilver/> with `actions/deploy-pages` (Pages enabled once: [step 7](#once-accounts-keys-dns) above).
-   Check the version's pages once the run is green; *Actions → pages → Run workflow* with the version rebuilds one. Runs
-   update `gh-pages` one at a time and a later run can cancel one still waiting: re-run a cancelled `pages` run. Each
+   Check the version's pages once the run is green; *Actions → pages → Run workflow* with the version rebuilds one. A
+   release update of `gh-pages` waits for another release update (a later one can replace one still waiting: re-run a
+   cancelled `pages` run); one that races a development-snapshot update is redone on the new `gh-pages`, and each
+   deployment publishes `gh-pages` as it is when it starts. Each
    version adds about 30 MB (0.3.0-SNAPSHOT: 29 MB) and `/latest/` is a copy of one (stored once in git); GitHub Pages allows a
    1 GB site, so past about 30 versions the oldest ones are removed from `gh-pages` by hand.
    The same run builds the version's "How we verify" pages (`/<version>/verify/`, in Russian under `ru/verify/` and in
@@ -257,6 +259,12 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    the `verify` job and with it the publication. A later rebuild of the version after the artifacts expired keeps its
    published verification data (`tools/docs/verify.py keep`); with none to keep, the pages say "no data" and the run
    warns, while the guide and the API reference are published as usual.
+   The same workflow keeps `/dev/`, the development snapshot of `main`'s tip: after every successful `build.yml` run of
+   a push to `main` it publishes that run's guide and API reference (built by its `apple` job as the documentation gate,
+   with a "development snapshot of <sha>, not a release" banner and links at the commit) and the verification pages
+   from the same run; by hand, *Run workflow* with `ref` (a tag or a full commit SHA on `main`, whose push run is at most
+   7 days old) publishes that commit instead. The landing page lists `dev` beside the releases; `/latest/` is never a
+   snapshot. Only `/dev/` is kept, not one directory per snapshot: each would add about 30 MB to `gh-pages`.
    After the first publication (0.3.0), once <https://kuicksilver.github.io/kuicksilver/latest/verify/index.html> loads,
    add the site link and three badges to the README's badge block, in a commit of their own (they would be broken
    images before):

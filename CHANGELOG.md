@@ -19,7 +19,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   CI host, the engine interop pairs (client × server × wire), h2spec and the QUIC Interop Runner where they ran, fuzz
   targets and corpora, artifact sizes, benchmarks with where and when they were measured, and the RFC compliance summary;
   each page names the commit, the run and its date, and data of another commit is refused. Every `build.yml` job uploads
-  its counts as a `verify-<job>-a<attempt>` artifact; a rebuild after they expired keeps the published pages. Hosted CI now also runs h2spec
+  its counts as a `verify-<job>-a<attempt>` artifact; a rebuild after they expired keeps the published pages. The site
+  also has `/dev/`, the development snapshot of `main`'s tip (guide, API reference and verification pages of one green
+  `build.yml` push run, each page marked "development snapshot of <sha>, not a release"), published after every such
+  run or by hand for a commit on `main`; `/latest/` stays the newest release. Hosted CI now also runs h2spec
   against the linuxX64 server (the image pinned by digest in `tools/interop/h2spec.sh`, checked by `pins.sh`) and builds
   the release `Kuicksilver.xcframework`, whose slice and zip sizes the pages show.
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
