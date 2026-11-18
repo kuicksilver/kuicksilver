@@ -303,7 +303,7 @@ threats and limits: threat model 3.29.
 | `refuseOwnAddresses` | `Boolean` | `true` |  | 0.3.0 | refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with `destination_ip_prohibited` |
 | `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
 | `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
-| `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per target and 100 over the proxy, from the address the target sent to (`stats.packetTooBigNoSource` when a wildcard socket cannot tell it); without the privilege the payload is only dropped (`stats.packetTooBig`) |
+| `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per target and 100 over the proxy, from the address the target sent to (`stats.packetTooBigNoSource` when a wildcard socket cannot tell it, `stats.packetTooBigFailed` when the raw socket does not send it); without the privilege the payload is only dropped (`stats.packetTooBig`) |
 | `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
 
 ## Http2Settings

@@ -857,6 +857,9 @@ class ConnectUdpTest {
 
         /** The source address of each message sent: the address the target sent to. */
         val locals = Channel<InetSocketAddress>(Channel.UNLIMITED)
+
+        /** The MTU of each message sent. */
+        val mtus = Channel<Int>(Channel.UNLIMITED)
         var closed = 0
 
         override fun send(
@@ -868,6 +871,7 @@ class ConnectUdpTest {
         ): Boolean {
             sent.trySend(target)
             locals.trySend(local)
+            mtus.trySend(mtu)
             return accept
         }
 
@@ -1059,6 +1063,51 @@ class ConnectUdpTest {
                 val local = sink.locals.receive()
                 assertEquals("10.0.0.2", local.ipLiteral(), "IPv4, as the target")
                 assertEquals(port, local.port)
+                t.close()
+            }
+        }
+
+    /**
+     * A request for an IPv4-mapped target (`::ffff:192.0.2.51`, which Kotlin/Native keeps as IPv6) reaches the IPv4 address,
+     * and its Packet Too Big is IPv4: the sender gets the IPv4 target and the MTU with the IPv4 and UDP headers (28 bytes),
+     * the same as for a plain IPv4 target, not 48.
+     */
+    @Test fun packetTooBigToAnIpv4MappedTargetIsIpv4() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink()
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val mapped = InetSocketAddress("192.0.2.51", 5000) // where the proxy sends: the address unmapped
+                val gotPlain = rig.echo(echoAt)
+                val gotMapped = rig.echo(mapped)
+                val plain = p.client.connectUdp(template, "192.0.2.50", 5000)
+                plain.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400)))
+                assertEquals(1400, withTimeout(5.seconds) { gotPlain.receive() }.size)
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.packetTooBigSent == 1L }
+                }
+                assertEquals("192.0.2.50", sink.sent.receive().ipLiteral())
+                sink.locals.receive()
+                val plainMtu = sink.mtus.receive()
+                val t = p.client.connectUdp(template, "::ffff:192.0.2.51", 5000)
+                t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400)))
+                assertEquals(1400, withTimeout(5.seconds) { gotMapped.receive() }.size)
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.packetTooBigSent == 2L }
+                }
+                assertEquals("192.0.2.51", sink.sent.receive().ipLiteral(), "IPv4, not IPv4-mapped IPv6")
+                assertEquals("10.0.0.2", sink.locals.receive().ipLiteral())
+                assertEquals(plainMtu, sink.mtus.receive(), "the IPv4 headers' 28 bytes on top of the same payload")
+                plain.close()
                 t.close()
             }
         }
