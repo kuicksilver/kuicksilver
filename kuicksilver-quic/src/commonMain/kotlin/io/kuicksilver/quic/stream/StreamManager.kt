@@ -468,10 +468,11 @@ internal class StreamManager(
         heldIds = null
         if (accepted && ids != null) {
             finishedAwaitingResetAck?.let { waiting ->
+                val offered = retiredAwaitingAck ?: ArrayList<Long>().also { retiredAwaitingAck = it }
+                // the ones not taken since their retirement are offered already: offered once, in one pass over each set
+                val already = if (offered.isEmpty()) emptySet() else offered.toHashSet()
                 for (id in ids) {
-                    if (id !in waiting) continue
-                    val offered = retiredAwaitingAck ?: ArrayList<Long>().also { retiredAwaitingAck = it }
-                    if (id !in offered) offered += id // not taken since its retirement: offered once
+                    if (id in waiting && id !in already) offered += id
                 }
             }
         }
