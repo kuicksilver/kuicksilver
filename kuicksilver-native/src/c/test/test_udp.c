@@ -961,7 +961,8 @@ static void udp_sender_cases(void) {
             const int expect_round = SENDER_THREADS * SENDER_BATCH;
             int64_t deadline = mono_ms() + 120000;
             uint32_t round = 0;
-            for (; round < SENDER_EACH / SENDER_BATCH && mono_ms() < deadline && !failed && !unhanded; round++) {
+            for (; round < SENDER_EACH / SENDER_BATCH && mono_ms() < deadline && !failed && !unhanded && !bad;
+                 round++) {
                 struct sender_run runs[SENDER_THREADS];
                 pthread_t th[SENDER_THREADS];
                 int done = 0;
