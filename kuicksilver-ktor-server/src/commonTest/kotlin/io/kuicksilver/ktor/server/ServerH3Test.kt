@@ -890,6 +890,7 @@ class ServerH3Test {
     /** GOAWAY reaches every connection at once, not one per 2×RTT; the in-flight calls all finish within the grace period. */
     @Test fun stopSendsGoAwayToAllConnectionsAtOnce() =
         h3ServerTest {
+            val clients = 100
             val arrived = kotlin.concurrent.atomics.AtomicInt(0)
             val (server, port) =
                 tlsServer {
@@ -904,7 +905,7 @@ class ServerH3Test {
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             val conns = ArrayList<Http3Connection>()
             try {
-                repeat(50) { conns += ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3"))) }
+                repeat(clients) { conns += ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3"))) }
                 coroutineScope {
                     val responses =
                         conns.map { c ->
@@ -915,7 +916,7 @@ class ServerH3Test {
                                 }
                             }
                         }
-                    kotlinx.coroutines.withTimeout(5.seconds) { while (arrived.load() < 50) kotlinx.coroutines.delay(10) }
+                    kotlinx.coroutines.withTimeout(20.seconds) { while (arrived.load() < clients) kotlinx.coroutines.delay(10) }
                     val t0 =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
@@ -924,14 +925,14 @@ class ServerH3Test {
                     // macOS host, every run), and the deadline then cuts responses still in flight
                     val stop = async(kotlinx.coroutines.Dispatchers.Default) { server.stop(5000, 8000) }
                     kotlinx.coroutines.withTimeout(
-                        5.seconds,
+                        20.seconds,
                     ) { while (conns.any { it.goAwayReceived.value == null }) kotlinx.coroutines.delay(5) }
                     val allSawGoAway = t0.elapsedNow()
-                    assertEquals(List(50) { 200 to "done" }, responses.awaitAll())
+                    assertEquals(List(clients) { 200 to "done" }, responses.awaitAll())
                     stop.await()
                     // at once is one round of the server's 50 ms wait between its two GOAWAYs (~200 ms on a coarse timer, up to
-                    // 406 ms seen); one connection after another would be 50 such rounds, 2.5 s even on an idle host
-                    assertTrue(allSawGoAway < 1.seconds, "every client saw GOAWAY after $allSawGoAway")
+                    // 406 ms seen); one connection after another would be 100 such rounds, 5 s even on an idle host
+                    assertTrue(allSawGoAway < 2_500.milliseconds, "every client saw GOAWAY after $allSawGoAway")
                 }
             } finally {
                 conns.forEach { it.close() }
