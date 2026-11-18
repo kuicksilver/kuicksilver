@@ -9,9 +9,7 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
-import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.server.application.install
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -19,9 +17,9 @@ import io.ktor.server.routing.routing
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.TcpAddress
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.ipLiteral
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlin.test.Test
@@ -45,23 +43,27 @@ class ClientHappyEyeballsTest {
     @Test fun h3RacesTheAddressesOfAName() =
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
-            val selector = SelectorManager(Dispatchers.IO)
-            // the first address swallows QUIC where the host has IPv6 loopback; elsewhere a connect to it fails at once
-            val silent = runCatching { aSocket(selector).udp().bind(InetSocketAddress("::1", port)) }.getOrNull()
+            // the first address swallows QUIC where the host has IPv6 loopback; elsewhere a connect to it fails at once. A
+            // DatagramIo binds ::1 itself: ktor-network on Native binds ::1 as the wildcard :: (KTOR-10017)
+            val silent = runCatching { DatagramIo.open(InetSocketAddress("::1", port)) }.getOrNull()
+            if (silent == null) println("h3RacesTheAddressesOfAName: no IPv6 loopback, the first address fails at once")
+            val tried = ArrayList<String>()
             try {
                 testClient(Http3DiscoveryMode.H3Only, engine = {
                     connectTimeout = 20.seconds
                     familyResolverForTest = { _, v6 -> listOf(if (v6) loopback6 else loopback4) }
                 }).use { c ->
+                    (c.engine as KuicksilverEngine).h3.endpointChosenForTest = { remote, _ -> tried += remote.ipLiteral() }
                     val start = TimeSource.Monotonic.markNow()
                     val r = c.get("https://server.test:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertEquals("v=HTTP/3", r.bodyAsText())
                     assertTrue(start.elapsedNow() < 10.seconds, "${start.elapsedNow()}")
                 }
+                // with the silent socket the race ran: the first attempt went to ::1 and the second to 127.0.0.1
+                if (silent != null) assertEquals(listOf("::1", "127.0.0.1"), tried)
             } finally {
                 silent?.close()
-                selector.close()
                 server.stop(100, 500)
             }
         }

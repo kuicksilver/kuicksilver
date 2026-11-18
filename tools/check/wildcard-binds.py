@@ -34,6 +34,14 @@ connect to 127.0.0.1). What is a wildcard bind:
                 embeddedServer(factory, <port>) (the port by position: an integer or a variable that holds a port)
                 without host (Ktor's default 0.0.0.0)
   interop       HqInteropServer.start / H3InteropServer.start without `host =` (kuicksilver-interop's default 0.0.0.0)
+  ktor IPv6     in a test source set that runs on Kotlin/Native (any but jvm*Test and android*Test), a ktor-network
+                socket, aSocket(...).udp() or .tcp() (a .configure { } or .configure(...) before or after them included),
+                bound to an IPv6 address: a literal with two colons or more ("::1", "fe80::1", "[::1]", a zone such as
+                "fe80::1%en0", also a raw string), as the host or inside an InetSocketAddress (its first positional
+                argument or a named hostname = anywhere), directly or through a `val`/`var` of the file whose initializer
+                line holds one. A wildcard "::" the rules above already report is reported once. ktor-network on Native binds it as the wildcard `::` (lsof: UDP
+                *:port), and its datagrams to ::1 never arrive (Ktor issue KTOR-10017): bind with DatagramIo.open or
+                bindTcp, which bind the exact address. Checked in every such file, whether it talks to loopback or not.
 Comments and KDoc are skipped. Known blind spots: an address built elsewhere (a helper in another file, a function
 parameter), a wildcard reached through string templates or concatenation, a `val` shadowed in a nested lambda or local
 class (names are tracked per function, not per scope), DatagramSocket(x) whose x is neither declared here as a port nor
@@ -41,7 +49,9 @@ named like one (read as an address), a null address held in a variable (bind(add
 ServerSocket(0, 50, addr) with addr = null), embeddedServer(factory, x) whose x is neither declared here as a port nor
 named like one, a bind function reached through an alias or a reference, a bind in a file that reaches loopback only
 through a helper of another file other than rawHttp/slowHttp, a socket that binds implicitly on its first send (an unbound
-DatagramChannel), library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
+DatagramChannel), an IPv6 address a ktor-network bind takes from a parameter or a helper of another file or builds in a string template,
+a ktor-network socket whose bind is not chained to its aSocket(...).udp()/.tcp() call (a builder held in a variable, a
+call between them other than configure), an IPv6 InetSocketAddress held in a variable, library code (out of scope: the ktor-client HTTP/3 pool and QuicConnection.rebind choose the loopback
 address for a loopback peer themselves, through loopbackLocalFor), and code that is not Kotlin or Java (scripts, Node, docker peers). An allowlist entry that matches nothing is a finding too (stale).
 Two false findings to judge in the allowlist: a .bind(null, x) of something that is not a socket (any .bind call with a
 null first argument is read as a socket bound to no address), and embeddedServer(factory, x) whose x is named like a port
@@ -70,6 +80,12 @@ SERVER_SOCKET = re.compile(r"\bServerSocket\s*\(\s*[^,()\s]+\s*(?:,\s*[^,()\s]+\
 DATAGRAM_SOCKET = re.compile(r"\bDatagramSocket\s*\(\s*([\w.]*)\s*(,\s*null\s*)?\)")
 JAVA_PORT_ONLY = re.compile(r"\bInetSocketAddress\s*\(\s*[\w.]+\s*\)")  # ktor's takes a host too: this is java.net's, on the wildcard
 INTEROP = re.compile(r"\b(?:HqInteropServer|H3InteropServer)\.start\s*\(")
+NATIVE_SET = re.compile(r"/src/(?!jvm|android)[A-Za-z0-9]*Test[A-Za-z0-9]*/")
+IPV6 = r'(?:"""|")\[?(?=[0-9A-Fa-f.]*:[0-9A-Fa-f.]*:)[0-9A-Fa-f:.]+(?:%[\w.-]+)?\]?(?:"""|")'
+KTOR_SOCKET = re.compile(r"\baSocket\s*\(")
+KTOR_KIND = re.compile(r"\s*\.\s*(?:udp|tcp)\s*\(\s*\)")
+KTOR_CONFIGURE = re.compile(r"\s*\.\s*configure\s*")
+KTOR_BIND = re.compile(r"\s*\.\s*bind\s*\(")
 HOST_WILD = re.compile(r"\bhost\s*=\s*" + WILD + r'|"-host=(?:0\.0\.0\.0|::)"')
 
 
@@ -303,6 +319,59 @@ def findings_in(code):
     return found
 
 
+def skip_configure(code, i):
+    """The offset after any .configure { } / .configure(...) calls starting at i."""
+    while True:
+        m = KTOR_CONFIGURE.match(code, i)
+        if not m:
+            return i
+        j = m.end()
+        if j < len(code) and code[j] == "(":
+            j += len(call_args(code, j))
+            while j < len(code) and code[j] in " \t\r\n":
+                j += 1
+        if j < len(code) and code[j] == "{":
+            block, j = block_after(code, j)
+        if j == m.end():
+            return i
+        i = j
+
+
+def ktor_ipv6_findings(code):
+    """(offset, kind, end) of every ktor-network socket bound to an IPv6 address in comment-free code (see the module doc);
+    end is the offset after the bind call."""
+    found = []
+    text, code = code, blank_strings(code)
+    v6_names = {
+        m.group(1)
+        for m in re.finditer(r"\b(?:val|var)\s+(\w+)\s*(?::\s*[\w.?<>]+\s*)?=([^\n]*)", text)
+        if re.search(IPV6, m.group(2))
+    }
+    for m in KTOR_SOCKET.finditer(code):
+        after = skip_configure(code, m.end() - 1 + len(call_args(code, m.end() - 1)))
+        k = KTOR_KIND.match(code, after)
+        if not k:
+            continue
+        b = KTOR_BIND.match(code, skip_configure(code, k.end()))
+        if not b:
+            continue
+        end = b.end() - 1 + len(call_args(code, b.end() - 1))
+        args = text[b.end() : end - 1]
+        for a in split_args(args)[:1] + [a for a in split_args(args)[1:] if re.match(r"(?:localAddress|hostname)\s*=", a)]:
+            a = re.sub(r"^\w+\s*=\s*", "", a.strip())
+            host = a
+            inner = re.match(r"InetSocketAddress\s*\((.*)\)$", a, re.S)
+            if inner:
+                parts = split_args(inner.group(1))
+                named = [x for x in parts if re.match(r"hostname\s*=", x)]
+                positional = [x for x in parts if not re.match(r"\w+\s*=(?!=)", x)]
+                host = re.sub(r"^hostname\s*=\s*", "", named[0]) if named else (positional[0] if positional else "")
+            if re.fullmatch(IPV6, host) or (re.fullmatch(r"\w+", host) and host in v6_names):
+                found.append((m.start(), "a ktor-network socket bound to an IPv6 address: on Native it binds the wildcard :: (KTOR-10017)", end))
+                break
+    return found
+
+
 def split_args(args):
     """The top-level arguments of an argument list's text (brackets and string literals respected)."""
     out, depth, cur, in_str, i = [], 0, [], False, 0
@@ -372,18 +441,22 @@ def main(argv):
                 continue
             text = open(os.path.join(dp, f), encoding="utf-8", errors="replace").read()
             code = strip_comments(text)
-            if not LOOPBACK.search(code):
-                continue
-            files += 1
+            hits = findings_in(code) if LOOPBACK.search(code) else []
+            files += 1 if LOOPBACK.search(code) else 0
+            if NATIVE_SET.search("/" + rel):
+                # one finding per bind: a wildcard "::" the rules above report inside the same call is not reported again
+                hits += [(o, kind) for o, kind, end in ktor_ipv6_findings(code) if not any(o <= h < end for h, _ in hits)]
             lines = text.split("\n")
-            for off, kind in sorted(set(findings_in(code))):
+            for off, kind in sorted(set(hits)):
                 ln = code.count("\n", 0, off) + 1
                 src = lines[ln - 1].strip()
                 key = (rel, src)
                 if key in allow:
                     allow[key][1] = True
                     continue
-                findings.append(f"{rel}:{ln}: {kind} in a test that talks to loopback: bind it to 127.0.0.1 (or ::1), or judge it in {ALLOW}\n    {src}")
+                fix = "bind it with DatagramIo.open or bindTcp" if "KTOR-10017" in kind else "bind it to 127.0.0.1 (or ::1)"
+                where = "in a test that runs on Native" if "KTOR-10017" in kind else "in a test that talks to loopback"
+                findings.append(f"{rel}:{ln}: {kind} {where}: {fix}, or judge it in {ALLOW}\n    {src}")
     for (p, src), (n, used) in allow.items():
         if not used:
             problems.append(f"{ALLOW}:{n}: stale, matches no wildcard bind: {p} | {src}")

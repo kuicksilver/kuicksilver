@@ -9,7 +9,6 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.url
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -298,7 +297,8 @@ class ClientWebSocketConnectingTest {
     @Test fun handshakesToTwoAddressesDoNotWait() =
         clientTest {
             val selector = SelectorManager(Dispatchers.IO)
-            val v6 = runCatching { aSocket(selector).tcp().bind("::1", 0).close() }
+            // bindTcp binds ::1 itself; ktor-network on Native binds ::1 as the wildcard :: (KTOR-10017)
+            val v6 = runCatching { bindTcp(selector, "::1", 0).close() }
             selector.close()
             v6.onFailure {
                 println("handshakesToTwoAddressesDoNotWait skipped: needs an IPv6 loopback ($it)")
