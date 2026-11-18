@@ -75,7 +75,8 @@ third upstream to watch.
   | zlib + brotli, encoder tables computed lazily | 3,420,688 | +522,112 | 3,056,792 | +512,736 |
   | zlib + brotli decoder only | 3,127,568 | +228,992 | 2,759,096 | +215,040 |
 
-  Taken: decoder only on Android and iOS, the lazy encoder elsewhere (the macOS JNI library: +512,736). What is left on
+  Taken: decoder only on Android and iOS, the lazy encoder elsewhere. With `ksl`'s one-shot wrappers below, as shipped: the
+  Android arm64 library 3,128,112 bytes (+229,536), the macOS arm64 JNI library 3,056,808 (+512,752). What is left on
   Android is brotli's RFC 7932 dictionary (122 KB, which a decoder needs), its decoder and zlib. The Android size gate
   (`tools/check/size.sh`) is 3,200,000 with a target of 2,900,000, 200,000 above where it was. Other per-target deltas
   (Android x86_64 and armeabi-v7a, iOS, Linux, mingw) were not measured.

@@ -804,7 +804,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   decoder with its allocations capped at 3 times the output plus 256 KiB (`ksl_decompress.c`). Android and iOS get brotli's
   decoder only (the encoder's entry points are stubs that fail), the other targets the encoder with its static tables
   computed on first use (`BROTLI_STATIC_INIT_LAZY`, run once by `tools/openssl/brotli/ksl_static_init.c`): the Android
-  arm64 `libksl.so` grows from 2,898,576 to 3,127,568 bytes, the macOS arm64 JNI library from 2,544,056 to 3,056,792
+  arm64 `libksl.so` grows from 2,898,576 to 3,128,112 bytes, the macOS arm64 JNI library from 2,544,056 to 3,056,808
   (ADR-0025 has every option measured), and the Android size gate (`tools/check/size.sh`) moves up by 200,000 bytes to a
   limit of 3,200,000. brotli's encoder needs `libm`: the Linux libraries link it (`libm.so.6` joins the Linux import
   whitelist of the release; the glibc floor stays 2.17); the Android library, without the encoder, does not. `provenance.txt` of every

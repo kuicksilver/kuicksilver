@@ -17,8 +17,9 @@ typedef struct {
     size_t cap, used, peak;
 } ksl_brotli_budget;
 
-/* the largest total of live allocations of the last call (read by the C tests) */
-size_t ksl_brotli_decode_peak;
+/* the largest total of live allocations of this thread's last call (read by the C tests); per thread, as handshakes on several
+   threads decode at once */
+_Thread_local size_t ksl_brotli_decode_peak;
 
 static void *ksl_brotli_alloc(void *opaque, size_t n) {
     ksl_brotli_budget *b = opaque;
@@ -43,7 +44,8 @@ static void ksl_brotli_free(void *opaque, void *address) {
     free(p);
 }
 
-/* the budget for an output of `decoded` bytes; SIZE_MAX / 4 and above saturate */
+/* the budget for an output of `decoded` bytes: 3 x decoded + 256 KiB, saturating at SIZE_MAX for decoded above
+   (SIZE_MAX - 256 KiB) / 3 */
 size_t ksl_brotli_decode_budget(size_t decoded) {
     if (decoded > (SIZE_MAX - KSL_BROTLI_SLACK) / 3)
         return SIZE_MAX;

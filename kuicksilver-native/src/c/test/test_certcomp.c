@@ -728,7 +728,7 @@ static void test_decoder_only(void) {
    (tools/openssl/brotli/ksl_decompress.c): a stream declaring a 16 MiB meta-block in 68 bytes made brotli 1.2.1 allocate 16.8 MiB */
 int BrotliDecoderDecompress(size_t encoded_size, const uint8_t *encoded, size_t *decoded_size, uint8_t *decoded);
 size_t ksl_brotli_decode_budget(size_t decoded);
-extern size_t ksl_brotli_decode_peak;
+extern _Thread_local size_t ksl_brotli_decode_peak;
 static void test_brotli_memory_bound(void) {
     SECTION("negative_certcomp_brotli_memory_bounded");
     static uint8_t out[CERT_LIST_MAX];

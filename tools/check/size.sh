@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Size gate for the Android arm64 library: FAIL above <limit> (default 3,200,000), WARN above <target> (2,900,000). Both
 # were raised by 200,000 bytes for zlib and brotli's decoder in libcrypto (TLS certificate compression, RFC 8879; ADR-0025),
-# which add 228,992 bytes to the arm64 library (2,898,576 -> 3,127,568, measured when they were added).
+# which add 229,536 bytes to the arm64 library (2,898,576 -> 3,128,112, measured when they were added).
 # Usage: size.sh <aar|libksl.so> [limit] [target]
 set -uo pipefail
 in="${1:?aar or so}"; limit="${2:-3200000}"; target="${3:-2900000}"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT INT TERM HUP
