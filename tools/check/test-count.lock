@@ -3258,6 +3258,10 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineO
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineQueuedRefusalTest.negative_aMalformedRequestBehindAFullQueueGets400
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineQueuedRefusalTest.negative_anOversizedHeadBehindAFullQueueGets431
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineRefusalLingerTest.negative_aRefusedRequestIsReadBeforeTheClose
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.aBodyReadBeforeTheHandlerEndedKeepsTheConnection
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.aBodyReadWhenTheHandlerEndedKeepsTheConnection
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.aHeadThatWonTheRaceIsAnsweredAndTheStopClosesTheConnection
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineSelectRaceTest.negative_aHeadThatArrivedAsTheServerStoppedIsAnswered
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.headStartedBeforeTheStopIsServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.idleKeepAliveConnectionClosesAtStop
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h1.H1PipelineStopTest.lingerAfterARefusalEndsAtStop

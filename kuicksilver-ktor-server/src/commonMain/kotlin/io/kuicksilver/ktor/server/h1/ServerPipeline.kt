@@ -169,6 +169,22 @@ internal var responseFlushedForTest: (suspend (ByteWriteChannel) -> Unit)? = nul
 @kotlin.concurrent.Volatile
 internal var pipelineResponseTakenForTest: (suspend (ByteWriteChannel) -> Unit)? = null
 
+/**
+ * Test hook: runs inside the wait for the first byte of a request head that races the server's stop, once that wait
+ * returned and before its result is handed to the race; it gets the connection's input (a test that never returns from
+ * it leaves the stop as the only side that can win).
+ */
+@kotlin.concurrent.Volatile
+internal var requestStartForTest: (suspend (ByteReadChannel) -> Unit)? = null
+
+/**
+ * Test hook: runs inside the read of a request body that races the handler's end, once the body was read and before
+ * its outcome is handed to the race; it gets the connection's input (a test that holds it until the handler ended
+ * leaves the handler's end as the side that wins).
+ */
+@kotlin.concurrent.Volatile
+internal var bodyReadForTest: (suspend (ByteReadChannel) -> Unit)? = null
+
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
 private val RequestHandlerName = CoroutineName("kuicksilver-h1-request")
@@ -616,7 +632,10 @@ internal fun CoroutineScope.startH1Pipeline(
                             }
                         }
                     input.startBody(timeout, gate, bodyTimedOut)
-                    val reader = async(start = CoroutineStart.UNDISPATCHED) { readRequestBody(body, requestBody, response) }
+                    val reader =
+                        async(start = CoroutineStart.UNDISPATCHED) {
+                            readRequestBody(body, requestBody, response).also { bodyReadForTest?.invoke(input.sourceForTest) }
+                        }
                     val outcome =
                         select {
                             reader.onAwait { it }
@@ -696,22 +715,30 @@ private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS", "TRACE")
 
 /**
  * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser
- * reports), false when [draining] completes first.
+ * reports), false when [draining] completes first and nothing is there to read. A byte that arrives as [draining]
+ * completes is a head that started: true, whichever side the race picked ([HeadLimitedInput.hasInput] after the wait
+ * ended).
  */
 @OptIn(InternalAPI::class)
 private suspend fun awaitRequestStart(
-    input: ByteReadChannel,
+    input: HeadLimitedInput,
     draining: Job,
 ): Boolean {
     if (!input.readBuffer.exhausted() || input.isClosedForRead) return true
     if (draining.isCompleted) return false
     return coroutineScope {
-        val started = async(start = CoroutineStart.UNDISPATCHED) { input.awaitContent() }
+        val started =
+            async(start = CoroutineStart.UNDISPATCHED) {
+                input.awaitContent().also { requestStartForTest?.invoke(input.sourceForTest) }
+            }
         select {
             started.onAwait { true }
             draining.onJoin {
-                started.cancel()
-                false
+                // the stop won, but a byte may have come with it: the wait is ended (joined, so nothing else reads the
+                // input meanwhile) and the input looked at again. A head that has started to arrive is read and answered,
+                // as the pipeline's contract says; only a connection with nothing to read ends here
+                started.cancelAndJoin()
+                input.hasInput()
             }
         }
     }
