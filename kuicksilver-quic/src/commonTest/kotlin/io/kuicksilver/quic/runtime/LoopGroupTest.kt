@@ -578,17 +578,31 @@ class LoopGroupTest {
                                 }
                             }
                         }.awaitAll()
-                // states that stay, never an instant: every client ends either handed to the accept queue on the server's side
-                // (once per connection; a counter that only grows) or ended on its own side (its connect failed, or its
-                // connection closed: refused at its Initial or at its handshake's completion). Refusals are not counted on
-                // the server's side: a client refused at its Initial may retransmit it and be refused again. A slow host only
-                // takes longer to get there
+                // states that stay, never an instant, counted once per client: a client is decided when it ended on its own
+                // side (its connect failed, or its connection closed: refused at its Initial or at its handshake's completion)
+                // or when a server connection from its address was handed to the accept queue. Refusals are not counted on
+                // the server's side: a client refused at its Initial may retransmit it and be refused again. A slow host
+                // only takes longer to get there
                 val loops = (0..1).map { group.loopForTest(it) }
 
-                fun handedOff() = loops.sumOf { it.acceptHandOffsForTest }
+                suspend fun handedOffFrom(): Set<InetSocketAddress> =
+                    loops.flatMapTo(HashSet()) { l ->
+                        kotlinx.coroutines.withContext(l.dispatcher) {
+                            l.runtimes.values
+                                .filter { it.handedOff }
+                                .map { it.core.remoteAddress }
+                        }
+                    }
 
-                fun ended() = connects.count { it !is QuicConnection || it.closed.isCompleted }
-                withTimeout(20.seconds) { while (handedOff() + ended() < clients.size) delay(5) }
+                suspend fun undecided(): Int {
+                    val handed = handedOffFrom()
+                    return clients.indices.count { i ->
+                        val c = connects[i]
+                        val ended = c !is QuicConnection || c.closed.isCompleted
+                        !ended && clients[i].localAddress !in handed
+                    }
+                }
+                withTimeout(20.seconds) { while (undecided() > 0) delay(5) }
                 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 val outcomes = connects.map { if (it is QuicConnection) it.closed.takeIf { d -> d.isCompleted }?.getCompleted() else it }
                 val waiting = group.loopForTest(0).pendingAcceptForTest
