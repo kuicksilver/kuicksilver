@@ -45,6 +45,7 @@ changed=$(git diff --name-only --diff-filter=AMR "$base"...HEAD -- 'kuicksilver-
 # <target> <module> <class> <why> lines, one per class to repeat
 plan=$(printf '%s\n' "$changed" | python3 -I -c '
 import importlib.util, os, re, sys
+sys.dont_write_bytecode = True  # no __pycache__ in the tree
 spec = importlib.util.spec_from_file_location("race_tests", os.path.join(sys.argv[1], "tools/check/race-tests.py"))
 rt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rt)
