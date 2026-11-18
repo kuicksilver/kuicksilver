@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.server
 
 import io.ktor.server.config.ApplicationConfig
+import io.ktor.server.config.ApplicationConfigValue
 import io.ktor.server.engine.CommandLineConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
@@ -27,7 +28,7 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.tls.clientCa` (the PEM file of the CAs client certificates are verified against),
  * `kuicksilver.tls.versions` (`tls13`, the default, or `tls12And13`: TLS 1.2 clients served too, under the RFC 9325 profile),
  * `kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's order of preference, e.g.
- * `["X25519MLKEM768", "x25519", "secp256r1"]`; the default list when absent),
+ * `["X25519MLKEM768", "x25519", "secp256r1"]`, or one string of them separated by `:` or `,`; the default list when absent),
  * `kuicksilver.tls.ocspStapling` (a DER OCSP response file stapled on TCP and QUIC, read again every
  * `kuicksilver.tls.reloadInterval`; whether it is stapled is logged at startup and when that changes),
  * `kuicksilver.tls.trustedGateway` (`true`: every client of the deployment port, TLS or cleartext behind a TLS-terminating
@@ -91,7 +92,7 @@ public object EngineMain {
         val versions = parseTlsVersions(config.propertyOrNull("kuicksilver.tls.versions")?.getString())
         require(versions == null || chain != null) { "kuicksilver.tls.versions needs kuicksilver.tls.certificateChain and privateKey" }
         versions?.let { tlsVersions = it }
-        val groups = config.propertyOrNull("kuicksilver.tls.keyExchangeGroups")?.let { parseKeyExchangeGroups(it.getList()) }
+        val groups = config.propertyOrNull("kuicksilver.tls.keyExchangeGroups")?.let { parseKeyExchangeGroups(groupNames(it)) }
         require(groups == null || chain != null) {
             "kuicksilver.tls.keyExchangeGroups needs kuicksilver.tls.certificateChain and privateKey"
         }
@@ -253,6 +254,15 @@ public object EngineMain {
             "tls12and13" -> TlsVersions.Tls12And13
             else -> throw IllegalArgumentException("kuicksilver.tls.versions: \"$value\" is not tls13 or tls12And13")
         }
+
+    /**
+     * The names of `kuicksilver.tls.keyExchangeGroups`: a list, or one value (a `-P:` key, a `${?ENV}` substitution) of names
+     * separated by `:` or `,`. Throws [IllegalArgumentException] naming the key for a value that is neither.
+     */
+    private fun groupNames(value: ApplicationConfigValue): List<String> =
+        runCatching { value.getList() }.getOrNull()
+            ?: runCatching { value.getString() }.getOrNull()?.split(':', ',')
+            ?: throw IllegalArgumentException("kuicksilver.tls.keyExchangeGroups: a list of group names, or one string of them")
 
     /**
      * `kuicksilver.tls.keyExchangeGroups`: the group names, the server's most preferred first (`KeyExchangeGroups`, case ignored).

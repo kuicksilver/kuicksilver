@@ -3186,6 +3186,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.gu
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2Key
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2RepeatOffenderPenaltyKey
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.keyExchangeGroupsKeySetsTheServersGroups
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.keyExchangeGroupsKeyTakesASeparatedString
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.ktorSslKeysOnJvm
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_clientCaKeyCombinationsRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.negative_clientCaKeysWithSslPortRefused

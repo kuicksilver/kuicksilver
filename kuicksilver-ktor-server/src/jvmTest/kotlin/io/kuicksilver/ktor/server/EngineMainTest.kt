@@ -664,6 +664,33 @@ class EngineMainTest {
             }
         }
 
+    /**
+     * A single value (a `-P:` key, or a `${?ENV}` substitution in HOCON) is read as names separated by `:` or `,`; a bad one is
+     * refused with the key named, as a bad list is.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun keyExchangeGroupsKeyTakesASeparatedString() {
+        val one = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=x25519")).engine
+        assertEquals(listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519), one.configuration.tlsKeyExchangeGroups.groups)
+        val two = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=secp384r1:x25519, secp256r1")).engine
+        assertEquals(
+            listOf(
+                io.kuicksilver.tls.KeyExchangeGroups.SECP384R1,
+                io.kuicksilver.tls.KeyExchangeGroups.X25519,
+                io.kuicksilver.tls.KeyExchangeGroups.SECP256R1,
+            ),
+            two.configuration.tlsKeyExchangeGroups.groups,
+        )
+        for (bad in listOf("nope", "", "x25519::secp256r1")) {
+            val e =
+                assertFailsWith<IllegalArgumentException>("\"$bad\"") {
+                    EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.keyExchangeGroups=$bad")).engine
+                }
+            assertTrue(e.message.orEmpty().startsWith("kuicksilver.tls.keyExchangeGroups: "), "\"$bad\": ${e.message}")
+        }
+    }
+
     @Test fun negative_keyExchangeGroupsKeyRefusesAnInvalidListOrNoIdentity() {
         val e =
             assertFailsWith<IllegalArgumentException> {

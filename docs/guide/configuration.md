@@ -434,7 +434,8 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
 `kuicksilver.tls.clientAuth` (`none`, `optional` or `required`) and `kuicksilver.tls.clientCa` (the PEM file of the CAs
 client certificates are verified against; set together), `kuicksilver.tls.versions` (`tls13` or `tls12And13`),
-`kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's most preferred first),
+`kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's most preferred first, or one string
+of them separated by `:` or `,`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
