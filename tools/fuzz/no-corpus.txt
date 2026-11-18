@@ -10,3 +10,5 @@ ktor-network.wsGuard
 client.h1Response
 server.h1Request
 quic.bbrInvariants
+http3.udpTemplate
+http3.udpDatagrams

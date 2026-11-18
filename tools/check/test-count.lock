@@ -1152,6 +1152,8 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negati
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negative_aRowWithFourFieldsOrABlankLineOrATwinFails
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negative_aRowWithSixFieldsFails
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CommittedCorpusReplayTest.everyCommittedInputPasses
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.ConnectUdpFuzzTest.udpDatagrams
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.ConnectUdpFuzzTest.udpTemplate
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.GoAwayWaitingRequestTest.negative_queuedRequestsOpenNoStreamAfterGoAway
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.GoAwayWaitingRequestTest.negative_requestWaitingForStreamCreditIsNotSentAfterGoAway
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.GoAwayWaitingRequestTest.negative_requestWaitingForStreamCreditIsNotSentAfterOurGoAway

@@ -1,0 +1,15 @@
+# http3.udpTemplate: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/absolute	7a4e20eba2f91152	8b9327e8a61a9505
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/absolute-well-known	5410d333a97d4a59	22f747206b848d54
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/ambiguous	74a36279c83b556b	0610bace33c464dd
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/forbidden-operators	c74f4c6543b358d2	57fcdd405ea04eea
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/level4	754ba004a561b12e	7f8cbe43de99d55b
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/query-continuation	3536d40affe85f2b	ef4caafbe22709c9
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/query-form	d45b41fb645e90fb	60d2a6632414a795
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/query-literal	160557d0f9b7d73e	947e80b9819e9ce4
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/well-known	61a91f4df66eabe9	75c38cd559b68b54
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/well-known-ipv6	e9a4602047d35f18	c5327f59d7f73ecd
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/well-known-port-0	279639cd788ccec0	75c38cd559b68b54
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/well-known-raw-colons	ac678e8c31dcb8f9	5000e7472bee27d6
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/well-known-zone	5953a6f59c8e01ff	d2932750953855f9
