@@ -382,7 +382,10 @@ class ReloadableCaTest {
             c3.getOrNull()?.close()
         }
 
-    /** The recheck of a connection under an SNI override builds its context unshared: the identity's registry stays empty. */
+    /**
+     * The recheck of a connection under an SNI override builds its context unshared: the identity's registry holds only the
+     * context the handshake itself took for that answer (under the bundle current at its ClientHello).
+     */
     @Test fun recheckUnderAnSniOverrideRegistersNothing(): Unit =
         withForwarders { fwd ->
             val r = TrustConfig.reloadable(testCa)
@@ -395,7 +398,7 @@ class ReloadableCaTest {
             assertEquals(Certificate(TestCerts.client), s.getOrThrow().peerCertificates[0], "the client's CA stays: accepted")
             c.getOrThrow().close()
             s.getOrThrow().close()
-            assertEquals(emptyList(), overrideIdentity.serverContexts.contextsForTest(), "nothing registered under the override identity")
+            assertEquals(1, overrideIdentity.serverContexts.contextsForTest().size, "the recheck registered nothing more")
             overrideIdentity.close()
         }
 

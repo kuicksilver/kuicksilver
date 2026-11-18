@@ -374,6 +374,8 @@ public class Simulator(
                 core.nextEvent() ?: break
             into += e
             if (e is ConnectionEvent.VerifyRequested) core.resumeVerify(runBlocking { e.session.verifyPeer(e.chain) })
+            // a server's sniSelector answers at once, inside the step: virtual time does not move while it runs
+            if (e is ConnectionEvent.SniRequested) core.resumeSni(runBlocking { e.session.selectSni(e.clientHello) })
         }
     }
 

@@ -104,6 +104,10 @@ public class TlsSocket private constructor(
     @InternalKuicksilverApi
     public val sniSelectedFor: String? get() = tls.sniSelectedFor
 
+    /** See [TlsConnection.sniSelectedAlpn]. */
+    @InternalKuicksilverApi
+    public val sniSelectedAlpn: List<String>? get() = tls.sniSelectedAlpn
+
     /** The application protocol agreed through ALPN (RFC 7301), or null when none was negotiated. */
     public val negotiatedAlpn: String? get() = tls.negotiatedAlpn
 

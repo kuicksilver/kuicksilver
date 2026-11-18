@@ -85,6 +85,79 @@ static void test_no_hrr_for_x25519_only_client(void) {
     END();
 }
 
+/* An SNI override on QUIC survives a HelloRetryRequest: the selector is asked once, the second ClientHello keeps the override
+   (ksl_client_hello_cb), and the handshake completes under the override's certificate with no change_cipher_spec (the
+   override's server context has middlebox compatibility on for TCP; RFC 9001 section 8.4). The client offers a key share only
+   for a group the server does not take, so the server answers with a HelloRetryRequest for secp256r1. */
+typedef struct {
+    ksl_ctx *override;
+    int asked;
+} sni_count;
+static int on_sni_count(ksl_ssl *s, int rc, void *arg) {
+    sni_count *x = arg;
+    if (rc != KSL_WANT_SNI)
+        return 1;
+    x->asked++;
+    return ksl_ssl_sni_resume(s, x->override, 0) == KSL_OK;
+}
+static void test_sni_override_after_hrr(void) {
+    SECTION("quic_sni_override_survives_hello_retry_request");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server-other-ca"),
+            *o = server_ctx("server");
+    ksl_ctx_set_option(sc, KSL_OPT_SNI_PAUSE, 1);
+    ksl_ssl *c = client(cc, "server.test"), *s = server(sc);
+    SSL *raw = ksl_ssl_raw_for_test(c);
+    CHECK(SSL_set1_groups_list(raw, "*brainpoolP256r1tls13:secp256r1") == 1,
+          "client: a key share only for brainpoolP256r1");
+    client_hellos = 0;
+    SSL_set_msg_callback(raw, count_client_hello);
+    sni_count n = {o, 0};
+    side cs = {0}, ss = {0};
+    int rc = pump(c, s, &cs, &ss, 60, on_sni_count, &n);
+    CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs.done && ss.done,
+          "handshake completes under the override (the base identity's CA is not trusted)");
+    CHECK(client_hellos == 2, "two ClientHellos: the server sent a HelloRetryRequest");
+    CHECK(n.asked == 1, "the selector was asked once");
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    ksl_ctx_free(o);
+    END();
+}
+
+/* A refusal at the SNI pause ends a QUIC handshake with the alert asked for: unrecognized_name (RFC 6066 section 3), and
+   missing_extension (RFC 9846 section 9.2) */
+typedef struct {
+    int alert;
+} sni_refuse;
+static int on_sni_refuse(ksl_ssl *s, int rc, void *arg) {
+    if (rc != KSL_WANT_SNI)
+        return 1;
+    return ksl_ssl_sni_resume(s, NULL, ((sni_refuse *)arg)->alert) == KSL_OK;
+}
+static void test_sni_refusal(void) {
+    SECTION("negative_quic_sni_refusal_sends_the_alert");
+    for (int i = 0; i < 2; i++) {
+        int want = i ? 109 : 112;
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ctx_set_option(sc, KSL_OPT_SNI_PAUSE, 1);
+        ksl_ssl *c = client(cc, "server.test"), *s = server(sc);
+        sni_refuse r = {want};
+        side cs = {0}, ss = {0};
+        pump(c, s, &cs, &ss, 40, on_sni_refuse, &r);
+        int sent = 0;
+        last_code(s, &sent);
+        /* QUIC carries the alert in CONNECTION_CLOSE (0x100 + alert, RFC 9001 section 4.8), which the transport sends */
+        CHECK(!ss.done && !cs.done && sent == want, want == 112 ? "unrecognized_name sent" : "missing_extension sent");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    END();
+}
+
 static void test_split_server_hello(void) {
     SECTION("quic_split_serverhello_wants_read");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
@@ -767,6 +840,8 @@ static void test_tls_key_update(void) {
 void run_quic(void) {
     test_handshake();
     test_no_hrr_for_x25519_only_client();
+    test_sni_override_after_hrr();
+    test_sni_refusal();
     test_split_server_hello();
     test_provide_during_pause();
     test_corrupt_stable();

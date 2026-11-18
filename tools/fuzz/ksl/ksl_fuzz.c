@@ -15,6 +15,13 @@
      7  `[ctx][ClientHello]`: a resumption ClientHello (pre_shared_key with a ticket, early_data) to a server whose ticket
         keys came from ksl_ctx_set_ticket_keys (0), a registered set (1) or the generated keys (2): ticket decryption and
         the 0-RTT verdict on a fuzzed ticket
+     0xfe  (the whole byte, not modulo 8: no older input starts with it) a NewSessionTicket message for the client's scan of
+        its early_data extension (ksl_nst_has_early_data), which reads the message before OpenSSL checks it
+     0xfd  (the whole byte, as 0xfe) `[cfg][TLS records]` to a TLS-over-TCP server session: the ALPN extension check and
+        KSL_OPT_ALPN_POLICY of ksl_client_hello_cb, at every ClientHello and at completion. cfg % 3 is the base context's
+        policy; cfg / 3 % 4: 0 no SNI pause, 1..3 a pause resumed with an override whose policy is that minus 1; cfg / 12 % 2:
+        a server (and override) that takes only P-384, so a ClientHello with another key share draws a HelloRetryRequest and
+        the records may carry a second one
    Every session is driven until it wants more input; every event is drained and every key freed. */
 #define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
 #define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
@@ -25,6 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "ksl.h"
+#include "ksl_internal.h" /* the SSL_CTX of the TCP servers of mode 0xfd: their key-exchange groups */
 
 #ifndef KSL_FUZZ_TESTDATA
 #define KSL_FUZZ_TESTDATA "kuicksilver-native/src/c/test/testdata/"
@@ -48,8 +56,12 @@ static const uint8_t CLIENT_TP[] = {0x01, 0x02, 0x67, 0x10, 0x11, 0x08, 0, 0, 0,
 static uint8_t TICKET_KEYS[80];
 
 static ksl_ctx *server_ctx, *server_sni_ctx, *server_early_ctx, *client_ctx, *server_registered_ctx, *server_default_ctx;
+/* mode 0xfd: TCP servers by [policy][pause][P-384 only], the SNI overrides by policy, and a TCP client for the seeds */
+static const uint8_t ALPN_X1[] = {2, 'x', '1'};
+static ksl_ctx *tcp_server_ctx[3][2][2], *tcp_override_ctx[3][2], *tcp_client_ctx;
 
 extern int64_t (*ksl_ticket_clock)(void);
+int ksl_nst_has_early_data(const uint8_t *m, size_t len);
 static int64_t fake_now = 1000000;
 static int64_t fake_clock(void) { return fake_now; }
 
@@ -82,6 +94,50 @@ static void init(void) {
     if (ksl_ctx_use_default_ticket_keys(server_default_ctx, 3600) != KSL_OK) abort();
     client_ctx = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(client_ctx, ALPN_H3, sizeof ALPN_H3);
     ksl_ctx_set_option(client_ctx, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+    for (int policy = 0; policy < 3; policy++) {
+        for (int pause = 0; pause < 2; pause++)
+            for (int p384 = 0; p384 < 2; p384++) {
+                ksl_ctx *c = new_server(pause, 0); ksl_ctx_set_alpn(c, ALPN_X1, sizeof ALPN_X1);
+                if (ksl_ctx_set_option(c, KSL_OPT_ALPN_POLICY, policy) != KSL_OK) abort();
+                if (p384 && SSL_CTX_set1_groups_list(c->ctx, "secp384r1") != 1) abort();
+                ksl_ctx_freeze(c); tcp_server_ctx[policy][pause][p384] = c;
+            }
+        for (int p384 = 0; p384 < 2; p384++) {
+            ksl_ctx *o = new_server(0, 0); ksl_ctx_set_alpn(o, ALPN_X1, sizeof ALPN_X1);
+            if (ksl_ctx_set_option(o, KSL_OPT_ALPN_POLICY, policy) != KSL_OK) abort();
+            if (p384) { o->groups = "secp384r1"; if (SSL_CTX_set1_groups_list(o->ctx, o->groups) != 1) abort(); } /* applied with it */
+            ksl_ctx_freeze(o); tcp_override_ctx[policy][p384] = o;
+        }
+    }
+    tcp_client_ctx = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(tcp_client_ctx, ALPN_X1, sizeof ALPN_X1);
+    ksl_ctx_set_option(tcp_client_ctx, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+}
+
+static void touch(const uint8_t *p, size_t n);
+
+/* Mode 0xfd: [cfg] (see the top of the file) and the client's TLS records, fed to a TCP server session driven until it wants
+   more input; the pause reads the ClientHello and resumes with the override; every byte the server writes is drained. */
+static void serve_tcp(uint8_t cfg, const uint8_t *p, size_t n) {
+    int pause = cfg / 3 % 4;
+    ksl_ssl *s = ksl_ssl_new(tcp_server_ctx[cfg % 3][pause != 0][cfg / 12 % 2], KSL_MODE_TCP); if (!s) return;
+    size_t off = 0;
+    for (int round = 0; round < 8; round++) {
+        size_t used = 0;
+        if (off < n && ksl_tcp_feed(s, p + off, n - off, &used) == KSL_OK) off += used;
+        int rc = ksl_drive(s);
+        if (rc == KSL_WANT_SNI) {
+            ksl_client_hello ch;
+            if (ksl_ssl_client_hello(s, &ch) == KSL_OK) { touch(ch.sni, ch.sni_len); touch(ch.alpn, ch.alpn_len); touch(ch.sig_algs, ch.sig_algs_len); }
+            ksl_ssl_sni_resume(s, tcp_override_ctx[pause - 1][cfg / 12 % 2], 0);
+            rc = ksl_drive(s);
+        }
+        uint8_t out[4096]; size_t w;
+        while (ksl_tcp_drain(s, out, sizeof out, &w) == KSL_OK && w) touch(out, w);
+        if (rc == KSL_ERROR || (rc == KSL_OK && off == n)) break;
+    }
+    uint8_t buf[64]; size_t l; ksl_ssl_get(s, KSL_GET_ALPN, buf, sizeof buf, &l);
+    if (debug) { uint32_t code; int al; char m[256]; ksl_ssl_last_error(s, &code, &al, m, sizeof m); fprintf(stderr, "tcp served: alert %d %s\n", al, m); }
+    ksl_ssl_free(s);
 }
 
 /* Drains every event; returns the CRYPTO bytes of [level] (malloc'ed, *len) when out is non-NULL. */
@@ -206,6 +262,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     init();
     if (size < 1) return 0;
     const uint8_t *rest = data + 1; size_t n = size - 1;
+    if (data[0] == 0xfe) {
+        uint8_t *copy = malloc(n ? n : 1); memcpy(copy, rest, n); /* its own allocation: ASan sees a read past n */
+        int r = ksl_nst_has_early_data(copy, n); free(copy);
+        if (r != 0 && r != 1) abort();
+        return 0;
+    }
+    if (data[0] == 0xfd) {
+        if (n >= 1) serve_tcp(rest[0], rest + 1, n - 1);
+        return 0;
+    }
     switch (data[0] % 8) {
     case 0: {
         size_t hl; uint8_t *hello = client_hello(rest, n, &hl, NULL);
@@ -283,5 +349,60 @@ int ksl_fuzz_write_seeds(const char *dir) {
     prog[pl++] = 1; prog[pl++] = 0x7f;
     prog[pl++] = 3;
     PUT("ticket-keys-program", 6, prog, pl);
+    /* mode 0xfe: a NewSessionTicket with a nonce, a ticket and early_data 0xffffffff */
+    static const uint8_t NST[] = {4, 0, 0, 0x1a, 0, 0, 0x1c, 0x20, 1, 2, 3, 4, 2, 0xaa, 0xbb, 0, 3, 1, 2, 3, 0, 8,
+                                  0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
+    PUT("new-session-ticket", 0xfe, NST, sizeof NST);
+    /* mode 0xfd: a TCP client's first records offering x1 or no ALPN, under each policy (with an override: cfg 3..), and the
+       records of a client that went through a HelloRetryRequest (its first ClientHello, then the second) */
+    for (int alpn = 0; alpn < 2; alpn++) {
+        ksl_ctx *cc = alpn ? tcp_client_ctx : ksl_ctx_new(KSL_CLIENT);
+        if (!alpn) ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE);
+        for (int hrr = 0; hrr < 2; hrr++) {
+            ksl_ssl *tc = ksl_ssl_new(cc, KSL_MODE_TCP), *ts = ksl_ssl_new(tcp_server_ctx[0][0][hrr], KSL_MODE_TCP);
+            ksl_ssl_set(tc, KSL_SET_SNI, (const uint8_t *)"server.test", 11);
+            uint8_t rec[8192], out[4096]; size_t rl = 0, w, used;
+            for (int round = 0; round < (hrr ? 2 : 1); round++) {
+                ksl_drive(tc);
+                while (ksl_tcp_drain(tc, out, sizeof out, &w) == KSL_OK && w) {
+                    if (rl + w <= sizeof rec) { memcpy(rec + rl, out, w); rl += w; }
+                    ksl_tcp_feed(ts, out, w, &used);
+                }
+                ksl_drive(ts);
+                while (ksl_tcp_drain(ts, out, sizeof out, &w) == KSL_OK && w) ksl_tcp_feed(tc, out, w, &used);
+            }
+            for (int cfg = 0; cfg < 12; cfg += hrr ? 4 : 1) {
+                uint8_t framedfd[8193]; framedfd[0] = (uint8_t)(cfg + 12 * hrr); memcpy(framedfd + 1, rec, rl);
+                char name[48]; snprintf(name, sizeof name, "tcp-%s%s-%d", alpn ? "alpn" : "no-alpn", hrr ? "-hrr" : "", cfg);
+                PUT(name, 0xfd, framedfd, rl + 1);
+            }
+            ksl_ssl_free(tc); ksl_ssl_free(ts);
+        }
+        if (!alpn) ksl_ctx_free(cc);
+    }
+    /* mode 0xfd: a client that offers x1 in its first ClientHello and drops ALPN from the second, after the HelloRetryRequest of a
+       P-384-only server (RFC 9846 section 4.2.2 forbids it; KSL_OPT_ALPN_POLICY judges the second on its own) */
+    {
+        ksl_ssl *tc = ksl_ssl_new(tcp_client_ctx, KSL_MODE_TCP), *ts = ksl_ssl_new(tcp_server_ctx[0][0][1], KSL_MODE_TCP);
+        ksl_ssl_set(tc, KSL_SET_SNI, (const uint8_t *)"server.test", 11);
+        uint8_t rec[8192], out[4096]; size_t rl = 0, w, used;
+        for (int round = 0; round < 2; round++) {
+            ksl_drive(tc);
+            while (ksl_tcp_drain(tc, out, sizeof out, &w) == KSL_OK && w) {
+                if (rl + w <= sizeof rec) { memcpy(rec + rl, out, w); rl += w; }
+                ksl_tcp_feed(ts, out, w, &used);
+            }
+            if (round == 0) SSL_set_alpn_protos(tc->ssl, NULL, 0); /* the second ClientHello carries no ALPN */
+            ksl_drive(ts);
+            while (ksl_tcp_drain(ts, out, sizeof out, &w) == KSL_OK && w) ksl_tcp_feed(tc, out, w, &used);
+        }
+        static const int cfgs[] = {0, 1, 4, 8};   /* + 12: base OPEN, base REQUIRED, overrides OPEN and REQUIRED */
+        for (size_t k = 0; k < sizeof cfgs / sizeof cfgs[0]; k++) {
+            uint8_t framedfd[8193]; framedfd[0] = (uint8_t)(cfgs[k] + 12); memcpy(framedfd + 1, rec, rl);
+            char name[48]; snprintf(name, sizeof name, "tcp-alpn-dropped-hrr-%d", cfgs[k]);
+            PUT(name, 0xfd, framedfd, rl + 1);
+        }
+        ksl_ssl_free(tc); ksl_ssl_free(ts);
+    }
     return 0;
 }

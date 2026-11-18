@@ -52,7 +52,7 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
            fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
         SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
-    /* TCP: for the session's life (KeyUpdate accounting); a QUIC client: until the handshake ends (its ServerHello) */
+    /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) {
         SSL_set_msg_callback(s->ssl, ksl_msg_cb);
         SSL_set_msg_callback_arg(s->ssl, s);
@@ -205,6 +205,18 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         }
         if (!data[0])
             return KSL_OK;
+        /* the name byte for byte, as OpenSSL's client checks it once the handshake runs (tls_construct_ctos_early_data): a name
+           that differs in case only would fail the handshake instead of going without 0-RTT */
+        {
+            SSL_SESSION *sess = SSL_get_session(s->ssl);
+            const char *was = sess ? SSL_SESSION_get0_hostname(sess) : NULL,
+                       *now = SSL_get_servername(s->ssl, TLSEXT_NAMETYPE_host_name);
+            if (was && (!now || strcmp(was, now) != 0)) {
+                ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED,
+                                  "ksl: no early data under another server name than the ticket's");
+                return KSL_ERROR;
+            }
+        }
         if (!SSL_set_quic_tls_early_data_enabled(s->ssl, 1)) {
             ERR_clear_error();
             ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: the session does not allow early data");
@@ -461,6 +473,17 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
             return KSL_ERROR;
         }
     }
+    /* RFC 9846 section 4.7.1: clients "SHOULD only resume if the SNI value matches the one used in the original session" (a server
+       declines another name's ticket, RFC 6066 section 3, and OpenSSL's client fails a handshake that offers early data under
+       another name: "inconsistent early data sni"). DNS names compare case-insensitively (RFC 4343); no name matches no name. */
+    if (session) {
+        const char *was = SSL_SESSION_get0_hostname((SSL_SESSION *)session),
+                   *now = SSL_get_servername(s->ssl, TLSEXT_NAMETYPE_host_name);
+        if ((was == NULL) != (now == NULL) || (was && OPENSSL_strcasecmp(was, now) != 0)) {
+            ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: a session of another server name is not resumed");
+            return KSL_ERROR;
+        }
+    }
     if (!session || SSL_set_session(s->ssl, (SSL_SESSION *)session) != 1) {
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: session rejected");
         return KSL_ERROR;
@@ -563,16 +586,23 @@ int ksl_drive(ksl_ssl *s) {
             r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
-            int ours = s->mode == KSL_MODE_QUIC && s->owner->role == KSL_CLIENT;
-#ifdef KSL_TEST
-            ours = ours && !s->msg_observer;
-#endif
-            if (ours)
-                SSL_set_msg_callback(s->ssl, NULL); /* a QUIC client needs ksl_msg_cb for the handshake only */
             /* both sides refuse TLS 1.2 without EMS before Finished, with handshake_failure (server_name_cb, ksl_cert_verify_cb): this
                is the last line, for a handshake that reached the end without a certificate to check (a resumption) */
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl))
                 return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
+            /* KSL_OPT_ALPN_POLICY is decided at every ClientHello (ksl_client_hello_cb); a handshake that completes without a
+               protocol under a context that requires one passed none of those checks: the last line */
+            if (s->mode == KSL_MODE_TCP && s->owner->role == KSL_SERVER &&
+                s->owner->alpn_policy != KSL_ALPN_POLICY_OPEN) {
+                const unsigned char *a;
+                unsigned al;
+                SSL_get0_alpn_selected(s->ssl, &a, &al);
+                if (al == 0) {
+                    s->done = 0;
+                    return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED,
+                                        "ksl: no application protocol negotiated where one is required");
+                }
+            }
             if (s->mode == KSL_MODE_QUIC) {
                 /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
                    OpenSSL client accepts a server that answered without ALPN (the server side is refused in ksl_client_hello_cb) */
@@ -641,6 +671,36 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
         off += 4 + l;
     }
     return 0;
+}
+/* Whether the NewSessionTicket message m[0, len) (handshake header included) carries early_data. Layout (RFC 9846 section 4.6.1):
+   lifetime(4) age_add(4) nonce<0..255> ticket<1..2^16-1> extensions<0..2^16-2>, each extension type(2) length(2) data. Every read
+   stays inside len and inside the body length the header declares; an extension counts only when it lies whole inside the
+   extensions block. A malformed message answers 0 (no early data) and is left to OpenSSL, which refuses it. */
+int ksl_nst_has_early_data(const uint8_t *m, size_t len) {
+    if (!m || len < 4 || m[0] != SSL3_MT_NEWSESSION_TICKET)
+        return 0;
+    size_t body = ((size_t)m[1] << 16) | ((size_t)m[2] << 8) | m[3], end = 4 + body, off = 4 + 8;
+    if (end > len || off + 1 > end)
+        return 0;
+    off += 1 + (size_t)m[off]; /* nonce */
+    if (off + 2 > end)
+        return 0;
+    off += 2 + (((size_t)m[off] << 8) | m[off + 1]); /* ticket */
+    if (off + 2 > end)
+        return 0;
+    size_t ext_end = off + 2 + (((size_t)m[off] << 8) | m[off + 1]);
+    if (ext_end > end)
+        return 0;
+    int found = 0;
+    for (off += 2; off + 4 <= ext_end;) {
+        size_t type = ((size_t)m[off] << 8) | m[off + 1], l = ((size_t)m[off + 2] << 8) | m[off + 3];
+        if (off + 4 + l > ext_end)
+            return 0;
+        if (type == TLSEXT_TYPE_early_data)
+            found = 1;
+        off += 4 + l;
+    }
+    return off == ext_end && found;
 }
 /* A client's message callback during the handshake, called with each message before OpenSSL processes it. ServerHello:
    - notes whether it carried extended_master_secret, which ksl_cert_verify_cb needs before Finished (SSL_get_extms_support answers
@@ -712,6 +772,16 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         m[0] == (s->owner->role == KSL_CLIENT ? SSL3_MT_HELLO_REQUEST : SSL3_MT_CLIENT_HELLO) &&
         s->renegotiations < UINT32_MAX)
         s->renegotiations++;
+    /* RFC 9846 section 4.6.1: max_early_data_size is "the maximum amount of 0-RTT data that the client is allowed to send when using
+       this ticket", so a ticket without early_data allows none. OpenSSL's client copies the session of the resumed ticket for each
+       NewSessionTicket and sets max_early_data only from an extension present, so a ticket renewed without it kept the old
+       ticket's value, and a QUIC client offered 0-RTT the server had withdrawn (RFC 9001 section 4.6.1: "To indicate that the
+       server does not accept 0-RTT data, the early_data extension is omitted from the NewSessionTicket"). This callback sees each
+       ticket before OpenSSL processes it and notes whether it carries the extension; new_session_cb then clears the value of a
+       session from a ticket without it (ksl_nst_has_early_data). */
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 1 && m[0] == SSL3_MT_NEWSESSION_TICKET &&
+        s->owner->role == KSL_CLIENT)
+        s->nst_early_data = ksl_nst_has_early_data(m, len);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

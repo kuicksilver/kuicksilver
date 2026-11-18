@@ -310,6 +310,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 val peer: List<Certificate>
                                 val own: List<Certificate>
                                 var sni: SniChoice? = null
+                                var h3ForName = true // the sniSelector's answer for this connection's name allows HTTP/3
                                 val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
@@ -342,7 +343,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     sock = t
                                     peer = t.peerCertificates
                                     own = t.localCertificates
-                                    if (l.tls.sniSelector != null) sni = SniChoice(t.sniSelectedFor)
+                                    if (l.tls.sniSelector != null) {
+                                        sni = SniChoice(t.sniSelectedFor)
+                                        h3ForName = t.sniSelectedAlpn?.let { "h3" in it } ?: true
+                                    }
                                 } else {
                                     sock = client
                                     peer = emptyList()
@@ -351,7 +355,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 // RFC 9110 section 7.4: an https request for a host this connection's certificate does not name, or over a plain
                                 // connection, gets 421
                                 val authorityCheck = AuthorityCheck(own, l.trustedGateway, sni)
-                                val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else NO_ALT_SVC
+                                // RFC 7838 section 2.1: an alternative must serve the origin; a name whose answer lists ALPN without
+                                // h3 is refused over HTTP/3, so its connections advertise none (requests are for that name, 421 else)
+                                val altSvc = if (l.tls != null && configuration.altSvc && h3ForName) http3AltSvc(port) else NO_ALT_SVC
                                 if (h2Offered && (sock as? io.kuicksilver.ktor.network.TlsSocket)?.negotiatedAlpn == H2_ALPN) {
                                     return@launchOrElse serveH2(
                                         sock,
@@ -415,6 +421,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
 /** The ALPN protocol ID of HTTP/2 over TLS (RFC 9113 section 3.2). */
 internal const val H2_ALPN = "h2"
 
+/** The ALPN protocol ID of HTTP/1.1 (RFC 7301 section 6), what a TLS client without ALPN speaks. */
+internal const val HTTP11_ALPN = "http/1.1"
+
 /**
  * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
@@ -429,7 +438,7 @@ internal const val H2_ALPN = "h2"
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig =
-    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, "http/1.1") else listOf("http/1.1"), Duration.INFINITE, quic = false)
+    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, HTTP11_ALPN) else listOf(HTTP11_ALPN), Duration.INFINITE, quic = false)
 
 /**
  * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as `http3Advertising` says at

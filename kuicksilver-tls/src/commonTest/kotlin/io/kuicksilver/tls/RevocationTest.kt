@@ -456,7 +456,42 @@ class RevocationTest {
         key: ByteArray,
     ) = TlsIdentity.fromDer(listOf(leaf, RevocationCerts.rvMid), key.copyOf())
 
-    /** An identity chosen by sniSelector staples its own response, and never the default identity's (TCP; QUIC has no sniSelector). */
+    /**
+     * Over QUIC as over TCP ([negative_sniOverrideStaplesItsOwnResponseOnly]): an identity chosen by sniSelector staples its
+     * own response, and never the default identity's.
+     */
+    @Test fun negative_quicSniOverrideStaplesItsOwnResponseOnly() {
+        fun sniServer(override: () -> ServerTlsOverride) =
+            Fixtures.server(listOf(RevocationCerts.rvLeaf, RevocationCerts.rvMid), RevocationCerts.rvLeafKey) {
+                ocspStapling = good
+                sniSelector = { override() }
+            }
+        val own =
+            sniServer {
+                ServerTlsOverride(
+                    overrideIdentity(RevocationCerts.rvLeafMustStaple, RevocationCerts.rvLeafMustStapleKey),
+                    null,
+                    null,
+                    null,
+                    OcspStapling(RevocationCerts.ocspMustStaple),
+                )
+            }
+        quicPasses(client(RevocationPolicy.RequireStapled), own)
+        // the same certificate as the default identity, without a response of its own: the default's is not stapled
+        val none = sniServer { ServerTlsOverride(overrideIdentity(RevocationCerts.rvLeaf, RevocationCerts.rvLeafKey)) }
+        assertEquals(VerifyReason.UnknownRevocationStatus, quicRefused(client(RevocationPolicy.RequireStapled), none))
+        quicPasses(
+            client(RevocationPolicy.RequireStapled),
+            sniServer {
+                ServerTlsOverride(overrideIdentity(RevocationCerts.rvLeaf, RevocationCerts.rvLeafKey), null, null, null, good)
+            },
+        )
+    }
+
+    /**
+     * An identity chosen by sniSelector staples its own response, and never the default identity's (TCP; QUIC:
+     * [negative_quicSniOverrideStaplesItsOwnResponseOnly]).
+     */
     @Test fun negative_sniOverrideStaplesItsOwnResponseOnly(): Unit =
         runBlocking {
             val own =

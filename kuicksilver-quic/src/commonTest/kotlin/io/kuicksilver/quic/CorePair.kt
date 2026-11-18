@@ -195,6 +195,7 @@ internal class CorePair(
             ) {
                 core.resumeVerify(runBlocking { e.session.verifyPeer(e.chain) })
             }
+            if (e is ConnectionEvent.SniRequested) core.resumeSni(runBlocking { e.session.selectSni(e.clientHello) })
         }
     }
 

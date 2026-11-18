@@ -222,7 +222,7 @@ val quic = quicConfig {
 ```
 
 QUIC is stricter than TLS over TCP about the `TlsConfig` it accepts (RFC 9001 section 4): TLS 1.3 only, a non-empty
-`alpn` list, no `TLS_AES_128_CCM_8_SHA256`, and no `sniSelector` (not supported for QUIC yet). Building a `QuicClientConfig` or
+`alpn` list, and no `TLS_AES_128_CCM_8_SHA256`. Building a `QuicClientConfig` or
 `QuicServerConfig` from a config that breaks one of these throws `TlsException.Config` right away, not at the first
 `connect`.
 
@@ -335,6 +335,12 @@ val echoed = incoming.acceptStream()
 echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: "")
 echoed.output.flushAndClose()
 ```
+
+A server that serves several names gives its `TlsConfig` an `sniSelector`: each handshake's identity is chosen from its
+ClientHello as over TCP ([TLS: Certificate per name](tls.md#certificate-per-name-sni)). The selector runs off the connection's
+loop while that handshake waits; a name it refuses closes the connection with CRYPTO_ERROR `unrecognized_name` (0x170),
+a failing selector with `internal_error` (0x150). `QuicConnection.localCertificates` is the chosen chain. Retry and the
+admission policy act before any TLS session exists, so they are the same with or without a selector.
 
 ## 0-RTT (opt-in, experimental)
 

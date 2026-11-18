@@ -437,7 +437,8 @@ static void *err_writer(void *arg) {
 
 #if defined(__linux__) || defined(__APPLE__)
 /* A second IPv4 address of this host besides 127.0.0.1, written into a[3..6]: 127.0.0.2 where the whole 127/8 is local (Linux), else the first
-   up, non-loopback interface address a socket can bind (Darwin has 127.0.0.1 alone on lo0 without an alias); 0 when there is none */
+   up, non-loopback, non-point-to-point interface address a socket can bind (Darwin has 127.0.0.1 alone on lo0 without an alias); 0 when
+   there is none */
 static int second_v4(uint8_t a[KSL_UDP_ADDR_LEN]) {
     v4(a, 0);
     a[6] = 2;
@@ -453,8 +454,10 @@ static int second_v4(uint8_t a[KSL_UDP_ADDR_LEN]) {
     if (getifaddrs(&ifs) != 0)
         return 0;
     for (i = ifs; i && !found; i = i->ifa_next) {
+        /* not a point-to-point interface: a VPN's tunnel address (macOS utun) is bound locally but routed into the tunnel, so a
+           client on 127.0.0.1 never reaches it */
         if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) ||
-            (i->ifa_flags & IFF_LOOPBACK))
+            (i->ifa_flags & (IFF_LOOPBACK | IFF_POINTOPOINT)))
             continue;
         memcpy(a + 3, &((struct sockaddr_in *)i->ifa_addr)->sin_addr, 4);
         t = ksl_udp_open(a, 0, &err, msg, sizeof msg);

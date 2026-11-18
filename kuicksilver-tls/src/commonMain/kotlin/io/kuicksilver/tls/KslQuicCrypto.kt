@@ -14,6 +14,8 @@ import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
@@ -236,6 +238,15 @@ internal class KslQuicTlsSession(
     private lateinit var reference: HostName
     private var rejection: VerifyReason? = null // the Kotlin-side verdict, kept so the failure carries the real reason
 
+    // ---- SNI selection (server, TlsConfig.sniSelector) ----
+    private var sniPending = false // paused at the ClientHello until resumeSni
+    private var overrideLease: KslContext.Lease? = null // the chosen identity's context, owned until close
+    private var selectedFor: String? = null
+    private var sniFailure: Pair<TlsException, Int>? = null // the selection that ended the handshake, and the alert it sent
+
+    /** The context whose settings this handshake runs under: the [TlsConfig.sniSelector] override once applied, else the base. */
+    private val active: KslContext get() = overrideLease?.ctx ?: ctx
+
     init {
         val config = ctx.config
         if (config.role == TlsRole.Client) {
@@ -266,6 +277,9 @@ internal class KslQuicTlsSession(
     }
 
     private fun s(): Long = ssl.also { if (it == 0L) throw IllegalStateException("session closed") }
+
+    /** The context of the identity an sniSelector chose, null before or without one (tests). */
+    internal val overrideContextForTest: KslContext? get() = overrideLease?.ctx
 
     /** The context this session was built from (tests). */
     internal val context: KslContext get() = ctx
@@ -466,7 +480,7 @@ internal class KslQuicTlsSession(
                     ) {
                         TlsException.Verify(r, presented) to (if (ctx.config.genericAlerts) 40 else r.alertCode)
                     } else {
-                        e.toTlsFailure(presented)
+                        sniFailure ?: e.toTlsFailure(presented)
                     }
                 settleAdmission(failed = true)
                 return DriveResult.Failed(ex, alert).also { failure = it }
@@ -482,6 +496,18 @@ internal class KslQuicTlsSession(
                 DriveResult.WantVerify(presented)
             }
 
+            KslConst.WANT_SNI -> {
+                sniPending = true
+                val ch = Ksl.sslClientHello(s())
+                DriveResult.WantSni(
+                    ClientHelloInfo(
+                        ch.serverName,
+                        TlsConnection.parseAlpn(ch.alpnWire),
+                        TlsConnection.parseU16List(ch.signatureAlgorithmsWire),
+                    ),
+                )
+            }
+
             else -> {
                 if (!done) completed()
                 collectTicket()
@@ -490,11 +516,16 @@ internal class KslQuicTlsSession(
         }.also { if (rc == KslConst.WANT_READ) collectTicket() }
     }
 
-    /** Handshake finished on the OpenSSL side: when ksl verified the chain itself (AnchoredCa), pins are checked here against its validated chain. */
+    /**
+     * Handshake finished on the OpenSSL side: when ksl verified the chain itself (AnchoredCa), pins are checked here against its
+     * validated chain. A server checks client certificates under the settings of the identity its handshake ran under (an SNI
+     * override's own clientAuth and trust).
+     */
     private fun completed() {
         done = true
         alpn = Ksl.sslGet(s(), KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
-        val config = ctx.config
+        val active = active
+        val config = active.config
         val pinsApply =
             (config.role == TlsRole.Client && ctx.verifyMode == KslConst.VERIFY_OPENSSL) ||
                 (config.role == TlsRole.Server && config.clientAuth != ClientAuth.None && config.trust is TrustConfig.Pinned)
@@ -514,7 +545,7 @@ internal class KslQuicTlsSession(
             if (cached == null) presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
             // ClientAuth.Optional: a client without a certificate is accepted; one that presents a certificate must pass the pins
             if (config.role == TlsRole.Server && config.clientAuth == ClientAuth.Optional && presented.isEmpty()) return
-            val r = verification.pinCheck(cached?.validated ?: validatedChain())
+            val r = (if (active === ctx) verification else Verification(config)).pinCheck(cached?.validated ?: validatedChain())
             if (r is VerifyResult.Rejected) {
                 failure =
                     DriveResult.Failed(TlsException.Verify(r.reason, presented), if (config.genericAlerts) 40 else r.reason.alertCode)
@@ -522,9 +553,9 @@ internal class KslQuicTlsSession(
             }
         }
         // a ReloadableCa reloaded since the ClientHello: the client's certificate must pass the bundle current now
-        if (config.role == TlsRole.Server && ctx.trustSnapshot != null) {
+        if (config.role == TlsRole.Server && active.trustSnapshot != null) {
             val chain = presented.ifEmpty { Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate) }
-            ctx.recheckClientChain(chain)?.let { reason ->
+            active.recheckClientChain(chain)?.let { reason ->
                 presented = chain
                 failure = DriveResult.Failed(TlsException.Verify(reason, chain), if (config.genericAlerts) 40 else reason.alertCode)
             }
@@ -532,6 +563,84 @@ internal class KslQuicTlsSession(
     }
 
     override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult = verification.verify(chain, reference)
+
+    /**
+     * Reads only immutable state ([ctx]'s configuration and kind) and builds a context of its own, so it runs off the loop while
+     * the loop keeps providing CRYPTO data to this session. The override's context is of the session's kind: tickets and 0-RTT
+     * as the base context, except for an override with client certificates, which gets neither (0-RTT with client
+     * certificates is not supported, and a QUIC ticket is issued during the handshake, before any pin verdict).
+     */
+    override suspend fun selectSni(clientHello: ClientHelloInfo): SniSelection {
+        val config = ctx.config
+        val selector = config.sniSelector ?: throw IllegalStateException("no sniSelector in this configuration")
+        return try {
+            when (val verdict = config.sniVerdict(clientHello, selector(clientHello))) {
+                is SniVerdict.Override -> {
+                    val o = config.overrideConfigs.of(config, verdict.override)
+                    val plain = o.clientAuth == ClientAuth.None
+                    val lease = KslContext.acquire(o, quic = true, ctx.quicTickets && plain, ctx.earlyData && plain)
+                    SniSelection(this, clientHello.serverName, lease, verdict.override, 0, null)
+                }
+
+                is SniVerdict.Refuse -> {
+                    SniSelection(
+                        this,
+                        clientHello.serverName,
+                        null,
+                        null,
+                        verdict.alert,
+                        TlsException.Protocol(null, verdict.reason, null),
+                    )
+                }
+
+                SniVerdict.Default -> {
+                    SniSelection(this, clientHello.serverName, null, null, 0, null)
+                }
+            }
+        } catch (t: Throwable) {
+            // our cancellation goes on; a CancellationException out of the application's selector fails the handshake like any other
+            if (t is kotlin.coroutines.cancellation.CancellationException) currentCoroutineContext().ensureActive()
+            // the message is the CONNECTION_CLOSE reason phrase the client reads: the application's text stays in the cause
+            SniSelection(
+                this,
+                clientHello.serverName,
+                null,
+                null,
+                ALERT_INTERNAL_ERROR,
+                TlsException.Protocol(null, "sniSelector failed", t),
+            )
+        }
+    }
+
+    override fun resumeSni(selection: SniSelection) {
+        val lease = selection.take()
+        try {
+            require(selection.session === this) { "an SNI selection of another session" }
+            check(sniPending && ssl != 0L) { "no SNI selection pending" }
+            val override = selection.override
+            // a selection closed (or resumed) before: its identity is gone, and the default one must not stand in for it
+            check(override == null || lease != null) { "the SNI selection was closed or already used" }
+            if (lease != null && override != null) {
+                // the override's identity staples its own response, never the default identity's
+                if (ctx.config.ocspStapling != null || override.ocspStapling != null) {
+                    mapped { Ksl.sslSet(s(), KslConst.SET_OCSP_RESPONSE, override.ocspStapling?.currentForSession ?: ByteArray(0)) }
+                }
+                mapped { Ksl.sslSniResume(s(), lease.ctx.handle, 0) }
+                overrideLease = lease
+            } else {
+                mapped { Ksl.sslSniResume(s(), 0L, selection.alert) }
+                selection.failure?.let { sniFailure = it to selection.alert }
+            }
+            sniPending = false
+            selectedFor = selection.serverName
+        } catch (t: Throwable) {
+            if (overrideLease !== lease) lease?.close()
+            throw t
+        }
+    }
+
+    /** See [QuicTlsSession.sniSelectedFor]. */
+    internal val sniSelectedName: String? get() = selectedFor
 
     override fun resumeVerify(result: VerifyResult) {
         when (result) {
@@ -589,7 +698,7 @@ internal class KslQuicTlsSession(
     }
 
     @ExperimentalKuicksilverApi
-    override val localCertificates: List<Certificate> get() = ctx.localChain
+    override val localCertificates: List<Certificate> get() = active.localChain
 
     override val peerCertificates: List<Certificate> get() =
         if (ssl != 0L &&
@@ -643,6 +752,8 @@ internal class KslQuicTlsSession(
         pendingTickets.clear()
         if (lastSession != 0L) Ksl.sessionFree(lastSession)
         lastSession = 0L
+        overrideLease?.close() // after the SSL that refers to its SSL_CTX
+        overrideLease = null
         lease.close()
     }
 }

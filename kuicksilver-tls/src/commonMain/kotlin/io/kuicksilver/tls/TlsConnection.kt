@@ -134,6 +134,17 @@ public class TlsConnection private constructor(
     @InternalKuicksilverApi
     public val sniSelectedFor: String? get() = selectedFor
 
+    @Volatile private var selectedAlpn: List<String>? = null
+
+    /**
+     * A server whose [TlsConfig.sniSelector] chose this connection's settings: the ALPN list its answer set
+     * ([ServerTlsOverride.alpn]) as it set it, `h3` included (the handshake went without it), null when it set none or no
+     * selector ran. The server engine advertises HTTP/3 on the
+     * connection only when this is null or names `h3` (RFC 7838: an alternative must serve the origin).
+     */
+    @InternalKuicksilverApi
+    public val sniSelectedAlpn: List<String>? get() = selectedAlpn
+
     /**
      * The chain this side presents on this connection, leaf first: a server's identity as chosen for its ClientHello (the
      * [TlsConfig.sniSelector] override, or the snapshot of [TlsConfig.identity] current then), a client's certificate. After a
@@ -351,11 +362,13 @@ public class TlsConnection private constructor(
         val ch = Ksl.sslClientHello(s())
         val info = ClientHelloInfo(ch.serverName, parseAlpn(ch.alpnWire), parseU16List(ch.signatureAlgorithmsWire))
         selectedFor = ch.serverName
-        val override = selector(info)
-        when {
-            override != null -> {
-                val o = KslContext.create(config.withOverride(override), quic = false)
+        when (val verdict = config.sniVerdict(info, selector(info))) {
+            is SniVerdict.Override -> {
+                val override = verdict.override
+                // its TCP context selects from the list without h3, and refuses every client when h3 was all of it (tcpAlpnPolicy)
+                val o = KslContext.acquire(config.overrideConfigs.of(config, override), quic = false)
                 overrideCtx = o
+                selectedAlpn = override.alpn?.toList()
                 lock.withLock {
                     // the override's identity staples its own response, never the default identity's
                     if (config.ocspStapling != null || override.ocspStapling != null) {
@@ -365,14 +378,14 @@ public class TlsConnection private constructor(
                 }
             }
 
-            info.serverName != null -> {
-                lock.withLock { Ksl.sslSniResume(s(), 0L, 112) }
+            // unrecognized_name, or missing_extension without a default identity
+            is SniVerdict.Refuse -> {
+                lock.withLock { Ksl.sslSniResume(s(), 0L, verdict.alert) }
             }
 
-            // unrecognized_name
-            else -> {
+            SniVerdict.Default -> {
                 lock.withLock { Ksl.sslSniResume(s(), 0L, 0) }
-            } // default identity
+            }
         }
     }
 

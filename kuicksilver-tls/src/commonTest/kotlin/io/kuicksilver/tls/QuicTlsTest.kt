@@ -62,6 +62,9 @@ internal class Pump(
     val cs = Side()
     val ss = Side()
 
+    /** Sees every ClientHello a server paused at for its sniSelector, before the selection is made. */
+    var onSni: (ClientHelloInfo) -> Unit = {}
+
     /** Sees every event (true = from the client) before the pump handles it. */
     var onEvent: (Boolean, TlsEvent) -> Unit = { _, _ -> }
 
@@ -75,6 +78,12 @@ internal class Pump(
                 val r = me.drive()
                 side.last = r
                 if (r is DriveResult.WantVerify && onVerify != null) me.resumeVerify(onVerify(r))
+                // a server's sniSelector: the selection is made as a connection runtime makes it, then applied
+                if (r is DriveResult.WantSni) {
+                    onSni(r.clientHello)
+                    me.resumeSni(runBlocking { me.selectSni(r.clientHello) })
+                    progressed = true
+                }
                 while (true) {
                     val ev = me.nextEvent() ?: break
                     progressed = true
@@ -343,15 +352,10 @@ class QuicHandshakeTest {
         }
     }
 
-    @Test fun sniSelectorIsConfigErrorForQuic() {
-        assertFailsWith<TlsException.Config> {
-            KslQuicCrypto.newSession(
-                Fixtures.server {
-                    sniSelector =
-                        { null }
-                },
-            )
-        }
+    /** A QUIC server takes an sniSelector (it pauses at DriveResult.WantSni; QuicSniTest): no Config error any more. */
+    @Test fun sniSelectorIsAcceptedForQuic() {
+        KslQuicCrypto.newSession(Fixtures.server { sniSelector = { null } }).close()
+        Fixtures.server { sniSelector = { null } }.checkQuicCompatible()
     }
 
     @Test fun clientWithoutReferenceNameIsConfigError() {

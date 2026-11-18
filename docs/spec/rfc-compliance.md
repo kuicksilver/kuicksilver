@@ -89,7 +89,7 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 |---|---|---|---|---|---|
 | RFC 9846 | (obsoletes RFC 8446) — TLS 1.3 | ✅ | 0.2.1 | TLS 1.3 over OpenSSL 3.5 is the protocol of every connection, checked against RFC 9846. | [details](rfc/9846.md#tls-1-3) |
 | RFC 5246 | (obsoleted by RFC 9846; TLS 1.2 itself stays as written there) — TLS 1.2 (TCP, explicit only) | ✅ | 0.2.1 | TLS 1.2 is offered only over TCP when configured explicitly, with ECDHE, AEAD and Extended Main Secret. | [details](rfc/5246.md#tls-1-2-tcp-explicit-only) |
-| RFC 6066 | (updated by RFC 9846 §4.5.1.1, OCSP) — SNI | ✅ | 0.2.1 | The client sends SNI for names only, and the server selects its identity by SNI over TCP. | [details](rfc/6066.md#sni) |
+| RFC 6066 | (updated by RFC 9846 §4.5.1.1, OCSP) — SNI | ✅ | 0.3.0 | The client sends SNI for names only, and the server selects its identity by SNI over TCP and QUIC (HTTP/3); tickets resume only under the name and certificate they were issued under. | [details](rfc/6066.md#sni) |
 | RFC 7301 | RFC 9001 §8.1 — ALPN | ✅ | 0.2.0 | ALPN is mandatory in QUIC, and a missing or mismatched protocol closes the connection. | [details](rfc/7301.md#alpn) |
 | RFC 7301 | §3.1 — protocol name lengths | ✅ | 0.2.0 | Protocol names are checked as 1..255 bytes and the list fits the native wire buffer. | [details](rfc/7301.md#s3-1-protocol-name-lengths) |
 | RFC 5705 | (updated by RFC 9846 §7.5) — keying material exporter | ✅ | 0.2.0 | Both sessions export keying material. | [details](rfc/5705.md#keying-material-exporter) |

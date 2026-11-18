@@ -41,8 +41,10 @@ internal class KslContext private constructor(
      * identity. A server's requests are checked against its leaf (RFC 9110 section 7.4).
      */
     val localChain: List<Certificate>,
-    private val quicTickets: Boolean,
-    private val earlyData: Boolean,
+    /** A QUIC server context that issues session tickets (see [create]). */
+    val quicTickets: Boolean,
+    /** A QUIC server context whose tickets allow 0-RTT and that can accept it (see [create]). */
+    val earlyData: Boolean,
     /**
      * The bundle a `TrustConfig.ReloadableCa` in [config] gave when this context was built (its roots are this context's
      * client-certificate anchors), null for any other trust: a server's handshakes share a context only under the same bundle.
@@ -111,8 +113,7 @@ internal class KslContext private constructor(
         while (true) {
             val now = clientCaSnapshot(config) ?: return null
             if (sameBundle(now, verifiedUnder)) return null
-            // a context of its own, never registered: an SNI override's configuration is a copy per connection, and a rare
-            // recheck must not push the shared contexts out of their registry
+            // a context of its own, never registered: a rare recheck must not push the shared contexts out of their registry
             val lease =
                 try {
                     create(config, quic, quicTickets, earlyData)
@@ -222,8 +223,9 @@ internal class KslContext private constructor(
          * everything that differs per connection lives in the session (`ksl_ssl`); the process ticket keys are looked up per
          * ticket, so they rotate under a shared context. A `TrustConfig.ReloadableCa` is read once per handshake as well: the
          * context also carries the client CA bundle, so contexts are shared per identity snapshot and bundle, and the first
-         * handshake after a reload builds one with the new bundle. Anything else (a client, an SNI override, a server without an
-         * identity) gets a context of its own ([create]).
+         * handshake after a reload builds one with the new bundle. An SNI override shares one the same way: its configuration is
+         * the one [OverrideConfigs] keeps for that answer. Anything else (a client, a server without an identity) gets a context
+         * of its own ([create]).
          *
          * @throws IllegalStateException when the identity is closed.
          */
@@ -332,7 +334,9 @@ internal class KslContext private constructor(
             snapshot: TlsIdentity.InMemory?,
             trust: TrustConfig,
         ): List<Certificate> {
-            if (config.alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(config.alpn))
+            // a TLS-over-TCP server never selects h3 (RFC 9114 section 3.1); what a client offers is its own business
+            val alpn = if (quic || config.role == TlsRole.Client) config.alpn else config.tcpAlpn
+            if (alpn.isNotEmpty()) Ksl.ctxSetAlpn(h, alpnWire(alpn))
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             val chain =
@@ -376,6 +380,13 @@ internal class KslContext private constructor(
                 )
                 if (config.sniSelector != null) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
                 if (!quic) {
+                    config.tcpAlpnPolicy.takeIf { it != KslConst.ALPN_POLICY_OPEN }?.let {
+                        Ksl.ctxSetOption(
+                            h,
+                            KslConst.OPT_ALPN_POLICY,
+                            it,
+                        )
+                    }
                     // contexts of other configurations and processes (and, before P.3, of every connection): without shared keys no ticket could be
                     // resumed elsewhere, so the default is a process-wide rotating set
                     useTicketKeys(h, config.sessionTickets)
@@ -462,9 +473,11 @@ internal class KslContext private constructor(
  * The server contexts built from one identity snapshot ([TlsIdentity.InMemory.serverContexts]), one per configuration and kind
  * ([KslContext.serves]), each shared by every session of its configuration. The registry holds one reference to each; [close]
  * (the identity's close, which a reload does to the snapshot it replaces) drops them, so a context goes when the identity is
- * closed and its last session is gone, never while a session uses it. At most [MAX] contexts are kept: the least recently used
- * one goes first (a process that keeps building new configurations around one identity holds no more), and still serves its
- * sessions. A hit in the older half moves its context to the young end of the list (best effort: a concurrent change wins).
+ * closed and its last session is gone, never while a session uses it. At most [MAX] contexts of the server's own
+ * configurations and [MAX_OVERRIDES] of sniSelector answers ([TlsConfig.isOverride]) are kept, each bound counted on its own,
+ * so that answers never push the configurations' own contexts out: the least recently used one of the same kind goes first (a
+ * process that keeps building new configurations around one identity holds no more), and still serves its sessions. A hit in
+ * the older half moves its context to the young end of the list (best effort: a concurrent change wins).
  */
 internal class SharedServerContexts {
     // null once closed: nothing is kept any more
@@ -503,8 +516,10 @@ internal class SharedServerContexts {
             // a context of an older client CA bundle serves no new handshake: the first context of the current one replaces it
             val stale = if (ca != null) list.filter { it.sameKindAs(made) && !sameBundle(it.trustSnapshot, ca) } else emptyList()
             val grown = list.filter { it !in stale } + made
-            val evicted = if (grown.size > MAX) grown[0] else null
-            if (entries.compareAndSet(list, if (evicted != null) grown.drop(1) else grown)) {
+            val kind = made.config.isOverride
+            val ofKind = grown.filter { it.config.isOverride == kind }
+            val evicted = if (ofKind.size > (if (kind) MAX_OVERRIDES else MAX)) ofKind[0] else null
+            if (entries.compareAndSet(list, if (evicted != null) grown.filter { it !== evicted } else grown)) {
                 stale.forEach { it.release() }
                 evicted?.release()
                 return made
@@ -546,9 +561,12 @@ internal class SharedServerContexts {
         entries.exchange(null)?.forEach { it.release() }
     }
 
-    private companion object {
+    internal companion object {
         /** Contexts one identity snapshot keeps: a server rarely has more configurations per identity (QUIC, TCP, a few ports). */
         const val MAX = 8
+
+        /** Contexts of sniSelector answers one identity snapshot keeps, as many as [OverrideConfigs] keeps answers. */
+        const val MAX_OVERRIDES = OverrideConfigs.MAX
     }
 }
 

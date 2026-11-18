@@ -349,8 +349,8 @@ The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows
 ADR-0006); `udpSocketCount > 1` works wherever HTTP/3 does: a socket per loop with `SO_REUSEPORT` on Linux and Android,
 one socket routed by connection ID in process on macOS, iOS and Windows ([QUIC: Several loops on one port](quic.md#several-loops-on-one-port)).
 Where a QUIC server cannot run, the engine logs a warning and serves
-HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
-identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
+HTTP/1.1 only, without `Alt-Svc`. A `tlsConnector` with an `sniSelector` serves HTTP/3 too: the same selector picks the
+identity of each QUIC handshake ([Certificate per name](#certificate-per-name-sni)).
 
 Running it in production (UDP in firewalls, Docker and Kubernetes, load balancers, kernel buffers, checking that clients
 arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
@@ -674,6 +674,51 @@ A plain connector has no certificate at all, so a request whose target is an abs
 (`GET https://example.com/ HTTP/1.1`) gets 421 there too. Origin-form requests (`GET / HTTP/1.1` with any `Host`), which
 a gateway in front of the server sends, are served as before. A gateway that forwards absolute `https` targets to a plain
 port needs `plainConnector { trustedGateway = true }` (experimental) instead of Ktor's `connector { }`.
+
+### Certificate per name (SNI)
+
+One connector can serve several names, each with its own certificate (RFC 6066 section 3): its `sniSelector` sees the
+ClientHello's server name and answers with the identity, and optionally the client-certificate policy, trust and OCSP
+response, for it:
+
+```kotlin
+// guide:ktor:sni-server
+tlsConnector(defaultIdentity) {
+    port = 443
+    sniSelector = { hello ->
+        when (hello.serverName) {
+            "api.example.com" -> ServerTlsOverride(apiIdentity)
+            "admin.example.com" -> ServerTlsOverride(adminIdentity, clientAuth = ClientAuth.Required, trust = adminCa)
+            else -> null // a name not served here: the handshake ends with unrecognized_name
+        }
+    }
+}
+```
+
+The selector answers for TCP (HTTP/1.1, HTTP/2) and HTTP/3 alike, so a name gets the same certificate and policy on every
+protocol, and the `Alt-Svc` its TCP responses carry leads to a QUIC endpoint that presents it. It is a suspending
+function: it may look the identity up (a cache, a store); on QUIC it runs off the connection's loop while that handshake
+waits, and a handshake that times out meanwhile cancels it. On QUIC it runs for each new connection's ClientHello, before
+the client's address is validated (as RFC 9001 section 4.3 notes, a server that parses the ClientHello to decide can
+require a Retry first): keep it cheap, or let `quicAdmission` ask unvalidated clients for a Retry. A ClientHello without a server name (a client that connected
+to an address) reaches it with `serverName == null`, and `null` from it then means the connector's own identity
+(`defaultIdentity`). An answer's `alpn` restricts its name: without one the name gets every protocol of the connector;
+with one TCP negotiates from that list without `h3` (which identifies HTTP/3 over QUIC only, RFC 9114 section 3.1; a list
+of `h3` alone serves the name over HTTP/3 only, and its TCP handshake ends with `no_application_protocol`), and the name is
+served over HTTP/3, and advertised with `Alt-Svc` on its TCP responses, only when the list names `h3`
+(`listOf("h3", "h2", "http/1.1")`); a TCP client without ALPN speaks HTTP/1.1 (RFC 9113 section 3.3: "HTTP/2 connections
+over TLS MUST use protocol negotiation in TLS"), so a list without `http/1.1` refuses it with `no_application_protocol`
+(the connector's `alpnFallback`, [TLS guide](tls.md#configuration)); otherwise its QUIC handshake ends with
+`no_application_protocol` (CRYPTO_ERROR 0x178, RFC 7301 section 3.2) and its TCP responses carry no `Alt-Svc` (RFC 7838
+section 2.1: an alternative must serve the origin). Return the same `TrustConfig` and `OcspStapling` objects for a name,
+so that its handshakes share one TLS context. A selector
+that throws ends that handshake (on QUIC with `internal_error`; the exception's text is not sent to the client).
+
+Session tickets resume only under the name and the certificate they were issued under: a client that comes back with a
+ticket of another name, or after the selector started answering with another certificate, runs one full handshake (no
+0-RTT) and gets a new ticket. A name whose answer asks for client certificates gets no 0-RTT and no tickets on HTTP/3
+(`quicEarlyData` applies to the other names). Requests on a connection must be for the name its identity was chosen for:
+see [Misdirected requests](#misdirected-requests).
 
 ### Certificate rotation
 

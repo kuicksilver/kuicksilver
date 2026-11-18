@@ -179,6 +179,7 @@ internal class EndpointPair(
                 c.nextEvent() ?: break
             l += e
             if (e is ConnectionEvent.VerifyRequested) c.resumeVerify(runBlocking { e.session.verifyPeer(e.chain) })
+            if (e is ConnectionEvent.SniRequested) c.resumeSni(runBlocking { e.session.selectSni(e.clientHello) })
         }
     }
 

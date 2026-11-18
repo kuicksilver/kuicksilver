@@ -79,6 +79,7 @@ import io.kuicksilver.tls.ResetKey
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyResult
+import io.kuicksilver.tls.sniSelectedFor
 import kotlin.random.Random
 
 /**
@@ -1112,6 +1113,34 @@ public class ConnectionCore internal constructor(
     }
 
     /**
+     * Resumes a handshake paused by [ConnectionEvent.SniRequested] with the result of `session.selectSni`: the chosen identity
+     * answers the ClientHello, or the handshake ends with the selection's TLS alert (CRYPTO_ERROR). Takes [selection] over:
+     * one that arrives after the handshake ended, or that nobody waits for, is closed.
+     */
+    public fun resumeSni(selection: io.kuicksilver.tls.SniSelection) {
+        if (released || state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) {
+            selection.close()
+            return
+        }
+        try {
+            handshake.resumeSni(selection)
+            checkTlsInput()
+        } catch (e: QuicWireException) {
+            fail(e.code, e.frameType, e.message ?: "", null)
+            return
+        }
+        if (handshake.failed) return
+        drainStreamEvents()
+    }
+
+    /**
+     * Server: the server_name of the ClientHello the configuration's `sniSelector` chose this connection's identity for, null
+     * when it carried none or no selector ran (see `QuicTlsSession.sniSelectedFor`).
+     */
+    @io.kuicksilver.annotations.InternalKuicksilverApi
+    public val sniSelectedFor: String? get() = handshake.session.sniSelectedFor
+
+    /**
      * Opens a local stream and returns its id, or -1 while the peer's stream limit is reached (a STREAMS_BLOCKED goes out, RFC 9000 section
      * 4.6); retry after later input, since no event announces the peer's MAX_STREAMS in this version.
      */
@@ -1364,7 +1393,7 @@ public class ConnectionCore internal constructor(
             earlyMode: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
             localCid: ConnectionId? = null,
         ): ConnectionCore {
-            // the crypto provider validates the rest (sniSelector etc.)
+            // the crypto provider validates the rest (TLS version, ALPN, suites)
             require(tls.role == TlsRole.Client) { "client core needs a client TlsConfig" }
             val odcid = ConnectionId(ByteArray(8).also { random.nextBytes(it) })
             // [localCid]: a loop group's client connection carries its loop's routing byte (EndpointCore.connect)

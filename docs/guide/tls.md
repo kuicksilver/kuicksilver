@@ -113,6 +113,24 @@ val server = tlsConfig(TlsRole.Server) {
 }
 ```
 
+A TLS-over-TCP client that sends no ALPN extension completes the handshake without ALPN by default, as with OpenSSL and
+Go's `crypto/tls`. A server whose protocols imply one for such a client sets `alpnFallback` (experimental), e.g.
+`http/1.1`: RFC 9113 section 3.3 says "HTTP/2 connections over TLS MUST use protocol negotiation in TLS", so a client
+without ALPN speaks HTTP/1.1. Such a client then completes the handshake only where the protocols in effect for its
+connection (`alpn`, or the `sniSelector` answer's) name the fallback; elsewhere the handshake ends with
+`no_application_protocol` (120). That is the alert RFC 7301 section 3.2 gives a server that "supports no protocols that
+the client advertises", and the one RFC 9001 section 8.1 requires when "an application protocol is not negotiated" over
+QUIC; `missing_extension` (109) is for an extension "mandatory to send for the offered TLS version" (RFC 9846 section
+6.2), which ALPN over TCP is not. The rule holds at every ClientHello, the second one after a HelloRetryRequest included:
+RFC 9846 section 4.2.2 has the client "send the same ClientHello without modification" there but does not tell a server
+to compare the two, and OpenSSL does not, so a client that drops ALPN from its second ClientHello is judged as one that
+never sent it; the handshake is checked once more when it completes. A ClientHello whose ALPN extension is present but
+malformed (RFC 7301 section 3.1: a non-empty list of non-empty names) gets `decode_error` (50), with or without the
+fallback, as OpenSSL answers it. An empty list in effect (no ALPN) takes any client. The fallback cannot be `h3`, and a
+server over TCP selects from its `alpn` without `h3` (RFC 9114 section 3.1: HTTP/3 runs over QUIC only); a list of `h3`
+alone serves nothing over TCP, and every TCP handshake ends with `no_application_protocol`. QUIC ignores `alpnFallback`:
+a QUIC client without ALPN is always refused (RFC 9001 section 8.1). The Ktor server's TLS connector sets it to `http/1.1`.
+
 ### Rotating the server certificate
 
 A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
@@ -190,6 +208,42 @@ clientCa.reload(TrustConfig.AnchoredCa(Certificate.parsePem(renewedBundlePem)))
 
 The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tls.clientCa` with
 `kuicksilver.tls.reloadInterval` ([Certificate rotation](ktor.md#certificate-rotation)).
+
+### Certificate per name (SNI)
+
+A server's `sniSelector` chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
+(`TlsConnection`) and QUIC (`QuicTlsSession`, HTTP/3) alike. It sees a `ClientHelloInfo` (the server name, null without
+SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
+`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
+
+- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
+  for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
+  identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of `h3` alone serves the name over QUIC only, and its
+  TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2), as does that of a client without ALPN
+  where `alpnFallback` is set and the list leaves it out ([Configuration](#configuration));
+- null for a ClientHello with a server name: the handshake ends with `unrecognized_name` (112), the fatal choice RFC 6066
+  section 3 offers for a name the server does not recognize;
+- null for a ClientHello without one: the configuration's own `identity`; a configuration without one ends the handshake
+  with `missing_extension` (109, RFC 9846 section 9.2; TLS 1.2 has no such alert and gets `handshake_failure`).
+
+A selector that throws, or an override the configuration's rules refuse, ends that handshake: over TCP with the
+exception, over QUIC with `internal_error` (80) and the exception as the cause of the failure (the CONNECTION_CLOSE reason
+the client reads carries none of its text). Over QUIC the handshake pauses at `DriveResult.WantSni`; the QUIC endpoint runs
+the selector off the connection's loop (`QuicTlsSession.selectSni`, then `resumeSni` on the loop), and a connection that
+ends meanwhile cancels it and frees what it built. A QUIC override needs a non-empty `alpn` like any QUIC configuration,
+and one with client certificates gets neither tickets nor 0-RTT, as a QUIC server with client certificates never does.
+
+Session tickets are bound to the server name and to the certificate they were issued under: a ticket resumes, and its
+0-RTT is accepted, only when the same name selects the same certificate again (RFC 6066 section 3, RFC 9846 section
+4.7.1). Otherwise the handshake is a full one and issues a new ticket. A Kuicksilver client does not even offer a ticket
+under another name than its own.
+
+The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
+trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
+for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
+reload. Hand out the same `TrustConfig` and `OcspStapling` objects for a name: a new object per call is a new answer
+and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
+their contexts are counted apart from the configuration's own, so many answers never push those out.
 
 ## Trust
 
@@ -348,7 +402,7 @@ experimental in 0.3.0:
   round trips. Call `update` with a fresh response before
   the current one's nextUpdate; `isUsableFor(chain)` says whether the current one would be stapled. An identity chosen
   by `sniSelector` staples the response of its own `ServerTlsOverride(identity, alpn, clientAuth, trust, ocspStapling)`,
-  and never the default identity's (TCP; QUIC has no `sniSelector`).
+  and never the default identity's, over TCP and QUIC alike.
 
 ```kotlin
 // guide:tls:revocation

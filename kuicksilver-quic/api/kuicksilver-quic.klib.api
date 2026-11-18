@@ -480,6 +480,13 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
             final fun <get-ticket>(): io.kuicksilver.tls/QuicSessionTicket // io.kuicksilver.quic/ConnectionEvent.SessionTicket.ticket.<get-ticket>|<get-ticket>(){}[0]
     }
 
+    final class SniRequested : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.SniRequested|null[0]
+        final val clientHello // io.kuicksilver.quic/ConnectionEvent.SniRequested.clientHello|{}clientHello[0]
+            final fun <get-clientHello>(): io.kuicksilver.tls/ClientHelloInfo // io.kuicksilver.quic/ConnectionEvent.SniRequested.clientHello.<get-clientHello>|<get-clientHello>(){}[0]
+        final val session // io.kuicksilver.quic/ConnectionEvent.SniRequested.session|{}session[0]
+            final fun <get-session>(): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.quic/ConnectionEvent.SniRequested.session.<get-session>|<get-session>(){}[0]
+    }
+
     final class StopSendingReceived : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived|null[0]
         final val code // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code|{}code[0]
             final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code.<get-code>|<get-code>(){}[0]
@@ -759,6 +766,7 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
     final fun readStream(kotlin/Long, kotlin/ByteArray, kotlin/Int, kotlin/Int): kotlin/Int // io.kuicksilver.quic/ConnectionCore.readStream|readStream(kotlin.Long;kotlin.ByteArray;kotlin.Int;kotlin.Int){}[0]
     final fun resetStream(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionCore.resetStream|resetStream(kotlin.Long;kotlin.Long){}[0]
     final fun resetStreamAt(kotlin/Long, kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionCore.resetStreamAt|resetStreamAt(kotlin.Long;kotlin.Long;kotlin.Long){}[0]
+    final fun resumeSni(io.kuicksilver.tls/SniSelection) // io.kuicksilver.quic/ConnectionCore.resumeSni|resumeSni(io.kuicksilver.tls.SniSelection){}[0]
     final fun resumeVerify(io.kuicksilver.tls/VerifyResult) // io.kuicksilver.quic/ConnectionCore.resumeVerify|resumeVerify(io.kuicksilver.tls.VerifyResult){}[0]
     final fun setPathCapabilities(io.kuicksilver.quic/PathId, io.kuicksilver.quic/IoCapabilities) // io.kuicksilver.quic/ConnectionCore.setPathCapabilities|setPathCapabilities(io.kuicksilver.quic.PathId;io.kuicksilver.quic.IoCapabilities){}[0]
     final fun setPriority(kotlin/Long, io.kuicksilver.quic/StreamPriority) // io.kuicksilver.quic/ConnectionCore.setPriority|setPriority(kotlin.Long;io.kuicksilver.quic.StreamPriority){}[0]

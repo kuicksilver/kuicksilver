@@ -35,6 +35,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 
@@ -379,6 +380,7 @@ class ServerMisdirectedRequestTest {
     private suspend fun sniPolicyServer(
         http2: Boolean = false,
         trustedGateway: Boolean = false,
+        http3: Boolean = false,
     ): Triple<Server, Int, Seen> {
         val identity = ServerFixtures.identity()
         val strict =
@@ -388,7 +390,7 @@ class ServerMisdirectedRequestTest {
                 trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa)),
             )
         val open = ServerTlsOverride(identity)
-        return countingServer(http2 = http2, connector = {
+        return countingServer(http2 = http2, http3 = http3, connector = {
             sniSelector = { if (it.serverName == "a.wild.test") strict else open }
             this.trustedGateway = trustedGateway
         })
@@ -459,7 +461,7 @@ class ServerMisdirectedRequestTest {
             }
         }
 
-    /** The same over HTTP/2: the stream gets 421, the connection goes on. (HTTP/3 never runs on a connector with an `sniSelector`.) */
+    /** The same over HTTP/2: the stream gets 421, the connection goes on. */
     @Test fun negative_h2RequestForAnotherSniPolicyGets421() =
         serverTest {
             val (server, port, seen) = sniPolicyServer(http2 = true)
@@ -593,6 +595,46 @@ class ServerMisdirectedRequestTest {
                 assertTrue(r.endsWith("ok"), r)
                 assertCalls(1, seen)
             } finally {
+                server.stopSuspend(0, 1000)
+            }
+        }
+
+    /**
+     * The same over HTTP/3, whose handshake the same `sniSelector` chose the settings of (RFC 9114 section 3.3 lets a client
+     * reuse a connection for another origin the certificate names; the connection context decides here): each name is served
+     * on its own connection, the other one's request gets 421 and the connection goes on.
+     */
+    @Test fun negative_h3RequestForAnotherSniPolicyGets421() =
+        h3ServerTest {
+            val (server, port, seen) = sniPolicyServer(http3 = true)
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val lax = ep.connect(InetSocketAddress("127.0.0.1", port), via("server.test", alpn = "h3"))
+                try {
+                    assertEquals(421, lax.request(http3Request("GET", "a.wild.test", "/")).status, "the stricter name")
+                    assertEquals(421, lax.request(http3Request("GET", "127.0.0.1:$port", "/")).status, "an address")
+                    assertEquals(200, lax.request(http3Request("GET", "server.test:$port", "/")).status)
+                } finally {
+                    lax.close()
+                }
+                val strict = ep.connect(InetSocketAddress("127.0.0.1", port), via("a.wild.test", withCertificate = true, alpn = "h3"))
+                try {
+                    assertEquals(421, strict.request(http3Request("GET", "server.test", "/")).status)
+                    assertEquals(200, strict.request(http3Request("GET", "a.wild.test", "/")).status)
+                    assertTrue(strict.quic.peerCertificates.isNotEmpty())
+                } finally {
+                    strict.close()
+                }
+                assertFailsWith<Throwable>("the strict name's handshake requires a client certificate over QUIC too") {
+                    ep
+                        .connect(
+                            InetSocketAddress("127.0.0.1", port),
+                            via("a.wild.test", alpn = "h3"),
+                        ).request(http3Request("GET", "a.wild.test", "/"))
+                }
+                assertCalls(2, seen, "the misdirected requests never reached the application")
+            } finally {
+                ep.close()
                 server.stopSuspend(0, 1000)
             }
         }

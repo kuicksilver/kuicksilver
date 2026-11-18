@@ -46,8 +46,7 @@ public class KuicksilverTlsConnector private constructor(
     /** The TLS 1.3 cipher suites in preference order. */
     public val cipherSuites: CipherSuites,
     /**
-     * Picks an identity per SNI name on TCP connections. QUIC cannot use it in v1, so HTTP/3 is skipped for this
-     * connector with a warning: it serves HTTP/1.1 only and sends no `Alt-Svc`.
+     * Picks an identity per SNI name, on TCP and HTTP/3 (QUIC) connections alike; see [Builder.sniSelector].
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
     /**
@@ -70,7 +69,8 @@ public class KuicksilverTlsConnector private constructor(
 
     /**
      * The server TLS configuration for [alpn]: with `h3` among them the QUIC one (TLS 1.3 only, RFC 9001 section 4.2), else the
-     * TCP one with [versions][KuicksilverTlsConnector.versions].
+     * TCP one with [versions][KuicksilverTlsConnector.versions] and `alpnFallback = "http/1.1"` (a client without ALPN speaks
+     * HTTP/1.1, RFC 9113 section 3.3, and is refused with `no_application_protocol` where the protocols leave it out).
      */
     public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null, quic = "h3" in alpn)
 
@@ -91,9 +91,28 @@ public class KuicksilverTlsConnector private constructor(
             clientAuth = this@KuicksilverTlsConnector.clientAuth
             this@KuicksilverTlsConnector.trust?.let { trust = it }
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
-            sniSelector = this@KuicksilverTlsConnector.sniSelector
+            sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) forHttp3(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
-            if (!quic) versions = this@KuicksilverTlsConnector.versions
+            if (!quic) {
+                versions = this@KuicksilverTlsConnector.versions
+                // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS": a client without
+                // ALPN speaks HTTP/1.1, refused (no_application_protocol) where the name's protocols leave http/1.1 out
+                alpnFallback = HTTP11_ALPN
+            }
+        }
+
+    /**
+     * [selector] for the HTTP/3 side. An answer without an ALPN list keeps the connector's (`h3`); one whose list names `h3`
+     * gets `h3` (the rest of the list is for TCP); one whose list leaves `h3` out keeps that list, which a client of HTTP/3
+     * shares nothing with, so its QUIC handshake ends with `no_application_protocol` (RFC 7301 section 3.2; CRYPTO_ERROR
+     * 0x178): the operator restricted that name to the protocols listed.
+     */
+    private fun forHttp3(selector: suspend (ClientHelloInfo) -> ServerTlsOverride?): suspend (ClientHelloInfo) -> ServerTlsOverride? =
+        { hello ->
+            selector(hello)?.let { o ->
+                val alpn = o.alpn
+                if (alpn == null || "h3" !in alpn) o else ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling)
+            }
         }
 
     /** The same connector bound to [port] (resolved connectors report the real port). */
@@ -144,8 +163,18 @@ public class KuicksilverTlsConnector private constructor(
         public var cipherSuites: CipherSuites = CipherSuites.Default
 
         /**
-         * Picks an identity per SNI name (TCP connections). HTTP/3 is skipped for this connector with a warning: QUIC
-         * cannot pick an identity per SNI name in v1.
+         * Picks an identity per SNI name (`TlsConfig.Builder.sniSelector`), on TCP and HTTP/3 connections alike: one
+         * selector answers both, so a name gets the same certificate, client-certificate policy and staple over HTTP/1.1,
+         * HTTP/2 and HTTP/3, and the `Alt-Svc` the TCP side advertises leads to a QUIC endpoint that presents the same
+         * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake. An answer's `alpn` restricts
+         * the name: without one the name gets every protocol of the connector; with one, TCP negotiates from it without
+         * `h3` (QUIC only, RFC 9114 section 3.1: a list of `h3` alone ends the name's TCP handshake with
+         * `no_application_protocol`; a client without ALPN speaks HTTP/1.1, RFC 9113 section 3.3, refused there when the list
+         * leaves `http/1.1` out), and HTTP/3 is served (and advertised with `Alt-Svc` on that name's TCP responses) only
+         * when it lists `h3`, else the QUIC handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
+         * so that its handshakes share one TLS context. Null with SNI present refuses the handshake (`unrecognized_name`); null for a
+         * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen
+         * for (else 421, RFC 9110 section 7.4). Null by default.
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 

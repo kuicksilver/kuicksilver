@@ -215,6 +215,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     open fun enableEarlyData(kotlin/ByteArray?, io.kuicksilver.tls/EarlyDataAdmission?): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.enableEarlyData|enableEarlyData(kotlin.ByteArray?;io.kuicksilver.tls.EarlyDataAdmission?){}[0]
     open fun pendingCryptoBytes(io.kuicksilver.tls/EncryptionLevel): kotlin/Int // io.kuicksilver.tls/QuicTlsSession.pendingCryptoBytes|pendingCryptoBytes(io.kuicksilver.tls.EncryptionLevel){}[0]
     open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
+    open fun resumeSni(io.kuicksilver.tls/SniSelection) // io.kuicksilver.tls/QuicTlsSession.resumeSni|resumeSni(io.kuicksilver.tls.SniSelection){}[0]
+    open suspend fun selectSni(io.kuicksilver.tls/ClientHelloInfo): io.kuicksilver.tls/SniSelection // io.kuicksilver.tls/QuicTlsSession.selectSni|selectSni(io.kuicksilver.tls.ClientHelloInfo){}[0]
 }
 
 abstract interface io.kuicksilver.tls/ResetKey : kotlin/AutoCloseable { // io.kuicksilver.tls/ResetKey|null[0]
@@ -239,6 +241,13 @@ sealed interface io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveRes
             final fun <get-alert>(): kotlin/Int? // io.kuicksilver.tls/DriveResult.Failed.alert.<get-alert>|<get-alert>(){}[0]
         final val exception // io.kuicksilver.tls/DriveResult.Failed.exception|{}exception[0]
             final fun <get-exception>(): io.kuicksilver.tls/TlsException // io.kuicksilver.tls/DriveResult.Failed.exception.<get-exception>|<get-exception>(){}[0]
+    }
+
+    final class WantSni : io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveResult.WantSni|null[0]
+        constructor <init>(io.kuicksilver.tls/ClientHelloInfo) // io.kuicksilver.tls/DriveResult.WantSni.<init>|<init>(io.kuicksilver.tls.ClientHelloInfo){}[0]
+
+        final val clientHello // io.kuicksilver.tls/DriveResult.WantSni.clientHello|{}clientHello[0]
+            final fun <get-clientHello>(): io.kuicksilver.tls/ClientHelloInfo // io.kuicksilver.tls/DriveResult.WantSni.clientHello.<get-clientHello>|<get-clientHello>(){}[0]
     }
 
     final class WantVerify : io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveResult.WantVerify|null[0]
@@ -658,6 +667,13 @@ final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/Sessi
     }
 }
 
+final class io.kuicksilver.tls/SniSelection : kotlin/AutoCloseable { // io.kuicksilver.tls/SniSelection|null[0]
+    final val serverName // io.kuicksilver.tls/SniSelection.serverName|{}serverName[0]
+        final fun <get-serverName>(): kotlin/String? // io.kuicksilver.tls/SniSelection.serverName.<get-serverName>|<get-serverName>(){}[0]
+
+    final fun close() // io.kuicksilver.tls/SniSelection.close|close(){}[0]
+}
+
 final class io.kuicksilver.tls/SpkiSha256 { // io.kuicksilver.tls/SpkiSha256|null[0]
     constructor <init>(kotlin/ByteArray) // io.kuicksilver.tls/SpkiSha256.<init>|<init>(kotlin.ByteArray){}[0]
 
@@ -676,6 +692,8 @@ final class io.kuicksilver.tls/SpkiSha256 { // io.kuicksilver.tls/SpkiSha256|nul
 final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[0]
     final val alpn // io.kuicksilver.tls/TlsConfig.alpn|{}alpn[0]
         final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val alpnFallback // io.kuicksilver.tls/TlsConfig.alpnFallback|{}alpnFallback[0]
+        final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
     final val cipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites|{}cipherSuites[0]
         final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
     final val clientAuth // io.kuicksilver.tls/TlsConfig.clientAuth|{}clientAuth[0]
@@ -714,6 +732,9 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var alpn // io.kuicksilver.tls/TlsConfig.Builder.alpn|{}alpn[0]
             final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.Builder.alpn.<get-alpn>|<get-alpn>(){}[0]
             final fun <set-alpn>(kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/TlsConfig.Builder.alpn.<set-alpn>|<set-alpn>(kotlin.collections.List<kotlin.String>){}[0]
+        final var alpnFallback // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback|{}alpnFallback[0]
+            final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
+            final fun <set-alpnFallback>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<set-alpnFallback>|<set-alpnFallback>(kotlin.String?){}[0]
         final var cipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites|{}cipherSuites[0]
             final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
             final fun <set-cipherSuites>(io.kuicksilver.tls/CipherSuites) // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<set-cipherSuites>|<set-cipherSuites>(io.kuicksilver.tls.CipherSuites){}[0]

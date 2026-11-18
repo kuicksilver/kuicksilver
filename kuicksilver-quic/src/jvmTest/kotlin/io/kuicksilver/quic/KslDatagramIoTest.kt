@@ -216,6 +216,19 @@ class KslDatagramIoTest {
         if (windows) return null
 
         fun bindable(ip: String) = runCatching { java.net.DatagramSocket(java.net.InetSocketAddress(ip, 0)).close() }.isSuccess
+
+        // an address the host owns is not always one a loopback client reaches: a VPN's tunnel address (macOS utun) is bound
+        // locally but routed into the tunnel, and a send from 127.0.0.1 to it fails ("Can't assign requested address")
+        fun reachedFromLoopback(ip: String): Boolean =
+            runCatching {
+                java.net.DatagramSocket(java.net.InetSocketAddress("0.0.0.0", 0)).use { w ->
+                    java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", 0)).use { c ->
+                        w.soTimeout = 1000
+                        c.send(java.net.DatagramPacket(byteArrayOf(1), 1, java.net.InetAddress.getByName(ip), w.localPort))
+                        w.receive(java.net.DatagramPacket(ByteArray(1), 1))
+                    }
+                }
+            }.isSuccess
         if (bindable("127.0.0.2")) return "127.0.0.2"
         return java.net.NetworkInterface
             .getNetworkInterfaces()
@@ -224,7 +237,7 @@ class KslDatagramIoTest {
             .flatMap { it.inetAddresses.toList() }
             .filterIsInstance<java.net.Inet4Address>()
             .map { it.hostAddress }
-            .firstOrNull { bindable(it) }
+            .firstOrNull { bindable(it) && reachedFromLoopback(it) }
     }
 
     /**

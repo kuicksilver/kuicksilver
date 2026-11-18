@@ -50,10 +50,10 @@ class ServerTls12JdkClientTest {
 
     private val get = "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n"
 
-    /** A JDK TLS 1.2 socket to [port] offering [alpn] and, when given, only [suites] in that order; the handshake is done. */
+    /** A JDK TLS 1.2 socket to [port] offering [alpn] (null: no ALPN) and, when given, only [suites] in that order; the handshake is done. */
     private fun jdkTls12(
         port: Int,
-        alpn: String,
+        alpn: String?,
         suites: List<String>? = null,
     ): SSLSocket {
         val s = jdkContext().socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket
@@ -61,7 +61,7 @@ class ServerTls12JdkClientTest {
         s.sslParameters =
             s.sslParameters.apply {
                 protocols = arrayOf("TLSv1.2")
-                applicationProtocols = arrayOf(alpn)
+                if (alpn != null) applicationProtocols = arrayOf(alpn)
                 serverNames = listOf(javax.net.ssl.SNIHostName("server.test"))
                 if (suites != null) cipherSuites = suites.toTypedArray()
             }
@@ -131,6 +131,42 @@ class ServerTls12JdkClientTest {
                 assertTrue(0xff01 in serverHelloExtensions(fromServer), "renegotiation_info in the ServerHello")
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Over TLS 1.2 as over 1.3, a client without ALPN speaks HTTP/1.1 (RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST
+     * use protocol negotiation in TLS"): a name whose sniSelector answer leaves `http/1.1` out, or lists `h3` alone, refuses it
+     * with `no_application_protocol` (RFC 7301 section 3.2); one that lists it serves it.
+     */
+    @Test fun negative_aTls12ClientWithoutAlpnIsRefusedForANameWithoutHttp11() =
+        serverTest {
+            val id = ServerFixtures.identity()
+            for ((answer, served) in listOf(listOf("h2") to false, listOf("h3") to false, listOf("h2", "http/1.1") to true)) {
+                val (server, port) =
+                    tlsServer(
+                        configure = { http3 = false },
+                        connector = {
+                            versions = TlsVersions.Tls12And13
+                            sniSelector = { io.kuicksilver.tls.ServerTlsOverride(id, alpn = answer) }
+                        },
+                    ) { routing { get("/") { call.respondText("jdk ${call.request.httpVersion}") } } }
+                try {
+                    withContext(Dispatchers.IO) {
+                        if (served) {
+                            jdkTls12(port, null).use { s ->
+                                assertEquals("TLSv1.2", s.session.protocol)
+                                val resp = s.http(get)
+                                assertTrue(resp.startsWith("HTTP/1.1 200") && resp.endsWith("jdk HTTP/1.1"), resp)
+                            }
+                        } else {
+                            val e = assertFailsWith<SSLHandshakeException>("answer $answer") { jdkTls12(port, null).close() }
+                            assertContains(e.message.orEmpty(), "no_application_protocol", message = "answer $answer")
+                        }
+                    }
+                } finally {
+                    server.stop(100, 500)
+                }
             }
         }
 

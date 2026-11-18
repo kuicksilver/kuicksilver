@@ -98,8 +98,8 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 
 `quicClientConfig(tls) { }` and `quicServerConfig(tls) { }` pair a `TlsConfig` with a `QuicConfig`. `build()` throws
 `IllegalArgumentException` for a `TlsConfig` of the wrong role ("client config needs a client TlsConfig") and
-`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn`, `TLS_AES_128_CCM_8_SHA256`, or an
-`sniSelector`.
+`TlsException.Config` for one QUIC cannot use: TLS 1.2 allowed, an empty `alpn` or `TLS_AES_128_CCM_8_SHA256`. A
+server's `sniSelector` works as over TCP (its overrides must suit QUIC as well: an empty `alpn` there fails that handshake).
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
@@ -164,19 +164,20 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
-| `alpn` | `List<String>` | empty | each name 1..255 UTF-8 bytes, the list at most 255 bytes on the wire; QUIC needs at least one | 0.2.0 | ALPN protocol IDs in preference order |
+| `alpn` | `List<String>` | empty | each name 1..255 UTF-8 bytes, the list at most 255 bytes on the wire; QUIC needs at least one | 0.2.0 | ALPN protocol IDs in preference order; a server over TCP selects without `h3` (QUIC only), and `h3` alone refuses every TCP client (since 0.3.0) |
 | `serverName` | `String?` | `null` | a client needs it (or `TrustConfig.ExpectedName`) | 0.2.0 | SNI and the name the certificate must match; an IP literal is verified but never sent as SNI. Servers ignore it |
 | `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | 0.2.0 | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only); renegotiation is always refused, and on an `h2` connection a peer's attempt ends it (RFC 9113 section 9.2.1) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | 0.2.0 | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | 0.2.0 | certificate chain and key; `TlsIdentity.reloadable(...)` for one replaced at run time ([TLS guide](tls.md#rotating-the-server-certificate)) |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa` or `ReloadableCa`, optionally under `Pinned` | 0.2.0 | how the peer is verified ([TrustConfig](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | 0.2.0 | `None`, `Optional` or `Required` client certificates |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP and QUIC (since 0.3.0) | 0.2.0 | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello; `null` with SNI: `unrecognized_name`, without SNI: the default `identity` (none: `missing_extension`) ([TLS guide](tls.md#certificate-per-name-sni)) |
 | `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see [SessionTicketConfig](#sessionticketconfig) | 0.2.0 | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` |  | 0.2.0 | TLS secrets as RFC 9850 key log lines ([Key logging](tls.md#key-logging)) |
 | `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | 0.2.0 | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
 | `genericAlerts` | `Boolean` | `false` |  | 0.2.0 | send `handshake_failure` instead of the specific alert; a failed stapled OCSP check is still sent as `bad_certificate_status_response` (113) |
 | `revocation` (*experimental*) | `RevocationPolicy` | `StapledIfPresent` | clients; `RequireStapled` only with a trust `ksl` verifies (`AnchoredCa`, `Platform` on Linux Native) | 0.3.0 | how the OCSP response the server staples is checked: `Off`, `StapledIfPresent` (soft-fail without one), `RequireStapled`; a must-staple certificate needs one under every policy but `Off`. Alerts: 113 for every failed staple check (also with `genericAlerts`); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) ([Certificate revocation](tls.md#certificate-revocation)) |
+| `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](tls.md#configuration)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](tls.md#certificate-revocation)) |
 
 ### SessionTicketConfig
@@ -425,7 +426,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `clientAuth` | `ClientAuth` | `None` |  | 0.2.0 | ask for or require client certificates |
 | `trust` | `TrustConfig?` | `null` | `AnchoredCa` or `ReloadableCa` (optionally under `Pinned`) when `clientAuth` is not `None` | 0.2.0 | verifies client certificates; a `ReloadableCa` rotates for TCP and QUIC alike |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` |  | 0.2.0 | TLS 1.3 suites |
-| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP; the connector then serves no HTTP/3 (warning) |
+| `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` |  | 0.2.0 | identity per SNI name over TCP and HTTP/3 (HTTP/3 since 0.3.0; an answer's `alpn` without `h3` keeps that name off HTTP/3 and out of `Alt-Svc`, one of `h3` alone keeps it off TCP, one without `http/1.1` refuses a TCP client without ALPN) ([Certificate per name](ktor.md#certificate-per-name-sni)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |

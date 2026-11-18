@@ -33,9 +33,10 @@ class QuicDslTest {
         assertFailsWith<TlsException.Config> { QuicClientConfig.Builder(tls).build() }
     }
 
-    @Test fun serverBuildRejectsSniSelector() {
+    /** A QUIC server picks its identity per SNI name like a TCP one: the configuration builds. */
+    @Test fun serverBuildAcceptsSniSelector() {
         val tls = CoreFixtures.server { sniSelector = { null } }
-        assertFailsWith<TlsException.Config> { QuicServerConfig.Builder(tls).build() }
+        assertEquals(tls, QuicServerConfig.Builder(tls).build().tls)
     }
 
     @Test fun validClientConfigBuilds() {

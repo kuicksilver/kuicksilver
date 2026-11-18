@@ -146,3 +146,12 @@ is for the leaf sent and fresh. The OCSP half needs OpenSSL's ocsp module, which
 ocsp since this change, and a build without them (a system OpenSSL built `no-ocsp`) answers `KSL_ERROR` from
 `ksl_ocsp_check` and `KSL_E_NOT_SUPPORTED` from the option and the setter. JNI `KslNative.ctxSetCrls` / `KslNative.ocspCheck`, cinterop
 `ksl_ctx_set_crls` / `ksl_ocsp_check`, Kotlin `Ksl.ctxSetCrls` / `Ksl.ocspCheck`. 88 functions.
+
+A TLS-over-TCP server's ALPN policy, additive under 7 (RFC 7301 sections 3.1 and 3.2, RFC 9113 section 3.3):
+`KSL_OPT_ALPN_POLICY` on a server context, `KSL_ALPN_POLICY_OPEN` (the default), `_REQUIRED` (a ClientHello without the ALPN
+extension gets no_application_protocol) or `_REFUSE` (every ClientHello does: a list of `h3` alone, which TLS over TCP never
+negotiates). `ksl_client_hello_cb` applies the policy of the context in effect (the SNI override once applied) at every
+ClientHello, the second one after a HelloRetryRequest included, and `ksl_drive` again when the handshake completes; before any
+of it, and before the SNI pause, a present ALPN extension that is malformed gets decode_error in both modes. It is decided in
+`ksl` and not at the SNI pause because only `ksl` sees whether the extension is there at all (`ksl_ssl_client_hello` hands out
+the list without its length) and every ClientHello, which the pause sees once. No new function.

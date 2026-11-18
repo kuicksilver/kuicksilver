@@ -40,8 +40,9 @@ typedef struct {
 struct ksl_ctx {
     SSL_CTX *ctx;
     int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data, level_after_pause;
-    int revocation; /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
-    int has_crls;   /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
+    int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
+    int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
     uint8_t ocsp_hash[32];
@@ -102,8 +103,8 @@ struct ksl_ssl {
     /* server: when the session being resumed was authenticated (its full handshake, epoch seconds), carried into renewed tickets */
     int64_t auth_time;
     int skip_ticket; /* server: ticket_gen_cb found no time left for a ticket; ticket_cb then issues none */
-    /* server SNI pause */
-    int sni_pending, sni_decision_alert;
+    /* server SNI pause; sni_late_alert: a refusal sent once the version is chosen (server_name_cb), for an alert TLS 1.3 alone has */
+    int sni_pending, sni_decision_alert, sni_late_alert;
     ksl_ctx *sni_override;
     /* KSL_OPT_NUM_TICKETS 0: set by ksl_ssl_new_session_ticket, the only way such a session gets a ticket (after the pin verdict) */
     int ticket_authorized;
@@ -123,6 +124,7 @@ struct ksl_ssl {
         update_requested_pending; /* the bound was reached: no more KeyUpdates of ours; our update_requested awaits the peer's KeyUpdate */
     uint64_t fed,
         update_requested_at; /* ciphertext bytes fed (ksl_tcp_feed); how many had been when our update_requested was written */
+    int nst_early_data; /* client: the NewSessionTicket just read carried early_data (ksl_msg_cb), for new_session_cb */
     int server_hello_ems,
         ems_refused; /* client: the ServerHello carried extended_master_secret; the handshake was refused for its lack (RFC 7627 section 5.2) */
     uint64_t records_sent,
@@ -190,6 +192,7 @@ int ksl_chain_security(int level,
                        STACK_OF(X509) *
                            chain); /* ksl_verify.c: X509_V_OK or the X509 error of the first weak key or signature */
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
+int ksl_nst_has_early_data(const uint8_t *m, size_t len); /* ksl_ssl.c, also the fuzz harness's mode 0xfe */
 int ksl_client_hello_sni(SSL *ssl, const unsigned char **name,
                          size_t *len); /* during the ClientHello: its host_name, if any */
 /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed 2^48-1" */
