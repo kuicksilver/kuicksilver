@@ -82,6 +82,11 @@ public actual object Ksl {
         tls12: String?,
     ): Unit = ctxCheck(ctx, KslNative.ctxSetCiphers(ctx, tls13, tls12))
 
+    public actual fun ctxSetGroups(
+        ctx: Long,
+        groups: String,
+    ): Unit = ctxCheck(ctx, KslNative.ctxSetGroups(ctx, groups))
+
     public actual fun ctxUseDefaultTicketKeys(
         ctx: Long,
         rotateSeconds: Int,

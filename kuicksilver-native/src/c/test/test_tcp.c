@@ -487,7 +487,7 @@ static void test_client_alert_after_server_hello_is_encrypted(void) {
     for (int refuse = 0; refuse < 2; refuse++) {
         ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL),
                 *sc = server_ctx(refuse ? "server-other-ca" : "server");
-        SSL_CTX_set1_groups_list(sc->ctx, "secp384r1");
+        ksl_ctx_set_groups(sc, "secp384r1");
         ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
         static wire_log wc, ws;
         wc.len = ws.len = 0;
@@ -940,15 +940,15 @@ static int alpn_policy_alert_with(const uint8_t *offer, size_t offer_len, int po
     if (policy)
         ksl_ctx_set_option(sc, KSL_OPT_ALPN_POLICY, policy);
     if (hrr)
-        SSL_CTX_set1_groups_list(sc->ctx, "secp384r1");
+        ksl_ctx_set_groups(sc, "secp384r1");
     if (override_policy >= 0) {
         oc = server_ctx("server");
         ksl_ctx_set_alpn(oc, x1, sizeof x1);
         if (override_policy)
             ksl_ctx_set_option(oc, KSL_OPT_ALPN_POLICY, override_policy);
         if (hrr) {
-            oc->groups = "secp384r1"; /* what ksl_ctx_apply_to_ssl gives the session once the override is applied */
-            SSL_CTX_set1_groups_list(oc->ctx, oc->groups);
+            ksl_ctx_set_groups(
+                oc, "secp384r1"); /* what ksl_ctx_apply_to_ssl gives the session once the override is applied */
         }
         ksl_ctx_set_option(sc, KSL_OPT_SNI_PAUSE, 1);
         ksl_ctx_freeze(oc);

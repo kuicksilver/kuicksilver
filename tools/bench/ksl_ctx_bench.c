@@ -29,7 +29,7 @@ static ksl_ctx *server_ctx(void) {   /* KslContext.configure + quicServerTickets
 }
 static ksl_ctx *client_groups(int platform, const char *groups) {
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
-    if (groups) { c->groups = groups; SSL_CTX_set1_groups_list(c->ctx, groups); }   /* before the freeze, like every other setting */ ksl_ctx_set_alpn(c, ALPN, sizeof ALPN); ksl_ctx_set_ciphers(c, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256", NULL);
+    if (groups && ksl_ctx_set_groups(c, groups) != KSL_OK) exit(3);   /* before the freeze, like every other setting */ ksl_ctx_set_alpn(c, ALPN, sizeof ALPN); ksl_ctx_set_ciphers(c, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256", NULL);
     if (ksl_ctx_set_roots(c, platform ? NULL : ca, platform ? 0 : ca_len) != KSL_OK) { uint32_t e; char m[512]; ksl_ctx_last_error(c, &e, m, sizeof m); printf("roots: %s\n", m); exit(3); }
     ksl_ctx_set_option(c, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL); ksl_ctx_freeze(c); return c;
 }

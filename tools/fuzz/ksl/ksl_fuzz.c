@@ -31,8 +31,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "ksl_internal.h" /* the SSL of a TCP client session (mode 0xfd seeds) */
 #include "ksl.h"
-#include "ksl_internal.h" /* the SSL_CTX of the TCP servers of mode 0xfd: their key-exchange groups */
 
 #ifndef KSL_FUZZ_TESTDATA
 #define KSL_FUZZ_TESTDATA "kuicksilver-native/src/c/test/testdata/"
@@ -99,13 +99,13 @@ static void init(void) {
             for (int p384 = 0; p384 < 2; p384++) {
                 ksl_ctx *c = new_server(pause, 0); ksl_ctx_set_alpn(c, ALPN_X1, sizeof ALPN_X1);
                 if (ksl_ctx_set_option(c, KSL_OPT_ALPN_POLICY, policy) != KSL_OK) abort();
-                if (p384 && SSL_CTX_set1_groups_list(c->ctx, "secp384r1") != 1) abort();
+                if (p384 && ksl_ctx_set_groups(c, "secp384r1") != KSL_OK) abort();
                 ksl_ctx_freeze(c); tcp_server_ctx[policy][pause][p384] = c;
             }
         for (int p384 = 0; p384 < 2; p384++) {
             ksl_ctx *o = new_server(0, 0); ksl_ctx_set_alpn(o, ALPN_X1, sizeof ALPN_X1);
             if (ksl_ctx_set_option(o, KSL_OPT_ALPN_POLICY, policy) != KSL_OK) abort();
-            if (p384) { o->groups = "secp384r1"; if (SSL_CTX_set1_groups_list(o->ctx, o->groups) != 1) abort(); } /* applied with it */
+            if (p384 && ksl_ctx_set_groups(o, "secp384r1") != KSL_OK) abort();
             ksl_ctx_freeze(o); tcp_override_ctx[policy][p384] = o;
         }
     }

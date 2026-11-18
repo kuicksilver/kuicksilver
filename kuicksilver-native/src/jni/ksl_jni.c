@@ -130,6 +130,13 @@ static jint j_ctx_set_ciphers(JNIEnv *e, jclass c, jlong h, jstring s13, jstring
     cstr_free(e, s12, b);
     return r;
 }
+static jint j_ctx_set_groups(JNIEnv *e, jclass c, jlong h, jstring s) {
+    (void)c;
+    const char *a = cstr(e, s);
+    int r = a ? ksl_ctx_set_groups(CTX(h), a) : KSL_ERROR;
+    cstr_free(e, s, a);
+    return r;
+}
 static jint j_ctx_use_default_ticket_keys(JNIEnv *e, jclass c, jlong h, jint rotate) {
     (void)e;
     (void)c;
@@ -943,6 +950,7 @@ static const JNINativeMethod methods[] = {
     {"pkeyFree", "(J)V", (void *)j_pkey_free},
     {"ctxSetRoots", "(J[B)I", (void *)j_ctx_set_roots},
     {"ctxSetCiphers", "(J" S_STR S_STR ")I", (void *)j_ctx_set_ciphers},
+    {"ctxSetGroups", "(J" S_STR ")I", (void *)j_ctx_set_groups},
     {"ctxUseDefaultTicketKeys", "(JI)I", (void *)j_ctx_use_default_ticket_keys},
     {"ticketKeysRegister", "([B)I", (void *)j_ticket_keys_register},
     {"ctxUseTicketKeys", "(JI)I", (void *)j_ctx_use_ticket_keys},

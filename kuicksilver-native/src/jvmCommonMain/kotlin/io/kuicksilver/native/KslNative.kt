@@ -49,6 +49,11 @@ internal object KslNative {
         tls12: String?,
     ): Int
 
+    @JvmStatic external fun ctxSetGroups(
+        ctx: Long,
+        groups: String,
+    ): Int
+
     @JvmStatic external fun ctxUseDefaultTicketKeys(
         ctx: Long,
         rotateSeconds: Int,

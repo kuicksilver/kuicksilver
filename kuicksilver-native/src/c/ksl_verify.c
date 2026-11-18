@@ -352,6 +352,16 @@ static int alpn_ext_well_formed(const unsigned char *p, size_t l) {
     }
     return 1;
 }
+/* The server's group choice by its own order (ksl_prefer_server_groups) for this ClientHello, under the session's current context (the
+   SNI override once applied): 0 when the list could not be applied (internal_error) */
+static int prefer_groups(SSL *ssl, ksl_ssl *s) {
+    const unsigned char *ks;
+    size_t ks_len;
+    if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_key_share, &ks, &ks_len) != 1)
+        return 1; /* TLS 1.2, or OpenSSL refuses the ClientHello for the missing extension */
+    int choice = ksl_key_share_choice(s->owner, ks, ks_len);
+    return choice == -2 || ksl_prefer_server_groups(s->owner, ssl, choice);
+}
 /* KSL_OPT_ALPN_POLICY of the session's current context (the SNI override once applied), TLS over TCP only: nonzero and the alert
    set when this ClientHello is refused */
 static int alpn_policy_refuses(SSL *ssl, ksl_ssl *s, int *al) {
@@ -400,8 +410,13 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         return SSL_CLIENT_HELLO_ERROR;
     }
     /* without a pause, or a second ClientHello after HelloRetryRequest (under the override chosen for the first) */
-    if (!s->owner->sni_pause || s->sni_pending == 3)
+    if (!s->owner->sni_pause || s->sni_pending == 3) {
+        if (!prefer_groups(ssl, s)) {
+            *al = SSL_AD_INTERNAL_ERROR;
+            return SSL_CLIENT_HELLO_ERROR;
+        }
         return alpn_policy_refuses(ssl, s, al) ? SSL_CLIENT_HELLO_ERROR : SSL_CLIENT_HELLO_SUCCESS;
+    }
     if (s->sni_pending == 0) {
         s->sni_pending = 1;
         return SSL_CLIENT_HELLO_RETRY;
@@ -431,6 +446,10 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         s->owner = o;
         s->verify_mode = o->verify_mode; /* ownership of the session's settings moves to the override context */
         SSL_set_ex_data(ssl, 1, s);
+    }
+    if (!prefer_groups(ssl, s)) {
+        *al = SSL_AD_INTERNAL_ERROR;
+        return SSL_CLIENT_HELLO_ERROR;
     }
     return alpn_policy_refuses(ssl, s, al) ? SSL_CLIENT_HELLO_ERROR : SSL_CLIENT_HELLO_SUCCESS;
 }

@@ -342,6 +342,14 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
             b[1 + i] = (uint8_t)(u >> (56 - 8 * i));
         return copy_out(out, cap, len, b, sizeof b);
     }
+    case KSL_GET_GROUP: {
+        /* the group of this handshake's key exchange (OpenSSL: the TLS 1.3 key share once taken, else the session's), none for a
+           psk_ke resumption or before the ServerHello */
+        int nid = SSL_get_negotiated_group(s->ssl);
+        int id = nid ? ksl_group_id_of_name(SSL_get0_group_name(s->ssl)) : 0;
+        uint8_t b[2] = {(uint8_t)(id >> 8), (uint8_t)id};
+        return copy_out(out, cap, len, b, id ? 2 : 0);
+    }
     case KSL_GET_RENEGOTIATION: {
         uint8_t b = s->renegotiations > 0;
         return copy_out(out, cap, len, &b, 1);

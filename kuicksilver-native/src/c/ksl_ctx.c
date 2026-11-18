@@ -394,6 +394,137 @@ void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
     SSL_CTX_set_allow_early_data_cb(ctx, allow_early_data_cb, NULL);
 }
+static int frozen(ksl_ctx *c);
+/* The key-exchange groups ksl takes (RFC 9846 section 4.3.7, the IANA TLS Supported Groups registry), in OpenSSL's spelling: the
+   post-quantum hybrids of OpenSSL 3.5 and the elliptic curves of RFC 9846 section 9.1 and RFC 8422. Not taken: the finite-field
+   groups (RFC 7919; slow, and ksl's TLS 1.2 profile is ECDHE only), the Brainpool and SM2 curves and pure ML-KEM, which no peer of
+   the interop set offers by default. */
+static const struct {
+    const char *name;
+    uint16_t id;
+} group_table[KSL_GROUPS_MAX] = {
+    {"X25519MLKEM768", 0x11ec}, {"SecP256r1MLKEM768", 0x11eb}, {"SecP384r1MLKEM1024", 0x11ed}, {"X25519", 0x001d},
+    {"X448", 0x001e},           {"secp256r1", 0x0017},         {"secp384r1", 0x0018},          {"secp521r1", 0x0019},
+};
+static int group_lookup(const char *name, size_t len) {
+    for (int i = 0; i < KSL_GROUPS_MAX; i++)
+        if (strlen(group_table[i].name) == len && OPENSSL_strncasecmp(group_table[i].name, name, len) == 0)
+            return i;
+    return -1;
+}
+int ksl_group_id_of_name(const char *name) {
+    int i = name ? group_lookup(name, strlen(name)) : -1;
+    return i < 0 ? 0 : group_table[i].id;
+}
+/* Parses and installs a group list (ksl_ctx_set_groups); KSL_ERROR with the context's error set, the context unchanged */
+static int set_groups(ksl_ctx *c, const char *list) {
+    char canon[KSL_GROUPS_LIST_MAX];
+    uint8_t idx[KSL_GROUPS_MAX];
+    size_t n = 0, shares = 0, out = 0;
+    const char *why = NULL;
+    if (!list || !*list)
+        why = "ksl: the group list is empty";
+    for (const char *p = list; !why;) {
+        const char *end = strchr(p, ':');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        int share = len > 0 && *p == '*';
+        int i = group_lookup(p + share, len - (size_t)share);
+        if (i < 0)
+            why = "ksl: an unknown key-exchange group, or an empty name (X25519MLKEM768, SecP256r1MLKEM768, "
+                  "SecP384r1MLKEM1024, X25519, X448, secp256r1, secp384r1, secp521r1)";
+        else if (memchr(idx, i, n))
+            why = "ksl: a key-exchange group is listed twice (RFC 9846 section 4.3.7)";
+        else if (share && c->role == KSL_SERVER)
+            why = "ksl: a server sends no key share in a ClientHello: '*' is for clients";
+        else if (share && ++shares > KSL_GROUP_SHARES_MAX)
+            why = "ksl: at most 4 key shares";
+        if (why)
+            break;
+        out += (size_t)snprintf(canon + out, sizeof canon - out, "%s%s%s", n ? ":" : "", share ? "*" : "",
+                                group_table[i].name);
+        idx[n++] = (uint8_t)i;
+        if (!end)
+            break;
+        p = end + 1;
+    }
+    if (why) {
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, why);
+        return KSL_ERROR;
+    }
+    /* each group alone first, so a refusal names which one this OpenSSL lacks (a build without it, a provider that does not offer
+       it); the list in effect is put back on every refusal */
+    for (size_t k = 0; k < n; k++)
+        if (SSL_CTX_set1_groups_list(c->ctx, group_table[idx[k]].name) != 1) {
+            char m[160];
+            snprintf(m, sizeof m, "ksl: key-exchange group %s is not available in this OpenSSL",
+                     group_table[idx[k]].name);
+            if (c->groups[0])
+                (void)SSL_CTX_set1_groups_list(c->ctx, c->groups);
+            ERR_clear_error();
+            ksl_ctx_set_error(c, KSL_E_NOT_SUPPORTED, m);
+            return KSL_ERROR;
+        }
+    if (SSL_CTX_set1_groups_list(c->ctx, canon) != 1) {
+        if (c->groups[0])
+            (void)SSL_CTX_set1_groups_list(c->ctx, c->groups);
+        ERR_clear_error();
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: the group list was refused");
+        return KSL_ERROR;
+    }
+    memcpy(c->groups, canon, out + 1);
+    memcpy(c->group_idx, idx, n);
+    c->group_count = n;
+    return KSL_OK;
+}
+int ksl_ctx_set_groups(ksl_ctx *c, const char *list) {
+    if (frozen(c))
+        return KSL_ERROR;
+    ERR_clear_error();
+    if (list && strlen(list) >= KSL_GROUPS_LIST_MAX) {
+        ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: the group list is too long");
+        return KSL_ERROR;
+    }
+    return set_groups(c, list);
+}
+/* RFC 9846 section 4.3.8, KeyShareClientHello: client_shares<0..2^16-1> of KeyShareEntry { NamedGroup group;
+   opaque key_exchange<1..2^16-1> }. The index in `o`'s list of the first group of that list the client sent a share for, -1 for none,
+   -2 when the extension is malformed (OpenSSL answers it with decode_error when it parses it after ksl_client_hello_cb). */
+int ksl_key_share_choice(const ksl_ctx *o, const uint8_t *p, size_t len) {
+    if (len < 2 || (((size_t)p[0] << 8) | p[1]) != len - 2)
+        return -2;
+    int best = -1;
+    for (size_t i = 2; i < len;) {
+        if (len - i < 4)
+            return -2;
+        uint16_t g = (uint16_t)(p[i] << 8 | p[i + 1]);
+        size_t l = ((size_t)p[i + 2] << 8) | p[i + 3];
+        if (l == 0 || l > len - i - 4)
+            return -2;
+        for (size_t k = 0; k < o->group_count && (best < 0 || k < (size_t)best); k++)
+            if (group_table[o->group_idx[k]].id == g) {
+                best = (int)k;
+                break;
+            }
+        i += 4 + l;
+    }
+    return best;
+}
+/* The server's choice by its own order (ksl_ctx_set_groups), as tuples of OpenSSL's group list for this ClientHello: OpenSSL takes a
+   group of the first tuple that has one the client supports, within a tuple a share before a group without one (and the client's
+   order, SSL_OP_CIPHER_SERVER_PREFERENCE being off in TLS 1.3, where it would reorder the cipher suites too:
+   tcp_tls12_server_suite_choice). With `choice` the first of the list with a client share, the first tuple runs to it: no earlier
+   group has a share, so that one is taken without a HelloRetryRequest. Without one, every group is its own tuple: the
+   HelloRetryRequest asks for the first of the list the client supports (RFC 9846 section 4.2.1), not the client's first. The flat
+   order stays the list's, which EncryptedExtensions carries (RFC 9846 section 4.3.7). */
+int ksl_prefer_server_groups(const ksl_ctx *o, SSL *ssl, int choice) {
+    char l[KSL_GROUPS_LIST_MAX];
+    size_t out = 0;
+    for (size_t k = 0; k < o->group_count; k++) {
+        const char *sep = k == 0 ? "" : choice < 0 || (int)k == choice + 1 ? "/" : ":";
+        out += (size_t)snprintf(l + out, sizeof l - out, "%s%s", sep, group_table[o->group_idx[k]].name);
+    }
+    return o->group_count == 0 || SSL_set1_groups_list(ssl, l) == 1;
+}
 /* SSL_new copies these settings from the SSL_CTX into the session, and SSL_set_SSL_CTX moves only the certificate and the session id
    context: an SNI override (ksl_client_hello_cb) applies the rest itself, so that every setting of the override is in effect (ticket
    count, version range, options, verify mode and parameters, suites, groups, early data). The ALPN select, ticket key, keylog and
@@ -481,9 +612,8 @@ ksl_ctx *ksl_ctx_new(int role) {
        X25519MLKEM768 when the client supports it but sent no share for it (OpenSSL's default puts the hybrid alone in the first
        tuple; ngtcp2 and others ship X25519 shares only, and the extra round trip doubled handshake loss in interop). A client
        still sends shares for the hybrid and X25519 (the '*' marks), so a post-quantum server picks the hybrid in one flight. */
-    c->groups = role == KSL_SERVER ? "X25519MLKEM768:X25519:secp256r1:X448:secp384r1:secp521r1"
-                                   : "*X25519MLKEM768:*X25519:secp256r1:X448:secp384r1:secp521r1";
-    if (SSL_CTX_set1_groups_list(c->ctx, c->groups) != 1) {
+    if (set_groups(c, role == KSL_SERVER ? "X25519MLKEM768:X25519:secp256r1:X448:secp384r1:secp521r1"
+                                         : "*X25519MLKEM768:*X25519:secp256r1:X448:secp384r1:secp521r1") != KSL_OK) {
         SSL_CTX_free(c->ctx);
         free(c);
         return NULL;

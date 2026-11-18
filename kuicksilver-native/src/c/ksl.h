@@ -39,7 +39,8 @@ extern "C" {
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
-   ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2) */
+   ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
+   ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8) */
 
 /* return codes */
 #define KSL_OK 0
@@ -127,6 +128,9 @@ extern "C" {
 #define KSL_GET_OCSP_STATUS 12 /* client, 9 bytes: the KSL_OCSP_* of the stapled response the handshake accepted (KSL_OCSP_GOOD or
                                       KSL_OCSP_UNKNOWN), 0xff when none was checked, then 8 bytes big-endian: the epoch second until which
                                       that response is fresh (its nextUpdate plus 5 minutes of clock skew), 0 with none. Additive in ABI 7 */
+#define KSL_GET_GROUP 13 /* 2 bytes big-endian: the IANA code point of the key-exchange group the handshake used (RFC 9846 section
+                                      4.3.7), once the ServerHello is sent or read; 0 bytes before, and for a resumption without key
+                                      exchange (psk_ke). Additive in ABI 7 */
 /* clang-format on */
 
 /* ksl_ssl_set keys */
@@ -275,6 +279,17 @@ int ksl_ctx_set_session_context(
     ksl_ctx *, const uint8_t *sid_ctx,
     size_t len); /* server, 1..32 bytes: a session (ticket) resumes only under the same context (default "ksl") */
 int ksl_ctx_set_option(ksl_ctx *, int option, int value);
+/* The key-exchange groups (additive under ABI 7; RFC 9846 sections 4.3.7 and 4.3.8): `list` names them most preferred first,
+   separated by ':', each one of X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, X448, secp256r1, secp384r1 and
+   secp521r1 (case does not matter), each at most once. A client sends them in this order in supported_groups, and key shares in
+   its first ClientHello for the groups marked '*' (1 to 4 of them; none marked: the first group). A server takes no '*': among the
+   groups the client sent a key share for, it takes the first of its list; with none of them, it answers with a HelloRetryRequest
+   for the first of its list the client supports (RFC 9846 section 4.2.1); with no group in common, handshake_failure. TLS 1.2
+   takes the elliptic curves of the list in the same order. KSL_E_BAD_ARG for NULL, an empty list or name, an unknown name, a
+   duplicate, any other syntax of OpenSSL's group lists, a '*' on a server or more than 4 of them, and KSL_E_NOT_SUPPORTED for a
+   group this OpenSSL does not provide; a refused call changes nothing. The default: X25519MLKEM768, X25519, secp256r1, X448,
+   secp384r1, secp521r1, a client sending shares for the first two. */
+int ksl_ctx_set_groups(ksl_ctx *, const char *list);
 int ksl_ctx_freeze(ksl_ctx *);
 /* Verifies a peer chain kept from an earlier handshake (framed as for ksl_ctx_set_roots, leaf first) again, as that handshake did: this
    context's trust store and verify parameters, the purpose of the peer's role, and on a client the reference identifier `name` (DNS-ID
