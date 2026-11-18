@@ -1026,7 +1026,11 @@ public class ConnectionCore internal constructor(
         afterInput(now)
     }
 
-    /** Fills [out] with datagrams to send now; returns their number (at most one send quantum). */
+    /**
+     * Fills [out] with datagrams to send now; returns their number (at most one send quantum). Once the idle deadline has
+     * passed it sends nothing, queued data included, until [onTimeout] runs and closes the connection: a packet sent then
+     * would restart the idle timer (RFC 9000 section 10.1).
+     */
     public fun poll(
         out: PacketBatch,
         now: TimeMark,
