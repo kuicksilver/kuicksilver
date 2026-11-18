@@ -258,6 +258,15 @@ snapshot_classpath() {
   [ -s "$out/kuicksilver-quic.cp" ] || die "no classpath snapshot: run without --no-build"
 }
 
+# tools/fuzz/ksl/corpus-names.c built into the state directory: it renames the inputs of a ksl.parsers merge to the FNV-1a 64 of
+# their bytes, the name the macOS driver gives them and tools/c-test.sh checks (libFuzzer's merge, on Linux, names them by SHA-1)
+ksl_names() {
+  local bin="$state/bin/corpus-names"
+  mkdir -p "$state/bin"
+  "${CC:-cc}" -std=c11 -O1 -Wall -Wextra -Werror "$root/tools/fuzz/ksl/corpus-names.c" -o "$bin" || return 1
+  echo "$bin"
+}
+
 ksl_harness() { # the ksl harness binary (built by tools/fuzz/ksl/build.sh)
   local bin="$root/build/fuzz-ksl/ksl_fuzz"
   if [ "$build" = 1 ] || [ ! -x "$bin" ]; then quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null; fi
@@ -358,6 +367,10 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
         || { echo "$id: merge failed (see $out/merge.log)"; failed="$failed $id"; continue; }
     fi
     rm -f "$out/min"/seed-baseline-*
+    if [ "$kind" != jvm ]; then
+      names=$(ksl_names) && "$names" --rename "$out/min" > "$out/names.log" 2>&1 \
+        || { echo "$id: the merged inputs could not be named by their FNV-1a 64 (see $out/names.log)"; failed="$failed $id"; continue; }
+    fi
     before=$(find "$corpus" -type f | wc -l | tr -d ' ')
     # a step killed meanwhile (fuzz.yml's prune timeout) leaves the old corpus whole, never a partial one the cache would keep
     dest=$committed; [ "$cmd" = prune ] && dest=$corpus

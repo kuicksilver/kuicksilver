@@ -341,7 +341,8 @@ These run by hand on the maintainer's machine; each has a computed verdict, not 
   `tools/fuzz/corpus/`, which the gate replays. A Jazzer target's corpus input is named by the SHA-1 of its bytes, as the
   merge names it, and `CommittedCorpusReplayTest` fails on one that is not (a rewrite renames the file); the ksl harness's
   inputs (`ksl.parsers`) are named by the FNV-1a 64 of their bytes (`tools/fuzz/ksl/fnv.h`, as the driver names them), and
-  `tools/c-test.sh` fails on one that is not before it replays them (`tools/fuzz/ksl/corpus-names.c`; `--rename` renames). A crash becomes a committed input, a unit test and a fix, and is
+  `tools/c-test.sh` fails on one that is not before it replays them (`tools/fuzz/ksl/corpus-names.c`; `--rename` renames, and
+  `campaign.sh minimize` and `prune` rename a merge's output with it, since libFuzzer's merge on Linux names inputs by SHA-1). A crash becomes a committed input, a unit test and a fix, and is
   handled as a private vulnerability report until it is fixed when it may be reachable by a peer. For 0.2.1: 2 hours per target.
   The weekly hosted run is `fuzz.yml`, whose findings stay private; ClusterFuzzLite is not enabled, because it would
   publish a finding's input (an artifact) and stack trace (the job log). `.clusterfuzzlite/` is kept OSS-Fuzz-compatible
