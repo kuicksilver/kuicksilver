@@ -8,6 +8,8 @@
 # file is written, so the tree is either patched whole or left as it was. Perl only: the build images have it (OpenSSL's
 # Configure needs it), and none of them is required to have patch(1) or git. Several patches apply in the order given, each to
 # the result of the ones before (a file two of them change is read once and written once), and all or none are applied.
+# A git format-patch series in one file (several "From <hash>" messages, or the "-- " signature after the hunks) is refused:
+# one carried patch per file, each pinned by its own hash.
 # Usage: apply-patch.pl <tree> <patch>...
 use strict;
 use warnings;
@@ -49,6 +51,9 @@ while ($i < @p) {
         $i++;
         my $start = $oc == 0 ? $os : $os - 1;    # 0-based index of the hunk's first old line
         die "apply-patch: $old: hunk at line $os overlaps the one before\n" if $start < $at;
+        # a pure insertion (no old line) after line $os: that line must exist (0: before the first); past the end is no
+        # exact place, and the lines in between would be made up
+        die "apply-patch: $old: hunk at line $os is past the end of the file (" . scalar(@src) . " lines)\n" if $start > @src;
         push @out, @src[$at .. $start - 1];
         my $pos = $start;
         my ($seen_old, $seen_new) = (0, 0);

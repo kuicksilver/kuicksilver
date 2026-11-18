@@ -51,6 +51,15 @@ expect_refused "negative_second_hunk_fails" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -1,1 
 expect_refused "negative_overlapping_hunks" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -2,2 +2,2 @@\n-two\n+TWO\n three\n@@ -3,1 +3,1 @@\n-three\n+3\n'
 expect_refused "negative_missing_file" $'--- a/d/none.c\n+++ b/d/none.c\n@@ -1,1 +1,1 @@\n-one\n+ONE\n'
 expect_refused "negative_no_file_in_patch" $'only a description\n'
+expect_refused "negative_insertion_past_end" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -9,0 +10,1 @@\n+x\n'
+expect_refused "negative_insertion_one_past_end" $'--- a/d/f.c\n+++ b/d/f.c\n@@ -6,0 +7,1 @@\n+x\n'
+expect_refused "negative_format_patch_series" $'From 1 Mon Sep 17 00:00:00 2001\nSubject: [PATCH 1/2] a\n\n--- a/d/f.c\n+++ b/d/f.c\n@@ -1,1 +1,1 @@\n-one\n+ONE\n-- \n2.50.0\n\nFrom 2 Mon Sep 17 00:00:00 2001\nSubject: [PATCH 2/2] b\n\n--- a/d/f.c\n+++ b/d/f.c\n@@ -2,1 +2,1 @@\n-two\n+TWO\n'
+# an insertion at the end of the file (after its last line) is exact and applies
+tree
+printf -- '--- a/d/f.c\n+++ b/d/f.c\n@@ -5,0 +6,1 @@\n+six\n' > "$tmp/p4"
+if perl "$here/apply-patch.pl" "$tmp/t" "$tmp/p4" >/dev/null 2>&1 && [ "$(cat "$tmp/t/d/f.c")" = "$(printf 'one\ntwo\nthree\nfour\nfive\nsix')" ]; then
+  ok "an insertion after the last line applies"
+else bad "an insertion after the last line applies"; fi
 
 # build.sh refuses a pinned patch whose SHA-256 differs, before it looks for the OpenSSL source
 pin="$root/gradle/openssl.toml"
