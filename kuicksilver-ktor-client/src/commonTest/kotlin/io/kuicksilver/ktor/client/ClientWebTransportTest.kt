@@ -38,6 +38,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readString
 import kotlin.test.BeforeTest
@@ -579,6 +580,27 @@ class ClientWebTransportTest {
                 }
             } finally {
                 wrong.close()
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /** A WebTransport session's origin is resolved by the application resolver (`dns`), as a request's is. */
+    @Test fun theApplicationDnsResolvesAWebTransportOrigin() =
+        h3Test {
+            val (server, port) = testServer(configure = { webTransport = true }) { routing { webTransport("/wt") { } } }
+            val asked = kotlinx.coroutines.sync.Mutex() to ArrayList<String>()
+            try {
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    dns =
+                        Dns { host ->
+                            asked.first.withLock { asked.second += host }
+                            listOf(IpAddress.parse("127.0.0.1"))
+                        }
+                }).use { client ->
+                    assertEquals(0L, withTimeout(10.seconds) { client.webTransport("https://server.test:$port/wt").closed.await() }.code)
+                }
+                assertEquals(listOf("server.test"), asked.first.withLock { asked.second.toList() })
+            } finally {
                 server.stopSuspend(100, 1000)
             }
         }
