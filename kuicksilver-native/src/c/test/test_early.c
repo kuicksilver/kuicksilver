@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* 0-RTT (ABI 6): server early-data option, early context bound into tickets, the transport's per-hello verdict, status getter. */
 #include "test_common.h"
+#include "ksl_internal.h" /* the session copy a 0-RTT client offers (early_session) */
 #include <openssl/ssl.h>
 
 static const uint8_t TICKET_KEY[80] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0x11, 0x22, 0x33};
@@ -270,6 +271,28 @@ static void test_negative_early_data_after_hello_retry_request(void) {
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
     ksl_ctx_free(p384);
+    END();
+}
+/* KSL_SET_EARLY_DATA gives the connection a copy of its session, which a HelloRetryRequest may change (ksl_msg_cb). A session set
+   again afterwards replaces that copy: the connection then holds no copy of its own, and nothing points at the freed one, whose
+   address a later session (shared with other connections) could take. */
+static void test_negative_session_set_again_drops_the_early_copy(void) {
+    SECTION("negative_session_set_again_drops_the_early_copy");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = suite_server_ctx(NULL, NULL, 0);
+    ksl_session *a = first_session(cc, sc, "cfg-1"), *b = first_session(cc, sc, "cfg-1");
+    CHECK(a && b, "two tickets that allow 0-RTT");
+    ksl_ssl *c = qclient(cc);
+    uint8_t one = 1;
+    CHECK(ksl_ssl_set_session(c, a) == KSL_OK && ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1) == KSL_OK,
+          "0-RTT with the first ticket");
+    CHECK(c->early_session != NULL && c->early_session != (SSL_SESSION *)a, "the connection offers a copy of its own");
+    CHECK(ksl_ssl_set_session(c, b) == KSL_OK, "another ticket set before the handshake");
+    CHECK(c->early_session == NULL, "the copy is forgotten with the session it was made for");
+    ksl_ssl_free(c);
+    ksl_session_free(a);
+    ksl_session_free(b);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
     END();
 }
 static const uint8_t ALPN_H3_HQ[] = {2, 'h', '3', 10, 'h', 'q', '-', 'i', 'n', 't', 'e', 'r', 'o', 'p'};
@@ -847,6 +870,7 @@ void run_early(void) {
     test_early_context_mismatch();
     test_negative_early_cipher_mismatch();
     test_negative_early_data_after_hello_retry_request();
+    test_negative_session_set_again_drops_the_early_copy();
     test_negative_early_alpn_mismatch();
     test_early_verdict_refused();
     test_ticket_without_early_data();

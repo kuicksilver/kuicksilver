@@ -514,6 +514,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     SSL_SESSION_free(s->offered_session);
     s->offered_session = (SSL_SESSION *)session;
     SSL_SESSION_up_ref(s->offered_session);
+    s->early_session = NULL; /* the copy KSL_SET_EARLY_DATA made went with the session SSL_set_session replaced */
     return KSL_OK;
 }
 void ksl_session_free(ksl_session *session) {
