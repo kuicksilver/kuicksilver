@@ -459,8 +459,13 @@ internal class PacketReceiver(
         val closing = c.state == ConnectionState.Closing
         val ackEliciting =
             try {
-                FrameDecoder.decode(reader, type, if (closing) closingFrames else frames, ackView)
+                val handler = if (closing) closingFrames else frames
+                // qlog: each frame recorded as it is handed over; a connection that is not traced decodes as before
+                val q = c.qlog
+                val recorded = if (q == null || !q.enabled) handler else q.frames.receiving(handler, c.loss.peerAckDelayExponent)
+                FrameDecoder.decode(reader, type, recorded, ackView)
             } catch (_: ReassemblyFull) {
+                c.qlog?.frames?.abandon()
                 // not acknowledged, so the peer resends its frames in a new packet (RFC 9000 section 13.1: all frames must be
                 // processed before a packet is acknowledged). The frames ahead of the refused one were applied (a DATAGRAM delivered, a
                 // PATH_CHALLENGE answered): the packet number counts as seen, so a duplicate or a replay is not processed again (section
@@ -470,6 +475,7 @@ internal class PacketReceiver(
                 c.datagramsDropped++
                 return true
             } catch (e: QuicWireException) {
+                c.qlog?.frames?.abandon()
                 // RFC 9000 section 19.19: "the type of frame that triggered the error"; the stream and flow-control layers below the
                 // dispatcher do not know which frame called them, the decoder does
                 val frameType = if (reader.frameType != 0L) reader.frameType else e.frameType
@@ -482,7 +488,7 @@ internal class PacketReceiver(
                 return true
             }
         c.packetsReceived++
-        c.qlog?.packetReceived(space, pn, hv.packetEnd - headerStart(), now)
+        c.qlog?.packetReceived(type, pn, hv.packetEnd - headerStart(), now)
         if (closing) return true
         sp.ack.onEcn(datagramEcn) // RFC 9000 section 13.4.1 / 21.10: only processed packets move the ECN counts
         // PING-only packets beyond a PTO pair (RFC 9002 section 6.2.4: two probes, both PING when nothing is left to resend) within one RTT

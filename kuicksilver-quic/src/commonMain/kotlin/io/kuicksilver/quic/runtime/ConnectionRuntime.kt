@@ -167,7 +167,7 @@ internal class ConnectionRuntime(
             if (drainScheduled.compareAndSet(0, 1)) {
                 loop.scope.launch {
                     drainScheduled.store(0)
-                    writer.drainExternal()
+                    writer.drainExternal(loop.now())
                 }
             }
         }

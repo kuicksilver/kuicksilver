@@ -794,6 +794,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the trigger `rejected` (before: `unexpected_packet`); `packet_lost` has no trigger (before: `time_or_packet_threshold`,
   not one of the draft's); a `connection_closed` that is not a peer's close or a timeout has the trigger
   `stateless_reset`, `version_mismatch` or `error`, its message in `reason` (before: the message as the trigger).
+- qlog `packet_sent` and `packet_received` carry every frame with the members of draft-ietf-quic-qlog-quic-events-04
+  section 8.11 (before: the frame type alone, and no frames for received packets or close packets): ACK ranges,
+  `ack_delay` and ECN counts, STREAM and CRYPTO offsets and lengths, limits, connection IDs, path data, CONNECTION_CLOSE
+  codes and reason; RESET_STREAM_AT and DATAGRAM through the draft's extension point. Tokens, stateless reset tokens and
+  payloads are never written. 0-RTT packets are `0RTT` (before: `1RTT`). `connection_closed` is written once and the
+  trace stays open through the closing period, until the connection releases it (before: it ended at the first
+  `connection_closed`). HTTP/3 events queued for the loop take its time when they were stamped later, so transport
+  events keep theirs.
 
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once

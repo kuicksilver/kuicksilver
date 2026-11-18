@@ -43,6 +43,8 @@ class QlogExternalRecordsTest {
             }
     }
 
+    private val later = TimeMark(Long.MAX_VALUE)
+
     private fun writer(
         sink: QlogSink,
         maxBytes: Long = 1L shl 20,
@@ -112,23 +114,26 @@ class QlogExternalRecordsTest {
         val w = writer(sink, http3 = false)
         assertFalse(w.takesHttp3Events)
         assertFalse(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_000_000_000L)))
-        w.drainExternal()
+        w.drainExternal(later)
         assertTrue(sink.records.none { "http:" in it })
     }
 
     /**
      * main-schema-05 section 3.4.1: "Events in each individual trace SHOULD be logged in strictly ascending timestamp
-     * order". An event of the layer above stamped on its own thread after a transport event the loop writes later gets
-     * no earlier time than that one: times never go back in the file.
+     * order". An event of the layer above stamped on its own thread later than the loop turn that writes it (the
+     * transport event that follows carries that turn's older reading) takes the turn's time: times never go back, and a
+     * transport event keeps its own time (tools such as tools/interop/closing-challenge.py map them to captures).
      */
     @Test fun timesNeverGoBackInTheFile() {
         val sink = Sink()
         val w = writer(sink)
         assertTrue(w.enqueue("http:frame_created", "\"stream_id\":0", TimeMark(1_005_000_000L)))
         w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_003_000_000L)) // the loop's older clock reading
+        assertTrue(w.enqueue("http:frame_created", "\"stream_id\":4", TimeMark(1_002_000_000L))) // before the last record
+        w.drainExternal(TimeMark(1_006_000_000L))
         w.connectionStateUpdated(ConnectionState.Established, TimeMark(1_007_000_000L))
         val times = sink.records.drop(1).map { it.substringAfter("\"time\":").substringBefore(",").toDouble() }
-        assertEquals(listOf(5.0, 5.0, 7.0), times)
+        assertEquals(listOf(3.0, 3.0, 3.0, 7.0), times)
     }
 
     @Test fun queuedEventsPrecedeTheNextTransportEvent() {
@@ -147,7 +152,7 @@ class QlogExternalRecordsTest {
         val sink = Sink()
         val w = writer(sink)
         w.enqueue("http:parameters_set", "\"owner\":\"local\"", TimeMark(1_000_000_000L))
-        w.drainExternal()
+        w.drainExternal(later)
         assertEquals(2, sink.records.size, "the header, then the event")
         assertTrue(sink.records[0].contains("\"qlog_version\":\"0.3\""))
         assertTrue(sink.records[1].contains("\"name\":\"http:parameters_set\""))
@@ -170,7 +175,7 @@ class QlogExternalRecordsTest {
                     }
                 }.awaitAll()
         }
-        w.drainExternal()
+        w.drainExternal(later)
         val events = sink.records.drop(1)
         assertEquals(threads * each, events.size)
         val seen = HashSet<Pair<Int, Int>>()
@@ -197,7 +202,7 @@ class QlogExternalRecordsTest {
         repeat(QlogWriter.MAX_QUEUED + 100) { if (w.enqueue("http:frame_created", "\"i\":$it", TimeMark(1_000_000_000L))) accepted++ }
         assertEquals(QlogWriter.MAX_QUEUED, accepted, "events beyond the queue are dropped, not waited for")
         assertEquals(100L, w.externalDropped)
-        w.drainExternal()
+        w.drainExternal(later)
         assertTrue(w.enqueue("http:frame_created", "\"after\":1", TimeMark(1_000_000_000L)), "room again once drained")
     }
 
@@ -218,7 +223,7 @@ class QlogExternalRecordsTest {
         val sink = Sink()
         val w = writer(sink, maxBytes = 400)
         repeat(20) { w.enqueue("http:frame_created", "\"pad\":\"${"y".repeat(40)}\"", TimeMark(1_000_000_000L)) }
-        w.drainExternal()
+        w.drainExternal(later)
         assertFalse(w.enabled, "past the cap the trace is over")
         val total = sink.records.sumOf { it.length }
         assertTrue(total < 400 + 120, "$total")
@@ -232,7 +237,7 @@ class QlogExternalRecordsTest {
         var failure: Throwable? = null
         w.onFailure = { failure = it }
         w.enqueue("http:frame_created", "\"x\":1", TimeMark(1_000_000_000L))
-        w.drainExternal()
+        w.drainExternal(later)
         assertTrue(failure is IllegalStateException, "$failure")
         assertFalse(w.enabled)
         assertEquals(1, sink.closed)
@@ -243,7 +248,7 @@ class QlogExternalRecordsTest {
         val sink = Sink()
         val w = writer(sink)
         w.enqueue("http:frame_created", "\"x\":1", TimeMark(999_000_000L))
-        w.drainExternal()
+        w.drainExternal(later)
         assertTrue(sink.records[1].startsWith("\u001e{\"time\":0.000,"), sink.records[1])
     }
 }

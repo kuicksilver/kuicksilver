@@ -4579,6 +4579,11 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.theSizeCapEndsQueuedEventsToo
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.timesNeverGoBackInTheFile
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.aRealExchangeLogsTypedFramesBothWays
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.everyFrameTypeIsTypedSentAndReceived
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_aPayloadThatDoesNotDecodeLeavesNoFrames
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_eachFrameTypeRefusesWhatTheDraftDoesNot
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogFramesTest.negative_tokensAndPayloadsNeverReachTheTrace
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aSinkThatCannotOpenLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.aTraceThatCannotWriteLeavesTheConnectionAlone
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.qlog.QlogRobustnessTest.undecryptableInitialsOpenNoTraceThatStaysOpen

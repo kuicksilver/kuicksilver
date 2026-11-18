@@ -8,8 +8,8 @@ import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
-import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
+import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.channels.Channel
 import kotlin.concurrent.Volatile
@@ -49,6 +49,7 @@ internal class QlogWriter(
     private var written = 0L
     private var closed = false
     private var ending = false
+    private var closeLogged = false
 
     /** False once the trace ended ([close]); read on any thread by [enqueue] and the layer above. */
     @Volatile var enabled: Boolean = true
@@ -75,7 +76,9 @@ internal class QlogWriter(
     val externalDropped: Long get() = dropped.load()
 
     private var trace: QlogTrace? = null
-    private val sb = StringBuilder(256)
+
+    /** The frames of the packet being logged (quic-events-04 section 8.11), filled by the packet builder and receiver. */
+    val frames = QlogFrames()
     private var failure: Throwable? = null
 
     /**
@@ -118,12 +121,18 @@ internal class QlogWriter(
         return true
     }
 
-    /** Loop: writes the queued events of the layer above, in the order they were queued. */
-    fun drainExternal() {
+    /**
+     * Loop: writes the queued events of the layer above, in the order they were queued, at [now] (the loop's clock, or the
+     * time of the transport event about to be written). An event is written with its own time, kept between the last
+     * record's time and [now]: one stamped on its thread later than the loop turn that writes it takes that turn's time,
+     * so a transport event's time is never moved for it (main-schema-05 section 3.4.1: ascending times).
+     */
+    fun drainExternal(now: TimeMark) {
         while (!closed) {
             val r = external.tryReceive().getOrNull() ?: return
             queued.decrementAndFetch()
-            write(r.nanos, r.body)
+            val hi = if (now.nanos < lastNanos) lastNanos else now.nanos
+            write(r.nanos.coerceAtMost(hi), r.body)
         }
     }
 
@@ -131,14 +140,11 @@ internal class QlogWriter(
         nanos: Long,
         body: String,
     ) {
-        drainExternal() // what the layer above logged before this event comes first
+        drainExternal(TimeMark(nanos)) // what the layer above logged before this event comes first
         write(nanos, body)
     }
 
-    /**
-     * Writes one event. Its time is never before the last one written: an event of the layer above is stamped on its own
-     * thread, and the loop's transport events carry the clock reading of their loop turn, which may be older.
-     */
+    /** Writes one event, at no earlier time than the record before it. */
     private fun write(
         nanos: Long,
         body: String,
@@ -214,30 +220,42 @@ internal class QlogWriter(
             SpaceId.Application -> "1RTT"
         }
 
-    fun packetSent(
-        space: SpaceId,
-        pn: Long,
-        size: Int,
-        frames: SentFrames?,
-        now: TimeMark,
-    ) = event(
-        now,
-        "transport:packet_sent",
-        "\"header\":{\"packet_type\":\"${packetType(
-            space,
-        )}\",\"packet_number\":$pn},\"raw\":{\"length\":$size},\"frames\":[${frameSummary(frames)}]",
-    )
+    /** quic-events-04 section 8.5 PacketType. */
+    private fun packetType(type: PacketType) =
+        when (type) {
+            PacketType.Initial -> "initial"
+            PacketType.ZeroRtt -> "0RTT"
+            PacketType.Handshake -> "handshake"
+            PacketType.OneRtt -> "1RTT"
+            PacketType.Retry -> "retry"
+        }
 
-    fun packetReceived(
-        space: SpaceId,
+    /** The packet's header and size, and its frames when [frames] holds them for it (taken, so they are logged once). */
+    private fun packet(
+        type: PacketType,
+        pn: Long,
+        size: Int,
+    ): String {
+        val f = if (frames.ready) ",\"frames\":[" + frames.out + "]" else ""
+        frames.abandon()
+        return "\"header\":{\"packet_type\":\"${packetType(type)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}$f"
+    }
+
+    /** `transport:packet_sent` (section 5.5), with the frames [QlogFrames.sent] read from it before it was sealed. */
+    fun packetSent(
+        type: PacketType,
         pn: Long,
         size: Int,
         now: TimeMark,
-    ) = event(
-        now,
-        "transport:packet_received",
-        "\"header\":{\"packet_type\":\"${packetType(space)}\",\"packet_number\":$pn},\"raw\":{\"length\":$size}",
-    )
+    ) = event(now, "transport:packet_sent", packet(type, pn, size))
+
+    /** `transport:packet_received` (section 5.6), with the frames [QlogFrames.receiving] recorded as they were processed. */
+    fun packetReceived(
+        type: PacketType,
+        pn: Long,
+        size: Int,
+        now: TimeMark,
+    ) = event(now, "transport:packet_received", packet(type, pn, size))
 
     /**
      * A packet authenticated and then dropped: qlog `transport:packet_dropped` with one of its [trigger]s and our [reason] in its
@@ -300,17 +318,20 @@ internal class QlogWriter(
         reason: QuicException.ConnectionLost,
         now: TimeMark,
     ) {
+        if (closeLogged) return // one event per connection: the first reason, as the connection reports it
+        closeLogged = true
         val d =
             when (reason) {
                 is QuicException.ConnectionLost.TransportClosed -> {
-                    "\"owner\":\"${reason.initiator.name.lowercase()}\",\"connection_code\":${reason.code}," +
+                    "\"owner\":\"${reason.initiator.name.lowercase()}\"${connectionCode(reason.code)}," +
                         "\"reason\":\"${escape(
                             reason.reason,
                         )}\""
                 }
 
                 is QuicException.ConnectionLost.ApplicationClosed -> {
-                    "\"owner\":\"${reason.initiator.name.lowercase()}\",\"application_code\":${reason.code}," +
+                    "\"owner\":\"${reason.initiator.name.lowercase()}\"" +
+                        QlogFrames.applicationError(StringBuilder(), "application_code", reason.code) + "," +
                         "\"reason\":\"${escape(
                             reason.reason,
                         )}\""
@@ -334,14 +355,15 @@ internal class QlogWriter(
                 }
             }
         event(now, "connectivity:connection_closed", d)
-        close()
+        // the trace stays open through the closing or draining period (RFC 9000 section 10.2): the packets that carry and
+        // answer the close are in it too; it ends when the connection releases its resources
     }
 
     /** Ends the trace (idempotent) after what the layer above queued so far; a sink whose close throws is ignored. */
     fun close() {
         if (!closed && !ending) {
             ending = true // a write below that ends the trace (cap, failure) closes it without draining again
-            drainExternal()
+            drainExternal(TimeMark(Long.MAX_VALUE))
         }
         closed = true
         enabled = false
@@ -355,131 +377,35 @@ internal class QlogWriter(
         }
     }
 
-    private fun frameSummary(f: SentFrames?): String {
-        if (f == null) return ""
-        sb.setLength(0)
-
-        fun add(type: String) {
-            if (sb.isNotEmpty()) sb.append(',')
-            sb.append("{\"frame_type\":\"").append(type).append("\"}")
+    /** connection_code (section 4.3): TransportError or CryptoError by name, another code as a uint32, else left out. */
+    private fun connectionCode(code: Long): String {
+        val name = QlogFrames.transportErrorName(code)
+        return when {
+            name != null -> ",\"connection_code\":\"$name\""
+            code in 0..0xffff_ffffL -> ",\"connection_code\":$code"
+            else -> ""
         }
-
-        // qlog's QUIC event schema names the stream and the code of a reset or a stop (draft-ietf-quic-qlog-quic-events:
-        // ResetStreamFrame, StopSendingFrame), so a trace says which stream was abandoned
-        fun addStreamFrame(
-            type: String,
-            stream: Long,
-            code: Long,
-            finalSize: Long = -1,
-            reliableSize: Long = -1,
-        ) {
-            if (sb.isNotEmpty()) sb.append(',')
-            sb
-                .append("{\"frame_type\":\"")
-                .append(type)
-                .append("\",\"stream_id\":")
-                .append(stream)
-                .append(",\"error_code\":")
-                .append(code)
-            if (finalSize >= 0) sb.append(",\"final_size\":").append(finalSize)
-            if (reliableSize >= 0) sb.append(",\"reliable_size\":").append(reliableSize)
-            sb.append('}')
-        }
-        if (f.ackLargest >= 0) add("ack")
-        for (i in 0 until f.cryptoCount) add("crypto")
-        for (i in 0 until f.streamCount) add("stream")
-        if (f.flags and SentFrames.PING !=
-            0
-        ) {
-            add("ping")
-        }
-        if (f.flags and SentFrames.HANDSHAKE_DONE !=
-            0
-        ) {
-            add("handshake_done")
-        }
-        if (f.flags and SentFrames.MAX_DATA != 0) add("max_data")
-        if (f.flags and SentFrames.MAX_STREAMS_BIDI != 0 ||
-            f.flags and SentFrames.MAX_STREAMS_UNI != 0
-        ) {
-            add("max_streams")
-        }
-        if (f.flags and SentFrames.DATA_BLOCKED !=
-            0
-        ) {
-            add("data_blocked")
-        }
-        if (f.flags and SentFrames.PATH_RESPONSE != 0) add("path_response")
-        for (i in 0 until f.idCount) {
-            when (f.idKind[i]) {
-                SentFrames.ID_RESET_STREAM -> {
-                    addStreamFrame("reset_stream", f.idValue[i], f.idExtra[i], f.idExtra2[i])
-                    continue
-                }
-
-                SentFrames.ID_RESET_STREAM_AT -> {
-                    addStreamFrame("reset_stream_at", f.idValue[i], f.idExtra[i], f.idExtra2[i], f.idExtra3[i])
-                    continue
-                }
-
-                SentFrames.ID_STOP_SENDING -> {
-                    addStreamFrame("stop_sending", f.idValue[i], f.idExtra[i])
-                    continue
-                }
-            }
-            add(
-                when (f.idKind[i]) {
-                    SentFrames.ID_MAX_STREAM_DATA -> "max_stream_data"
-                    SentFrames.ID_NEW_CONNECTION_ID -> "new_connection_id"
-                    SentFrames.ID_RETIRE_CONNECTION_ID -> "retire_connection_id"
-                    SentFrames.ID_NEW_TOKEN -> "new_token"
-                    else -> "stream_data_blocked"
-                },
-            )
-        }
-        return sb.toString()
     }
 
-    private fun escape(s: String): String {
-        val o = StringBuilder(s.length + 8)
-        for (ch in s) {
-            when (ch) {
-                '"' -> {
-                    o.append("\\\"")
-                }
-
-                '\\' -> {
-                    o.append("\\\\")
-                }
-
-                '\n' -> {
-                    o.append("\\n")
-                }
-
-                '\r' -> {
-                    o.append("\\r")
-                }
-
-                '\t' -> {
-                    o.append("\\t")
-                }
-
-                else -> {
-                    if (ch <
-                        ' '
-                    ) {
-                        o.append("\\u").append(ch.code.toString(16).padStart(4, '0'))
-                    } else {
-                        o.append(ch)
-                    }
-                }
-            }
-        }
-        return o.toString()
-    }
+    private fun escape(s: String): String = StringBuilder(s.length + 8).also { escapeInto(s, it) }.toString()
 
     internal companion object {
         /** Events of the layer above waiting for the loop at most; more are dropped. */
         const val MAX_QUEUED = 4096
+
+        /** JSON string escaping (RFC 8259 section 7): quote, backslash, control characters and lone surrogates. */
+        fun escapeInto(
+            s: String,
+            o: StringBuilder,
+        ) {
+            for (ch in s) {
+                when {
+                    ch == '"' -> o.append("\\\"")
+                    ch == '\\' -> o.append("\\\\")
+                    ch < ' ' || ch == '\u007f' || ch.isSurrogate() -> o.append("\\u").append(ch.code.toString(16).padStart(4, '0'))
+                    else -> o.append(ch)
+                }
+            }
+        }
     }
 }

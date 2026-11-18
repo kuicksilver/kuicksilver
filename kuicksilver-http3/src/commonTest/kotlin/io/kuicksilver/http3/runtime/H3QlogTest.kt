@@ -283,7 +283,7 @@ class H3QlogTest {
             awaitCondition("the server's trace closed") { sink.trace(TlsRole.Server).closed }
             val e = events(sink, TlsRole.Server)
             assertTrue(e.named("http:frame_parsed").any { it.frame()["frame_type"] == "data" && it.num("length") == 1000L }, "$e")
-            assertEquals("connectivity:connection_closed", e.last()["name"])
+            assertTrue(e.any { it["name"] == "connectivity:connection_closed" }, "the close is in the trace")
         }
 
     /** A stream that ends inside a frame (H3_FRAME_ERROR, RFC 9114 section 7.1): nothing half-written in the trace. */

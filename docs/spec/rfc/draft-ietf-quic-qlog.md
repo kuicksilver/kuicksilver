@@ -35,6 +35,16 @@ Original row: draft-ietf-quic-qlog-*.
   triggers were our own) — `qlog.QlogExternalRecordsTest.theHeaderNamesTheProtocolsAndTheReferenceTime`,
   `qlog.QlogExternalRecordsTest.timesNeverGoBackInTheFile`, `qlog.QlogExternalRecordsTest.transportEnumerationsAreTheDrafts`,
   `qlog.QlogExternalRecordsTest.negative_aTraceWithoutHttp3TakesNoHttp3Event`
+- every frame of `packet_sent` and `packet_received` with the members quic-events-04 section 8.11 defines (ACK ranges,
+  `ack_delay` and ECN counts, STREAM and CRYPTO offsets and lengths, stream limits, connection IDs, path data,
+  CONNECTION_CLOSE's `error_space`, `error_code`, `error_code_value`, `reason`, `trigger_frame_type`, ...), RESET_STREAM_AT
+  and DATAGRAM through its `$QuicFrame` extension point; packet types of section 8.5 (0-RTT included); no token or
+  stateless reset token bytes and no payloads; one `connection_closed`, and the trace open through the closing period
+  (0.3.0; before, frames by type alone, 0-RTT packets as 1RTT, and the trace ended at the close) —
+  `qlog.QlogFramesTest.everyFrameTypeIsTypedSentAndReceived`, `qlog.QlogFramesTest.aRealExchangeLogsTypedFramesBothWays`,
+  `qlog.QlogFramesTest.negative_eachFrameTypeRefusesWhatTheDraftDoesNot`,
+  `qlog.QlogFramesTest.negative_tokensAndPayloadsNeverReachTheTrace`,
+  `qlog.QlogFramesTest.negative_aPayloadThatDoesNotDecodeLeavesNoFrames`
 
 ## <a id="qlog-h3"></a>qlog HTTP/3 and QPACK events
 
@@ -103,8 +113,6 @@ supports up to 0.3" (`net/quic/qlog/qlog.go:192-196`).
 
 - not loaded in qvis: the traces were validated offline against the draft's definitions as `runtime.QlogSchema`
   encodes them (no network here); opening a trace in qvis is a manual check still to do.
-- the transport events log their frames by type alone: valid through quic-events-04's `$QuicFrame` extension point,
-  but without the members section 8.11 defines for each type (`stream_id`, `offset`, `length` of a STREAM frame, ...).
 - the move to the current drafts (main-schema/quic-events/h3-events -12, `http3:` names) is one change for both layers.
 - not written: `http:push_resolved` (no server push), `qpack:dynamic_table_updated`, `qpack:headers_encoded`,
   `qpack:headers_decoded`, `qpack:instruction_created` and `qpack:instruction_parsed` (the QPACK codecs do not expose

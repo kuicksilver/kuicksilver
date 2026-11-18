@@ -46,8 +46,9 @@ internal class FailureQlog(
             override fun close() {
                 if (closed) return
                 closed = true
-                val last = ring.records.lastOrNull().orEmpty()
-                if ("connection_closed" in last && "\"trigger\"" in last) {
+                // the trace goes on through the closing period (the packets that carry and answer the close) after the event
+                val last = ring.records.lastOrNull { "connection_closed" in it }.orEmpty()
+                if ("\"trigger\"" in last) {
                     write(ring)
                     while (true) {
                         val f = failed.load()

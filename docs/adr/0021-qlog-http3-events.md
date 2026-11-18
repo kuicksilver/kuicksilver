@@ -59,10 +59,33 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
   `["QUIC","HTTP3"]`, otherwise `["QUIC"]`, and such a trace takes no HTTP/3 event. `reference_time` is 0 with
   `time_format` "relative": times count from the trace's start, which main-schema-05 section 3.4.1 allows ("time since
   connection start in ms"), and no wall clock enters the trace.
-- **Times never go back.** main-schema-05 section 3.4.1: events "SHOULD be logged in strictly ascending timestamp
-  order". An HTTP/3 event is stamped on its own thread and a transport event with its loop turn's clock reading, which
-  may be older; the writer gives no record an earlier time than the one before it (events of one loop turn share a
-  time, as they did before).
+- **Times never go back, and transport times stay as they were.** main-schema-05 section 3.4.1: events "SHOULD be
+  logged in strictly ascending timestamp order". An HTTP/3 event is stamped on its own thread; a transport event carries
+  its loop turn's clock reading, which may be older. The loop writes queued HTTP/3 events just before a transport
+  event, or in a drain task, and gives each its own time kept between the last record's time and the time of that
+  transport event (or the loop's clock in the drain task): one stamped later than the turn that writes it takes the
+  turn's time. Only HTTP/3 events move, by less than a loop turn; transport events keep their times, which
+  `tools/interop/closing-challenge.py` maps to packet captures. (A first version raised the transport event's time
+  instead, which could move such a mapping.)
+- **Typed transport frames.** `packet_sent` and `packet_received` carry every frame with the members quic-events-04
+  section 8.11 defines: offsets and lengths of STREAM and CRYPTO frames, ACK ranges with `ack_delay` and ECN counts,
+  stream limits, connection IDs, path data, CONNECTION_CLOSE with `error_space`, `error_code` (TransportError and
+  CryptoError names, section 8.11.22 and 8.11.24), `error_code_value`, `reason` and `trigger_frame_type`, and so on;
+  RESET_STREAM_AT and DATAGRAM through the `$QuicFrame` extension point. A sent packet's frames are read back from its
+  plaintext payload before it is sealed, so the trace shows what went on the wire; a received packet's frames are
+  recorded as the decoder hands them to the connection. An untraced connection does neither. Packet types are those of
+  section 8.5, 0-RTT packets included. An application error code above 2^32 (WebTransport's), which `$ApplicationError
+  / uint32` cannot hold, is written as `application_error_0x<hex>`, our extension of the `$ApplicationError` socket
+  (section 8.11.23 asks applications to extend it).
+- **Secrets in frames.** Never written: a NEW_TOKEN's token (logged by its length: a token lets its holder skip
+  address validation; section 8.8 makes its bytes optional), the stateless reset token of a NEW_CONNECTION_ID
+  (optional in section 8.11.15; whoever holds it can end the connection), and STREAM, CRYPTO and DATAGRAM payloads.
+  Written: connection IDs (section 8.11.15 requires them, and they travel in clear in packet headers) and PATH_CHALLENGE
+  data (useful to pair a challenge with its response, worthless once the path is validated). There is no opt-in for the
+  tokens, unlike field values: nothing in a trace needs them.
+- **The trace covers the closing period.** `connectivity:connection_closed` is written once, when the connection
+  starts to close, and the trace stays open until the connection releases its resources (RFC 9000 section 10.2), so
+  the packet that carries the close and those that answer it are in it.
 - **Field values redacted by default (CWE-532).** Every header and trailer field is written with its name; its value is
   `[redacted]` unless the sink sets `QlogSink.logHeaderValues`, except `:method`, `:scheme`, `:status` and
   `:protocol`, tokens the protocol defines. quic-go logs values and offers a redaction wrapper
@@ -71,12 +94,12 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
 
 ## Consequences
 
-- A trace holds both layers in the order of their writing. A transport event written after an HTTP/3 event stamped
-  later carries that later time: it can move by at most the time a loop turn takes.
+- A trace holds both layers in the order of their writing; an HTTP/3 event's time may be moved back to the loop turn
+  that wrote it.
 - The transport events changed with the header: their enumerations are now quic-events-04's (connection states of
   section 4.6, a `packet_dropped` trigger of section 5.7, `connection_closed` triggers of section 4.3; `packet_lost`
-  without a trigger, as section 7.5 has none for "time or packet threshold"). Their frames are still logged by type
-  alone, valid through the `$QuicFrame` extension point but without the members section 8.11 defines for each type.
+  without a trigger, as section 7.5 has none for "time or packet threshold"), their frames are typed, and the last
+  record of a trace is no longer always `connection_closed` (the soak test's failure capture looks for it).
 - Traces of 0.3.0 are read by the qvis builds that read 0.3, and by tools that read the h3-events-04 names.
 - The traces were validated offline against the drafts' definitions as the tests encode them (`runtime.QlogSchema`);
   loading them in qvis is a manual step.
