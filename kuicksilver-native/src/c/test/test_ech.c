@@ -282,6 +282,7 @@ typedef struct {
     int last_c_type;                 /* TCP: type and length of the last record the client wrote */
     size_t last_c_len;
     int status_c_late; /* the client's KSL_GET_ECH_STATUS after session_hook_late */
+    int wire_alert_c;  /* TCP: the alert of the client's last record, read off the wire (-1: none) */
 } run;
 /* called on each client session right after it is made (test hooks of ksl_internal.h), and before the outcome is read */
 static void (*session_hook)(ksl_ssl *c);
@@ -330,6 +331,238 @@ static int accept_verify(ksl_ssl *s, int rc, void *a) {
         seen[n] = 0;
     return ksl_ssl_verify_resume(s, 1, 0) == KSL_OK;
 }
+static uint8_t client_wire[32768]; /* TCP: what the client wrote (move_bytes) */
+static size_t client_wire_len;
+/* ---------- a server whose flight is rewritten on its way to the client ---------- */
+/* Rewrites one handshake message of the server (msg: type, u24 length, body; cap bytes of room): returns the new length, or
+   the old one to leave it. Set by the tests below; the TCP and QUIC paths call it on the server's ServerHello and
+   EncryptedExtensions, so the client meets what an attacker or a broken server could send. A client that aborts at that
+   message never reaches the transcript check that would otherwise catch the change. */
+static size_t (*rewrite_msg)(uint8_t *msg, size_t len, size_t cap);
+/* the pump of test_common.h, with the server's CRYPTO data rewritten message by message */
+static int ech_pump(ksl_ssl *c, ksl_ssl *s, side *cs, side *ss, int max, int (*on_want)(ksl_ssl *, int rc, void *),
+                    void *arg) {
+    int rc = KSL_OK;
+    for (int round = 0; round < max; round++) {
+        ksl_ssl *who[2] = {c, s};
+        side *me[2] = {cs, ss};
+        ksl_ssl *peer[2] = {s, c};
+        int progressed = 0;
+        for (int k = 0; k < 2; k++) {
+            int r = ksl_drive(who[k]);
+            if (k == 0)
+                rc = r;
+            if ((r == KSL_WANT_VERIFY || r == KSL_WANT_SNI) && on_want && !on_want(who[k], r, arg))
+                return r;
+            ksl_event ev;
+            while (ksl_quic_next_event(who[k], &ev)) {
+                progressed = 1;
+                if (ev.type == KSL_EV_CRYPTO_SEND) {
+                    static uint8_t out[65536];
+                    size_t n = 0;
+                    for (size_t off = 0; off + 4 <= ev.len;) { /* each handshake message of the event */
+                        size_t l =
+                            4 + (((size_t)ev.buf[off + 1] << 16) | ((size_t)ev.buf[off + 2] << 8) | ev.buf[off + 3]);
+                        if (off + l > ev.len || n + l + 512 > sizeof out)
+                            break;
+                        memcpy(out + n, ev.buf + off, l);
+                        n += k == 1 && rewrite_msg ? rewrite_msg(out + n, l, l + 512) : l;
+                        off += l;
+                    }
+                    me[k]->crypto_events++;
+                    ksl_quic_provide(peer[k], ev.level, out, n);
+                } else if (ev.type == KSL_EV_KEY) {
+                    me[k]->keys++;
+                    ksl_key_free(ev.key);
+                } else if (ev.type == KSL_EV_TRANSPORT_PARAMS) {
+                    me[k]->tp_len = ev.len < sizeof me[k]->tp ? ev.len : sizeof me[k]->tp;
+                    memcpy(me[k]->tp, ev.buf, me[k]->tp_len);
+                } else if (ev.type == KSL_EV_HANDSHAKE_DONE)
+                    me[k]->done = 1;
+            }
+            if (r == KSL_ERROR)
+                return KSL_ERROR;
+        }
+        if (cs->done && ss->done && !progressed)
+            return rc;
+        if (!progressed && round > 3)
+            return rc;
+    }
+    return rc;
+}
+
+/* the extensions block of a ServerHello (2) or EncryptedExtensions (8) message: its offset (at the u16 length), else 0 */
+static size_t exts_at(const uint8_t *m, size_t len) {
+    if (len < 6)
+        return 0;
+    if (m[0] == 8)
+        return 4;
+    if (m[0] != 2 || len < 4 + 2 + 32 + 1)
+        return 0;
+    size_t p = 4 + 2 + 32;
+    p += 1 + m[p]; /* legacy_session_id_echo */
+    p += 2 + 1;    /* cipher_suite, legacy_compression_method */
+    return p + 2 <= len ? p : 0;
+}
+/* inserts n bytes at `at` of a message of len bytes, fixing the message's and the extensions block's length */
+static size_t msg_insert(uint8_t *m, size_t len, size_t cap, size_t ext_len_at, size_t at, const uint8_t *b, size_t n) {
+    if (len + n > cap)
+        return len;
+    memmove(m + at + n, m + at, len - at);
+    memcpy(m + at, b, n);
+    len += n;
+    size_t body = len - 4, el = (((size_t)m[ext_len_at] << 8) | m[ext_len_at + 1]) + n;
+    m[1] = (uint8_t)(body >> 16), m[2] = (uint8_t)(body >> 8), m[3] = (uint8_t)body;
+    m[ext_len_at] = (uint8_t)(el >> 8), m[ext_len_at + 1] = (uint8_t)el;
+    return len;
+}
+/* EncryptedExtensions: a byte after the ECHConfigList of encrypted_client_hello (RFC 9849 sections 6.1.6, 6.2.1) */
+static size_t ee_trailing_byte(uint8_t *m, size_t len, size_t cap) {
+    size_t e = exts_at(m, len);
+    if (m[0] != 8 || !e)
+        return len;
+    for (size_t p = e + 2; p + 4 <= len;) {
+        unsigned t = ((unsigned)m[p] << 8) | m[p + 1];
+        size_t l = ((size_t)m[p + 2] << 8) | m[p + 3];
+        if (t == 0xfe0d) {
+            static const uint8_t z = 0x5a;
+            size_t n = msg_insert(m, len, cap, e, p + 4 + l, &z, 1);
+            if (n != len)
+                m[p + 2] = (uint8_t)((l + 1) >> 8), m[p + 3] = (uint8_t)(l + 1);
+            return n;
+        }
+        p += 4 + l;
+    }
+    return len;
+}
+static const uint8_t *ee_ech_value; /* the retry_configs ee_add_ech adds */
+static size_t ee_ech_value_len;
+/* EncryptedExtensions: an encrypted_client_hello with ee_ech_value (an ECHConfigList) appended (RFC 9849 section 5) */
+static size_t ee_add_ech(uint8_t *m, size_t len, size_t cap) {
+    size_t e = exts_at(m, len);
+    if (m[0] != 8 || !e || ee_ech_value_len > 1024)
+        return len;
+    uint8_t ext[1100];
+    ext[0] = 0xfe, ext[1] = 0x0d, ext[2] = (uint8_t)(ee_ech_value_len >> 8), ext[3] = (uint8_t)ee_ech_value_len;
+    memcpy(ext + 4, ee_ech_value, ee_ech_value_len);
+    return msg_insert(m, len, cap, e, len, ext, 4 + ee_ech_value_len);
+}
+/* ServerHello: a pre_shared_key choosing identity 0 (RFC 9849 section 6.1.2) */
+static size_t sh_add_psk(uint8_t *m, size_t len, size_t cap) {
+    size_t e = exts_at(m, len);
+    if (m[0] != 2 || !e)
+        return len;
+    static const uint8_t psk[6] = {0, 41, 0, 2, 0, 0};
+    return msg_insert(m, len, cap, e, len, psk, sizeof psk);
+}
+
+/* TLS 1.3 record protection of the tests' TCP sessions (TLS_AES_128_GCM_SHA256): the key and IV of a traffic secret the
+   session's keylog names (`label`), and one record sealed or opened at `seq` */
+static int traffic_key(ksl_ssl *s, const char *label, uint8_t key[16], uint8_t iv[12]) {
+    const char *l = s->keylog ? strstr(s->keylog, label) : NULL;
+    if (!l)
+        return 0;
+    l = strchr(l + strlen(label) + 1, ' ');
+    if (!l)
+        return 0;
+    uint8_t secret[32];
+    for (int i = 0; i < 32; i++) {
+        unsigned v;
+        if (sscanf(l + 1 + 2 * i, "%2x", &v) != 1)
+            return 0;
+        secret[i] = (uint8_t)v;
+    }
+    return ksl_hkdf_expand_label(KSL_HASH_SHA256, secret, 32, "key", NULL, 0, key, 16) == KSL_OK &&
+           ksl_hkdf_expand_label(KSL_HASH_SHA256, secret, 32, "iv", NULL, 0, iv, 12) == KSL_OK;
+}
+/* seals (enc) or opens a record body under key/iv at seq; hdr is the 5-byte record header with the ciphertext length.
+   Returns the output length, or 0 when it does not open. */
+static size_t record_crypt(int enc, const uint8_t key[16], const uint8_t iv[12], uint64_t seq, const uint8_t hdr[5],
+                           const uint8_t *in, size_t n, uint8_t *out) {
+    uint8_t nonce[12];
+    memcpy(nonce, iv, 12);
+    for (int i = 0; i < 8; i++)
+        nonce[4 + i] ^= (uint8_t)(seq >> (56 - 8 * i));
+    EVP_CIPHER_CTX *x = EVP_CIPHER_CTX_new();
+    int ok = 0, l = 0, f = 0;
+    size_t body = enc ? n : n - 16;
+    if (x && (enc || n >= 16) && EVP_CipherInit_ex(x, EVP_aes_128_gcm(), NULL, key, nonce, enc) == 1 &&
+        EVP_CipherUpdate(x, NULL, &l, hdr, 5) == 1 && EVP_CipherUpdate(x, out, &l, in, (int)body) == 1 &&
+        (enc || EVP_CIPHER_CTX_ctrl(x, EVP_CTRL_GCM_SET_TAG, 16, (void *)(in + body)) == 1) &&
+        EVP_CipherFinal_ex(x, out + l, &f) == 1 &&
+        (!enc || EVP_CIPHER_CTX_ctrl(x, EVP_CTRL_GCM_GET_TAG, 16, out + body) == 1))
+        ok = 1;
+    EVP_CIPHER_CTX_free(x);
+    return ok ? (enc ? body + 16 : body) : 0;
+}
+/* the TCP path: the server's records on their way to the client, its first handshake record (ServerHello) and its first
+   protected record (EncryptedExtensions) rewritten by rewrite_msg */
+static uint8_t srv_buf[65536];
+static size_t srv_len;
+static uint64_t srv_seq;
+static void server_records(ksl_ssl *s, ksl_ssl *c) {
+    uint8_t buf[8192];
+    size_t n, used;
+    while (ksl_tcp_drain(s, buf, sizeof buf, &n) == KSL_OK && n && srv_len + n <= sizeof srv_buf) {
+        memcpy(srv_buf + srv_len, buf, n);
+        srv_len += n;
+    }
+    size_t off = 0;
+    while (off + 5 <= srv_len) {
+        size_t l = ((size_t)srv_buf[off + 3] << 8) | srv_buf[off + 4];
+        if (off + 5 + l > srv_len)
+            break;
+        static uint8_t rec[20000], plain[20000];
+        size_t rl = 5 + l;
+        memcpy(rec, srv_buf + off, rl);
+        if (rewrite_msg && rec[0] == 22 && l >= 4) { /* ServerHello, in the clear */
+            rl = 5 + rewrite_msg(rec + 5, l, sizeof rec - 5);
+            rec[3] = (uint8_t)((rl - 5) >> 8), rec[4] = (uint8_t)(rl - 5);
+        } else if (rewrite_msg && rec[0] == 23) {
+            uint8_t key[16], iv[12];
+            size_t pl;
+            if (srv_seq == 0 && traffic_key(s, "SERVER_HANDSHAKE_TRAFFIC_SECRET", key, iv) &&
+                (pl = record_crypt(0, key, iv, 0, rec, rec + 5, l, plain)) > 1 && plain[pl - 1] == 22) {
+                size_t ml = rewrite_msg(plain, pl - 1, sizeof plain - 600) /* the record's last byte: its type */;
+                plain[ml] = 22;
+                uint8_t hdr[5] = {23, 3, 3, (uint8_t)((ml + 1 + 16) >> 8), (uint8_t)(ml + 1 + 16)};
+                memcpy(rec, hdr, 5);
+                rl = 5 + record_crypt(1, key, iv, 0, hdr, plain, ml + 1, rec + 5);
+            }
+            srv_seq++;
+        }
+        for (size_t o = 0; o < rl; o += used)
+            if (ksl_tcp_feed(c, rec + o, rl - o, &used) != KSL_OK || !used)
+                break;
+        off += 5 + l;
+    }
+    memmove(srv_buf, srv_buf + off, srv_len - off);
+    srv_len -= off;
+}
+/* the alert the client's last record carries (21: in the clear; 23: opened under its handshake key), -1 when none */
+static int client_wire_alert(ksl_ssl *c) {
+    int type = -1, seq = -1;
+    size_t at = 0, len = 0;
+    for (size_t off = 0; off + 5 <= client_wire_len;) {
+        size_t l = (size_t)client_wire[off + 3] << 8 | client_wire[off + 4];
+        if (off + 5 + l > client_wire_len)
+            break;
+        type = client_wire[off], at = off, len = l;
+        if (type == 23)
+            seq++;
+        off += 5 + l;
+    }
+    if (type == 21 && len == 2)
+        return client_wire[at + 6];
+    uint8_t key[16], iv[12], plain[64];
+    size_t pl;
+    if (type == 23 && seq >= 0 && len <= 64 && traffic_key(c, "CLIENT_HANDSHAKE_TRAFFIC_SECRET", key, iv) &&
+        (pl = record_crypt(0, key, iv, (uint64_t)seq, client_wire + at, client_wire + at + 5, len, plain)) == 3 &&
+        plain[2] == 21)
+        return plain[1];
+    return -1;
+}
+
 static run quic_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k, char *paused_name) {
     run r;
     memset(&r, 0, sizeof r);
@@ -342,15 +575,13 @@ static run quic_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k, char *paused_name
     if (ksl_quic_peek_event(c, &ev) && ev.type == KSL_EV_CRYPTO_SEND && ev.level == KSL_LEVEL_INITIAL)
         hello_sni(ev.buf, ev.len, r.wire_sni, sizeof r.wire_sni, &r.wire_ech);
     side cs = {0}, ss = {0};
-    r.rc = pump(c, s, &cs, &ss, 40, accept_verify, paused_name);
+    r.rc = (rewrite_msg ? ech_pump : pump)(c, s, &cs, &ss, 40, accept_verify, paused_name);
     r.done = cs.done && ss.done;
     finish(&r, c, s);
     ksl_ssl_free(c);
     ksl_ssl_free(s);
     return r;
 }
-static uint8_t client_wire[32768];
-static size_t client_wire_len;
 static size_t move_bytes(ksl_ssl *a, ksl_ssl *b, uint8_t *first, size_t *first_len) {
     uint8_t buf[8192];
     size_t total = 0, n, used;
@@ -377,6 +608,7 @@ static run tcp_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k) {
     if (session_hook)
         session_hook(c);
     client_wire_len = 0;
+    srv_len = 0, srv_seq = 0;
     uint8_t first[8192];
     size_t first_len = 0;
     r.rc = KSL_WANT_READ;
@@ -386,12 +618,18 @@ static run tcp_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k) {
             ksl_ssl_verify_resume(c, 1, 0), a = ksl_drive(c);
         move_bytes(c, s, first, &first_len);
         int b = ksl_drive(s);
-        move_bytes(s, c, NULL, NULL);
+        if (rewrite_msg)
+            server_records(s, c);
+        else
+            move_bytes(s, c, NULL, NULL);
         if (a == KSL_ERROR || b == KSL_ERROR) {
             if (b == KSL_ERROR)
                 ksl_drive(c);
-            else
+            else {
+                if (rewrite_msg)
+                    ksl_drive(c); /* the client reads what was fed above */
                 move_bytes(c, s, NULL, NULL), ksl_drive(s);
+            }
             r.rc = KSL_ERROR;
             break;
         }
@@ -411,6 +649,7 @@ static run tcp_run(ksl_ctx *cc, ksl_ctx *sc, const echkey *k) {
         r.last_c_len = l;
         off += 5 + l;
     }
+    r.wire_alert_c = client_wire_alert(c);
     finish(&r, c, s);
     ksl_ssl_free(c);
     ksl_ssl_free(s);
@@ -1151,8 +1390,8 @@ static void test_outcomes(void) {
         run rs[2] = {quic_run(cc, so, &key_a, NULL), tcp_run(cc, so, &key_a)};
         for (int m = 0; m < 2; m++) {
             run r = rs[m];
-            int ok = r.rc == KSL_ERROR && r.status_c == KSL_ECH_OFFERED && r.retry_len == 0 &&
-                     r.alert_c == (m == 0 ? 50 : 121);
+            int ok = r.rc == KSL_ERROR && r.status_c == KSL_ECH_OFFERED && r.retry_len == 0 && r.alert_c == 50 &&
+                     (m == 0 || r.alert_s == (50 | 0x100));
             CHECK(ok, b == 0 ? (m == 0 ? "negative_ech_server_sends_truncated_retry_configs: QUIC, decode_error"
                                        : "... over TCP")
                              : (m == 0 ? "negative_ech_server_sends_duplicate_extension: QUIC, decode_error"
@@ -1395,6 +1634,222 @@ static void test_padding(void) {
     ksl_ctx_free(cc);
     END();
 }
+/* RFC 9849 section 4.1: a server SHOULD give its keys distinct config_ids; OpenSSL 4.1 tries only the first key of a
+   config_id (section 7.1 has it go on to the next), so a set whose keys share one is refused: a client of the second key
+   would be rejected */
+static void test_shared_config_id(void) {
+    SECTION("ech_keys_sharing_a_config_id");
+    uint8_t l[600];
+    memcpy(l, key_b.list, key_b.list_len);
+    l[6] = key_a.list[6]; /* key_b's ECHConfig with key_a's config_id */
+    echkey twin = key_b;
+    twin.pem = pem_with_list(&key_b, l, key_b.list_len);
+    blob both = keyset(2, &twin, 1, &key_a, 0), alone = keyset(1, &twin, 1);
+    char msg[256] = "";
+    ksl_ech_keys *k = ksl_ech_keys_new(both.buf, both.len, msg, sizeof msg);
+    CHECK(k == NULL && strstr(msg, "config_id") != NULL,
+          "negative_ech_keys_sharing_a_config_id: refused, the message says why");
+    if (k) { /* what the set would do: the client of the second key is rejected */
+        ksl_ctx *sc = ech_server(&id_both, NULL, NULL), *cc = ech_client(KSL_VERIFY_OPENSSL, 0);
+        ksl_ctx_set_ech_keys(sc, k);
+        run q = quic_run(cc, sc, &key_a, NULL);
+        printf("  accepted: the client of key_a gets status %d\n", q.status_c);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+        ksl_ech_keys_free(k);
+    }
+    k = ksl_ech_keys_new(alone.buf, alone.len, msg, sizeof msg);
+    CHECK(k != NULL, "the same key alone is taken");
+    ksl_ech_keys_free(k);
+    free(both.buf);
+    free(alone.buf);
+    free(twin.pem);
+    END();
+}
+/* ---------- the alerts on the wire (the carried patches 5 and 6 of ADR-0019) ---------- */
+static ksl_session *captured;
+static void capture_session(ksl_ssl *c) {
+    ksl_drive(c); /* TCP: read the tickets that came with the server's last flight */
+    ksl_session_free(captured);
+    captured = ksl_ssl_get1_session(c);
+}
+static void offer_captured(ksl_ssl *c) {
+    if (captured)
+        ksl_ssl_set_session(c, captured);
+}
+static ksl_ctx *wire_ctx(ksl_ctx *c) {
+    ksl_ctx_set_option(c, KSL_OPT_KEYLOG, 1);
+    ksl_ctx_set_ciphers(c, "TLS_AES_128_GCM_SHA256", NULL);
+    return c;
+}
+/* checks one case over QUIC (the alert of the CONNECTION_CLOSE) and TCP (the alert of the client's last record, read off the
+   wire, and the server's reading of it) */
+static void wire_case(const char *what, ksl_ctx *cc, ksl_ctx *sc, const echkey *k,
+                      size_t (*rw)(uint8_t *, size_t, size_t), int alert, int ech_status) {
+    char m[300];
+    rewrite_msg = rw;
+    session_hook = captured ? offer_captured : NULL;
+    run q = quic_run(cc, sc, k, NULL);
+    snprintf(m, sizeof m, "%s: QUIC, alert %d", what, alert);
+    int ok = q.rc == KSL_ERROR && !q.done && q.alert_c == alert && q.status_c == ech_status && q.retry_len == 0;
+    CHECK(ok, m);
+    if (!ok)
+        report(what, q);
+    run t = tcp_run(cc, sc, k);
+    snprintf(m, sizeof m, "%s: TCP, alert %d on the wire, read by the server", what, alert);
+    ok = t.rc == KSL_ERROR && !t.done && t.wire_alert_c == alert && t.alert_s == (alert | 0x100) &&
+         t.status_c == ech_status && t.retry_len == 0;
+    CHECK(ok, m);
+    if (!ok) {
+        printf("  wire alert %d\n", t.wire_alert_c);
+        report(what, t);
+    }
+    rewrite_msg = NULL;
+    session_hook = NULL;
+}
+static void test_wire_alerts(void) {
+    SECTION("ech_alerts_on_the_wire");
+    blob ka = keyset(1, &key_a, 1), kb = keyset(1, &key_b, 1);
+    ksl_ctx *cc = wire_ctx(ech_client(KSL_VERIFY_OPENSSL, 0)), *gc = wire_ctx(ech_client(KSL_VERIFY_OPENSSL, 1));
+    ksl_ctx *sa = wire_ctx(ech_server(&id_both, &ka, NULL)), *sb = wire_ctx(ech_server(&id_both, &kb, NULL));
+    /* RFC 9849 sections 6.1.6 and 6.2.1: a byte after the retry_configs' ECHConfigList is no valid extension */
+    wire_case("negative_ech_retry_configs_trailing_byte (rejection)", cc, sb, &key_a, ee_trailing_byte, 50,
+              KSL_ECH_OFFERED);
+    wire_case("negative_ech_retry_configs_trailing_byte (GREASE)", gc, sa, NULL, ee_trailing_byte, 50, KSL_ECH_GREASE);
+    /* section 5: retry_configs on an accepted ECH */
+    ee_ech_value = key_b.list, ee_ech_value_len = key_b.list_len;
+    wire_case("negative_ech_accepted_with_retry_configs_on_the_wire", cc, sa, &key_a, ee_add_ech, 110,
+              KSL_ECH_ACCEPTED);
+    /* section 6.1.2: a pre_shared_key in the ServerHello after a rejection; the client holds a ticket of an accepted ECH
+       connection, so its inner ClientHello offers it and the outer one a GREASE PSK */
+    static const uint8_t ticket_key[80] = {9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 4, 5, 6};
+    ksl_ctx_set_ticket_keys(sa, ticket_key, 1);
+    ksl_ctx_set_option(sa, KSL_OPT_NUM_TICKETS, 2);
+    for (int m = 0; m < 2; m++) {
+        session_hook_late = capture_session;
+        run r = m == 0 ? quic_run(cc, sa, &key_a, NULL) : tcp_run(cc, sa, &key_a);
+        session_hook_late = NULL;
+        CHECK(ACCEPTED(r) && captured != NULL,
+              m == 0 ? "a ticket from an accepted ECH connection (QUIC)" : "... (TCP)");
+        rewrite_msg = sh_add_psk;
+        session_hook = offer_captured;
+        run x = m == 0 ? quic_run(cc, sb, &key_a, NULL) : tcp_run(cc, sb, &key_a);
+        rewrite_msg = NULL;
+        session_hook = NULL;
+        int ok = x.rc == KSL_ERROR && !x.done && x.retry_len == 0 && x.status_c != KSL_ECH_REJECTED &&
+                 (m == 0 ? x.alert_c == 47 : x.wire_alert_c == 47 && x.alert_s == (47 | 0x100));
+        CHECK(ok, m == 0 ? "negative_ech_rejected_with_psk_on_the_wire: QUIC, illegal_parameter"
+                         : "negative_ech_rejected_with_psk_on_the_wire: TCP, illegal_parameter on the wire");
+        if (!ok) {
+            printf("  wire alert %d\n", x.wire_alert_c);
+            report("psk after rejection", x);
+        }
+        ksl_session_free(captured);
+        captured = NULL;
+    }
+    /* section 6.2.1 from a real server: GREASE answered with retry_configs that do not frame (a key whose ECHConfig has a
+       trailing byte, which OpenSSL sends truncated) */
+    {
+        uint8_t l[600];
+        size_t n = key_b.list_len;
+        memcpy(l, key_b.list, n);
+        l[n++] = 0;
+        l[4] = (uint8_t)((n - 6) >> 8), l[5] = (uint8_t)(n - 6);
+        l[0] = (uint8_t)((n - 2) >> 8), l[1] = (uint8_t)(n - 2);
+        echkey odd = key_b;
+        odd.pem = pem_with_list(&key_b, l, n);
+        blob ko = keyset(1, &odd, 1);
+        ksl_ctx *so = wire_ctx(ech_server(&id_both, &ko, NULL));
+        wire_case("negative_ech_grease_answered_with_unframed_retry_configs", gc, so, NULL, NULL, 50, KSL_ECH_GREASE);
+        ksl_ctx_free(so);
+        free(ko.buf);
+        free(odd.pem);
+    }
+    ksl_ctx_free(sb);
+    ksl_ctx_free(sa);
+    ksl_ctx_free(gc);
+    ksl_ctx_free(cc);
+    free(ka.buf);
+    free(kb.buf);
+    END();
+}
+/* RFC 9849 section 6.2.1: a GREASE payload is "a randomly generated string of L+C bytes", L the padded
+   EncodedClientHelloInner of a real offer of the same ClientHello: GREASE and a real offer (maximum_name_length 0, the same
+   name and ALPN, with and without a ticket to offer) have one payload length (the carried patch 7 of ADR-0019) */
+static size_t first_payload(ksl_ctx *cc, const echkey *k, const char *name, int mode) {
+    ksl_ssl *c = ksl_ssl_new(cc, mode);
+    ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)name, strlen(name));
+    ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)name, strlen(name));
+    if (k)
+        ksl_ssl_set(c, KSL_SET_ECH_CONFIG_LIST, k->list, k->list_len);
+    if (captured)
+        ksl_ssl_set_session(c, captured);
+    if (mode == KSL_MODE_QUIC)
+        ksl_quic_set_transport_params(c, TP, sizeof TP);
+    ksl_drive(c);
+    char sni[256];
+    int has = 0;
+    hello_ech_payload = 0;
+    if (mode == KSL_MODE_QUIC) {
+        ksl_event ev;
+        if (ksl_quic_peek_event(c, &ev) && ev.type == KSL_EV_CRYPTO_SEND)
+            hello_sni(ev.buf, ev.len, sni, sizeof sni, &has);
+    } else {
+        uint8_t b[8192];
+        size_t n = 0;
+        if (ksl_tcp_drain(c, b, sizeof b, &n) == KSL_OK && n > 5 && b[0] == 22)
+            hello_sni(b + 5, n - 5, sni, sizeof sni, &has);
+    }
+    ksl_ssl_free(c);
+    return has ? hello_ech_payload : 0;
+}
+static void test_grease_length(void) {
+    SECTION("ech_grease_payload_length");
+    ksl_ctx *gc = ech_client(KSL_VERIFY_OPENSSL, 1), *tc = ech_client(KSL_VERIFY_OPENSSL, 1);
+    static const uint8_t alpn_tcp[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    ksl_ctx_set_alpn(tc, alpn_tcp, sizeof alpn_tcp);
+    int same = 1, n = 0;
+    for (int with_ticket = 0; with_ticket < 2; with_ticket++) {
+        if (with_ticket) { /* a ticket of an accepted QUIC ECH connection, offered by both */
+            blob ka = keyset(1, &key_a, 1);
+            ksl_ctx *sa = ech_server(&id_both, &ka, NULL);
+            static const uint8_t tk[80] = {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1};
+            ksl_ctx_set_ticket_keys(sa, tk, 1);
+            ksl_ctx_set_option(sa, KSL_OPT_NUM_TICKETS, 2);
+            session_hook_late = capture_session;
+            quic_run(gc, sa, &key_a, NULL);
+            session_hook_late = NULL;
+            ksl_ctx_free(sa);
+            free(ka.buf);
+            CHECK(captured != NULL, "a ticket to offer");
+        }
+        for (int mode = 0; mode < 2; mode++)
+            for (int d = 6; d < 200; d += 7) {
+                char name[256];
+                name_of(name, d);
+                ksl_ctx *c = mode == 0 ? gc : tc;
+                int m = mode == 0 ? KSL_MODE_QUIC : KSL_MODE_TCP;
+                if (with_ticket && m == KSL_MODE_TCP)
+                    continue; /* the QUIC ticket is for QUIC */
+                size_t real = first_payload(c, &key_a, name, m), grease = first_payload(c, NULL, name, m);
+                n++;
+                if (!real || real != grease) {
+                    if (same)
+                        printf("  %s, %d-byte name%s: real %zu, GREASE %zu\n", m == KSL_MODE_QUIC ? "QUIC" : "TCP", d,
+                               with_ticket ? ", ticket" : "", real, grease);
+                    same = 0;
+                }
+            }
+        ksl_session_free(captured);
+        captured = NULL;
+    }
+    CHECK(same && n > 60,
+          "GREASE and a real offer have one payload length (QUIC and TCP, 28 name lengths, with a ticket)");
+    ksl_ctx_free(tc);
+    ksl_ctx_free(gc);
+    END();
+}
+
 /* the first ksl_ctx_set_ech_keys on a fresh server context, from several threads at once, while others make sessions: the
    key lock exists from ksl_ctx_new (a lock made by the first setter raced the others and ksl_ech_ssl_init); run under
    ThreadSanitizer by KSL_TSAN=1 tools/c-test.sh */
@@ -1441,6 +1896,10 @@ void run_ech(void) {
     make_pki();
     key_a = make_echkey(PUBLIC);
     key_b = make_echkey(PUBLIC);
+    while (key_b.list[6] == key_a.list[6]) { /* distinct config_ids (OpenSSL tries only the first key of one) */
+        free(key_b.pem);
+        key_b = make_echkey(PUBLIC);
+    }
     test_list_check();
     test_accept();
     test_hrr();
@@ -1457,6 +1916,9 @@ void run_ech(void) {
     test_grease_suites();
     test_inner_tls12();
     test_padding();
+    test_shared_config_id();
+    test_wire_alerts();
+    test_grease_length();
     free(key_a.pem);
     free(key_b.pem);
     free_pki();

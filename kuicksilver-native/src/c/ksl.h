@@ -165,8 +165,8 @@ extern "C" {
                               so nothing of the session reached the application; KSL_GET_ECH_RETRY_CONFIGS has the server's new
                               configurations, or none ("securely disabled", section 6.1.6). Never when the server resumed a session
                               in the outer handshake (section 6.1.2) or sent retry_configs that do not parse (section 6.1.6): those
-                              are KSL_ECH_OFFERED, the handshake failed with that error (QUIC: illegal_parameter or decode_error;
-                              TCP: OpenSSL wrote ech_required first, the message names the error). Server: the ClientHello carried an ECH
+                              are KSL_ECH_OFFERED, the handshake failed with that error (illegal_parameter or decode_error, sent by
+                              the patched OpenSSL of ADR-0019 before any ech_required). Server: the ClientHello carried an ECH
                               extension this server did not decrypt (another key, or GREASE); it answered with retry_configs */
 #define KSL_ECH_OFFERED 4  /* client: offered, and neither accepted nor rejected with an authenticated outer handshake: the ServerHello
                               has not come yet, or the handshake failed first (a certificate not valid for the public_name: then the

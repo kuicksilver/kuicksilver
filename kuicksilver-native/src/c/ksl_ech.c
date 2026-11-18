@@ -9,6 +9,7 @@
 #include <stdio.h>
 #if KSL_HAS_ECH
 #include <openssl/ech.h>
+#include <openssl/pem.h>
 #endif
 
 #define ECH_VERSION 0xfe0d       /* RFC 9849 section 4: the version of the ECHConfig this document defines */
@@ -359,11 +360,11 @@ int ksl_ech_retry_configs(ksl_ssl *s, uint8_t *out, size_t cap, size_t *len) {
 
 /* A client handshake that completed (ksl_drive). RFC 9849 section 5: an encrypted_client_hello extension in EncryptedExtensions
    answers only the outer ClientHello; "If the server sent this extension in response to the inner variant, then the client MUST
-   abort with an unsupported_extension alert" (OpenSSL 4.1 keeps it). Section 6.2.1: after GREASE "the client MUST check the
-   extension syntactically and abort the connection with a decode_error alert if it is invalid" (OpenSSL checks only its outer
-   length). The session fails before it is reported established: over QUIC with that alert (the CONNECTION_CLOSE takes it from
-   last_alert); over TCP the client's Finished is already written and OpenSSL 4.1 has no call to send an alert afterwards, so the
-   connection ends without one. */
+   abort with an unsupported_extension alert". Section 6.2.1: after GREASE "the client MUST check the extension syntactically and
+   abort the connection with a decode_error alert if it is invalid". The fifth carried patch of ADR-0019 has OpenSSL abort at the
+   EncryptedExtensions with those alerts, over TCP and QUIC; this is the second line, for an OpenSSL without it: the session
+   fails before it is reported established, over QUIC with that alert (the CONNECTION_CLOSE takes it from last_alert), over TCP
+   without one (the client's Finished is written, and OpenSSL 4.1 has no call to send an alert afterwards). */
 int ksl_ech_check_done(ksl_ssl *s) {
 #if KSL_HAS_ECH
     if (s->owner->role != KSL_CLIENT)
@@ -388,8 +389,10 @@ int ksl_ech_check_done(ksl_ssl *s) {
 }
 
 /* A client handshake that failed (ksl_drive): after our ech_required, the ECH errors RFC 9849 has the client report instead of a
-   rejection. Over QUIC the alert is the one the section names (the CONNECTION_CLOSE takes it from last_alert); over TCP OpenSSL wrote
-   ech_required already, and the message names the error. */
+   rejection. The fifth and sixth carried patches of ADR-0019 have OpenSSL abort before ech_required with the alert the section names
+   (over TCP and QUIC), and this never runs then; it is the second line, for an OpenSSL without them: over QUIC the alert is the one
+   the section names (the CONNECTION_CLOSE takes it from last_alert), over TCP OpenSSL wrote ech_required already, and the message
+   names the error. */
 void ksl_ech_check_failed(ksl_ssl *s) {
 #if KSL_HAS_ECH
     if (s->owner->role != KSL_CLIENT || !s->ech_set || !s->ech_required_sent)
@@ -459,7 +462,10 @@ void ksl_ech_before_handshake(ksl_ssl *s) {
     static const char *const suites[] = {"x25519,hkdf-sha256,aes-128-gcm", "x25519,hkdf-sha256,aes-256-gcm",
                                          "x25519,hkdf-sha256,chacha20-poly1305"};
     uint8_t r = 0;
-    (void)ksl_rand(&r, 1); /* on failure the first suite, OpenSSL's default */
+    for (int i = 0; i < 8 && ksl_rand(&r, 1) == KSL_OK && r >= 255; i++)
+        ; /* 255 is not a multiple of 3: redrawn, so the three are equally likely; on failure the first suite */
+    if (r >= 255)
+        r = 0;
     s->ech_grease_ready = 1;
     (void)SSL_ech_set1_grease_suite(s->ssl, suites[r % 3]); /* on failure OpenSSL's default suite */
     ERR_clear_error();
@@ -519,6 +525,32 @@ static void ech_msg(char *msg, size_t msglen, const char *m) {
     if (msg && msglen)
         snprintf(msg, msglen, "%s", m);
 }
+#if KSL_HAS_ECH
+/* The config_id of the ECHConfig in one key's PEM (its ECHCONFIG block: an ECHConfigList of one entry), -1 when there is none */
+static int pem_config_id(const uint8_t *pem, size_t len) {
+    BIO *in = BIO_new_mem_buf(pem, (int)len);
+    char *name = NULL, *header = NULL;
+    unsigned char *data = NULL;
+    long dl = 0;
+    int id = -1;
+    while (id < 0 && in != NULL && PEM_read_bio(in, &name, &header, &data, &dl) == 1) {
+        if (strcmp(name, "ECHCONFIG") == 0 && dl >= 7)
+            id = data[6]; /* list length 2, version 2, length 2, then config_id */
+        OPENSSL_free(name);
+        OPENSSL_free(header);
+        OPENSSL_free(data);
+    }
+    BIO_free(in);
+    ERR_clear_error();
+    return id;
+}
+#endif
+/* Keys are loaded from their PEM only (OSSL_ECHSTORE_read_pem), never handed over as a store OSSL_ECHSTORE_new_config made:
+   OpenSSL 4.1 builds the HPKE info of such a store from other bytes than the same key read back from PEM or published in
+   DNS, so a server using it directly would decrypt no client that took the configuration from its HTTPS record (bug L of
+   ADR-0019). C test ech_accept pins the PEM path. A set whose keys share a config_id is refused: OpenSSL 4.1's server tries
+   only the first key of a config_id and does not go on to the next when it does not decrypt (RFC 9849 section 7.1 has it go
+   on), so a client of the second key would be rejected; section 4.1 has a server allocate distinct ones. */
 ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_t msglen) {
     ERR_clear_error();
 #if KSL_HAS_ECH
@@ -528,7 +560,7 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
     }
     OSSL_ECHSTORE *es = OSSL_ECHSTORE_new(NULL, NULL);
     size_t off = 0;
-    int count = 0, retry = 0, ok = es != NULL;
+    int count = 0, retry = 0, ok = es != NULL, ids[ECH_KEYS_MAX];
     const char *why = "ksl: out of memory";
     while (ok && off < len) {
         ok = ksl_span_fits(off, 4, len);
@@ -541,7 +573,15 @@ ksl_ech_keys *ksl_ech_keys_new(const uint8_t *keys, size_t len, char *msg, size_
         why = "ksl: bad ECH key framing: (uint32 length || flags || PEM)*, 1 to 16 keys, flags 0 or 1";
         if (!ok)
             break;
-        int for_retry = keys[off] & 1, before = 0, after = 0;
+        int for_retry = keys[off] & 1, before = 0, after = 0, id = pem_config_id(keys + off + 1, l - 1);
+        for (int i = 0; ok && id >= 0 && i < count; i++)
+            ok = ids[i] != id;
+        why =
+            "ksl: two ECH keys share a config_id (RFC 9849 section 4.1: distinct ones; OpenSSL tries only the first): make "
+            "one of them again";
+        if (!ok)
+            break;
+        ids[count] = id;
         BIO *in = BIO_new_mem_buf(keys + off + 1, (int)(l - 1));
         ok = in != NULL && OSSL_ECHSTORE_num_keys(es, &before) == 1 &&
              OSSL_ECHSTORE_read_pem(es, in, for_retry ? OSSL_ECH_FOR_RETRY : OSSL_ECH_NO_RETRY) == 1 &&
