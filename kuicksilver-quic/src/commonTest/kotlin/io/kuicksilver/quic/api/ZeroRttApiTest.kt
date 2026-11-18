@@ -315,8 +315,8 @@ class ZeroRttApiTest {
      * Requests sent in 0-RTT and cancelled before the answer, as an HTTP/3 client cancels one (RFC 9114 section 4.1.1: reset
      * the sending part, abort reading): the server got each request and answered it, the answers wait, and our resets never
      * arrive. A regression guard, not the fix's test: the response's FIN comes in 1-RTT, which the client reads in the same
-     * call that settles the answer, so these streams retire after it and never take the path the fix changed (it passed
-     * before the fix too). The order where the FIN comes first is pinned in the stream manager
+     * core call that settles the answer, so no runtime drain falls between the FIN and the settle and these streams never
+     * take the path the fix changed (it passed before the fix too). The order where the FIN comes first is pinned in the stream manager
      * (`StreamStateTest.cancelledEarlyRequestWhoseResponseEndedBeforeTheAnswerIsOfferedAgainAtTheAcceptance`). Every wrapper
      * goes once the server accepted and the response ended, never only at an acknowledgment of the reset.
      */

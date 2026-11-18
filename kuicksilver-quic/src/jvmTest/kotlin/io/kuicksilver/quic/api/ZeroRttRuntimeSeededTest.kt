@@ -46,7 +46,8 @@ import kotlin.time.Duration.Companion.seconds
  * (each call that suspends runs as a job of its own); the server accepts, rejects (another configuration; Required mode,
  * which closes), never answers, answers after a Retry, or after a Version Negotiation, or accepts while nothing the client
  * sends after that acceptance arrives until the answer is checked (so no reset of the 0-RTT is acknowledged; the client
- * also resets a stream of its own then); or the application closes first. Odd seeds remember small limits, so calls in 0-RTT also wait for stream and flow-control credit.
+ * also resets a stream of its own then); or the application closes first. Odd seeds remember small limits, so calls in
+ * 0-RTT also wait for stream and flow-control credit.
  *
  * Once the answer is known: no wrapper stays for a stream retired with its reset unacknowledged; after a rejection every
  * stream the application opened before it is failed with [QuicException.StreamError.EarlyDataRejected] on both halves and
