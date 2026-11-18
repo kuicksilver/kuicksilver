@@ -6,6 +6,7 @@ package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.io.encoding.Base64
@@ -381,6 +382,50 @@ class EchTest {
             assertContentEquals(listB.bytes, e.retryConfigs?.bytes)
             assertFailsWith<TlsException> { withTimeout(10.seconds) { rs.await() } }
         }
+
+    /** One TCP connection with a byte each way (so the ticket arrives); whether it resumed. [ech]: the partition of its ticket. */
+    private fun tcpOnce(
+        client: TlsConfig,
+        server: TlsConfig,
+        ech: Boolean,
+    ): Boolean =
+        runBlocking {
+            val (cd, sd) = connect(client, server)
+            val c = withTimeout(20.seconds) { cd.await() }
+            val s = withTimeout(20.seconds) { sd.await() }
+            c.output.writeFully(byteArrayOf(1), 0, 1)
+            c.output.flush()
+            s.input.readExactly(1)
+            s.output.writeFully(byteArrayOf(2), 0, 1)
+            s.output.flush()
+            c.input.readExactly(1)
+            val reused = c.sessionReused
+            // the server's tickets precede its byte, so they are cached by now (SessionResumptionTest.ticketCachedBeforeTheDataThatFollowsIt)
+            val key = SessionCache.key(client.serverName, "server.test", client.trust, client.identity, ech = ech)
+            assertTrue(SessionCache.Default.peek(key), "the ticket is cached under its own partition")
+            c.close()
+            s.close()
+            reused
+        }
+
+    /**
+     * A ticket from a connection with ECH is never offered on one without it (its PSK identity would go in the clear
+     * ClientHello and link the hidden name to the visible one), nor one from a connection without ECH on one with it; each
+     * kind resumes its own.
+     */
+    @Test fun negative_echTicketsAreNotOfferedWithoutEch() {
+        val server = TcpFixtures.server { echKeys = EchServerKeys(listOf(keyA)) }
+        val withEch = TcpFixtures.client { echConfigList = listA }
+        val plain = TcpFixtures.client()
+        assertFalse(tcpOnce(withEch, server, ech = true), "first ECH connection: a full handshake")
+        assertFalse(tcpOnce(plain, server, ech = false), "the ECH connection's ticket is not offered without ECH")
+        assertTrue(tcpOnce(withEch, server, ech = true), "control: an ECH connection resumes the ECH ticket")
+        assertTrue(tcpOnce(plain, server, ech = false), "control: a connection without ECH resumes its own ticket")
+        assertTrue(
+            SessionCache.key("a", "a", plain.trust, null, ech = true) != SessionCache.key("a", "a", plain.trust, null),
+            "QUIC tickets use the same partition (SessionCache.takeQuic / putQuic)",
+        )
+    }
 
     @Test fun base64OfTheRecordParses() {
         assertEquals(listA, EchConfigList.parseBase64(Base64.encode(listA.bytes)))

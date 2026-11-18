@@ -1874,7 +1874,9 @@ When the server rejects ECH (its key changed, or it no longer has one), the clie
 `ech_required` and throws `TlsException.EchRejected`, whose `retryConfigs` are the server's current configurations: retry
 once, on a new connection, with them. Nothing of the rejected connection is used, and a second rejection is not retried.
 Without `retryConfigs` the server has stopped supporting ECH; connecting without it reveals the name, so it is the
-caller's choice. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
+caller's choice. Session tickets of connections that offered ECH are kept apart from those of connections without it
+(GREASE counts as without): a ticket is never offered on a connection of the other kind, where its PSK identity would link
+the hidden name to the visible one. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
 `Offered`.
 
 A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ech -public_name <name> -out key.pem`

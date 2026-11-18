@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. During a rejection the certificate is checked for the
   `public_name` by the base trust alone: the origin's pins (`TrustConfig.Pinned`) do not apply to it, and
   `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).
+  Session tickets of connections with ECH and without it are cached apart, never offered on the other kind.
 - Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
   Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
   on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by

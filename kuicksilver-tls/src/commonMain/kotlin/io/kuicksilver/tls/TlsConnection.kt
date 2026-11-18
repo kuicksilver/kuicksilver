@@ -248,7 +248,7 @@ public class TlsConnection private constructor(
             sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
             Ksl.sslSet(ssl, KslConst.SET_VERIFY_NAME, host.value.encodeToByteArray())
             echOffered = offerEch(ssl, config)
-            cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity)
+            cacheKey = SessionCache.key(config.serverName, host.value, config.trust, config.identity, ech = echOffered)
         } else {
             stapleFor(ssl, config)
         }
@@ -1314,12 +1314,24 @@ public class SessionCache(
         /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */
         public val Default: SessionCache = SessionCache()
 
+        /**
+         * The cache key of a client's sessions. [ech]: the connection offers an ECH configuration. Sessions of connections
+         * with ECH and without it are kept apart: a ticket from an ECH connection offered without ECH would put its PSK
+         * identity in the clear ClientHello and link the two connections, the hidden name to the visible one (the linking
+         * RFC 9849 section 10.7 describes; with ECH the identity rides only in the encrypted inner ClientHello). A GREASE
+         * connection counts as one without ECH (section 6.2.1: it "MAY offer to resume sessions established without ECH").
+         * Connections with different ECH configurations of the origin (a retry's, a rotated record's) share them: the
+         * identity stays encrypted there.
+         */
         internal fun key(
             sni: String?,
             reference: String,
             trust: TrustConfig,
             identity: TlsIdentity?,
-        ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
+            ech: Boolean = false,
+        ): String =
+            "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}" +
+                if (ech) "|ech" else ""
     }
 
     /** Removes and returns the newest live ticket of [key]: a ticket is used at most once (RFC 9846 appendix C.4). */
@@ -1457,7 +1469,13 @@ public class SessionCache(
 
     private fun quicKey(config: TlsConfig): String =
         "quic|" + config.alpn.joinToString(",") + "|" +
-            key(config.serverName, HostName.normalize(referenceOf(config)).value, config.trust, config.identity)
+            key(
+                config.serverName,
+                HostName.normalize(referenceOf(config)).value,
+                config.trust,
+                config.identity,
+                ech = config.echConfigList?.isUsable == true,
+            )
 }
 
 internal expect fun nowSeconds(): Long
