@@ -1183,8 +1183,9 @@ internal class H1Pool(
                                     // 7.1.1 when the session ended in order (both Closes, its writer done), the server's
                                     // close first, within T2 (WebSocketLifetime); at once otherwise, cleanly (TLS
                                     // close_notify, a FIN: section 7.1.1, the client "SHOULD" close cleanly) when the
-                                    // stream is whole and the socket took all of it: the writer finished or stopped
-                                    // between frames, and nothing waits in front of the kernel (a Close that went out,
+                                    // stream is whole and the socket took all of it: the frame guard stopped between frames
+                                    // (that the writer ended says nothing: Ktor's ends its channel in order also when
+                                    // cancelled inside a frame), and nothing waits in front of the kernel (a Close that went out,
                                     // the server's never came; a session cancelled while idle). It is reset otherwise: a
                                     // writer stopped inside a frame (behind a server that does not read, at the close
                                     // wait), frames still queued in front of the socket after the close wait, or a writer
@@ -1731,7 +1732,7 @@ internal class Http11Routes {
 /** The server closed the connection after answering the first-contact probe ([H1Pool.probeVersion]). */
 internal class ProbeEndedConnection : Exception("the server closed the connection after the OPTIONS probe")
 
-/** How an HTTP/1.1 WebSocket's connection ends once its session did ([webSocketTransportEnd]). */
+/** How a client WebSocket's transport (HTTP/1.1, HTTP/3) ends once its session did ([webSocketTransportEnd]). */
 internal enum class WebSocketTransportEnd {
     /** The session ended in order: the server closes first, this side follows within T2 (closeAfterWebSocket). */
     AfterServer,
@@ -1744,10 +1745,17 @@ internal enum class WebSocketTransportEnd {
 }
 
 /**
- * The end of an HTTP/1.1 WebSocket's connection from what is left of its stream. Whole frames still queued in front of the
- * socket (the writer finished, or stopped between frames) go out in order unless the close wait cut the session
+ * The end of a client WebSocket's transport (an HTTP/1.1 connection, an HTTP/3 stream) from what is left of its stream. Whole frames still queued in front of the
+ * socket (the frame guard stopped between frames) go out in order unless the close wait cut the session
  * (`WebSocketLifetime.cutByCloseWait`: nothing it queued leaves after T1); a session cancelled by its call while idle is
  * closed in order whether or not the socket's writer has taken its last frames yet.
+ *
+ * Only the frame guard says the stream is whole, [writerDone] does not: Ktor's `WebSocketWriter` ends its channel with
+ * `flushAndClose()` in a `finally`, also when it is cancelled inside a frame (the close wait cut it while a large frame
+ * waited for a server that does not read), and that end reaches the connection as a writer that finished in order. A
+ * FIN after it ended the cut frame as if the stream were whole: `ClientWebSocketCloseTest`'s server read
+ * `[binary 16777216, cut]` in Docker, where its receive buffer grows to 32 MiB and the cancelled writer sometimes finished
+ * its `finally` before this decision.
  */
 internal fun webSocketTransportEnd(
     endedInOrder: Boolean,
@@ -1758,7 +1766,7 @@ internal fun webSocketTransportEnd(
     cutByCloseWait: Boolean,
 ): WebSocketTransportEnd =
     when {
-        endedInOrder && writerDone -> WebSocketTransportEnd.AfterServer
-        !failed && (writerDone || atFrameBoundary) && (drained || !cutByCloseWait) -> WebSocketTransportEnd.Orderly
+        endedInOrder && writerDone && atFrameBoundary -> WebSocketTransportEnd.AfterServer
+        !failed && atFrameBoundary && (drained || !cutByCloseWait) -> WebSocketTransportEnd.Orderly
         else -> WebSocketTransportEnd.Reset
     }

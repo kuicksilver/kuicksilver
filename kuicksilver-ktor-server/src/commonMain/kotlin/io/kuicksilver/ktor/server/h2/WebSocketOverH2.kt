@@ -14,6 +14,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.H2ServerStream
 import io.kuicksilver.http2.runtime.H2StreamOutput
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h1.httpDateNow
@@ -138,6 +139,8 @@ internal class H2UpgradeResponse(
         // check ends with the upgrade
         val guard = Job()
         var webSocket: ServerWebSocket? = null
+        // the session's guarded output: whether its last frame went out whole decides between END_STREAM and a reset
+        var sessionOutput: io.ktor.utils.io.ByteWriteChannel? = null
         try {
             val input =
                 startServerWebSocket(
@@ -159,7 +162,9 @@ internal class H2UpgradeResponse(
             // Once the server's own Close is written the session is closing: its writer is no longer held at the lead, as
             // on the client, so the Close and the stream's end do not wait behind a window the client may never open again
             // (the send-stall deadline bounds them, RFC 6455 section 7.1.1)
-            upgrade.upgrade(input.channel, input.output(output) { output.releaseLead() }, engineDispatcher, userDispatcher).join()
+            val out = input.output(output) { output.releaseLead() }
+            sessionOutput = out
+            upgrade.upgrade(input.channel, out, engineDispatcher, userDispatcher).join()
         } finally {
             // the frame guard stops first, then the extension's state is freed (the guard inflates with a codec of its own, so
             // the order is for clarity, not safety)
@@ -170,8 +175,9 @@ internal class H2UpgradeResponse(
             // END_STREAM is waited for (CLOSE_WAIT), so an orderly close ends with both flags and no RST_STREAM; a client
             // that has not ended by then is stopped when the stream is released (RST_STREAM NO_ERROR after our END_STREAM,
             // RFC 9113 section 8.1)
-            if (!currentCoroutineContext().isActive || output.closedCause != null) {
-                // cancelled, or the session failed (its output cancelled), or the stream failed under it: CANCEL, unless the
+            if (!currentCoroutineContext().isActive || output.closedCause != null || sessionOutput?.isWebSocketFrameCut() == true) {
+                // cancelled, or the session failed (its output cancelled) or ended inside a frame (never END_STREAM after a cut
+                // frame), or the stream failed under it: CANCEL, unless the
                 // stream failed already (the client's RST_STREAM, a stream error of ours such as a HEADERS on the tunnel, the
                 // send-stall deadline), which RFC 9113 section 5.4.2 answers with nothing more
                 output.cancel(output.closedCause ?: CancellationException("the call was cancelled"))

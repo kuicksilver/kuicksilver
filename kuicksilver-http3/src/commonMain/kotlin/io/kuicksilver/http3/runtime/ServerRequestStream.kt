@@ -932,6 +932,14 @@ internal class ResponseWriterImpl(
     override val output: ByteWriteChannel get() = channel
     private var finishing = false
 
+    /**
+     * The bytes of [output] the pump has handed to the QUIC stream so far, each piece counted once the stream's own
+     * buffer handed it to the connection's send buffer (its flush returned): what a reset can still discard is no
+     * longer queued in front of the transport ([io.kuicksilver.http3.contentHandedToTransport]).
+     */
+    @Volatile internal var handedToTransport: Long = 0
+        private set
+
     /** Why the pump abandoned the response (set before it ends): [finish] reports it, also once the channel was closed. */
     @Volatile private var abandoned: Throwable? = null
     internal val pump: Job =
@@ -953,6 +961,7 @@ internal class ResponseWriterImpl(
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
                         sent += n
+                        handedToTransport = sent
                     }
                 }
                 channel.closedCause?.let { throw it }

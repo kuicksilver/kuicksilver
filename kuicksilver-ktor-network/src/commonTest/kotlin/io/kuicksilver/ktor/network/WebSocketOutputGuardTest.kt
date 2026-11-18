@@ -421,4 +421,108 @@ class WebSocketOutputGuardTest {
             assertEquals(listOf(0x41, 0x80), out.map { it.b0 })
             assertContentEquals(bytes(0xC0, 0xAF), out[1].payload)
         }
+
+    /**
+     * A writer cancelled while the Close's header waits for room (a peer that does not read): the header is queued, its
+     * body is not, so the guard is inside a frame. Before, the header went to the output before the guard counted the
+     * frame as started, the guard read as at a frame boundary, and an engine closed the stream cleanly after a cut Close.
+     */
+    @Test fun negative_aCloseCutInsideItsHeaderIsNotAtAFrameBoundary() =
+        runTest {
+            val stalled = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val wire = StallingOutput(stalled)
+            val guarded = guardWebSocketOutput(wire, masking = true)
+            val writer =
+                launch {
+                    guarded.writeFully(close(4000, "bye".encodeToByteArray()))
+                    guarded.flushAndClose()
+                }
+            stalled.await()
+            writer.cancel()
+            writer.join()
+            assertTrue(wire.queued > 0, "the Close's header was handed on")
+            assertEquals(false, guarded.isAtWebSocketFrameBoundary(), "a cut Close is not at a frame boundary")
+        }
+
+    /**
+     * Ktor's `WebSocketWriter` ends its channel with `flushAndClose()` in a `finally`, also when it was cancelled inside a
+     * frame: the guard then resets the output (cancels it) instead of closing it, client and server, so the peer never
+     * reads the cut frame followed by a clean end (a FIN, END_STREAM). Before, the close went through and the transport
+     * ended in order after part of a frame. A writer that ends between frames still closes the output in order.
+     */
+    @Test fun negative_aWriterThatEndsInsideAFrameResetsTheOutput() =
+        runTest {
+            for (masking in listOf(true, false)) {
+                val wire = ByteChannel()
+                val guarded = guardWebSocketOutput(wire, masking)
+                val whole = frame(0x82, ByteArray(100))
+                guarded.writeFully(whole.copyOf(2 + 10)) // the header and 10 of the 100 payload bytes
+                guarded.flushAndClose()
+                val cause = wire.closedCause
+                assertNotNull(cause, "masking $masking: the output is reset, not closed")
+                assertTrue(cause !is kotlinx.coroutines.CancellationException, "masking $masking: a failure, not a cancellation: $cause")
+            }
+            val wire = ByteChannel()
+            val guarded = guardWebSocketOutput(wire, masking = false)
+            launch {
+                guarded.writeFully(frame(0x82, ByteArray(100)))
+                guarded.flushAndClose()
+            }
+            assertEquals(listOf(0x82), frames(wire as ByteReadChannel).map { it.b0 })
+            assertNull(wire.closedCause, "a writer that ends between frames closes the output in order")
+        }
+
+    /**
+     * A writer cancelled while the 0x00 0x00 0xff 0xff tail of a compressed non-final frame (permessage-deflate per frame,
+     * RFC 7692 section 7.2.1) waits for room: the header and the payload are queued, the tail is not all, so the frame is
+     * cut. Before, the payload's end counted as the frame's end before the tail was handed on, and the guard read as at a
+     * frame boundary.
+     */
+    @Test fun negative_aFrameCutInsideItsTailIsNotAtAFrameBoundary() =
+        runTest {
+            val stalled = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val payload = bytes(1, 2, 3)
+            // a 2-byte header (unmasked, length 3 + 4), the payload, then the tail: the flush after the tail stalls
+            val wire = StallingOutput(stalled, stallAt = 2L + payload.size + 4)
+            val guarded = guardWebSocketOutput(wire, masking = false, checkText = false, compression = SentCompression.PerFrame)
+            val writer =
+                launch {
+                    guarded.writeFully(frame(0x42, payload)) // binary, RSV1, not the last frame: its tail goes back on
+                    guarded.flush()
+                }
+            stalled.await()
+            writer.cancel()
+            writer.join()
+            assertEquals(2L + payload.size + 4, wire.queued, "the header, the payload and the tail were handed on")
+            assertEquals(false, guarded.isAtWebSocketFrameBoundary(), "a frame cut inside its tail is not at a frame boundary")
+        }
+
+    /**
+     * An output that takes writes into its buffer; a flush once it holds [stallAt] bytes or more completes [stalled] and
+     * waits for good, an earlier one returns.
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    private class StallingOutput(
+        private val stalled: kotlinx.coroutines.CompletableDeferred<Unit>,
+        private val stallAt: Long = 0,
+    ) : io.ktor.utils.io.ByteWriteChannel {
+        private val buffer = kotlinx.io.Buffer()
+        val queued: Long get() = buffer.size
+        override val autoFlush: Boolean get() = true
+        override val isClosedForWrite: Boolean get() = false
+        override val closedCause: Throwable? get() = null
+        override val writeBuffer: kotlinx.io.Sink get() = buffer
+
+        override suspend fun flush() {
+            if (buffer.size < stallAt) return
+            stalled.complete(Unit)
+            kotlinx.coroutines.awaitCancellation()
+        }
+
+        override suspend fun flushAndClose() {
+            flush()
+        }
+
+        override fun cancel(cause: Throwable?) {}
+    }
 }

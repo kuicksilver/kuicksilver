@@ -2199,6 +2199,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketCo
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketConnectingTest.sharedHostWaitsForTheRelease
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketConnectingTest.tryAcquireTakesFreeKeysOnly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.everyCombinationFollowsTheRule
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_aWriterThatEndedInsideAFrameIsReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_framesStillQueuedWhenTheCloseWaitCutTheSessionAreReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_wholeFramesStillQueuedWhenTheCallIsCancelledGoOutInOrder
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFailureTest.negative_aWebSocketClosedInOrderLogsTheReleaseFailureAfterTheCloseWait
@@ -2211,6 +2212,9 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFa
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFailureTest.negative_anExchangeWhoseReleaseThrowsAtTheCallsEndLogsIt
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFailureTest.negative_anExchangeWithoutAJobKeepsItsFailureOverTheRelease
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFailureTest.negative_anOpenWebSocketWhoseCallIsCancelledLogsTheReleaseFailure
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.aWholeStreamNotCutGetsAFin
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.negative_aSessionCutByTheCloseWaitWithFramesQueuedIsReset
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h3.H3WebSocketStreamEndTest.negative_aWriterThatEndedInsideAFrameIsReset
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.hostJvmClientToAServerOnIos
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH1ToTheHost
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.ktorH3ToTheHost
@@ -2432,6 +2436,9 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketInp
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketInputRulesTest.validUtf8SplitAcrossMaskedFragmentsPasses
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.frameSplitAcrossFlushes
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.ktorRawSessionThroughTheGuard
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_aCloseCutInsideItsHeaderIsNotAtAFrameBoundary
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_aFrameCutInsideItsTailIsNotAtAFrameBoundary
+kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_aWriterThatEndsInsideAFrameResetsTheOutput
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_clientFramesGetFreshMaskingKeys
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_closeReasonNotUtf8IsDropped
 kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.WebSocketOutputGuardTest.negative_closeWithAForbiddenCodeGoesOutWithoutABody

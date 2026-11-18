@@ -179,6 +179,9 @@ class ClientH3WebSocketTest {
                         }.build(),
                     io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
                 )
+            // every attempt's decision in order, with what it was made from: the server reads nothing, so no session ends
+            // in order
+            val ends = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             try {
                 val read =
                     unwrittenCloseAttempts { data, frames ->
@@ -206,6 +209,9 @@ class ClientH3WebSocketTest {
                                     install(WebSockets)
                                 }).use { c ->
                                     (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 200
+                                    (c.engine as KuicksilverEngine).h3.webSocketEndForTest = { end, writerDone, boundary ->
+                                        ends.trySend("$end writerDone=$writerDone boundary=$boundary")
+                                    }
                                     val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
                                     repeat(frames) { session.outgoing.send(Frame.Binary(true, data)) }
                                     launch { session.close(CloseReason(4002, "client bye")) }
@@ -219,6 +225,11 @@ class ClientH3WebSocketTest {
                         }
                     }
                 assertEquals("reset", read.last(), "the stream was reset, not ended with a FIN: $read")
+                // the attempt whose Close stayed unwritten (the last one) was reset, also when its writer ended its channel
+                // inside a frame (Ktor's writer does so when cancelled): never a FIN after a cut frame. An earlier attempt
+                // whose writing the transport took whole, its Close in flight, rightly got a FIN; it is not checked here
+                val decided = generateSequence { ends.tryReceive().getOrNull() }.toList()
+                assertTrue(decided.lastOrNull()?.startsWith("Reset") == true, "the last attempt's stream reset: $decided")
             } finally {
                 ep.close()
             }

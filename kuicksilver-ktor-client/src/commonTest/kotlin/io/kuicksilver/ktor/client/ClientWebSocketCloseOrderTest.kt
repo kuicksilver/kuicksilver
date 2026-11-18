@@ -447,7 +447,7 @@ class ClientWebSocketCloseOrderTest {
                         }
                     rawServer(true, serve = { conn ->
                         released.await() // reads nothing before the client gave the connection up
-                        val read = probing(conn.output) { readClientFrames(conn.input) }
+                        val read = probing(conn.output) { readClientFrames(conn.input, it) }
                         // the probe's write can fail the TLS session (a reset connection) while the socket still holds what
                         // the client sent: the session reads no more, the rest of the socket is read and dropped
                         conn.stopFeeding()

@@ -16,6 +16,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.network.isWebSocketFrameCut
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.h2.WebSocketOverH2
@@ -117,6 +118,8 @@ internal class H3UpgradeResponse(
         // the frame guard stopped reading the client's direction (its end, a failure, or the guard's cancellation)
         val guardStopped = CompletableDeferred<Unit>()
         var webSocket: ServerWebSocket? = null
+        // the session's guarded output: whether its last frame went out whole decides between a FIN and a reset
+        var sessionOutput: io.ktor.utils.io.ByteWriteChannel? = null
         try {
             val input =
                 startServerWebSocket(
@@ -131,7 +134,9 @@ internal class H3UpgradeResponse(
                     onInputEnd = { guardStopped.complete(Unit) },
                 ) ?: return // a Close with 1011 went out instead
             webSocket = input
-            upgrade.upgrade(input.channel, input.output(stream.output), engineDispatcher, userDispatcher).join()
+            val out = input.output(stream.output)
+            sessionOutput = out
+            upgrade.upgrade(input.channel, out, engineDispatcher, userDispatcher).join()
         } finally {
             // the session is over: nothing reads its input any more, so the guard stops here, before it copies what the
             // client still sends into a channel nobody reads; then the extension's state is freed (the guard inflates with
@@ -149,27 +154,35 @@ internal class H3UpgradeResponse(
             // stopped, with H3_NO_ERROR (RFC 9114 section 4.1: the code "SHOULD be used when requesting that the client stop
             // sending"); one that did gets no STOP_SENDING (RFC 9000 section 3.5: once all stream data was received
             // "sending a STOP_SENDING frame is unnecessary")
-            try {
-                currentCoroutineContext().ensureActive()
-                stream.output.flushAndClose()
-                val clientEnded =
-                    withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) {
-                        guardStopped.await() // the guard's last read is over: the input is this coroutine's now
-                        try {
-                            stream.input.discard()
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Throwable) {
-                            // the client reset its direction: it ended all the same
-                        }
-                    }
-                if (clientEnded == null) runCatching { stream.stopSending(Http3ErrorCode.NO_ERROR) }
-            } catch (e: CancellationException) {
+            // A session whose writer ended inside a frame (the guard resets that already) gets no FIN after the cut frame:
+            // the same reset, both directions
+            if (sessionOutput?.isWebSocketFrameCut() == true) {
                 runCatching { stream.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
                 runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
-                throw e
-            } finally {
                 stream.input.cancel()
+            } else {
+                try {
+                    currentCoroutineContext().ensureActive()
+                    stream.output.flushAndClose()
+                    val clientEnded =
+                        withTimeoutOrNull(WebSocketOverH2.CLOSE_WAIT) {
+                            guardStopped.await() // the guard's last read is over: the input is this coroutine's now
+                            try {
+                                stream.input.discard()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Throwable) {
+                                // the client reset its direction: it ended all the same
+                            }
+                        }
+                    if (clientEnded == null) runCatching { stream.stopSending(Http3ErrorCode.NO_ERROR) }
+                } catch (e: CancellationException) {
+                    runCatching { stream.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+                    runCatching { stream.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                    throw e
+                } finally {
+                    stream.input.cancel()
+                }
             }
         }
     }

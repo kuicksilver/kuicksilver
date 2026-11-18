@@ -48,6 +48,35 @@ class WebSocketTransportEndTest {
         )
     }
 
+    /**
+     * Ktor's `WebSocketWriter` cancelled inside a large frame (the close wait cut it while a server did not read) still
+     * ends its channel with `flushAndClose()`, so the writer looks done although the frame guard is inside the frame and
+     * the rest of the frame and the Close never reached the connection. Before, that writer counted as done, the
+     * connection got a FIN after the cut frame, and the server read `[binary 16777216, cut]` as a clean end
+     * (`ClientWebSocketCloseTest.negative_anUnwrittenCloseIsBoundedByTheCloseWait` in the local matrix's Docker step,
+     * 2026-11-18); now it is reset.
+     */
+    @Test fun negative_aWriterThatEndedInsideAFrameIsReset() {
+        for (inOrder in listOf(true, false)) {
+            for (drained in listOf(true, false)) {
+                for (cut in listOf(true, false)) {
+                    assertEquals(
+                        WebSocketTransportEnd.Reset,
+                        webSocketTransportEnd(
+                            endedInOrder = inOrder,
+                            failed = false,
+                            writerDone = true,
+                            atFrameBoundary = false,
+                            drained = drained,
+                            cutByCloseWait = cut,
+                        ),
+                        "in order: $inOrder, drained: $drained, cut by the close wait: $cut",
+                    )
+                }
+            }
+        }
+    }
+
     @Test fun everyCombinationFollowsTheRule() {
         val b = listOf(false, true)
         for (inOrder in b) {
@@ -60,13 +89,13 @@ class WebSocketTransportEndTest {
                                 val got = webSocketTransportEnd(inOrder, failed, writerDone, boundary, drained, cut)
                                 val want =
                                     when {
-                                        inOrder && writerDone -> WebSocketTransportEnd.AfterServer
+                                        inOrder && writerDone && boundary -> WebSocketTransportEnd.AfterServer
 
                                         failed -> WebSocketTransportEnd.Reset
 
-                                        !writerDone && !boundary -> WebSocketTransportEnd.Reset
+                                        !boundary -> WebSocketTransportEnd.Reset
 
-                                        // a frame cut in the middle
+                                        // a frame cut in the middle, whether or not the writer ended its channel
                                         !drained && cut -> WebSocketTransportEnd.Reset
 
                                         // queued data never leaves after the close wait
