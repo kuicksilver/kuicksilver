@@ -980,7 +980,8 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
         pf[1].fd = u->wake;
         pf[1].events = POLLRDNORM;
         int pr;
-        KSL_COUNT(u->waits);
+        if (wait != 0) /* a zero-timeout WSAPoll does not wait: not counted, as on POSIX */
+            KSL_COUNT(u->waits);
 #ifdef KSL_TEST
         KSL_COUNT(u->polls);
         if (u->fake_pollerr) {
