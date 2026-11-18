@@ -890,6 +890,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   goes with the first release that merges it). The second also aborts with illegal_parameter when a HelloRetryRequest
   rejected ECH and the ServerHello then confirms it (RFC 9849 section 6.1.4: acceptance is decided by the server's first
   message).
+- The bundled OpenSSL carries two more ECH patches of Kuicksilver's own (`patch_3`, `patch_4`; the pin profile now takes
+  up to `patch_9`, each after all the ones before it). `openssl-4.1.0-ech-retry-configs-raw.patch` makes
+  `SSL_ech_get1_retry_config` hand over the server's `retry_configs` once their framing holds. Before, one ECHConfig
+  OpenSSL could not use dropped the whole list, as did a first entry of another version and a list past 1500 bytes.
+  `openssl-4.1.0-ech-sni-padding.patch` pads the inner server name by max(0, M − D) (RFC 9849 section 6.1.3; 4.1.0
+  padded 9 bytes less). Upstream issues are to be filed.
+- TLS, Encrypted Client Hello (`ksl`). Each item is checked where OpenSSL 4.1 does not:
+  - An ECHConfigList whose 0xfe0d ECHConfig is malformed, for example by a trailing byte or an extension type given
+    twice, does not parse (RFC 9849 sections 4, 4.2).
+  - A rejection where the server resumed a session (section 6.1.2), or whose `retry_configs` do not parse (section
+    6.1.6), fails the handshake instead of reporting a rejection: no retry configurations, never "securely disabled".
+  - `retry_configs` on an accepted ECH (section 5), and malformed ones after GREASE (section 6.2.1), fail the session.
+  - Over QUIC these failures close with the alert the RFC names. Over TCP the alert is OpenSSL's `ech_required`, or
+    there is none.
+  - A server refuses an accepted inner ClientHello that offers TLS 1.2 or below, with `illegal_parameter` (section 7.1).
+  - GREASE takes a cipher suite at random per handshake.
+  - A server context's ECH key lock is made with the context. A first key set from several threads raced, and
+    ThreadSanitizer saw it.
+  - A lock failure answers `KSL_E_NO_MEMORY`.
+  - The JVM binding no longer reports a failed allocation as an ECHConfigList that does not parse.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

@@ -62,9 +62,9 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   shared mode with key rotation and retry configurations. No split mode.
 - **Bug A is worked around in `ksl`**: no client custom extension that declines to be sent on an ECH session; the bug is
   reported to OpenSSL as well.
-- **Two carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C). Until now the
-  bundled OpenSSL has been the upstream release tarball exactly, checked by its signature and SHA-256 and nothing else.
-  The build carries two minimal patches, applied in this order:
+- **Four carried OpenSSL patches, as an exception** (owner decisions 2026-11-18: bug B, then bug C; 2026-11-19: M1 and
+  the padding of section 6.1.3). Until now the bundled OpenSSL has been the upstream release tarball exactly, checked by
+  its signature and SHA-256 and nothing else. The build carries four minimal patches, applied in this order:
   1. `openssl-4.1.0-ech-hrr-custom-ext.patch` (bug B: ECH after a HelloRetryRequest with a client's own custom
      extension, which every QUIC client has). Upstream code: the `ssl/statem/extensions.c` hunk of OpenSSL commit
      openssl/openssl@981f976bb0 (pull request #33246, issue #33231), merged to master, openssl-4.1 and openssl-4.0 on 2026-11-13;
@@ -72,19 +72,31 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   2. `openssl-4.1.0-ech-hrr-rejection.patch` (bug C: a rejection after a HelloRetryRequest ends with `illegal_parameter`
      instead of the rejection path of RFC 9849 section 6.1.6). Upstream code until it merges: the
      `ssl/statem/statem_clnt.c` hunk of OpenSSL pull request #33233 (open, in review; the patch header records the PR
-     head commit it was taken from); dropped with the first release that merges it.
-  The rules for both:
-  - both bugs are known upstream (B: issue #33231, fixed; C: pull request #33233), so nothing is filed; the patches carry
-    upstream's code verbatim (source hunks only, the build has no tests), and each is dropped on its own condition
-    above;
+     head commit it was taken from); dropped with the first release that merges it;
+  3. `openssl-4.1.0-ech-retry-configs-raw.patch` (M1, Kuicksilver's own code: `SSL_ech_get1_retry_config` checks only
+     the framing of the server's `retry_configs` and hands them over as sent. 4.1.0 decoded them into a store first,
+     which dropped the whole list for one ECHConfig it could not use, for a first entry of another version and for a list
+     past 1500 bytes, and gave no way to tell a list that does not frame from those. `ksl` checks each ECHConfig itself);
+  4. `openssl-4.1.0-ech-sni-padding.patch` (Kuicksilver's own code: the inner server_name padding of RFC 9849 section
+     6.1.3 is max(0, M − D); 4.1.0 compared M with D + 9 and padded 9 bytes less).
+  The rules for all four:
+  - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
+    upstream's code verbatim (source hunks only, the build has no tests). For patches 3 and 4 upstream issues are
+    drafted (2026-11-19) and to be filed; they are minimal, apply unchanged to OpenSSL master at df4c3359, and their
+    headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
+    that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
-    `patch_sha256`, then `patch_2`, `patch_2_sha256`); `tools/openssl/build.sh` applies them in that order to the
-    verified tarball (`apply-patch.pl`, exactly, both or neither) and refuses a patch whose hash differs, and a second
-    patch without a first;
+    `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_9`); `tools/openssl/build.sh` applies them in
+    that order to the verified tarball (`apply-patch.pl`, exactly, all or none) and refuses a patch whose hash differs,
+    and a patch without all the ones before it;
   - the patches and their hashes are listed in the build's provenance (`provenance.txt`, the release provenance and the
     SBOM) and are part of the build cache's key and of `configure-target.txt`;
   - the reproducibility checks (the double build, `tools/verify/verify-release.sh`) rebuild with the same patches;
-  - no further patch is carried without a new decision.
+  - no further patch is carried without a new decision;
+  - the other client-side gaps of OpenSSL 4.1 (sections 5, 6.1.2, 6.1.6 and 6.2.1: outcomes it does not refuse;
+    section 7.1: a server that accepts an inner ClientHello offering TLS 1.2; a GREASE suite that never changes) are
+    checked in `ksl` without a patch (below, "ECH in `ksl`"), and drafts of upstream issues for them are filed with the
+    others.
 - **On rejection the certificate is checked against the `public_name`**, in `ksl_verify.c` and on the paused path of the
   platform verifiers alike.
   The implementation comes with the move to 4.1.x, not with this ADR.
@@ -179,7 +191,7 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   `kuicksilver:openssl:patch`. The double build and `verify-release.sh` run the same `build.sh`, so they apply it too.
   `tools/openssl/apply-patch-test.sh` (CI lint) keeps the applier exact and the hash check in place.
 - **Leaving.** Renovate's note for an OpenSSL update says to check the release for the fix: the patch, its two pin
-  lines and the file go with 4.1.1 (`patch_2` then becomes `patch`). `gradle/openssl-next.toml` carries the same lines while it
+  lines and the file go with 4.1.1 (the later patches are renumbered: `patch_2` becomes `patch`, and so on). `gradle/openssl-next.toml` carries the same lines while it
   names a release without the fix, so the `openssl-next` job tests what would ship.
 - **Upstream.** Bug B is OpenSSL issue #33231, fixed by openssl/openssl@981f976bb0; bug A is issue #33487 with pull request #33532 in
   review. Nothing is filed from here.
@@ -198,7 +210,26 @@ quic-go, Android's platform TLS), and without it the server name of every connec
 - **The ECHConfigList is checked entry by entry.** OpenSSL refuses a whole list for one ECHConfig it cannot use (another
   version is skipped, but an unsupported KEM, suite or mandatory extension, or a bad `public_name`, fails the list),
   where RFC 9849 ignores that ECHConfig alone; `ksl_ech_config_list_check` hands each entry to OpenSSL as a list of one
-  and keeps those it takes. It is the one ECH parser of `ksl` (fuzz mode `0xfc`).
+  and keeps those it takes. Before that, `list_syntax_ok` checks the syntax OpenSSL leaves out: an ECHConfig of
+  version 0xfe0d well formed to its last byte, no extension type twice (section 4.2). It is the one ECH parser of `ksl`
+  (fuzz mode `0xfc`), for lists from DNS, configurations and `retry_configs` alike (the third carried patch gives it
+  the server's bytes).
+- **Outcomes OpenSSL 4.1 does not refuse (2026-11-19).** A rejection is recorded when our `ech_required` goes out
+  (`info_cb`). After it, a server that resumed a session (section 6.1.2) or `retry_configs` that do not parse
+  (section 6.1.6) are reported as a failed handshake, not a rejection: no retry configurations, never "securely
+  disabled". On a completed handshake, `retry_configs` on an accepted ECH (section 5) and malformed ones after GREASE
+  (section 6.2.1) fail the session before it counts as established. Over QUIC the CONNECTION_CLOSE carries the alert
+  the RFC names. Over TCP OpenSSL has written `ech_required` first, or the client's Finished is out and OpenSSL 4.1 has
+  no call to send an alert (a deviation, `docs/spec/rfc/9849.md`).
+- **The server's side of section 7.1.** ksl's ClientHello callback sees the decrypted inner ClientHello of an accepted
+  ECH and refuses one that offers TLS 1.2 or below with `illegal_parameter`; OpenSSL 4.1 does not check it.
+- **GREASE (section 6.2.1).** Each GREASE handshake takes one of the suites a Kuicksilver client uses with a real
+  ECHConfig (HKDF-SHA256 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305) at random, set when the handshake starts
+  (`SSL_ech_set1_grease_suite` marks the session as GREASE, so not at `ksl_ssl_new`, where a configuration may still
+  follow).
+- **The key lock.** A server context's ECH key lock is made by `ksl_ctx_new`: the first `ksl_ctx_set_ech_keys` making it
+  lazily raced other setters and session creation (ThreadSanitizer). `kuicksilver-tls` gives the initial keys when it
+  builds the context, not at the first session.
 - **The name on rejection.** `ksl_match_leaf` takes the name OpenSSL verifies (`X509_VERIFY_PARAM` host, which OpenSSL
   replaces by the `public_name` on rejection), and `KSL_GET_VERIFY_NAME` hands it to the paused path.
 - **Rotation.** The keys are an `OSSL_ECHSTORE` held by the context and replaced whole under a lock, also on a frozen
@@ -250,5 +281,6 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   `public_name` during a rejection and its certificate is the one the client checks.
 - **No client certificate on a rejection.** OpenSSL 4.1 sends `ech_required` once the server's Finished is verified, before
   the client's flight, so no Certificate message leaves (RFC 9849 section 6.1.7 asks for an empty one if the client goes on;
-  BoringSSL goes on and sends it); the C test `ech_rejection_sends_no_client_certificate` pins it.
+  BoringSSL goes on and sends it); the C test `ech_rejection_sends_no_client_certificate` pins it. Accepted deviation,
+  upstream issue https://github.com/openssl/openssl/issues/33831 (no patch is carried for it).
 
