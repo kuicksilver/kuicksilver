@@ -599,6 +599,10 @@ internal class ServerRequestImpl(
 
     private val datagramChannel = if (hasDatagramSemantics(method, protocol)) session.datagrams.register(st.id) else null
 
+    /** Tests: datagrams for this request wait to be read (they arrived before its CONNECT was answered). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    internal val datagramsWaitingForTest: Boolean get() = datagramChannel?.isEmpty == false
+
     /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
     var tunnel = false
         private set

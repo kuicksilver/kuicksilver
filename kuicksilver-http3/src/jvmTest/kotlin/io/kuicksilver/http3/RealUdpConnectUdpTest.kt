@@ -35,6 +35,9 @@ class RealUdpConnectUdpTest {
 
     private val loopback = InetSocketAddress("127.0.0.1", 0)
 
+    /** The proxy's target sockets. */
+    private val opened = java.util.concurrent.CopyOnWriteArrayList<DatagramIo>()
+
     private suspend fun proxyServer(): Pair<Http3Endpoint, UdpProxy> {
         val endpoint =
             Http3Endpoint.bind(
@@ -49,7 +52,7 @@ class RealUdpConnectUdpTest {
             UdpProxy(
                 UdpProxyConfig(
                     targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
-                    socketFactory = { DatagramIo.open(loopback) },
+                    socketFactory = { DatagramIo.open(loopback).also { opened += it } },
                 ),
             )
         return endpoint to proxy
@@ -96,6 +99,14 @@ class RealUdpConnectUdpTest {
                     tunnel.send("over real UDP".encodeToByteArray())
                     assertContentEquals("echo:over real UDP".encodeToByteArray(), withTimeout(10.seconds) { tunnel.payloads.first() })
                     assertEquals(1, proxy.stats.toTargets)
+                    // RFC 9298 section 3.1: "In IPv4, the Don't Fragment (DF) bit MUST be set, if possible": the default,
+                    // accelerated socket sets it (the portable one cannot)
+                    assertEquals(
+                        true,
+                        opened
+                            .single()
+                            .capabilities.value.df,
+                    )
                     tunnel.close()
                     withTimeout(10.seconds) { proxy.activeTunnels.first { it == 0 } }
                     echoing.cancel()

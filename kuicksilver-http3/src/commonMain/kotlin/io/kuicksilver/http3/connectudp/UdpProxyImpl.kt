@@ -93,6 +93,12 @@ internal class UdpProxyImpl(
     /** Tests shorten the idle timeout below the two minutes [UdpProxyConfig] allows. */
     internal var idleTimeoutForTest: Duration? = null
 
+    /** Tests: runs once the socket is open, before the request is answered. */
+    internal var beforeAnswerForTest: (suspend (Http3ServerRequest) -> Unit)? = null
+
+    /** Tests: runs as soon as the 2xx was handed to the stream, before anything is forwarded. */
+    internal var answeredForTest: (() -> Unit)? = null
+
     /** How long ending a tunnel gracefully (its queued capsules, then FIN) may take before the stream is reset. */
     internal var closeTimeout: Duration = 5.seconds
 
@@ -199,6 +205,7 @@ internal class UdpProxyImpl(
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
             io.io.disableEcnMarking()
             val payloadLimit = config.linkMtu - if (v4) IPV4_UDP_OVERHEAD else IPV6_UDP_OVERHEAD
+            beforeAnswerForTest?.invoke(request)
             val stream =
                 try {
                     request.acceptConnect(Http3Headers(listOf(CapsuleProtocol.Enabled)))
@@ -208,6 +215,7 @@ internal class UdpProxyImpl(
                     count(refused)
                     return // a request that rules capsules out was answered 400; a stream already gone needs nothing
                 }
+            answeredForTest?.invoke()
             val impl = stream as Http3StreamImpl
             val filter =
                 DatagramFilter { ctx, len ->

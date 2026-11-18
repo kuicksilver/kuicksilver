@@ -44,6 +44,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -59,6 +60,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -154,11 +156,15 @@ internal class ClosingIo(
     val ecnSent = ArrayList<io.kuicksilver.quic.Ecn>()
     var ecnMarkingDisabled = false
 
+    /** Runs before each send (the tests' observer of when the proxy first sent). */
+    @kotlin.concurrent.Volatile var onSend: (() -> Unit)? = null
+
     override fun disableEcnMarking() {
         ecnMarkingDisabled = true
     }
 
     override suspend fun send(batch: io.kuicksilver.quic.PacketBatch): Int {
+        onSend?.invoke()
         for (i in 0 until batch.count) ecnSent += batch.ecn(i)
         return io.send(batch)
     }
@@ -208,6 +214,44 @@ class ConnectUdpTest {
                 withTimeout(5.seconds) { tunnel.payloads.toList() }
                 withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
                 assertEquals(1, rig.proxy.stats.tunnelsOpened)
+            }
+        }
+
+    /**
+     * Section 3.1, section 5: a datagram the client sent before the answer (it "MAY optimistically start sending") reaches
+     * the target only after the 2xx went out: the proxy forwards nothing before it answered.
+     */
+    @Test fun noUdpGoesToTheTargetBeforeTheAnswer() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                val got = rig.echo(echoAt)
+                val requestArrived = CompletableDeferred<Unit>()
+                val datagramSent = CompletableDeferred<Unit>()
+                val answered = kotlin.concurrent.atomics.AtomicBoolean(false)
+                val sentBeforeAnswer = kotlin.concurrent.atomics.AtomicBoolean(false)
+                rig.proxy.impl.beforeAnswerForTest = { request ->
+                    rig.sockets.single().onSend = { if (!answered.load()) sentBeforeAnswer.store(true) }
+                    requestArrived.complete(Unit)
+                    datagramSent.await()
+                    // the early datagram waits on the request (32 at most, RFC 9297 section 2.1) while it is unanswered
+                    withTimeout(5.seconds) {
+                        while (!(request as io.kuicksilver.http3.runtime.ServerRequestImpl).datagramsWaitingForTest) {
+                            kotlinx.coroutines
+                                .yield()
+                        }
+                    }
+                }
+                rig.proxy.impl.answeredForTest = { answered.store(true) }
+                val tunnel = async { p.client.connectUdp(template, "192.0.2.50", 5000) }
+                withTimeout(5.seconds) { requestArrived.await() }
+                // the client's first request stream is 0: Quarter Stream ID 0, Context ID 0 (RFC 9297 section 2.1, RFC 9298 section 5)
+                assertEquals(DatagramSendResult.Sent, p.client.quic.trySendDatagram(byteArrayOf(0, 0) + "early".encodeToByteArray()))
+                datagramSent.complete(Unit)
+                assertContentEquals("early".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                assertTrue(answered.load())
+                assertFalse(sentBeforeAnswer.load(), "the proxy sent to the target before it answered")
+                withTimeout(5.seconds) { tunnel.await() }.close()
             }
         }
 

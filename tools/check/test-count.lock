@@ -396,6 +396,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unansweredTargetIsNotFlooded
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unknownContextIdIsDroppedByTheClient
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unknownContextIdIsDroppedByTheProxy
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.noUdpGoesToTheTargetBeforeTheAnswer
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.http3ThroughTheProxy
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.tunnelSocketShape
