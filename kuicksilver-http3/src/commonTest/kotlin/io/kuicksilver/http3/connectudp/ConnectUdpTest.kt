@@ -37,7 +37,9 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,7 +78,10 @@ internal class ProxyRig(
     val pair: H3Pair,
     configure: (suspend (InetSocketAddress) -> io.kuicksilver.quic.DatagramIo) -> UdpProxyConfig,
 ) : AutoCloseable {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** What a rig coroutine threw: checked by [close], since on Kotlin/Native an uncaught exception ends the test process. */
+    private val failures = Channel<Throwable>(Channel.UNLIMITED)
+    private val scope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> failures.trySend(e) })
     private val nextPort = AtomicInt(40_000)
     val socketsOpened = AtomicInt(0)
     val socketsClosed = Channel<InetSocketAddress>(Channel.UNLIMITED)
@@ -99,7 +104,14 @@ internal class ProxyRig(
     fun serveAll() {
         scope.launch {
             while (true) {
-                val r = pair.server.acceptRequest()
+                val r =
+                    try {
+                        pair.server.acceptRequest()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        return@launch // the server's connection ended (the test closed the pair)
+                    }
                 launch { proxy.serve(r) }
             }
         }
@@ -112,7 +124,7 @@ internal class ProxyRig(
         scope.launch {
             try {
                 while (true) {
-                    val (bytes, from) = io.inbox.receive()
+                    val (bytes, from) = io.inbox.receiveCatching().getOrNull() ?: return@launch // the socket was closed
                     got.trySend(bytes)
                     pair.quic.net.deliver(address, from, "echo:".encodeToByteArray() + bytes)
                 }
@@ -129,6 +141,7 @@ internal class ProxyRig(
     override fun close() {
         scope.cancel()
         pair.close()
+        failures.tryReceive().getOrNull()?.let { throw AssertionError("a coroutine of the rig failed", it) }
     }
 }
 
