@@ -4955,6 +4955,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamSchedulerTest.u
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.ackAfterResetDoesNotDoubleCountSendBuffer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.ackedDataReleasesSendBuffer
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.bidiPeerStreamCountsClosedWhenBothHalvesConsumed
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.cancelledEarlyRequestWhoseResponseEndedBeforeTheAnswerIsOfferedAgainAtTheAcceptance
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.connectionWindowFollowsStreamWindow
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.dataBeyondAGapRaisesTheHighestOffset
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.dataBeyondFinalSizeIsFinalSizeError
@@ -4970,6 +4971,7 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.maxSt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.maxStreamDataRaisesStreamWritable
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.maxStreamsRaisesStreamsAvailable
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.minusOneAfterAResetReportsItsCode
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_cancelledEarlyRequestIsNotOfferedAgainAtARejection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_changedCodeAfterResetStreamAtIsStreamStateError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_flowControlErrorKeepsReceivedWithinLimit
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.stream.StreamStateTest.negative_repeatedResetRaisesOneEvent
