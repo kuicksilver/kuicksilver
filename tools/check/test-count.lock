@@ -5317,6 +5317,8 @@ kuicksilver-testing/src/commonTest	io.kuicksilver.testing.SimulatorTest.tailLoss
 kuicksilver-testing/src/commonTest	io.kuicksilver.testing.SimulatorTest.transfer10MiBNoLoss
 kuicksilver-testing/src/commonTest	io.kuicksilver.testing.SimulatorTest.transferWithFivePercentLoss
 kuicksilver-testing/src/commonTest	io.kuicksilver.testing.SimulatorTest.uploadIsWindowLimitedNotQuantumLimited
+kuicksilver-testing/src/commonTest	io.kuicksilver.testing.TraceHashTest.negative_theOldOffsetBasisIsNotTheBasis
+kuicksilver-testing/src/commonTest	io.kuicksilver.testing.TraceHashTest.theReferenceValuesHold
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrHarshScenarioTest.ackAggregationLikeWifi
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrHarshScenarioTest.blackholeOfTwoSeconds
 kuicksilver-testing/src/jvmTest	io.kuicksilver.testing.BbrHarshScenarioTest.deepBufferSharedWithCubic

@@ -789,6 +789,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Testing: `SimResult.traceHash` of the `kuicksilver-testing` simulator is FNV-1a 64 with the standard offset basis
+  (14695981039346656037; it was one digit short), so its values differ from earlier versions; the same seed still gives the
+  same hash in every run.
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets
