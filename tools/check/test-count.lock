@@ -2801,6 +2801,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.g
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.h1ClientStillServed
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.largeResponseAndHead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.largeUploadThroughSmallWindows
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.negative_aStopDoesNotWaitForAPrefaceInProgress
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.negative_altSvcGoesOutAsAnAltSvcFrameOnH2
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.negative_connectionLimitCountsH2
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.negative_contentLengthMismatch

@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.server
 
 import io.ktor.server.request.httpVersion
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -226,20 +227,30 @@ class ServerH2cTest {
 
     /**
      * A stopping server reads no further request: a connection still sending the preface on [H2cMode.WithHttp11] goes to
-     * HTTP/1.1, which closes it as idle at once, instead of holding the stop for the request-head deadline (60 s here).
+     * HTTP/1.1, which closes it as idle at once, and one on [H2cMode.Only] gets GOAWAY and the close, instead of holding
+     * the stop for the request-head deadline (60 s here).
      */
     @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
         serverTest {
-            val (server, port) = h2cServer(H2cMode.WithHttp11, configure = { requestHeaderTimeoutSeconds = 60 })
-            RawH2Client.connectPlain(port).use { raw ->
-                raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
-                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
-                val t =
-                    kotlin.time.TimeSource.Monotonic
-                        .markNow()
-                server.stopSuspend(10_000, 15_000)
-                assertTrue(t.elapsedNow() < 5.seconds, "the stop waited ${t.elapsedNow()}")
-                raw.readToEnd(within = 15.seconds)
+            for (mode in listOf(H2cMode.WithHttp11, H2cMode.Only)) {
+                val (server, port) = h2cServer(mode, configure = { requestHeaderTimeoutSeconds = 60 })
+                RawH2Client.connectPlain(port).use { raw ->
+                    raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
+                    withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                    // Only: the HTTP/2 connection is waiting for the rest of the preface
+                    if (mode == H2cMode.Only) {
+                        withTimeout(10.seconds) {
+                            server.engine.h2Live.count
+                                .first { it == 1 }
+                        }
+                    }
+                    val t =
+                        kotlin.time.TimeSource.Monotonic
+                            .markNow()
+                    server.stopSuspend(10_000, 15_000)
+                    assertTrue(t.elapsedNow() < 5.seconds, "$mode: the stop waited ${t.elapsedNow()}")
+                    raw.readToEnd(within = 15.seconds)
+                }
             }
         }
 
@@ -306,7 +317,8 @@ class ServerH2cTest {
      * Request smuggling between an HTTP/1.1 front and an h2c back end (ADR-0018, threat model): the message checks of HTTP/2
      * hold on h2c as on TLS. A connection-specific field (`transfer-encoding`, RFC 9113 section 8.2.2) or a
      * `content-length` that the DATA does not match (section 8.1.1) makes the request malformed: RST_STREAM with
-     * PROTOCOL_ERROR, never the application, and the connection serves the next request.
+     * PROTOCOL_ERROR: framing comes from HTTP/2 frames only, a handler that started on the HEADERS fails its body read and
+     * never sees the excess octets, and the connection serves the next request.
      */
     @Test fun negative_smugglingFieldsOverH2cAreMalformed() =
         serverTest {
@@ -319,6 +331,9 @@ class ServerH2cTest {
                             call.respondText("ok")
                         }
                         post("/") {
+                            // the handler may start on the HEADERS; the excess octets fail its body read, so it counts only
+                            // a body that reached it whole
+                            call.receiveText()
                             calls.update { it + 1 }
                             call.respondText("ok")
                         }

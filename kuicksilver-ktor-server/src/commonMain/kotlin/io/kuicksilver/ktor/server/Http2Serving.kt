@@ -27,12 +27,14 @@ import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -156,17 +158,33 @@ internal suspend fun KuicksilverApplicationEngine.serveH2(
             events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_2_0, remote) }
             // RFC 9113 section 3.4: the client preface, within the request-head deadline (as the first request head on HTTP/1.1)
             // a preface read as the deadline fires is the preface (withTimeoutOrNull drops what the wait returned when its
-            // timeout lands after it, and the connection was ended with GOAWAY)
+            // timeout lands after it, and the connection was ended with GOAWAY). A stopping server reads no further request:
+            // a preface still arriving when it starts draining is not waited for (the GOAWAY below, last stream 0, tells the
+            // client nothing was processed), else one slow or silent client held the stop for the whole deadline
             val preface =
                 completedWithin(prefaceWithin) {
-                    runCatching { c.awaitPreface() }.isSuccess.also { configuration.h2PrefaceForTest?.invoke() }
+                    coroutineScope {
+                        val arrived = async { runCatching { c.awaitPreface() }.isSuccess }
+                        try {
+                            select {
+                                arrived.onAwait { it }
+                                draining.onJoin { false }
+                            }
+                        } finally {
+                            arrived.cancel()
+                        }
+                    }.also { configuration.h2PrefaceForTest?.invoke() }
                 }
             if (preface != true) {
                 // section 9.1: GOAWAY before the close (no stream was taken: its last stream is 0); a client that does not
                 // even read it is cut off after the send-stall deadline
                 c.goAway(Http2ErrorCode.NO_ERROR)
                 if (withTimeoutOrNull(sendTimeout) { c.awaitClosed() } == null) {
-                    c.abort(IOException("no HTTP/2 connection preface within the request header timeout ($headerTimeout)"))
+                    c.abort(
+                        IOException(
+                            "no HTTP/2 connection preface within the request header timeout ($headerTimeout), or the server stopped",
+                        ),
+                    )
                     sock.abort()
                 }
                 return@coroutineScope
