@@ -83,7 +83,7 @@ def up(rel):
     return "../" * rel.count("/")
 
 
-def shell(m, rel, title, body, langs, base_url, style, nav=""):
+def shell(m, rel, title, body, langs, base_url, style, nav="", banner=""):
     """A page of language m at <prefix><rel> under the version directory. Links to the other languages are relative (the
     site's link check follows them); the hreflang alternates are absolute under base_url, as search engines want them."""
     here = m.prefix + rel
@@ -107,7 +107,7 @@ def shell(m, rel, title, body, langs, base_url, style, nav=""):
         f'<a href="{root}guide/index.html">{html.escape(m("nav.guide"))}</a> '
         f'<a href="{root}api/index.html">{html.escape(m("nav.api"))}</a> '
         f'<a href="{root}{m.prefix}verify/index.html">{html.escape(m("nav.verify"))}</a>'
-        f'<nav class="lang" aria-label="{html.escape(m("nav.language"))}">{switch}</nav></header>\n'
+        f'<nav class="lang" aria-label="{html.escape(m("nav.language"))}">{switch}</nav></header>\n' + banner
         + (f'<div class="layout">{nav}<main>\n{body}\n</main></div>' if nav else f"<main>\n{body}\n</main>")
         + "\n</body>\n</html>\n"
     )

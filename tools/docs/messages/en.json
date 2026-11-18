@@ -132,5 +132,7 @@
   "col.fuzzTarget": "Fuzz target",
   "sizes.iosNote": "Kuicksilver.xcframework as the Swift package ships it: the dynamic framework binary of each slice is what an app embeds, the zip is what SwiftPM downloads. Kuicksilver's share of a linked app, by origin, is measured with tools/check/ios-size.sh.",
   "prov.expired": "The successful build.yml run of commit {sha}, started {date}, is known, but its results are no longer available (CI artifacts are kept 30 days): the sections that come from CI show no data.",
-  "benchmarks.perfConclusion": "perf.yml run {id} of this commit concluded {conclusion}."
+  "benchmarks.perfConclusion": "perf.yml run {id} of this commit concluded {conclusion}.",
+  "dev.banner": "Development snapshot of {sha} ({date}), not a release.",
+  "dev.releases": "All releases"
 }

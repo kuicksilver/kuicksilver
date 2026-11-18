@@ -314,7 +314,7 @@ rm -rf "$kp/oldschema/zh"; rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
 if "${py[@]}" keep --new "$kp/new" --old "$kp/oldschema" 2> /dev/null && untouched "$kp/oldschema" "$kp/new" && [ ! -e "$kp/new/zh/verify" ]; then
   pass "keep: kept as they are means no language the published pages lack (no zh no-data page beside them)"
 else fail "keep: kept as they are means no language the published pages lack (no zh no-data page beside them)"; fi
-grep -q '"schema": 1' "$out/0.3.0/verify/data.json" && pass "data.json carries its schema" || fail "data.json carries its schema"
+grep -q '"schema": 2' "$out/0.3.0/verify/data.json" && pass "data.json carries its schema" || fail "data.json carries its schema"
 if "${py[@]}" keep --new "$kp/missing" --old "$kp/fresh" 2> /dev/null; then fail "negative: keep without new pages fails"
 else pass "negative: keep without new pages fails"; fi
 
@@ -328,6 +328,31 @@ if ! PATH="$hs/bin:$PATH" bash "$hs/tools/interop/h2spec.sh" --no-build linux-x6
   && [ "$(cat "$hs/build/h2spec/variants.txt")" = "linux-x64 tls build/h2spec/linux-x64" ] && [ ! -e "$hs/build/h2spec/linux-x64/h2spec.txt" ]; then
   pass "negative: h2spec.sh without its image leaves a fresh manifest and no old report"
 else fail "negative: h2spec.sh without its image leaves a fresh manifest and no old report"; fi
+
+# the development snapshot (/dev/): the same data and rules, a banner with the commit and date on every page in every
+# language, the canonical and hreflang URLs under /dev/, and keep renders a kept dev page as dev again
+dv="$tmp/devsite"; mkdir -p "$dv/dev/guide" "$dv/dev/api"; echo '<html></html>' | tee "$dv/index.html" "$dv/dev/guide/index.html" > "$dv/dev/api/index.html"
+if "${py[@]}" build --sha "$SHA" --version 0.3.0-SNAPSHOT --ref "$SHA" --src "$src" --out "$dv/dev" --dir dev --snapshot-date 2026-11-18T09:00:00Z \
+     --meta "$fx/meta.json" --data "$data" 2> /dev/null \
+  && has "$dv/dev/verify/sizes.html" "Development snapshot of $SHA (2026-11-18T09:00:00Z), not a release." \
+  && has "$dv/dev/ru/verify/rfc.html" "Снимок разработки (development snapshot) коммита $SHA" \
+  && has "$dv/dev/zh/verify/how.html" "提交 ${SHA}（2026-11-18T09:00:00Z）的开发快照" \
+  && has "$dv/dev/verify/index.html" 'href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/index.html"' \
+  && has "$dv/dev/verify/index.html" 'href="../../index.html">All releases' \
+  && ! has "$out/0.3.0/verify/index.html" 'class="snapshot"' \
+  && python3 -I tools/docs/site.py check "$dv" > /dev/null 2>&1; then
+  pass "dev: banner with the commit and date in every language, URLs under /dev/, none on a release"
+else fail "dev: banner with the commit and date in every language, URLs under /dev/, none on a release"; fi
+cp -R "$dv/dev" "$kp/devold"; rm -rf "$kp/devnew"; mkdir -p "$kp/devnew"
+"${py[@]}" build --sha "$SHA" --version 0.3.0-SNAPSHOT --ref "$SHA" --src "$src" --out "$kp/devnew" --dir dev --snapshot-date 2026-11-18T09:00:00Z \
+  --meta "$fx/meta.json" --data "$tmp/emptydata" 2> /dev/null
+if "${py[@]}" keep --new "$kp/devnew" --old "$kp/devold" 2> /dev/null && has "$kp/devnew/zh/verify/platforms.html" '的开发快照' \
+  && has "$kp/devnew/verify/platforms.html" 'Data from the successful' \
+  && has "$kp/devnew/verify/platforms.html" 'href="https://kuicksilver.github.io/kuicksilver/dev/verify/platforms.html"'; then
+  pass "dev: keep renders the kept data of a snapshot as a snapshot, under /dev/"
+else fail "dev: keep renders the kept data of a snapshot as a snapshot, under /dev/"; fi
+if "${py[@]}" build --sha "$SHA" --version 0.3.0-SNAPSHOT --ref "$SHA" --src "$src" --out "$tmp/devbad" --dir dev > /dev/null 2>&1; then
+  fail "negative: --dir dev without the commit date is refused"; else pass "negative: --dir dev without the commit date is refused"; fi
 
 if "${py[@]}" build --sha "${SHA:0:12}" --version 0.3.0 --ref v0.3.0 --src "$src" --out "$tmp/short" > /dev/null 2>&1; then
   fail "negative: a short SHA is refused"; else pass "negative: a short SHA is refused"; fi

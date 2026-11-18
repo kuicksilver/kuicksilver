@@ -91,6 +91,30 @@ grep -q 'href="latest/verify/index.html"' "$out/index.html" && grep -q 'href="0.
   && "${site[@]}" check "$out" >/dev/null 2>&1 \
   && pass "landing links the verification pages of a version that has them" || fail "landing verification link"
 
+# the development snapshot: built into dev/ with a banner on every guide and API page, listed on the landing page
+# beside the releases, never latest/; a site with only the snapshot has a landing page too
+SHA=0123456789abcdef0123456789abcdef01234567
+"${site[@]}" build --version 0.4.0-SNAPSHOT --ref "$SHA" --api "$tmp/api" --guide "$repo/docs/guide" --out "$out" \
+  --dir dev --snapshot "$SHA" --snapshot-date 2026-11-18T09:00:00Z 2>/dev/null
+grep -q "Development snapshot</strong> of <code>$SHA</code> (2026-11-18T09:00:00Z), not a release" "$out/dev/guide/quic.html" \
+  && grep -q "of <code>$SHA</code>" "$out/dev/api/mod/index.html" && grep -q "/blob/$SHA/README.md" "$out/dev/guide/quic.html" \
+  && ! grep -q 'class="snapshot"' "$out/0.3.0/guide/quic.html" && [ -f "$out/dev/snapshot.json" ] \
+  && grep -q 'href="dev/guide/index.html"' "$out/index.html" && grep -q "<td>dev</td>" "$out/index.html" \
+  && grep -q 'Kuicksilver 0.3.0 guide' "$out/latest/guide/index.html" && "${site[@]}" check "$out" >/dev/null 2>&1 \
+  && pass "dev: banner on guide and API pages, links at the commit, listed on the landing page, never latest" \
+  || fail "dev: banner on guide and API pages, links at the commit, listed on the landing page, never latest"
+mkdir -p "$tmp/devonly"
+if "${site[@]}" build --version 0.4.0-SNAPSHOT --ref "$SHA" --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devonly" \
+     --dir dev --snapshot "$SHA" 2>/dev/null && grep -q 'No final release yet' "$tmp/devonly/index.html" \
+     && grep -q 'href="dev/api/index.html"' "$tmp/devonly/index.html" && [ ! -e "$tmp/devonly/latest" ]; then
+  pass "dev: a site with only the snapshot has a landing page and no latest"; else fail "dev: a site with only the snapshot"; fi
+if "${site[@]}" build --version 0.4.0-SNAPSHOT --ref main --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devbad" --dir dev >/dev/null 2>&1 \
+  || "${site[@]}" build --version 0.4.0-SNAPSHOT --ref main --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devbad" --snapshot "$SHA" >/dev/null 2>&1 \
+  || "${site[@]}" build --version 0.4.0-SNAPSHOT --ref main --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devbad" --dir dev --snapshot abc123 >/dev/null 2>&1 \
+  || "${site[@]}" build --version 0.4.0-SNAPSHOT --ref main --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devbad" --dir latest >/dev/null 2>&1; then
+  fail "negative_devArguments: dev without a snapshot, a snapshot without dev, a short SHA or another directory was accepted"
+else pass "negative_devArguments: dev and the snapshot go together, a full SHA, no other directory"; fi
+
 # negative controls
 neg="$tmp/neg"; cp -R "$out" "$neg"
 printf '<html><body><a href="nowhere.html">x</a></body></html>\n' > "$neg/0.3.0/guide/extra.html"

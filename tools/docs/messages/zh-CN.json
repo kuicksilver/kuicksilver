@@ -132,5 +132,7 @@
   "col.fuzzTarget": "模糊测试目标",
   "sizes.iosNote": "Swift 包所发布的 Kuicksilver.xcframework：每个切片（slice）的动态框架二进制文件即应用所嵌入的内容，zip 为 SwiftPM 下载的文件。Kuicksilver 在已链接应用中按来源划分的占比由 tools/check/ios-size.sh 测量。",
   "prov.expired": "已知提交 {sha} 的成功 build.yml 运行（开始于 {date}），但其结果已不可用（CI 构件保留 30 天）：来自 CI 的部分显示为无数据。",
-  "benchmarks.perfConclusion": "该提交的 perf.yml 运行 {id} 结论为 {conclusion}。"
+  "benchmarks.perfConclusion": "该提交的 perf.yml 运行 {id} 结论为 {conclusion}。",
+  "dev.banner": "提交 {sha}（{date}）的开发快照（development snapshot），不是发布版本。",
+  "dev.releases": "所有发布版本"
 }

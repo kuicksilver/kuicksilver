@@ -8,6 +8,10 @@
       OUT/index.html the landing page, OUT/latest/ a copy of the newest final release (none without one: never a
                      prerelease or snapshot); both recomputed from every version in OUT,
                      so building into a copy of the published site adds a version and keeps the others
+  site.py build ... --dir dev --snapshot SHA --snapshot-date DATE
+                     the development snapshot of a commit on main instead of a release: built into OUT/dev/, with a banner
+                     "development snapshot of <sha>, not a release" on every guide and API page and OUT/dev/snapshot.json
+                     (the commit and its date) for the landing page; never /latest/
   site.py index OUT  only the landing page and OUT/latest/, from the versions already in OUT (the Pages workflow, after it
                      put a newly built version into the published site)
   site.py check OUT [--version V --baseline FILE [--undocumented FILE] [--sources REPO]]
@@ -20,6 +24,7 @@
 """
 import argparse
 import html
+import json
 import os
 import posixpath
 import re
@@ -30,6 +35,7 @@ from html.parser import HTMLParser
 from urllib.parse import unquote
 
 REPO = "https://github.com/kuicksilver/kuicksilver"
+DEV = "dev"   # the directory of the development snapshot (the current main), beside the release versions
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
 # reading order of the guide index; a page not listed here follows in file name order
 GUIDE_ORDER = ["quic", "http3", "tls", "ktor", "deployment", "ios", "app-store", "configuration", "troubleshooting"]
@@ -61,6 +67,8 @@ th, td { border: 1px solid var(--line); padding: 6px 12px; vertical-align: top; 
 blockquote { margin: 0; padding: 0 16px; color: var(--muted); border-left: 4px solid var(--line); }
 li.task { list-style: none; }
 h1, h2, h3 { line-height: 1.25; }
+.snapshot { background: #fff8c5; color: #3b2300; border-bottom: 1px solid #d4a72c; padding: 8px 16px; }
+@media (prefers-color-scheme: dark) { .snapshot { background: #3b2e00; color: #f0d58c; border-color: #9e6a03; } }
 h2 { border-bottom: 1px solid var(--line); padding-bottom: 0.3em; }
 @media (max-width: 760px) { .layout { display: block; } nav.pages { border-right: 0; border-bottom: 1px solid var(--line); }
   main { padding: 16px; } }
@@ -87,7 +95,17 @@ def slug(heading):
     return "".join(out)
 
 
-def page(title, version, body, nav="", depth=2):
+def snapshot_banner(sha, date, landing="../../index.html"):
+    """The notice on every page of a development snapshot (the guide, the API reference; the verification pages have
+    their own, translated, from tools/docs/verify.py)."""
+    if not sha:
+        return ""
+    return (f'<div class="snapshot" role="note"><strong>Development snapshot</strong> of <code>{html.escape(sha)}</code> '
+            f"({html.escape(date)}), not a release."
+            + (f' Releases: <a href="{landing}">all versions</a>.' if landing else "") + "</div>\n")
+
+
+def page(title, version, body, nav="", depth=2, banner=""):
     up = "../" * depth
     links = f'<a href="{up}index.html">Home</a>'
     if version:
@@ -98,13 +116,13 @@ def page(title, version, body, nav="", depth=2):
         f"<title>{html.escape(title)}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n"
         f'<header><a class="name" href="{up}index.html">Kuicksilver</a>'
         + (f'<span class="version">{html.escape(version)}</span>' if version else "")
-        + f"{links}</header>\n"
+        + f"{links}</header>\n" + banner
         + (f'<div class="layout">{nav}<main>\n{body}\n</main></div>' if nav else f"<main>\n{body}\n</main>")
         + "\n</body>\n</html>\n"
     )
 
 
-def render_guide(src, dst, version, ref):
+def render_guide(src, dst, version, ref, banner=""):
     from markdown_it import MarkdownIt
 
     md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
@@ -144,11 +162,11 @@ def render_guide(src, dst, version, ref):
         return f'<nav class="pages"><ul><li><a href="index.html">Guide</a></li>{items}</ul></nav>'
 
     for name, (title, body) in pages.items():
-        write(os.path.join(dst, name + ".html"), page(f"{title} - Kuicksilver {version}", version, body, nav(name)))
+        write(os.path.join(dst, name + ".html"), page(f"{title} - Kuicksilver {version}", version, body, nav(name), banner=banner))
     rows = "".join(f'<li><a href="{n}.html">{html.escape(t)}</a></li>' for n, (t, _) in pages.items())
     body = (f"<h1>Kuicksilver {html.escape(version)} guide</h1>\n<ul>{rows}</ul>\n"
             '<p>The <a href="../api/index.html">API reference</a> documents every public declaration.</p>')
-    write(os.path.join(dst, "index.html"), page(f"Guide - Kuicksilver {version}", version, body, nav("index")))
+    write(os.path.join(dst, "index.html"), page(f"Guide - Kuicksilver {version}", version, body, nav("index"), banner=banner))
 
 
 def task(item_open, inline):
@@ -188,7 +206,13 @@ def write(path, text):
 
 def landing(out):
     versions = sorted((d for d in os.listdir(out) if VERSION.match(d) and os.path.isdir(os.path.join(out, d))), key=version_key)
-    if not versions:
+    dev = None
+    try:
+        with open(os.path.join(out, DEV, "snapshot.json"), encoding="utf-8") as f:
+            dev = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if not versions and not dev:
         sys.exit(f"site.py: no version directory in {out}")
     finals = [v for v in versions if VERSION.match(v).group(4) is None]
     # /latest/ is the newest final release only, never a prerelease or snapshot: a prerelease is not on Maven Central,
@@ -211,12 +235,18 @@ def landing(out):
         + "</ul>\n"
         if latest else "<h2>No final release yet</h2>\n<p>Every version below is a prerelease or a snapshot.</p>\n"
     )
+    if dev:
+        head += (f"<h2>Development snapshot (dev)</h2>\n<p>The current <code>main</code>: commit "
+                 f"<code>{html.escape(dev.get('sha', ''))}</code> of {html.escape(dev.get('date', ''))}, not a release. "
+                 f'<a href="{DEV}/guide/index.html">Guide</a>, <a href="{DEV}/api/index.html">API reference</a>'
+                 + (f', <a href="{DEV}/verify/index.html">How we verify</a>' if os.path.isfile(os.path.join(out, DEV, "verify", "index.html")) else "")
+                 + ".</p>\n")
     rows = "".join(
         f'<tr><td>{html.escape(v)}</td><td><a href="{v}/guide/index.html">Guide</a></td>'
         f'<td><a href="{v}/api/index.html">API reference</a></td>'
         + (f'<td><a href="{v}/verify/index.html">How we verify</a></td>' if os.path.isfile(os.path.join(out, v, "verify", "index.html"))
            else "<td></td>")
-        + "</tr>" for v in reversed(versions)
+        + "</tr>" for v in ([DEV] if dev else []) + list(reversed(versions))
     )
     body = (
         "<h1>Kuicksilver</h1>\n<p>QUIC, HTTP/3 and TLS 1.3 for Kotlin Multiplatform, with Ktor client and server engines.</p>\n"
@@ -401,6 +431,9 @@ def main():
     b.add_argument("--api", required=True)
     b.add_argument("--guide", required=True)
     b.add_argument("--out", required=True)
+    b.add_argument("--dir", help=f"the directory under OUT (default: the version); '{DEV}' for a development snapshot")
+    b.add_argument("--snapshot", help="the commit of a development snapshot (with --dir dev)")
+    b.add_argument("--snapshot-date", default="", help="its commit date")
     sub.add_parser("index").add_argument("out")
     c = sub.add_parser("check")
     c.add_argument("out")
@@ -418,10 +451,34 @@ def main():
         return 0
     if not VERSION.match(args.version):
         sys.exit(f"site.py: '{args.version}' is not a version (X.Y.Z or X.Y.Z-suffix)")
-    target = os.path.join(args.out, args.version)
+    name = args.dir or args.version
+    if (name == DEV) != bool(args.snapshot):
+        sys.exit(f"site.py: --dir {DEV} and --snapshot go together")
+    if name != DEV and name != args.version:
+        sys.exit(f"site.py: --dir is the version or {DEV}")
+    if args.snapshot and not re.fullmatch(r"[0-9a-f]{40}", args.snapshot):
+        sys.exit(f"site.py: --snapshot '{args.snapshot}' is not a full commit SHA")
+    target = os.path.join(args.out, name)
     shutil.rmtree(target, ignore_errors=True)
     shutil.copytree(args.api, os.path.join(target, "api"))
-    render_guide(args.guide, os.path.join(target, "guide"), args.version, args.ref)
+    banner = snapshot_banner(args.snapshot, args.snapshot_date)
+    if banner:
+        # the same notice at the top of every API page (Dokka's own layout below it)
+        # (Dokka pages sit at every depth: no relative link to the landing page there)
+        styled = snapshot_banner(args.snapshot, args.snapshot_date, landing="").replace(
+            'class="snapshot"', 'class="snapshot" style="background:#fff8c5;color:#3b2300;padding:8px 16px;'
+            'font:14px/1.5 sans-serif;border-bottom:1px solid #d4a72c"')
+        for d, _, files in os.walk(os.path.join(target, "api")):
+            for f in files:
+                if f.endswith(".html"):
+                    p = os.path.join(d, f)
+                    text = open(p, encoding="utf-8", errors="replace").read()
+                    new = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + styled, text, count=1)
+                    if new != text:
+                        write(p, new)
+        write(os.path.join(target, "snapshot.json"), json.dumps({"sha": args.snapshot, "date": args.snapshot_date,
+                                                                 "version": args.version}) + "\n")
+    render_guide(args.guide, os.path.join(target, "guide"), args.version, args.ref, banner)
     latest = landing(args.out)
     print(f"site.py: {target} built; latest is {latest or 'none (no final release)'}", file=sys.stderr)
     return 0

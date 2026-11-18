@@ -63,7 +63,7 @@ SITE_URL = "https://kuicksilver.github.io/kuicksilver/"
 SCHEMA = 2   # 2: run_attempt
 # the version of verify/data.json (the model the pages are rendered from): raise it with any change of its keys, so that
 # keep never renders an older one with code that reads it differently
-MODEL_SCHEMA = 1
+MODEL_SCHEMA = 2   # 2: dir and snapshot (the development snapshot /dev/)
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # the platform matrix, in this order; a target without a record shows "no data"
 TARGETS = ["jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64", "linuxArm64", "mingwX64"]
@@ -591,6 +591,9 @@ def build_model(args):
     return {
         "sha": args.sha,
         "version": args.version,
+        "dir": args.dir or args.version,
+        # a development snapshot of a commit on main (/dev/): its commit date; None for a release
+        "snapshot": {"sha": args.sha, "date": args.snapshot_date} if args.dir == "dev" else None,
         "ref": args.ref,
         "run": None if meta is None else {"id": meta.get("databaseId"), "date": meta.get("createdAt", ""),
                                           "url": meta.get("url", ""), "event": meta.get("event", "")},
@@ -963,7 +966,12 @@ def render(model, langs, out, base_url):
                 body = f'<p class="note">{esc(m("lang.unreviewed"))} <a href="{en}" hreflang="en" lang="en">English</a></p>\n' + body
             title = f"{m('page.' + p)} - Kuicksilver {model['version']}"
             path = os.path.join(out, m.prefix + rel)
-            site.write(path, i18n.shell(m, rel, title, body, langs, base_url, STYLE, nav))
+            banner = ""
+            if model.get("snapshot"):
+                sn = model["snapshot"]
+                banner = (f'<div class="snapshot" role="note">{esc(m("dev.banner", sha=sn["sha"], date=sn["date"]))} '
+                          f'<a href="{root}../index.html">{esc(m("dev.releases"))}</a></div>\n')
+            site.write(path, i18n.shell(m, rel, title, body, langs, base_url, STYLE, nav, banner))
             written.append(path)
     for name, svg in badges(model).items():
         site.write(os.path.join(out, "verify", "badges", name + ".svg"), svg)
@@ -983,7 +991,11 @@ def build(args):
     except i18n.MessageError as e:
         print(f"verify.py build: messages: {e}", file=sys.stderr)
         return 1
-    base = args.base_url or f"{SITE_URL}{args.version}/"
+    if (args.dir == "dev") != bool(args.snapshot_date):
+        sys.exit("verify.py build: --dir dev and --snapshot-date go together")
+    if args.dir not in (None, "dev", args.version):
+        sys.exit("verify.py build: --dir is the version or dev")
+    base = args.base_url or f"{SITE_URL}{args.dir or args.version}/"
     try:
         written = render(model, langs, args.out, base)
     except i18n.MessageError as e:
@@ -1039,7 +1051,7 @@ def keep(args):
             return 0
         tmp = tempfile.mkdtemp(prefix="verify-keep-")
         try:
-            render(old, langs, tmp, args.base_url or f"{SITE_URL}{old['version']}/")
+            render(old, langs, tmp, args.base_url or f"{SITE_URL}{old['dir']}/")
         except Exception as e:   # any error of the old model with this code: the published pages stay as they are
             shutil.rmtree(tmp, ignore_errors=True)
             _note(f"the published data.json of {old.get('sha')} does not render with this verify.py ({type(e).__name__}: {e}): "
@@ -1093,6 +1105,8 @@ def main():
     b.add_argument("--perf-meta")
     b.add_argument("--perf")
     b.add_argument("--base-url")
+    b.add_argument("--dir", help="the directory the pages are for: the version (default) or dev, a development snapshot")
+    b.add_argument("--snapshot-date", help="with --dir dev: the commit date shown in the snapshot banner")
     b.add_argument("--messages", default=os.path.join(HERE, "messages"))
     b.add_argument("--pairs", default=os.path.join(HERE, "engine-pairs.tsv"))
     k = sub.add_parser("keep")
