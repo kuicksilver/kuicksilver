@@ -263,7 +263,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    a push to `main` it publishes that run's guide and API reference (built by its `apple` job as the documentation gate,
    with a "development snapshot of <sha>, not a release" banner and links at the commit) and the verification pages
    from the same run; by hand, *Run workflow* with `ref` (a tag or a full commit SHA on `main`, whose push run is at most
-   7 days old) publishes that commit instead. The landing page lists `dev` beside the releases; `/latest/` is never a
+   7 days old) publishes that commit instead. An automatic update goes out only while its commit is still `main`'s tip
+   and the published snapshot is not newer (`tools/docs/dev-guard.sh`, right before the push), so a slow run never rolls
+   `/dev/` back; every snapshot page is `noindex`, so search engines show the release pages. The landing page lists `dev` beside the releases; `/latest/` is never a
    snapshot. Only `/dev/` is kept, not one directory per snapshot: each would add about 30 MB to `gh-pages`.
    After the first publication (0.3.0), once <https://kuicksilver.github.io/kuicksilver/latest/verify/index.html> loads,
    add the site link and three badges to the README's badge block, in a commit of their own (they would be broken

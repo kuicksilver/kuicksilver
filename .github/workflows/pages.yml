@@ -236,7 +236,11 @@ jobs:
           # a full one (push, schedule) before a dispatched one, which may have run only some jobs; a pull_request run built
           # a merge commit and never counts
           run="$TRIGGER"
-          if [ -z "$run" ]; then
+          if [ -z "$run" ] && [ "$CHANNEL" = dev ]; then
+            # a snapshot by hand: only a push run on main has the snapshot's site-dev
+            run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" --status success --limit 50 --json databaseId,event,headBranch \
+              --jq '[.[] | select(.event == "push" and .headBranch == "main")][0].databaseId // empty')
+          elif [ -z "$run" ]; then
             run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" --status success --limit 50 --json databaseId,event \
               --jq '([.[] | select(.event == "push" or .event == "schedule")] + [.[] | select(.event == "workflow_dispatch")])[0].databaseId // empty')
           fi
@@ -339,6 +343,9 @@ jobs:
         env:
           DIR: ${{ needs.resolve.outputs.dir }}
           SHA: ${{ needs.resolve.outputs.sha }}
+          CHANNEL: ${{ needs.resolve.outputs.channel }}
+          # auto: after a build.yml run (workflow_run), manual: by hand
+          MODE: ${{ needs.resolve.outputs.run != '' && 'auto' || 'manual' }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
@@ -357,7 +364,8 @@ jobs:
               2) git init --quiet -b gh-pages "$site" || exit 1 ;;   # no gh-pages yet: the first publication starts the branch
               *) echo "::error::git ls-remote $url failed ($rc)"; exit 1 ;;
             esac
-            rm -rf "$RUNNER_TEMP/this" && cp -R "$RUNNER_TEMP/new" "$RUNNER_TEMP/this" || exit 1
+            rm -rf "$RUNNER_TEMP/this" "$site.before" && cp -R "$RUNNER_TEMP/new" "$RUNNER_TEMP/this" || exit 1
+            mkdir -p "$site.before/dev" && { [ ! -f "$site/dev/snapshot.json" ] || cp "$site/dev/snapshot.json" "$site.before/dev/"; } || exit 1
             python3 -I tools/docs/verify.py keep --new "$RUNNER_TEMP/this" --old "$site/$DIR" || exit 1
             rm -rf "${site:?}/$DIR" && cp -R "$RUNNER_TEMP/this" "$site/$DIR" || exit 1
             python3 -I tools/docs/site.py index "$site" || exit 1
@@ -366,6 +374,19 @@ jobs:
             if git -C "$site" diff --cached --quiet; then echo "gh-pages already has $DIR of $SHA"; return 0; fi
             git -C "$site" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               commit --quiet -m "Documentation site: $DIR ($SHA)" || exit 1
+            if [ "$CHANNEL" = dev ]; then
+              # right before the push: an automatic snapshot only while it is main's tip and nothing newer is published
+              # (a slow run of an older commit must not roll /dev/ back; tools/docs/dev-guard.sh)
+              tip=$(git -c http.extraheader="$auth" ls-remote "$url" refs/heads/main | cut -f1)
+              [ -n "$tip" ] || { echo "::error::cannot read main's tip"; exit 1; }
+              published=$(jq -r '.sha // "-"' "$site.before/dev/snapshot.json" 2>/dev/null || echo -)
+              relation=-
+              if [ "$published" != - ] && [ "$published" != "$SHA" ]; then
+                relation=$(gh api "repos/$REPO/compare/$SHA...$published" --jq .status 2>/dev/null || echo -)
+              fi
+              decision=$(bash tools/docs/dev-guard.sh "$MODE" "$SHA" "$tip" "$published" "$relation") || exit 1
+              if [ "$decision" != publish ]; then echo "/dev/ not updated: ${decision#skip: }"; return 0; fi
+            fi
             git -C "$site" -c http.extraheader="$auth" push --quiet "$url" HEAD:refs/heads/gh-pages || return 1
           }
           for attempt in 1 2 3 4 5; do
