@@ -138,11 +138,18 @@ class ClientH3ConnectionReuseTest {
         }
     }
 
-    private fun autoClient(resolve: (String) -> List<TcpAddress>) =
-        testClient(Http3DiscoveryMode.Auto, engine = {
+    /** [viaDns]: [resolve] answers as an application resolver (`dns`) instead of the test hook. */
+    private fun autoClient(
+        viaDns: Boolean = false,
+        resolve: (String) -> List<TcpAddress>,
+    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+        if (viaDns) {
+            dns = Dns { host -> resolve(host).map { IpAddress.of(it.bytes) } }
+        } else {
             resolverForTest = { host, p -> resolve(host).map { TcpAddress(it.bytes, p) } }
-            http3 { altSvcStore = InMemoryAltSvcStore() }
-        })
+        }
+        http3 { altSvcStore = InMemoryAltSvcStore() }
+    })
 
     private val loopback = TcpAddress(byteArrayOf(127, 0, 0, 1), 0)
 
@@ -170,6 +177,30 @@ class ClientH3ConnectionReuseTest {
                         "one connection to 127.0.0.1:$port: shared ${h3.sharedForTest.load()} " +
                             h3.connectionsForTest().map { it.quic.paths.map { p -> p.remoteAddress } },
                     )
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The same with an application resolver (`dns`): the alternative's name resolves through it to the address the origin's
+     * connection uses, and the connection is shared (RFC 9114 section 3.3).
+     */
+    @Test fun alternativeUnderAnotherNameOfTheSameAddressReusesTheConnectionWithTheApplicationDns() =
+        h3Test {
+            val switch = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val (server, port, altUsed) = advertisingServer({ "h3=\":$it\"" }, { "h3=\"alias.test:$it\"" }, switch)
+            try {
+                autoClient(viaDns = true) { listOf(loopback) }.use { c ->
+                    val url = "https://server.test:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, c.get(url).version)
+                    untilAlternativeUsed(c, url, altUsed, "server.test:$port")
+                    switch.complete(Unit)
+                    untilAlternativeUsed(c, url, altUsed, "alias.test:$port")
+                    val h3 = (c.engine as KuicksilverEngine).h3
+                    assertEquals(1, h3.connectionsForTest().size, "shared ${h3.sharedForTest.load()}")
+                    assertTrue(h3.sharedForTest.load() >= 1, "the alternative did not share the origin's connection")
                 }
             } finally {
                 server.stop(100, 500)

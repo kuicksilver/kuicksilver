@@ -41,15 +41,26 @@ class ClientHttpsEndpointsTest {
     private val names = ArrayList<String>()
     private val namesLock = kotlinx.coroutines.sync.Mutex()
 
-    private fun client(answers: Map<String, List<SvcbRecord>>) =
-        testClient(Http3DiscoveryMode.Auto, engine = {
+    /** [viaDns]: the names go to an application resolver (`dns`) instead of the test hook; the same answers either way. */
+    private fun client(
+        answers: Map<String, List<SvcbRecord>>,
+        viaDns: Boolean = false,
+    ) = testClient(Http3DiscoveryMode.Auto, engine = {
+        if (viaDns) {
+            dns =
+                Dns { host ->
+                    namesLock.withLock { names += host }
+                    listOf(IpAddress.parse("127.0.0.1"))
+                }
+        } else {
             resolverForTest = { host, p ->
                 namesLock.withLock { names += host }
                 listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
             }
-            connectTimeout = 30.seconds
-            http3 { httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() } }
-        })
+        }
+        connectTimeout = 30.seconds
+        http3 { httpsRecords = HttpsRecordsForTest { answers[it] ?: emptyList() } }
+    })
 
     private suspend fun h1(
         body: String,
@@ -73,6 +84,23 @@ class ClientHttpsEndpointsTest {
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                 }
                 assertTrue("svc.server.test" in names, "the TargetName was resolved: $names")
+            } finally {
+                origin.stopSuspend(0, 0)
+                target.stopSuspend(0, 0)
+            }
+        }
+
+    /** An application resolver (`dns`) resolves the records' TargetName as it does the origin (RFC 9460 section 3). */
+    @Test fun theApplicationDnsResolvesTheRecordsTarget() =
+        clientTest {
+            val (origin, port) = h1("origin")
+            val (target, targetPort) = h1("target")
+            try {
+                val name = "_$port._https.server.test"
+                client(mapOf(name to listOf(rec(name, 1, "svc.server.test", "h2", port = targetPort))), viaDns = true).use { c ->
+                    assertEquals("target", c.get("https://server.test:$port/").bodyAsText())
+                }
+                assertTrue("svc.server.test" in names, "the TargetName went to the application resolver: $names")
             } finally {
                 origin.stopSuspend(0, 0)
                 target.stopSuspend(0, 0)

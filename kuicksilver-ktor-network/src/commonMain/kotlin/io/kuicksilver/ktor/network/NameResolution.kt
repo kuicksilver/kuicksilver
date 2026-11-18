@@ -181,6 +181,15 @@ private val lookupsInFlight = HashMap<Pair<String, Boolean>, Deferred<List<TcpAd
 internal var blockingLookupForTest: ((String, Boolean) -> List<TcpAddress>)? = null
 
 /**
+ * Sets [blockingLookupForTest] from the tests of other modules (the Ktor client engine's: answers of the system path that
+ * no real resolver gives on demand, such as 0.0.0.0); null puts it back. Answers are then not cached.
+ */
+@InternalKuicksilverApi
+public fun setSystemLookupForTest(lookup: ((name: String, ipv6: Boolean) -> List<TcpAddress>)?) {
+    blockingLookupForTest = lookup
+}
+
+/**
  * How long a lookup's answer is kept ([platformLookupCacheTtl]): on the JVM what `InetAddress` itself would keep it (its
  * cache is not in the path any more), so a host without a caching resolver does not pay two `getaddrinfo` per connection.
  */

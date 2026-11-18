@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
+  resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
+  resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller
+  that gives up takes its queued lookup off the pool), `FamilyDns` for one that answers IPv6 and
+  IPv4 separately (RFC 8305 section 3), or any `Dns` returning `IpAddress`es (`IpAddress.of(InetAddress)` on the JVM and
+  Android). It resolves the origin over TCP and QUIC, an `Alt-Svc` alternative, an HTTPS record's target and a proxy's
+  name, never an IP literal nor the origin behind an HTTP or `socks5h` proxy; it is asked once per name per request and
+  bounded by the connect timeout. Its answers are sorted by RFC 6724 and raced with Happy Eyeballs like the system's;
+  duplicates, unspecified, multicast and broadcast addresses are dropped and at most 32 addresses per family kept; a
+  failure or an empty answer fails the connection as an unresolvable name does. SNI and certificate verification use the
+  host name, never the answer (threat model 3.25, ADR-0020).
+- Ktor client: DNS events on `KuicksilverEventListener` (experimental), as OkHttp's `dnsStart` and `dnsEnd`: one pair per
+  name lookup the engine makes, through the system's resolver (per address family) or `dns` (per family for a
+  `FamilyDns`, once for both with a plain `Dns`); `dnsEnd` carries the addresses the engine may connect to, or the
+  failure (a cancellation included). An address literal is no lookup and has no events.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
@@ -792,6 +807,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.
+- Ktor client: an answer of the system resolver that no connection may go to is dropped before connecting, over TCP and
+  QUIC: "this network" (0.0.0.0/8), `::`, multicast (224.0.0.0/4, `ff00::/8`) and 255.255.255.255, IPv4-mapped forms
+  included (RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2, RFC 9293 section 3.9.1 MUST-46), as for an application's
+  `dns`; also the addresses an HTTPS answer carries. Before, an answer of 0.0.0.0 (a DNS sinkhole's, say) reached the
+  device's own listeners on Linux and macOS, and QUIC sent its Initials there. A name left without addresses fails as one
+  that resolves to none (threat model 3.25).
+- Ktor client: an IP address written in the URL that no connection may go to (`https://0.0.0.0/`, `https://[::]/`, a
+  multicast group such as `https://[ff02::1]/` or `224.0.0.251`, 255.255.255.255) fails with an `IOException` before any
+  packet, over TCP and QUIC; before, `0.0.0.0` reached the device's own listeners on Linux and macOS and QUIC sent its
+  Initials to the group. A host with the form of an IPv4 address that is not a dotted quad is read by the engine, with
+  the system's resolver too: `127.1` is still 127.0.0.1, while one platforms read differently (`010.0.0.1`, octal
+  8.0.0.1 to getaddrinfo; `0x7f.1`) or that is no address fails without a lookup (RFC 1123 section 2.1; threat model 3.25).
 - TLS server with an `sniSelector` and no `identity`: a ClientHello without SNI that the selector answers `null` now ends
   with `missing_extension` (109), the alert RFC 9846 section 9.2 names for a server that requires `server_name`, sent once
   TLS 1.3 is chosen (OpenSSL turned an earlier one into `handshake_failure`); a TLS 1.2 handshake still gets

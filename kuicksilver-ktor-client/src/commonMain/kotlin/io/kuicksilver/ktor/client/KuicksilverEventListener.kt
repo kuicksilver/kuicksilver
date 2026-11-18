@@ -14,11 +14,16 @@ import kotlin.time.Duration
  * Hears what the client engine does with each call (docs/guide/ktor.md, "Observability"), in the manner of OkHttp's
  * `EventListener`: set it with `engine { eventListener = ... }`. Every method has an empty default; override the ones you
  * need. The order for one call is [callStart], then for each attempt the protocol decision ([protocolSelected], with
- * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply) and [connectionAcquired], and finally [callEnd] or
- * [callFailed]; [connectionReleased] follows when the call's response is done with.
+ * [raceEnded], [altSvcUsed], [fallback] and [retry] where they apply), the name lookups it makes ([dnsStart] and [dnsEnd],
+ * before the connection they serve; usually none when the request reuses a pooled connection, except that a WebSocket's
+ * keys are looked up before the pool is asked, and an HTTP/3 request whose origin has a connection under another name
+ * (its host and an alternative) resolves first to decide whether to share it) and [connectionAcquired], and finally
+ * [callEnd] or [callFailed]; [connectionReleased] follows when the call's response is done with.
  *
  * Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without
- * blocking; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
+ * blocking. [dnsStart] and [dnsEnd] may run concurrently, on different threads, for one call: the two address families
+ * are looked up at once, and the two sides of the HTTP/3 and TCP race too, so an implementation of them must be
+ * thread-safe; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
  * logger and otherwise ignored.
  */
 @ExperimentalKuicksilverApi
@@ -99,6 +104,36 @@ public abstract class KuicksilverEventListener {
         request: HttpRequestData,
         attempt: Int,
         cause: Throwable,
+    ) {}
+
+    /**
+     * The engine starts a lookup of [host] for [request] (OkHttp's `dnsStart`): through the system's resolver or
+     * `KuicksilverEngineConfig.dns`. [ipv6] is the address family asked for, IPv6 or IPv4: the system's resolver and a
+     * [FamilyDns] are asked once per family (RFC 8305 section 3), often both at once; null when one lookup answers both (a
+     * plain [Dns]). Each host and family is looked up once per request (again only after a lookup whose caller was cancelled),
+     * so the h3/h1 race and a fallback share it.
+     * No lookup, and no event, for an address literal, a host with the form of an IPv4 address, or the addresses an HTTPS
+     * answer carried. [dnsEnd] follows once. May run concurrently with the call's other DNS events, on another thread.
+     */
+    public open fun dnsStart(
+        request: HttpRequestData,
+        host: String,
+        ipv6: Boolean?,
+    ) {}
+
+    /**
+     * The lookup [dnsStart] announced ended (OkHttp's `dnsEnd`, which has no failure; here also when it failed): [addresses]
+     * are what the engine may connect to, after the destination check (no unspecified, multicast or broadcast address) and
+     * before the RFC 6724 sort, empty when the name has none of that family; on a failure (a cancellation included)
+     * [addresses] is empty and [failure] says why. On an IPv6-only network the IPv4 answers are synthesized later, so they
+     * appear here as IPv4. May run concurrently with the call's other DNS events, on another thread.
+     */
+    public open fun dnsEnd(
+        request: HttpRequestData,
+        host: String,
+        ipv6: Boolean?,
+        addresses: List<IpAddress>,
+        failure: Throwable?,
     ) {}
 
     /** [request] got a connection over [protocol]: an open or pooled one when [reused], else a new one. */
@@ -191,6 +226,9 @@ internal class EngineEvents(
     val logger: KuicksilverLogger,
 ) {
     val enabled: Boolean get() = listener != null
+
+    /** The DNS events of [request]'s lookups ([DnsObserver]); null without a listener. */
+    fun dnsObserver(request: io.ktor.client.request.HttpRequestData): DnsObserver? = if (enabled) DnsObserver(this, request) else null
 
     inline fun emit(
         what: String,

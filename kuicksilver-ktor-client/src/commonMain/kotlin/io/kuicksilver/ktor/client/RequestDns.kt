@@ -50,12 +50,18 @@ internal class RequestDns private constructor(
     private val answers: HashMap<Pair<String, Boolean>, CompletableDeferred<Result<List<TcpAddress>>>>,
     /** Every lookup goes to this host and port instead (an HTTPS record's endpoint, [connectTo]). */
     private val endpoint: Pair<String, Int>?,
+    /** The request's DNS events of each lookup of one family ([resolveFamily] reports a lookup of both itself); null: none. */
+    private val familyEvents: DnsObserver?,
 ) {
     constructor(
         nat64: Nat64 = Nat64.system,
         newSort: () -> DestinationSort = { DestinationSort() },
+        familyEvents: DnsObserver? = null,
         resolveFamily: suspend (String, Boolean) -> List<TcpAddress> = ::resolveFamily,
-    ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null)
+    ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null, familyEvents)
+
+    /** Whether this is the system's resolution ([Dns.System]), made as before the application resolver existed (tests). */
+    internal var isSystemForTest: Boolean = false
 
     /** The lock over the answers (tests). */
     internal val lockForTest: Mutex get() = lock
@@ -68,7 +74,7 @@ internal class RequestDns private constructor(
     fun connectTo(
         host: String,
         port: Int,
-    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port)
+    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port, familyEvents)
 
     /**
      * Takes [addresses] (4 or 16 bytes each), the A/AAAA records an HTTPS answer carried, for [host]: RFC 9460 section 5,
@@ -81,8 +87,8 @@ internal class RequestDns private constructor(
         host: String,
         addresses: List<ByteArray>,
     ) {
-        if (addresses.isEmpty()) return
-        val list = addresses.map { TcpAddress(it, 0) }
+        val list = addresses.map { TcpAddress(it, 0) }.filter(::usableAsDestination)
+        if (list.isEmpty()) return
         val name = socketHost(host)
         lock.withLock {
             for (v6 in listOf(true, false)) {
@@ -106,8 +112,8 @@ internal class RequestDns private constructor(
         if (endpoint != null) return root().resolution(endpoint.first, endpoint.second)
         val name = socketHost(host)
         val ipv6Only = nat64.ipv6OnlyNetwork()
-        // an address literal is never looked up
-        val literal = if (':' in name || parseIpv4Literal(name) != null) SystemResolution(name, port) else null
+        // an address literal is never looked up, and one no connection may go to fails here
+        val literal = if (':' in name || parseIpv4Literal(name) != null) checkedLiteral(name, port) else null
         return object : AddressResolution {
             override val ipv6Only: Boolean = ipv6Only
             private var literalSynthesized: List<TcpAddress>? = null
@@ -154,7 +160,7 @@ internal class RequestDns private constructor(
         val name = socketHost(host)
         val plain =
             if (':' in name || parseIpv4Literal(name) != null) {
-                SystemResolution(name, port)
+                checkedLiteral(name, port)
             } else {
                 object : AddressResolution {
                     override suspend fun addresses(ipv6: Boolean): List<TcpAddress> = family(name, ipv6).map { it.withPort(port) }
@@ -183,7 +189,7 @@ internal class RequestDns private constructor(
         if (endpoint != null) return root().answered(endpoint.first, endpoint.second, onAnswered, afterForTest)
         val name = socketHost(host)
         if (':' in name || parseIpv4Literal(name) != null) {
-            return resolveBoth(SystemResolution(name, port), name).also {
+            return resolveBoth(checkedLiteral(name, port), name).also {
                 onAnswered?.invoke(it)
                 afterForTest?.invoke()
             }
@@ -250,13 +256,41 @@ internal class RequestDns private constructor(
         return found + found.filter { it.bytes.size == 4 }.flatMap { nat64.synthesize(it.bytes, port) }
     }
 
-    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null)
+    /**
+     * The resolution of the address literal [name] (no lookup), failing with an IOException when it is an address no
+     * connection may go to ([requireDestination]). A literal that does not parse fails later, as before, where it is used.
+     */
+    private suspend fun checkedLiteral(
+        name: String,
+        port: Int,
+    ): SystemResolution {
+        val literal = SystemResolution(name, port)
+        val addresses =
+            try {
+                literal.addresses(true) + literal.addresses(false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        addresses.forEach { requireDestination(name, it) }
+        // the JDK makes an IPv4-mapped literal its IPv4 address, which the IPv6 family then leaves out: check the literal itself
+        if (':' in name) parseIpLiteral(name)?.let { requireDestination(name, TcpAddress(it, 0)) }
+        return literal
+    }
 
-    /** One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. */
+    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null, familyEvents)
+
+    /**
+     * One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. A host with
+     * the form of an IPv4 address other than a dotted quad is the engine's to read, whatever the resolver ([numericAnswer]):
+     * its address without a lookup (and without DNS events), or a failure.
+     */
     private suspend fun family(
         name: String,
         ipv6: Boolean,
     ): List<TcpAddress> {
+        numericAnswer(name, ipv6)?.let { return it }
         val key = name to ipv6
         while (true) {
             var mine = false
@@ -271,7 +305,8 @@ internal class RequestDns private constructor(
             if (mine) {
                 val result =
                     try {
-                        Result.success(resolveFamily(name, ipv6))
+                        // no answer, the system's included, is a destination no packet may go to (usableAsDestination)
+                        Result.success(familyEvents.observing(name, ipv6) { resolveFamily(name, ipv6).filter(::usableAsDestination) })
                     } catch (e: CancellationException) {
                         // this caller goes: no answer is left behind, and a caller waiting for it asks again. Cancel first,
                         // then remove without being cancellable: a busy lock must not leave the entry behind
@@ -304,45 +339,25 @@ internal class RequestDns private constructor(
 }
 
 /**
- * A fresh [RequestDns] with this configuration's resolver: the system's, or a test's. A test resolver of both families
- * ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
+ * A fresh [RequestDns] with this configuration's resolver: the system's ([Dns.System], the default: the path of 0.2, as it
+ * was), the application's ([KuicksilverEngineConfig.dns], through [familyResolver]), or a test's. A test resolver of both
+ * families ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
  */
-internal fun KuicksilverEngineConfig.newRequestDns(): RequestDns {
-    familyResolverForTest?.let { return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }, it) }
-    val both = resolverForTest ?: return RequestDns()
-    val lock = Mutex()
-    val once = HashMap<String, CompletableDeferred<Result<List<TcpAddress>>>>()
-    return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }) { name, ipv6 ->
-        var answer: Result<List<TcpAddress>>? = null
-        while (answer == null) {
-            var mine = false
-            val d =
-                lock.withLock {
-                    once[name]?.takeUnless { it.isCancelled } ?: CompletableDeferred<Result<List<TcpAddress>>>().also {
-                        mine = true
-                        once[name] = it
-                    }
-                }
-            if (mine) {
-                d.complete(
-                    try {
-                        Result.success(both(name, 0))
-                    } catch (e: CancellationException) {
-                        d.cancel()
-                        throw e
-                    } catch (e: Throwable) {
-                        Result.failure(e)
-                    },
-                )
-            }
-            answer =
-                try {
-                    d.await()
-                } catch (e: CancellationException) {
-                    currentCoroutineContext().ensureActive() // the caller that asked went away: ask again
-                    null
-                }
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun KuicksilverEngineConfig.newRequestDns(events: DnsObserver? = null): RequestDns {
+    familyResolverForTest?.let { return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }, events, it) }
+    resolverForTest?.let { both ->
+        val once = OncePerName { name -> events.observing(name, null) { both(name, 0) } }
+        return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }) { name, ipv6 ->
+            once.get(name).filter { it.isIpv6 == ipv6 }
         }
-        answer.getOrThrow().filter { it.isIpv6 == ipv6 }
     }
+    if (dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
+    // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
+    val app = dns
+    return RequestDns(
+        nat64ForTest ?: Nat64.system,
+        familyEvents = events.takeIf { app is FamilyDns },
+        resolveFamily = app.familyResolver(events),
+    )
 }

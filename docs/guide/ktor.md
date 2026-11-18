@@ -1350,7 +1350,8 @@ Every connection the engine makes to a host name, HTTP/1.1 and HTTP/2 over TCP, 
 alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; details and the RFC text in
 [RFC 8305](../spec/rfc/8305.md)):
 
-- **Resolution.** The name's IPv6 (AAAA) and IPv4 (A) addresses are asked for separately, IPv6 first: one `getaddrinfo`
+- **Resolution.** With the system's resolver (the default; `dns` sets [your own](#name-resolution-experimental)), the
+  name's IPv6 (AAAA) and IPv4 (A) addresses are asked for separately, IPv6 first: one `getaddrinfo`
   per family on two threads, on the JVM and Android through Kuicksilver's native library, since `InetAddress` asks for
   both at once. The first IPv6 answer starts a connection at once; an IPv4 answer that comes first waits up to 50 ms for
   the IPv6 one (the Resolution Delay), and goes ahead at once when the IPv6 answer is empty or failed. An answer that
@@ -1393,6 +1394,72 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
 - **Caching.** An answer is kept as long as the JDK's own cache would keep it (`networkaddress.cache.ttl`, 30 s, and
   `networkaddress.cache.negative.ttl`, 10 s by default; 2 s on Android), at most 1000 names and families; on
   Kotlin/Native the system resolver's cache does it.
+
+### Name resolution (experimental)
+
+The engine resolves host names with the system's resolver (`Dns.System`, the default, described under
+[Happy Eyeballs](#happy-eyeballs)). `dns` replaces it with a resolver of your own, as OkHttp's `Dns` does: another DNS
+server (DNS over HTTPS through a client you trust), fixed addresses for some names, or a policy of your own. Whatever it
+answers, the engine connects to with Happy Eyeballs over TCP (HTTP/1.1, HTTP/2) and QUIC (HTTP/3).
+
+```kotlin
+// guide:ktor:dns
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+// fixed addresses for some names, the system's resolver for the rest
+val fixed = mapOf("api.example.test" to listOf(IpAddress.parse("192.0.2.10"), IpAddress.parse("2001:db8::10")))
+val client = HttpClient(Kuicksilver) {
+    engine {
+        dns = Dns { name -> fixed[name] ?: Dns.System.lookup(name) }
+    }
+}
+// a blocking resolver (here the JDK's; an OkHttp Dns alike) runs on threads of its own
+val blocking = HttpClient(Kuicksilver) {
+    engine {
+        dns = Dns.blocking { name -> java.net.InetAddress.getAllByName(name).map { IpAddress.of(it) } }
+    }
+}
+```
+
+The contract (the KDoc of `Dns` has it in full):
+
+- **Suspending, not blocking.** `lookup` is called in the call's coroutine on the engine's dispatcher and must not block
+  it. `Dns.blocking { }` runs a blocking resolver on a pool of its own (8 threads by default, shared by all of them, or the
+  dispatcher you give it): a lookup that never returns holds one of those threads, never the engine's. The default pool
+  is shared by every `Dns.blocking` resolver of the process, every engine's: 8 lookups that hang hold it whole, and the
+  others wait behind them until their calls time out. Give a resolver that may hang a dispatcher of its own. A call that
+  gives up takes its lookup off the queue when it has not started.
+- **Within the connect timeout.** The lookup is part of connecting: the connect timeout bounds it with the rest, and the
+  call then fails with Ktor's `ConnectTimeoutException`; a cancelled call cancels its lookup. A blocking lookup cannot be
+  interrupted: the call stops waiting and the lookup ends on its thread. A `CancellationException` your resolver throws
+  on its own (its own `withTimeout`) counts as a failed lookup.
+- **Failures.** An exception, an empty list, or a list without a usable address fails the connection as a name that does
+  not resolve does (an `IOException`: "could not be resolved", with your exception as the cause, or "resolved to no
+  address").
+- **Order and families.** The engine sorts the answer by RFC 6724 and alternates the families (RFC 8305 section 4 makes
+  the sort a MUST), as it does the system's: your order only breaks ties. A plain `Dns` answers both families in one
+  call; implement `FamilyDns` to answer IPv6 and IPv4 separately, so that the race can start on the first answer
+  (RFC 8305 section 3). Duplicates are dropped, an IPv4-mapped address counts as IPv4, and at most 32 addresses of each
+  family are kept. On an IPv6-only network with NAT64 the IPv4 answers are synthesized as the system's are.
+- **Never a destination.** 0.0.0.0/8, `::`, multicast and 255.255.255.255 in an answer, yours or the system's, are
+  dropped: a connect to
+  0.0.0.0 reaches the device's own listeners on Linux and macOS, and RFC 9293 makes a TCP open to a multicast address an
+  error.
+- **Literals.** An IP address in the URL is connected to as it is, unless no connection may go there (`0.0.0.0`,
+  `[::]`, a multicast group, 255.255.255.255): that call fails with an `IOException`. Your resolver gets host names only.
+  A host with the form of an IPv4 address that is not a dotted quad is not a host name (RFC 1123): `127.1` is 127.0.0.1,
+  and one that platforms read differently (`010.0.0.1`, octal to some, decimal to others) fails the call without a
+  lookup, with the system's resolver too.
+- **Once per request.** Each name is asked once per request, both sides of the HTTP/3 and TCP race and a fallback
+  included; the engine caches nothing across requests, so caching and TTLs are your resolver's.
+- **Proxies.** Your resolver is asked for a proxy's name. Behind an HTTP proxy and `socks5h` the origin's name goes to
+  the proxy and is never resolved here; through `socks5` it is resolved here and the proxy gets the addresses.
+- **HTTP/3 and Alt-Svc.** An `Alt-Svc` alternative's host and an HTTPS record's target are resolved by it too; the A and
+  AAAA records an HTTPS answer carries are used first, and your resolver is asked for the families they lack. HTTPS
+  records themselves come from `http3.httpsRecords`; the NAT64 prefix discovery and a PAC script's `dnsResolve` stay with
+  the system.
+- **Identity.** Your answers decide where the engine connects, never whom it trusts there: TLS sends the URL's host
+  name as SNI and verifies the certificate and the pins against that name over TCP and QUIC, whatever address your
+  resolver gave. Connections are pooled per origin, never per address, and no connection is shared across origins.
 
 ### Racing and fallback
 
@@ -1928,7 +1995,10 @@ with the HTTP/3 failure itself (not the `FallbackReason`, which is on the respon
 did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
 (reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
 followed the network, [Connection migration](#connection-migration)); `webSocketFailed` (a coroutine of a WebSocket
-session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close);
+`dnsStart` and `dnsEnd` (since 0.3.0, as OkHttp's: one pair per name lookup, per address family for the system's resolver
+and a `FamilyDns`, once for both with a plain `Dns`; the end carries the addresses the engine may connect to, or the
+failure; no lookup and no event for an address literal, [Name resolution](#name-resolution-experimental)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin

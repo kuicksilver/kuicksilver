@@ -42,6 +42,23 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 	public static fun values ()[Lio/kuicksilver/ktor/client/AlternativeSource;
 }
 
+public abstract interface class io/kuicksilver/ktor/client/Dns {
+	public static final field Companion Lio/kuicksilver/ktor/client/Dns$Companion;
+	public static final field MAX_ADDRESSES_PER_FAMILY I
+	public abstract fun lookup (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/ktor/client/Dns$Companion {
+	public static final field MAX_ADDRESSES_PER_FAMILY I
+	public final fun blocking (Lkotlinx/coroutines/CoroutineDispatcher;Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/ktor/client/Dns;
+	public static synthetic fun blocking$default (Lio/kuicksilver/ktor/client/Dns$Companion;Lkotlinx/coroutines/CoroutineDispatcher;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lio/kuicksilver/ktor/client/Dns;
+	public final fun getSystem ()Lio/kuicksilver/ktor/client/Dns;
+}
+
+public final class io/kuicksilver/ktor/client/Dns_jvmCommonKt {
+	public static final fun of (Lio/kuicksilver/ktor/client/IpAddress$Companion;Ljava/net/InetAddress;)Lio/kuicksilver/ktor/client/IpAddress;
+}
+
 public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/FallbackReason;
 	public static final field Configuration Lio/kuicksilver/ktor/client/FallbackReason;
@@ -65,6 +82,15 @@ public final class io/kuicksilver/ktor/client/FallbackReason : java/lang/Enum {
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/FallbackReason;
 	public static fun values ()[Lio/kuicksilver/ktor/client/FallbackReason;
+}
+
+public abstract interface class io/kuicksilver/ktor/client/FamilyDns : io/kuicksilver/ktor/client/Dns {
+	public fun lookup (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun lookup (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/ktor/client/FamilyDns$DefaultImpls {
+	public static fun lookup (Lio/kuicksilver/ktor/client/FamilyDns;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/ktor/client/FileAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
@@ -224,6 +250,22 @@ public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilv
 	public fun setNetworkId (Ljava/lang/String;)V
 }
 
+public final class io/kuicksilver/ktor/client/IpAddress {
+	public static final field Companion Lio/kuicksilver/ktor/client/IpAddress$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytes ()[B
+	public final fun getScopeId ()I
+	public fun hashCode ()I
+	public final fun isIpv6 ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/IpAddress$Companion {
+	public final fun of ([BI)Lio/kuicksilver/ktor/client/IpAddress;
+	public static synthetic fun of$default (Lio/kuicksilver/ktor/client/IpAddress$Companion;[BIILjava/lang/Object;)Lio/kuicksilver/ktor/client/IpAddress;
+	public final fun parse (Ljava/lang/String;)Lio/kuicksilver/ktor/client/IpAddress;
+}
+
 public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engine/HttpClientEngineFactory {
 	public static final field INSTANCE Lio/kuicksilver/ktor/client/Kuicksilver;
 	public fun create (Lkotlin/jvm/functions/Function1;)Lio/ktor/client/engine/HttpClientEngine;
@@ -237,6 +279,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getAssumeHttp11 ()Z
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
+	public final fun getDns ()Lio/kuicksilver/ktor/client/Dns;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
 	public final fun getHttp11Hints ()Ljava/util/Set;
 	public final fun getHttp2 ()Lio/kuicksilver/ktor/client/Http2ClientConfig;
@@ -260,6 +303,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setAssumeHttp11 (Z)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
+	public final fun setDns (Lio/kuicksilver/ktor/client/Dns;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
 	public final fun setHttp11Hints (Ljava/util/Set;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
@@ -295,6 +339,8 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun connectionAcquired (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
 	public fun connectionMigrated (Ljava/lang/String;Lio/kuicksilver/quic/MigrationEvent;)V
 	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
+	public fun dnsEnd (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;Ljava/lang/Throwable;)V
+	public fun dnsStart (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;Ljava/lang/Boolean;)V
 	public fun fallback (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 	public fun httpsRecordUsed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;)V
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V

@@ -563,7 +563,7 @@ internal class H3Pool(
                         this.url.takeFrom(url)
                         method = HttpMethod("CONNECT")
                     }.build()
-            val dns = config.newRequestDns()
+            val dns = config.newRequestDns(events.dnsObserver(data))
             val passed = HashSet<H3Entry>()
             var refusals = 0
             var lost = 0
@@ -1064,7 +1064,7 @@ internal class H3Pool(
     suspend fun connection(
         t: H3Target,
         data: HttpRequestData,
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
     ): Http3Connection = connectionEntry(t, data, dns).second
 
     private suspend fun connectionEntry(
@@ -1501,7 +1501,7 @@ internal class H3Pool(
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>> = emptyList(),
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         prefer: Http3Connection? = null,
     ): HttpResponseData {
         var attempts = 0

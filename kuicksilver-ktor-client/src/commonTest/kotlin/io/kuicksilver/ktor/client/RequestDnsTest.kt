@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    kotlinx.coroutines.ExperimentalCoroutinesApi::class,
+)
 
 package io.kuicksilver.ktor.client
 
@@ -40,7 +44,7 @@ class RequestDnsTest {
     private fun dns(
         sort: () -> DestinationSort = dual,
         resolve: suspend (String, Boolean) -> List<TcpAddress>,
-    ) = RequestDns(Nat64.offForTest(), sort, resolve)
+    ) = RequestDns(Nat64.offForTest(), sort, resolveFamily = resolve)
 
     private suspend fun RequestDns.texts(host: String) = lookup(host, 443).map { it.toString() }
 
@@ -181,6 +185,81 @@ class RequestDnsTest {
 
     // ---- addresses an HTTPS answer carried (RFC 9460 section 5): one family alone is used, the other still looked up
 
+    private fun tcp(text: String) = TcpAddress(IpAddress.parse(text).bytes, 0)
+
+    /**
+     * No resolver's answer is a destination when no packet may go there (RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2,
+     * RFC 9293 section 3.9.1 MUST-46): unspecified, multicast and limited broadcast addresses, IPv4-mapped too, are dropped
+     * from the system's answers as from an application's, for the race (TCP and QUIC alike), the SOCKS5 targets and
+     * WebSocket keys, and from the addresses an HTTPS answer carried.
+     */
+    @Test fun negative_unusableAnswersAreNeverDestinations() =
+        runTest {
+            val dns =
+                dns { _, v6 ->
+                    if (v6) {
+                        listOf(tcp("::"), tcp("ff02::1"), tcp("::ffff:224.0.0.1"), tcp("::ffff:0.0.0.0"), v6(1))
+                    } else {
+                        listOf(tcp("0.0.0.0"), tcp("224.0.0.1"), tcp("255.255.255.255"), tcp("0.1.2.3"), addr(1))
+                    }
+                }
+            assertEquals(listOf("[2001:db8::1]:443", "192.0.2.1:443"), dns.texts("a.example"))
+            val r = dns.resolution("a.example", 443)
+            assertEquals(listOf("[2001:db8::1]:443"), r.addresses(true).map { it.toString() })
+            assertEquals(listOf("192.0.2.1:443"), r.addresses(false).map { it.toString() })
+            assertEquals(listOf("[2001:db8::1]:443", "192.0.2.1:443"), dns.answered("a.example", 443).map { it.toString() })
+            val seeded = dns { _, _ -> emptyList() }
+            seeded.seed("b.example", listOf(tcp("0.0.0.0").bytes, tcp("ff02::1").bytes, addr(2).bytes))
+            assertEquals(listOf("192.0.2.2:443"), seeded.texts("b.example"))
+        }
+
+    /**
+     * An address literal in a URL that no connection may go to (RFC 1122 section 3.2.1.3, RFC 4291 section 2.5.2, RFC 9293
+     * section 3.9.1 MUST-46) fails with an IOException that says so, for the race (TCP and QUIC), the SOCKS5 targets and
+     * WebSocket keys, before any packet: `0.0.0.0` reaches the host's own listeners, `ff02::1` and `224.0.0.251` are groups.
+     */
+    @Test fun negative_anUnusableLiteralIsNoDestination() =
+        runTest {
+            val dns = dns { _, _ -> error("a literal is never looked up") }
+            for (bad in listOf("0.0.0.0", "[::]", "[ff02::1]", "224.0.0.251", "255.255.255.255", "[::ffff:0.0.0.0]")) {
+                for (call in listOf<suspend () -> Unit>(
+                    { dns.resolution(bad, 443) },
+                    { dns.lookup(bad, 443) },
+                    { dns.answered(bad, 443) },
+                )) {
+                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException>(bad) { call() }
+                    assertTrue("no connection may go to" in e.message.orEmpty(), "$bad: $e")
+                }
+            }
+            assertEquals(listOf("127.0.0.1:443"), dns.texts("127.0.0.1"))
+            // no false positives: loopback, private and scoped link-local literals are destinations
+            for (good in listOf("[::1]", "10.0.0.1", "[fe80::1%1]")) {
+                dns.resolution(good, 443)
+                kotlin.test.assertTrue(dns.lookup(good, 443).isNotEmpty(), good)
+                kotlin.test.assertTrue(dns.answered(good, 443).isNotEmpty(), good)
+            }
+        }
+
+    /**
+     * The engine reads a numeric host once, whatever the resolver (ADR-0020): `127.1` is 127.0.0.1 without a lookup, and
+     * one that resolvers read differently (`010.0.0.1`: octal 8.0.0.1 to getaddrinfo) fails without one.
+     */
+    @Test fun negative_numericHostsAreTheEnginesForEveryResolver() =
+        runTest {
+            val asked = ArrayList<String>()
+            val dns =
+                dns { name, _ ->
+                    asked += name
+                    emptyList()
+                }
+            assertEquals(listOf("127.0.0.1:443"), dns.texts("127.1"))
+            assertEquals(listOf("127.0.0.1:443"), dns.resolution("127.1", 443).addresses(false).map { it.toString() })
+            for (bad in listOf("010.0.0.1", "0x7f.1", "0")) {
+                kotlin.test.assertFailsWith<kotlinx.io.IOException>(bad) { dns.lookup(bad, 443) }
+            }
+            assertEquals(emptyList(), asked)
+        }
+
     @Test fun seededIpv4IsUsedAndIpv6StillLookedUp() =
         runTest {
             // section 5: the A records of the answer are the A answer, no query for them; the AAAA query still runs
@@ -288,6 +367,20 @@ class RequestDnsTest {
             // an A answer of a name comes back synthesized
             val name = dns.resolution("a.example", 443)
             assertEquals(listOf("[64:ff9b::5db8:d822]:443"), name.addresses(false).map { it.toString() })
+        }
+
+    /**
+     * An application resolver's IPv4 answer is synthesized on an IPv6-only network as the system's is (RFC 8305 section 7):
+     * the engine's resolution with `dns` set uses the engine's NAT64 state.
+     */
+    @Test fun anApplicationResolversAnswersAreSynthesizedOnAnIpv6OnlyNetwork() =
+        runTest {
+            val config = KuicksilverEngineConfig()
+            config.dns = Dns { listOf(IpAddress.parse("93.184.216.34")) }
+            config.nat64ForTest = nat64()
+            val r = config.newRequestDns().resolution("a.example", 443)
+            assertTrue(r.ipv6Only)
+            assertEquals(listOf("[64:ff9b::5db8:d822]:443"), r.addresses(false).map { it.toString() })
         }
 
     /** The HTTP/3 pool compares a connection's address with these: the A answer and, on an IPv6-only network, its synthesis. */
