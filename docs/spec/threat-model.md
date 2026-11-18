@@ -909,7 +909,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   listener as IPv4-mapped (the tests bind loopback addresses only; the mapping itself is unit-tested), and a proxy that
   is trusted but lies.
 
-### 3.28 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20)
+### 3.31 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20)
 
 - **Threats:** without ECH the server name of every connection is on the path in the clear (CWE-200, exposure to an
   unauthorized actor). With ECH: an ECHConfigList from DNS or from a server's `retry_configs` is input from the network
@@ -927,14 +927,13 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   session tickets never arrive; `retry_configs` are reported only after that authentication and never after GREASE
   (§6.1.6, §6.2.1). An ECH client offers TLS 1.3 only, so a server that answers TLS 1.2 gets no connection. The server's
   keys are replaced whole under a lock (rotation), each session copying the set it starts with. GREASE ECH hides
-  whether a client has a configuration. OpenSSL 4.1.0 needs a carried patch for ECH after a HelloRetryRequest (QUIC's
-  transport parameters), and fails closed with `illegal_parameter` when a server rejects ECH after one (bug C of
-  ADR-0019).
+  whether a client has a configuration. OpenSSL 4.1.0 needs two carried patches for ECH after a HelloRetryRequest (QUIC's
+  transport parameters; a rejection after one, bugs B and C of ADR-0019).
 - **Verification:** C `test_ech.c`: `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`,
   `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`,
   `negative_ech_rejected` (QUIC, TCP), `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`,
   `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`,
-  `negative_ech_rejected_after_hrr`, the `negative_ech_keys_*` and `negative_ech_config_*` refusals, and the accepted,
+  `ech_rejected_after_hrr`, the `negative_ech_keys_*` and `negative_ech_config_*` refusals, and the accepted,
   HelloRetryRequest, rotation (three threads under ThreadSanitizer) and resumption cases; fuzzing: the ksl harness's
   modes `0xfc` (the list check) and `0xfb` (an ECH server's decryption of an attacker's ClientHello).
 - **Not covered:** the name of the origin is still visible in the plaintext DNS query for its HTTPS record unless DNS is
@@ -982,6 +981,9 @@ HTTP/2 and HPACK (§3.23):
 
 PROXY protocol (§3.27):
 15. `negative_headerFromAnUntrustedSourceIsRefused`, `negative_connectionWithoutAHeaderIsClosed`, `negative_malformedHeadersAreClosed`, `negative_headerNotCompleteWithinTheTimeoutIsCut`, `negative_unknownPeerIsNotTrusted`, `negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `negative_invalidConfigurationsAreRefused`, `negative_v1WithoutCrlfWithin107BytesIsRefused`, `negative_v1LineEndsOtherThanCrlfAreRefused`, `negative_v1MalformedFieldsAreRefused`, `negative_v2BadVersionCommandOrFamilyIsRefused`, `negative_v2LocalWithAnInvalidNibbleIsRefused`, `negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `negative_v2AddressBlockShorterThanItsFamilyIsRefused`, `negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `negative_v2TlvOverrunningTheHeaderIsRefused`, `negative_v2CrcMismatchIsRefused`, `negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`, `negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`, `negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `negative_proxyProtocolKeysWithSslPortRefused`, `negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`, `negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`, `negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused` (`ServerProxyProtocolTest`, `ServerH2FloodTest`, `ProxyProtocolConfigTest`, `ProxyProtocolCodecTest` on the JVM and every Native target; `EngineMainTest` on the JVM)
+
+Encrypted Client Hello (§3.31):
+19. C (`test_ech.c`): `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`, `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`, `negative_ech_rejected`, `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`, `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`, `negative_ech_keys_without_retry`, `negative_ech_config_on_tls12_context`; Kotlin (`tls.EchTest`): `negative_malformedListsAreRefused`, `negative_configurationsInTheWrongPlaceAreRefused`, `negative_quicRejectedReportsRetryConfigs`, `negative_quicUnauthenticatedRejectionHasNoRetryConfigs`, `negative_quicServerWithoutEchIsSecurelyDisabled`
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)
@@ -1062,7 +1064,7 @@ weakness appears in different protocols.
 | 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |
 | 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
-| 3.28 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection | CWE-200, CWE-20, CWE-295 |
+| 3.31 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection | CWE-200, CWE-20, CWE-295 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and
