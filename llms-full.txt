@@ -1354,7 +1354,7 @@ import kotlin.time.Duration.Companion.seconds
 ```
 
 Kuicksilver's TLS layer (`io.kuicksilver:kuicksilver-tls`) runs TLS 1.3 (RFC 9846; the default, as RFC 9852 asks) and,
-when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 3.5 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
+when asked, TLS 1.2 under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) over OpenSSL 4.1 on every Kotlin Multiplatform target. The same configuration object drives QUIC handshakes,
 TLS over TCP and the `ktor-network` socket wrapper. The code blocks below compile and run as `GuideSamplesTest`.
 
 ### Native library availability
@@ -1686,7 +1686,8 @@ experimental in 0.3.0:
   not cover it (a distribution point it does not name, alert 46) fails with `VerifyReason.UnknownRevocationStatus` as
   well. So does a configured CRL whose issuer is neither among the roots nor on the path: with
   `AnchoredCa(roots = [intermediate], crls = [the root's CRL, ...])` the intermediate's own status cannot be verified,
-  and its certificates fail (fail closed; leave that CRL out, or anchor at the root). A certificate whose issuer has none
+  and its certificates fail (fail closed; leave that CRL out, or anchor at the root); with the root among the roots too,
+  the intermediate is checked against the root's CRL and fails when it is revoked. A certificate whose issuer has none
   of the configured CRLs is not checked. Only complete, direct CRLs are supported: delta CRLs,
   indirect CRLs and CRLs limited to some revocation reasons are refused when the trust is made (`TlsException.Config`). On a server, a
   `TrustConfig.ReloadableCa` reload to the same roots with new CRLs applies them to the next handshakes, as a CA reload
@@ -1849,6 +1850,51 @@ signatures apart. A HelloRetryRequest costs a round trip
 and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other groups, its key exchange being fresh.
 `TlsConnection.keyExchangeGroup`, `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the
 group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none.
+
+
+### Encrypted Client Hello
+
+Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a connection from the path: the ClientHello
+the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
+needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
+The Ktor engines do not use it yet; through `TlsConfig` it works over QUIC and TCP.
+
+A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
+record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
+extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one; a list with none
+usable offers nothing. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
+stand out. ECH is TLS 1.3 only: `echConfigList` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
+
+When the server rejects ECH (its key changed, or it no longer has one), the client checks the certificate against the
+`public_name` (also through a platform or custom verifier, which is asked for that name), ends the handshake with
+`ech_required` and throws `TlsException.EchRejected`, whose `retryConfigs` are the server's current configurations: retry
+once, on a new connection, with them. Nothing of the rejected connection is used, and a second rejection is not retried.
+Without `retryConfigs` the server has stopped supporting ECH; connecting without it reveals the name, so it is the
+caller's choice. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
+`Offered`.
+
+A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ech -public_name <name> -out key.pem`
+writes (the private key and the `ECHCONFIG` block whose base64 goes into the HTTPS record), at least one of them marked for
+`retry_configs`. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
+previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). A client whose ECH is
+rejected verifies the certificate against the `public_name`, so the server must present one valid for it then (an
+`sniSelector` sees the `public_name` as the server name of such a handshake).
+
+```text
+val keys = EchServerKeys(listOf(EchKey(pemText)))
+val server = tlsConfig(TlsRole.Server) {
+    identity = TlsIdentity.fromPem(chainPem, keyPem)   // valid for the inner names and for the public_name
+    echKeys = keys
+}
+val client = tlsConfig(TlsRole.Client) {
+    serverName = "inner.example"
+    echConfigList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord)
+}
+```
+
+ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
+remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
+the DNS query itself unless DNS is protected, stay visible.
 
 ## HTTP/3 with Kuicksilver
 
@@ -5690,6 +5736,9 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#configuration)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two) | 1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with `Tls12And13` at least one elliptic curve | 0.3.0 | key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, `handshake_failure` with none in common; in TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (without `secp256r1`, a P-256 certificate is refused) ([Key exchange groups](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-exchange-groups)) |
+| `echConfigList` (*experimental*) | `EchConfigList?` | `null` | clients only; not with `versions` `Tls12And13` | 0.3.0 | Encrypted Client Hello configurations offered (RFC 9849; an HTTPS record's `ech` parameter, RFC 9848); unusable ECHConfigs are ignored one by one; a rejection fails with `TlsException.EchRejected` and its `retryConfigs` ([Encrypted Client Hello](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#encrypted-client-hello)) |
+| `echGrease` (*experimental*) | `Boolean` | `true` | clients | 0.3.0 | GREASE ECH where no configuration is offered (RFC 9849 section 6.2.1) ([Encrypted Client Hello](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#encrypted-client-hello)) |
+| `echKeys` (*experimental*) | `EchServerKeys?` | `null` | servers only; 1 to 16 keys, at least one for `retry_configs` | 0.3.0 | the server's ECH keys (shared mode), `rotate` replaces them for new handshakes ([Encrypted Client Hello](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#encrypted-client-hello)) |
 
 #### SessionTicketConfig
 
@@ -6761,7 +6810,7 @@ check the size and the build.
 the SwiftPM one in [Swift only](#swift-only-kuicksilverxcframework-and-swiftpm), and a running app in
 [`samples/ios`](https://github.com/kuicksilver/kuicksilver/blob/main/samples/ios/README.md).
 
-Kuicksilver runs on iOS through Kotlin/Native (`iosArm64`, `iosSimulatorArm64`). OpenSSL 3.5 and the `ksl` C shim are
+Kuicksilver runs on iOS through Kotlin/Native (`iosArm64`, `iosSimulatorArm64`). OpenSSL 4.1 and the `ksl` C shim are
 linked statically into your app with every OpenSSL symbol renamed to `ksl_ossl_*` (ADR-0007), so another OpenSSL or
 BoringSSL in the same app does not clash with it. The QUIC socket is the accelerated `ksl` socket (ECN, DF; no GSO/GRO
 on Darwin). Certificates are checked by SecTrust when you use `TrustConfig.Platform`.
@@ -7047,7 +7096,7 @@ the EAR as published in the eCFR: [15 CFR 740.17](https://www.ecfr.gov/current/t
 
 **Why Kuicksilver counts as non-exempt encryption.** Apple treats encryption that is part of its operating systems
 (HTTPS through `URLSession`, for example) as typically exempt from export documentation, and other encryption as not.
-Kuicksilver ships its own TLS 1.3 (OpenSSL 3.5, statically linked) to secure QUIC, so an app that links it "implements
+Kuicksilver ships its own TLS 1.3 (OpenSSL 4.1, statically linked) to secure QUIC, so an app that links it "implements
 standard encryption algorithms instead of, or in addition to, using or accessing the encryption in Apple's operating
 systems". Only standard, published algorithms are used (no proprietary cryptography).
 
@@ -7213,7 +7262,7 @@ Long version (paste and adjust):
 > must receive the handshake messages for each encryption level separately, install the traffic secrets for each
 > level itself, and carry QUIC transport parameters inside the TLS handshake. Apple's TLS interfaces (Security and
 > Network frameworks) do not expose these steps to a third-party QUIC implementation, so the app includes the
-> Kuicksilver library, which uses OpenSSL 3.5 as its TLS 1.3 implementation. Only standard, published algorithms
+> Kuicksilver library, which uses OpenSSL 4.1 as its TLS 1.3 implementation. Only standard, published algorithms
 > are used: AES-GCM and ChaCha20-Poly1305 for encryption, X25519 and the X25519/ML-KEM hybrid for key exchange, ECDSA
 > and RSA signature verification, and HKDF with SHA-2. The cryptography is used only to authenticate the
 > servers the app connects to and to encrypt the app's own network traffic; it is not offered to users or other apps
