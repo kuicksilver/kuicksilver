@@ -384,7 +384,9 @@ public class TlsConfig private constructor(
          * shares for the first two. A server picks by its own order, a group the client sent a share for first; see
          * [KeyExchangeGroups] for the HelloRetryRequest and the `handshake_failure` a mismatch costs. [build] throws
          * [TlsException.Config] for a group the OpenSSL in use does not provide, for key shares on a server, and for
-         * [TlsVersions.Tls12And13] with no elliptic curve in the list (TLS 1.2 has no hybrid).
+         * [TlsVersions.Tls12And13] with no elliptic curve in the list (TLS 1.2 has no hybrid). In TLS 1.2 the list also limits the
+         * curves of the peer's ECDSA certificate (RFC 8422 section 5.1): a client without [KeyExchangeGroups.SECP256R1] refuses a
+         * P-256 server certificate (`handshake_failure`), a server without it a P-256 client certificate (`illegal_parameter`).
          */
         @ExperimentalKuicksilverApi
         public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default

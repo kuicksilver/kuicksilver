@@ -3246,6 +3246,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkCli
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_defaultConnectorRefusesJdkTls12
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_jdkTls12ClientWithoutEmsRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_renegotiationOnH2EndsWithGoaway
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_tls12ClientCertificateCurveMustBeInTheServersGroups
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.rsaConnectorServesTheMandatoryHttp2Tls12Suite
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.tls12ServerHelloCarriesTheDowngradeSentinel
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.SslConnectorBridgeTest.enabledProtocolsMapToVersions

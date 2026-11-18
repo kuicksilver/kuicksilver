@@ -110,6 +110,81 @@ class ServerTls12JdkClientTest {
      * RFC 9846 section 4.1.3: "If negotiating TLS 1.2, TLS 1.3 servers MUST set the last 8 bytes of their Random value to the
      * bytes: 44 4F 57 4E 47 52 44 01", so a client with TLS 1.3 detects an attacker who removed it from its offer.
      */
+
+    /**
+     * RFC 8422 section 5.1 on the server side in TLS 1.2: OpenSSL holds a client's ECDSA certificate to the server's own
+     * key-exchange groups, so a connector whose list leaves out secp256r1 refuses the JDK's P-256 client certificate
+     * (`illegal_parameter`); with secp256r1 in the list it is accepted (C `groups_tls12_server_list_and_client_certificate_curve`).
+     */
+    @Test fun negative_tls12ClientCertificateCurveMustBeInTheServersGroups() =
+        serverTest {
+            val cert =
+                CertificateFactory
+                    .getInstance(
+                        "X.509",
+                    ).generateCertificate(ByteArrayInputStream(TestCerts.client))
+            val key =
+                java.security.KeyFactory
+                    .getInstance("EC")
+                    .generatePrivate(java.security.spec.PKCS8EncodedKeySpec(TestCerts.clientKey))
+            val ks =
+                KeyStore.getInstance("PKCS12").apply {
+                    load(null, null)
+                    setKeyEntry("client", key, "pw".toCharArray(), arrayOf(cert))
+                }
+            val keys =
+                javax.net.ssl.KeyManagerFactory
+                    .getInstance(
+                        javax.net.ssl.KeyManagerFactory
+                            .getDefaultAlgorithm(),
+                    ).apply { init(ks, "pw".toCharArray()) }
+                    .keyManagers
+            for (withP256 in listOf(false, true)) {
+                val groups =
+                    io.kuicksilver.tls.KeyExchangeGroups(
+                        listOf(io.kuicksilver.tls.KeyExchangeGroups.X25519, io.kuicksilver.tls.KeyExchangeGroups.SECP384R1) +
+                            if (withP256) listOf(io.kuicksilver.tls.KeyExchangeGroups.SECP256R1) else emptyList(),
+                    )
+                val (server, port) =
+                    tlsServer(configure = { http3 = false }, connector = {
+                        versions = TlsVersions.Tls12And13
+                        clientAuth = io.kuicksilver.tls.ClientAuth.Required
+                        trust =
+                            io.kuicksilver.tls.TrustConfig
+                                .AnchoredCa(listOf(ServerFixtures.testCa))
+                        keyExchangeGroups = groups
+                    }) {
+                        routing { get("/") { call.respondText("ok") } }
+                    }
+                try {
+                    val outcome =
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                (jdkContext(keys).socketFactory.createSocket(InetAddress.getLoopbackAddress(), port) as SSLSocket).use { s ->
+                                    s.soTimeout = 20_000
+                                    s.sslParameters =
+                                        s.sslParameters.apply {
+                                            protocols = arrayOf("TLSv1.2")
+                                            serverNames = listOf(javax.net.ssl.SNIHostName("server.test"))
+                                        }
+                                    s.startHandshake()
+                                    s.http(get)
+                                }
+                            }
+                        }
+                    if (withP256) {
+                        assertTrue(outcome.getOrNull().orEmpty().startsWith("HTTP/1.1 200"), "with secp256r1: $outcome")
+                    } else {
+                        val e = outcome.exceptionOrNull()
+                        assertTrue(e is javax.net.ssl.SSLException, "without secp256r1 the certificate is refused: $outcome")
+                        assertContains(e.message.orEmpty(), "illegal_parameter")
+                    }
+                } finally {
+                    server.stop(100, 500)
+                }
+            }
+        }
+
     @Test fun tls12ServerHelloCarriesTheDowngradeSentinel() =
         serverTest {
             val (server, port) =
@@ -518,7 +593,9 @@ class ServerTls12JdkClientTest {
 }
 
 /** The test CA as the JDK's trust, with the host name left out (the connection goes to 127.0.0.1). */
-internal fun jdkContext(): SSLContext {
+
+/** The JDK's client context trusting the test CA; with [keys], it presents their certificate when a server asks for one. */
+internal fun jdkContext(keys: Array<javax.net.ssl.KeyManager>? = null): SSLContext {
     val ca = CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(TestCerts.testCa)) as X509Certificate
     val ks =
         KeyStore.getInstance(KeyStore.getDefaultType()).apply {
@@ -570,7 +647,7 @@ internal fun jdkContext(): SSLContext {
 
             override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf(ca)
         }
-    return SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
+    return SSLContext.getInstance("TLS").apply { init(keys, arrayOf(tm), null) }
 }
 
 /**

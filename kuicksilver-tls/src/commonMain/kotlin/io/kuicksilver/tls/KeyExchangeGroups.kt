@@ -20,9 +20,10 @@ import io.kuicksilver.native.KslConst
  *   a HelloRetryRequest for the first of [groups] the client supports; with no group in common, `handshake_failure`. It ignores
  *   [keyShares]. An `sniSelector` answer may bring its own ([ServerTlsOverride.keyExchangeGroups]).
  * - TLS 1.2 ([TlsVersions.Tls12And13], TCP) takes the elliptic curves of [groups] ([X25519], [X448], [SECP256R1], [SECP384R1],
- *   [SECP521R1]) in the same order; the hybrids are TLS 1.3 only. There a client's list also names the curves of ECDSA
- *   certificates it accepts (RFC 8422 section 5.1): without [SECP256R1] a TLS 1.2 server's P-256 certificate is refused with
- *   `handshake_failure`. TLS 1.3 negotiates signatures apart.
+ *   [SECP521R1]) in the same order; the hybrids are TLS 1.3 only. There the list also names the curves of the peer's ECDSA
+ *   certificates an endpoint accepts (RFC 8422 section 5.1): a client without [SECP256R1] refuses a TLS 1.2 server's P-256
+ *   certificate with `handshake_failure`, and a server without it refuses a P-256 client certificate with `illegal_parameter`
+ *   (47; OpenSSL holds client certificates to the server's own list). TLS 1.3 negotiates signatures apart.
  *
  * A session ticket does not depend on the group: a resumption runs a fresh key exchange (`psk_dhe_ke`) under the groups in effect.
  *

@@ -568,6 +568,46 @@ static void test_negative_key_share_scan(void) {
     END();
 }
 
+/* The server side of RFC 8422 section 5.1 in TLS 1.2: OpenSSL holds a client's ECDSA certificate to the server's own list too
+   (tls12_check_peer_sigalg with check_own_groups), so a server list without P-256 refuses a P-256 client certificate. [max12]
+   limits the client to TLS 1.2; returns the alert the server sent, 0 when the handshake completed. */
+static int client_cert_alert(const char *server_groups, int max12) {
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = groups_server(server_groups);
+    blob ch = chain_of(1, "client");
+    size_t kl;
+    uint8_t *k = key_of("client", &kl);
+    ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl);
+    free(ch.buf);
+    free(k);
+    blob roots = chain_of(1, "test-ca");
+    ksl_ctx_set_roots(sc, roots.buf, roots.len);
+    free(roots.buf);
+    ksl_ctx_set_option(sc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_REQUIRED);
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    if (max12) {
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    }
+    ksl_ssl *c = new_client(cc, 1), *s = new_server(sc, 1);
+    int rc = tcp_pump(c, s, NULL, NULL), sent = 0;
+    if (rc != KSL_OK)
+        last_code(s, &sent);
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    return rc == KSL_OK ? 0 : sent ? sent : -1;
+}
+static void test_tls12_server_groups_and_client_certificates(void) {
+    SECTION("groups_tls12_server_list_and_client_certificate_curve");
+    CHECK(client_cert_alert("X25519:secp384r1", 1) == SSL_AD_ILLEGAL_PARAMETER,
+          "negative: TLS 1.2, a server list without P-256 refuses a P-256 client certificate");
+    CHECK(client_cert_alert("X25519:secp384r1:secp256r1", 1) == 0,
+          "control: with P-256 in the server's list it is accepted");
+    CHECK(client_cert_alert("X25519:secp384r1", 0) == 0, "control: TLS 1.3 accepts it under the same list");
+    END();
+}
+
 /* A TLS 1.2 abbreviated handshake (a resumption) runs no key exchange: KSL_GET_GROUP reports none on both sides, not the group of
    the full handshake the session came from (OpenSSL keeps that one in the session, SSL_get_negotiated_group) */
 static void test_tls12_resumption_reports_no_group(void) {
@@ -617,5 +657,6 @@ void run_groups(void) {
     test_sni_override_groups();
     test_resumption_with_other_groups();
     test_tls12_groups();
+    test_tls12_server_groups_and_client_certificates();
     test_tls12_resumption_reports_no_group();
 }

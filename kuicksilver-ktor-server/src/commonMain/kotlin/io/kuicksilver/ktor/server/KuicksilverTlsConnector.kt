@@ -228,7 +228,9 @@ public class KuicksilverTlsConnector private constructor(
          * default [KeyExchangeGroups.Default]. The server takes the first of them a client sent a key share for, else asks for
          * the first the client supports with a HelloRetryRequest; a client with none of them is refused with `handshake_failure`.
          * Key shares are a client's setting: a list with them makes the server's start fail. With [versions] Tls12And13 the
-         * list needs an elliptic curve, the hybrids being TLS 1.3 only.
+         * list needs an elliptic curve, the hybrids being TLS 1.3 only, and with [clientAuth] it also limits the curves of a TLS
+         * 1.2 client's ECDSA certificate (RFC 8422 section 5.1): without `secp256r1` a P-256 client certificate is refused with
+         * `illegal_parameter`.
          */
         @ExperimentalKuicksilverApi
         public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
