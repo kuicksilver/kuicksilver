@@ -2788,6 +2788,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_continuationFloodBounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodClassesWithoutReadingEndCalm
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodWithoutReadingIsCutOffAfterTheStallDeadline
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_madeYouResetBounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_rapidResetDoesNotRunHandlersUnbounded
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2FloodTest.negative_repeatOffenderBackoff

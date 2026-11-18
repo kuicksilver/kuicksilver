@@ -192,8 +192,8 @@ valid header (no guessing), and nothing of the connection is processed before it
 unanswered. The header is read before the TLS handshake from the socket's own read channel, which the TLS session then
 reads on from (`Socket.tlsServer(config, input)`), so a ClientHello sent in the header's segment is kept; on a plain
 connector the same channel goes to HTTP/1.1. The wait is `headerTimeout` (5 s by default; the builder refuses less than
-3 s), cut to what is left of `requestHeaderTimeoutSeconds` from accept but never below 3 s
-(`ProxyProtocolConfig.headerWait`). The client the header names becomes `call.request.origin` (remote and local addresses
+3 s), cut to what is left of `requestHeaderTimeoutSeconds` from accept (`ProxyProtocolConfig.headerWait`); the engine
+refuses to start a PROXY connector with `requestHeaderTimeoutSeconds` below 3, so at accept the wait is at least 3 s. The client the header names becomes `call.request.origin` (remote and local addresses
 and ports) on HTTP/1.1 and HTTP/2 calls, `call.request.local` keeps the TCP connection, and `call.request.proxyHeader`
 gives the header itself. On a PROXY connector the HTTP/2 repeat-offender penalty is never the TCP peer's: a flood strikes
 the client the header names, or nobody when it names none, and the accept-time check of the peer is skipped.
@@ -202,10 +202,12 @@ the client the header names, or nobody when it names none, and the accept-time c
 `.negative_headerNotCompleteWithinTheTimeoutIsCut`, `.pipelinedRequestsAfterTheHeaderAreServed`,
 `.tlsConnectorReadsTheHeaderBeforeTheClientHello`, `.http2CallsReportTheClient`, `.repeatOffendersAreTheClientsBehindTheProxy`,
 `.negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `.negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`,
+`.negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`,
+`ServerH2FloodTest.negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`,
 `ProxyProtocolConfigTest.addressesAndBlocksMatch`, `.ipv4MappedPeersMatchIpv4Blocks`, `.negative_ipv6BlocksDoNotTakeMappedIpv4Peers`,
-`.negative_unknownPeerIsNotTrusted`, `.negative_invalidConfigurationsAreRefused`, `.headerWaitIsNeverBelowThreeSeconds`,
+`.negative_unknownPeerIsNotTrusted`, `.negative_invalidConfigurationsAreRefused`, `.headerWaitIsTheTimeoutCutToTheRequestHeadDeadline`,
 `TlsServerAfterPrefixTest.clientHelloInThePrefixSegmentIsKept`, `EngineMainTest.proxyProtocolKeysOnTheDeploymentPort`,
-`.negative_proxyProtocolKeysWithSslPortRefused`.
+`.negative_proxyProtocolKeysWithSslPortRefused`, `.negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused`.
 
 **Notes on peers.** nghttpx turns the protocol on per frontend (`--accept-proxy-protocol`, `doc/nghttpx.1.rst`) with no
 list of trusted sources: every peer of such a frontend must send a header (`shrpx_client_handler.cc:477-481`).
