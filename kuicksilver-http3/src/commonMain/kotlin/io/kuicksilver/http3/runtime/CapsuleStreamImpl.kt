@@ -13,8 +13,11 @@ import io.kuicksilver.http3.CapsuleStream
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.CapsuleParser
 import io.kuicksilver.http3.message.CapsuleRules
+import io.kuicksilver.http3.message.DatagramFilter
+import io.kuicksilver.http3.message.DatagramVerdict
 import io.kuicksilver.quic.DatagramSendResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -42,6 +45,12 @@ import kotlin.concurrent.atomics.decrementAndFetch
 internal class CapsuleStreamImpl(
     override val stream: Http3StreamImpl,
     private val config: CapsuleConfig,
+    /**
+     * Judges every HTTP datagram, QUIC DATAGRAM frame or DATAGRAM capsule, by its Context ID (RFC 9298 sections 4 and 5):
+     * a skipped one never reaches [datagrams], an aborted one resets and stops the stream with H3_DATAGRAM_ERROR. Null:
+     * every datagram is delivered.
+     */
+    private val datagramFilter: DatagramFilter? = null,
 ) : CapsuleStream {
     private val parser =
         CapsuleParser(
@@ -49,6 +58,7 @@ internal class CapsuleStreamImpl(
             maxDatagramLength = config.maxDatagramLength.toLong(),
             known = config.knownTypes + CapsuleProtocol.DATAGRAM,
             terminal = config.terminalTypes,
+            filter = datagramFilter,
         )
     private val incoming = HandOffQueue<Capsule>(config.receiveQueue)
     private val datagramQueue = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
@@ -89,8 +99,30 @@ internal class CapsuleStreamImpl(
             reader.cancel()
         }
         stream.scope
-            .launch { stream.datagrams.collect { datagramQueue.trySend(it) } }
-            .invokeOnCompletion { datagramSourceEnded() }
+            .launch {
+                stream.datagrams.collect { d ->
+                    when (judge(d)) {
+                        DatagramVerdict.Deliver -> {
+                            datagramQueue.trySend(d)
+                        }
+
+                        DatagramVerdict.Skip -> {}
+
+                        DatagramVerdict.Abort -> {
+                            malformed("HTTP datagram refused: ${d.size} bytes", Http3ErrorCode.DATAGRAM_ERROR)
+                        }
+                    }
+                }
+            }.invokeOnCompletion { datagramSourceEnded() }
+    }
+
+    /** [datagramFilter]'s verdict on a QUIC datagram's payload; one too short for its Context ID is skipped. */
+    private fun judge(d: ByteArray): DatagramVerdict {
+        val f = datagramFilter ?: return DatagramVerdict.Deliver
+        if (d.isEmpty()) return DatagramVerdict.Skip
+        val ctx = VarInt.read(d, 0, d.size)
+        if (ctx < 0) return DatagramVerdict.Skip
+        return f.verdict(ctx, (d.size - VarInt.encodedLength(d[0])).toLong())
     }
 
     private suspend fun readLoop() {
@@ -115,7 +147,7 @@ internal class CapsuleStreamImpl(
             if (inputStopped.load()) throw IOException("the stream's input was stopped (STOP_SENDING)")
             parser.endOfStream() // RFC 9297 section 3.3: a FIN inside a capsule is a malformed message
         } catch (e: H3ProtocolError) {
-            end = malformed(e.message ?: "malformed capsule")
+            end = malformed(e.message ?: "malformed capsule", e.code)
         } catch (e: CancellationException) {
             end = IOException("the stream's input was stopped or the connection closed", e) // never a clean end
             throw e
@@ -126,11 +158,14 @@ internal class CapsuleStreamImpl(
         }
     }
 
-    private fun malformed(reason: String): Http3Exception.MessageError {
+    private fun malformed(
+        reason: String,
+        code: Long = Http3ErrorCode.MESSAGE_ERROR,
+    ): Http3Exception.MessageError {
         val e = Http3Exception.MessageError(stream.streamId, reason)
         fail(e)
-        stream.reset(Http3ErrorCode.MESSAGE_ERROR)
-        stream.stopSending(Http3ErrorCode.MESSAGE_ERROR)
+        stream.reset(code)
+        stream.stopSending(code)
         return e
     }
 
