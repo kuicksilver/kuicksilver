@@ -37,6 +37,7 @@ import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.tls.completedWithin
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -196,10 +197,12 @@ internal suspend fun h2WebSocket(
         fun onOwnClose() {
             output.releaseLead()
         }
+        var guard: io.ktor.utils.io.ByteWriteChannel? = null
         lifetime.invokeOnEnd { cause ->
             // a call that failed or was cancelled before the session's own Close, or a session cut at T1 or failed, is
-            // reset with CANCEL at once
-            if (cause != null || !held.endRequested || output.closedCause != null) {
+            // reset with CANCEL at once; so is one whose frame guard is inside a frame (a writer that ended says nothing:
+            // Ktor's ends its channel in order also when cancelled inside a frame), never ended with END_STREAM
+            if (cause != null || !held.endRequested || output.closedCause != null || guard?.isAtWebSocketFrameBoundary() != true) {
                 sender.cancel()
                 releaseLogged(events, stream) { release() }
                 return@invokeOnEnd
@@ -253,7 +256,8 @@ internal suspend fun h2WebSocket(
                 ),
                 // Ktor writes unmasked frames; the guard masks each with a key from the CSPRNG (RFC 6455 section 5.3)
                 // its own Close is also seen here, once written, whichever way it was sent (see WebSocketLifetime.watch)
-                guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression, onClose = ::onOwnClose),
+                guardWebSocketOutput(held, masking = true, handshake.checkText, handshake.sentCompression, onClose = ::onOwnClose)
+                    .also { guard = it },
                 masking = false,
                 coroutineContext = lifetime.context,
                 channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,

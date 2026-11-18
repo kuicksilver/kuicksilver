@@ -57,20 +57,22 @@ class WebSocketTransportEndTest {
      * 2026-11-18); now it is reset.
      */
     @Test fun negative_aWriterThatEndedInsideAFrameIsReset() {
-        for (drained in listOf(true, false)) {
-            for (cut in listOf(true, false)) {
-                assertEquals(
-                    WebSocketTransportEnd.Reset,
-                    webSocketTransportEnd(
-                        endedInOrder = false,
-                        failed = false,
-                        writerDone = true,
-                        atFrameBoundary = false,
-                        drained = drained,
-                        cutByCloseWait = cut,
-                    ),
-                    "drained: $drained, cut by the close wait: $cut",
-                )
+        for (inOrder in listOf(true, false)) {
+            for (drained in listOf(true, false)) {
+                for (cut in listOf(true, false)) {
+                    assertEquals(
+                        WebSocketTransportEnd.Reset,
+                        webSocketTransportEnd(
+                            endedInOrder = inOrder,
+                            failed = false,
+                            writerDone = true,
+                            atFrameBoundary = false,
+                            drained = drained,
+                            cutByCloseWait = cut,
+                        ),
+                        "in order: $inOrder, drained: $drained, cut by the close wait: $cut",
+                    )
+                }
             }
         }
     }
@@ -87,7 +89,7 @@ class WebSocketTransportEndTest {
                                 val got = webSocketTransportEnd(inOrder, failed, writerDone, boundary, drained, cut)
                                 val want =
                                     when {
-                                        inOrder && writerDone -> WebSocketTransportEnd.AfterServer
+                                        inOrder && writerDone && boundary -> WebSocketTransportEnd.AfterServer
 
                                         failed -> WebSocketTransportEnd.Reset
 

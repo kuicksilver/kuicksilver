@@ -367,6 +367,9 @@ internal class Http3StreamImpl(
 
     override val streamId: Long get() = st.id
     override val output: ByteWriteChannel get() = writer.output
+
+    /** [ResponseWriterImpl.handedToTransport] of this stream's writer; null for a writer of another kind. */
+    internal val handedToTransport: Long? get() = (writer as? ResponseWriterImpl)?.handedToTransport
     override var priority: StreamPriority
         get() = st.priority
         set(v) {

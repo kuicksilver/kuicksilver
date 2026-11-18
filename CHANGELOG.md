@@ -1336,11 +1336,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   taken by the kernel and the server's never came, or cancelled while idle between frames) is closed cleanly instead: a
   FIN, and over TLS close_notify first (RFC 9846 section 6.1), where before the TLS session was dropped without one.
   HTTP/2 and HTTP/3 streams were already reset.
-- Ktor client: an HTTP/1.1 WebSocket session cut by its close wait inside a frame (a large frame behind a server that
-  does not read) could still get a FIN after the part of the frame that went out, as if the stream were whole: Ktor's
-  `WebSocketWriter` ends its channel in order also when it is cancelled, and that end counted as a finished writer. Only
-  the frame guard's position now says that the stream is whole; such a connection is reset (`SO_LINGER` 0), as
-  documented. Seen in Docker as a server reading a 16 MiB frame cut after about 5 MB and then a clean end.
+- Ktor client and server: a WebSocket session cut inside a frame (a large frame behind a peer that does not read, its
+  writer cancelled) could still get a clean end after the part of the frame that went out, as if the stream were whole:
+  Ktor's `WebSocketWriter` ends its channel with `flushAndClose()` also when it is cancelled, and that end counted as a
+  finished writer. The frame guard now resets the transport in place of such a close (a TCP reset, RST_STREAM CANCEL,
+  RESET_STREAM H3_REQUEST_CANCELLED), counts a frame as started before its header is handed on, and every engine checks
+  that the guard is between frames before a FIN, close_notify or END_STREAM; the HTTP/1.1 client's end decision takes
+  only the guard's position for a whole stream. Seen in Docker as a server reading a 16 MiB frame cut after about 5 MB
+  and then a clean end (HTTP/1.1 client). Over HTTP/3 the client now follows the HTTP/1.1 rule: a session its close wait
+  cut with frames still queued in front of QUIC's send buffer is reset, as documented, where before a finished writer
+  ended it with a FIN and the queued frames went on after the close wait; one whose writing was all handed to the
+  transport keeps its FIN, and one its call cancelled between frames gets a FIN.
 - WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
   3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
   own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which

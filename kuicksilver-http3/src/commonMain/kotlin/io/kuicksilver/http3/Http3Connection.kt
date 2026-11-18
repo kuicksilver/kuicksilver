@@ -341,6 +341,16 @@ public var Http3Connection.beforeTransportClosedForTest: (suspend () -> Unit)?
     }
 
 /**
+ * The bytes written to [this] stream's [Http3Stream.output] that have been handed to the QUIC stream and from there to
+ * the connection's send buffer: once it equals what was written, nothing waits in front of the transport (a client
+ * WebSocket engine decides from it whether a session its close wait cut may still end with a FIN, as a TCP socket whose
+ * kernel took everything). Null for streams of other implementations.
+ */
+@InternalKuicksilverApi
+public val Http3Stream.contentHandedToTransport: Long?
+    get() = (this as? io.kuicksilver.http3.runtime.Http3StreamImpl)?.handedToTransport
+
+/**
  * For a server engine that runs one handler per request: from now on [this] request keeps its stream's MAX_STREAMS credit
  * until [handlerEnded], whatever happens to the request meanwhile (the client's reset, a failed response), so the client
  * never has more handlers running than it may open streams (RFC 9114 section 10.5; Rapid Reset, CVE-2023-44487). Call it

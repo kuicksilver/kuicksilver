@@ -1732,7 +1732,7 @@ internal class Http11Routes {
 /** The server closed the connection after answering the first-contact probe ([H1Pool.probeVersion]). */
 internal class ProbeEndedConnection : Exception("the server closed the connection after the OPTIONS probe")
 
-/** How an HTTP/1.1 WebSocket's connection ends once its session did ([webSocketTransportEnd]). */
+/** How a client WebSocket's transport (HTTP/1.1, HTTP/3) ends once its session did ([webSocketTransportEnd]). */
 internal enum class WebSocketTransportEnd {
     /** The session ended in order: the server closes first, this side follows within T2 (closeAfterWebSocket). */
     AfterServer,
@@ -1745,7 +1745,7 @@ internal enum class WebSocketTransportEnd {
 }
 
 /**
- * The end of an HTTP/1.1 WebSocket's connection from what is left of its stream. Whole frames still queued in front of the
+ * The end of a client WebSocket's transport (an HTTP/1.1 connection, an HTTP/3 stream) from what is left of its stream. Whole frames still queued in front of the
  * socket (the frame guard stopped between frames) go out in order unless the close wait cut the session
  * (`WebSocketLifetime.cutByCloseWait`: nothing it queued leaves after T1); a session cancelled by its call while idle is
  * closed in order whether or not the socket's writer has taken its last frames yet.
@@ -1766,7 +1766,7 @@ internal fun webSocketTransportEnd(
     cutByCloseWait: Boolean,
 ): WebSocketTransportEnd =
     when {
-        endedInOrder && writerDone -> WebSocketTransportEnd.AfterServer
+        endedInOrder && writerDone && atFrameBoundary -> WebSocketTransportEnd.AfterServer
         !failed && atFrameBoundary && (drained || !cutByCloseWait) -> WebSocketTransportEnd.Orderly
         else -> WebSocketTransportEnd.Reset
     }

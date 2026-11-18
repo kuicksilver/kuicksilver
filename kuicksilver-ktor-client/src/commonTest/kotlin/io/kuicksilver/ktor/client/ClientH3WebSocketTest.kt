@@ -179,6 +179,8 @@ class ClientH3WebSocketTest {
                         }.build(),
                     io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
                 )
+            // every attempt's decision, with what it was made from: the server reads nothing, so no session ends in order
+            val ends = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             try {
                 val read =
                     unwrittenCloseAttempts { data, frames ->
@@ -206,6 +208,9 @@ class ClientH3WebSocketTest {
                                     install(WebSockets)
                                 }).use { c ->
                                     (c.engine as KuicksilverEngine).h3.webSocketCloseWaitMillis = 200
+                                    (c.engine as KuicksilverEngine).h3.webSocketEndForTest = { end, writerDone, boundary ->
+                                        ends.trySend("$end writerDone=$writerDone boundary=$boundary")
+                                    }
                                     val session = c.webSocketSession("wss://127.0.0.1:${ep.localAddress.port}/ws")
                                     repeat(frames) { session.outgoing.send(Frame.Binary(true, data)) }
                                     launch { session.close(CloseReason(4002, "client bye")) }
@@ -219,6 +224,10 @@ class ClientH3WebSocketTest {
                         }
                     }
                 assertEquals("reset", read.last(), "the stream was reset, not ended with a FIN: $read")
+                // the close wait cut every session: reset, also one whose writer ended its channel inside a frame (Ktor's
+                // writer does so when cancelled), never a FIN after a cut frame
+                val decided = generateSequence { ends.tryReceive().getOrNull() }.toList()
+                assertTrue(decided.isNotEmpty() && decided.all { it.startsWith("Reset") }, "every stream reset: $decided")
             } finally {
                 ep.close()
             }

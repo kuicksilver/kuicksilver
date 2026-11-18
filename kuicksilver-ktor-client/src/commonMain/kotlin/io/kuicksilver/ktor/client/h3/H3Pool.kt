@@ -35,6 +35,7 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.awaitWebTransportExchangeEnd
+import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
@@ -64,6 +65,7 @@ import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import io.kuicksilver.ktor.network.guardWebSocketOutput
+import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.raceAddresses
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.LogLevel
@@ -278,6 +280,15 @@ internal class H3Pool(
 
     /** Test hook: runs once a WebSocket read the server's end of the stream (its FIN or reset), still inside T2. */
     internal var webSocketServerEndForTest: (suspend () -> Unit)? = null
+
+    /**
+     * Test hook: how a WebSocket's stream ends once its session did ([h3WebSocketStreamEnd]), with what it was decided
+     * from: whether the session's writer ended its channel and whether the frame guard was between frames.
+     */
+    internal var webSocketEndForTest: (
+        (end: io.kuicksilver.ktor.client.h1.WebSocketTransportEnd, writerDone: Boolean, atFrameBoundary: Boolean) -> Unit
+    )? =
+        null
 
     /** Test hook: runs once a WebSocket's CONNECT was answered, still inside the connect timeout. */
     internal var webSocketConnectedForTest: (suspend () -> Unit)? = null
@@ -1717,12 +1728,23 @@ internal class H3Pool(
         // receive data from the target of the CONNECT"). A session that ended in order keeps its FIN back until the
         // server's FIN, at most T2 (WebSocketLifetime), then sends it; a server still silent then is stopped with
         // H3_REQUEST_CANCELLED once one more close wait has passed. A peer's STOP_SENDING meanwhile is answered with
-        // RESET_STREAM by the transport (RFC 9000 section 3.5). A session that did not end in order is reset, unless its
-        // writer finished (its Close may still be in flight: a RESET_STREAM could discard it), and stopped
+        // RESET_STREAM by the transport (RFC 9000 section 3.5). A session that did not end in order gets a FIN when its
+        // stream is whole (the frame guard between frames: a writer that ended says nothing, Ktor's ends its channel in order
+        // also when cancelled inside a frame) and the close wait did not cut it (a session cancelled by its call: its Close,
+        // if any, may still be in flight, and a RESET_STREAM could discard it) or, cut, everything it wrote was handed to
+        // QUIC's send buffer; it is reset otherwise, so nothing it queued leaves after T1, and stopped. As over HTTP/1.1
+        // (h3WebSocketStreamEnd, webSocketTransportEnd)
+        var guard: io.ktor.utils.io.ByteWriteChannel? = null
         lifetime.invokeOnEnd { cause ->
-            val sentCleanly = heldEnd.endRequested && stream.output.closedCause == null
+            val failed = stream.output.closedCause != null
+            val writerDone = heldEnd.endRequested && !failed
+            val atFrameBoundary = guard?.isAtWebSocketFrameBoundary() == true
+            // nothing waits in front of QUIC's send buffer: what the session wrote was all handed to the stream
+            val drained = stream.contentHandedToTransport == heldEnd.handed
+            val end = h3WebSocketStreamEnd(cause == null, failed, writerDone, atFrameBoundary, drained, lifetime.cutByCloseWait)
+            webSocketEndForTest?.invoke(end, writerDone, atFrameBoundary)
             try {
-                if (cause == null && sentCleanly) {
+                if (end == io.kuicksilver.ktor.client.h1.WebSocketTransportEnd.AfterServer) {
                     webSocketClosingForTest?.invoke("waiting")
                     // true: the server's FIN; false: the server reset its direction, an abort (RFC 9220 section 3: "RST
                     // exceptions are represented with a stream error"), which gets no clean FIN after it but a reset, as
@@ -1748,7 +1770,7 @@ internal class H3Pool(
                         }
                     }
                 } else {
-                    if (sentCleanly) {
+                    if (end == io.kuicksilver.ktor.client.h1.WebSocketTransportEnd.Orderly) {
                         withTimeoutOrNull(lifetime.closeWait) { runCatching { stream.output.flushAndClose() } }
                     } else {
                         stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
@@ -1798,7 +1820,7 @@ internal class H3Pool(
                             checkText = handshake.checkText,
                             onEnd = { inputDone.complete(Unit) },
                         ),
-                        guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression),
+                        guardWebSocketOutput(heldEnd, masking = true, handshake.checkText, handshake.sentCompression).also { guard = it },
                         masking = false,
                         coroutineContext = lifetime.context,
                         channelsConfig = data.attributes[WEBSOCKETS_KEY].channelsConfig,
@@ -1956,3 +1978,28 @@ private suspend fun discardToEnd(input: ByteReadChannel): Boolean =
     } catch (_: Throwable) {
         false
     }
+
+/**
+ * How an HTTP/3 WebSocket's stream ends once its session did, as an HTTP/1.1 connection does
+ * ([webSocketTransportEnd][io.kuicksilver.ktor.client.h1.webSocketTransportEnd]): a FIN needs the frame guard between
+ * frames, and for a session the close wait cut also [drained], everything it wrote handed to QUIC's send buffer (the
+ * transport's part, like a kernel's: its Close still in flight is delivered, never discarded by a reset). A session cut
+ * with frames still queued in front of it (the stream's writer channel, its pump, the QUIC stream's own buffer) is reset
+ * with RESET_STREAM H3_REQUEST_CANCELLED (RFC 9220 section 3), so nothing it queued leaves after T1.
+ */
+internal fun h3WebSocketStreamEnd(
+    endedInOrder: Boolean,
+    failed: Boolean,
+    writerDone: Boolean,
+    atFrameBoundary: Boolean,
+    drained: Boolean,
+    cutByCloseWait: Boolean,
+): io.kuicksilver.ktor.client.h1.WebSocketTransportEnd =
+    io.kuicksilver.ktor.client.h1.webSocketTransportEnd(
+        endedInOrder = endedInOrder,
+        failed = failed,
+        writerDone = writerDone,
+        atFrameBoundary = atFrameBoundary,
+        drained = drained,
+        cutByCloseWait = cutByCloseWait,
+    )
