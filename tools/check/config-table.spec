@@ -10,6 +10,7 @@ TlsConfig | kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TlsConfig.k
 SessionTicketConfig | kuicksilver-tls/src/commonMain/kotlin/io/kuicksilver/tls/TlsConfig.kt | SessionTicketConfig | ctor
 Http3Settings | kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Http3Settings.kt | Http3Settings.Builder | var
 CapsuleConfig | kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/Capsules.kt | CapsuleConfig.Builder | var
+UdpProxyConfig | kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/ConnectUdp.kt | UdpProxyConfig | ctor
 Http2Settings | kuicksilver-http2/src/commonMain/kotlin/io/kuicksilver/http2/Http2Settings.kt | Http2Settings | ctor
 Ktor client engine | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | KuicksilverEngineConfig | var
 HTTP/2 client options | kuicksilver-ktor-client/src/commonMain/kotlin/io/kuicksilver/ktor/client/KuicksilverEngineConfig.kt | Http2ClientConfig | var

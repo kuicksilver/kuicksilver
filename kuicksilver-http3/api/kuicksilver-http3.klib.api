@@ -17,6 +17,33 @@ final enum class io.kuicksilver.http3/Http3Role : kotlin/Enum<io.kuicksilver.htt
     final fun values(): kotlin/Array<io.kuicksilver.http3/Http3Role> // io.kuicksilver.http3/Http3Role.values|values#static(){}[0]
 }
 
+abstract fun interface io.kuicksilver.http3/UdpProxyResolver { // io.kuicksilver.http3/UdpProxyResolver|null[0]
+    abstract suspend fun resolve(kotlin/String): kotlin.collections/List<kotlin/ByteArray> // io.kuicksilver.http3/UdpProxyResolver.resolve|resolve(kotlin.String){}[0]
+
+    final object Companion { // io.kuicksilver.http3/UdpProxyResolver.Companion|null[0]
+        final val System // io.kuicksilver.http3/UdpProxyResolver.Companion.System|{}System[0]
+            final fun <get-System>(): io.kuicksilver.http3/UdpProxyResolver // io.kuicksilver.http3/UdpProxyResolver.Companion.System.<get-System>|<get-System>(){}[0]
+    }
+}
+
+abstract fun interface io.kuicksilver.http3/UdpTargetFilter { // io.kuicksilver.http3/UdpTargetFilter|null[0]
+    abstract fun allows(kotlin/String, kotlin/ByteArray, kotlin/Int): kotlin/Boolean // io.kuicksilver.http3/UdpTargetFilter.allows|allows(kotlin.String;kotlin.ByteArray;kotlin.Int){}[0]
+    open fun and(io.kuicksilver.http3/UdpTargetFilter): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.and|and(io.kuicksilver.http3.UdpTargetFilter){}[0]
+    open fun or(io.kuicksilver.http3/UdpTargetFilter): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.or|or(io.kuicksilver.http3.UdpTargetFilter){}[0]
+
+    final object Companion { // io.kuicksilver.http3/UdpTargetFilter.Companion|null[0]
+        final val AllowAll // io.kuicksilver.http3/UdpTargetFilter.Companion.AllowAll|{}AllowAll[0]
+            final fun <get-AllowAll>(): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.AllowAll.<get-AllowAll>|<get-AllowAll>(){}[0]
+        final val PublicOnly // io.kuicksilver.http3/UdpTargetFilter.Companion.PublicOnly|{}PublicOnly[0]
+            final fun <get-PublicOnly>(): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.PublicOnly.<get-PublicOnly>|<get-PublicOnly>(){}[0]
+
+        final fun addresses(kotlin/Array<out kotlin/String>...): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.addresses|addresses(kotlin.Array<out|kotlin.String>...){}[0]
+        final fun excluding(kotlin/Array<out kotlin/String>...): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.excluding|excluding(kotlin.Array<out|kotlin.String>...){}[0]
+        final fun hosts(kotlin/Array<out kotlin/String>...): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.hosts|hosts(kotlin.Array<out|kotlin.String>...){}[0]
+        final fun ports(kotlin/Array<out kotlin.ranges/IntRange>...): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpTargetFilter.Companion.ports|ports(kotlin.Array<out|kotlin.ranges.IntRange>...){}[0]
+    }
+}
+
 abstract interface io.kuicksilver.http3/CapsuleStream { // io.kuicksilver.http3/CapsuleStream|null[0]
     abstract val capsules // io.kuicksilver.http3/CapsuleStream.capsules|{}capsules[0]
         abstract fun <get-capsules>(): kotlinx.coroutines.flow/Flow<io.kuicksilver.http3/Capsule> // io.kuicksilver.http3/CapsuleStream.capsules.<get-capsules>|<get-capsules>(){}[0]
@@ -111,6 +138,26 @@ abstract interface io.kuicksilver.http3/Http3Stream { // io.kuicksilver.http3/Ht
     abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/Http3Stream.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
     abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/Http3Stream.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
     open fun useCapsuleProtocol(io.kuicksilver.http3/CapsuleConfig = ...): io.kuicksilver.http3/CapsuleStream // io.kuicksilver.http3/Http3Stream.useCapsuleProtocol|useCapsuleProtocol(io.kuicksilver.http3.CapsuleConfig){}[0]
+}
+
+abstract interface io.kuicksilver.http3/UdpTunnel { // io.kuicksilver.http3/UdpTunnel|null[0]
+    abstract val droppedDatagrams // io.kuicksilver.http3/UdpTunnel.droppedDatagrams|{}droppedDatagrams[0]
+        abstract fun <get-droppedDatagrams>(): kotlin/Long // io.kuicksilver.http3/UdpTunnel.droppedDatagrams.<get-droppedDatagrams>|<get-droppedDatagrams>(){}[0]
+    abstract val payloads // io.kuicksilver.http3/UdpTunnel.payloads|{}payloads[0]
+        abstract fun <get-payloads>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // io.kuicksilver.http3/UdpTunnel.payloads.<get-payloads>|<get-payloads>(){}[0]
+    abstract val remoteAddress // io.kuicksilver.http3/UdpTunnel.remoteAddress|{}remoteAddress[0]
+        abstract fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.http3/UdpTunnel.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    abstract val stream // io.kuicksilver.http3/UdpTunnel.stream|{}stream[0]
+        abstract fun <get-stream>(): io.kuicksilver.http3/CapsuleStream // io.kuicksilver.http3/UdpTunnel.stream.<get-stream>|<get-stream>(){}[0]
+    abstract val targetHost // io.kuicksilver.http3/UdpTunnel.targetHost|{}targetHost[0]
+        abstract fun <get-targetHost>(): kotlin/String // io.kuicksilver.http3/UdpTunnel.targetHost.<get-targetHost>|<get-targetHost>(){}[0]
+    abstract val targetPort // io.kuicksilver.http3/UdpTunnel.targetPort|{}targetPort[0]
+        abstract fun <get-targetPort>(): kotlin/Int // io.kuicksilver.http3/UdpTunnel.targetPort.<get-targetPort>|<get-targetPort>(){}[0]
+
+    abstract fun asDatagramIo(): io.kuicksilver.quic/DatagramIo // io.kuicksilver.http3/UdpTunnel.asDatagramIo|asDatagramIo(){}[0]
+    abstract fun trySend(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/UdpTunnel.trySend|trySend(kotlin.ByteArray){}[0]
+    abstract suspend fun close() // io.kuicksilver.http3/UdpTunnel.close|close(){}[0]
+    abstract suspend fun send(kotlin/ByteArray) // io.kuicksilver.http3/UdpTunnel.send|send(kotlin.ByteArray){}[0]
 }
 
 abstract interface io.kuicksilver.http3/WebTransportBidiStream : io.kuicksilver.http3/WebTransportReceiveStream, io.kuicksilver.http3/WebTransportSendStream // io.kuicksilver.http3/WebTransportBidiStream|null[0]
@@ -484,6 +531,96 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
     }
 }
 
+final class io.kuicksilver.http3/UdpProxy { // io.kuicksilver.http3/UdpProxy|null[0]
+    constructor <init>(io.kuicksilver.http3/UdpProxyConfig = ...) // io.kuicksilver.http3/UdpProxy.<init>|<init>(io.kuicksilver.http3.UdpProxyConfig){}[0]
+
+    final val activeTunnels // io.kuicksilver.http3/UdpProxy.activeTunnels|{}activeTunnels[0]
+        final fun <get-activeTunnels>(): kotlinx.coroutines.flow/StateFlow<kotlin/Int> // io.kuicksilver.http3/UdpProxy.activeTunnels.<get-activeTunnels>|<get-activeTunnels>(){}[0]
+    final val config // io.kuicksilver.http3/UdpProxy.config|{}config[0]
+        final fun <get-config>(): io.kuicksilver.http3/UdpProxyConfig // io.kuicksilver.http3/UdpProxy.config.<get-config>|<get-config>(){}[0]
+    final val stats // io.kuicksilver.http3/UdpProxy.stats|{}stats[0]
+        final fun <get-stats>(): io.kuicksilver.http3/UdpProxyStats // io.kuicksilver.http3/UdpProxy.stats.<get-stats>|<get-stats>(){}[0]
+
+    final suspend fun serve(io.kuicksilver.http3/Http3ServerRequest) // io.kuicksilver.http3/UdpProxy.serve|serve(io.kuicksilver.http3.Http3ServerRequest){}[0]
+}
+
+final class io.kuicksilver.http3/UdpProxyConfig { // io.kuicksilver.http3/UdpProxyConfig|null[0]
+    constructor <init>(kotlin/String = ..., io.kuicksilver.http3/UdpTargetFilter = ..., io.kuicksilver.http3/UdpProxyResolver = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/String = ..., kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo> = ...) // io.kuicksilver.http3/UdpProxyConfig.<init>|<init>(kotlin.String;io.kuicksilver.http3.UdpTargetFilter;io.kuicksilver.http3.UdpProxyResolver;kotlin.time.Duration;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.String;kotlin.coroutines.SuspendFunction1<io.ktor.network.sockets.InetSocketAddress,io.kuicksilver.quic.DatagramIo>){}[0]
+
+    final val idleTimeout // io.kuicksilver.http3/UdpProxyConfig.idleTimeout|{}idleTimeout[0]
+        final fun <get-idleTimeout>(): kotlin.time/Duration // io.kuicksilver.http3/UdpProxyConfig.idleTimeout.<get-idleTimeout>|<get-idleTimeout>(){}[0]
+    final val linkMtu // io.kuicksilver.http3/UdpProxyConfig.linkMtu|{}linkMtu[0]
+        final fun <get-linkMtu>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.linkMtu.<get-linkMtu>|<get-linkMtu>(){}[0]
+    final val maxTunnels // io.kuicksilver.http3/UdpProxyConfig.maxTunnels|{}maxTunnels[0]
+        final fun <get-maxTunnels>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.maxTunnels.<get-maxTunnels>|<get-maxTunnels>(){}[0]
+    final val maxTunnelsPerClient // io.kuicksilver.http3/UdpProxyConfig.maxTunnelsPerClient|{}maxTunnelsPerClient[0]
+        final fun <get-maxTunnelsPerClient>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.maxTunnelsPerClient.<get-maxTunnelsPerClient>|<get-maxTunnelsPerClient>(){}[0]
+    final val packetBurst // io.kuicksilver.http3/UdpProxyConfig.packetBurst|{}packetBurst[0]
+        final fun <get-packetBurst>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.packetBurst.<get-packetBurst>|<get-packetBurst>(){}[0]
+    final val packetRate // io.kuicksilver.http3/UdpProxyConfig.packetRate|{}packetRate[0]
+        final fun <get-packetRate>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.packetRate.<get-packetRate>|<get-packetRate>(){}[0]
+    final val pathTemplate // io.kuicksilver.http3/UdpProxyConfig.pathTemplate|{}pathTemplate[0]
+        final fun <get-pathTemplate>(): kotlin/String // io.kuicksilver.http3/UdpProxyConfig.pathTemplate.<get-pathTemplate>|<get-pathTemplate>(){}[0]
+    final val proxyName // io.kuicksilver.http3/UdpProxyConfig.proxyName|{}proxyName[0]
+        final fun <get-proxyName>(): kotlin/String // io.kuicksilver.http3/UdpProxyConfig.proxyName.<get-proxyName>|<get-proxyName>(){}[0]
+    final val requireCapsuleProtocolField // io.kuicksilver.http3/UdpProxyConfig.requireCapsuleProtocolField|{}requireCapsuleProtocolField[0]
+        final fun <get-requireCapsuleProtocolField>(): kotlin/Boolean // io.kuicksilver.http3/UdpProxyConfig.requireCapsuleProtocolField.<get-requireCapsuleProtocolField>|<get-requireCapsuleProtocolField>(){}[0]
+    final val resolveTimeout // io.kuicksilver.http3/UdpProxyConfig.resolveTimeout|{}resolveTimeout[0]
+        final fun <get-resolveTimeout>(): kotlin.time/Duration // io.kuicksilver.http3/UdpProxyConfig.resolveTimeout.<get-resolveTimeout>|<get-resolveTimeout>(){}[0]
+    final val resolver // io.kuicksilver.http3/UdpProxyConfig.resolver|{}resolver[0]
+        final fun <get-resolver>(): io.kuicksilver.http3/UdpProxyResolver // io.kuicksilver.http3/UdpProxyConfig.resolver.<get-resolver>|<get-resolver>(){}[0]
+    final val socketFactory // io.kuicksilver.http3/UdpProxyConfig.socketFactory|{}socketFactory[0]
+        final fun <get-socketFactory>(): kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo> // io.kuicksilver.http3/UdpProxyConfig.socketFactory.<get-socketFactory>|<get-socketFactory>(){}[0]
+    final val targetFilter // io.kuicksilver.http3/UdpProxyConfig.targetFilter|{}targetFilter[0]
+        final fun <get-targetFilter>(): io.kuicksilver.http3/UdpTargetFilter // io.kuicksilver.http3/UdpProxyConfig.targetFilter.<get-targetFilter>|<get-targetFilter>(){}[0]
+    final val unansweredLimit // io.kuicksilver.http3/UdpProxyConfig.unansweredLimit|{}unansweredLimit[0]
+        final fun <get-unansweredLimit>(): kotlin/Int // io.kuicksilver.http3/UdpProxyConfig.unansweredLimit.<get-unansweredLimit>|<get-unansweredLimit>(){}[0]
+}
+
+final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProxyStats|null[0]
+    final val droppedClientBusy // io.kuicksilver.http3/UdpProxyStats.droppedClientBusy|{}droppedClientBusy[0]
+        final fun <get-droppedClientBusy>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedClientBusy.<get-droppedClientBusy>|<get-droppedClientBusy>(){}[0]
+    final val droppedForeignSource // io.kuicksilver.http3/UdpProxyStats.droppedForeignSource|{}droppedForeignSource[0]
+        final fun <get-droppedForeignSource>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedForeignSource.<get-droppedForeignSource>|<get-droppedForeignSource>(){}[0]
+    final val droppedRateLimited // io.kuicksilver.http3/UdpProxyStats.droppedRateLimited|{}droppedRateLimited[0]
+        final fun <get-droppedRateLimited>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedRateLimited.<get-droppedRateLimited>|<get-droppedRateLimited>(){}[0]
+    final val droppedTooLargeForClient // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForClient|{}droppedTooLargeForClient[0]
+        final fun <get-droppedTooLargeForClient>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForClient.<get-droppedTooLargeForClient>|<get-droppedTooLargeForClient>(){}[0]
+    final val droppedTooLargeForLink // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForLink|{}droppedTooLargeForLink[0]
+        final fun <get-droppedTooLargeForLink>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForLink.<get-droppedTooLargeForLink>|<get-droppedTooLargeForLink>(){}[0]
+    final val droppedUnanswered // io.kuicksilver.http3/UdpProxyStats.droppedUnanswered|{}droppedUnanswered[0]
+        final fun <get-droppedUnanswered>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedUnanswered.<get-droppedUnanswered>|<get-droppedUnanswered>(){}[0]
+    final val droppedUnknownContext // io.kuicksilver.http3/UdpProxyStats.droppedUnknownContext|{}droppedUnknownContext[0]
+        final fun <get-droppedUnknownContext>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedUnknownContext.<get-droppedUnknownContext>|<get-droppedUnknownContext>(){}[0]
+    final val fromTargets // io.kuicksilver.http3/UdpProxyStats.fromTargets|{}fromTargets[0]
+        final fun <get-fromTargets>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.fromTargets.<get-fromTargets>|<get-fromTargets>(){}[0]
+    final val requestsRefused // io.kuicksilver.http3/UdpProxyStats.requestsRefused|{}requestsRefused[0]
+        final fun <get-requestsRefused>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.requestsRefused.<get-requestsRefused>|<get-requestsRefused>(){}[0]
+    final val toTargets // io.kuicksilver.http3/UdpProxyStats.toTargets|{}toTargets[0]
+        final fun <get-toTargets>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.toTargets.<get-toTargets>|<get-toTargets>(){}[0]
+    final val tunnelsOpened // io.kuicksilver.http3/UdpProxyStats.tunnelsOpened|{}tunnelsOpened[0]
+        final fun <get-tunnelsOpened>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.tunnelsOpened.<get-tunnelsOpened>|<get-tunnelsOpened>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.http3/UdpProxyStats.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.http3/UdpProxyTemplate { // io.kuicksilver.http3/UdpProxyTemplate|null[0]
+    final val authority // io.kuicksilver.http3/UdpProxyTemplate.authority|{}authority[0]
+        final fun <get-authority>(): kotlin/String // io.kuicksilver.http3/UdpProxyTemplate.authority.<get-authority>|<get-authority>(){}[0]
+    final val scheme // io.kuicksilver.http3/UdpProxyTemplate.scheme|{}scheme[0]
+        final fun <get-scheme>(): kotlin/String // io.kuicksilver.http3/UdpProxyTemplate.scheme.<get-scheme>|<get-scheme>(){}[0]
+    final val template // io.kuicksilver.http3/UdpProxyTemplate.template|{}template[0]
+        final fun <get-template>(): kotlin/String // io.kuicksilver.http3/UdpProxyTemplate.template.<get-template>|<get-template>(){}[0]
+
+    final fun expand(kotlin/String, kotlin/Int): kotlin/String // io.kuicksilver.http3/UdpProxyTemplate.expand|expand(kotlin.String;kotlin.Int){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.http3/UdpProxyTemplate.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.http3/UdpProxyTemplate.Companion|null[0]
+        final fun parse(kotlin/String): io.kuicksilver.http3/UdpProxyTemplate // io.kuicksilver.http3/UdpProxyTemplate.Companion.parse|parse(kotlin.String){}[0]
+        final fun wellKnown(kotlin/String): io.kuicksilver.http3/UdpProxyTemplate // io.kuicksilver.http3/UdpProxyTemplate.Companion.wellKnown|wellKnown(kotlin.String){}[0]
+    }
+}
+
 final class io.kuicksilver.http3/WebTransportCloseInfo { // io.kuicksilver.http3/WebTransportCloseInfo|null[0]
     constructor <init>(kotlin/Long, kotlin/String, kotlin/Throwable?) // io.kuicksilver.http3/WebTransportCloseInfo.<init>|<init>(kotlin.Long;kotlin.String;kotlin.Throwable?){}[0]
 
@@ -652,6 +789,17 @@ final object io.kuicksilver.http3/CapsuleProtocol { // io.kuicksilver.http3/Caps
     final fun isEnabled(io.kuicksilver.http3/Http3Headers): kotlin/Boolean // io.kuicksilver.http3/CapsuleProtocol.isEnabled|isEnabled(io.kuicksilver.http3.Http3Headers){}[0]
 }
 
+final object io.kuicksilver.http3/ConnectUdp { // io.kuicksilver.http3/ConnectUdp|null[0]
+    final const val MAX_UDP_PAYLOAD // io.kuicksilver.http3/ConnectUdp.MAX_UDP_PAYLOAD|{}MAX_UDP_PAYLOAD[0]
+        final fun <get-MAX_UDP_PAYLOAD>(): kotlin/Int // io.kuicksilver.http3/ConnectUdp.MAX_UDP_PAYLOAD.<get-MAX_UDP_PAYLOAD>|<get-MAX_UDP_PAYLOAD>(){}[0]
+    final const val PROTOCOL // io.kuicksilver.http3/ConnectUdp.PROTOCOL|{}PROTOCOL[0]
+        final fun <get-PROTOCOL>(): kotlin/String // io.kuicksilver.http3/ConnectUdp.PROTOCOL.<get-PROTOCOL>|<get-PROTOCOL>(){}[0]
+    final const val WELL_KNOWN_PATH // io.kuicksilver.http3/ConnectUdp.WELL_KNOWN_PATH|{}WELL_KNOWN_PATH[0]
+        final fun <get-WELL_KNOWN_PATH>(): kotlin/String // io.kuicksilver.http3/ConnectUdp.WELL_KNOWN_PATH.<get-WELL_KNOWN_PATH>|<get-WELL_KNOWN_PATH>(){}[0]
+
+    final fun isConnectUdp(io.kuicksilver.http3/Http3ServerRequest): kotlin/Boolean // io.kuicksilver.http3/ConnectUdp.isConnectUdp|isConnectUdp(io.kuicksilver.http3.Http3ServerRequest){}[0]
+}
+
 final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3ErrorCode|null[0]
     final const val CLOSED_CRITICAL_STREAM // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM|{}CLOSED_CRITICAL_STREAM[0]
         final fun <get-CLOSED_CRITICAL_STREAM>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM.<get-CLOSED_CRITICAL_STREAM>|<get-CLOSED_CRITICAL_STREAM>(){}[0]
@@ -714,5 +862,6 @@ final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3
 final inline fun io.kuicksilver.http3/capsuleConfig(kotlin/Function1<io.kuicksilver.http3/CapsuleConfig.Builder, kotlin/Unit>): io.kuicksilver.http3/CapsuleConfig // io.kuicksilver.http3/capsuleConfig|capsuleConfig(kotlin.Function1<io.kuicksilver.http3.CapsuleConfig.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Request(kotlin/String, kotlin/String?, kotlin/String?, kotlin/Function1<io.kuicksilver.http3/Http3Request.Builder, kotlin/Unit> = ...): io.kuicksilver.http3/Http3Request // io.kuicksilver.http3/http3Request|http3Request(kotlin.String;kotlin.String?;kotlin.String?;kotlin.Function1<io.kuicksilver.http3.Http3Request.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Settings(kotlin/Function1<io.kuicksilver.http3/Http3Settings.Builder, kotlin/Unit>): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/http3Settings|http3Settings(kotlin.Function1<io.kuicksilver.http3.Http3Settings.Builder,kotlin.Unit>){}[0]
+final suspend fun (io.kuicksilver.http3/Http3Connection).io.kuicksilver.http3/connectUdp(io.kuicksilver.http3/UdpProxyTemplate, kotlin/String, kotlin/Int, io.kuicksilver.http3/Http3Headers = ..., kotlin.time/Duration = ...): io.kuicksilver.http3/UdpTunnel // io.kuicksilver.http3/connectUdp|connectUdp@io.kuicksilver.http3.Http3Connection(io.kuicksilver.http3.UdpProxyTemplate;kotlin.String;kotlin.Int;io.kuicksilver.http3.Http3Headers;kotlin.time.Duration){}[0]
 final suspend fun (io.kuicksilver.http3/Http3Connection).io.kuicksilver.http3/webTransport(io.kuicksilver.http3/Http3Request, kotlin.collections/List<kotlin/String> = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.http3/webTransport|webTransport@io.kuicksilver.http3.Http3Connection(io.kuicksilver.http3.Http3Request;kotlin.collections.List<kotlin.String>){}[0]
 final suspend fun (io.kuicksilver.http3/Http3ServerRequest).io.kuicksilver.http3/acceptWebTransport(io.kuicksilver.http3/Http3Headers = ..., kotlin/String? = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.http3/acceptWebTransport|acceptWebTransport@io.kuicksilver.http3.Http3ServerRequest(io.kuicksilver.http3.Http3Headers;kotlin.String?){}[0]

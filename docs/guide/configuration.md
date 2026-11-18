@@ -278,6 +278,29 @@ How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) 
 | `sendQueue` | `Int` | 32 | 1..4096 | 0.3.0 | capsules waiting to be written; when full, `send` suspends and a fallback `trySendDatagram` answers `QueueFull` |
 | `terminalTypes` | `Set<Long>` | empty | among `knownTypes`, not DATAGRAM | 0.3.0 | a capsule of such a type must be the stream's last: it is delivered, and any byte after it resets the stream with `H3_MESSAGE_ERROR` (WebTransport's WT_CLOSE_SESSION) |
 
+### UdpProxyConfig (*experimental*)
+
+`UdpProxyConfig(...)` (constructor parameters, immutable): how a `UdpProxy` serves CONNECT-UDP (RFC 9298); a bad value
+throws `IllegalArgumentException` when the object is built. Guide: [HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental);
+threats and limits: threat model 3.25.
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `pathTemplate` | `String` | `ConnectUdp.WELL_KNOWN_PATH` | a path and query URI Template with `target_host` and `target_port` once each, readable back | 0.3.0 | the path a request must have; another shape is answered 404, an invalid value 400 |
+| `targetFilter` | `UdpTargetFilter` | `UdpTargetFilter.PublicOnly` |  | 0.3.0 | which resolved addresses and ports may be reached; a refusal is 403 with `destination_ip_prohibited`, before a socket is opened |
+| `resolver` | `UdpProxyResolver` | `UdpProxyResolver.System` |  | 0.3.0 | resolves a `target_host` that is a DNS name, before the answer |
+| `resolveTimeout` | `Duration` | 5 s | positive | 0.3.0 | a resolution that takes longer is answered 504 with `dns_timeout` |
+| `idleTimeout` | `Duration` | 2 min | at least 2 min | 0.3.0 | a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor) |
+| `linkMtu` | `Int` (bytes) | 1500 | 1280..65 535 | 0.3.0 | UDP payloads above `linkMtu - 28` (IPv4) or `- 48` (IPv6) are dropped rather than sent fragmented |
+| `maxTunnels` | `Int` | 4096 | at least 1 | 0.3.0 | tunnels at once; one more is answered 503 with `connection_limit_reached` |
+| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client IP address; one more is answered 429 |
+| `packetRate` | `Int` | 20000 | at least 1 | 0.3.0 | UDP payloads per second a tunnel sends to its target; more are dropped |
+| `packetBurst` | `Int` | 2000 | at least 1 | 0.3.0 | payloads a tunnel may send at once (the token bucket's size) |
+| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a tunnel sends before its target answers once; later ones are dropped until it does; 0 turns it off |
+| `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
+| `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
+| `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
+
 ## Http2Settings
 
 `Http2Settings(...)` (*experimental*, constructor parameters, immutable). Used by the Ktor client (`http2 { settings = … }`) and

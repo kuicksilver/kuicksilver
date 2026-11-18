@@ -14,6 +14,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- CONNECT-UDP (RFC 9298, Proxying UDP in HTTP), experimental, in `kuicksilver-http3` over HTTP/3: a client opens a UDP
+  tunnel through a proxy with `Http3Connection.connectUdp(UdpProxyTemplate, host, port)` and sends and receives UDP
+  payloads as HTTP datagrams with Context ID 0 (QUIC DATAGRAM frames, or DATAGRAM capsules when HTTP/3 datagrams are not
+  negotiated); `UdpTunnel.asDatagramIo()` makes the tunnel the UDP socket of a `QuicEndpoint` or `Http3Endpoint`, so QUIC
+  and HTTP/3 run end to end through the proxy (proxied QUIC, the MASQUE use). `UdpProxy.serve` is the proxy: the URI
+  Template of section 2 (the well-known `/.well-known/masque/udp/{target_host}/{target_port}/` by default), DNS before the
+  answer with `proxy-status` on errors, only globally reachable unicast targets by default (`UdpTargetFilter.PublicOnly`;
+  loopback, private, link-local, multicast and broadcast refused, CWE-918), source validation, Not-ECT, a link-MTU limit,
+  per-tunnel rate and unanswered-packet limits, tunnel limits in all and per client, and a two-minute idle timeout.
+  HTTP/1.1 and HTTP/2 (sections 3.2, 3.3) are not offered (ADR-0023), nor the ICMP Packet Too Big of section 6.1; the Ktor
+  engines do not use it yet. Template and datagram parsing are fuzzed (`http3.udpTemplate`, `http3.udpDatagrams`).
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the

@@ -62,6 +62,19 @@ public final class io/kuicksilver/http3/CapsulesKt {
 	public static final fun capsuleConfig (Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/http3/CapsuleConfig;
 }
 
+public final class io/kuicksilver/http3/ConnectUdp {
+	public static final field INSTANCE Lio/kuicksilver/http3/ConnectUdp;
+	public static final field MAX_UDP_PAYLOAD I
+	public static final field PROTOCOL Ljava/lang/String;
+	public static final field WELL_KNOWN_PATH Ljava/lang/String;
+	public final fun isConnectUdp (Lio/kuicksilver/http3/Http3ServerRequest;)Z
+}
+
+public final class io/kuicksilver/http3/ConnectUdpKt {
+	public static final fun connectUdp-x2RqbK4 (Lio/kuicksilver/http3/Http3Connection;Lio/kuicksilver/http3/UdpProxyTemplate;Ljava/lang/String;ILio/kuicksilver/http3/Http3Headers;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun connectUdp-x2RqbK4$default (Lio/kuicksilver/http3/Http3Connection;Lio/kuicksilver/http3/UdpProxyTemplate;Ljava/lang/String;ILio/kuicksilver/http3/Http3Headers;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class io/kuicksilver/http3/Http3Connection : java/lang/AutoCloseable {
 	public static final field Companion Lio/kuicksilver/http3/Http3Connection$Companion;
 	public final fun acceptRequest (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -466,6 +479,108 @@ public abstract interface class io/kuicksilver/http3/Http3Stream {
 public final class io/kuicksilver/http3/Http3Stream$DefaultImpls {
 	public static fun useCapsuleProtocol (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;)Lio/kuicksilver/http3/CapsuleStream;
 	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
+}
+
+public final class io/kuicksilver/http3/UdpProxy {
+	public fun <init> ()V
+	public fun <init> (Lio/kuicksilver/http3/UdpProxyConfig;)V
+	public synthetic fun <init> (Lio/kuicksilver/http3/UdpProxyConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getActiveTunnels ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getConfig ()Lio/kuicksilver/http3/UdpProxyConfig;
+	public final fun getStats ()Lio/kuicksilver/http3/UdpProxyStats;
+	public final fun serve (Lio/kuicksilver/http3/Http3ServerRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/http3/UdpProxyConfig {
+	public fun <init> ()V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;Lkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getIdleTimeout-UwyO8pc ()J
+	public final fun getLinkMtu ()I
+	public final fun getMaxTunnels ()I
+	public final fun getMaxTunnelsPerClient ()I
+	public final fun getPacketBurst ()I
+	public final fun getPacketRate ()I
+	public final fun getPathTemplate ()Ljava/lang/String;
+	public final fun getProxyName ()Ljava/lang/String;
+	public final fun getRequireCapsuleProtocolField ()Z
+	public final fun getResolveTimeout-UwyO8pc ()J
+	public final fun getResolver ()Lio/kuicksilver/http3/UdpProxyResolver;
+	public final fun getSocketFactory ()Lkotlin/jvm/functions/Function2;
+	public final fun getTargetFilter ()Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun getUnansweredLimit ()I
+}
+
+public abstract interface class io/kuicksilver/http3/UdpProxyResolver {
+	public static final field Companion Lio/kuicksilver/http3/UdpProxyResolver$Companion;
+	public abstract fun resolve (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/http3/UdpProxyResolver$Companion {
+	public final fun getSystem ()Lio/kuicksilver/http3/UdpProxyResolver;
+}
+
+public final class io/kuicksilver/http3/UdpProxyStats {
+	public final fun getDroppedClientBusy ()J
+	public final fun getDroppedForeignSource ()J
+	public final fun getDroppedRateLimited ()J
+	public final fun getDroppedTooLargeForClient ()J
+	public final fun getDroppedTooLargeForLink ()J
+	public final fun getDroppedUnanswered ()J
+	public final fun getDroppedUnknownContext ()J
+	public final fun getFromTargets ()J
+	public final fun getRequestsRefused ()J
+	public final fun getToTargets ()J
+	public final fun getTunnelsOpened ()J
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/UdpProxyTemplate {
+	public static final field Companion Lio/kuicksilver/http3/UdpProxyTemplate$Companion;
+	public final fun expand (Ljava/lang/String;I)Ljava/lang/String;
+	public final fun getAuthority ()Ljava/lang/String;
+	public final fun getScheme ()Ljava/lang/String;
+	public final fun getTemplate ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/UdpProxyTemplate$Companion {
+	public final fun parse (Ljava/lang/String;)Lio/kuicksilver/http3/UdpProxyTemplate;
+	public final fun wellKnown (Ljava/lang/String;)Lio/kuicksilver/http3/UdpProxyTemplate;
+}
+
+public abstract interface class io/kuicksilver/http3/UdpTargetFilter {
+	public static final field Companion Lio/kuicksilver/http3/UdpTargetFilter$Companion;
+	public abstract fun allows (Ljava/lang/String;[BI)Z
+	public fun and (Lio/kuicksilver/http3/UdpTargetFilter;)Lio/kuicksilver/http3/UdpTargetFilter;
+	public fun or (Lio/kuicksilver/http3/UdpTargetFilter;)Lio/kuicksilver/http3/UdpTargetFilter;
+}
+
+public final class io/kuicksilver/http3/UdpTargetFilter$Companion {
+	public final fun addresses ([Ljava/lang/String;)Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun excluding ([Ljava/lang/String;)Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun getAllowAll ()Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun getPublicOnly ()Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun hosts ([Ljava/lang/String;)Lio/kuicksilver/http3/UdpTargetFilter;
+	public final fun ports ([Lkotlin/ranges/IntRange;)Lio/kuicksilver/http3/UdpTargetFilter;
+}
+
+public final class io/kuicksilver/http3/UdpTargetFilter$DefaultImpls {
+	public static fun and (Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpTargetFilter;)Lio/kuicksilver/http3/UdpTargetFilter;
+	public static fun or (Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpTargetFilter;)Lio/kuicksilver/http3/UdpTargetFilter;
+}
+
+public abstract interface class io/kuicksilver/http3/UdpTunnel {
+	public abstract fun asDatagramIo ()Lio/kuicksilver/quic/DatagramIo;
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getDroppedDatagrams ()J
+	public abstract fun getPayloads ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public abstract fun getStream ()Lio/kuicksilver/http3/CapsuleStream;
+	public abstract fun getTargetHost ()Ljava/lang/String;
+	public abstract fun getTargetPort ()I
+	public abstract fun send ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun trySend ([B)Lio/kuicksilver/quic/DatagramSendResult;
 }
 
 public abstract interface class io/kuicksilver/http3/WebTransportBidiStream : io/kuicksilver/http3/WebTransportReceiveStream, io/kuicksilver/http3/WebTransportSendStream {

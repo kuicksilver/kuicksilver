@@ -1618,8 +1618,9 @@ resolver that does not answer within the engine's `connectTimeout` (not a per-re
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
 `replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
-RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (the engine does
+not use CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl; `kuicksilver-http3` itself can run HTTP/3
+through a CONNECT-UDP proxy ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
