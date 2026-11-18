@@ -22,7 +22,7 @@
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
 #include <fcntl.h>        /* F_GETFD: a descriptor the sender clones keep open */
-#include <sched.h>        /* sched_yield: the clone senders wait for the receiver */
+#include <sched.h>        /* sched_yield: a clone sender waits out a full kernel queue */
 #endif
 #ifdef __linux__
 #include <sched.h> /* unshare: a user and network namespace for the ICMP injection test */
@@ -238,11 +238,11 @@ static int recv1(ksl_udp *u, int timeout_ms) {
         return -1;
     return got ? (int)lens[0] : 0;
 }
-/* Waits up to [ms] for at least [n] datagrams in u's receive queue: 1 when they are there, 0 when they never got there, -1 when the
-   host cannot count. Darwin counts the datagrams queued on a socket (SO_NUMRCVPKT) but signals none of the counts (POLLIN fires
-   at the first), so the count is polled every 5 ms; Linux has no such count. Under a UDP flood Darwin's loopback drops datagrams
-   with every sendto successful, and only the count tells that loss from a datagram ksl took and lost */
-static int wait_queued(ksl_udp *u, int n, int ms) {
+/* The datagrams in u's receive queue now, -1 when the host cannot count them. Darwin counts the datagrams queued on a socket
+   (SO_NUMRCVPKT); Linux has no such count. Under a UDP flood Darwin's loopback drops datagrams with every sendto successful, and
+   only the count tells that loss from a datagram ksl took and lost: a datagram counted here is in the kernel's hands, and ksl must
+   hand it out */
+static int queued_now(ksl_udp *u) {
 #ifdef SO_NUMRCVPKT
     uint8_t fd8[4];
     size_t k = 0;
@@ -251,13 +251,23 @@ static int wait_queued(ksl_udp *u, int n, int ms) {
     if (!got_fd)
         return -1;
     int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
+    int queued = 0;
+    socklen_t ql = sizeof queued;
+    int counted = getsockopt(fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &ql) == 0;
+    CHECK(counted, "SO_NUMRCVPKT");
+    return counted ? queued : -1;
+#else
+    (void)u;
+    return -1;
+#endif
+}
+/* Waits up to [ms] for at least [n] datagrams in u's receive queue (queued_now): 1 when they are there, 0 when they never got
+   there, -1 when the host cannot count. The count raises no event (POLLIN fires at the first datagram): it is polled every 5 ms */
+static int wait_queued(ksl_udp *u, int n, int ms) {
     int64_t until = mono_ms() + ms;
     for (;;) {
-        int queued = 0;
-        socklen_t ql = sizeof queued;
-        int counted = getsockopt(fd, SOL_SOCKET, SO_NUMRCVPKT, &queued, &ql) == 0;
-        CHECK(counted, "SO_NUMRCVPKT");
-        if (!counted)
+        int queued = queued_now(u);
+        if (queued < 0)
             return -1;
         if (queued >= n)
             return 1;
@@ -265,51 +275,106 @@ static int wait_queued(ksl_udp *u, int n, int ms) {
             return 0;
         usleep(5000);
     }
-#else
-    (void)u;
-    (void)n;
-    (void)ms;
-    return -1;
-#endif
 }
-/* One datagram of [len] bytes with mark [ecn] from u to [to] (v's address). Sent again, up to four times, only when the kernel
-   never queued it on v (wait_queued: loopback dropped it); one the kernel queued must come out of ksl within 2 s. Where the queue
-   cannot be counted (Linux), sent again when none came out within 2 s. The mark of the datagram received goes to *mark; the number
-   received (0 or 1) is returned */
-static uint32_t ping1_resent(ksl_udp *u, ksl_udp *v, const uint8_t to[KSL_UDP_ADDR_LEN], uint32_t len, uint8_t ecn,
-                             uint8_t *mark) {
-    uint8_t *buf = malloc(len), *rbuf = malloc(1500);
-    memset(buf, 0x5a, len);
-    uint8_t *bufs[1] = {buf}, *rb[1] = {rbuf};
-    uint32_t lens[1] = {len}, caps[1] = {1500}, rl[1], got = 0;
-    uint8_t ecns[1] = {ecn}, ra[KSL_UDP_ADDR_LEN], re[1];
-    for (int attempt = 0; attempt < 5 && !got; attempt++) {
+/* xfer: transfers in the UDP tests that loopback may lose. Counted over the whole udp section: the transfers, and the ones that
+   had to be sent again; at most one in two may be (checked at the end of run_udp), so a ksl send that drops datagrams fails even
+   though each resend hides one loss */
+static uint32_t xfer_calls, xfer_resends;
+static uint8_t xfer_tag;
+/* the payload of datagram i of the attempt [tag]: tag, i, then bytes that follow from both */
+static void xfer_payload(uint8_t *p, uint32_t len, uint8_t tag, uint8_t i) {
+    p[0] = tag;
+    p[1] = i;
+    for (uint32_t k = 2; k < len; k++)
+        p[k] = (uint8_t)(tag * 13 + i * 7 + k);
+}
+/* Sends n (at most 8) datagrams of len bytes (at least 2) from s to [to] (sources srcs[i] as ksl_udp_send_src, NULL: none; mark
+   ecn) and receives them on r. Returns how many arrived, n when all did; their sources, destinations (ksl_udp_recv_dst) and
+   marks go to from, dst and marks (each may be NULL), in arrival order.
+   The oracle: every datagram r hands out must be intact (its payload follows from its tag and index), the attempt's datagrams
+   come out once each and in the order sent, and the loss loopback may cause is a tail of the attempt. Where the queue can be
+   counted (Darwin), every datagram the kernel queued must come out within 2 s; an attempt the kernel did not queue whole is sent
+   again, with a new tag, up to four times: a datagram of an earlier attempt that arrives late is checked and set aside, never
+   taken for the new one. Where it cannot be counted (Linux) nothing is sent again: every datagram must arrive within 5 s, so a
+   datagram ksl loses fails there too (no loopback loss was seen on Linux) */
+static uint32_t xfer(ksl_udp *s, ksl_udp *r, const uint8_t to[KSL_UDP_ADDR_LEN], const uint8_t *srcs, uint8_t ecn,
+                     uint32_t n, uint32_t len, uint8_t *from, uint8_t *dst, uint8_t *marks) {
+    uint8_t *bufs[8], *rb[8];
+    uint32_t lens[8], caps[8], rl[8], cur = 0;
+    uint8_t addrs[8 * KSL_UDP_ADDR_LEN], ecns[8], ra[8 * KSL_UDP_ADDR_LEN], rd[8 * KSL_UDP_ADDR_LEN], re[8];
+    for (uint32_t i = 0; i < 8; i++) {
+        bufs[i] = malloc(len);
+        rb[i] = malloc(1500);
+        lens[i] = len;
+        caps[i] = 1500;
+        memcpy(addrs + i * KSL_UDP_ADDR_LEN, to, KSL_UDP_ADDR_LEN);
+        ecns[i] = ecn;
+    }
+    xfer_calls++;
+    for (int attempt = 0; attempt < 5 && cur < n; attempt++) {
+        if (attempt) {
+            xfer_resends++;
+            printf("    note: loopback lost a datagram before the kernel queued it; sent again\n");
+        }
+        uint8_t tag = ++xfer_tag ? xfer_tag : ++xfer_tag; /* never 0 */
+        for (uint32_t i = 0; i < n; i++)
+            xfer_payload(bufs[i], len, tag, (uint8_t)i);
         uint32_t sent = 0;
-        CHECK(ksl_udp_send(u, bufs, lens, to, ecns, 1, &sent) == KSL_OK && sent == 1, "send");
-        int queued = wait_queued(v, 1, 2000);
-        if (queued == 0) {
-            printf("    note: a datagram lost on loopback; sent again\n");
-            continue;
+        CHECK(ksl_udp_send_src(s, bufs, lens, addrs, srcs, ecns, n, &sent) == KSL_OK && sent == n, "xfer: sent");
+        int whole = wait_queued(r, (int)n, 2000);
+        int expect = whole < 0 ? -1 : queued_now(r); /* what ksl must hand out, those of earlier attempts included */
+        int handed = 0, bad = 0, dup = 0, disorder = 0, last = -1;
+        uint32_t seen = 0;
+        cur = 0;
+        int64_t end = mono_ms() + (whole < 0 ? 5000 : 2000);
+        while ((expect < 0 ? cur < n : handed < expect) && mono_ms() < end) {
+            uint32_t got = 0;
+            int rc = ksl_udp_recv_dst(r, rb, caps, rl, ra, rd, re, n, &got, 200);
+            CHECK(rc == KSL_OK || rc == KSL_WANT_READ, "xfer: recv");
+            for (uint32_t k = 0; k < got; k++) {
+                const uint8_t *p = rb[k];
+                int good = rl[k] >= 2 && p[1] < 8;
+                for (uint32_t j = 2; good && j < rl[k]; j++)
+                    good = p[j] == (uint8_t)(p[0] * 13 + p[1] * 7 + j);
+                handed++;
+                if (!good || (p[0] == tag && rl[k] != len)) {
+                    bad++;
+                    continue;
+                }
+                if (p[0] != tag)
+                    continue; /* a late datagram of an earlier attempt: intact, set aside */
+                if (seen & (1u << p[1])) {
+                    dup++;
+                    continue;
+                }
+                if (p[1] < last)
+                    disorder++;
+                last = p[1];
+                seen |= 1u << p[1];
+                if (from)
+                    memcpy(from + cur * KSL_UDP_ADDR_LEN, ra + k * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN);
+                if (dst)
+                    memcpy(dst + cur * KSL_UDP_ADDR_LEN, rd + k * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN);
+                if (marks)
+                    marks[cur] = re[k];
+                cur++;
+            }
         }
-        int64_t end = mono_ms() + 2000;
-        while (!got && mono_ms() < end) {
-            int r = ksl_udp_recv(v, rb, caps, rl, ra, re, 1, &got, 200);
-            CHECK(r == KSL_OK || r == KSL_WANT_READ, "recv");
-        }
-        if (!got && queued == 1) {
-            CHECK(0, "a datagram the kernel queued is handed out");
+        CHECK(bad == 0, "xfer: every datagram handed out intact");
+        CHECK(dup == 0, "xfer: no datagram handed out twice");
+        CHECK(disorder == 0, "xfer: datagrams handed out in the order sent");
+        CHECK(!(seen & (seen + 1)),
+              "xfer: loopback lost a tail of the attempt, never a datagram between two that arrived");
+        if (expect >= 0)
+            CHECK(handed >= expect, "xfer: every datagram the kernel queued is handed out");
+        if (bad || dup || disorder || expect < 0 || handed < expect)
             break;
-        }
-        if (!got)
-            printf("    note: a datagram lost on loopback; sent again\n");
     }
-    if (got) {
-        CHECK(rl[0] == len && rbuf[0] == 0x5a && rbuf[len - 1] == 0x5a, "the datagram arrives intact");
-        *mark = re[0];
+    for (uint32_t i = 0; i < 8; i++) {
+        free(bufs[i]);
+        free(rb[i]);
     }
-    free(buf);
-    free(rbuf);
-    return got;
+    return cur;
 }
 /* Sends [empties] empty datagrams and then "q" from the plain socket s to [to], u's address, and tells whether the whole burst is
    in u's receive queue (wait_queued, up to 5 s): 1 when it is, 0 when it never got there (the caller sends the burst again to a
@@ -571,55 +636,18 @@ static int second_v4(uint8_t a[KSL_UDP_ADDR_LEN]) {
 static int same_ip(const uint8_t *x, const uint8_t *y) {
     return x[0] == y[0] && !memcmp(x + 3, y + 3, x[0] == 4 ? 4 : 16);
 }
-/* one datagram from c to `to`, received on the wildcard socket w: its source and the destination w saw (dst); 1 when it arrived */
+/* one datagram from c to `to`, received on the wildcard socket w: its source and the destination w saw (dst); 1 when it arrived
+   (xfer: loopback loss is told from ksl's) */
 static int recv_dst(ksl_udp *c, ksl_udp *w, const uint8_t to[KSL_UDP_ADDR_LEN], uint8_t from[KSL_UDP_ADDR_LEN],
                     uint8_t dst[KSL_UDP_ADDR_LEN]) {
-    if (send1(c, to, 64) != 1)
-        return 0;
-    uint8_t buf[128];
-    uint8_t *rb[1] = {buf};
-    uint32_t rc[1] = {128}, rl[1] = {0}, got = 0;
-    uint8_t re[1];
     memset(dst, 0xee, KSL_UDP_ADDR_LEN);
-    for (int tries = 0; tries < 25 && !got; tries++)
-        ksl_udp_recv_dst(w, rb, rc, rl, from, dst, re, 1, &got, 200);
-    return got == 1 && rl[0] == 64;
+    return xfer(c, w, to, NULL, 0, 1, 64, from, dst, NULL) == 1;
 }
-/* n datagrams of len bytes from w to `to` with sources srcs[i] (NULL: none), received on c: the sources c saw, in arrival order */
+/* n datagrams of len bytes from w to `to` with sources srcs[i] (NULL: none), received on c: the sources c saw, in arrival order
+   (xfer) */
 static uint32_t reply_from(ksl_udp *w, ksl_udp *c, const uint8_t to[KSL_UDP_ADDR_LEN], const uint8_t *srcs, uint32_t n,
                            uint32_t len, uint8_t *seen) {
-    uint8_t *bufs[8];
-    uint32_t lens[8];
-    uint8_t addrs[8 * KSL_UDP_ADDR_LEN], ecn[8];
-    uint32_t sent = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        bufs[i] = malloc(len);
-        memset(bufs[i], (int)i, len);
-        lens[i] = len;
-        memcpy(addrs + i * KSL_UDP_ADDR_LEN, to, KSL_UDP_ADDR_LEN);
-        ecn[i] = 0;
-    }
-    int r = ksl_udp_send_src(w, bufs, lens, addrs, srcs, ecn, n, &sent);
-    for (uint32_t i = 0; i < n; i++)
-        free(bufs[i]);
-    if (r != KSL_OK || sent != n)
-        return 0;
-    uint8_t *rb[8];
-    uint32_t rc[8], rl[8], total = 0, got;
-    uint8_t re[8];
-    for (uint32_t i = 0; i < 8; i++) {
-        rb[i] = malloc(1500);
-        rc[i] = 1500;
-    }
-    for (int tries = 0; tries < 25 && total < n; tries++) {
-        got = 0;
-        ksl_udp_recv(c, rb + total, rc + total, rl + total, seen + total * KSL_UDP_ADDR_LEN, re + total, n - total,
-                     &got, 200);
-        total += got;
-    }
-    for (uint32_t i = 0; i < 8; i++)
-        free(rb[i]);
-    return total;
+    return xfer(w, c, to, srcs, 0, n, len, seen, NULL, NULL);
 }
 /* udp_pktinfo_*: a server bound to the wildcard learns the address each datagram was sent to and replies from it (RFC 9000 section 9: a
    path is a 4-tuple). Without it a reply to a client that reached the host's second address leaves from the address the route picks, and
@@ -821,15 +849,13 @@ static void udp_pktinfo_cases(void) {
 #define SENDER_THREADS 4
 #define SENDER_EACH 10000
 #define SENDER_LEN 48
-/* clang-format off */
-#define SENDER_WINDOW 1024 /* datagrams sent and not yet received, all threads together: the receive buffer never overflows */
-/* clang-format on */
+#define SENDER_BATCH                                                                                                   \
+    16 /* datagrams each clone sends in one round; the four rounds' 64 stay far below the receive buffer */
 struct sender_run {
     ksl_udp *clone;
     const uint8_t *to;
     uint8_t id;
-    int *received; /* __atomic, the receiver counts */
-    int *sent;     /* __atomic, all senders count */
+    uint32_t seq; /* the round's first sequence number */
     int failed;
 };
 static void sender_payload(uint8_t *p, uint8_t id, uint32_t seq) {
@@ -841,6 +867,7 @@ static void sender_payload(uint8_t *p, uint8_t id, uint32_t seq) {
     for (int i = 5; i < SENDER_LEN; i++)
         p[i] = (uint8_t)(id * 31 + seq * 7 + (uint32_t)i);
 }
+/* one round of one clone: SENDER_BATCH datagrams from seq on, in calls of 8 */
 static void *clone_sender(void *arg) {
     struct sender_run *r = arg;
     uint8_t buf[8][SENDER_LEN];
@@ -852,15 +879,9 @@ static void *clone_sender(void *arg) {
         lens[i] = SENDER_LEN;
         memcpy(addrs + i * KSL_UDP_ADDR_LEN, r->to, KSL_UDP_ADDR_LEN);
     }
-    uint32_t seq = 0;
-    while (seq < SENDER_EACH) {
-        /* a window over all senders: wait (yield) until the receiver has caught up */
-        if (__atomic_load_n(r->sent, __ATOMIC_ACQUIRE) - __atomic_load_n(r->received, __ATOMIC_ACQUIRE) >=
-            SENDER_WINDOW) {
-            sched_yield();
-            continue;
-        }
-        uint32_t n = SENDER_EACH - seq < 8 ? SENDER_EACH - seq : 8;
+    uint32_t seq = r->seq, end = r->seq + SENDER_BATCH;
+    while (seq < end) {
+        uint32_t n = end - seq < 8 ? end - seq : 8;
         for (uint32_t i = 0; i < n; i++)
             sender_payload(buf[i], r->id, seq + i);
         uint32_t sent = 0;
@@ -869,7 +890,6 @@ static void *clone_sender(void *arg) {
             return NULL;
         }
         seq += sent;
-        __atomic_add_fetch(r->sent, (int)sent, __ATOMIC_ACQ_REL);
         if (!sent)
             sched_yield(); /* the kernel's queue is full: the rest goes later */
     }
@@ -881,8 +901,14 @@ static int64_t live_of(int which) {
     return v[which];
 }
 static void udp_sender_cases(void) {
-    /* udp_sender_clones_send_concurrently: four threads, 10 000 datagrams each through four clones of one socket; the socket
-       itself receives all 40 000, each once and with its content (clean under KSL_TSAN=1: the clones share no mutable state) */
+    /* udp_sender_clones_send_concurrently: four threads, 10 000 datagrams each through four clones of one socket, in rounds of 16 per
+       clone sent at once; the socket itself receives every round, each datagram once, intact and in its clone's order (clean under
+       KSL_TSAN=1: the clones share no mutable state). Loopback loses datagrams under a UDP flood before the kernel queues them
+       (Darwin, plain sockets alike), so where the queue can be counted (queued_now) a round ends when its 64 are queued or after
+       2 s, and every datagram queued must come out. What did not reach the queue is loopback's loss, within bounds: one stretch of
+       a clone's round (loss takes what was sent during a moment), in at most 10 of the 625 rounds, at most 2 % of all; a ksl send
+       that drops datagrams here and there breaks the first two. Where the queue cannot be counted (Linux) all 40 000 must arrive.
+       The rounds end at a 120 s deadline */
     {
         uint8_t la[KSL_UDP_ADDR_LEN];
         ksl_udp *base = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, la);
@@ -906,13 +932,6 @@ static void udp_sender_cases(void) {
                       !memcmp(lc, la, KSL_UDP_ADDR_LEN),
                   "a clone reports the socket's local address");
             CHECK(caps_of(clones[0], NULL) == caps_of(base, NULL), "a clone has the socket's granted flags");
-            int received = 0, sent = 0;
-            struct sender_run runs[SENDER_THREADS];
-            pthread_t th[SENDER_THREADS];
-            for (int i = 0; i < SENDER_THREADS; i++) {
-                runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, &received, &sent, 0};
-                pthread_create(&th[i], NULL, clone_sender, &runs[i]);
-            }
             static uint8_t seen[SENDER_THREADS][SENDER_EACH];
             memset(seen, 0, sizeof seen);
             uint8_t rbuf[64][128];
@@ -923,49 +942,90 @@ static void udp_sender_cases(void) {
                 rb[i] = rbuf[i];
                 rc[i] = sizeof rbuf[i];
             }
-            int bad = 0, dup = 0, total = 0;
-            int64_t deadline = mono_ms() + 60000;
-            while (total < SENDER_THREADS * SENDER_EACH && mono_ms() < deadline) {
-                uint32_t got = 0;
-                int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, 200);
-                if (r == KSL_WANT_READ)
-                    continue;
-                if (r != KSL_OK) {
-                    bad++;
-                    break;
+            int bad = 0, dup = 0, disorder = 0, total = 0, failed = 0, unhanded = 0, stretches = 0, lossy = 0;
+            int64_t last[SENDER_THREADS];
+            for (int i = 0; i < SENDER_THREADS; i++)
+                last[i] = -1;
+            const int expect_round = SENDER_THREADS * SENDER_BATCH;
+            int64_t deadline = mono_ms() + 120000;
+            uint32_t round = 0;
+            for (; round < SENDER_EACH / SENDER_BATCH && mono_ms() < deadline && !failed && !unhanded; round++) {
+                struct sender_run runs[SENDER_THREADS];
+                pthread_t th[SENDER_THREADS];
+                for (int i = 0; i < SENDER_THREADS; i++) {
+                    runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, round * SENDER_BATCH, 0};
+                    pthread_create(&th[i], NULL, clone_sender, &runs[i]);
                 }
-                for (uint32_t i = 0; i < got; i++) {
-                    uint8_t expect[SENDER_LEN];
-                    uint8_t id = rb[i][0];
-                    uint32_t seq =
-                        (uint32_t)rb[i][1] << 24 | (uint32_t)rb[i][2] << 16 | (uint32_t)rb[i][3] << 8 | rb[i][4];
-                    if (rl[i] != SENDER_LEN || id >= SENDER_THREADS || seq >= SENDER_EACH ||
-                        port_of(ra + i * KSL_UDP_ADDR_LEN) != port_of(la)) {
+                for (int i = 0; i < SENDER_THREADS; i++) {
+                    pthread_join(th[i], NULL);
+                    failed |= runs[i].failed;
+                }
+                int whole = wait_queued(base, expect_round, 2000);
+                int expect = whole < 0 ? expect_round : queued_now(base), handed = 0;
+                uint32_t got_mask[SENDER_THREADS] = {0};
+                int64_t until = mono_ms() + (whole < 0 ? 5000 : 2000);
+                while (handed < expect && mono_ms() < until) {
+                    uint32_t got = 0;
+                    int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, 200);
+                    if (r != KSL_OK && r != KSL_WANT_READ) {
                         bad++;
-                        continue;
+                        break;
                     }
-                    sender_payload(expect, id, seq);
-                    if (memcmp(expect, rb[i], SENDER_LEN))
-                        bad++;
-                    else if (seen[id][seq]++)
-                        dup++;
-                    else
+                    for (uint32_t i = 0; i < got; i++) {
+                        uint8_t expect_p[SENDER_LEN];
+                        uint8_t id = rb[i][0];
+                        uint32_t seq =
+                            (uint32_t)rb[i][1] << 24 | (uint32_t)rb[i][2] << 16 | (uint32_t)rb[i][3] << 8 | rb[i][4];
+                        handed++;
+                        if (rl[i] != SENDER_LEN || id >= SENDER_THREADS || seq >= SENDER_EACH ||
+                            port_of(ra + i * KSL_UDP_ADDR_LEN) != port_of(la)) {
+                            bad++;
+                            continue;
+                        }
+                        sender_payload(expect_p, id, seq);
+                        if (memcmp(expect_p, rb[i], SENDER_LEN)) {
+                            bad++;
+                            continue;
+                        }
+                        if (seen[id][seq]++) {
+                            dup++;
+                            continue;
+                        }
+                        if ((int64_t)seq < last[id])
+                            disorder++;
+                        last[id] = seq;
                         total++;
+                        if (seq / SENDER_BATCH == round)
+                            got_mask[id] |= 1u << (seq % SENDER_BATCH);
+                    }
                 }
-                __atomic_add_fetch(&received, (int)got, __ATOMIC_ACQ_REL);
+                if (whole >= 0 && handed < expect)
+                    unhanded++; /* where the queue cannot be counted, "all 40 000" below decides */
+                for (int i = 0; i < SENDER_THREADS; i++) {
+                    uint32_t lost = ~got_mask[i] & ((1u << SENDER_BATCH) - 1);
+                    if (!lost)
+                        continue;
+                    lossy++;
+                    while (!(lost & 1))
+                        lost >>= 1;
+                    if (lost & (lost + 1))
+                        stretches++; /* more than one stretch lost: not what loopback does */
+                }
             }
-            int failed = 0;
-            if (total < SENDER_THREADS * SENDER_EACH) /* lost datagrams: let stalled senders go so the join ends */
-                __atomic_store_n(&received, SENDER_THREADS * SENDER_EACH, __ATOMIC_RELEASE);
-            for (int i = 0; i < SENDER_THREADS; i++) {
-                pthread_join(th[i], NULL);
-                failed |= runs[i].failed;
-            }
+            int all = SENDER_THREADS * SENDER_EACH;
             CHECK(!failed, "every clone's sends succeeded");
+            CHECK(round == SENDER_EACH / SENDER_BATCH, "every round within 120 s");
             CHECK(bad == 0 && dup == 0, "every datagram intact and received once");
-            CHECK(total == SENDER_THREADS * SENDER_EACH, "udp_sender_clones_send_concurrently: all 40 000 received");
-            if (total != SENDER_THREADS * SENDER_EACH)
-                printf("    %d of %d received (%d bad, %d duplicate)\n", total, SENDER_THREADS * SENDER_EACH, bad, dup);
+            CHECK(disorder == 0, "each clone's datagrams in the order it sent them");
+            CHECK(unhanded == 0, "every datagram the kernel queued is handed out");
+            CHECK(stretches == 0, "a clone's round lost one stretch at most, never datagrams between two that arrived");
+            CHECK(lossy <= 10, "at most 10 rounds of a clone lost anything");
+            CHECK(total >= all - all / 50, "at most 2 % lost on loopback");
+            if (total != all)
+                printf("    note: %d of %d received (%d bad, %d duplicate, %d rounds of a clone short)\n", total, all,
+                       bad, dup, lossy);
+            if (queued_now(base) < 0)
+                CHECK(total == all, "udp_sender_clones_send_concurrently: all 40 000 received");
         }
         for (int i = 0; i < SENDER_THREADS; i++)
             ksl_udp_close(clones[i]);
@@ -987,7 +1047,7 @@ static void udp_sender_cases(void) {
             size_t n = 0;
             ksl_udp_get(base, KSL_UDP_GET_FD, fdb, 4, &n);
             int fd = (int)((uint32_t)fdb[0] << 24 | (uint32_t)fdb[1] << 16 | (uint32_t)fdb[2] << 8 | fdb[3]);
-            CHECK(send1(clone, lb, 100) == 1 && recv1(peer, 2000) == 100, "the clone sends");
+            CHECK(xfer(clone, peer, lb, NULL, 0, 1, 100, NULL, NULL, NULL) == 1, "the clone sends");
             ksl_udp_close(base); /* the base first */
             CHECK(fcntl(fd, F_GETFD) != -1, "the descriptor stays open while a clone holds it");
             uint8_t z[8] = {0};
@@ -1008,8 +1068,10 @@ static void udp_sender_cases(void) {
         CHECK(base && clone, "socket and clone again");
         if (peer && base && clone) {
             ksl_udp_close(clone);
-            CHECK(send1(base, lb, 120) == 1 && recv1(peer, 2000) == 120, "the socket sends after its clone closed");
-            CHECK(send1(peer, la, 130) == 1 && recv1(base, 2000) == 130, "the socket receives after its clone closed");
+            CHECK(xfer(base, peer, lb, NULL, 0, 1, 120, NULL, NULL, NULL) == 1,
+                  "the socket sends after its clone closed");
+            CHECK(xfer(peer, base, la, NULL, 0, 1, 130, NULL, NULL, NULL) == 1,
+                  "the socket receives after its clone closed");
             ksl_udp_close(base);
         }
         ksl_udp_close(peer);
@@ -1025,7 +1087,14 @@ static void udp_sender_cases(void) {
         ksl_udp *clone = base ? ksl_udp_sender(base, NULL, NULL, 0) : NULL;
         CHECK(peer && base && clone, "socket, clone and peer");
         if (peer && base && clone) {
-            CHECK(send1(peer, la, 140) == 1, "a datagram for the socket");
+            /* queued before the clone tries to receive (sent again while loopback loses it, where the queue can be counted) */
+            int queued = 0;
+            for (int attempt = 0; attempt < 5 && queued == 0; attempt++) {
+                CHECK(send1(peer, la, 140) == 1, "a datagram for the socket");
+                if ((queued = wait_queued(base, 1, 2000)) == 0)
+                    printf("    note: loopback lost a datagram before the kernel queued it; sent again\n");
+            }
+            CHECK(queued != 0, "the socket's datagram queued within five attempts");
             CHECK(recv1(clone, 200) == -1, "negative_udp_sender_cannot_receive: KSL_ERROR");
             uint8_t e[600];
             size_t n = 0;
@@ -1035,7 +1104,7 @@ static void udp_sender_cases(void) {
             CHECK(recv1(base, 2000) == 140, "the socket still gets its datagram");
             ksl_udp *nested = ksl_udp_sender(clone, NULL, NULL, 0);
             CHECK(nested != NULL, "a clone of a clone sends on the same socket");
-            CHECK(nested && send1(nested, lb, 150) == 1 && recv1(peer, 2000) == 150, "it sends");
+            CHECK(nested && xfer(nested, peer, lb, NULL, 0, 1, 150, NULL, NULL, NULL) == 1, "it sends");
             ksl_udp_close(nested);
         }
         uint32_t err = 0;
@@ -1923,14 +1992,15 @@ void run_udp(void) {
             CHECK(w6 == NULL && err == KSL_E_NOT_SUPPORTED, ":: without IPv6: not supported");
             ksl_udp_no_ipv6_for_test(0);
             if (w) {
-                uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[4];
+                uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[1] = {0};
                 size_t n = 0;
                 ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n);
                 v4(to4, port_of(lw));
                 CHECK((caps_of(w, NULL) & KSL_UDP_ECN) && (caps_of(w, NULL) & KSL_UDP_DF),
                       "ECN and DF on the AF_INET fallback");
-                /* resent when lost: the 4000 sockets of the test before were closed just now (see ping1_resent) */
-                CHECK(ping1_resent(a, w, to4, 100, 2, re) == 1 && re[0] == 2,
+                /* through xfer: right after the 4000 sockets of the test before closed, Darwin's loopback drops most such
+                   datagrams under a UDP flood, plain sockets alike */
+                CHECK(xfer(a, w, to4, NULL, 2, 1, 100, NULL, NULL, re) == 1 && re[0] == 2,
                       "the fallback receives IPv4 with its mark");
                 ksl_udp_close(w);
             }
@@ -2217,7 +2287,7 @@ void run_udp(void) {
                 (void)recv1(d, 50);
                 CHECK(ksl_udp_take_ptb(d, out, sizeof out, &ql, od, &mtu) == 0,
                       "port unreachable is no Packet Too Big");
-                CHECK(send1(e, ld, 100) == 1 && recv1(d, 500) == 100, "the socket still receives");
+                CHECK(xfer(e, d, ld, NULL, 0, 1, 100, NULL, NULL, NULL) == 1, "the socket still receives");
 #ifdef __linux__
                 CHECK(ksl_udp_recverr_for_test(d) == 1 && ksl_udp_errqueue_reads_for_test(d) > 0,
                       "IP_RECVERR on with DF, the error queue drained");
@@ -2238,7 +2308,7 @@ void run_udp(void) {
             uint64_t e0 = ksl_udp_emsgsize(a, &last);
             CHECK(send1(a, lb, 20000) == 1, "the oversized slot counts as sent (lost)");
             CHECK(ksl_udp_emsgsize(a, &last) == e0 + 1 && last == 20000, "EMSGSIZE counted with the datagram's size");
-            CHECK(send1(a, lb, 100) == 1 && recv1(b, 500) == 100, "the socket still sends");
+            CHECK(xfer(a, b, lb, NULL, 0, 1, 100, NULL, NULL, NULL) == 1, "the socket still sends");
         }
 #endif
 #ifdef __linux__
@@ -2286,6 +2356,11 @@ void run_udp(void) {
         ksl_udp_close(a);
         ksl_udp_close(b);
     }
+    /* the transfers loopback lost before the kernel queued them were sent again (xfer); a ksl send that drops datagrams would need
+       a resend for most of them, loopback under a flood was seen to need one or two per run */
+    CHECK(xfer_resends * 2 <= xfer_calls, "at most one transfer in two sent again");
+    if (xfer_resends)
+        printf("    note: %u of %u transfers sent again\n", xfer_resends, xfer_calls);
 #elif defined(_WIN32)
     {
         void run_udp_win(void);
