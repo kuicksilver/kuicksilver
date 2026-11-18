@@ -291,7 +291,7 @@ jobs:
             --junit 'jvm:*/build/test-results/jvmTest/*.xml'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-linux-${{ matrix.arch }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-linux-${{ matrix.arch }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jni-${{ matrix.classifier }}
@@ -358,8 +358,8 @@ jobs:
         run: KSL_GRADLE="$G" bash tools/check/deployment-guide.sh
       - name: 'docker: h2spec linux-x64 (HTTP/2 server; TLS, and h2c where tools/interop/h2spec.sh has it)'
         # the release gate's h2spec run (tools/ci/local-matrix.sh) on the linuxX64 server: every case must pass. The image
-        # is the digest pin of h2spec.sh itself, pulled here (the script never pulls). Before h2c support (k10/h2c) the
-        # script runs TLS only; with it, both transports by default, and the next step then expects both reports
+        # is the digest pin of h2spec.sh itself, pulled here (the script never pulls). The script lists the runs it makes
+        # (build/h2spec/variants.txt: TLS today, h2c too once the script has it) and the next step reads each one's report
         run: |
           image=$(sed -n 's/^image="\(summerwind\/h2spec:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/h2spec.sh)
           [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/h2spec.sh"; exit 1; }
@@ -368,15 +368,13 @@ jobs:
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         run: |
-          # h2c is expected (and its absence shown as a failure) once h2spec.sh has the --h2c transport
-          h2c=(); if grep -q -- '--h2c)' tools/interop/h2spec.sh; then h2c=(--h2spec h2c:build/h2spec/linux-x64-h2c/h2spec.txt); fi
           python3 -I tools/docs/verify.py collect --lane linux-native --host 'Linux x64 (manylinux2014 container)' \
             --out "$RUNNER_TEMP/verify/linux-native.json" --gtest "linuxX64:$RUNNER_TEMP/verify-logs/linuxX64/*.log" \
-            --h2spec 'tls:build/h2spec/linux-x64/h2spec.txt' "${h2c[@]}" \
+            --h2spec-manifest build/h2spec/variants.txt \
             --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-linux-native', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-linux-native-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mingw-test-exe
@@ -422,7 +420,7 @@ jobs:
             --out "$RUNNER_TEMP/verify/linux-native-arm64.json" --gtest "linuxArm64:$RUNNER_TEMP/verify-logs/linuxArm64/*.log"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-linux-native-arm64', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-linux-native-arm64-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   windows:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows,')) }}
@@ -478,7 +476,7 @@ jobs:
             --gtest 'mingwX64:build/verify-logs/mingwX64/*.log'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-windows-${{ matrix.shard }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-windows-${{ matrix.shard }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   windows-jvm:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows-jvm,')) }}
@@ -511,7 +509,7 @@ jobs:
             --junit 'jvm:*/build/test-results/jvmTest/*.xml'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-windows-jvm', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-windows-jvm-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -612,7 +610,7 @@ jobs:
             --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-apple', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-apple-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - name: 'sample: realtime-telemetry'
         # its test classes are read for test methods no runner calls, as the modules' are below
         run: |
@@ -707,7 +705,14 @@ jobs:
         run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
       - name: 'native: Kuicksilver.xcframework (release, both slices; its size for the documentation site)'
         # the framework the Swift package ships (tools/release/xcframework.sh builds the release asset the same way)
-        run: $G -p samples/ios -Pkuicksilver.openssl.prebuilt=true :kuicksilver-swift:zipKuicksilverXCFramework
+        # with the flags of tools/release/xcframework.sh (-Pkuicksilver.version, no build cache), so the size is that of the
+        # asset a release ships: the version is the release this commit prepares, the build's default without -SNAPSHOT
+        run: |
+          version=$(sed -n 's/^version = providers.gradleProperty("kuicksilver.version").getOrElse("\([^"]*\)")$/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
+          version=${version%-SNAPSHOT}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "::error::no default version in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts"; exit 1; }
+          $G -p samples/ios --no-build-cache -Pkuicksilver.version="$version" -Pkuicksilver.openssl.prebuilt=true \
+            :kuicksilver-swift:zipKuicksilverXCFramework
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         env: { IOS_DEVICE: '${{ steps.ios-device.outcome }}' }
@@ -720,7 +725,7 @@ jobs:
             --size 'zip:samples/ios/kuicksilver-swift/build/spm/Kuicksilver.xcframework.zip' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-apple-native', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-apple-native-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -821,7 +826,7 @@ jobs:
             --junit 'android:*/build/outputs/androidTest-results/connected/**/*.xml' "${sizes[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-android-${{ matrix.api }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-android-${{ matrix.api }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -876,7 +881,7 @@ jobs:
             --junit 'jvm:*/build/test-results/jvmTest/*.xml'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-jdk-${{ matrix.jdk }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-jdk-${{ matrix.jdk }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -966,7 +971,7 @@ jobs:
             --out "$RUNNER_TEMP/verify/interop-$IMAGE-$PEER.json" --interop-runner "$IMAGE:build/interop/2*/*.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-interop-${{ matrix.image }}-${{ matrix.peer }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-interop-${{ matrix.image }}-${{ matrix.peer }}-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - name: 'interop: handshake with the runner debug log'   # what docker compose said when a cell or the compliance check failed
         if: failure()
         env:
@@ -1069,7 +1074,7 @@ jobs:
             --size 'jni:kuicksilver-native/build/jni/resources/META-INF/native/libksl_*' --size 'jar:kuicksilver-native/build/libs/kuicksilver-native-jvm-*.jar'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
-        with: { name: 'verify-jvm-jar', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
+        with: { name: 'verify-jvm-jar-a${{ github.run_attempt }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   consumer-smoke:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',consumer-smoke,')) }}

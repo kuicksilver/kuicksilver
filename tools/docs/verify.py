@@ -7,8 +7,10 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
 
   verify.py collect --lane NAME --host LABEL --out FILE [--sha SHA --run-id ID] [sources...]
       run at the end of a build.yml job (from the repository root): reads what the job produced and writes one JSON record
-      with the commit and run it belongs to (GITHUB_SHA and GITHUB_RUN_ID by default). Only counts, outcomes, test and
-      file names and sizes are kept: no path, host name or output of the runner. Sources (each may repeat):
+      with the commit, run and attempt it belongs to (GITHUB_SHA, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT by default). Only
+      counts, outcomes, test and file names and sizes are kept: no path, host name or output of the runner. A source that
+      matches nothing, or a declared h2spec run without a report, makes the exit status 1 after the record is written
+      (--allow-empty: a source may match nothing). Sources (each may repeat):
         --junit TARGET:GLOB         JUnit XML reports (Gradle test-results, Android connected tests); the module is the
                                     first path component of each file
         --cases MODULE              also keep each test case of MODULE (the engine interop pairs)
@@ -19,17 +21,24 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
                                     build/classes/kotlin/<target>/), jar, zip, xcframework (the framework binary of
                                     each slice of an .xcframework directory)
         --skip-module MODULE        no size of MODULE (a module that is not published)
-        --h2spec VARIANT:FILE       an h2spec run's output (tools/interop/h2spec.sh writes build/h2spec/<kind>/h2spec.txt)
+        --h2spec-manifest FILE      the runs tools/interop/h2spec.sh declared (build/h2spec/variants.txt: kind, variant,
+                                    report directory) and their reports
         --interop-runner IMAGE:GLOB QUIC Interop Runner result files (tools/interop/run-local.sh)
   verify.py build --sha SHA --version V --ref REF --src REPO --out VERSION_DIR [--meta FILE --data DIR]
                   [--fuzz-meta FILE --fuzz-stats DIR] [--fuzz-targets FILE] [--perf-meta FILE --perf DIR] [--base-url URL]
       writes VERSION_DIR/verify/*.html (English), VERSION_DIR/<lang>/verify/*.html, VERSION_DIR/verify/badges/*.svg and
-      VERSION_DIR/verify/data.json. --meta is the build.yml run (gh run view --json: databaseId, headSha, createdAt, url,
-      event, conclusion) and --data the downloaded verify-* artifacts. The run must be a successful run of exactly SHA and
-      every record must name SHA and that run, else nothing is written and the exit status is 1 (no stale or foreign data
-      is ever shown as this commit's). A missing run or record is "no data" on the page, never a failure. The fuzzing
+      VERSION_DIR/verify/data.json. --meta is the build.yml run (gh run view --json: databaseId, attempt, headSha,
+      createdAt, url, event, conclusion) and --data the downloaded verify-* artifacts. The run must be a successful run of
+      exactly SHA and every record must name SHA, that run and one of its attempts (the newest attempt of each lane
+      counts; two records of one lane and attempt are refused), else nothing is written and the exit status is 1 (no
+      stale or foreign data is ever shown as this commit's). A missing run, or a run whose records are gone (artifacts
+      expire), is "no data" on the page, never a failure; data.json then has no lanes. The fuzzing
       campaign (fuzz.yml, weekly) and perf.yml run on other commits: they are shown with their own commit and date, never
       as this commit's. REPO is the published commit's checkout (RFC table, committed corpora and benchmarks).
+  verify.py keep --new VERSION_DIR --old VERSION_DIR
+      the Pages workflow, before it replaces a published version: when the new pages have no CI data (data.json without
+      lanes), the old version's pages of the same commit with data are kept (copied over the new ones); exit 1 when
+      neither has data, so a rebuild never replaces good pages with empty ones and no release goes out without them
   verify.py check-pairs --sources DIR
       every test class of the engine interop sources (DIR) has a row in tools/docs/engine-pairs.tsv (exit 1 otherwise)
 
@@ -50,7 +59,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_URL = "https://github.com/kuicksilver/kuicksilver"
 SITE_URL = "https://kuicksilver.github.io/kuicksilver/"
-SCHEMA = 1
+SCHEMA = 2   # 2: run_attempt
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # the platform matrix, in this order; a target without a record shows "no data"
 TARGETS = ["jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64", "linuxArm64", "mingwX64"]
@@ -164,18 +173,30 @@ def _tree_size(path):
 def collect(args):
     sha = args.sha or os.environ.get("GITHUB_SHA", "")
     run_id = args.run_id or os.environ.get("GITHUB_RUN_ID", "")
+    attempt = args.run_attempt or os.environ.get("GITHUB_RUN_ATTEMPT", "") or "1"
     if not SHA.match(sha):
         sys.exit(f"verify.py collect: '{sha}' is not a commit SHA (--sha or GITHUB_SHA)")
     if not str(run_id).isdigit():
         sys.exit(f"verify.py collect: '{run_id}' is not a run id (--run-id or GITHUB_RUN_ID)")
-    rec = {"schema": SCHEMA, "sha": sha, "run_id": int(run_id), "lane": args.lane, "host": args.host, "results": [],
+    if not str(attempt).isdigit():
+        sys.exit(f"verify.py collect: '{attempt}' is not a run attempt (--run-attempt or GITHUB_RUN_ATTEMPT)")
+    # what the job was asked for and did not produce: the record is still written (it shows what there is), and the
+    # exit status is 1 so the job says so (--allow-empty for a source that may legitimately match nothing)
+    problems = []
+
+    def matched(what, spec, files):
+        if not files and not args.allow_empty:
+            problems.append(f"{what} {spec} matched nothing")
+        return files
+
+    rec = {"schema": SCHEMA, "sha": sha, "run_id": int(run_id), "run_attempt": int(attempt), "lane": args.lane, "host": args.host, "results": [],
            "cases": [], "compiled": [], "sizes": [], "conformance": [], "interop_runner": [], "fuzz_regression": None}
     fuzz = {"tests": 0, "failed": 0}
     case_modules = set(args.cases or [])
     for spec in args.junit or []:
         target, pattern = _split(spec, "--junit")
         per_module = {}
-        for f in _files(pattern):
+        for f in matched("--junit", spec, _files(pattern)):
             mod = _module(f)
             cases, ok = parse_junit(f)
             c = per_module.setdefault(mod, {"tests": 0, "passed": 0, "failed": 0, "skipped": 0, "broken": 0})
@@ -197,14 +218,14 @@ def collect(args):
         rec["fuzz_regression"] = fuzz
     for spec in args.gtest or []:
         target, pattern = _split(spec, "--gtest")
-        for f in _files(pattern):
+        for f in matched("--gtest", spec, _files(pattern)):
             rec["results"].append(_row(target, args.host, os.path.basename(f).rsplit(".", 1)[0], parse_gtest(f)))
     for spec in args.compiled or []:
         target, outcome = _split(spec, "--compiled")
         rec["compiled"].append({"target": target, "host": args.host, "outcome": outcome})
     for spec in args.size or []:
         kind, pattern = _split(spec, "--size")
-        for f in sorted(glob.glob(pattern, recursive=True)):
+        for f in matched("--size", spec, sorted(glob.glob(pattern, recursive=True))):
             if _module(f) in (args.skip_module or []):
                 continue
             name = os.path.basename(f.rstrip("/"))
@@ -219,7 +240,7 @@ def collect(args):
                                      "bytes": os.path.getsize(f)})
             elif kind == "xcframework":
                 # each slice's framework binary (<slice>/<Name>.framework/<Name>): what an app embeds
-                for b in sorted(glob.glob(os.path.join(f, "*", "*.framework", "*"))):
+                for b in matched("--size", f"{spec} (framework binaries)", sorted(glob.glob(os.path.join(f, "*", "*.framework", "*")))):
                     fw = os.path.basename(os.path.dirname(b))
                     if os.path.isfile(b) and os.path.basename(b) == fw[: -len(".framework")]:
                         rec["sizes"].append({"kind": "framework", "name": fw, "target": os.path.basename(os.path.dirname(os.path.dirname(b))),
@@ -235,21 +256,33 @@ def collect(args):
                                                      "bytes": i.file_size})
             else:
                 sys.exit(f"verify.py collect: unknown size kind '{kind}'")
-    for spec in args.h2spec or []:
-        variant, path = _split(spec, "--h2spec")
-        entry = {"suite": "h2spec", "variant": variant, "host": args.host, "tests": 0, "passed": 0, "skipped": 0, "failed": 0,
-                 "status": "error"}
-        if os.path.isfile(path):
+    # h2spec: the runs tools/interop/h2spec.sh declared in its manifest ("<kind> <variant> <report dir>" per line, written
+    # before any run); a declared run without a report is shown as incomplete and fails the collect
+    for path in args.h2spec_manifest or []:
+        if not os.path.isfile(path):
+            problems.append(f"--h2spec-manifest {path}: no manifest (h2spec.sh did not start)")
+            continue
+        for line in open(path, encoding="utf-8"):
+            cols = line.split()
+            if len(cols) != 3:
+                continue
+            kind, variant, d = cols
+            entry = {"suite": "h2spec", "variant": variant, "host": kind, "tests": 0, "passed": 0, "skipped": 0, "failed": 0,
+                     "status": "error"}
+            report = os.path.join(d, "h2spec.txt")   # the report directory, relative to the repository root as h2spec.sh writes it
             m = None
-            for line in open(path, encoding="utf-8", errors="replace"):
-                m = re.match(r"^(\d+) tests, (\d+) passed, (\d+) skipped, (\d+) failed", line.strip()) or m
+            if os.path.isfile(report):
+                for rl in open(report, encoding="utf-8", errors="replace"):
+                    m = re.match(r"^(\d+) tests, (\d+) passed, (\d+) skipped, (\d+) failed", rl.strip()) or m
             if m:
-                t, p, s, fl = (int(x) for x in m.groups())
-                entry.update(tests=t, passed=p, skipped=s, failed=fl, status="fail" if fl or s or p != t else "pass")
-        rec["conformance"].append(entry)
+                t, p, sk, fl = (int(x) for x in m.groups())
+                entry.update(tests=t, passed=p, skipped=sk, failed=fl, status="fail" if fl or sk or p != t else "pass")
+            else:
+                problems.append(f"h2spec {kind} {variant}: declared in {path}, no summary in {d}/h2spec.txt")
+            rec["conformance"].append(entry)
     for spec in args.interop_runner or []:
         image, pattern = _split(spec, "--interop-runner")
-        for f in _files(pattern):
+        for f in matched("--interop-runner", spec, _files(pattern)):
             try:
                 r = json.load(open(f, encoding="utf-8"))
             except (OSError, ValueError):
@@ -268,7 +301,9 @@ def collect(args):
     n = len(rec["results"])
     print(f"verify.py collect: {args.out}: {n} test records, {len(rec['cases'])} cases, {len(rec['sizes'])} sizes, "
           f"{len(rec['interop_runner'])} interop cells", file=sys.stderr)
-    return 0
+    for p in problems:
+        print(f"verify.py collect: {p}", file=sys.stderr)
+    return 1 if problems else 0
 
 
 # ------------------------------------------------------------------------------------------------------------- the model
@@ -290,7 +325,7 @@ def load_ci(meta_path, data_dir, sha):
         raise Refused(f"the build.yml run {meta.get('databaseId')} concluded '{meta.get('conclusion')}', not success")
     if meta.get("event") == "pull_request":
         raise Refused(f"the build.yml run {meta.get('databaseId')} is a pull_request run (it built a merge commit)")
-    records = []
+    by_lane, seen = {}, set()
     for f in sorted(glob.glob(os.path.join(data_dir or "", "**", "*.json"), recursive=True)) if data_dir else []:
         rec = load_json(f)
         if rec.get("schema") != SCHEMA:
@@ -299,8 +334,18 @@ def load_ci(meta_path, data_dir, sha):
             raise Refused(f"{os.path.basename(f)} (lane {rec.get('lane')}) is of commit {rec.get('sha')}, not {sha}")
         if rec.get("run_id") != meta.get("databaseId"):
             raise Refused(f"{os.path.basename(f)} (lane {rec.get('lane')}) is from run {rec.get('run_id')}, not {meta.get('databaseId')}")
-        records.append(rec)
-    return meta, records
+        attempt = rec.get("run_attempt")
+        if not isinstance(attempt, int) or attempt < 1 or attempt > int(meta.get("attempt") or 1):
+            raise Refused(f"{os.path.basename(f)} (lane {rec.get('lane')}) is from attempt {attempt}, the run has {meta.get('attempt') or 1}")
+        # a re-run job uploads its lane again under a new attempt: only the newest attempt of a lane counts (an earlier,
+        # failed attempt's record never shows on the successful run); two records of one lane and attempt are refused
+        if (rec["lane"], attempt) in seen:
+            raise Refused(f"two records of lane {rec['lane']} from attempt {attempt}")
+        seen.add((rec["lane"], attempt))
+        prev = by_lane.get(rec["lane"])
+        if not prev or prev["run_attempt"] < attempt:
+            by_lane[rec["lane"]] = rec
+    return meta, [by_lane[k] for k in sorted(by_lane)]
 
 
 def load_pairs(path):
@@ -468,6 +513,11 @@ def perf_model(perf_meta, perf_dir, sha):
             "cells": cells}
 
 
+def has_data(model):
+    """CI results to show: a run and at least one of its records (after 30 days the artifacts are gone, the run is not)."""
+    return model["run"] is not None and bool(model["lanes"])
+
+
 def status_of(rows):
     if not rows:
         return "none"
@@ -578,7 +628,7 @@ GREEN, RED, GREY, AMBER = "#2da44e", "#cf222e", "#6e7781", "#bf8700"
 def badges(model):
     """Language-independent badges (English labels, as on every README)."""
     out = {}
-    if model["run"] is None:
+    if not has_data(model):
         out["tests"] = badge("test runs", "no data", GREY)
         out["platforms"] = badge("platforms", "no data", GREY)
         out["engine-interop"] = badge("engine interop", "no data", GREY)
@@ -646,6 +696,9 @@ def provenance(m, model):
     if model["run"] is None:
         return f'<p class="prov">{esc(m("prov.none", sha=model["sha"]))}</p>'
     r = model["run"]
+    if not has_data(model):
+        return (f'<p class="prov">{esc(m("prov.expired", sha=model["sha"], date=date_of(r["date"])))} '
+                f'<a href="{esc(r["url"])}">{esc(m("prov.link", id=r["id"]))}</a></p>')
     return (f'<p class="prov">{esc(m("prov.run", sha=model["sha"], date=date_of(r["date"])))} '
             f'<a href="{esc(r["url"])}">{esc(m("prov.link", id=r["id"]))}</a></p>')
 
@@ -660,7 +713,7 @@ def page_index(m, model, rel_badges):
 
 
 def page_platforms(m, model):
-    if model["run"] is None:
+    if not has_data(model):
         return nodata(m)
     rows = []
     for p in model["platforms"]:
@@ -684,7 +737,7 @@ def page_platforms(m, model):
 
 def page_interop(m, model):
     out = [f"<p>{esc(m('interop.intro'))} <a href=\"{gh(model, 'docs/spec/interop.md')}\">docs/spec/interop.md</a></p>"]
-    if model["run"] is None:
+    if not has_data(model):
         out.append(nodata(m))
     elif not model["interop"]:
         out.append(nodata(m, "nodata.lane"))
@@ -775,7 +828,7 @@ def page_fuzzing(m, model):
 def page_sizes(m, model):
     s = model["sizes"]
     out = [f"<p>{esc(m('sizes.intro'))}</p>"]
-    if model["run"] is None:
+    if not has_data(model):
         return "\n".join(out + [nodata(m)])
     groups = [("sizes.android", [x for x in s if x["kind"] in ("aar", "aar-so")]),
               ("sizes.jni", [x for x in s if x["kind"] in ("jni", "jar")])]
@@ -816,7 +869,9 @@ def page_benchmarks(m, model):
                          [[esc(c["server"]), esc(c["client"]), esc(c["measurement"]),
                            mark(m, "pass" if c["result"] == "succeeded" else "fail"), num(int(c["kbps"])) if c["kbps"] else "—"]
                           for c in p["cells"]], nums=(4,)))
-        out.append(f'<p class="prov"><a href="{esc(p["url"])}">{esc(m("prov.link", id=p["run_id"]))}</a></p>')
+        cls = "" if p["conclusion"] == "success" else ' class="warn"'
+        out.append(f'<p class="prov"><span{cls}>{esc(m("benchmarks.perfConclusion", id=p["run_id"], conclusion=p["conclusion"]))}</span> '
+                   f'<a href="{esc(p["url"])}">{esc(m("prov.link", id=p["run_id"]))}</a></p>')
     else:
         out.append(nodata(m, "benchmarks.perfNone"))
     b = model["benchmarks"]
@@ -853,7 +908,7 @@ def page_rfc(m, model):
     if r["open"]:
         out.append(table([esc(m(k)) for k in ("col.rfc", "col.topic", "col.status", "col.details")],
                          [[esc(o["rfc"]), esc(o["topic"]), o["status"],
-                           f'<a href="{gh(model, "docs/spec/" + o["details"])}">{esc(m("rfc.details"))}</a>' if o["details"] else ""]
+                           f'<a href="{esc(gh(model, "docs/spec/" + o["details"]))}">{esc(m("rfc.details"))}</a>' if o["details"] else ""]
                           for o in r["open"]]))
     else:
         out.append(f"<p>{esc(m('rfc.noOpen'))}</p>")
@@ -935,6 +990,39 @@ def build(args):
     return 0
 
 
+def _lanes(version_dir):
+    try:
+        d = load_json(os.path.join(version_dir, "verify", "data.json"))
+    except (OSError, ValueError):
+        return None, []
+    return d.get("sha"), d.get("lanes") or []
+
+
+def keep(args):
+    import shutil
+    sha, lanes = _lanes(args.new)
+    if sha is None:
+        print(f"verify.py keep: {args.new} has no verify/data.json", file=sys.stderr)
+        return 1
+    if lanes:
+        print(f"verify.py keep: the new pages have CI data ({len(lanes)} lanes)", file=sys.stderr)
+        return 0
+    old_sha, old_lanes = _lanes(args.old)
+    if not old_lanes or old_sha != sha:
+        print(f"verify.py keep: the new pages of {sha} have no CI data and there are no earlier pages of that commit with "
+              "data to keep: run build.yml on the commit and publish again", file=sys.stderr)
+        return 1
+    for code, prefix, _, _ in i18n.LANGUAGES:
+        src = os.path.join(args.old, prefix, "verify")
+        dst = os.path.join(args.new, prefix, "verify")
+        if os.path.isdir(src):
+            shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(src, dst)
+    print(f"verify.py keep: no CI data in the new pages; kept the published pages of {sha} ({len(old_lanes)} lanes)",
+          file=sys.stderr)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -944,7 +1032,9 @@ def main():
     c.add_argument("--out", required=True)
     c.add_argument("--sha")
     c.add_argument("--run-id")
-    for opt in ("--junit", "--cases", "--gtest", "--compiled", "--size", "--skip-module", "--h2spec", "--interop-runner"):
+    c.add_argument("--run-attempt")
+    c.add_argument("--allow-empty", action="store_true", help="a source that matches nothing is not an error")
+    for opt in ("--junit", "--cases", "--gtest", "--compiled", "--size", "--skip-module", "--h2spec-manifest", "--interop-runner"):
         c.add_argument(opt, action="append")
     b = sub.add_parser("build")
     b.add_argument("--sha", required=True)
@@ -962,12 +1052,17 @@ def main():
     b.add_argument("--base-url")
     b.add_argument("--messages", default=os.path.join(HERE, "messages"))
     b.add_argument("--pairs", default=os.path.join(HERE, "engine-pairs.tsv"))
+    k = sub.add_parser("keep")
+    k.add_argument("--new", required=True)
+    k.add_argument("--old", required=True)
     p = sub.add_parser("check-pairs")
     p.add_argument("--sources", required=True)
     p.add_argument("--pairs", default=os.path.join(HERE, "engine-pairs.tsv"))
     args = ap.parse_args()
     if args.cmd == "collect":
         return collect(args)
+    if args.cmd == "keep":
+        return keep(args)
     if args.cmd == "check-pairs":
         return check_pairs(args.sources, args.pairs)
     return build(args)

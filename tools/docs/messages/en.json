@@ -74,7 +74,7 @@
   "fuzzing.regressionCount": "The fuzz test classes replay the committed corpora and reproducers on every CI run: {tests} test cases, {failed} failed.",
   "fuzzing.targets": "Targets",
   "fuzzing.campaignThis": "Campaign columns: the fuzz.yml run of this commit ({sha}), started {date}, concluded {conclusion}.",
-  "fuzzing.campaignOther": "Campaign columns: the latest fuzz.yml run, on an earlier commit ({sha}), started {date}, concluded {conclusion}. It is not a result of this commit.",
+  "fuzzing.campaignOther": "Campaign columns: the latest fuzz.yml run, on another commit ({sha}), started {date}, concluded {conclusion}. It is not a result of this commit.",
   "fuzzing.noCampaign": "No fuzzing campaign was found.",
   "fuzzing.mutation": "Mutation testing",
   "fuzzing.mutationNone": "Not measured in CI: mutation testing is run by hand on selected modules, and the gaps it finds become tests. There is no mutation score to show.",
@@ -130,5 +130,7 @@
   "how.release": "To check that the artifacts you download are the ones released, and that the native libraries are what the tagged sources build, see",
   "how.source": "The process document is the single source; this page only links to it:",
   "col.fuzzTarget": "Fuzz target",
-  "sizes.iosNote": "Kuicksilver.xcframework as the Swift package ships it: the dynamic framework binary of each slice is what an app embeds, the zip is what SwiftPM downloads. Kuicksilver's share of a linked app, by origin, is measured with tools/check/ios-size.sh."
+  "sizes.iosNote": "Kuicksilver.xcframework as the Swift package ships it: the dynamic framework binary of each slice is what an app embeds, the zip is what SwiftPM downloads. Kuicksilver's share of a linked app, by origin, is measured with tools/check/ios-size.sh.",
+  "prov.expired": "The successful build.yml run of commit {sha}, started {date}, is known, but its results are no longer available (CI artifacts are kept 30 days): the sections that come from CI show no data.",
+  "benchmarks.perfConclusion": "perf.yml run {id} of this commit concluded {conclusion}."
 }

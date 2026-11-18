@@ -41,11 +41,11 @@ col() { # <lane> <host> [collect args...]
 }
 col apple "macOS arm64" --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop 2> /dev/null \
   && col apple-native "macOS arm64" --junit 'macosArm64:*/build/test-results/macosArm64Test/*.xml' --compiled iosArm64:success 2> /dev/null \
-  && col linux-native "Linux x64" --gtest 'linuxX64:kexe/*.log' --h2spec tls:h2spec/h2spec.txt --interop-runner 'jvm:interop/*.json' \
+  && col linux-native "Linux x64" --gtest 'linuxX64:kexe/*.log' --h2spec-manifest h2spec/variants.txt --interop-runner 'jvm:interop/*.json' \
        --size 'klib:*/build/classes/kotlin/*/main/klib/*' --skip-module kuicksilver-testing 2> /dev/null \
   && col android "Android API 35 emulator" --junit 'android:*/build/outputs/androidTest-results/connected/**/*.xml' \
        --size 'aar:aar/*.aar' --size 'jni:jni/*/*.so' 2> /dev/null \
-  && col empty "nowhere" --junit 'jvm:nothing/**/*.xml' 2> /dev/null \
+  && col empty "nowhere" --junit 'jvm:nothing/**/*.xml' --allow-empty 2> /dev/null \
   && pass "collect: five lanes from the fixtures" || fail "collect: five lanes from the fixtures"
 python3 -I - "$data" <<'EOF' && pass "collect: counts, outcomes, cases and sizes" || fail "collect: counts, outcomes, cases and sizes"
 import json, sys
@@ -71,6 +71,11 @@ EOF
 if (cd "$ws" && env -u GITHUB_SHA "${py[@]}" collect --lane x --host y --out "$tmp/x.json" --run-id 1 > /dev/null 2>&1); then
   fail "collect: refuses to run without a commit SHA"
 else pass "collect: refuses to run without a commit SHA"; fi
+rc=0; (cd "$ws" && "${py[@]}" collect --lane e --host y --out "$tmp/e.json" --sha "$SHA" --run-id 1 --junit 'jvm:nothing/*.xml' \
+  --gtest 'linuxX64:kexe/*.log' > /dev/null 2> "$tmp/e.err") || rc=$?
+[ $rc = 1 ] && [ -f "$tmp/e.json" ] && grep -q "jvm:nothing/\*.xml matched nothing" "$tmp/e.err" \
+  && pass "negative: a source that matches nothing fails the collect (the record is still written)" \
+  || fail "negative: a source that matches nothing fails the collect (the record is still written)" "rc=$rc $(cat "$tmp/e.err")"
 
 # --- the published commit's checkout
 src="$tmp/src"; mkdir -p "$src/docs/spec" "$src/docs/benchmarks" "$src/tools/fuzz"
@@ -158,7 +163,7 @@ assert f["regression"]["tests"] == 2
 assert d["benchmarks"]["goodput"][0]["median_kbps"] == 9200 and d["benchmarks"]["handshakes"][0]["median"] == 1745
 html = {n: open(f"{v}/verify/{n}.html", encoding="utf-8").read() for n in ("interop", "fuzzing", "conformance", "benchmarks", "platforms", "index")}
 assert '<span class="fail">h2 ✗</span>' in html["interop"] and "OkHttpToServerH2Test.post1MiB()" in html["interop"]
-assert "on an earlier commit" in html["fuzzing"] and "(" + "fedcba987654" + ")" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
+assert "on another commit" in html["fuzzing"] and "(" + "fedcba987654" + ")" in html["fuzzing"] and "It is not a result of this commit" in html["fuzzing"]
 assert "h2spec (h2c)" in html["conformance"] and "not run in hosted CI" in html["conformance"] and "h3spec" in html["conformance"]
 assert "9 377" in html["benchmarks"] and "9 200" in html["benchmarks"]
 assert "0123456789abcdef0123456789abcdef01234567" in html["platforms"] and "2026-11-18 09:00 UTC" in html["platforms"]
@@ -185,9 +190,13 @@ o3="$tmp/nolane"; site_dir "$o3"; mkdir -p "$tmp/emptydata"
 if build "$o3" --meta "$fx/meta.json" --data "$tmp/emptydata" --fuzz-stats "$tmp/none" --perf "$tmp/none" > /dev/null 2>&1 \
   && python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); assert all(p["status"] == "none" for p in d["platforms"]) and not d["interop"]' \
        "$o3/0.3.0/verify/data.json" \
-  && has "$o3/0.3.0/verify/interop.html" 'produced no result for this section' && python3 -I tools/docs/site.py check "$o3" > /dev/null 2>&1; then
-  pass "negative: a run without artifacts: no data on every target, links still resolve"
-else fail "negative: a run without artifacts: no data on every target, links still resolve"; fi
+  && has "$o3/0.3.0/verify/interop.html" 'No data: there is no CI run for this commit' \
+  && has "$o3/0.3.0/verify/platforms.html" 'its results are no longer available' && ! has "$o3/0.3.0/verify/platforms.html" 'Data from the successful' \
+  && has "$o3/0.3.0/verify/badges/tests.svg" 'no data' && has "$o3/0.3.0/verify/badges/platforms.svg" 'no data' \
+  && ! has "$o3/0.3.0/verify/badges/platforms.svg" '0/8' && has "$o3/0.3.0/zh/verify/index.html" '其结果已不可用' \
+  && python3 -I tools/docs/site.py check "$o3" > /dev/null 2>&1; then
+  pass "negative: a run whose artifacts expired: no data in every section and badge, its own provenance line"
+else fail "negative: a run whose artifacts expired: no data in every section and badge, its own provenance line"; fi
 o4="$tmp/nosrc"; site_dir "$o4"
 if "${py[@]}" build --sha "$SHA" --version 0.3.0 --ref v0.3.0 --src "$tmp/missing-src" --out "$o4/0.3.0" > /dev/null 2>&1 \
   && has "$o4/0.3.0/verify/rfc.html" 'The RFC compliance matrix was not found'; then
@@ -214,6 +223,45 @@ cp -R "$data" "$tmp/data-run"
 python3 -I -c 'import json, sys; f = sys.argv[1]; r = json.load(open(f)); r["run_id"] = 999; json.dump(r, open(f, "w"))' \
   "$tmp/data-run/verify-apple/apple.json"
 refused "a record of another run" "$fx/meta.json" "$tmp/data-run"
+# attempts: the newest attempt of a lane wins (a failed first attempt never shows), one lane twice in an attempt is refused
+cp -R "$data" "$tmp/data-att"; mkdir -p "$tmp/data-att/verify-apple-a2"
+python3 -I - "$tmp/data-att" <<'PY'
+import json, sys
+d = sys.argv[1]
+a1 = json.load(open(f"{d}/verify-apple/apple.json"))
+for r in a1["results"]:
+    r.update(failed=r["tests"], passed=0, status="fail")          # attempt 1: everything red
+json.dump(a1, open(f"{d}/verify-apple/apple.json", "w"))
+a2 = dict(a1, run_attempt=2, results=[dict(r, failed=0, passed=r["tests"], skipped=0, status="pass") for r in a1["results"]])
+json.dump(a2, open(f"{d}/verify-apple-a2/apple.json", "w"))
+PY
+meta_with attempt 2 "$tmp/meta-a2.json"
+if build "$tmp/att" --meta "$tmp/meta-a2.json" --data "$tmp/data-att" > /dev/null 2>&1 \
+  && python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); j = [p for p in d["platforms"] if p["target"] == "jvm"][0]; assert j["hosts"][0]["failed"] == 0, j' \
+       "$tmp/att/0.3.0/verify/data.json"; then
+  pass "attempts: the newest attempt of a lane replaces a failed earlier one"
+else fail "attempts: the newest attempt of a lane replaces a failed earlier one"; fi
+refused "a record of an attempt the run does not have" "$fx/meta.json" "$tmp/data-att"
+cp -R "$data/verify-apple" "$tmp/data-att/verify-apple-copy"
+refused "the same lane twice in one attempt" "$tmp/meta-a2.json" "$tmp/data-att"
+
+# keep: a rebuild without CI data keeps the published pages of the commit, and fails when there are none
+kp="$tmp/keep"; mkdir -p "$kp"
+cp -R "$out/0.3.0" "$kp/old"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/old" 2> /dev/null && has "$kp/new/verify/platforms.html" 'Data from the successful' \
+  && has "$kp/new/zh/verify/platforms.html" '数据来自提交' && has "$kp/new/ru/verify/index.html" 'Данные из успешного'; then
+  pass "keep: no data in the rebuild: the published pages with data are kept in every language"
+else fail "keep: no data in the rebuild: the published pages with data are kept in every language"; fi
+rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/missing" 2> /dev/null; then fail "negative: keep with no data anywhere fails"
+else pass "negative: keep with no data anywhere fails"; fi
+python3 -I -c 'import json, sys; f = sys.argv[1]; d = json.load(open(f)); d["sha"] = sys.argv[2]; json.dump(d, open(f, "w"))' "$kp/old/verify/data.json" "$OTHER"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/old" 2> /dev/null; then fail "negative: keep never takes pages of another commit"
+else pass "negative: keep never takes pages of another commit"; fi
+cp -R "$out/0.3.0" "$kp/fresh"
+if "${py[@]}" keep --new "$kp/fresh" --old "$kp/old" 2> /dev/null && has "$kp/fresh/verify/platforms.html" 'Data from the successful'; then
+  pass "keep: new pages with data are left as they are"; else fail "keep: new pages with data are left as they are"; fi
+
 if "${py[@]}" build --sha "${SHA:0:12}" --version 0.3.0 --ref v0.3.0 --src "$src" --out "$tmp/short" > /dev/null 2>&1; then
   fail "negative: a short SHA is refused"; else pass "negative: a short SHA is refused"; fi
 
@@ -235,11 +283,17 @@ for sl in ios-arm64 ios-arm64_x86_64-simulator; do
   head -c 10 /dev/zero > "$aws/xcf/Kuicksilver.xcframework/$sl/Kuicksilver.framework/Info.plist"
 done
 (cd "$aws/xcf" && zip -qr Kuicksilver.xcframework.zip Kuicksilver.xcframework)
-rm -rf "$tmp/adata"
-if (cd "$aws" && "${py[@]}" collect --lane apple --host h --out "$tmp/adata/verify-apple/apple.json" --sha "$SHA" --run-id 1001 \
-      --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop --gtest 'mingwX64:logs/*.log' \
-      --h2spec 'h2c:h2spec/missing.txt' --size 'xcframework:xcf/Kuicksilver.xcframework' --size 'zip:xcf/*.zip' 2> /dev/null) \
-  && build "$tmp/asite" --meta "$fx/meta.json" --data "$tmp/adata" 2> /dev/null \
+mkdir -p "$aws/build/h2spec/linux-x64"; printf '146 tests, 146 passed, 0 skipped, 0 failed\n' > "$aws/build/h2spec/linux-x64/h2spec.txt"
+printf 'linux-x64 tls build/h2spec/linux-x64\nlinux-x64 h2c build/h2spec/linux-x64-h2c\n' > "$aws/build/h2spec/variants.txt"
+# an RFC row whose details link would break out of the href attribute
+asrc="$tmp/asrc"; cp -R "$src" "$asrc"
+printf '| RFC 1 | x | 🔶 | 0.3.0 | y. | [details](rfc/x.md#a"onmouseover="alert(1)) |\n' >> "$asrc/docs/spec/rfc-compliance.md"
+rm -rf "$tmp/adata"; arc=0
+(cd "$aws" && "${py[@]}" collect --lane apple --host h --out "$tmp/adata/verify-apple/apple.json" --sha "$SHA" --run-id 1001 \
+  --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop --gtest 'mingwX64:logs/*.log' \
+  --h2spec-manifest build/h2spec/variants.txt --size 'xcframework:xcf/Kuicksilver.xcframework' --size 'zip:xcf/*.zip' 2> /dev/null) || arc=$?
+if [ $arc = 1 ] \
+  && "${py[@]}" build --sha "$SHA" --version 0.3.0 --ref v0.3.0 --src "$asrc" --out "$tmp/asite/0.3.0" --meta "$fx/meta.json" --data "$tmp/adata" 2> /dev/null \
   && python3 -I - "$tmp/asite/0.3.0" <<'PY'
 import json, sys
 v = sys.argv[1]
@@ -247,8 +301,8 @@ d = json.load(open(f"{v}/verify/data.json"))
 p = {x["target"]: x for x in d["platforms"]}
 assert p["jvm"]["status"] == "fail" and "kuicksilver-tls" in p["jvm"]["hosts"][0]["problems"], p["jvm"]   # truncated report
 assert p["mingwX64"]["status"] == "pass" and p["mingwX64"]["hosts"][0]["tests"] == 2, p["mingwX64"]      # UTF-16 log
-c = d["conformance"]
-assert len(c) == 1 and c[0]["variant"] == "h2c" and c[0]["status"] == "error", c                     # expected, missing
+c = {x["variant"]: x for x in d["conformance"]}
+assert c["tls"]["status"] == "pass" and c["tls"]["host"] == "linux-x64" and c["h2c"]["status"] == "error", c   # declared, missing
 assert '<span class="fail">incomplete</span>' in open(f"{v}/verify/conformance.html", encoding="utf-8").read()
 fw = sorted((x["target"], x["bytes"]) for x in d["sizes"] if x["kind"] == "framework")
 assert fw == [("ios-arm64", 7000), ("ios-arm64_x86_64-simulator", 7000)], d["sizes"]
@@ -257,9 +311,11 @@ assert "Kuicksilver.xcframework.zip" in sizes and "6.8 KiB" in sizes and "built 
 for l in ("", "ru/", "zh/"):
     t = open(f"{v}/{l}verify/interop.html", encoding="utf-8").read()
     assert "<script>" not in t and "x&lt;script&gt;alert(1)&lt;/script&gt;" in t, l
+    r = open(f"{v}/{l}verify/rfc.html", encoding="utf-8").read()
+    assert '"onmouseover' not in r and "&quot;onmouseover" in r, l
 PY
-then pass "attacks: a truncated report fails, markup is escaped, a UTF-16 log is read, a missing h2c report is incomplete; XCFramework slices"
-else fail "attacks: a truncated report fails, markup is escaped, a UTF-16 log is read, a missing h2c report is incomplete; XCFramework slices"; fi
+then pass "attacks: truncated report fails, markup and a details href are escaped, UTF-16 log read, a declared h2c run without report fails the collect; XCFramework slices"
+else fail "attacks: truncated report fails, markup and a details href are escaped, UTF-16 log read, a declared h2c run without report fails the collect; XCFramework slices" "collect exit $arc"; fi
 
 # --- negative controls: the message files of every language
 msg_case() { # <name> <python statement on t (the table of the file)> <file>

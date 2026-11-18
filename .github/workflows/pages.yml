@@ -155,9 +155,9 @@ jobs:
           run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$sha" --status success --limit 50 --json databaseId,event \
             --jq '([.[] | select(.event == "push" or .event == "schedule")] + [.[] | select(.event == "workflow_dispatch")])[0].databaseId // empty')
           if [ -n "$run" ]; then
-            gh run view "$run" --repo "$REPO" --json databaseId,headSha,createdAt,url,event,conclusion > "$d/meta.json"
+            gh run view "$run" --repo "$REPO" --json databaseId,attempt,headSha,createdAt,url,event,conclusion > "$d/meta.json"
             gh run download "$run" --repo "$REPO" --pattern 'verify-*' --dir "$d/data" \
-              || echo "::warning::build.yml run $run has no verify-* artifacts (expired after 30 days, or older than tools/docs/verify.py): the pages say no data"
+              || echo "::warning::build.yml run $run has no verify-* artifacts (expired after 30 days, or older than tools/docs/verify.py): the published pages of this version are kept if they have data (publish, verify.py keep)"
           else
             echo "::warning::no successful build.yml run for $sha: the pages say no data"
           fi
@@ -175,7 +175,9 @@ jobs:
               --jq '.artifacts[] | select(.expired | not) | .name | select(startswith("perf-") and (endswith("-logs") | not) and . != "perf-interop-image")')
             for a in $names; do gh run download "$perf" --repo "$REPO" --name "$a" --dir "$d/perf/$a"; done
           fi
-          KSL_FUZZ_STATE="$RUNNER_TEMP/fuzz-state" bash src/tools/fuzz/campaign.sh list > "$d/fuzz-targets.txt" \
+      - name: 'verify: the fuzz targets of the tag (no token in this step)'
+        run: |
+          KSL_FUZZ_STATE="$RUNNER_TEMP/fuzz-state" bash src/tools/fuzz/campaign.sh list > "$RUNNER_TEMP/verify-in/fuzz-targets.txt" \
             || echo "::warning::tools/fuzz/campaign.sh list failed: the fuzz targets are the committed corpus directories"
       - name: 'verify: build the pages'
         env:
@@ -220,6 +222,8 @@ jobs:
           name: site-verify
           path: ${{ runner.temp }}/new
       - name: 'pages: add the version to gh-pages'
+        # a rebuild whose verify job found no CI data (the build.yml artifacts expired) keeps the version's published
+        # verification pages of the same commit; with none to keep, the publication fails (tools/docs/verify.py keep)
         env:
           VERSION: ${{ needs.build.outputs.version }}
           GH_TOKEN: ${{ github.token }}
@@ -236,6 +240,7 @@ jobs:
             2) git init --quiet -b gh-pages "$site" ;;   # no gh-pages yet: the first publication starts the branch
             *) echo "::error::git ls-remote $url failed ($rc)"; exit 1 ;;
           esac
+          python3 -I tools/docs/verify.py keep --new "$RUNNER_TEMP/new" --old "$site/$VERSION"
           rm -rf "${site:?}/$VERSION"
           cp -R "$RUNNER_TEMP/new" "$site/$VERSION"
           python3 -I tools/docs/site.py index "$site"

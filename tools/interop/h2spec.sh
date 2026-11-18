@@ -14,7 +14,8 @@
 # :authority; the test identity names 127.0.0.1 but not host.docker.internal, so a server on a macOS host (the jvm and
 # macos kinds) runs as a trusted gateway (no 421 for a misdirected request, RFC 9110 section 7.4), while a server on a
 # Linux host and the linux-x64 container, which h2spec reaches as 127.0.0.1, keep the check on.
-# Usage: h2spec.sh [--no-build] [jvm|macos|linux-x64]...   (default: jvm); reports in build/h2spec/<kind>/
+# Usage: h2spec.sh [--no-build] [jvm|macos|linux-x64]...   (default: jvm); reports in build/h2spec/<kind>/, the list of
+#        the runs it makes in build/h2spec/variants.txt
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
@@ -108,6 +109,17 @@ if ! docker image inspect "$image" > /dev/null 2>&1; then
   echo "h2spec: the image $image is not available locally; pull it first: docker pull $image" >&2
   exit 1
 fi
+
+# The runs of this invocation, declared before any of them starts: build/h2spec/variants.txt, one "<kind> <variant> <report
+# directory>" per run (tools/docs/verify.py collect --h2spec-manifest reads it, and a declared run without a report fails
+# there). A report left from an earlier invocation is removed first, so it cannot stand in for a run that did not happen.
+mkdir -p build/h2spec
+manifest=build/h2spec/variants.txt
+: > "$manifest"
+for kind in "${kinds[@]}"; do
+  echo "$kind tls build/h2spec/$kind" >> "$manifest"
+  rm -f "build/h2spec/$kind/h2spec.txt"
+done
 
 failed=0
 for kind in "${kinds[@]}"; do
