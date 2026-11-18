@@ -11,6 +11,7 @@ import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.ClientHelloInfo
+import io.kuicksilver.tls.EchServerKeys
 import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.OcspStapling
 import io.kuicksilver.tls.ServerTlsOverride
@@ -70,6 +71,9 @@ public class KuicksilverTlsConnector private constructor(
     /** The PROXY protocol on the TCP side of this connector, or null (the default) for none; see [Builder.proxyProtocol]. */
     @ExperimentalKuicksilverApi
     public val proxyProtocol: ProxyProtocolConfig? = null,
+    /** The Encrypted Client Hello keys of TCP and QUIC, or null (the default) for none; see [Builder.echKeys]. */
+    @ExperimentalKuicksilverApi
+    public val echKeys: EchServerKeys? = null,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -101,6 +105,7 @@ public class KuicksilverTlsConnector private constructor(
             sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) forHttp3(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
             keyExchangeGroups = this@KuicksilverTlsConnector.keyExchangeGroups
+            echKeys = this@KuicksilverTlsConnector.echKeys
             if (!quic) {
                 versions = this@KuicksilverTlsConnector.versions
                 // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS": a client without
@@ -143,6 +148,7 @@ public class KuicksilverTlsConnector private constructor(
             versions,
             keyExchangeGroups,
             proxyProtocol,
+            echKeys,
         )
 
     /** For logs. */
@@ -254,6 +260,18 @@ public class KuicksilverTlsConnector private constructor(
             proxyProtocol = ProxyProtocolConfig.Builder().apply(block).build()
         }
 
+        /**
+         * The Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and QUIC handshakes alike; default null, which ignores
+         * a client's ECH (it is told nothing, and goes on with its outer ClientHello). Publish the keys' ECHConfigList in the
+         * `ech` parameter of the HTTPS record of every name this connector serves (RFC 9848). [EchServerKeys.rotate] replaces
+         * the keys while the server runs: handshakes that start afterwards use the new set, on TCP and QUIC alike. A client whose
+         * ECH is not decrypted (an old key, GREASE) gets the keys' retry configurations and must authenticate this connector's
+         * certificate for the configurations' `public_name` (RFC 9849 section 6.1.7): [identity] (or what [sniSelector] answers
+         * for that name, which it is asked for then) must be valid for it.
+         */
+        @ExperimentalKuicksilverApi
+        public var echKeys: EchServerKeys? = null
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         @OptIn(ExperimentalKuicksilverApi::class)
         public fun build(): KuicksilverTlsConnector {
@@ -271,6 +289,7 @@ public class KuicksilverTlsConnector private constructor(
                 versions,
                 keyExchangeGroups,
                 proxyProtocol,
+                echKeys,
             )
         }
     }

@@ -40,6 +40,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
+import io.kuicksilver.ktor.client.EchRoute
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.HeldTransportEnd
@@ -50,6 +51,7 @@ import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.WebSocketLifetime
 import io.kuicksilver.ktor.client.WebSocketLifetimeKey
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.echRejectionIn
 import io.kuicksilver.ktor.client.h1.WebSocketConnecting
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.isTransientRefusal
@@ -60,6 +62,7 @@ import io.kuicksilver.ktor.client.priorityUpdater
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketAfterHandshake
+import io.kuicksilver.ktor.client.withEchRetry
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.TcpAddress
@@ -107,6 +110,8 @@ internal class H3Target(
     val originHost: String,
     val host: String,
     val port: Int,
+    /** The ECH of an HTTPS record's endpoint (RFC 9848), shared with its TCP side; null: the origin's. Not in [key]. */
+    val ech: EchRoute? = null,
 ) {
     val key: String get() = "$originHost|$host:$port"
 }
@@ -770,7 +775,7 @@ internal class H3Pool(
         val left = -deadline.elapsedNow().inWholeMilliseconds
         if (left <= 0) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
         ensureOpen()
-        val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
+        val route = dns.echRoute(originHost) { config.ech.configLists[it] }
         val q = quicWithin(connectTimeoutMillis)
         // set inside the timeout: a handshake that completes as the timeout fires still lands here, never orphaned
         var made: Http3Connection? = null
@@ -781,7 +786,10 @@ internal class H3Pool(
                 made =
                     raceQuic(originHost, port, dns, failures) { remote ->
                         val (ep, to) = endpointFor(remote)
-                        ep.connect(to, tls, q, wtSettings)
+                        // ECH (RFC 9849), retried once on a new connection after a rejection (section 6.1.6)
+                        withEchRetry(
+                            route,
+                        ) { offer -> ep.connect(to, config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3), offer), q, wtSettings) }
                     }
             }
         } catch (e: TimeoutCancellationException) {
@@ -1102,7 +1110,7 @@ internal class H3Pool(
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
 
-    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun connectionEntryOnce(
         t: H3Target,
         data: HttpRequestData,
@@ -1110,6 +1118,7 @@ internal class H3Pool(
         wt: Boolean = false,
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
+        val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
         shareSameAddress(t, dns, wt)
         val (e, connect) =
             lock.withLock {
@@ -1152,27 +1161,27 @@ internal class H3Pool(
                             attempts.update { it + (won to Destination.of(a)) }
                         }) { destination ->
                             val (ep, remote) = endpointFor(destination)
-                            if (wt) {
-                                // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
-                                ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
-                            } else if (config.http3.earlyData) {
-                                // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
-                                // the handshake timer (a request sent early then fails, and falls back, at that time)
-                                ep
-                                    .connectEarly(
-                                        remote,
-                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                        quicWithin(data.connectTimeoutMillis(config)),
-                                        config.http3.settings,
-                                    )
-                            } else {
-                                ep
-                                    .connect(
-                                        remote,
-                                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                        quic,
-                                        config.http3.settings,
-                                    )
+                            // ECH (RFC 9849): the endpoint's configuration (RFC 9848) or the origin's; a rejection is
+                            // retried once on a new connection to the same address with the retry configurations, or
+                            // without ECH when the server sent none (section 6.1.6)
+                            withEchRetry(route) { offer ->
+                                val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
+                                if (wt) {
+                                    // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
+                                    ep.connect(remote, tls, quic, wtSettings)
+                                } else if (config.http3.earlyData) {
+                                    // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
+                                    // the handshake timer (a request sent early then fails, and falls back, at that time).
+                                    // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
+                                    // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
+                                    // handshake fails with the rejection after this returned: the request's next connection
+                                    // (its fallback, or a retry) then offers the retry configurations
+                                    ep
+                                        .connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+                                        .also { c -> noteLateEchRejection(c, route, offer) }
+                                } else {
+                                    ep.connect(remote, tls, quic, config.http3.settings)
+                                }
                             }
                         }
                     setupMadeForTest?.invoke()
@@ -1276,6 +1285,22 @@ internal class H3Pool(
                 follow(c.quic.activePath ?: c.quic.paths.firstOrNull())
             }
         c.closed.invokeOnCompletion { job.cancel() }
+    }
+
+    /**
+     * A 0-RTT connection [c] that offered [offer] and whose handshake fails later with an ECH rejection: [route] takes the
+     * rejection, so the request's next connection offers the retry's configuration (RFC 9849 section 6.1.6).
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun noteLateEchRejection(
+        c: Http3Connection,
+        route: EchRoute,
+        offer: EchRoute.Offer,
+    ) {
+        if (offer.list == null) return
+        c.closed.invokeOnCompletion { failure ->
+            if (failure == null) echRejectionIn(c.closed.getCompleted())?.let { route.rejected(offer, it) }
+        }
     }
 
     /**
@@ -1505,6 +1530,7 @@ internal class H3Pool(
         prefer: Http3Connection? = null,
     ): HttpResponseData {
         var attempts = 0
+        var echRetried = false
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
         while (true) {
             val (entry, conn) =
@@ -1574,6 +1600,19 @@ internal class H3Pool(
                 // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
                 // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
                 if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
+                // a 0-RTT connection whose ECH the server rejected: the server handshook on the outer ClientHello and ignored
+                // the early data (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10), and the client aborted before any
+                // 1-RTT data, so the request was not processed. It goes once more, on a new connection that offers the
+                // retry configurations (or none when the server sent none, section 6.1.6); a second rejection is the failure
+                val echRejected = echRejectionIn(e)
+                if (echRejected != null && !echRetried && !conn.quic.isHandshakeComplete) {
+                    echRetried = true
+                    val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
+                    route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
+                    lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }
+                    events.emit("retry") { retry(data, attempts + 2, e) }
+                    continue
+                }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {

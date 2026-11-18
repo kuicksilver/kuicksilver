@@ -175,8 +175,10 @@ class ClientHttpsRecordTest {
                         gate.await()
                         listOf(record(n, 1, "server.test", "h3"))
                     }
-                // TCP starts only once QUIC failed: the pooled HTTP/1.1 connection of the first request cannot win the race
+                // TCP starts only once QUIC failed: the pooled HTTP/1.1 connection of the first request cannot win the race.
+                // Without ECH: a client that offers ECH from the records waits for them (RFC 9848 section 5.3)
                 client(source, more = {
+                    ech { fromHttpsRecords = false }
                     http3 {
                         hardDelay = Duration.INFINITE
                         networkId = { "wifi" } // answers are cached only where a network change can be seen
@@ -207,12 +209,61 @@ class ClientHttpsRecordTest {
                         awaitCancellation()
                     }
                 // the source never answers and the connect timeout is far: the request goes on over TCP after the extra wait
-                client(source, more = { connectTimeout = 120.seconds }).use { c ->
+                // (without ECH from the records: with it the request waits, RFC 9848 section 5.3, see the next test)
+                client(source, more = {
+                    connectTimeout = 120.seconds
+                    ech { fromHttpsRecords = false }
+                }).use { c ->
                     val r = withTimeout(5.seconds) { c.get("https://server.test:$port/") } // the extra wait, not the 120 s timeout
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals(FallbackReason.NoAlternative, r.kuicksilverDiagnostics?.fallback)
                     assertTrue(asked.isCompleted, "the source was not asked")
                 }
+            } finally {
+                server.stopSuspend(0, 0)
+            }
+        }
+
+    /**
+     * RFC 9848 section 5.3: "clients that support ECH MUST NOT issue any TLS ClientHello until after SVCB resolution has
+     * completed". With ECH from the records (the default) a source that never answers holds the request until the lookup
+     * ends at the connect timeout; only then (no records: SVCB-optional) does the first ClientHello go out.
+     */
+    @Test fun negative_echClientSendsNoClientHelloBeforeTheRecordsResolved() =
+        clientTest {
+            val lookupEnded = CompletableDeferred<Unit>()
+            val helloBeforeLookupEnded = CompletableDeferred<Boolean>()
+            val server =
+                io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
+                    tlsConnector(ClientFixtures.identity()) {
+                        host = "127.0.0.1"
+                        port = 0
+                        sniSelector = {
+                            helloBeforeLookupEnded.complete(!lookupEnded.isCompleted)
+                            io.kuicksilver.tls.ServerTlsOverride(ClientFixtures.identity())
+                        }
+                    }
+                    http3 = false
+                }) { routing { get("/") { call.respondText("ok") } } }
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val source =
+                    HttpsRecordsForTest {
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            lookupEnded.complete(Unit)
+                        }
+                    }
+                client(source, more = { connectTimeout = 2.seconds }).use { c ->
+                    assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
+                }
+                assertEquals(false, helloBeforeLookupEnded.await(), "a ClientHello went out while the HTTPS lookup was running")
             } finally {
                 server.stopSuspend(0, 0)
             }

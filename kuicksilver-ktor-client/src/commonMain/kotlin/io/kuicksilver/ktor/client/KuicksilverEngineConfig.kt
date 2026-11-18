@@ -273,7 +273,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /**
      * Further TLS settings, applied after [trust] and [identity] (so the block may replace them). ALPN and the server name
      * come from the request (`h3`, or `h2` and `http/1.1`; the URL's host) and are set after the block: values the block
-     * gives them are not used. Verify another name with `TrustConfig.ExpectedName` instead. Allowing TLS 1.2 here
+     * gives them are not used, nor are its `echConfigList` and `echGrease` (the connection's, from [ech]). Verify another name with `TrustConfig.ExpectedName` instead. Allowing TLS 1.2 here
      * (`versions = TlsVersions.Tls12And13`) keeps HTTP/2 on: see [Http2ClientConfig].
      */
     public var tls: TlsConfig.Builder.() -> Unit = {}
@@ -457,6 +457,16 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public fun http2(block: Http2ClientConfig.() -> Unit) {
         http2.apply(block)
+    }
+
+    /** Encrypted Client Hello (RFC 9849): configurations per host, GREASE, the HTTPS records' `ech`; change it with [ech]. */
+    @ExperimentalKuicksilverApi
+    public val ech: EchClientConfig = EchClientConfig()
+
+    /** Configures [ech] in place: `engine { ech { configLists = mapOf("example.com" to list) } }`. */
+    @ExperimentalKuicksilverApi
+    public fun ech(block: EchClientConfig.() -> Unit) {
+        ech.apply(block)
     }
 
     /** Configures [http3] in place: `engine { http3 { discovery = Http3DiscoveryMode.Preferred } }`. */

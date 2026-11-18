@@ -21,6 +21,7 @@ internal object SvcbTestEncoder {
         if (r.noDefaultAlpn) out.param(2, ByteArray(0))
         r.port?.let { out.param(3, byteArrayOf((it shr 8).toByte(), it.toByte())) }
         if (r.ipv4Hints.isNotEmpty()) out.param(4, r.ipv4Hints.reduce { a, b -> a + b })
+        r.ech?.let { out.param(5, it) }
         if (r.ipv6Hints.isNotEmpty()) out.param(6, r.ipv6Hints.reduce { a, b -> a + b })
         return out.toByteArray()
     }

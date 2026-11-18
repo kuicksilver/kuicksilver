@@ -486,6 +486,38 @@ class EngineMainTest {
             }
         }
 
+    /**
+     * `kuicksilver.tls.echKeys` reads the ECH key files (each the PEM `openssl ech` writes) into the deployment port's keys,
+     * which its TLS connector carries; a file that is no ECH key, and the key without the identity files, are refused.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun echKeysKeyReadsTheKeyFiles() =
+        serverTest {
+            val a = File(dir, "ech-a.pem").apply { writeText(EchTestKeys.A) }
+            val b = File(dir, "ech-b.pem").apply { writeText(EchTestKeys.B) }
+            val server = EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.echKeys=${a.path},${b.path}"))
+            val keys = server.engine.configuration.tlsEchKeys
+            kotlin.test.assertNotNull(keys)
+            server.stop(0, 0)
+            val bad = File(dir, "ech-bad.pem").apply { writeText("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n") }
+            assertFailsWith<io.kuicksilver.tls.TlsException.Config> {
+                EngineMain.createServer(clientCaArgs("-P:kuicksilver.tls.echKeys=${bad.path}")).engine
+            }
+            assertFailsWith<IllegalArgumentException> {
+                EngineMain
+                    .createServer(
+                        arrayOf(
+                            "-host=127.0.0.1",
+                            "-port=0",
+                            "-P:ktor.application.modules.size=1",
+                            "-P:ktor.application.modules.0=$module",
+                            "-P:kuicksilver.tls.echKeys=${a.path}",
+                        ),
+                    ).engine
+            }
+        }
+
     /** Ktor's `-sslPort` connector cannot staple or trust a gateway: the two keys are refused next to it, naming the way out. */
     @Test fun negative_ocspStaplingAndTrustedGatewayKeysWithSslPortRefused() =
         serverTest {

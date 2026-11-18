@@ -34,6 +34,10 @@ internal class SvcbMalformedException(
  * @property ipv6Hints the `ipv6hint` addresses, 16 bytes each; checked, not used to connect.
  * @property ttlSeconds the TTL: the smallest of the record's and those of the CNAMEs that led to it.
  * @property owner the record's owner name (after CNAMEs), lower case.
+ * @property ech the `ech` value (RFC 9848 section 3): an ECHConfigList in wire format whose framing was checked
+ *   ([SvcbCodec]); which of its ECHConfigs are usable is decided when a connection offers it. Null without the key.
+ * @property echMandatory whether `mandatory` names `ech` (RFC 9460 section 8): a client that does not offer ECH cannot
+ *   use the record then.
  */
 internal class SvcbRecord(
     val priority: Int,
@@ -45,6 +49,8 @@ internal class SvcbRecord(
     val ipv6Hints: List<ByteArray>,
     val ttlSeconds: Long,
     val owner: String,
+    val ech: ByteArray? = null,
+    val echMandatory: Boolean = false,
 ) {
     /** AliasMode (RFC 9460 section 2.4.2). */
     val isAlias: Boolean get() = priority == 0
@@ -54,18 +60,25 @@ internal class SvcbRecord(
 
     /** This record with a TTL of at most [cap] (the smallest TTL of the CNAMEs that led to it). */
     fun withTtlAtMost(cap: Long): SvcbRecord =
-        if (ttlSeconds <= cap) this else SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4Hints, ipv6Hints, cap, owner)
+        if (ttlSeconds <=
+            cap
+        ) {
+            this
+        } else {
+            SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4Hints, ipv6Hints, cap, owner, ech, echMandatory)
+        }
 
     override fun equals(other: Any?): Boolean =
         other is SvcbRecord && priority == other.priority && target == other.target && alpn == other.alpn &&
             noDefaultAlpn == other.noDefaultAlpn && port == other.port && ttlSeconds == other.ttlSeconds && owner == other.owner &&
-            sameAddresses(ipv4Hints, other.ipv4Hints) && sameAddresses(ipv6Hints, other.ipv6Hints)
+            sameAddresses(ipv4Hints, other.ipv4Hints) && sameAddresses(ipv6Hints, other.ipv6Hints) &&
+            echMandatory == other.echMandatory && (ech?.contentEquals(other.ech) ?: (other.ech == null))
 
     override fun hashCode(): Int = ((priority * 31 + target.hashCode()) * 31 + alpn.hashCode()) * 31 + (port ?: -1)
 
     override fun toString(): String =
         "$owner $ttlSeconds HTTPS $priority $target alpn=$alpn${if (noDefaultAlpn) " no-default-alpn" else ""}" +
-            (port?.let { " port=$it" } ?: "")
+            (port?.let { " port=$it" } ?: "") + (ech?.let { " ech=(${it.size} bytes)" } ?: "")
 
     private fun sameAddresses(
         a: List<ByteArray>,
@@ -83,10 +96,15 @@ internal object SvcbCodec {
     private const val KEY_NO_DEFAULT_ALPN = 2
     private const val KEY_PORT = 3
     private const val KEY_IPV4HINT = 4
+    private const val KEY_ECH = 5
     private const val KEY_IPV6HINT = 6
 
-    /** The keys this client supports, so a `mandatory` list may name them (section 8); `ech` (5) is not among them. */
-    private val SUPPORTED = setOf(KEY_MANDATORY, KEY_ALPN, KEY_NO_DEFAULT_ALPN, KEY_PORT, KEY_IPV4HINT, KEY_IPV6HINT)
+    /**
+     * The keys this client supports, so a `mandatory` list may name them (section 8). `ech` (5, RFC 9848) is among them:
+     * whether a connection can honour it depends on the engine's ECH settings, so the record keeps [SvcbRecord.echMandatory]
+     * and [serviceEndpoints] leaves it out for a client that does not offer ECH.
+     */
+    private val SUPPORTED = setOf(KEY_MANDATORY, KEY_ALPN, KEY_NO_DEFAULT_ALPN, KEY_PORT, KEY_IPV4HINT, KEY_ECH, KEY_IPV6HINT)
 
     /**
      * The record in `b[off until off + len]` of [owner] with [ttl]; null when the record is well-formed but unusable: a
@@ -142,6 +160,7 @@ internal object SvcbCodec {
         var port: Int? = null
         var ipv4: List<ByteArray> = emptyList()
         var ipv6: List<ByteArray> = emptyList()
+        var ech: ByteArray? = null
         for (i in keys.indices) {
             val s = starts[i]
             val n = lengths[i]
@@ -170,14 +189,41 @@ internal object SvcbCodec {
                     ipv6 = addresses(b, s, n, 16)
                 }
 
-                else -> {} // ech and the keys this client does not know: ignored unless mandatory (below)
+                KEY_ECH -> {
+                    ech = echConfigList(b, s, n)
+                }
+
+                else -> {} // the keys this client does not know: ignored unless mandatory (below)
             }
         }
         // every key the mandatory list names must be in the record (section 8)
         if (!hasAllMandatory(keys, mandatory)) throw DnsFormatException("a mandatory key is missing")
         if (mandatory.any { it !in SUPPORTED }) return null
         if (noDefaultAlpn && alpn.isEmpty()) return null
-        return SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4, ipv6, ttl, owner)
+        return SvcbRecord(priority, target, alpn, noDefaultAlpn, port, ipv4, ipv6, ttl, owner, ech, KEY_ECH in mandatory)
+    }
+
+    /**
+     * `ech` (RFC 9848 section 3): "the value of the parameter is an ECHConfigList (Section 4 of [ECH]), including the
+     * redundant length prefix", that is `ECHConfig ECHConfigList<4..2^16-1>` (RFC 9849 section 4), each ECHConfig a version
+     * and a length-prefixed body (section 4: the framing every version keeps, so one of another version is skipped, not
+     * malformed). A value whose framing does not hold is a malformed SvcParamValue (RFC 9460 section 2.2): the RRset is
+     * dropped. Returns a copy of the value.
+     */
+    private fun echConfigList(
+        b: ByteArray,
+        s: Int,
+        n: Int,
+    ): ByteArray {
+        val r = DnsReader(b, s, s + n)
+        val listLength = r.u16()
+        if (listLength != n - 2) throw DnsFormatException("ech: list length $listLength in a value of $n bytes")
+        if (listLength < 4) throw DnsFormatException("ech: an ECHConfigList of $listLength bytes")
+        while (r.remaining > 0) {
+            r.u16() // version
+            r.skip(r.u16()) // contents
+        }
+        return b.copyOfRange(s, s + n)
     }
 
     /**
@@ -386,7 +432,17 @@ internal data class HttpsEndpoint(
     val port: Int,
     val quic: Boolean,
     val tcp: Boolean,
-)
+    /** The record's `ech` value (RFC 9848), for a client that offers ECH; null without one. */
+    val ech: ByteArray? = null,
+    /** The endpoint section 3 appends after AliasMode records (the final $QNAME, without SvcParams). */
+    val appended: Boolean = false,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is HttpsEndpoint && host == other.host && port == other.port && quic == other.quic && tcp == other.tcp &&
+            appended == other.appended && (ech?.contentEquals(other.ech) ?: (other.ech == null))
+
+    override fun hashCode(): Int = (host.hashCode() * 31 + port) * 4 + (if (quic) 2 else 0) + (if (tcp) 1 else 0)
+}
 
 /** The default ALPN set of the HTTPS RR (RFC 9460 section 9). */
 internal const val HTTPS_DEFAULT_ALPN = "http/1.1"
@@ -411,13 +467,15 @@ internal const val MAX_ENDPOINTS = 32
  * ".", section 2.5.2) and its `port` or [authorityPort] (section 7.2, SHALL). An endpoint whose SVCB ALPN set has no
  * protocol in [supported] is left out (section 7.1.2, SHOULD NOT attempt), and so is one whose name a socket cannot take.
  * At most [MAX_ENDPOINTS]. Empty when the RRset has an AliasMode record: its ServiceMode records are then ignored
- * (section 2.4.1, MUST).
+ * (section 2.4.1, MUST). With [ech] (the client offers ECH, RFC 9848) each endpoint carries its record's `ech` value;
+ * without it the value is dropped, and a record whose `mandatory` names `ech` is incompatible (section 8).
  */
 internal fun serviceEndpoints(
     records: List<SvcbRecord>,
     authorityPort: Int,
     supported: Set<String>,
     random: Random = Random,
+    ech: Boolean = false,
 ): List<HttpsEndpoint> {
     if (records.any { it.isAlias }) return emptyList()
     return records
@@ -426,10 +484,15 @@ internal fun serviceEndpoints(
         .sortedBy { it.key }
         .flatMap { it.value.shuffled(random) }
         .mapNotNull { r ->
+            if (r.echMandatory && !ech) return@mapNotNull null
             val set = r.alpnSet() intersect supported
             val quic = "h3" in set
             val tcp = "h2" in set || HTTPS_DEFAULT_ALPN in set
-            if ((!quic && !tcp) || !isHostName(r.serviceHost)) null else HttpsEndpoint(r.serviceHost, r.port ?: authorityPort, quic, tcp)
+            if ((!quic && !tcp) || !isHostName(r.serviceHost)) {
+                null
+            } else {
+                HttpsEndpoint(r.serviceHost, r.port ?: authorityPort, quic, tcp, r.ech.takeIf { ech })
+            }
         }.take(MAX_ENDPOINTS)
 }
 

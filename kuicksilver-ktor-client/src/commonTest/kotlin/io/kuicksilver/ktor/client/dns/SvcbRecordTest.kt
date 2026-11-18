@@ -40,6 +40,64 @@ class SvcbRecordTest {
         assertFailsWith<DnsFormatException> { parse(rdata) }
     }
 
+    // ---- RFC 9848: the `ech` SvcParam (key 5)
+
+    /** RFC 9848 Figure 1: ech="AEj+DQBE...AAA=" (public_name ech-sites.example.net), the ECHConfigList with its length prefix. */
+    private val figure1Ech =
+        kotlin.io.encoding.Base64.decode(
+            "AEj+DQBEAQAgACAdd+scUi0IYFsXnUIU7ko2Nd9+F8M26pAGZVpz/KrWPgAEAAEAAWQVZWNoLXNpdGVzLmV4YW1wbGUubmV0AAA=",
+        )
+
+    private fun echParam(value: ByteArray): String =
+        "0005 " + value.size.toString(16).padStart(4, '0') + " " +
+            value.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+    @Test fun echValueIsKept() {
+        val r = parsed("0001 00 ${echParam(figure1Ech)}")
+        assertContentEquals(figure1Ech, r.ech)
+        assertFalse(r.echMandatory)
+        // and it survives the encoder (the tests' DNS answers)
+        val again = SvcbTestEncoder.encode(r).let { SvcbCodec.parseRdata(it, 0, it.size, "example.com", 300) }
+        assertContentEquals(figure1Ech, assertNotNull(again).ech)
+    }
+
+    /** RFC 9460 section 2.2: a value that is not an ECHConfigList with its length prefix (RFC 9848 section 3) is malformed. */
+    @Test fun negative_malformedEchValues() {
+        malformed("0001 00 ${echParam(figure1Ech.copyOf(figure1Ech.size - 1))}") // the list's length says more
+        malformed("0001 00 ${echParam(figure1Ech + byteArrayOf(0))}") // a byte after the list
+        malformed("0001 00 0005 0002 0000") // an empty list (ECHConfigList<4..2^16-1>)
+        malformed("0001 00 0005 0000") // no length prefix at all
+        malformed("0001 00 0005 0006 0004 fe0d 0005") // an ECHConfig whose length runs past the list
+    }
+
+    /** An ECHConfig of another version is skipped by the client, not malformed (RFC 9849 section 4): the value is kept. */
+    @Test fun echOfAnotherVersionIsKept() {
+        assertNotNull(parsed("0001 00 0005 0006 0004 fe0c 0000").ech)
+    }
+
+    /** RFC 9460 section 8 with RFC 9848: `mandatory=ech` is compatible only with a client that offers ECH. */
+    @Test fun mandatoryEchNeedsAClientWithEch() {
+        val r = parsed("0001 00 0000 0002 0005 ${echParam(figure1Ech)}")
+        assertTrue(r.echMandatory)
+        assertEquals(emptyList(), serviceEndpoints(listOf(r), 443, setOf("http/1.1")))
+        val e = serviceEndpoints(listOf(r), 443, setOf("http/1.1"), ech = true).single()
+        assertContentEquals(figure1Ech, e.ech)
+        // without ECH the endpoints carry none, whatever the record has
+        val plain = parsed("0001 00 ${echParam(figure1Ech)}")
+        assertNull(serviceEndpoints(listOf(plain), 443, setOf("http/1.1")).single().ech)
+    }
+
+    /** RFC 9848 section 5.1: SVCB-reliant when every ServiceMode endpoint has `ech` (the AliasMode endpoint aside). */
+    @Test fun echReliantWhenEveryEndpointHasEch() {
+        val withEch = HttpsEndpoint("a.test", 443, quic = false, tcp = true, ech = figure1Ech)
+        val without = HttpsEndpoint("b.test", 443, quic = false, tcp = true)
+        val appended = HttpsEndpoint("c.test", 443, quic = false, tcp = true, appended = true)
+        assertTrue(HttpsResolution.Endpoints(listOf(withEch)).echReliant)
+        assertTrue(HttpsResolution.Endpoints(listOf(withEch, appended)).echReliant)
+        assertFalse(HttpsResolution.Endpoints(listOf(withEch, without)).echReliant)
+        assertFalse(HttpsResolution.Endpoints(listOf(appended)).echReliant)
+    }
+
     // ---- RFC 9460 Appendix D.1 and D.2 (Figures 2 to 10)
 
     @Test fun aliasModeVector() { // Figure 2: example.com. HTTPS 0 foo.example.com.
@@ -117,8 +175,9 @@ class SvcbRecordTest {
         assertNull(parse("0001 00 0000 0002 029b 0001 0003 026833 029b 0005 68656c6c6f"))
     }
 
-    @Test fun mandatoryEchSkipsRecord() { // ech is not supported (no client ECH), so a record that needs it is not used
-        assertNull(parse("0001 00 0000 0002 0005 0001 0003 026833 0005 0002 abcd"))
+    @Test fun mandatoryEchSkipsRecord() { // a client without ECH cannot use a record that needs it (section 8)
+        val r = parsed("0001 00 0000 0002 0005 0001 0003 026833 0005 0006 0004 fe0d 0000")
+        assertEquals(emptyList(), serviceEndpoints(listOf(r), 443, setOf("h3")))
     }
 
     @Test fun noDefaultAlpnWithoutAlpnSkipsRecord() = assertNull(parse("0001 00 0002 0000"))
