@@ -51,16 +51,43 @@ internal class KslContext private constructor(
      */
     val trustSnapshot: TrustConfig.AnchoredCa?,
 ) {
-    /** The version of [TlsConfig.echKeys] this server context decrypts with (0: none applied yet). */
+    /**
+     * The version of [TlsConfig.echKeys] this server context decrypts with (0: none). [build] applies the set current then,
+     * before the context is shared; it only moves forward afterwards ([ensureEchKeys]).
+     */
     private val echApplied = AtomicInt(0)
 
+    // 1 while one thread applies a newer set: the native set and [echApplied] change together, never interleaved
+    private val echApplying = AtomicInt(0)
+
+    /** The version of the ECH keys this context decrypts with (tests). */
+    internal val echAppliedVersion: Int get() = echApplied.load()
+
     /**
-     * Server: gives this context the current set of [TlsConfig.echKeys] when it has not got it yet, before a session is made
-     * from it; a rotation of those keys reaches contexts already built this way (ksl takes a new set on a frozen context).
+     * Server: gives this context the current set of [TlsConfig.echKeys] when a rotation replaced the one it has, before a
+     * session is made from it (ksl takes a new set on a frozen context). Racing callers apply one at a time, each the set
+     * current when it applies, so the native set is always the one of the version recorded, and that version never goes
+     * back: a session never decrypts with a set older than one it already used.
      */
     fun ensureEchKeys() {
         val keys = config.echKeys ?: return
-        if (echApplied.load() != keys.version) echApplied.store(keys.applyTo(handle))
+        if (echApplied.load() >= keys.version) return
+        while (!echApplying.compareAndSet(0, 1)) {
+            // another thread applies one now (a rotation is rare and the native call short); it may be the one wanted
+            if (echApplied.load() >= keys.version) return
+        }
+        try {
+            if (echApplied.load() < keys.version) {
+                echApplied.store(keys.applyTo(handle))
+            }
+        } finally {
+            echApplying.store(0)
+        }
+    }
+
+    /** [build]: records the version of the set it applied before the context was frozen. */
+    private fun echAppliedAtBuild(version: Int) {
+        echApplied.store(version)
     }
 
     /** One holder's reference to [ctx]: [close] gives it back once, so a second close cannot take another holder's reference. */
@@ -312,8 +339,12 @@ internal class KslContext private constructor(
                     ) {
                         throw TlsException.Config("invalid TLS configuration: ${e.message}")
                     }
+                    // the server's ECH keys go in before the context is frozen and shared: no session is made without them, and
+                    // the first sessions do not race to give them (ensureEchKeys only follows rotations from here on)
+                    val echVersion = if (config.role == TlsRole.Server) config.echKeys?.applyTo(h) ?: 0 else 0
                     Ksl.ctxFreeze(h)
                     return KslContext(h, config, quic, chain.firstOrNull()?.let(::certificateTag), chain, quicTickets, earlyData, ca)
+                        .also { it.echAppliedAtBuild(echVersion) }
                 } catch (t: Throwable) {
                     Ksl.ctxFree(h)
                     throw t

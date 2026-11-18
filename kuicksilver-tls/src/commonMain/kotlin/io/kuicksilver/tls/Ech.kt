@@ -135,11 +135,28 @@ public class EchServerKeys(
 ) {
     private val current = AtomicReference(Native(parse(keys), 1))
 
-    /** Replaces the whole set (see the class); the old set is freed once no context still uses it. */
+    /**
+     * Replaces the whole set (see the class); the old set is freed once no context still uses it. Concurrent rotations are
+     * ordered: each one's set gets a version above the set it replaced, so a context never takes an older set for a newer one.
+     */
     public fun rotate(keys: List<EchKey>) {
-        val next = Native(parse(keys), current.load().version + 1)
-        current.exchange(next).release()
+        val handle = parse(keys)
+        while (true) {
+            val old = current.load()
+            val next = Native(handle, old.version + 1)
+            beforeSwapForTest?.invoke()
+            if (current.compareAndSet(old, next)) {
+                old.release()
+                return
+            }
+        }
     }
+
+    /** Test hook: runs in [rotate] between reading the current set and replacing it. */
+    internal var beforeSwapForTest: (() -> Unit)? = null
+
+    /** Test hook: runs in [applyTo] before (true) and after (false) the native context takes the set of that version. */
+    internal var applyHookForTest: ((Boolean, Int) -> Unit)? = null
 
     /** The version of the current set: a context applies a set once ([applyTo]). */
     internal val version: Int get() = current.load().version
@@ -150,7 +167,9 @@ public class EchServerKeys(
             val n = current.load()
             if (!n.tryAcquire()) continue // rotated and freed between the load and the acquire: take the newer one
             try {
+                applyHookForTest?.invoke(true, n.version)
                 Ksl.ctxSetEchKeys(ctx, n.handle)
+                applyHookForTest?.invoke(false, n.version)
                 return n.version
             } catch (e: KslException.Internal) {
                 throw TlsException.Config("ECH keys refused: ${e.message}")
