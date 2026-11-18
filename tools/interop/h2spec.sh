@@ -18,7 +18,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-image="summerwind/h2spec:2.6.0"
+# pinned by its registry digest (a single-arch linux/amd64 manifest); CI pulls exactly this reference (build.yml, linux-native),
+# tools/check/pins.sh refuses an h2spec reference without a digest
+image="summerwind/h2spec:2.6.0@sha256:5f4a65c30cae8569558ced048b4bfe0dcf01a221e36767ae504ccd8348a7aeb0"
 expected_cases=146 # h2spec 2.6.0, first run 2026-11-06: generic 44, http2 94 (RFC 9113 sections 3 to 8), hpack 8 (RFC 7541)
 linux_image=${KSL_H2SPEC_LINUX_IMAGE:-kuicksilver-openssl-linux-x64} # the image tools/ci/run-kexe.sh runs the linux-x64 tests in
 build=1

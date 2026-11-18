@@ -356,11 +356,23 @@ jobs:
       - name: 'docker: deployment guide commands (linux-x64)'
         # docs/guide/deployment.md "Checking a deployment" (curl --http3-only, tcpdump) against the linuxX64 server in one container
         run: KSL_GRADLE="$G" bash tools/check/deployment-guide.sh
+      - name: 'docker: h2spec linux-x64 (HTTP/2 server; TLS, and h2c where tools/interop/h2spec.sh has it)'
+        # the release gate's h2spec run (tools/ci/local-matrix.sh) on the linuxX64 server: every case must pass. The image
+        # is the digest pin of h2spec.sh itself, pulled here (the script never pulls). Before h2c support (k10/h2c) the
+        # script runs TLS only; with it, both transports by default, and the next step then expects both reports
+        run: |
+          image=$(sed -n 's/^image="\(summerwind\/h2spec:[^"]*@sha256:[0-9a-f]\{64\}\)"$/\1/p' tools/interop/h2spec.sh)
+          [ -n "$image" ] || { echo "::error::no digest-pinned image= line in tools/interop/h2spec.sh"; exit 1; }
+          docker pull --platform linux/amd64 "$image"
+          KSL_GRADLE="$G" bash tools/interop/h2spec.sh linux-x64
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         run: |
+          # h2c is expected (and its absence shown as a failure) once h2spec.sh has the --h2c transport
+          h2c=(); if grep -q -- '--h2c)' tools/interop/h2spec.sh; then h2c=(--h2spec h2c:build/h2spec/linux-x64-h2c/h2spec.txt); fi
           python3 -I tools/docs/verify.py collect --lane linux-native --host 'Linux x64 (manylinux2014 container)' \
             --out "$RUNNER_TEMP/verify/linux-native.json" --gtest "linuxX64:$RUNNER_TEMP/verify-logs/linuxX64/*.log" \
+            --h2spec 'tls:build/h2spec/linux-x64/h2spec.txt' "${h2c[@]}" \
             --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'

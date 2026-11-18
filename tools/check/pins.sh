@@ -22,6 +22,10 @@ while IFS= read -r f; do
   done < <(grep -E '^FROM[[:space:]]' "$f" | grep -vE '^FROM[[:space:]]+(scratch|\$)')
 done < <(find "$root" \( -path '*/build' -o -path '*/.git' -o -path '*/.worktrees' -o -path '*/.gradle' \) -prune -o -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) -print)
 grep -Eq '^distributionSha256Sum=[0-9a-f]{64}$' "$root/gradle/wrapper/gradle-wrapper.properties" || fail "gradle-wrapper.properties: no distributionSha256Sum"
+# container images run by the scripts and workflows outside a Dockerfile: h2spec (tools/interop/h2spec.sh) by digest too
+while IFS= read -r line; do
+  printf '%s' "$line" | grep -Eq 'summerwind/h2spec:[0-9.]+@sha256:[0-9a-f]{64}' || fail "h2spec image not pinned by digest: $line"
+done < <(grep -rnE 'summerwind/h2spec:[0-9]' "$root/.github" "$root/tools" 2>/dev/null)
 left=$(grep -rIl 'OWNER-FILL-IN' "$root/.github" "$root/tools" "$root/gradle" 2>/dev/null | grep -v 'tools/check/pins.sh$')
 [ -z "$left" ] || fail "owner placeholders left in: $(echo "$left" | tr '\n' ' ')"
 [ $rc -eq 0 ] && echo "pins OK"
