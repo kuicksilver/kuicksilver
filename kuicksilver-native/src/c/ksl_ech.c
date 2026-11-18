@@ -445,12 +445,12 @@ int ksl_ech_inner_versions_ok(SSL *ssl) {
     return 1;
 }
 
-/* RFC 9849 section 6.2.1: a GREASE ECH extension sets "cipher_suite to a value it would choose ... (for example, the cipher suite of
-   the ECHConfig the client would use)"; OpenSSL 4.1 sends the default suite (HKDF-SHA256, AES-128-GCM) every time, a fixed mark
-   among clients that choose. Each GREASE handshake takes one of the suites a Kuicksilver client uses with a real ECHConfig
-   (HKDF-SHA256 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305; X25519, the KEM every ECHConfig of RFC 9849's mandatory suite
-   has), at random. Set when the handshake starts, not at ksl_ssl_new: SSL_ech_set1_grease_suite marks the session as GREASE, and a
-   list given after ksl_ssl_new (KSL_SET_ECH_CONFIG_LIST) must not run under that mark. */
+/* RFC 9849 section 6.2.1: a GREASE ECH extension sets "the cipher_suite field to a supported HpkeSymmetricCipherSuite. The
+   selection SHOULD vary, so that all plausible configurations are exercised"; OpenSSL 4.1.0 sends its default suite
+   (HKDF-SHA256, AES-128-GCM) every time, a fixed mark among clients that vary it. Each GREASE handshake takes one of the suites a
+   Kuicksilver client uses with a real ECHConfig (HKDF-SHA256 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305; X25519, the KEM
+   of RFC 9849's mandatory suite), at random. Set when the handshake starts, not at ksl_ssl_new: SSL_ech_set1_grease_suite marks
+   the session as GREASE, and a list given after ksl_ssl_new (KSL_SET_ECH_CONFIG_LIST) must not run under that mark. */
 void ksl_ech_before_handshake(ksl_ssl *s) {
 #if KSL_HAS_ECH
     if (s->owner->role != KSL_CLIENT || !s->owner->ech_grease || s->ech_set || s->ech_grease_ready ||

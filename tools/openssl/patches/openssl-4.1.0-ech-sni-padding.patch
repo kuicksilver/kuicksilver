@@ -2,8 +2,9 @@ OpenSSL 4.1.0: the inner server_name padding of an ECH ClientHello is 9 bytes sh
 
 Kuicksilver's own code, the fourth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
 openssl-4.1.0-ech-retry-configs-raw.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_4, applied by
-tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes the upstream
-issue filed for it (research note S1-rfc). Applies unchanged to OpenSSL master at df4c3359.
+tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it. Known
+upstream: issue openssl/openssl#32170, pull request #32930 (open) with the same one-line fix. Applies unchanged to OpenSSL
+master at df4c3359.
 
 The bug: RFC 9849 section 6.1.3: "If the ClientHelloInner contained a "server_name" extension with a name of length D,
 add max(0, M - D) bytes of padding", M the ECHConfig's maximum_name_length. ossl_ech_calc_padding (ech_internal.c)

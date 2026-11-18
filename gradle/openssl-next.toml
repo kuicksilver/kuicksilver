@@ -21,8 +21,8 @@ patch_2_sha256 = "eb23e1ba5067175b8550c6595837922b97d9008661d856342a426c0fd535e1
 # hands them over as sent, so one ECHConfig OpenSSL cannot use no longer drops the others (ksl checks each one). Kuicksilver's
 # own code; dropped with the first release that fixes the upstream issue.
 patch_3 = "tools/openssl/patches/openssl-4.1.0-ech-retry-configs-raw.patch"
-patch_3_sha256 = "67177f932d70c2c693d4af06877224a41f0d7bbbd9120014c57d062833a6900c"
+patch_3_sha256 = "9beb570284cc7a6541b3f4e65ddcb3f5286bd8cc7a22595dde352274149ff588"
 # The fourth carried patch (ADR-0019, S1-rfc): the inner server_name padding of RFC 9849 section 6.1.3, max(0, M - D) (4.1.0 pads
-# 9 bytes less). Kuicksilver's own code; dropped with the first release that fixes the upstream issue.
+# 9 bytes less). Kuicksilver's own code; upstream issue #32170 (pull request #32930); dropped with the first release that fixes it.
 patch_4 = "tools/openssl/patches/openssl-4.1.0-ech-sni-padding.patch"
-patch_4_sha256 = "38159ca006c6adf66977fe7553607d9abb2bc6a7a2af32620a528a2d03170045"
+patch_4_sha256 = "3c1d08cf4186cc028e41209b76ecf8ab4c11f55e9e973b870595871e810accf8"

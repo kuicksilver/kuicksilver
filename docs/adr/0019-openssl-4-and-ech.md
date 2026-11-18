@@ -81,8 +81,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
      6.1.3 is max(0, M − D); 4.1.0 compared M with D + 9 and padded 9 bytes less).
   The rules for all four:
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
-    upstream's code verbatim (source hunks only, the build has no tests). For patches 3 and 4 upstream issues are
-    drafted (2026-11-19) and to be filed; they are minimal, apply unchanged to OpenSSL master at df4c3359, and their
+    upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
+    covers part of the bug and an issue for the rest is drafted (2026-11-19), to be filed; they are minimal, apply unchanged to OpenSSL master at df4c3359, and their
     headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
     that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
