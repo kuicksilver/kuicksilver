@@ -187,9 +187,13 @@ internal class UdpProxyImpl(
             val bucket = ptbTargets.remove(key) ?: TokenBucket(PTB_RATE, PTB_BURST) { clockStart.elapsedNow().inWholeNanoseconds }
             ptbTargets[key] = bucket // the most recent last
             if (ptbTargets.size > MAX_PTB_TARGETS) ptbTargets.remove(ptbTargets.keys.first())
-            if (!bucket.tryTake()) return@withLock false
             val all = ptbAll ?: TokenBucket(ptbTotalRate, ptbTotalBurst) { clockStart.elapsedNow().inWholeNanoseconds }.also { ptbAll = it }
-            if (!all.tryTake()) return@withLock false
+            if (!bucket.tryTake()) return@withLock false
+            // the target's token goes back when the proxy's limit refuses: it was not spent on a message
+            if (!all.tryTake()) {
+                bucket.refund()
+                return@withLock false
+            }
             val sink =
                 ptbSink ?: (senderForTest?.invoke() ?: RawPtbSink(PacketTooBigSender.create())).also {
                     ptbSink = it
@@ -789,5 +793,10 @@ internal class TokenBucket(
         if (tokens < 1.0) return false
         tokens -= 1.0
         return true
+    }
+
+    /** Gives back a token [tryTake] took for nothing. */
+    fun refund() {
+        tokens = minOf(burst.toDouble(), tokens + 1.0)
     }
 }

@@ -11,9 +11,8 @@ import io.kuicksilver.quic.ipLiteral
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
-import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.fetchAndIncrement
+import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
  * The key a client's limits are kept under: its IPv4 address, or its IPv6 address cut to [ipv6Prefix] bits (a /64 is one
@@ -62,34 +61,55 @@ internal class SharedTokenBucket(
 
 /**
  * The starts of the latest payloads a tunnel sent to its target, for the RFC 8085 section 5.2 check of an ICMP unreachable:
- * one that quotes none of them did not answer this tunnel's traffic. Written by the tunnel's sender, read by its watcher.
+ * one that quotes none of them did not answer this tunnel's traffic. Fixed buffers, no allocation per datagram; written by
+ * the tunnel's sender only, read by its watcher, each slot under a sequence number (odd while it is written) so a read that
+ * overlaps a write is not trusted.
  */
 internal class SentPrefixes {
-    private val slots = Array(SLOTS) { AtomicReference<ByteArray?>(null) }
-    private val next = AtomicInt(0)
+    private val bytes = ByteArray(SLOTS * PREFIX)
+    private val lens = IntArray(SLOTS)
+    private val seq = Array(SLOTS) { AtomicInt(0) }
+    private var next = 0 // the sender's only
 
-    /** Keeps the start of `d[off, off + len)`. */
+    /** Keeps the start of `d[off, off + len)`. One thread at a time. */
     fun record(
         d: ByteArray,
         off: Int,
         len: Int,
     ) {
-        val i = (next.fetchAndIncrement() and Int.MAX_VALUE) % SLOTS
-        slots[i].store(d.copyOfRange(off, off + minOf(len, PREFIX)))
+        val i = next
+        next = (i + 1) % SLOTS
+        val n = minOf(len, PREFIX)
+        seq[i].incrementAndFetch() // odd: being written
+        d.copyInto(bytes, i * PREFIX, off, off + n)
+        lens[i] = n
+        seq[i].incrementAndFetch()
     }
 
-    /** Whether [quote] (non-empty) is the start of one of the kept payloads. */
+    /**
+     * Whether [quote] is the start of one of the kept payloads and long enough to say so: at least [MIN_QUOTE] bytes, or
+     * the whole payload when it was shorter. A forger guessing a byte or two would match too often.
+     */
     fun matches(quote: ByteArray): Boolean {
         if (quote.isEmpty()) return false
-        return slots.any { s ->
-            val p = s.load() ?: return@any false
-            quote.size <= p.size && (quote.indices).all { quote[it] == p[it] }
+        for (i in 0 until SLOTS) {
+            val before = seq[i].load()
+            if (before == 0 || before % 2 == 1) continue
+            val n = lens[i]
+            val ok =
+                quote.size <= n && quote.size >= minOf(MIN_QUOTE, n) &&
+                    (quote.indices).all { quote[it] == bytes[i * PREFIX + it] }
+            if (ok && seq[i].load() == before) return true
         }
+        return false
     }
 
     companion object {
         const val SLOTS = 16
         const val PREFIX = 64
+
+        /** The shortest quote of a longer payload taken as evidence: a UDP payload start of 8 bytes. */
+        const val MIN_QUOTE = 8
     }
 }
 

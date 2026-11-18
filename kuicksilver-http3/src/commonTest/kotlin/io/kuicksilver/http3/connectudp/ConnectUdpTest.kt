@@ -1034,12 +1034,13 @@ class ConnectUdpTest {
                 report(echoAt, true, "") // the headers only: nothing to check
                 report(echoAt, true, "spoof") // a payload never sent
                 report(echoAt, true, "hello!") // longer than what was sent
+                report(echoAt, true, "hel") // part of a payload shorter than 8 bytes: a guess could do as well
                 withTimeout(5.seconds) {
                     rig.proxy.impl.changes
-                        .first { rig.proxy.stats.ignoredUnreachable == 6L }
+                        .first { rig.proxy.stats.ignoredUnreachable == 7L }
                 }
                 assertEquals(1, rig.proxy.activeTunnels.value)
-                report(echoAt, true, "hel") // the start of what was sent
+                report(echoAt, true, "hello") // what was sent, whole
                 val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
                 assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
                 assertEquals(1, rig.proxy.stats.closedUnreachable)
@@ -1056,11 +1057,16 @@ class ConnectUdpTest {
         assertTrue(s.matches(long.copyOf(64)))
         assertFalse(s.matches(long.copyOf(65)), "64 bytes kept")
         assertFalse(s.matches(ByteArray(0)), "an empty quote matches nothing")
+        assertTrue(s.matches(long.copyOf(8)), "8 bytes of a long payload")
+        assertFalse(s.matches(long.copyOf(7)), "7 bytes of a long payload: too short to tell from a guess")
+        assertFalse(s.matches(long.copyOf(2)), "nor a byte or two")
         s.record(byteArrayOf(9, 1, 2, 3), 1, 2)
-        assertTrue(s.matches(byteArrayOf(1, 2)))
+        assertTrue(s.matches(byteArrayOf(1, 2)), "a payload shorter than 8 bytes, quoted whole")
+        assertFalse(s.matches(byteArrayOf(1)), "part of a short payload")
         assertFalse(s.matches(byteArrayOf(1, 2, 3)), "only the recorded range")
         repeat(SentPrefixes.SLOTS) { s.record(byteArrayOf(7), 0, 1) }
         assertFalse(s.matches(byteArrayOf(1, 2)), "the oldest forgotten")
+        assertFalse(s.matches(long.copyOf(8)), "the oldest forgotten")
     }
 
     /** Section 7: the proxy's own address (the one this request's connection reached) is refused, whatever the filter allows. */

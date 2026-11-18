@@ -789,7 +789,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   (two minutes), 16 blocking name lookups at once and 4 per client (one more is refused, an abandoned one keeps its
   thread, and counts, until it returns); a target datagram above the link MTU is dropped whole, never forwarded cut; an
   ICMP port unreachable for the target closes the tunnel (Linux and Android) only when it quotes the start of a payload
-  the tunnel sent lately (RFC 8085 §5.2): host unreachable and reports quoting the headers only or another payload are
+  the tunnel sent lately, 8 bytes of it at least or all of a shorter one (RFC 8085 §5.2): host unreachable and reports quoting the headers only or another payload are
   ignored, so an off-path forger who sprays port unreachables over the proxy's ephemeral ports closes nothing without
   having seen the traffic; every tunnel's socket and
   slot are released on every end (FIN, reset, lost connection, socket failure, idle, cancellation). Only the target's
@@ -815,8 +815,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   unless configured; a client that sends from many /64s or IPv4 addresses is limited by `maxTunnels` only; a client that
   stays away two minutes gets a fresh `unansweredLimit`. An on-path attacker who sees a tunnel's payloads can still
   forge a port unreachable that closes it (it can drop the traffic anyway), and a target whose stack quotes the headers
-  only never has its tunnel closed by ICMP (it ends idle); a flood of reports fills the ring of 8 and hides a genuine one
-  until the next poll. The Ktor client keeps tunnelled connections' session tickets
+  only never has its tunnel closed by ICMP (it ends idle); junk reports that fill the ring of 8 between two polls push a
+  genuine one out: that fails safe (the tunnel stays open and ends idle or by the client), it never closes one. The Ktor client keeps tunnelled connections' session tickets
   apart from direct ones', per proxy route.
 - **Tests:** `negative_forbiddenTargetsAreRefusedByDefault`, `negative_publicOnlyRefusesSpecialPurposeAddresses`,
   `negative_invalidTargetValuesAndPathsAreRefused`, `negative_unknownContextIdIsDroppedByTheProxy`,

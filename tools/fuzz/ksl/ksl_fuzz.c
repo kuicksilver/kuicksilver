@@ -22,6 +22,8 @@
         policy; cfg / 3 % 4: 0 no SNI pause, 1..3 a pause resumed with an override whose policy is that minus 1; cfg / 12 % 2:
         a server (and override) that takes only P-384, so a ClientHello with another key share draws a HelloRetryRequest and
         the records may carry a second one
+     0xf9  (the whole byte, as 0xfe) `[flags][mtu:2][cap:2][ports:4][target 16][local 16][payload]` to ksl_icmp_ptb_build
+        (RFC 9298 section 6.1): the length bound, the ICMP checksum and the quote checked on every message built
    Every session is driven until it wants more input; every event is drained and every key freed. */
 #define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
 #define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */

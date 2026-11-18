@@ -25,7 +25,8 @@ out="$root/build/icmp-linux-check"; mkdir -p "$out"
 
 # 1) the C tests, privileged
 echo "== ksl C tests in $img (CAP_NET_RAW)"
-KSL_DOCKER_OPTS="--cap-add=NET_RAW --security-opt seccomp=unconfined" bash tools/ci/docker-run.sh "$plat" "$img" \
+# IPv6 on: a stock Docker network turns it off in the container, and the IPv6 Packet Too Big case needs ::1
+KSL_DOCKER_OPTS="--cap-add=NET_RAW --security-opt seccomp=unconfined --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0" bash tools/ci/docker-run.sh "$plat" "$img" \
   "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh $target" > "$out/c-test.log" 2>&1 || { cat "$out/c-test.log"; echo "C tests failed"; exit 1; }
 for m in 'icmp: OK' 'icmp_linux_unreachable: OK' 'icmp_linux_ptb_v4: OK' 'icmp_linux_ptb_v6: OK' 'udp_recverr_ptb_parsed: OK'; do
   grep -qF "$m" "$out/c-test.log" || { grep -E 'icmp|recverr' "$out/c-test.log"; echo "missing: $m"; exit 1; }
