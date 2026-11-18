@@ -87,6 +87,23 @@ class SvcbRecordTest {
         assertNull(serviceEndpoints(listOf(plain), 443, setOf("http/1.1")).single().ech)
     }
 
+    /**
+     * RFC 9848 figure 5 with RFC 9460 section 8: a record whose `mandatory` names `ech` but whose `ech` has no ECHConfig this
+     * client can use is incompatible (GREASE would reach the endpoint without ECH); without `mandatory=ech` the same value
+     * is kept (the connection sends GREASE, RFC 9849 section 6.1).
+     */
+    @Test fun negative_mandatoryEchWithoutUsableConfigIsSkipped() {
+        val otherVersion = hex("0007 fe0c 0003 010203")
+        val mandatory = parsed("0001 00 0000 0002 0005 ${echParam(otherVersion)}")
+        assertTrue(mandatory.echMandatory)
+        assertEquals(emptyList(), serviceEndpoints(listOf(mandatory), 443, setOf("http/1.1"), ech = true))
+        val optional = parsed("0001 00 ${echParam(otherVersion)}")
+        assertContentEquals(otherVersion, serviceEndpoints(listOf(optional), 443, setOf("http/1.1"), ech = true).single().ech)
+        // a usable one stays: the record is compatible
+        val usable = parsed("0001 00 0000 0002 0005 ${echParam(figure1Ech)}")
+        assertEquals(1, serviceEndpoints(listOf(usable, mandatory), 443, setOf("http/1.1"), ech = true).size)
+    }
+
     /** RFC 9848 section 5.1: SVCB-reliant when every ServiceMode endpoint has `ech` (the AliasMode endpoint aside). */
     @Test fun echReliantWhenEveryEndpointHasEch() {
         val withEch = HttpsEndpoint("a.test", 443, quic = false, tcp = true, ech = figure1Ech)

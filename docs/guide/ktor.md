@@ -1545,7 +1545,8 @@ val client =
   ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
   given for a host never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` with nothing usable
   is different: that connection sends GREASE, as RFC 9849 section 6.1 allows ("If no compatible configuration is found,
-  then the client SHOULD proceed as described in Section 6.2").
+  then the client SHOULD proceed as described in Section 6.2"); a record whose `mandatory` names `ech` is skipped then,
+  since it must not be reached without ECH (RFC 9848 section 5).
 - **What it does not hide.** The DNS queries for the origin's records and addresses (protect them with DNS over HTTPS),
   the server's address, and the traffic's sizes and timing.
 

@@ -34,7 +34,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`TlsException.EchRejected` in its causes). A 0-RTT request on a rejected connection is sent again on the retry. With the
   records' ECH no ClientHello goes out before the records resolved (the request waits up to the connect timeout instead of
   `httpsRecordExtraWait`), and a request whose endpoints all have `ech` never falls back to a connection without it. The
-  SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible) and an ECH
+  SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible when the value has a usable ECHConfig) and an ECH
   rejection no longer marks an HTTP/3 alternative broken.
 - Ktor server: `KuicksilverTlsConnector.Builder.echKeys` (experimental) for TCP and HTTP/3, rotated with
   `EchServerKeys.rotate`, and the `EngineMain` key `kuicksilver.tls.echKeys` (PEM files; docs/guide/ktor.md, "Encrypted
