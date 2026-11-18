@@ -173,7 +173,7 @@ public class KuicksilverTlsConnector private constructor(
          * leaves `http/1.1` out), and HTTP/3 is served (and advertised with `Alt-Svc` on that name's TCP responses) only
          * when it lists `h3`, else the QUIC handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
          * so that its handshakes share one TLS context. Null with SNI present refuses the handshake (`unrecognized_name`); null for a
-         * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen
+         * ClientHello without SNI leaves the connector's own [identity][KuicksilverTlsConnector.Builder.identity] to answer it. A request on such a connection must be for the name its identity was chosen
          * for (else 421, RFC 9110 section 7.4). Null by default.
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
