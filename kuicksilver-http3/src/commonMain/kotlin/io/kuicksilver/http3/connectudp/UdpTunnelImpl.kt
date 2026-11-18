@@ -46,6 +46,9 @@ import kotlin.time.Duration
 /** The Context ID of UDP payloads (RFC 9298 section 5), one byte as a QUIC varint. */
 private const val UDP_CONTEXT: Byte = 0
 
+/** The longest Context ID varint (RFC 9000 section 16): a full UDP payload may follow one of 8 bytes. */
+private const val MAX_CONTEXT_ID_LENGTH = 8
+
 /** Payloads from the target kept for a collector that lags (the newest win, as on a socket's receive buffer). */
 private const val RECEIVE_QUEUE = 64
 
@@ -92,7 +95,7 @@ internal suspend fun connectUdpTunnel(
         }
     val capsules =
         try {
-            impl.useCapsuleProtocol(connectUdpCapsules(ConnectUdp.MAX_UDP_PAYLOAD + 1), filter)
+            impl.useCapsuleProtocol(connectUdpCapsules(ConnectUdp.MAX_UDP_PAYLOAD + MAX_CONTEXT_ID_LENGTH), filter)
         } catch (e: Throwable) {
             if (e !is CancellationException) impl.reset(Http3ErrorCode.REQUEST_CANCELLED)
             throw e

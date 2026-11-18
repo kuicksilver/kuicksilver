@@ -484,6 +484,30 @@ class ConnectUdpTest {
             }
         }
 
+    /** Section 5: a full 65527-byte payload arrives even behind a Context ID in its longest (8-byte) encoding. */
+    @Test fun largestPayloadWithALongContextIdIsDelivered() =
+        h3Test {
+            H3Pair.open(serverSettings = proxySettings).useScoped { p ->
+                launch {
+                    val c =
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect(
+                                Http3Headers(listOf(CapsuleProtocol.Enabled)),
+                            ).useCapsuleProtocol(CapsuleConfig())
+                    val ctx = byteArrayOf(0xc0.toByte(), 0, 0, 0, 0, 0, 0, 0)
+                    c.send(Capsule(CapsuleProtocol.DATAGRAM, ctx + ByteArray(ConnectUdp.MAX_UDP_PAYLOAD) { 7 }))
+                    c.capsules.toList()
+                    c.close()
+                }
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val got = withTimeout(5.seconds) { t.payloads.first() }
+                assertEquals(ConnectUdp.MAX_UDP_PAYLOAD, got.size)
+                assertEquals(7, got.last().toInt())
+                t.close()
+            }
+        }
+
     /** Section 3.1: "If the UDP proxy uses a non-connected socket, it MUST validate the IP source address and UDP source port". */
     @Test fun negative_datagramFromAnotherSourceIsDiscarded() =
         h3Test {

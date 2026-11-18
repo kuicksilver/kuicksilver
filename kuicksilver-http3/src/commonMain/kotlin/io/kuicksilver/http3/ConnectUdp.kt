@@ -373,7 +373,7 @@ public class UdpProxy(
 ) {
     internal val impl = UdpProxyImpl(config)
 
-    /** Tunnels open now. */
+    /** Requests [serve] holds now: tunnels open and requests still being set up (resolved, answered); what the limits count. */
     public val activeTunnels: StateFlow<Int> get() = impl.active
 
     /** Counters since the proxy was made. */
