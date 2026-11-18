@@ -199,7 +199,7 @@ step "lint: doc refs and test gates, negatives" bash -c 'rc=0
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
-step "lint: reliability report (fixtures)"      bash tools/report/reliability-test.sh
+step "lint: reliability report and verification pages (fixtures)" bash -c 'bash tools/report/reliability-test.sh && bash tools/docs/verify-test.sh'
 step "lint: RFC compliance summary table"      bash -c 'bash tools/check/rfc-table.sh && bash tools/check/rfc-table-test.sh'
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check

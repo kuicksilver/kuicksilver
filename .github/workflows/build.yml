@@ -164,6 +164,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/docs-venv"
           "$RUNNER_TEMP/docs-venv/bin/pip" install --quiet --require-hashes -r tools/docs/requirements.txt
           DOCS_PYTHON="$RUNNER_TEMP/docs-venv/bin/python" bash tools/docs/site-test.sh
+      - name: 'lint: verification pages (tools/docs/verify.py on fixtures, negative controls)'
+        run: bash tools/docs/verify-test.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: C formatting (clang-format, .clang-format)'
@@ -281,6 +283,15 @@ jobs:
           grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out" || { echo "udp_recverr_ptb_parsed did not run (SKIP)"; exit 1; }
       - name: 'docker: jvm ${{ matrix.target }} (.so + tests)'
         run: bash tools/ci/docker-jvm.sh ${{ matrix.classifier }}
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { ARCH: '${{ matrix.arch }}' }
+        run: |
+          python3 -I tools/docs/verify.py collect --lane "linux-$ARCH" --host "Linux $ARCH" --out "$RUNNER_TEMP/verify/linux-$ARCH.json" \
+            --junit 'jvm:*/build/test-results/jvmTest/*.xml'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-linux-${{ matrix.arch }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jni-${{ matrix.classifier }}
@@ -337,6 +348,7 @@ jobs:
       - name: 'docker: image linux-x64'
         run: bash tools/openssl/build-docker.sh --image linux-x64
       - name: 'docker: test.kexe linux-x64 (all modules)'
+        env: { KSL_KEXE_LOG_DIR: '${{ runner.temp }}/verify-logs/linuxX64' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose
@@ -344,6 +356,15 @@ jobs:
       - name: 'docker: deployment guide commands (linux-x64)'
         # docs/guide/deployment.md "Checking a deployment" (curl --http3-only, tcpdump) against the linuxX64 server in one container
         run: KSL_GRADLE="$G" bash tools/check/deployment-guide.sh
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        run: |
+          python3 -I tools/docs/verify.py collect --lane linux-native --host 'Linux x64 (manylinux2014 container)' \
+            --out "$RUNNER_TEMP/verify/linux-native.json" --gtest "linuxX64:$RUNNER_TEMP/verify-logs/linuxX64/*.log" \
+            --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-linux-native', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mingw-test-exe
@@ -377,10 +398,19 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: linux-arm64-test-kexe, path: . }
       - name: 'docker: test.kexe linux-arm64 (all modules)'
+        env: { KSL_KEXE_LOG_DIR: '${{ runner.temp }}/verify-logs/linuxArm64' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose
           bash tools/ci/run-kexe.sh linux/arm64 "$KSL_UBUNTU_IMAGE" linuxArm64 $KSL_LINK_MODULES
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        run: |
+          python3 -I tools/docs/verify.py collect --lane linux-native-arm64 --host 'Linux arm64 (Ubuntu 24.04 container)' \
+            --out "$RUNNER_TEMP/verify/linux-native-arm64.json" --gtest "linuxArm64:$RUNNER_TEMP/verify-logs/linuxArm64/*.log"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-linux-native-arm64', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   windows:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows,')) }}
@@ -396,7 +426,11 @@ jobs:
     steps:
       # the C tests read their certificates and keys from kuicksilver-native/src/c/test/testdata, relative to the checkout
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false, sparse-checkout: kuicksilver-native/src/c/test/testdata }
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            kuicksilver-native/src/c/test/testdata
+            tools/docs
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: mingw-c-test-exe, path: ctest }
       - name: 'c-tests: mingw-x64 ksl_test.exe'
@@ -417,10 +451,22 @@ jobs:
           $failed = @()
           foreach ($e in $exes) {
             Write-Host "== $($e.FullName)"
-            & $e.FullName
+            # the output also goes to build/verify-logs/mingwX64/<module>.log, for the documentation site (tools/docs/verify.py)
+            $module = $e.FullName -replace '.*[\\/](kuicksilver-[^\\/]+)[\\/]build[\\/].*', '$1'
+            New-Item -ItemType Directory -Force -Path build/verify-logs/mingwX64 | Out-Null
+            & $e.FullName | Tee-Object -FilePath "build/verify-logs/mingwX64/$module.log"
             if ($LASTEXITCODE -ne 0) { $failed += $e.FullName }
           }
           if ($failed.Count -gt 0) { Write-Host "::error::test.exe failed: $($failed -join ', ')"; exit 1 }
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { SHARD: '${{ matrix.shard }}' }
+        run: |
+          python -I tools/docs/verify.py collect --lane "windows-$SHARD" --host 'Windows Server 2025' --out "$RUNNER_TEMP/verify/windows-$SHARD.json" \
+            --gtest 'mingwX64:build/verify-logs/mingwX64/*.log'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-windows-${{ matrix.shard }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   windows-jvm:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows-jvm,')) }}
@@ -446,6 +492,14 @@ jobs:
           $G --max-workers=2 --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost \
             :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-http3:jvmTest \
             :kuicksilver-http2:jvmTest :kuicksilver-ktor-network:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        run: |
+          python -I tools/docs/verify.py collect --lane windows-jvm --host 'Windows Server 2025, JVM' --out "$RUNNER_TEMP/verify/windows-jvm.json" \
+            --junit 'jvm:*/build/test-results/jvmTest/*.xml'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-windows-jvm', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -539,6 +593,14 @@ jobs:
         # Kuicksilver's client and server engines against Ktor's Netty and CIO engines, OkHttp, the JDK's HttpClient and
         # Netty's HTTP/2 and HTTP/3 codecs, in one JVM over loopback (docs/spec/interop.md, "Engine interop")
         run: $G :kuicksilver-engine-interop:jvmTest
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        run: |
+          python3 -I tools/docs/verify.py collect --lane apple --host 'macOS arm64' --out "$RUNNER_TEMP/verify/apple.json" \
+            --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-apple', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - name: 'sample: realtime-telemetry'
         # its test classes are read for test methods no runner calls, as the modules' are below
         run: |
@@ -624,12 +686,24 @@ jobs:
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_SIM_TESTS
       - name: 'native: compile iosArm64 (device)'
+        id: ios-device
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
           $G $KSL_IOS_COMPILE
       - name: 'native: prefix whitelist (apple)'
         run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { IOS_DEVICE: '${{ steps.ios-device.outcome }}' }
+        run: |
+          python3 -I tools/docs/verify.py collect --lane apple-native --host 'macOS arm64 (Xcode 27)' --out "$RUNNER_TEMP/verify/apple-native.json" \
+            --junit 'macosArm64:*/build/test-results/macosArm64Test/*.xml' \
+            --junit 'iosSimulatorArm64:*/build/test-results/iosSimulatorArm64Test/*.xml' \
+            --compiled "iosArm64:$IOS_DEVICE" --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-apple-native', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -721,6 +795,16 @@ jobs:
             adb logcat -G 16M || true
             adb shell df /data || true
             bash tools/ci/android-connected-check.sh || { mkdir -p build/reports && adb shell df /data > build/reports/df.txt; adb logcat -d -b crash -b main -b system > build/reports/logcat.txt; exit 1; }
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { API: '${{ matrix.api }}' }
+        run: |
+          sizes=(); [ "$API" != 35 ] || sizes=(--size "aar:$AAR")
+          python3 -I tools/docs/verify.py collect --lane "android-$API" --host "Android API $API (x86_64 emulator)" --out "$RUNNER_TEMP/verify/android-$API.json" \
+            --junit 'android:*/build/outputs/androidTest-results/connected/**/*.xml' "${sizes[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-android-${{ matrix.api }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -767,6 +851,15 @@ jobs:
           # shellcheck disable=SC2086
           $G --continue -x :kuicksilver-native:buildJniHost -Pkuicksilver.test.jdk=${{ matrix.jdk }} \
             "-Porg.gradle.java.installations.paths=$TEST_JDK" ${TEST_JVM_ARGS:+"-Pkuicksilver.test.jvmArgs=$TEST_JVM_ARGS"} $KSL_JVM_TESTS
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { JDK: '${{ matrix.jdk }}' }
+        run: |
+          python3 -I tools/docs/verify.py collect --lane "jdk-$JDK" --host "Linux x64 (JDK $JDK)" --out "$RUNNER_TEMP/verify/jdk-$JDK.json" \
+            --junit 'jvm:*/build/test-results/jvmTest/*.xml'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-jdk-${{ matrix.jdk }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -848,6 +941,15 @@ jobs:
           else
             bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" "$PEER"
           fi
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        env: { IMAGE: '${{ matrix.image }}', PEER: '${{ matrix.peer }}' }
+        run: |
+          python3 -I tools/docs/verify.py collect --lane "interop-$IMAGE-$PEER" --host 'Linux x64 (QUIC Interop Runner)' \
+            --out "$RUNNER_TEMP/verify/interop-$IMAGE-$PEER.json" --interop-runner "$IMAGE:build/interop/2*/*.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-interop-${{ matrix.image }}-${{ matrix.peer }}', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
       - name: 'interop: handshake with the runner debug log'   # what docker compose said when a cell or the compliance check failed
         if: failure()
         env:
@@ -943,6 +1045,14 @@ jobs:
           set -- kuicksilver-native/build/libs/kuicksilver-native-jvm-*.jar
           unzip -l "$1" 'META-INF/native/*'
           bash tools/ci/collect-jni.sh --check-jar "$1"
+      - name: 'verify: results for the documentation site (tools/docs/verify.py)'
+        if: '!cancelled()'
+        run: |
+          python3 -I tools/docs/verify.py collect --lane jvm-jar --host 'Linux x64' --out "$RUNNER_TEMP/verify/jvm-jar.json" \
+            --size 'jni:kuicksilver-native/build/jni/resources/META-INF/native/libksl_*' --size 'jar:kuicksilver-native/build/libs/kuicksilver-native-jvm-*.jar'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!cancelled()'
+        with: { name: 'verify-jvm-jar', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }
 
   consumer-smoke:
     if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',consumer-smoke,')) }}
