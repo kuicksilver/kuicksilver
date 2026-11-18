@@ -28,6 +28,7 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
 import io.kuicksilver.ktor.network.fieldListElements
+import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.server.ServerWebSocket
 import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import io.kuicksilver.ktor.server.copyContentFrom
@@ -95,6 +96,8 @@ internal class H1Response(
         // the check ends with the upgrade. Its frames go out unmasked (section 5.1)
         val guard = Job()
         var webSocket: ServerWebSocket? = null
+        // a WebSocket's guarded output: whether its last frame went out whole decides between a clean end and a reset
+        var sessionOutput: ByteWriteChannel? = null
         try {
             val upgradedInput =
                 if (isWebSocket) {
@@ -114,7 +117,7 @@ internal class H1Response(
                 } else {
                     input
                 }
-            val upgradedOutput = webSocket?.output(output) ?: output
+            val upgradedOutput = webSocket?.output(output)?.also { sessionOutput = it } ?: output
             val upgradedJob = upgrade.upgrade(upgradedInput, upgradedOutput, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
@@ -122,7 +125,14 @@ internal class H1Response(
             // the order is for clarity, not safety)
             guard.cancel()
             webSocket?.done()
-            output.flushAndClose()
+            if (sessionOutput?.isAtWebSocketFrameBoundary() == false) {
+                // a session whose writer ended inside a frame (the guard resets that already): never a FIN after the cut
+                // frame, which would end a truncated stream as if whole (RFC 6455 section 7.1.1); a failed response resets
+                // the connection
+                output.cancel(kotlinx.io.IOException("the WebSocket session ended inside a frame"))
+            } else {
+                output.flushAndClose()
+            }
             input.cancel()
         }
     }

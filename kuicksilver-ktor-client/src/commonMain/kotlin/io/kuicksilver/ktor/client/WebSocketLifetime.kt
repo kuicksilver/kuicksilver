@@ -427,6 +427,14 @@ internal class HeldTransportEnd(
     @kotlin.concurrent.Volatile var endRequested: Boolean = false
         private set
 
+    /**
+     * The bytes handed to [out] so far: every write reaches [out]'s write buffer through this channel's [writeBuffer] and
+     * leaves it with a [flush] of this channel (ktor-io's writes flush through their receiver), counted there. An engine
+     * compares it with what its transport took to tell whether anything still waits in front of the transport.
+     */
+    @kotlin.concurrent.Volatile var handed: Long = 0
+        private set
+
     override val isClosedForWrite: Boolean get() = out.isClosedForWrite
 
     override val closedCause: Throwable? get() = out.closedCause
@@ -435,15 +443,27 @@ internal class HeldTransportEnd(
     override val writeBuffer: kotlinx.io.Sink get() = out.writeBuffer
 
     override suspend fun flush() {
+        count()
         out.flush()
     }
 
     override suspend fun flushAndClose() {
+        count()
         out.flush()
         endRequested = true
     }
 
+    private fun count() {
+        // a closed [out] has no write buffer: its flush below fails as it would have
+        handed += runCatching { (out.writeBuffer as? kotlinx.io.Buffer)?.size }.getOrNull() ?: 0
+    }
+
     override fun cancel(cause: Throwable?) {
+        // the frame guard's reset of a stream its writer cut inside a frame: the engine ends the transport after the session
+        // (a reset, from webSocketTransportEnd), not the output under it now (over TLS a failed output would send an alert
+        // and a FIN before that reset)
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        if (cause is io.kuicksilver.ktor.network.WebSocketFrameCutException) return
         out.cancel(cause)
     }
 }

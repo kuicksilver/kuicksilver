@@ -52,7 +52,11 @@ import kotlinx.io.readTo
  * The frames are rewritten as they pass, in the writer's own coroutine: what Ktor's writer flushed is on [output] when
  * its flush returns, so closing or resetting [output] after the session ended loses nothing. Only a frame header (at
  * most 14 bytes) and a Close frame (at most 139) wait for their last byte here. The side inflater's zlib state is freed
- * when the writer closes the channel ([ByteWriteChannel.flushAndClose], which Ktor's writers always call last).
+ * when the writer closes the channel ([ByteWriteChannel.flushAndClose], which Ktor's writers always call last). Ktor's
+ * `WebSocketWriter` calls it in a `finally`, also when it was cancelled inside a frame: a close that comes with a frame
+ * cut on [output] (its header handed on, its payload not all) cancels [output] with [WebSocketFrameCutException] instead
+ * of closing it (the connection is reset, an HTTP/2 or HTTP/3 stream reset), so the peer never reads a cut frame followed
+ * by a clean end.
  * [onClose] runs once this side's own Close frame was written to [output] (before the flush that sends it): the session
  * is closing, so an engine that holds its writer behind the peer's window can stop holding it.
  *
@@ -83,6 +87,15 @@ public fun guardWebSocketOutput(
  */
 @InternalKuicksilverApi
 public fun ByteWriteChannel.isAtWebSocketFrameBoundary(): Boolean = (this as? OutputGuard)?.atFrameBoundary == true
+
+/**
+ * The cause a channel made by [guardWebSocketOutput] cancels its output with when its writer ends the channel in order
+ * inside a frame (Ktor's `WebSocketWriter` does so when it is cancelled): the stream is cut, and the transport is reset,
+ * never closed in order. An engine that ends the transport itself (a client deciding after the session) can tell it apart.
+ */
+@InternalKuicksilverApi
+public class WebSocketFrameCutException :
+    kotlinx.io.IOException("the WebSocket writer ended inside a frame; its stream is reset, not closed")
 
 /** How the extension that compresses what this side sends (permessage-deflate) frames a compressed message. */
 @InternalKuicksilverApi
@@ -162,7 +175,16 @@ private class OutputGuard(
 
     /** Nothing staged, and no frame handed on part-way ([isAtWebSocketFrameBoundary]). */
     val atFrameBoundary: Boolean
-        get() = staged.exhausted() && headerLength == 0 && payloadLeft < 0 && closeSize < 0 && discardLeft < 0
+        get() = staged.exhausted() && headerLength == 0 && payloadLeft < 0 && closeSize < 0 && discardLeft < 0 && !tailPending
+
+    /** The 0x00 0x00 0xff 0xff of a compressed non-final frame is being handed on: the frame is not whole yet. */
+    private var tailPending = false
+
+    /**
+     * Part of a frame is on [output] and the rest is not: its header went out and its payload (or tail) did not all. A
+     * header or a Close still being collected here is not on [output] yet, nor is a frame being discarded.
+     */
+    private val frameCutOnOutput: Boolean get() = payloadLeft >= 0 || tailPending
 
     override val closedCause: Throwable? get() = output.closedCause
 
@@ -178,6 +200,14 @@ private class OutputGuard(
         try {
             if (failure != null) return // the output was cancelled
             process()
+            if (frameCutOnOutput) {
+                // the writer ended its channel in order inside a frame (Ktor's does so when it is cancelled): a clean end
+                // after a cut frame would present a truncated stream as whole (RFC 6455 section 7.1.1), so it is reset
+                val e = WebSocketFrameCutException()
+                failure = e
+                output.cancel(e)
+                return
+            }
             output.flushAndClose()
         } finally {
             sideInflater?.close()
@@ -311,9 +341,11 @@ private class OutputGuard(
             wireMask.copyInto(h, n)
             n += 4
         }
-        output.writeFully(h, 0, n)
+        // inside the frame before its header is handed on: a write that is cancelled while it waits for room (a peer that
+        // does not read) may leave the header queued, and a frame boundary then would end the stream cleanly after it
         payloadLeft = payload
         position = 0
+        output.writeFully(h, 0, n)
         if (payload == 0L) payloadLeft = -1
     }
 
@@ -357,7 +389,10 @@ private class OutputGuard(
         if (appendTail) {
             val tail = TAIL.copyOf()
             if (masking) unmask(tail, tail.size, wireMask, position)
+            // still inside the frame until the tail is handed on (as the header in start)
+            tailPending = true
             output.writeFully(tail)
+            tailPending = false
         }
         if (messageChecked) {
             messageChecked = false
