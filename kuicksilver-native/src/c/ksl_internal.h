@@ -40,8 +40,9 @@ typedef struct {
 struct ksl_ctx {
     SSL_CTX *ctx;
     int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data, level_after_pause;
-    int revocation; /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
-    int has_crls;   /* ksl_ctx_set_crls added CRLs to the context's own store */
+    int revocation;  /* client: KSL_REVOCATION_* (ksl_ocsp.c) */
+    int alpn_policy; /* server: KSL_ALPN_POLICY_*, TCP sessions (ksl_client_hello_cb, ksl_drive) */
+    int has_crls;    /* ksl_ctx_set_crls added CRLs to the context's own store */
     /* server: the verdict on the last stapled response checked (ksl_ocsp.c server_status), shared by the sessions under the lock */
     CRYPTO_RWLOCK *ocsp_lock;
     uint8_t ocsp_hash[32];

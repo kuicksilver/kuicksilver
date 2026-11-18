@@ -39,7 +39,7 @@ extern "C" {
    of one UDP socket, one sender thread each); KSL_GET_RENEGOTIATION (the peer's TLS 1.2 renegotiation attempts, RFC 9113
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
-   ksl_ocsp_check, ksl_ctx_set_crls */
+   ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2) */
 
 /* return codes */
 #define KSL_OK 0
@@ -93,8 +93,18 @@ extern "C" {
                                       OCSP_VERIFY_NEEDED (none sent) or OCSP_CERT_UNKNOWN ("unknown"); the last two only under
                                       KSL_REVOCATION_REQUIRE_STAPLED or for a leaf with the RFC 7633 status_request feature. A leaf
                                       that is itself a trust anchor is not checked. KSL_E_BAD_ARG on a server context */
+#define KSL_OPT_ALPN_POLICY 13 /* server (ABI 7, additive): KSL_ALPN_POLICY_*, applied to TCP sessions under this context (the base
+                                      one, or the SNI override once applied) at every ClientHello, a second one after HelloRetryRequest
+                                      included, and checked again when the handshake completes (no protocol negotiated: KSL_ERROR).
+                                      A present ALPN extension is validated first, in both modes (RFC 7301 section 3.1: a non-empty
+                                      list of non-empty names, lengths exact), else decode_error (50). KSL_E_BAD_ARG on a client
+                                      context */
 /* clang-format on */
-#define KSL_REVOCATION_OFF 0                /* no status_request */
+#define KSL_ALPN_POLICY_OPEN 0     /* the default: a ClientHello without ALPN completes without it */
+#define KSL_ALPN_POLICY_REQUIRED 1 /* a ClientHello without the ALPN extension: no_application_protocol (120) */
+#define KSL_ALPN_POLICY_REFUSE                                                                                         \
+    2                        /* no protocol is served over TCP: every ClientHello gets no_application_protocol (120) */
+#define KSL_REVOCATION_OFF 0 /* no status_request */
 #define KSL_REVOCATION_STAPLED_IF_PRESENT 1 /* a stapled response must pass; none, or "unknown", passes */
 #define KSL_REVOCATION_REQUIRE_STAPLED 2    /* a stapled response saying "good" is required */
 

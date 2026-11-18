@@ -910,6 +910,194 @@ static void test_sni_override_alpn(void) {
     END();
 }
 
+/* KSL_OPT_ALPN_POLICY over TCP: the handshake with a client offering [offer] (NULL: no ALPN), the server context's [policy]; the alert
+   the server sent (0 when the handshake completed). With [hrr], the server takes only P-384, so the client's second ClientHello comes
+   after a HelloRetryRequest, and [drop] removes the client's ALPN from that second one (RFC 9846 section 4.2.2 forbids it). */
+static void client_hello_count_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
+                                  void *arg);
+static int alpn_dropped;
+static void drop_alpn_after_first_hello(int write_p, int version, int content_type, const void *buf, size_t len,
+                                        SSL *ssl, void *arg) {
+    (void)version;
+    (void)arg;
+    const uint8_t *m = buf;
+    if (write_p && content_type == SSL3_RT_HANDSHAKE && len >= 4 && m[0] == SSL3_MT_CLIENT_HELLO && !alpn_dropped) {
+        alpn_dropped = 1;
+        SSL_set_alpn_protos(ssl, NULL, 0); /* the second ClientHello carries no ALPN */
+    }
+}
+static int alpn_policy_alert(const uint8_t *offer, size_t offer_len, int policy, int hrr, int drop) {
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    static const uint8_t x1[] = {2, 'x', '1'};
+    ksl_ctx_set_alpn(sc, x1, sizeof x1);
+    if (offer)
+        ksl_ctx_set_alpn(cc, offer, offer_len);
+    else
+        SSL_CTX_set_alpn_protos(cc->ctx, NULL, 0);
+    if (policy)
+        ksl_ctx_set_option(sc, KSL_OPT_ALPN_POLICY, policy);
+    if (hrr)
+        SSL_CTX_set1_groups_list(sc->ctx, "secp384r1");
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    alpn_dropped = 0;
+    int hellos = 0;
+    if (drop)
+        ksl_ssl_msg_observer_for_test(c, drop_alpn_after_first_hello, NULL);
+    ksl_ssl_msg_observer_for_test(s, client_hello_count_cb, &hellos);
+    int rc = tcp_pump(c, s, NULL, NULL), sent = 0;
+    if (rc != KSL_OK)
+        last_code(s, &sent);
+    if (hrr && hellos != 2)
+        sent = -1; /* no HelloRetryRequest: the case was not run */
+    ksl_ssl_free(c);
+    ksl_ssl_free(s);
+    ksl_ctx_free(cc);
+    ksl_ctx_free(sc);
+    return rc == KSL_OK ? 0 : sent;
+}
+static void test_alpn_policy(void) {
+    SECTION("tcp_alpn_policy");
+    static const uint8_t x1[] = {2, 'x', '1'}, zz[] = {2, 'z', 'z'};
+    CHECK(alpn_policy_alert(NULL, 0, KSL_ALPN_POLICY_REQUIRED, 0, 0) == SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: REQUIRED, a ClientHello without ALPN gets no_application_protocol");
+    CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_REQUIRED, 0, 0) == 0,
+          "REQUIRED, a client offering x1 completes");
+    CHECK(alpn_policy_alert(zz, sizeof zz, KSL_ALPN_POLICY_REQUIRED, 0, 0) == SSL_AD_NO_APPLICATION_PROTOCOL,
+          "REQUIRED, an offer without overlap: OpenSSL's no_application_protocol");
+    CHECK(alpn_policy_alert(NULL, 0, KSL_ALPN_POLICY_OPEN, 0, 0) == 0,
+          "control: OPEN, a client without ALPN completes");
+    CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_REFUSE, 0, 0) == SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: REFUSE, even a client offering a served protocol gets no_application_protocol");
+    CHECK(alpn_policy_alert(NULL, 0, KSL_ALPN_POLICY_REFUSE, 0, 0) == SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: REFUSE, a client without ALPN too");
+    /* a client that offers ALPN in its first ClientHello and drops it from the second after a HelloRetryRequest: OpenSSL does not
+       compare the two (OPEN completes without ALPN); the policy is applied to the second ClientHello as to any */
+    CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_OPEN, 1, 1) == 0,
+          "control: OPEN, ALPN dropped after a HelloRetryRequest completes (OpenSSL compares nothing)");
+    CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_REQUIRED, 1, 1) == SSL_AD_NO_APPLICATION_PROTOCOL,
+          "negative: REQUIRED, ALPN dropped after a HelloRetryRequest gets no_application_protocol");
+    CHECK(alpn_policy_alert(x1, sizeof x1, KSL_ALPN_POLICY_REQUIRED, 1, 0) == 0,
+          "control: REQUIRED, ALPN kept after a HelloRetryRequest completes");
+    /* the last line: a handshake that completes without a protocol under a context that requires one fails (the policy is
+       switched on after the ClientHello was checked, as a path past ksl_client_hello_cb would) */
+    {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        SSL_CTX_set_alpn_protos(cc->ctx, NULL, 0);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        ksl_drive(c);
+        shuttle(c, s);
+        int r = ksl_drive(s); /* the ClientHello passed, the server's flight is out */
+        sc->alpn_policy = KSL_ALPN_POLICY_REQUIRED;
+        CHECK(r == KSL_WANT_READ && tcp_pump(c, s, NULL, NULL) == KSL_ERROR && !s->done &&
+                  last_message_has(s, "no application protocol negotiated where one is required"),
+              "negative: completion without ALPN under a context that requires it fails");
+        ksl_ssl_free(c);
+        ksl_ssl_free(s);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sc);
+    }
+    {
+        ksl_ctx *c = client_ctx(NULL, KSL_VERIFY_NONE);
+        CHECK(ksl_ctx_set_option(c, KSL_OPT_ALPN_POLICY, KSL_ALPN_POLICY_REQUIRED) == KSL_ERROR,
+              "negative: the ALPN policy is server-only");
+        ksl_ctx *s = server_ctx("server");
+        CHECK(ksl_ctx_set_option(s, KSL_OPT_ALPN_POLICY, 3) == KSL_ERROR, "negative: an unknown policy is refused");
+        ksl_ctx_free(c);
+        ksl_ctx_free(s);
+    }
+    END();
+}
+/* The client's first flight [in] (one record holding the ClientHello) with the data of its ALPN extension replaced by [ext] (the
+   record, handshake, extensions and extension lengths adjusted); the new length, 0 without an ALPN extension */
+static size_t with_alpn_ext(const uint8_t *in, size_t in_len, const uint8_t *ext, size_t ext_len, uint8_t *out,
+                            size_t cap) {
+#define U16AT(b, i) ((size_t)(b)[i] << 8 | (b)[(i) + 1])
+    size_t o = 5 + 4 + 2 + 32;
+    if (in_len < o + 1)
+        return 0;
+    o += 1 + in[o];
+    o += 2 + U16AT(in, o);
+    o += 1 + in[o];
+    size_t exts = o, end = o + 2 + U16AT(in, o);
+    for (o += 2; o + 4 <= end && end <= in_len;) {
+        size_t t = U16AT(in, o), l = U16AT(in, o + 2);
+        if (t == TLSEXT_TYPE_application_layer_protocol_negotiation) {
+            size_t n = in_len - l + ext_len;
+            if (n > cap)
+                return 0;
+            memcpy(out, in, o + 2);
+            out[o + 2] = (uint8_t)(ext_len >> 8);
+            out[o + 3] = (uint8_t)ext_len;
+            memcpy(out + o + 4, ext, ext_len);
+            memcpy(out + o + 4 + ext_len, in + o + 4 + l, in_len - (o + 4 + l));
+            size_t rec = n - 5, hs = rec - 4, ex = U16AT(in, exts) - l + ext_len;
+            out[3] = (uint8_t)(rec >> 8);
+            out[4] = (uint8_t)rec;
+            out[6] = (uint8_t)(hs >> 16);
+            out[7] = (uint8_t)(hs >> 8);
+            out[8] = (uint8_t)hs;
+            out[exts] = (uint8_t)(ex >> 8);
+            out[exts + 1] = (uint8_t)ex;
+            return n;
+        }
+        o += 4 + l;
+    }
+    return 0;
+#undef U16AT
+}
+/* RFC 7301 section 3.1: a present ALPN extension that is malformed (an empty list, an empty name, a length that does not add up) gets
+   decode_error (50) before any SNI decision or ALPN policy could answer it with another alert, in both modes */
+static void test_malformed_alpn_is_decode_error(void) {
+    SECTION("negative_malformed_alpn_extension_is_decode_error");
+    static const struct {
+        const char *ext;
+        size_t len;
+        const char *what;
+    } cases[] = {
+        {"", 0, "an empty extension"},
+        {"\x00", 1, "one byte"},
+        {"\x00\x00", 2, "an empty list"},
+        {"\x00\x01\x00", 3, "an empty name"},
+        {"\x00\x05\x02x1", 5, "a list length past the end"},
+        {"\x00\x03\x05x1", 5, "a name past the end"},
+        {"\x00\x04\x02x1", 5, "a list length short of the end"},
+        {"\xff\xff\xff\xff\xff", 5, "0xff bytes"},
+        {"\x00\x03\x02x1", 5, "control: a well-formed list"},
+    };
+    static const uint8_t x1[] = {2, 'x', '1'};
+    for (int policy = KSL_ALPN_POLICY_OPEN; policy <= KSL_ALPN_POLICY_REFUSE; policy++)
+        for (size_t k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+            int control = k == sizeof cases / sizeof cases[0] - 1;
+            ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+            ksl_ctx_set_alpn(cc, x1, sizeof x1);
+            ksl_ctx_set_alpn(sc, x1, sizeof x1);
+            if (policy)
+                ksl_ctx_set_option(sc, KSL_OPT_ALPN_POLICY, policy);
+            ksl_ctx_set_option(sc, KSL_OPT_SNI_PAUSE, 1);
+            ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+            uint8_t flight[4096], patched[4096];
+            size_t n = 0, m, used;
+            ksl_drive(c);
+            CHECK(ksl_tcp_drain(c, flight, sizeof flight, &n) == KSL_OK && n > 0, "the client's first flight");
+            m = with_alpn_ext(flight, n, (const uint8_t *)cases[k].ext, cases[k].len, patched, sizeof patched);
+            int fed = m && ksl_tcp_feed(s, patched, m, &used) == KSL_OK && used == m;
+            int r = ksl_drive(s), sent = 0;
+            last_code(s, &sent);
+            char what[160];
+            if (control)
+                snprintf(what, sizeof what, "%s (policy %d) reaches the SNI pause", cases[k].what, policy);
+            else
+                snprintf(what, sizeof what, "negative: %s (policy %d) gets decode_error before the SNI pause",
+                         cases[k].what, policy);
+            CHECK(fed && (control ? r == KSL_WANT_SNI : r == KSL_ERROR && sent == SSL_AD_DECODE_ERROR), what);
+            ksl_ssl_free(c);
+            ksl_ssl_free(s);
+            ksl_ctx_free(cc);
+            ksl_ctx_free(sc);
+        }
+    END();
+}
+
 static ksl_session *client_session_after(ksl_ssl *c) {
     uint8_t buf[16];
     size_t n;
@@ -2738,6 +2926,8 @@ void run_tcp(void) {
     test_ticket_lifetime_clamped();
     test_sni_pause();
     test_sni_override_alpn();
+    test_alpn_policy();
+    test_malformed_alpn_is_decode_error();
     test_sni_override_settings_effective();
     test_no_tls12_ticket_without_num_tickets();
     test_session_context();

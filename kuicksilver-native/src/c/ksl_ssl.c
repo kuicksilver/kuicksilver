@@ -590,6 +590,19 @@ int ksl_drive(ksl_ssl *s) {
                is the last line, for a handshake that reached the end without a certificate to check (a resumption) */
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl))
                 return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
+            /* KSL_OPT_ALPN_POLICY is decided at every ClientHello (ksl_client_hello_cb); a handshake that completes without a
+               protocol under a context that requires one passed none of those checks: the last line */
+            if (s->mode == KSL_MODE_TCP && s->owner->role == KSL_SERVER &&
+                s->owner->alpn_policy != KSL_ALPN_POLICY_OPEN) {
+                const unsigned char *a;
+                unsigned al;
+                SSL_get0_alpn_selected(s->ssl, &a, &al);
+                if (al == 0) {
+                    s->done = 0;
+                    return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED,
+                                        "ksl: no application protocol negotiated where one is required");
+                }
+            }
             if (s->mode == KSL_MODE_QUIC) {
                 /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
                    OpenSSL client accepts a server that answered without ALPN (the server side is refused in ksl_client_hello_cb) */

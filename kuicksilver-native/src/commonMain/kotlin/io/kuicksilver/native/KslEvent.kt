@@ -60,6 +60,22 @@ public object KslConst {
     public const val REVOCATION_STAPLED_IF_PRESENT: Int = 1
     public const val REVOCATION_REQUIRE_STAPLED: Int = 2
 
+    /**
+     * Server context: `ALPN_POLICY_*` for TLS-over-TCP sessions (ABI 7, additive; RFC 7301 section 3.2), applied at every
+     * ClientHello under the context in effect (the SNI override once applied) and again when the handshake completes. A present
+     * ALPN extension that is malformed is `decode_error` (50) in both modes, whatever the policy.
+     */
+    public const val OPT_ALPN_POLICY: Int = 13
+
+    /** A ClientHello without ALPN completes without it: the default. */
+    public const val ALPN_POLICY_OPEN: Int = 0
+
+    /** A ClientHello without the ALPN extension gets `no_application_protocol` (120). */
+    public const val ALPN_POLICY_REQUIRED: Int = 1
+
+    /** Nothing is served over TCP: every ClientHello gets `no_application_protocol` (120). */
+    public const val ALPN_POLICY_REFUSE: Int = 2
+
     /** [Ksl.ocspCheck] results (`KSL_OCSP_*`). */
     public const val OCSP_GOOD: Int = 0
     public const val OCSP_REVOKED: Int = 1

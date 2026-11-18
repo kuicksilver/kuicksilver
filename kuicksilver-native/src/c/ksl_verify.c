@@ -339,6 +339,33 @@ static int sni_tag(SSL *ssl, uint8_t out[32]) {
     EVP_MD_CTX_free(m);
     return ok;
 }
+/* RFC 7301 section 3.1: ProtocolName protocol_name_list<2..2^16-1>, each ProtocolName <1..2^8-1>; the list length is exact (OpenSSL's
+   own check, tls_parse_ctos_alpn, which runs after this callback) */
+static int alpn_ext_well_formed(const unsigned char *p, size_t l) {
+    if (l < 2 || (((size_t)p[0] << 8) | p[1]) != l - 2 || l == 2)
+        return 0;
+    for (size_t i = 2; i < l;) {
+        size_t n = p[i];
+        if (n == 0 || n > l - i - 1)
+            return 0;
+        i += 1 + n;
+    }
+    return 1;
+}
+/* KSL_OPT_ALPN_POLICY of the session's current context (the SNI override once applied), TLS over TCP only: nonzero and the alert
+   set when this ClientHello is refused */
+static int alpn_policy_refuses(SSL *ssl, ksl_ssl *s, int *al) {
+    const unsigned char *ext;
+    size_t ext_len;
+    if (s->mode != KSL_MODE_TCP || s->owner->alpn_policy == KSL_ALPN_POLICY_OPEN)
+        return 0;
+    if (s->owner->alpn_policy == KSL_ALPN_POLICY_REFUSE ||
+        SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
+        *al = SSL_AD_NO_APPLICATION_PROTOCOL;
+        return 1;
+    }
+    return 0;
+}
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     (void)arg;
     ksl_ssl *s = SSL_get_ex_data(ssl, 1);
@@ -351,8 +378,15 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         *al = SSL_AD_PROTOCOL_VERSION;
         return SSL_CLIENT_HELLO_ERROR;
     }
-    if (s->mode == KSL_MODE_QUIC &&
-        SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
+    int has_alpn =
+        SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) == 1;
+    /* a malformed ALPN extension is decode_error, as OpenSSL would send it, before any decision that could answer it with another
+       alert (the SNI pause, KSL_OPT_ALPN_POLICY) */
+    if (has_alpn && !alpn_ext_well_formed(ext, ext_len)) {
+        *al = SSL_AD_DECODE_ERROR;
+        return SSL_CLIENT_HELLO_ERROR;
+    }
+    if (s->mode == KSL_MODE_QUIC && !has_alpn) {
         *al = SSL_AD_NO_APPLICATION_PROTOCOL;
         return SSL_CLIENT_HELLO_ERROR;
     }
@@ -365,8 +399,9 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         *al = SSL_AD_INTERNAL_ERROR;
         return SSL_CLIENT_HELLO_ERROR;
     }
+    /* without a pause, or a second ClientHello after HelloRetryRequest (under the override chosen for the first) */
     if (!s->owner->sni_pause || s->sni_pending == 3)
-        return SSL_CLIENT_HELLO_SUCCESS;
+        return alpn_policy_refuses(ssl, s, al) ? SSL_CLIENT_HELLO_ERROR : SSL_CLIENT_HELLO_SUCCESS;
     if (s->sni_pending == 0) {
         s->sni_pending = 1;
         return SSL_CLIENT_HELLO_RETRY;
@@ -397,7 +432,7 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         s->verify_mode = o->verify_mode; /* ownership of the session's settings moves to the override context */
         SSL_set_ex_data(ssl, 1, s);
     }
-    return SSL_CLIENT_HELLO_SUCCESS;
+    return alpn_policy_refuses(ssl, s, al) ? SSL_CLIENT_HELLO_ERROR : SSL_CLIENT_HELLO_SUCCESS;
 }
 /* Resumption (ADR-0011): a resumed handshake carries no Certificate, so the chain cached from the full handshake is verified again with
    the current trust store, time, name, purpose and security level; X509_STORE is safe to share between threads for verification. With

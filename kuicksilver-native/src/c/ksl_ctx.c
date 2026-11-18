@@ -514,7 +514,7 @@ ksl_ctx *ksl_ctx_new(int role) {
         SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb);
     if (role == KSL_SERVER)
         SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb,
-                                    c); /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
+                                    c); /* ALPN extension and policy checks, SNI pause (KSL_OPT_SNI_PAUSE) */
     if (role == KSL_SERVER)
         SSL_CTX_set_tlsext_servername_callback(c->ctx, server_name_cb);
     /* certificate status (ksl_ocsp.c): a client asks for it only with KSL_OPT_REVOCATION; a server staples what its session was
@@ -1020,6 +1020,13 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
             return KSL_ERROR;
         }
         c->sni_pause = value != 0;
+        return KSL_OK;
+    case KSL_OPT_ALPN_POLICY:
+        if (c->role != KSL_SERVER || value < KSL_ALPN_POLICY_OPEN || value > KSL_ALPN_POLICY_REFUSE) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: ALPN policy is server-only (0..2)");
+            return KSL_ERROR;
+        }
+        c->alpn_policy = value;
         return KSL_OK;
     default:
         ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: unknown option");
