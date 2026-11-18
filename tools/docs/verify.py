@@ -37,8 +37,9 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
       as this commit's. REPO is the published commit's checkout (RFC table, committed corpora and benchmarks).
   verify.py keep --new VERSION_DIR --old VERSION_DIR [--base-url URL]
       the Pages workflow, before it replaces a published version: when the new pages have no CI data (data.json without
-      lanes), the published data of the same commit is kept, rendered again in every language together; with none, the
-      new "no data" pages stay (a warning). It decides the verify section only and never stops the rest of the site.
+      lanes), the published data of the same commit is kept, rendered again in every language together; if its schema
+      is not this one or it does not render, the published verify directories are kept as they are; with no published
+      pages, the new "no data" pages stay (a warning). It decides the verify section only and never stops the site.
   verify.py check-pairs --sources DIR
       every test class of the engine interop sources (DIR) has a row in tools/docs/engine-pairs.tsv (exit 1 otherwise)
 
@@ -60,6 +61,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_URL = "https://github.com/kuicksilver/kuicksilver"
 SITE_URL = "https://kuicksilver.github.io/kuicksilver/"
 SCHEMA = 2   # 2: run_attempt
+# the version of verify/data.json (the model the pages are rendered from): raise it with any change of its keys, so that
+# keep never renders an older one with code that reads it differently
+MODEL_SCHEMA = 1
 SHA = re.compile(r"^[0-9a-f]{40}$")
 # the platform matrix, in this order; a target without a record shows "no data"
 TARGETS = ["jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64", "linuxArm64", "mingwX64"]
@@ -602,6 +606,7 @@ def build_model(args):
         "benchmarks": benchmarks_summary(args.src),
         "rfc": rfc_summary(os.path.join(args.src, "docs", "spec", "rfc-compliance.md")),
         "process": process_anchors(args.src),
+        "schema": MODEL_SCHEMA,
     }
 
 
@@ -1003,10 +1008,15 @@ def _note(text):
 
 
 def keep(args):
-    """Only the verify section is decided here; the rest of the version's site is published either way. The new pages
-    stay when they have CI data. Without it, the published pages of the same commit with data are kept: re-rendered from
-    their data.json in every language at once (never some languages copied and others not, and a language added since
-    gets them too). With nothing to keep, the new pages with their honest "no data" go out."""
+    """Only the verify section is decided here; the rest of the version's site is published either way, and keep never
+    fails for want of data. The new pages stay when they have CI data. Without it, the published pages of the same
+    commit with data are kept: rendered again from their data.json in every language at once (no language mixed with
+    no-data pages, and a language added since gets them too) when its schema is this one and the rendering succeeds;
+    otherwise (an older or unknown schema, a rendering that fails) the published verify directories are kept exactly as
+    they are, every language, with a warning: real data is never replaced by "no data". Only when no verification pages
+    were published, or they have no data either, do the new "no data" pages go out."""
+    import shutil
+    import tempfile
     new = _model_of(args.new)
     if new is None:
         print(f"verify.py keep: {args.new} has no verify/data.json", file=sys.stderr)
@@ -1014,18 +1024,45 @@ def keep(args):
     if new.get("lanes"):
         print(f"verify.py keep: the new pages have CI data ({len(new['lanes'])} lanes)", file=sys.stderr)
         return 0
-    old = _model_of(args.old)
-    if not old or not old.get("lanes") or old.get("sha") != new.get("sha"):
-        _note(f"no CI data for {new.get('sha')} and no published pages of that commit with data: the verification pages "
-              "say no data (run build.yml on the commit and publish the version again to fill them)")
+    if not os.path.isdir(os.path.join(args.old, "verify")):
+        _note(f"no CI data for {new.get('sha')} and no published verification pages: the pages say no data (run build.yml "
+              "on the commit and publish the version again to fill them)")
         return 0
-    import shutil
+    old = _model_of(args.old)
+    if old is not None and old.get("sha") not in (None, new.get("sha")):
+        _note(f"the published verification pages are of {old.get('sha')}, not {new.get('sha')}: the new pages say no data")
+        return 0
     langs = i18n.load(args.messages)
-    for code, m in langs.items():
-        shutil.rmtree(os.path.join(args.new, m.prefix, "verify"), ignore_errors=True)
-    render(old, langs, args.new, args.base_url or f"{SITE_URL}{old['version']}/")
-    print(f"verify.py keep: no CI data in the new pages; kept the published data of {old['sha']} ({len(old['lanes'])} "
-          f"lanes), rendered in all {len(langs)} languages", file=sys.stderr)
+    if old is not None and old.get("schema") == MODEL_SCHEMA:
+        if not old.get("lanes"):
+            _note(f"no CI data for {new.get('sha')}, neither now nor in the published pages: the pages say no data")
+            return 0
+        tmp = tempfile.mkdtemp(prefix="verify-keep-")
+        try:
+            render(old, langs, tmp, args.base_url or f"{SITE_URL}{old['version']}/")
+        except Exception as e:   # any error of the old model with this code: the published pages stay as they are
+            shutil.rmtree(tmp, ignore_errors=True)
+            _note(f"the published data.json of {old.get('sha')} does not render with this verify.py ({type(e).__name__}: {e}): "
+                  "its published verification pages are kept as they are")
+        else:
+            for m in langs.values():
+                shutil.rmtree(os.path.join(args.new, m.prefix, "verify"), ignore_errors=True)
+                shutil.copytree(os.path.join(tmp, m.prefix, "verify"), os.path.join(args.new, m.prefix, "verify"))
+            shutil.rmtree(tmp, ignore_errors=True)
+            print(f"verify.py keep: no CI data in the new pages; kept the published data of {old['sha']} ({len(old['lanes'])} "
+                  f"lanes), rendered in all {len(langs)} languages", file=sys.stderr)
+            return 0
+    else:
+        _note(f"the published verification pages have data.json schema {None if old is None else old.get('schema')}, this "
+              f"verify.py reads {MODEL_SCHEMA}: they are kept as they are")
+    # the published verify directories exactly as they are: every language they have, and none they do not (their own
+    # language switch links only to those)
+    for m in langs.values():
+        dst = os.path.join(args.new, m.prefix, "verify")
+        shutil.rmtree(dst, ignore_errors=True)
+        src = os.path.join(args.old, m.prefix, "verify")
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
     return 0
 
 

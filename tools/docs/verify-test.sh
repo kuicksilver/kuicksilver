@@ -284,6 +284,37 @@ before=$(cat "$kp/fresh/verify/data.json")
 if "${py[@]}" keep --new "$kp/fresh" --old "$o3/0.3.0" 2> /dev/null && [ "$(cat "$kp/fresh/verify/data.json")" = "$before" ] \
   && has "$kp/fresh/verify/platforms.html" 'Data from the successful'; then
   pass "keep: new pages with data are left as they are"; else fail "keep: new pages with data are left as they are"; fi
+# keep with a published data.json this verify.py cannot render: an older schema, or a model that makes the rendering
+# throw. The published verify directories stay exactly as they are (every language, byte for byte), never no-data pages
+untouched() { # <old version dir> <new version dir>: the verify directories of new are those of old, in every language
+  local l rc=0
+  for l in "" ru/ zh/; do
+    if [ -d "$1/${l}verify" ]; then diff -r "$1/${l}verify" "$2/${l}verify" > /dev/null || rc=1
+    else [ ! -e "$2/${l}verify" ] || rc=1; fi
+  done
+  return $rc
+}
+cp -R "$out/0.3.0" "$kp/oldschema"
+python3 -I -c 'import json, sys; f = sys.argv[1]; d = json.load(open(f)); del d["schema"]; d["platformz"] = d.pop("platforms"); json.dump(d, open(f, "w"))' \
+  "$kp/oldschema/verify/data.json"
+rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/oldschema" 2> "$tmp/keep.err" && untouched "$kp/oldschema" "$kp/new" \
+  && grep -q 'schema None' "$tmp/keep.err"; then
+  pass "keep: a published data.json of an older schema: its pages are kept untouched in every language, with a warning"
+else fail "keep: a published data.json of an older schema: its pages are kept untouched in every language, with a warning"; fi
+cp -R "$out/0.3.0" "$kp/throws"
+python3 -I -c 'import json, sys; f = sys.argv[1]; d = json.load(open(f)); d["platforms"] = [{"target": "jvm"}]; json.dump(d, open(f, "w"))' \
+  "$kp/throws/verify/data.json"
+rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/throws" 2> "$tmp/keep.err" && untouched "$kp/throws" "$kp/new" \
+  && grep -q 'does not render with this verify.py (KeyError' "$tmp/keep.err" && ! ls -d "${TMPDIR:-/tmp}"/verify-keep-* > /dev/null 2>&1; then
+  pass "keep: a published data.json whose rendering throws: its pages are kept untouched, no half-written pages"
+else fail "keep: a published data.json whose rendering throws: its pages are kept untouched, no half-written pages"; fi
+rm -rf "$kp/oldschema/zh"; rm -rf "$kp/new"; cp -R "$o3/0.3.0" "$kp/new"
+if "${py[@]}" keep --new "$kp/new" --old "$kp/oldschema" 2> /dev/null && untouched "$kp/oldschema" "$kp/new" && [ ! -e "$kp/new/zh/verify" ]; then
+  pass "keep: kept as they are means no language the published pages lack (no zh no-data page beside them)"
+else fail "keep: kept as they are means no language the published pages lack (no zh no-data page beside them)"; fi
+grep -q '"schema": 1' "$out/0.3.0/verify/data.json" && pass "data.json carries its schema" || fail "data.json carries its schema"
 if "${py[@]}" keep --new "$kp/missing" --old "$kp/fresh" 2> /dev/null; then fail "negative: keep without new pages fails"
 else pass "negative: keep without new pages fails"; fi
 
