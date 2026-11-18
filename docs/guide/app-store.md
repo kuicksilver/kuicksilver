@@ -42,7 +42,7 @@ the EAR as published in the eCFR: [15 CFR 740.17](https://www.ecfr.gov/current/t
 
 **Why Kuicksilver counts as non-exempt encryption.** Apple treats encryption that is part of its operating systems
 (HTTPS through `URLSession`, for example) as typically exempt from export documentation, and other encryption as not.
-Kuicksilver ships its own TLS 1.3 (OpenSSL 3.5, statically linked) to secure QUIC, so an app that links it "implements
+Kuicksilver ships its own TLS 1.3 (OpenSSL 4.1, statically linked) to secure QUIC, so an app that links it "implements
 standard encryption algorithms instead of, or in addition to, using or accessing the encryption in Apple's operating
 systems". Only standard, published algorithms are used (no proprietary cryptography).
 
@@ -208,7 +208,7 @@ Long version (paste and adjust):
 > must receive the handshake messages for each encryption level separately, install the traffic secrets for each
 > level itself, and carry QUIC transport parameters inside the TLS handshake. Apple's TLS interfaces (Security and
 > Network frameworks) do not expose these steps to a third-party QUIC implementation, so the app includes the
-> Kuicksilver library, which uses OpenSSL 3.5 as its TLS 1.3 implementation. Only standard, published algorithms
+> Kuicksilver library, which uses OpenSSL 4.1 as its TLS 1.3 implementation. Only standard, published algorithms
 > are used: AES-GCM and ChaCha20-Poly1305 for encryption, X25519 and the X25519/ML-KEM hybrid for key exchange, ECDSA
 > and RSA signature verification, and HKDF with SHA-2. The cryptography is used only to authenticate the
 > servers the app connects to and to encrypt the app's own network traffic; it is not offered to users or other apps

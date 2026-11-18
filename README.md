@@ -51,7 +51,7 @@ embeddedServer(Kuicksilver) { /* ... */ }      // HTTP/1.1 over TLS and HTTP/3 o
 - **Tested against the others.** The QUIC Interop Runner against msquic, ngtcp2, picoquic, quic-go, quiche and quinn,
   in both roles, a [published benchmark table](docs/benchmarks.md) against quiche, quinn and msquic, and
   [measured numbers against TCP](docs/why-quic.md) under delay, loss and an address change.
-- **No system OpenSSL.** Cryptography and certificates come from OpenSSL 3.5, pinned, signature-checked, built by this
+- **No system OpenSSL.** Cryptography and certificates come from OpenSSL 4.1, pinned, signature-checked, built by this
   repository and statically linked behind one small C shim, `ksl`.
 
 In protocol terms: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221, path MTU discovery of RFC 8899),
@@ -96,7 +96,7 @@ macOS arm64), so the application runs on that kind of machine alone.
 
 Each block pins every Kuicksilver module with the bill of materials (`kuicksilver-bom`) and every Ktor module with
 Ktor's (Kuicksilver needs Ktor 3.6.x, [Supported Ktor versions](docs/guide/ktor.md#supported-ktor-versions)). A module
-brings the modules it is built on; the native library (OpenSSL 3.5 and `ksl`) comes with `kuicksilver-native`, nothing
+brings the modules it is built on; the native library (OpenSSL 4.1 and `ksl`) comes with `kuicksilver-native`, nothing
 needs to be installed on the system. The imports of every snippet are at the top of each guide (for example
 [Ktor engines: Imports](docs/guide/ktor.md#imports)).
 
@@ -250,7 +250,7 @@ defines every one of them, with a protocol of its own and datagrams. Datagrams, 
 
 | Artifact (`io.kuicksilver:`) | What it is | Guide |
 |---|---|---|
-| `kuicksilver-native` | the `ksl` C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings, the native loader | [architecture](docs/architecture.md) |
+| `kuicksilver-native` | the `ksl` C shim with OpenSSL 4.1 inside, its JNI and cinterop bindings, the native loader | [architecture](docs/architecture.md) |
 | `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](docs/guide/tls.md) |
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](docs/guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](docs/guide/quic.md) |
@@ -282,7 +282,7 @@ is available as an opt-in, experimental API and is off by default (ADR-0015).
 ## Security model in one line
 
 Host names are always verified and pins are checked on top of the validated chain, never instead of it; 0-RTT is off
-unless both sides opt in, and then guarded against replay (ADR-0015); packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked 3.5 LTS release
+unless both sides opt in, and then guarded against replay (ADR-0015); packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked 4.1 release
 built by this repository. The full model is in [docs/spec/threat-model.md](docs/spec/threat-model.md), and
 vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md).
 
@@ -345,6 +345,6 @@ It is unrelated to `fuzz/ksl.cc` in ngtcp2, which is a data structure of that pr
 
 ## License
 
-Kuicksilver is licensed under the [Apache License 2.0](LICENSE). Its binaries statically link OpenSSL 3.5, which is
+Kuicksilver is licensed under the [Apache License 2.0](LICENSE). Its binaries statically link OpenSSL 4.1, which is
 also Apache-2.0 licensed; see [NOTICE](NOTICE) and [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt).
 Parts of the Ktor engines and their tests are adapted from Ktor 3.6.0 (Apache-2.0), with per-file attribution.

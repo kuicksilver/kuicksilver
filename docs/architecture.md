@@ -8,7 +8,7 @@ it first. Decisions and their reasons live in the ADRs (`docs/adr/`, one decisio
 
 Kuicksilver is a Kotlin Multiplatform network stack: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221,
 path MTU discovery of RFC 8899), HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT of
-RFC 9220, HTTP datagrams of RFC 9297), Ktor client and server engines over it, and TLS 1.3 over OpenSSL 3.5, on the
+RFC 9220, HTTP datagrams of RFC 9297), Ktor client and server engines over it, and TLS 1.3 over OpenSSL 4.1, on the
 JVM, Android and Kotlin/Native (Linux, Apple, Windows).
 
 On input, the stack gets UDP datagrams (QUIC) or TCP bytes (TLS) and calls from the application; on output, it sends

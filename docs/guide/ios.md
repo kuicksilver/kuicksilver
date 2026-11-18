@@ -23,7 +23,7 @@ check the size and the build.
 the SwiftPM one in [Swift only](#swift-only-kuicksilverxcframework-and-swiftpm), and a running app in
 [`samples/ios`](../../samples/ios/README.md).
 
-Kuicksilver runs on iOS through Kotlin/Native (`iosArm64`, `iosSimulatorArm64`). OpenSSL 3.5 and the `ksl` C shim are
+Kuicksilver runs on iOS through Kotlin/Native (`iosArm64`, `iosSimulatorArm64`). OpenSSL 4.1 and the `ksl` C shim are
 linked statically into your app with every OpenSSL symbol renamed to `ksl_ossl_*` (ADR-0007), so another OpenSSL or
 BoringSSL in the same app does not clash with it. The QUIC socket is the accelerated `ksl` socket (ECN, DF; no GSO/GRO
 on Darwin). Certificates are checked by SecTrust when you use `TrustConfig.Platform`.

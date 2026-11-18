@@ -1,7 +1,7 @@
 Kuicksilver
 Copyright 2026 The Kuicksilver Authors
 
-This product is statically linked against OpenSSL 3.5.x (https://openssl-library.org),
+This product is statically linked against OpenSSL 4.1.x (https://openssl-library.org),
 licensed under the Apache License 2.0; see licenses/LICENSE.openssl.txt.
 
 kuicksilver-ktor-network, kuicksilver-ktor-client and kuicksilver-ktor-server, including their test sources, contain

@@ -1,6 +1,6 @@
 # Module kuicksilver-native
 
-The `ksl` C shim with OpenSSL 3.5 statically linked inside, its JNI and cinterop bindings, the native library loader and
+The `ksl` C shim with OpenSSL 4.1 statically linked inside, its JNI and cinterop bindings, the native library loader and
 the opt-in annotations shared by every Kuicksilver module. Applications rarely use it directly: the other modules call
 it. `KslLoader.availability` tells whether the native library could be loaded on this platform.
 
