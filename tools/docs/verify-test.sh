@@ -339,10 +339,11 @@ if "${py[@]}" build --sha "$SHA" --version 0.3.0-SNAPSHOT --ref "$SHA" --src "$s
   && has "$dv/dev/zh/verify/how.html" "提交 ${SHA}（2026-11-18T09:00:00Z）的开发快照" \
   && has "$dv/dev/verify/index.html" 'href="https://kuicksilver.github.io/kuicksilver/dev/zh/verify/index.html"' \
   && has "$dv/dev/verify/index.html" 'href="../../index.html">All releases' \
-  && ! has "$out/0.3.0/verify/index.html" 'class="snapshot"' \
+  && ! has "$out/0.3.0/verify/index.html" 'class="snapshot"' && ! grep -rq 'name="robots"' "$out/0.3.0" \
+  && [ "$(grep -rL '<meta name="robots" content="noindex">' "$dv/dev/verify" "$dv/dev/ru/verify" "$dv/dev/zh/verify" --include='*.html')" = "" ] \
   && python3 -I tools/docs/site.py check "$dv" > /dev/null 2>&1; then
-  pass "dev: banner with the commit and date in every language, URLs under /dev/, none on a release"
-else fail "dev: banner with the commit and date in every language, URLs under /dev/, none on a release"; fi
+  pass "dev: banner and noindex on every page in every language, URLs under /dev/, neither on a release"
+else fail "dev: banner and noindex on every page in every language, URLs under /dev/, neither on a release"; fi
 cp -R "$dv/dev" "$kp/devold"; rm -rf "$kp/devnew"; mkdir -p "$kp/devnew"
 "${py[@]}" build --sha "$SHA" --version 0.3.0-SNAPSHOT --ref "$SHA" --src "$src" --out "$kp/devnew" --dir dev --snapshot-date 2026-11-18T09:00:00Z \
   --meta "$fx/meta.json" --data "$tmp/emptydata" 2> /dev/null

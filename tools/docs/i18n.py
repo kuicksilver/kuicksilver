@@ -102,7 +102,10 @@ def shell(m, rel, title, body, langs, base_url, style, nav="", banner=""):
     return (
         f'<!DOCTYPE html>\n<html lang="{m.code}">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{html.escape(title)}</title>\n{canonical}{alternates}<style>{style}</style>\n</head>\n<body>\n"
+        f"<title>{html.escape(title)}</title>\n{canonical}{alternates}"
+        # a page with a banner is a development snapshot: out of search results, where it would compete with releases
+        + ('<meta name="robots" content="noindex">\n' if banner else "")
+        + f"<style>{style}</style>\n</head>\n<body>\n"
         f'<header><a class="name" href="{root}../index.html">Kuicksilver</a>'
         f'<a href="{root}guide/index.html">{html.escape(m("nav.guide"))}</a> '
         f'<a href="{root}api/index.html">{html.escape(m("nav.api"))}</a> '

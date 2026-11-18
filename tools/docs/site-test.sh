@@ -103,6 +103,22 @@ grep -q "Development snapshot</strong> of <code>$SHA</code> (2026-11-18T09:00:00
   && grep -q 'Kuicksilver 0.3.0 guide' "$out/latest/guide/index.html" && "${site[@]}" check "$out" >/dev/null 2>&1 \
   && pass "dev: banner on guide and API pages, links at the commit, listed on the landing page, never latest" \
   || fail "dev: banner on guide and API pages, links at the commit, listed on the landing page, never latest"
+grep -q '<meta name="robots" content="noindex">' "$out/dev/guide/quic.html" && grep -q '<meta name="robots" content="noindex">' "$out/dev/api/mod/index.html" \
+  && ! grep -rq 'name="robots"' "$out/0.3.0" "$out/index.html" \
+  && pass "dev: every guide and API page of the snapshot is noindex, no release page is" || fail "dev: noindex"
+# tools/docs/dev-guard.sh: an automatic snapshot never rolls /dev/ back; one by hand is what the owner named
+OLD=1111111111111111111111111111111111111111
+guard() { bash tools/docs/dev-guard.sh "$@" 2>/dev/null; }
+[ "$(guard auto "$SHA" "$SHA" - -)" = publish ] && [ "$(guard auto "$SHA" "$SHA" "$OLD" behind)" = publish ] \
+  && [ "$(guard auto "$SHA" "$SHA" "$SHA" identical)" = publish ] && [ "$(guard auto "$SHA" "$SHA" "$OLD" -)" = publish ] \
+  && [ "$(guard manual "$SHA" "$OLD" "$OLD" ahead)" = publish ] \
+  && pass "dev-guard: main's tip over an older or no snapshot publishes; by hand always" || fail "dev-guard: publish cases"
+case "$(guard auto "$SHA" "$OLD" - -)" in "skip: $SHA is no longer main's tip"*) r1=ok ;; *) r1=bad ;; esac
+case "$(guard auto "$SHA" "$SHA" "$OLD" ahead)" in "skip: the published snapshot $OLD is newer"*) r2=ok ;; *) r2=bad ;; esac
+[ "$r1$r2" = okok ] && pass "negative_devRollback: an older commit than main's tip, or than the published snapshot, is skipped" \
+  || fail "negative_devRollback" "$r1 $r2"
+if guard auto abc "$SHA" - - || guard sometimes "$SHA" "$SHA" - -; then fail "negative_devGuardArguments: accepted"
+else pass "negative_devGuardArguments: a short SHA or an unknown mode is refused"; fi
 mkdir -p "$tmp/devonly"
 if "${site[@]}" build --version 0.4.0-SNAPSHOT --ref "$SHA" --api "$tmp/api" --guide "$repo/docs/guide" --out "$tmp/devonly" \
      --dir dev --snapshot "$SHA" 2>/dev/null && grep -q 'No final release yet' "$tmp/devonly/index.html" \

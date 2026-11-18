@@ -95,6 +95,10 @@ def slug(heading):
     return "".join(out)
 
 
+# a development snapshot's pages stay out of search results, where they would compete with the release pages
+NOINDEX = '<meta name="robots" content="noindex">\n'
+
+
 def snapshot_banner(sha, date, landing="../../index.html"):
     """The notice on every page of a development snapshot (the guide, the API reference; the verification pages have
     their own, translated, from tools/docs/verify.py)."""
@@ -113,7 +117,7 @@ def page(title, version, body, nav="", depth=2, banner=""):
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        f"<title>{html.escape(title)}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n"
+        f"<title>{html.escape(title)}</title>\n" + (NOINDEX if banner else "") + f"<style>{STYLE}</style>\n</head>\n<body>\n"
         f'<header><a class="name" href="{up}index.html">Kuicksilver</a>'
         + (f'<span class="version">{html.escape(version)}</span>' if version else "")
         + f"{links}</header>\n" + banner
@@ -474,6 +478,10 @@ def main():
                     p = os.path.join(d, f)
                     text = open(p, encoding="utf-8", errors="replace").read()
                     new = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + styled, text, count=1)
+                    if re.search(r"<head(?:\s[^>]*)?>", new):   # <head>, never <header>
+                        new = re.sub(r"(<head(?:\s[^>]*)?>)", lambda m: m.group(1) + NOINDEX, new, count=1)
+                    else:   # a page without a head: one with the tag before the body
+                        new = re.sub(r"(<body[^>]*>)", lambda m: "<head>" + NOINDEX + "</head>" + m.group(1), new, count=1)
                     if new != text:
                         write(p, new)
         write(os.path.join(target, "snapshot.json"), json.dumps({"sha": args.snapshot, "date": args.snapshot_date,
