@@ -209,14 +209,20 @@ bound written as a literal or as a constant of the same file; a bound held in a 
 (`timeout * 2`), one on the left of the comparison, and one checked by `if (...) fail()` are not seen, and the numbers of
 an entry are what its author measured and read, not a measurement of the check.
 
-**Race tests repeated under load.** [`tools/ci/race-repeat.sh`](../tools/ci/race-repeat.sh) picks the test files a branch
-added or changed since its merge base with `main` (`--base` for another) that hold a race test as `race-tests.py` names
-them or that assign a `*ForTest` hook, and runs their classes 10 times under CPU load through `tools/ci/flake-hunt.sh`:
+**Race tests repeated under load.** [`tools/ci/race-repeat.sh`](../tools/ci/race-repeat.sh) repeats what a branch changed
+in its race tests: from the test files changed since the base, a race test as `race-tests.py` names it whose own lines
+(declaration and body) changed, and a test whose body gained a line that assigns a `*ForTest` hook (such a line in a helper
+outside a test picks its whole class). They run 10 times under CPU load through `tools/ci/flake-hunt.sh`, test by test:
 those of `commonTest`, `jvmTest` and `jvmCommonTest` on the JVM, those of `nativeTest`, `appleTest` and `posixTest` as
-`macosArm64Test` on a macOS host; other source sets are listed and not run. The local gate runs it before step 1 of a
-full run (not for `--only` or `--from`) and refuses to start when a run failed (`build/ci/race-repeat.log`); its dry run
-lists what it would repeat. The hosted CI's lint job runs its negative controls (`tools/ci/race-repeat-test.sh`, on stubs)
-and lists the classes against its base commit, without running them. `--list` prints the selection, `-n` sets the runs.
+`macosArm64Test` on a macOS host; other source sets are listed and not run. The base is the newest commit this checkout's
+gate passed on (`build/ci/gate/<commit>.stamp` with `result=pass`) that `HEAD` descends from, so an integration branch
+repeats what came since its last gate, else the merge base with `main`; `--base` names another. The cost follows the
+selection: a branch's own changes take a few minutes (one build per target and 10 runs of the picked tests; nine picks
+across four modules took about 70 s for 2 runs), and a first run against `main` with a whole integration branch's worth of
+new race tests takes longer. The local gate runs it before step 1 of a full run (not for `--only` or `--from`) and refuses
+to start when a run failed (`build/ci/race-repeat.log`); its dry run lists what it would repeat. The hosted CI's lint job
+runs its negative controls (`tools/ci/race-repeat-test.sh`, on stubs) and lists the selection against its base commit,
+without running it. `--list` prints the selection, `-n` sets the runs.
 
 `deadline-sites.py` resolves the kotlinx functions exactly from each file's imports, but its timer and select forms are
 syntactic: a deadline through another library (Ktor's `HttpTimeout`), through a project helper (only the helper's own

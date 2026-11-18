@@ -429,17 +429,18 @@ if wants deps; then
     fi
   fi
 fi
-# Before step 1 of a full run: the race tests the branch added or changed since main run 10 times under load
-# (tools/ci/race-repeat.sh; docs/process.md, "Repository checks"), so a test that passes only in the order a quiet machine
-# picks fails here, not after the gate. A selection (--only, --from) leaves it out
+# Before step 1 of a full run: the race tests the branch added or changed since its last passed gate (else since main) run
+# 10 times under load (tools/ci/race-repeat.sh; docs/process.md, "Repository checks"), so a test that passes only in the
+# order a quiet machine picks fails here, not after the gate; a few minutes for a branch's own changes. A selection
+# (--only, --from) leaves it out
 if [ -z "$selection" ]; then
   if [ "$dry" = 1 ]; then
-    echo "preflight: race tests changed since main, 10 runs under load (dry run):"
-    bash tools/ci/race-repeat.sh --list --base main 2>&1 | sed 's/^/  /'
+    echo "preflight: race tests changed since the last passed gate, 10 runs under load (dry run):"
+    bash tools/ci/race-repeat.sh --list 2>&1 | sed 's/^/  /'
   else
-    mkdir -p build/ci; printf 'preflight: race tests changed since main, 10 runs under load ... '
+    mkdir -p build/ci; printf 'preflight: race tests changed since the last passed gate, 10 runs under load ... '
     if FLAKE_HUNT_GRADLE_ARGS="--max-workers=${KSL_GATE_WORKERS:-2} -Pkotlin.incremental=false" \
-      bash tools/ci/race-repeat.sh --base main > build/ci/race-repeat.log 2>&1; then echo ok
+      bash tools/ci/race-repeat.sh > build/ci/race-repeat.log 2>&1; then echo ok
     else
       echo "FAIL (see build/ci/race-repeat.log)"; tail -15 build/ci/race-repeat.log | sed 's/^/     | /'
       echo "local matrix: refused before step 1: a race test failed under load; reproduce with tools/ci/race-repeat.sh" >&2; exit 1
