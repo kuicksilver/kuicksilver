@@ -127,6 +127,24 @@ class ClientH1Test {
             }
         }
 
+    /** The policy is asked about an IPv6 literal in RFC 5952's text, so a rule for `::1` holds for every spelling of it. */
+    @Test fun negative_aRuleForAnIpv6AddressHoldsForEverySpellingOfIt() =
+        clientTest {
+            testClient(engine = { proxyResolver = ProxyResolvers.None }).use { client ->
+                val engine = client.engine as KuicksilverEngine
+                val asked = mutableListOf<String>()
+                engine.h1.cleartextPermitted = { host ->
+                    asked += host
+                    host != "::1"
+                }
+                for (url in listOf("http://[0:0:0:0:0:0:0:1]:1/", "http://[0000::0001]:1/", "http://[::1]:1/")) {
+                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get(url) }
+                    assertEquals("CLEARTEXT communication to ::1 not permitted by network security policy", e.message, url)
+                }
+                assertEquals(listOf("::1", "::1", "::1"), asked)
+            }
+        }
+
     /**
      * A numeric host that platforms read differently is refused as no host before the policy is asked, so a policy that
      * refuses cleartext (Android's default) does not hide that refusal.

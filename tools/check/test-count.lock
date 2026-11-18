@@ -1304,6 +1304,14 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.negative_markEndsOnEitherClock
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.networkChangeResets
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.BrokenAltSvcTest.workingResetsBackoff
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.aMappedIpv4AddressIsAskedAboutInMixedNotation
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.leadingZerosAreDropped
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.namesAndDottedQuadsStayAsTheyAre
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.negative_aLiteralThatDoesNotParseIsAskedAboutAsWritten
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.theFullFormOfLoopbackIsAskedAboutAsTheShortOne
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.theLongestRunOfZerosIsTheOneCompressed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.theZoneIsDropped
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.CleartextPolicyHostTest.upperCaseHexIsAskedAboutInLowerCase
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcH3Test.clearOverH3RemovesCachedAlternative
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcH3Test.newListOverH3ReplacesCachedAlternative
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.autoUpgradesToH3AfterAltSvc
@@ -1439,6 +1447,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.g
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.h1FallsBackToSecondAddress
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.informationalResponsesAreSkipped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.keepAliveReusesConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_aRuleForAnIpv6AddressHoldsForEverySpellingOfIt
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_anAmbiguousNumericHostIsRefusedBeforeThePolicyIsAsked
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_connectionAttemptDelayOutOfRangeRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly
