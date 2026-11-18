@@ -113,6 +113,17 @@ val server = tlsConfig(TlsRole.Server) {
 }
 ```
 
+A TLS-over-TCP client that sends no ALPN extension completes the handshake without ALPN by default, as with OpenSSL and
+Go's `crypto/tls`. A server whose protocols imply one for such a client sets `alpnFallback` (experimental), e.g.
+`http/1.1`: RFC 9113 section 3.3 says "HTTP/2 connections over TLS MUST use protocol negotiation in TLS", so a client
+without ALPN speaks HTTP/1.1. Such a client then completes the handshake only where the protocols in effect for its
+connection (`alpn`, or the `sniSelector` answer's) name the fallback; elsewhere the handshake ends with
+`no_application_protocol` (120). That is the alert RFC 7301 section 3.2 gives a server that "supports no protocols that
+the client advertises", and the one RFC 9001 section 8.1 requires when "an application protocol is not negotiated" over
+QUIC; `missing_extension` (109) is for an extension "mandatory to send for the offered TLS version" (RFC 9846 section
+6.2), which ALPN over TCP is not. An empty list in effect (no ALPN) takes any client. QUIC ignores `alpnFallback`: a QUIC
+client without ALPN is always refused (RFC 9001 section 8.1). The Ktor server's TLS connector sets it to `http/1.1`.
+
 ### Rotating the server certificate
 
 A server identity can be replaced while the server runs (experimental, 0.3.0): wrap it with
@@ -201,7 +212,8 @@ SNI; the ALPN offer; the signature schemes) while the handshake is paused, and r
 - an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
   for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
   identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of `h3` alone serves the name over QUIC only, and its
-  TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2);
+  TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2), as does that of a client without ALPN
+  where `alpnFallback` is set and the list leaves it out ([Configuration](#configuration));
 - null for a ClientHello with a server name: the handshake ends with `unrecognized_name` (112), the fatal choice RFC 6066
   section 3 offers for a name the server does not recognize;
 - null for a ClientHello without one: the configuration's own `identity`; a configuration without one ends the handshake

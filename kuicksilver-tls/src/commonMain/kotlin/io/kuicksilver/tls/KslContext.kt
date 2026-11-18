@@ -376,7 +376,7 @@ internal class KslContext private constructor(
                         ClientAuth.Required -> KslConst.CLIENT_CERT_REQUIRED
                     },
                 )
-                if (config.sniSelector != null) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
+                if (config.sniSelector != null || (!quic && config.pausesForAlpnFallback)) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
                 if (!quic) {
                     // contexts of other configurations and processes (and, before P.3, of every connection): without shared keys no ticket could be
                     // resumed elsewhere, so the default is a process-wide rotating set

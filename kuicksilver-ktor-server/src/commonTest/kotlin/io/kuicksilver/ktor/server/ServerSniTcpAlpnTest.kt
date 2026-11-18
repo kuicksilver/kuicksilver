@@ -72,7 +72,7 @@ class ServerSniTcpAlpnTest {
 
     /** The alert a TCP client offering [offer] receives from a server whose answer is [answer], null when it connected. */
     private suspend fun alertFor(
-        answer: List<String>,
+        answer: List<String>?,
         offer: List<String>,
     ): Int? {
         val (server, port) = server(answer)
@@ -114,6 +114,35 @@ class ServerSniTcpAlpnTest {
             assertEquals(120, alertFor(listOf("h3"), offer = emptyList()), "a client without ALPN is refused too")
             assertEquals(null, alertFor(listOf("h3", "http/1.1"), offer = listOf("http/1.1")), "control: a TCP protocol listed")
         }
+
+    /**
+     * A TCP client without ALPN speaks HTTP/1.1: RFC 9113 section 3.3, "HTTP/2 connections over TLS MUST use protocol
+     * negotiation in TLS". A name whose answer leaves `http/1.1` out refuses it with `no_application_protocol` (120).
+     */
+    @Test fun negative_aClientWithoutAlpnIsRefusedForANameWithoutHttp11() =
+        h3ServerTest {
+            assertEquals(120, alertFor(listOf("h2"), offer = emptyList()))
+            assertEquals(120, alertFor(listOf("h3", "h2"), offer = emptyList()))
+            assertEquals(120, alertFor(listOf("h3"), offer = emptyList()), "h3 alone: still 120")
+            assertEquals(null, alertFor(listOf("h2", "http/1.1"), offer = emptyList()), "control: http/1.1 listed")
+            assertEquals(null, alertFor(listOf("h3", "http/1.1"), offer = emptyList()), "control: http/1.1 listed after h3")
+            assertEquals(null, alertFor(emptyList(), offer = emptyList()), "control: an empty answer, no ALPN")
+            assertEquals(null, alertFor(null, offer = emptyList()), "control: no alpn in the answer, the connector's protocols")
+            assertEquals(null, alertFor(listOf("h2"), offer = listOf("h2")), "control: a client with ALPN")
+        }
+
+    /**
+     * The connector's TCP configurations carry the same rule for their own list (a `tlsConfig(listOf("h2"))` refuses a client
+     * without ALPN); the QUIC one has none, QUIC needing ALPN anyway (RFC 9001 section 8.1).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun theConnectorsTcpConfigurationsTakeHttp11ForAClientWithoutAlpn() {
+        val connector = KuicksilverTlsConnector.Builder(ServerFixtures.identity()).build()
+        assertEquals("http/1.1", connector.tlsConfig(listOf("h2")).alpnFallback)
+        assertEquals("http/1.1", connector.tlsConfig(listOf("h2", "http/1.1")).alpnFallback)
+        assertEquals(null, connector.tlsConfig(listOf("h3")).alpnFallback)
+    }
 
     private companion object {
         const val ALTSVC = 0xa

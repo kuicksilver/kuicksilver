@@ -69,7 +69,8 @@ public class KuicksilverTlsConnector private constructor(
 
     /**
      * The server TLS configuration for [alpn]: with `h3` among them the QUIC one (TLS 1.3 only, RFC 9001 section 4.2), else the
-     * TCP one with [versions][KuicksilverTlsConnector.versions].
+     * TCP one with [versions][KuicksilverTlsConnector.versions] and `alpnFallback = "http/1.1"` (a client without ALPN speaks
+     * HTTP/1.1, RFC 9113 section 3.3, and is refused with `no_application_protocol` where the protocols leave it out).
      */
     public fun tlsConfig(alpn: List<String>): TlsConfig = tlsConfig(alpn, null, quic = "h3" in alpn)
 
@@ -92,7 +93,12 @@ public class KuicksilverTlsConnector private constructor(
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
             sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) forHttp3(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
-            if (!quic) versions = this@KuicksilverTlsConnector.versions
+            if (!quic) {
+                versions = this@KuicksilverTlsConnector.versions
+                // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS": a client without
+                // ALPN speaks HTTP/1.1, refused (no_application_protocol) where the name's protocols leave http/1.1 out
+                alpnFallback = HTTP11_ALPN
+            }
         }
 
     /**
@@ -163,7 +169,8 @@ public class KuicksilverTlsConnector private constructor(
          * identity. On HTTP/3 it runs off the connection's loop, as on TCP inside the handshake. An answer's `alpn` restricts
          * the name: without one the name gets every protocol of the connector; with one, TCP negotiates from it without
          * `h3` (QUIC only, RFC 9114 section 3.1: a list of `h3` alone ends the name's TCP handshake with
-         * `no_application_protocol`), and HTTP/3 is served (and advertised with `Alt-Svc` on that name's TCP responses) only
+         * `no_application_protocol`; a client without ALPN speaks HTTP/1.1, RFC 9113 section 3.3, refused there when the list
+         * leaves `http/1.1` out), and HTTP/3 is served (and advertised with `Alt-Svc` on that name's TCP responses) only
          * when it lists `h3`, else the QUIC handshake ends with `no_application_protocol`. Return the same `TrustConfig` and `OcspStapling` objects for a name,
          * so that its handshakes share one TLS context. Null with SNI present refuses the handshake (`unrecognized_name`); null for a
          * ClientHello without SNI leaves the connector's own [identity] to answer it. A request on such a connection must be for the name its identity was chosen

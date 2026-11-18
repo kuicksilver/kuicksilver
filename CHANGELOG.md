@@ -28,7 +28,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   leaving it out refuses the name's QUIC handshake (`no_application_protocol`, 0x178) and drops `Alt-Svc` from its TCP
   responses (RFC 7838 section 2.1); without `alpn` the name gets every protocol. TLS over TCP never negotiates `h3` from
   an answer's list (RFC 9114 section 3.1): one of `h3` alone ends the name's TCP handshake with `no_application_protocol`
-  (120, RFC 7301 section 3.2). Retry and address
+  (120, RFC 7301 section 3.2). A TCP client without ALPN speaks HTTP/1.1 (RFC 9113 section 3.3: "HTTP/2 connections
+  over TLS MUST use protocol negotiation in TLS"), so a name whose list leaves `http/1.1` out refuses it with
+  `no_application_protocol` too (new `TlsConfig.Builder.alpnFallback`, experimental, set to `http/1.1` by the Ktor
+  connector; it also covers a connector's own `tlsConfig(listOf("h2"))`). Retry and address
   validation come before the selector and are unchanged. Docs: [Ktor: Certificate per name](docs/guide/ktor.md#certificate-per-name-sni),
   [TLS: Certificate per name](docs/guide/tls.md#certificate-per-name-sni). The context of a chosen identity is built
   once per answer (same identity, trust and staple objects, equal ALPN and client-certificate settings) and shared by

@@ -370,6 +370,7 @@ public final class io/kuicksilver/tls/SpkiSha256$Companion {
 
 public final class io/kuicksilver/tls/TlsConfig {
 	public final fun getAlpn ()Ljava/util/List;
+	public final fun getAlpnFallback ()Ljava/lang/String;
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getGenericAlerts ()Z
@@ -390,6 +391,7 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public fun <init> (Lio/kuicksilver/tls/TlsRole;)V
 	public final fun build ()Lio/kuicksilver/tls/TlsConfig;
 	public final fun getAlpn ()Ljava/util/List;
+	public final fun getAlpnFallback ()Ljava/lang/String;
 	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
 	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
 	public final fun getGenericAlerts ()Z
@@ -405,6 +407,7 @@ public final class io/kuicksilver/tls/TlsConfig$Builder {
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
 	public final fun setAlpn (Ljava/util/List;)V
+	public final fun setAlpnFallback (Ljava/lang/String;)V
 	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
 	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
 	public final fun setGenericAlerts (Z)V

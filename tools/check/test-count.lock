@@ -2895,9 +2895,11 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.negative_aNameRestrictedToTcpIsNeitherServedNorAdvertisedOverHttp3
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.negative_unknownNameRefusedOverHttp3
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniHttp3Test.zeroRttRequestsAreCheckedAgainstTheNameTheirIdentityWasChosenFor
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniTcpAlpnTest.negative_aClientWithoutAlpnIsRefusedForANameWithoutHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniTcpAlpnTest.negative_anH2NameWithoutH3GetsNoAltSvcFrame
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniTcpAlpnTest.negative_anH3OnlyNameIsRefusedOverTcpWithNoApplicationProtocol
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniTcpAlpnTest.negative_h3IsNeverSelectedOverTcp
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerSniTcpAlpnTest.theConnectorsTcpConfigurationsTakeHttp11ForAClientWithoutAlpn
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.certificateKeyTypeIsRead
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.h2OverTls12WhenHttp2On
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerTls12Test.negative_defaultConnectorRefusesTls12WithProtocolVersion
@@ -3215,6 +3217,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerH2JdkClient
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerH2JdkClientTest.oversizedFieldSectionGets431WithDate
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.jdkTls12ClientOverH2
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.jdkTls12ClientOverHttp11
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_aTls12ClientWithoutAlpnIsRefusedForANameWithoutHttp11
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_cbcSha1AndStaticRsaOnlyClientsRefused
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_defaultConnectorRefusesJdkTls12
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.ServerTls12JdkClientTest.negative_jdkTls12ClientWithoutEmsRefused
@@ -5410,6 +5413,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.resumeVerify
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.sniSelectorIsAcceptedForQuic
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.splitServerHelloWantRead
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicHandshakeTest.unknownCaFailsWithVerifyAndAlert48
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aQuicServerIgnoresTheAlpnFallback
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aReloadedIdentityReachesTheNextHandshake
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.aServerWithoutDefaultIdentityServesItsNames
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.QuicSniTest.drivingAPausedSessionKeepsItPaused
@@ -5594,10 +5598,13 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsReaderPumpTest.negative_byt
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsReaderPumpTest.negative_plaintextBeforeARefusedFeedIsDelivered
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsReaderPumpTest.recordFramingCountsCompleteRecordsAcrossFeeds
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsReaderPumpTest.slowReaderGetsEveryBatchInOrder
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.aClientWithoutAlpnConnectsWhereTheFallbackIsOfferedOrNoneIsSet
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.anEmptyOverrideListNegotiatesNoAlpnOverTcp
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.clientAuthOptionalPinnedAcceptsClientWithoutCertificate
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.clientAuthRequiredAnchoredCaAndPinned
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.ipServerNameNeverSentAsSni
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_aClientWithoutAlpnIsRefusedWhereTheFallbackIsNotOffered
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_alpnFallbackIsForServersAndANameOfOneToTwoHundredFiftyFiveBytes
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_anH3OnlyOverrideEndsATcpHandshakeWithNoApplicationProtocol
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_anOverrideNeverNegotiatesH3OverTcp
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsServerTest.negative_noSniWithoutDefaultIdentityEndsWithMissingExtension

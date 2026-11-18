@@ -421,6 +421,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
 /** The ALPN protocol ID of HTTP/2 over TLS (RFC 9113 section 3.2). */
 internal const val H2_ALPN = "h2"
 
+/** The ALPN protocol ID of HTTP/1.1 (RFC 7301 section 6), what a TLS client without ALPN speaks. */
+internal const val HTTP11_ALPN = "http/1.1"
+
 /**
  * The TLS configuration of a TCP connector: ALPN `h2` before `http/1.1` when [KuicksilverApplicationEngine.Configuration.http2]
  * is set (the server picks by its own order, so a client that offers both gets HTTP/2, RFC 7301 section 3.2), else
@@ -435,7 +438,7 @@ internal const val H2_ALPN = "h2"
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun KuicksilverApplicationEngine.tcpTlsConfig(tls: KuicksilverTlsConnector): io.kuicksilver.tls.TlsConfig =
-    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, "http/1.1") else listOf("http/1.1"), Duration.INFINITE, quic = false)
+    tls.tlsConfig(if (configuration.http2) listOf(H2_ALPN, HTTP11_ALPN) else listOf(HTTP11_ALPN), Duration.INFINITE, quic = false)
 
 /**
  * HTTP/3 is announced only where it is served (turned on together with the UDP listener), and as `http3Advertising` says at

@@ -184,6 +184,38 @@ class QuicSniTest {
         }
     }
 
+    /**
+     * `alpnFallback` is for TLS over TCP: QUIC needs ALPN anyway (RFC 9001 section 8.1, a client without it is refused in
+     * ksl), so a QUIC server with one not in its list neither pauses for it nor refuses an `h3` client, with a selector or
+     * without one.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    @Test
+    fun aQuicServerIgnoresTheAlpnFallback() {
+        val plain =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("h3")
+                identity = a
+                alpnFallback = "http/1.1"
+            }
+        val withSelector =
+            tlsConfig(TlsRole.Server) {
+                alpn = listOf("h3")
+                identity = untrusted
+                sniSelector = { ServerTlsOverride(a, alpn = listOf("h3")) }
+                alpnFallback = "http/1.1"
+            }
+        for (config in listOf(plain, withSelector)) {
+            val p = handshake(Fixtures.client(), config)
+            try {
+                assertTrue(p.cs.done && p.ss.done, "the handshake completed")
+                assertEquals("h3", p.s.negotiatedAlpn)
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     @Test fun overrideAlpnReplacesTheList() {
         val p =
             handshake(

@@ -94,7 +94,7 @@ internal fun TlsConfig.sniVerdict(
  * [sniVerdict] for a TLS-over-TCP handshake. RFC 9114 section 3.1: `h3` identifies HTTP/3 over QUIC, so TLS over TCP never
  * negotiates it: an override's ALPN list goes to the handshake without it. A list that names nothing else serves its name over
  * QUIC only, and the TCP handshake ends with `no_application_protocol` (RFC 7301 section 3.2), whatever the client offers;
- * an empty list stays "no ALPN" as in [TlsConfig.alpn].
+ * an empty list stays "no ALPN" as in [TlsConfig.alpn]. Then [withoutAlpnVerdict] for the protocols in effect.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal fun TlsConfig.sniVerdictOverTcp(
@@ -102,14 +102,44 @@ internal fun TlsConfig.sniVerdictOverTcp(
     override: ServerTlsOverride?,
 ): SniVerdict {
     val verdict = sniVerdict(hello, override)
-    if (verdict !is SniVerdict.Override) return verdict
+    if (verdict is SniVerdict.Refuse) return verdict
+    if (verdict !is SniVerdict.Override) return withoutAlpnVerdict(hello, alpn, verdict)
     val o = verdict.override
-    val alpn = o.alpn?.toList() ?: return verdict // copy first: the list checked is the one used
-    if (ALPN_H3 !in alpn) return SniVerdict.Override(ServerTlsOverride(o.identity, alpn, o.clientAuth, o.trust, o.ocspStapling))
+    val alpn = o.alpn?.toList() ?: return withoutAlpnVerdict(hello, this.alpn, verdict) // copy first: the list checked is the one used
     val tcp = alpn.filter { it != ALPN_H3 }
-    if (tcp.isEmpty()) return SniVerdict.Refuse(ALERT_NO_APPLICATION_PROTOCOL, "no_application_protocol: the name is served over QUIC only")
-    return SniVerdict.Override(ServerTlsOverride(o.identity, tcp, o.clientAuth, o.trust, o.ocspStapling))
+    if (tcp.isEmpty() && alpn.isNotEmpty()) {
+        return SniVerdict.Refuse(ALERT_NO_APPLICATION_PROTOCOL, "no_application_protocol: the name is served over QUIC only")
+    }
+    return withoutAlpnVerdict(hello, tcp, SniVerdict.Override(ServerTlsOverride(o.identity, tcp, o.clientAuth, o.trust, o.ocspStapling)))
 }
+
+/**
+ * [verdict], unless the client sent no ALPN extension and [TlsConfig.alpnFallback], the protocol it then speaks, is not among
+ * the non-empty [inEffect] of its connection: then `no_application_protocol` (RFC 7301 section 3.2; RFC 9113 section 3.3:
+ * "HTTP/2 connections over TLS MUST use protocol negotiation in TLS", so a client without ALPN can only speak the fallback).
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun TlsConfig.withoutAlpnVerdict(
+    hello: ClientHelloInfo,
+    inEffect: List<String>,
+    verdict: SniVerdict,
+): SniVerdict {
+    val fallback = alpnFallback ?: return verdict
+    if (hello.alpn.isNotEmpty() || inEffect.isEmpty() || fallback in inEffect) return verdict
+    return SniVerdict.Refuse(
+        ALERT_NO_APPLICATION_PROTOCOL,
+        "no_application_protocol: the client sent no ALPN, and $fallback is not offered",
+    )
+}
+
+/**
+ * Whether a TLS-over-TCP server must pause at the ClientHello without an sniSelector: its [TlsConfig.alpnFallback] is missing
+ * from its non-empty [TlsConfig.alpn], so a client without ALPN is refused ([withoutAlpnVerdict]). Never for an override's
+ * configuration, applied once the base configuration's pause was decided.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal val TlsConfig.pausesForAlpnFallback: Boolean
+    get() = !isOverride && alpnFallback.let { it != null && alpn.isNotEmpty() && it !in alpn }
 
 /** The ALPN protocol ID of HTTP/3 (RFC 9114 section 3.1), defined for QUIC only. */
 internal const val ALPN_H3 = "h3"

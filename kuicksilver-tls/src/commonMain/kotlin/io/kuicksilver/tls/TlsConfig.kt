@@ -182,6 +182,8 @@ public class TlsConfig private constructor(
     @property:ExperimentalKuicksilverApi public val revocation: RevocationPolicy,
     /** The OCSP response a server staples; see [Builder.ocspStapling]. */
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
+    /** The protocol a TLS-over-TCP client without ALPN speaks, null for none; see [Builder.alpnFallback]. */
+    @property:ExperimentalKuicksilverApi public val alpnFallback: String? = null,
     /** Made by [withOverride] for one sniSelector answer: its contexts are kept apart from the base configuration's ([SharedServerContexts]). */
     internal val isOverride: Boolean = false,
 ) {
@@ -209,6 +211,7 @@ public class TlsConfig private constructor(
             genericAlerts,
             revocation,
             o.ocspStapling,
+            alpnFallback,
             isOverride = true,
         )
     }
@@ -351,9 +354,22 @@ public class TlsConfig private constructor(
         public var ocspStapling: OcspStapling? = null
 
         /**
+         * Server, TLS over TCP: the protocol a client that sends no ALPN extension speaks (Netty's "fallback protocol"), e.g.
+         * `http/1.1` for HTTP, whose `h2` "over TLS MUST use protocol negotiation in TLS" (RFC 9113 section 3.3). Default null:
+         * such a client completes the handshake without ALPN, as with OpenSSL and Go's `crypto/tls`. Set, such a client
+         * completes it only where the protocols in effect for its connection name it: [alpn], or the [sniSelector] answer's
+         * [ServerTlsOverride.alpn]; otherwise the handshake ends with `no_application_protocol` (120), the alert RFC 7301
+         * section 3.2 gives a server that "supports no protocols that the client advertises" and RFC 9001 section 8.1 a
+         * QUIC server whose client negotiated none. An empty list in effect (no ALPN) takes any client. QUIC ignores it: a
+         * QUIC client without ALPN is always refused (RFC 9001 section 8.1). The value is 1..255 bytes of UTF-8.
+         */
+        @ExperimentalKuicksilverApi
+        public var alpnFallback: String? = null
+
+        /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client or not 1..255 bytes, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
@@ -370,6 +386,11 @@ public class TlsConfig private constructor(
                 serverName?.let { HostName.normalize(it) }
             }
             if (trust is TrustConfig.ExpectedName) HostName.normalize((trust as TrustConfig.ExpectedName).name)
+            val fallback = alpnFallback
+            if (fallback != null) {
+                if (role != TlsRole.Server) throw TlsException.Config("alpnFallback applies to servers")
+                validateAlpn(listOf(fallback))
+            }
             return TlsConfig(
                 role,
                 validAlpn,
@@ -386,6 +407,7 @@ public class TlsConfig private constructor(
                 genericAlerts,
                 revocation,
                 ocspStapling,
+                fallback,
             )
         }
     }

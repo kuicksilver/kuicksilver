@@ -16,6 +16,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslLoader
@@ -825,6 +826,76 @@ class TlsServerTest {
                 assertFailsWith<TlsException>("offer $offer") { withTimeout(10.seconds) { sd.await() } }
             }
         }
+    }
+
+    /**
+     * The ALPN a client without the extension gets from a server with [TlsConfig.alpnFallback] `fb` (null: it connected
+     * without ALPN), or the alert that ended its handshake: [base] is the server's list, [answer] its selector's, if any.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun withoutAlpn(
+        base: List<String>,
+        answer: List<String>? = null,
+        selector: Boolean = answer != null,
+        offer: List<String> = emptyList(),
+        fb: String? = "fb",
+    ): String =
+        runBlocking {
+            val server =
+                TcpFixtures.server {
+                    alpn = base
+                    alpnFallback = fb
+                    if (selector) sniSelector = { ServerTlsOverride(serverIdentity, alpn = answer) }
+                }
+            val (cd, sd) = connect(TcpFixtures.client { alpn = offer }, server)
+            val c = runCatching { withTimeout(10.seconds) { cd.await() } }
+            val s = runCatching { withTimeout(10.seconds) { sd.await() } }
+            try {
+                c.exceptionOrNull()?.let { e ->
+                    assertTrue(s.isFailure, "the server completed a handshake its client saw fail: $e")
+                    return@runBlocking "alert ${(e as? TlsException.AlertReceived)?.code ?: e}"
+                }
+                assertEquals(c.getOrThrow().negotiatedAlpn, s.getOrThrow().negotiatedAlpn)
+                c.getOrThrow().negotiatedAlpn ?: "none"
+            } finally {
+                c.getOrNull()?.close()
+                s.getOrNull()?.close()
+            }
+        }
+
+    /**
+     * RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS", so a client without ALPN speaks
+     * the fallback protocol; where the protocols in effect leave it out, the handshake ends with `no_application_protocol`
+     * (120, as RFC 9001 section 8.1 for a QUIC client that negotiated none), on the base configuration and an override alike.
+     */
+    @Test fun negative_aClientWithoutAlpnIsRefusedWhereTheFallbackIsNotOffered() {
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1")), "the base configuration, no selector")
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1"), selector = true), "a selector answer without alpn: the base list")
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1", "fb"), answer = listOf("x1")), "the answer's list")
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1", "fb"), answer = listOf("h3")), "h3 alone stays 120")
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1", "fb"), answer = listOf("h3", "x1")), "h3 dropped first")
+    }
+
+    /** The controls: the fallback offered, an empty list (no ALPN), a client with ALPN, and no fallback (OpenSSL's default). */
+    @Test fun aClientWithoutAlpnConnectsWhereTheFallbackIsOfferedOrNoneIsSet() {
+        assertEquals("none", withoutAlpn(base = listOf("x1", "fb")))
+        assertEquals("none", withoutAlpn(base = listOf("x1"), answer = listOf("fb", "x1")))
+        assertEquals("none", withoutAlpn(base = listOf("x1", "fb"), selector = true))
+        assertEquals("none", withoutAlpn(base = listOf("x1"), answer = emptyList()), "an empty answer: no ALPN")
+        assertEquals("none", withoutAlpn(base = emptyList()), "a server without ALPN")
+        assertEquals("none", withoutAlpn(base = listOf("x1"), fb = null), "no fallback: completes without ALPN")
+        assertEquals("none", withoutAlpn(base = listOf("x1"), answer = listOf("x1"), fb = null))
+        assertEquals("x1", withoutAlpn(base = listOf("x1"), offer = listOf("x1")), "a client with ALPN is not concerned")
+        assertEquals("x1", withoutAlpn(base = listOf("x1", "fb"), answer = listOf("x1"), offer = listOf("x1")))
+        assertEquals("alert 120", withoutAlpn(base = listOf("x1"), offer = listOf("fb")), "an offer without overlap stays 120")
+    }
+
+    @OptIn(ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_alpnFallbackIsForServersAndANameOfOneToTwoHundredFiftyFiveBytes() {
+        assertFailsWith<TlsException.Config> { TcpFixtures.client { alpnFallback = "http/1.1" } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "" } }
+        assertFailsWith<TlsException.Config> { TcpFixtures.server { alpnFallback = "x".repeat(256) } }
     }
 
     /** An empty override list keeps meaning "no ALPN" over TCP, as an empty [TlsConfig.alpn] does. */
