@@ -1367,6 +1367,19 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theDnsResolvesTheOriginOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theDnsResolvesTheOriginOverTcp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.theRaceAsksTheDnsOnce
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.acceptedOverHttp3
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.earlyDataUnderARejectedEchIsSentAgainOnTheRetry
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echGoesInsideAConnectTunnel
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echRouteRetriesOnceAndSharesTheRetryBetweenSiblings
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.greaseByDefault
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.hostConfigurationIsOfferedAndAcceptedOverTcp
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.httpsRecordEchIsOffered
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aRejectedRetryIsNotRetriedAgain
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_echReliantRequestNeverFallsBackToTheOrigin
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationNeedsTls13Only
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_serverWithoutEchIsRetriedWithoutEch
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceOverHttp3
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceWithTheRetryConfigurationsOverTcp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aDeadAlternativeReportsAltSvcRaceAndBrokenMark
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aFailedExchangeStillReleasesItsConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEventListenerTest.aListenerThrowingCancellationNeverFailsTheCall
@@ -1589,6 +1602,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRec
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.ipLiteralIsNotLookedUp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_aliasLoopStops
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_connectionMigrationNetworksFlushTheCache
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_echClientSendsNoClientHelloBeforeTheRecordsResolved
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_everyNetworkUpdateFlushesTheCache
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_extraWaitOutOfRangeFailsTheEngine
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsRecordTest.negative_failedNetworkSourceStopsCaching
@@ -2135,10 +2149,14 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecord
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.aliasModeVector
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.alpnWithEscapedCommaVector
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.dotTargetVector
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.echOfAnotherVersionIsKept
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.echReliantWhenEveryEndpointHasEch
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.echValueIsKept
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.encodeRoundTrips
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.genericKeyVectors
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.ipv6HintEmbeddedIpv4Vector
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.ipv6HintVector
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.mandatoryEchNeedsAClientWithEch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.mandatoryEchSkipsRecord
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.mandatoryVector
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.manyKeysAreRead
@@ -2153,6 +2171,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecord
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_ipv6HintNotMultipleOf16IsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_keysOutOfOrderIsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_labelOver63IsMalformed
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_malformedEchValues
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryCheckReadsEachKeyAtMostOnce
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryEmptyOrOddIsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryKeyMissingIsMalformed
@@ -2326,6 +2345,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.clientSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.diagnosticsSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.dnsSample
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.echClientSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.guideHasEveryMarker
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.http2Sample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.http3SwitchSample
@@ -2351,6 +2371,8 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KeptWithinTest.ne
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.LiveEchTest.hostConfigurationIsAcceptedByCloudflareOverTcpAndHttp3
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.LiveEchTest.httpsRecordEchIsAcceptedByCloudflare
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.negative_blockingSelectorFailsAtConnectTimeout
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.selectorGetsAWebSocketsResourceName
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.SystemProxyJvmTest.systemResolverFollowsDefaultProxySelector
@@ -2769,6 +2791,9 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerDeflateT
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEarlyDataHeaderTest.gatewayMarkedGetIsReceivedEarlyOverH1
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEarlyDataHeaderTest.negative_gatewayMarkedPostIsTooEarlyOverH1
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEarlyDataHeaderTest.negative_gatewayMarkedRequestsOverH3
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.connectorCarriesTheKeysToBothTlsConfigurations
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.keysRejectionSelectorAndRotation
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerEchTest.negative_aPublicNameCertificateThatDoesNotCoverItFailsTheRejection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerFailedChannelResponseTest.aContentThatFailsBeforeTheHeadGetsA500AndKeepsTheConnection
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerFailedChannelResponseTest.aFailureAfterTheWholeContentLengthKeepsTheResponseOverHttp11
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerFailedChannelResponseTest.aFailureAfterTheWholeContentLengthKeepsTheResponseOverHttp3
@@ -3308,6 +3333,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.h3.H3Authority
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.CurlHttp3Test.curlDownloadsOverHttp3Only
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.clientAuthKeyParsed
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.clientCaRequiredOnTheDeploymentPort
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.echKeysKeyReadsTheKeyFiles
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.guideApplicationConfStarts
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2Key
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.EngineMainTest.http2RepeatOffenderPenaltyKey
@@ -3341,6 +3367,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.clientCaRotationSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.deploymentGuideHasEveryMarker
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.drainWaitSample
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.echServerSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.guideHasEveryMarker
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.healthSample
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.GuideSamplesTest.http2ServerSample
@@ -5592,9 +5619,13 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.base64OfTheRecordParse
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.listParsingKeepsUsableConfigs
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_configurationsInTheWrongPlaceAreRefused
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_malformedListsAreRefused
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_pinnedRejectionStillNeedsTheBaseTrust
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_quicRejectedReportsRetryConfigs
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_quicServerWithoutEchIsSecurelyDisabled
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_quicUnauthenticatedRejectionHasNoRetryConfigs
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_tofuDoesNotTrustAPublicNameOnFirstContact
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.pinsDoNotApplyToThePublicNameCertificate
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.pinsDoNotFailAnAnchoredRejection
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicAccepted
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicGreaseByDefault
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicPausedVerifierSeesThePublicNameOnRejection

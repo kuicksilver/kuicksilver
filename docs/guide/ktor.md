@@ -355,6 +355,44 @@ identity of each QUIC handshake ([Certificate per name](#certificate-per-name-sn
 Running it in production (UDP in firewalls, Docker and Kubernetes, load balancers, kernel buffers, checking that clients
 arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
 
+### Encrypted Client Hello on the server
+
+*Experimental.* With `echKeys` the TLS connector decrypts Encrypted Client Hello (RFC 9849, shared mode) on TCP and HTTP/3
+alike, so the name a client asks for never crosses the network in the clear. Make a key with OpenSSL 4 and publish its
+ECHConfigList in the `ech` parameter of the HTTPS record of every name the connector serves (RFC 9848):
+
+```shell
+openssl ech -public_name cover.example.com -out ech-1.pem   # the PEM: the private key and an ECHCONFIG block
+```
+
+```kotlin
+val ech1 = File("/etc/kuicksilver/ech-1.pem")
+val ech2 = File("/etc/kuicksilver/ech-2.pem")
+// guide:ktor:ech-server
+val keys = EchServerKeys(listOf(EchKey(ech1.readText())))
+val server =
+    embeddedServer(Kuicksilver, configure = {
+        tlsConnector(identity) {
+            port = 443
+            echKeys = keys
+        }
+    }) { routing { get("/") { call.respondText("hidden") } } }
+// later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
+keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfigs = false)))
+```
+
+- **The public name.** A client whose configuration the server cannot decrypt (an old key, or GREASE) gets the keys' retry
+  configurations, but only after it authenticated the server for the configuration's `public_name` (RFC 9849 section
+  6.1.7): the connector's certificate must cover that name. With an `sniSelector` the selector is asked for the
+  `public_name` then (the outer ClientHello's name), and its answer is the certificate the client checks; after an
+  accepted ECH it is asked for the inner name, as without ECH.
+- **Rotation.** `rotate` replaces the whole set for handshakes that start afterwards, on TCP and QUIC; handshakes in
+  progress keep the set they started with. Keep a replaced key (`inRetryConfigs = false`) until the DNS TTL of the old
+  record has run out.
+- **Shared mode only.** The connector is both the client-facing and the backend server; split mode (a front end that
+  forwards to a backend) is not supported.
+- `EngineMain`: `kuicksilver.tls.echKeys` (above).
+
 ### HTTP/2 on the server
 
 `http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
@@ -921,6 +959,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.keyExchangeGroups` | the key-exchange groups of the deployment port, the server's most preferred first: a list of `KeyExchangeGroups` names (`["X25519MLKEM768", "x25519", "secp256r1"]`, case ignored), or one string of them separated by `:` or `,` (`-P:` keys, `${?ENV}`); unset: the default list; needs the identity files, and is refused next to `-sslPort`; an unknown name or a duplicate fails the start; see [TLS: Key exchange groups](tls.md#key-exchange-groups) |
 | `kuicksilver.tls.ocspStapling` | a file with a DER OCSP response (RFC 6960) for the identity's certificate, stapled on TCP and QUIC when it is fresh and for the certificate sent; read again every `kuicksilver.tls.reloadInterval` (put a fresh response in place before nextUpdate; without the interval, a restart reads it); a response that is not stapled is logged as a warning at startup, and so is one that stops being stapled (expired, or for a certificate that was reloaded); needs the identity files, and is refused next to `-sslPort`; see [Certificate revocation](tls.md#certificate-revocation) |
 | `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
+| `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of the deployment port: a list of PEM files, each what `openssl ech -public_name <name>` writes (the private key and its ECHConfigList; every one is sent in retry configurations), or one comma-separated string; read once at startup (rotate in code with `EchServerKeys.rotate`); needs the identity files, and is refused next to `-sslPort`; see [Encrypted Client Hello on the server](#encrypted-client-hello-on-the-server) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
@@ -1450,6 +1489,57 @@ alternative and to an HTTP proxy, follows Happy Eyeballs version 2 (RFC 8305; de
 - **Caching.** An answer is kept as long as the JDK's own cache would keep it (`networkaddress.cache.ttl`, 30 s, and
   `networkaddress.cache.negative.ttl`, 10 s by default; 2 s on Android), at most 1000 names and families; on
   Kotlin/Native the system resolver's cache does it.
+
+### Encrypted Client Hello (experimental)
+
+The engine offers Encrypted Client Hello (RFC 9849) on every `https://` connection, over TCP and HTTP/3: the ClientHello on
+the network names only the configuration's `public_name`, and the origin's name travels encrypted. Where the
+configuration comes from, for each connection:
+
+1. the `ech` parameter of the HTTPS record whose endpoint the connection goes to (RFC 9848), when `http3.httpsRecords`
+   looks records up (`Http3DiscoveryMode.Auto`) and `ech.fromHttpsRecords` is on (the default);
+2. else `ech.configLists` for the request's host, given out of band;
+3. else none, and the connection sends GREASE ECH (`ech.grease`, on by default, RFC 9849 section 6.2.1), so that it
+   looks like one with ECH.
+
+```kotlin
+val publishedEch = "AEj+DQBE..." // optional: the base64 of the origin's `ech` parameter, had out of band
+// guide:ktor:ech-client
+val client =
+    HttpClient(Kuicksilver) {
+        engine {
+            // the records' `ech`, through your DNS-over-HTTPS exchange (see "HTTPS records")
+            http3 { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
+            ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) }
+        }
+    }
+```
+
+- **Rejection.** A server that cannot decrypt the configuration (it rotated its keys) answers with its retry
+  configurations after the client authenticated it for the `public_name`: the engine retries once, on a new connection to
+  the same addresses, with them (RFC 9849 section 6.1.6), or without ECH when the server sent none ("securely disabled").
+  A retry that is rejected again fails the request with `TlsException.EchRejected` in its causes; no request is sent on a
+  rejected connection. Retry configurations are used for that retry only, never stored.
+- **SVCB-reliant.** When every endpoint of the origin's HTTPS records has an `ech` parameter, the request never falls back
+  to a connection without it: not to the origin's own address, not to the endpoint an AliasMode chain appends, not to an
+  `Alt-Svc` alternative whose own records have none (RFC 9848 sections 5.1 and 6); when no endpoint can be reached the
+  request fails. With ECH from the records the engine also sends no ClientHello before the records resolved (section 5.3),
+  within the connect timeout: `httpsRecordExtraWait` does not apply then.
+- **0-RTT.** With `http3.earlyData` the early data goes under the inner ClientHello's session. A server that rejects ECH
+  ignores it (RFC 9849 section 6.1; RFC 8446 section 4.2.10), and the engine sends the request again on the retry; it is
+  processed once.
+- **Certificates.** On an accepted ECH the certificate is checked for the origin, as always, with its pins. On a rejection
+  it is checked for the `public_name` by the base trust (`Platform`, `AnchoredCa`, a custom verifier); the origin's pins
+  (`TrustConfig.Pinned`) do not apply to it, and `TrustConfig.Tofu` accepts a `public_name` only with a key stored for it
+  earlier (a rejection is no first contact). Such a connection only triggers the retry, which is held to the pins. No client
+  certificate is sent on a rejected connection.
+- **Proxies.** Through an HTTP CONNECT or SOCKS5 proxy the TLS session inside the tunnel is the origin's, with
+  `ech.configLists` or GREASE (HTTPS records are not looked up through a proxy, RFC 9460 section 3.2). The hop to the
+  proxy is plain TCP, so it carries no ClientHello of its own; the proxy learns the origin's name from the CONNECT line.
+- **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
+  the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
+- **What it does not hide.** The DNS queries for the origin's records and addresses (protect them with DNS over HTTPS),
+  the server's address, and the traffic's sizes and timing.
 
 ### Name resolution (experimental)
 

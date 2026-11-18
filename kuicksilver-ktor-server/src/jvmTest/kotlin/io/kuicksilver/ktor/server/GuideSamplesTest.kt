@@ -32,6 +32,8 @@ import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.EchKey
+import io.kuicksilver.tls.EchServerKeys
 import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
@@ -838,6 +840,32 @@ class GuideSamplesTest {
         } finally {
             server.stop(100, 500)
             identity.close()
+            dir.deleteRecursively()
+        }
+    }
+
+    @OptIn(ExperimentalKuicksilverApi::class)
+    @Test
+    fun echServerSample() {
+        val dir = Files.createTempDirectory("ech-guide").toFile()
+        val identity = ServerFixtures.identity()
+        try {
+            val ech1 = File(dir, "ech-1.pem").apply { writeText(EchTestKeys.A) }
+            val ech2 = File(dir, "ech-2.pem").apply { writeText(EchTestKeys.B) }
+            // guide:ktor:ech-server
+            val keys = EchServerKeys(listOf(EchKey(ech1.readText())))
+            val server =
+                embeddedServer(Kuicksilver, configure = {
+                    tlsConnector(identity) {
+                        port = 443
+                        echKeys = keys
+                    }
+                }) { routing { get("/") { call.respondText("hidden") } } }
+            // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
+            keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfigs = false)))
+
+            assertTrue(server.engine.configuration.connectors.single() is KuicksilverTlsConnector)
+        } finally {
             dir.deleteRecursively()
         }
     }

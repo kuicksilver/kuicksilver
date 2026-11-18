@@ -10,6 +10,7 @@ internal object SvcbTestEncoder {
         out.u16(r.priority)
         out.addAll(name(r.target).toList())
         if (r.isAlias) return out.toByteArray()
+        if (r.echMandatory) out.param(0, byteArrayOf(0, 5)) // mandatory=ech, the one mandatory key the record keeps
         if (r.alpn.isNotEmpty()) {
             val v = ArrayList<Byte>()
             for (id in r.alpn) {

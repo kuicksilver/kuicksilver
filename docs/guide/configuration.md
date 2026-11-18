@@ -347,6 +347,16 @@ Guide: [Ktor: Client](ktor.md#client).
 | `settings` | `Http2Settings` | `Http2Settings()` | 0.3.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
 
+### ECH client options
+
+`ech { … }` (`EchClientConfig`, *experimental*; guide: [Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)):
+
+| Option | Type | Default | Since | What it does |
+|---|---|---|---|---|
+| `configLists` | `Map<String, EchConfigList>` | empty | 0.3.0 | ECHConfigLists given out of band, by request host: every connection for that origin offers it (directly, to an `Alt-Svc` alternative, inside a proxy tunnel) unless an HTTPS record's endpoint brings its own; with a `tls` block that allows TLS 1.2 the engine's creation fails with `IllegalArgumentException` (RFC 9849 section 6.1) |
+| `grease` | `Boolean` | `true` | 0.3.0 | GREASE ECH on every TLS connection that offers no configuration (RFC 9849 section 6.2.1) |
+| `fromHttpsRecords` | `Boolean` | `true` | 0.3.0 | offer the `ech` parameter of the origin's HTTPS records (RFC 9848; `http3.httpsRecords`, `Auto` mode): no ClientHello before the records resolved (section 5.3), and no fallback to a connection without them when every endpoint has `ech` (section 5.1, SVCB-reliant); ignored when `tls` allows TLS 1.2 |
+
 ### HTTP/3 client options
 
 `http3 { … }` (`Http3ClientConfig`; guide: [HTTP/3 on the client](ktor.md#http3-on-the-client)):
@@ -435,6 +445,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](ktor.md#tls-12-on-the-server)) |
 | `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | no key shares; with `versions` `Tls12And13` at least one elliptic curve | 0.3.0 | the server's key-exchange groups for TCP and HTTP/3, in its order of preference; with `Tls12And13` and client certificates, a TLS 1.2 client's P-256 certificate needs `secp256r1` in the list ([Key exchange groups](tls.md#key-exchange-groups)) |
 | `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every TCP connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources, before the ClientHello; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy; HTTP/3 takes none ([PROXY protocol](ktor.md#proxy-protocol)) |
+| `echKeys` (*experimental*) | `EchServerKeys?` | `null` |  | 0.3.0 | Encrypted Client Hello keys (RFC 9849, shared mode) of TCP and HTTP/3; `rotate` replaces them for new handshakes; the identity (or the `sniSelector` answer for the keys' `public_name`) must cover the `public_name` ([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),
@@ -443,6 +454,7 @@ client certificates are verified against; set together), `kuicksilver.tls.versio
 `kuicksilver.tls.keyExchangeGroups` (a list of `KeyExchangeGroups` names, the server's most preferred first, or one string
 of them separated by `:` or `,`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
+`kuicksilver.tls.echKeys` (a list of ECH key PEM files, or one comma-separated string; read at startup),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
 `kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),

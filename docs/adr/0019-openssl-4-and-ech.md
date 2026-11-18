@@ -223,3 +223,32 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   QUIC and TCP, and the retry) fails without it. While the pull request is open, every OpenSSL update re-checks it
   against the patch.
 
+### ECH in the Ktor engines (2026-11-18)
+
+- **Where a client's configuration comes from.** Per connection: the `ech` of the HTTPS record whose endpoint it goes to
+  (RFC 9848), else `ech.configLists` of the host, else GREASE. A record's value is framing-checked by the SVCB codec (a
+  malformed one drops the RRset, RFC 9460 section 2.2) and parsed by `EchConfigList` at connect time; one without a usable
+  ECHConfig sends GREASE (RFC 9849 section 6.1).
+- **One retry, per endpoint.** `EchRoute` holds the offer of a request's connections to one endpoint, shared by the QUIC
+  and TCP sides of the race: a rejection sets the retry's offer (the retry configurations, or none: "securely disabled"),
+  a sibling's rejection with the same offer takes it instead of a second retry, and a rejected retry is the failure
+  (section 6.1.6). The retry reuses the request's resolution (no new lookup, as the section requires). Retry
+  configurations are not stored (section 6.1.8 is a MAY; storing them would be a tracking vector to scope).
+- **SVCB-reliant and the wait.** With ECH from the records the resolution is waited for like a protected one (RFC 9848
+  section 5.3); when every ServiceMode endpoint has `ech` (section 5.1) neither the origin nor the AliasMode endpoint
+  nor an Alt-Svc alternative without its own `ech` is tried.
+- **0-RTT.** The early data rides under the inner ClientHello's PSK; OpenSSL copies `early_data` to the outer one and adds
+  a GREASE PSK there (section 6.1, rules 6 and 7). A rejected handshake shows after `connectEarly` returned: the request,
+  which the server ignored, is sent once more, and the connection's rejection sets the route's retry.
+- **Pins and TOFU.** The `public_name`'s certificate is authenticated by the base trust; pins are the origin's (RFC 7469)
+  and do not apply to it, since that connection only reports the rejection. TOFU takes no first contact from a rejection.
+- **Proxies.** Inside a CONNECT or SOCKS5 tunnel the origin's ECH applies (`configLists` or GREASE; no HTTPS records
+  through a proxy, RFC 9460 section 3.2). The hop to the proxy is plain TCP: there is no ClientHello to it, so neither ECH
+  nor GREASE arises there; a TLS connection to a proxy, if one is added, gets GREASE like any server without a
+  configuration (section 6.2.1) and never the origin's configuration.
+- **Server.** `echKeys` on the TLS connector (TCP and HTTP/3) and `kuicksilver.tls.echKeys`; the `sniSelector` sees the
+  `public_name` during a rejection and its certificate is the one the client checks.
+- **No client certificate on a rejection.** OpenSSL 4.1 sends `ech_required` once the server's Finished is verified, before
+  the client's flight, so no Certificate message leaves (RFC 9849 section 6.1.7 asks for an empty one if the client goes on;
+  BoringSSL goes on and sends it); the C test `ech_rejection_sends_no_client_certificate` pins it.
+

@@ -40,6 +40,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EchConfigList
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
@@ -583,4 +584,26 @@ class GuideSamplesTest {
             assertEquals(Http3DiscoveryMode.Auto, config.http3.discovery)
         }
     }
+
+    @Test fun echClientSample() =
+        clientTest {
+            val publishedEch =
+                EchTestKeys.A
+                    .substringAfter("-----BEGIN ECHCONFIG-----")
+                    .substringBefore("-----END ECHCONFIG-----")
+                    .lines()
+                    .joinToString("")
+            val dohPost: suspend (ByteArray) -> ByteArray = { throw kotlinx.io.IOException("no DNS in this sample") }
+            // guide:ktor:ech-client
+            val client =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        // the records' `ech`, through your DNS-over-HTTPS exchange (see "HTTPS records")
+                        http3 { httpsRecords = HttpsRecordSource.Exchange(secure = true) { query -> dohPost(query) } }
+                        ech { configLists = mapOf("example.com" to EchConfigList.parseBase64(publishedEch)) }
+                    }
+                }
+
+            client.use { assertTrue(it.engine is KuicksilverEngine) }
+        }
 }

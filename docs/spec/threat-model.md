@@ -909,7 +909,7 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   listener as IPv4-mapped (the tests bind loopback addresses only; the mapping itself is unit-tested), and a proxy that
   is trusted but lies.
 
-### 3.31 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20)
+### 3.31 Encrypted Client Hello (RFC 9849, RFC 9848; CWE-200, CWE-295, CWE-20, CWE-757, CWE-834)
 
 - **Threats:** without ECH the server name of every connection is on the path in the clear (CWE-200, exposure to an
   unauthorized actor). With ECH: an ECHConfigList from DNS or from a server's `retry_configs` is input from the network
@@ -928,17 +928,40 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   (§6.1.6, §6.2.1). An ECH client offers TLS 1.3 only, so a server that answers TLS 1.2 gets no connection. The server's
   keys are replaced whole under a lock (rotation), each session copying the set it starts with. GREASE ECH hides
   whether a client has a configuration. OpenSSL 4.1.0 needs two carried patches for ECH after a HelloRetryRequest (QUIC's
-  transport parameters; a rejection after one, bugs B and C of ADR-0019).
+  transport parameters; a rejection after one, bugs B and C of ADR-0019), both upstream code. On a rejection no client
+  certificate and no session ticket is exchanged (§6.1.7): OpenSSL aborts once the server's Finished is verified.
+- **Mitigations (`kuicksilver-tls`):** the origin's pins (`TrustConfig.Pinned`) are not applied to the `public_name`'s
+  certificate, which the base trust authenticates for that name; the connection only reports the rejection, and the retry
+  is held to the pins. Trust on first use takes no first contact from a rejection: a `public_name` without a stored key
+  fails it, so an attacker cannot plant retry configurations of its own through a TOFU client, nor a key in its store.
+- **Mitigations (Ktor client):** the `ech` SvcParam of an HTTPS record (CWE-20) is framing-checked by the SVCB codec
+  (length prefix equal to the value, each ECHConfig inside it), a malformed one rejecting the RRset (RFC 9460 §2.2),
+  before the TLS layer's own check; the SVCB codec's fuzz target covers it. Downgrade (CWE-757): with the records' ECH
+  the client sends no ClientHello before the resolution completed (RFC 9848 §5.3) and, when every endpoint has `ech`,
+  never falls back to a connection without it (§5.1): not to the origin, an appended AliasMode endpoint or an Alt-Svc
+  alternative without its own `ech`. Retries are bounded (CWE-834): one per endpoint and request, shared by the QUIC and
+  TCP sides, to the addresses already resolved (§6.1.6, no new lookup); a rejected retry fails the request, and retry
+  configurations are never stored. A 0-RTT request on a rejected connection was ignored by the server (§6.1 rule 7) and is
+  sent once more on the retry, never twice processed. Inside a proxy's tunnel the origin's ECH applies; the proxy hop is
+  plain TCP and carries no ClientHello.
 - **Verification:** C `test_ech.c`: `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`,
   `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`,
   `negative_ech_rejected` (QUIC, TCP), `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`,
   `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`,
-  `ech_rejected_after_hrr`, the `negative_ech_keys_*` and `negative_ech_config_*` refusals, and the accepted,
-  HelloRetryRequest, rotation (three threads under ThreadSanitizer) and resumption cases; fuzzing: the ksl harness's
-  modes `0xfc` (the list check) and `0xfb` (an ECH server's decryption of an attacker's ClientHello).
+  `ech_rejected_after_hrr`, `ech_rejection_sends_no_client_certificate`, the `negative_ech_keys_*` and
+  `negative_ech_config_*` refusals, and the accepted, HelloRetryRequest, rotation (three threads under ThreadSanitizer)
+  and resumption cases; Kotlin: `tls.EchTest` (`pinsDoNotApplyToThePublicNameCertificate`,
+  `negative_pinnedRejectionStillNeedsTheBaseTrust`, `negative_tofuDoesNotTrustAPublicNameOnFirstContact`),
+  `ClientEchTest` (`negative_aRejectedRetryIsNotRetriedAgain`, `negative_echReliantRequestNeverFallsBackToTheOrigin`,
+  `negative_serverWithoutEchIsRetriedWithoutEch`, `earlyDataUnderARejectedEchIsSentAgainOnTheRetry`),
+  `ClientHttpsRecordTest.negative_echClientSendsNoClientHelloBeforeTheRecordsResolved`, `SvcbRecordTest`
+  (`negative_malformedEchValues`), `ServerEchTest`; fuzzing: the ksl harness's modes `0xfc` (the list check) and `0xfb`
+  (an ECH server's decryption of an attacker's ClientHello), and the SVCB codec's target (`SvcbFuzzTest`).
 - **Not covered:** the name of the origin is still visible in the plaintext DNS query for its HTTPS record unless DNS is
-  protected (RFC 9849 §10.2: ECH is meaningful with authenticated, protected DNS), the destination address, and the
-  traffic's size and timing; split mode (a client-facing server forwarding to a backend) is not implemented.
+  protected (RFC 9849 §10.2, "Unauthenticated and Plaintext DNS"; RFC 9848 §8), and so is an attacker's ability to block
+  that query and with it ECH (RFC 9848 §8: abandoning the request on a failed protected lookup, `Exchange(secure = true)`,
+  is the defence); the destination address, the CONNECT line to a proxy, and the traffic's size and timing; split mode (a
+  client-facing server forwarding to a backend) is not implemented.
 
 ## 4. What we do not protect against
 
@@ -983,7 +1006,7 @@ PROXY protocol (§3.27):
 15. `negative_headerFromAnUntrustedSourceIsRefused`, `negative_connectionWithoutAHeaderIsClosed`, `negative_malformedHeadersAreClosed`, `negative_headerNotCompleteWithinTheTimeoutIsCut`, `negative_unknownPeerIsNotTrusted`, `negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `negative_invalidConfigurationsAreRefused`, `negative_v1WithoutCrlfWithin107BytesIsRefused`, `negative_v1LineEndsOtherThanCrlfAreRefused`, `negative_v1MalformedFieldsAreRefused`, `negative_v2BadVersionCommandOrFamilyIsRefused`, `negative_v2LocalWithAnInvalidNibbleIsRefused`, `negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `negative_v2AddressBlockShorterThanItsFamilyIsRefused`, `negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `negative_v2TlvOverrunningTheHeaderIsRefused`, `negative_v2CrcMismatchIsRefused`, `negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`, `negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`, `negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `negative_proxyProtocolKeysWithSslPortRefused`, `negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`, `negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`, `negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused` (`ServerProxyProtocolTest`, `ServerH2FloodTest`, `ProxyProtocolConfigTest`, `ProxyProtocolCodecTest` on the JVM and every Native target; `EngineMainTest` on the JVM)
 
 Encrypted Client Hello (§3.31):
-19. C (`test_ech.c`): `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`, `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`, `negative_ech_rejected`, `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`, `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`, `negative_ech_keys_without_retry`, `negative_ech_config_on_tls12_context`; Kotlin (`tls.EchTest`): `negative_malformedListsAreRefused`, `negative_configurationsInTheWrongPlaceAreRefused`, `negative_quicRejectedReportsRetryConfigs`, `negative_quicUnauthenticatedRejectionHasNoRetryConfigs`, `negative_quicServerWithoutEchIsSecurelyDisabled`
+19. C (`test_ech.c`): `negative_ech_unusable_configs_ignored`, `negative_ech_no_usable_config`, `negative_ech_list_length_mismatch`, `negative_ech_list_truncated`, `negative_ech_entry_overruns_list`, `negative_ech_rejected`, `negative_ech_rejection_unauthenticated`, `negative_ech_server_without_ech`, `negative_ech_downgrade_to_tls12`, `negative_ech_grease_retry_configs_ignored`, `negative_ech_rotated_out_key`, `negative_ech_keys_without_retry`, `negative_ech_config_on_tls12_context`, `negative_ech_rejected_no_client_certificate` (a check of `ech_rejection_sends_no_client_certificate`); Kotlin (`tls.EchTest`): `negative_malformedListsAreRefused`, `negative_configurationsInTheWrongPlaceAreRefused`, `negative_quicRejectedReportsRetryConfigs`, `negative_quicUnauthenticatedRejectionHasNoRetryConfigs`, `negative_quicServerWithoutEchIsSecurelyDisabled`, `negative_pinnedRejectionStillNeedsTheBaseTrust`, `negative_tofuDoesNotTrustAPublicNameOnFirstContact`; Ktor (`ClientEchTest`, `ClientHttpsRecordTest`, `SvcbRecordTest`, `ServerEchTest`): `negative_aRejectedRetryIsNotRetriedAgain`, `negative_serverWithoutEchIsRetriedWithoutEch`, `negative_echReliantRequestNeverFallsBackToTheOrigin`, `negative_hostConfigurationNeedsTls13Only`, `negative_echClientSendsNoClientHelloBeforeTheRecordsResolved`, `negative_malformedEchValues`, `negative_aPublicNameCertificateThatDoesNotCoverItFailsTheRejection`
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)
@@ -1064,7 +1087,7 @@ weakness appears in different protocols.
 | 3.25 | an application resolver's answers: identity, local and multicast destinations, size, stalls | CWE-291, CWE-918, CWE-400 |
 | 3.26 | HTTP field values in qlog traces; tracing load | CWE-532, CWE-400 |
 | 3.27 | PROXY protocol: spoofed client addresses; malformed headers | CWE-290, CWE-348; CWE-20, CWE-400 |
-| 3.31 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection | CWE-200, CWE-20, CWE-295 |
+| 3.31 | Encrypted Client Hello: the server name in the clear, ECHConfigList parsing, the name checked on rejection, downgrade to no ECH, bounded retries | CWE-200, CWE-20, CWE-295, CWE-757, CWE-834 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and
