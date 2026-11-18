@@ -447,8 +447,8 @@ class TcpSocketsNativeTest {
                 // a VPN in TUN mode (and Docker Desktop behind it) completes any TCP handshake itself: then nothing stays undecided
                 val faked = withTimeoutOrNull(500.milliseconds) { runCatching { connectTcpAddressWith(selector, testNet1Discard, null) } }
                 // a TUN that refuses the connect at once ("Failed to connect") answers it too: nothing stays undecided there.
-                // Where the network is known to leave it undecided (the Linux containers, KSL_REQUIRE_UNDECIDED_CONNECT=1),
-                // such an answer fails the test instead of skipping it
+                // Where the network is known to leave it undecided (the hosted CI's Linux containers set
+                // KSL_REQUIRE_UNDECIDED_CONNECT=1), such an answer fails the test instead of skipping it
                 if (faked != null) {
                     faked.getOrNull()?.close()
                     val why =

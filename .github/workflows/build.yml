@@ -347,6 +347,9 @@ jobs:
       - name: 'docker: image linux-x64'
         run: bash tools/openssl/build-docker.sh --image linux-x64
       - name: 'docker: test.kexe linux-x64 (all modules)'
+        # a hosted runner leaves a connect to TEST-NET-1 undecided: TcpSocketsNativeTest's test of that path may not skip
+        # itself here (docs/process.md, "Hosted CI"); the owner's Docker sits behind a TUN that answers it, so not there
+        env: { KSL_DOCKER_OPTS: '-e KSL_REQUIRE_UNDECIDED_CONNECT=1' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose
@@ -387,6 +390,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: linux-arm64-test-kexe, path: . }
       - name: 'docker: test.kexe linux-arm64 (all modules)'
+        # a hosted runner leaves a connect to TEST-NET-1 undecided: TcpSocketsNativeTest's test of that path may not skip
+        # itself here (docs/process.md, "Hosted CI"); the owner's Docker sits behind a TUN that answers it, so not there
+        env: { KSL_DOCKER_OPTS: '-e KSL_REQUIRE_UNDECIDED_CONNECT=1' }
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the module list splits into arguments on purpose

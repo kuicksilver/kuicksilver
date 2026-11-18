@@ -289,7 +289,10 @@ or a URL; a hash on a `(cherry picked ...)` line; a message whose comment charac
 
 Not covered by the local gate: running the `mingwX64` test executables and the Windows C tests (`ksl_test.exe`;
 hosted CI only), the C tests under sanitizers
-on Linux, and a physical iOS device ([ios.md, Device checklist](guide/ios.md#device-checklist)). Interop results and
+on Linux, the undecided-connect path of `TcpSocketsNativeTest.negative_anUndecidedConnectEndsAtItsLimit` (where a VPN in
+TUN mode answers or refuses a connect to TEST-NET-1 within 500 ms the test prints `SKIPPED ...` and passes; the hosted
+CI's Linux `test.kexe` steps set `KSL_REQUIRE_UNDECIDED_CONNECT=1`, passed into the container through `KSL_DOCKER_OPTS`,
+which turns that skip into a failure, as a hosted runner leaves the connect undecided), and a physical iOS device ([ios.md, Device checklist](guide/ios.md#device-checklist)). Interop results and
 their analysis are in [docs/spec/interop.md](spec/interop.md).
 
 ### Proposed check: lossless hand-offs between coroutines
