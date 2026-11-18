@@ -63,7 +63,7 @@ kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/H2Strea
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerFixtures.kt	1
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH1Test.kt	2
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH1TimeoutTest.kt	1
-kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH3Test.kt	6
+kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerH3Test.kt	3
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/ServerObservabilityTest.kt	7
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/contract/HttpServerCommonTestSuite.kt	2
 kuicksilver-ktor-server/src/commonTest/kotlin/io/kuicksilver/ktor/server/contract/WebSocketEngineSuite.kt	12

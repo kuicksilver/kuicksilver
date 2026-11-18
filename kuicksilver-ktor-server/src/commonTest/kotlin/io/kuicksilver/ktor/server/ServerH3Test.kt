@@ -36,6 +36,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.io.readByteArray
@@ -838,14 +839,20 @@ class ServerH3Test {
             }
         }
 
-    /** `stop(grace, timeout)` is honoured for HTTP/3 too — in-flight calls finish, the client sees GOAWAY. */
+    /**
+     * `stop(grace, timeout)` is honoured for HTTP/3 too: the call in flight (held until the client saw GOAWAY) finishes,
+     * and the stop returns once it is done, within 10 s of its end against a grace period of 30 s.
+     */
     @Test fun stopWaitsForInFlightH3Call() =
         h3ServerTest {
+            val arrived = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
             val (server, port) =
                 tlsServer {
                     routing {
                         get("/slow") {
-                            kotlinx.coroutines.delay(1500)
+                            arrived.complete(Unit)
+                            release.await()
                             call.respondText("done")
                         }
                     }
@@ -856,28 +863,20 @@ class ServerH3Test {
                 try {
                     coroutineScope {
                         val response = async { c.request(get("/slow")) }
-                        kotlinx.coroutines.delay(300)
-                        val t0 =
-                            kotlin.time.TimeSource.Monotonic
-                                .markNow()
-                        server.stopSuspend(5000, 10000)
-                        val stopTook = t0.elapsedNow()
+                        kotlinx.coroutines.withTimeout(10.seconds) { arrived.await() }
+                        val stop = async { server.stopSuspend(30_000, 40_000) }
+                        // the stop began: the client got GOAWAY, and the stop cannot have returned with the call held
+                        kotlinx.coroutines.withTimeout(10.seconds) { c.goAwayReceived.first { it != null } }
+                        assertFalse(stop.isCompleted, "the stop returned with a call in flight")
+                        release.complete(Unit)
                         val r = response.await()
                         assertEquals(200, r.status)
                         assertEquals("done", r.body.readFullBody().decodeToString())
-                        assertTrue(stopTook < 4.seconds && stopTook > 500.milliseconds, "stop waited for the call: $stopTook")
-                        assertEquals(
-                            true,
-                            kotlinx.coroutines.withTimeoutOrNull(3.seconds) {
-                                while (c.goAwayReceived.value ==
-                                    null
-                                ) {
-                                    kotlinx.coroutines.delay(20)
-                                }
-                                true
-                            },
-                            "the client received GOAWAY",
-                        )
+                        val t0 =
+                            kotlin.time.TimeSource.Monotonic
+                                .markNow()
+                        kotlinx.coroutines.withTimeout(40.seconds) { stop.await() }
+                        assertTrue(t0.elapsedNow() < 10.seconds, "the stop returned ${t0.elapsedNow()} after the call's end")
                     }
                 } finally {
                     c.close()
