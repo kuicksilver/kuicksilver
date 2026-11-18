@@ -296,9 +296,13 @@ public fun interface UdpProxyResolver {
  * @property packetTooBig send an ICMP Packet Too Big to a target whose UDP payload is dropped because it does not fit the
  *   client's QUIC DATAGRAM frames (RFC 9298 section 6.1), when the process may open a raw ICMP socket (Linux and Android
  *   with CAP_NET_RAW); without that privilege, or with false, the payload is only dropped and counted. True by default;
- *   [UdpProxyStats.packetTooBig] says which applies. At most 10 a second per tunnel, never more than the payloads dropped.
+ *   [UdpProxyStats.packetTooBig] says which applies. At most 10 a second per target address (a burst of 5) and 100 a
+ *   second over the proxy, never more than the payloads dropped. Sent from the address the target sent to: see [socketFactory].
  * @property socketFactory opens the UDP socket of a tunnel on a wildcard address of the target's family (`0.0.0.0:0`
- *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment.
+ *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment and, on
+ *   the wildcard bind, reports each datagram's destination, the source of a [packetTooBig] message. A factory may bind one
+ *   address instead (its Packet Too Big messages leave from it); a wildcard socket that does not report destinations (the
+ *   portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource].
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
@@ -367,6 +371,10 @@ public class UdpProxyConfig(
  * @property packetTooBig whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its
  *   first tunnel.
  * @property packetTooBigSent ICMP Packet Too Big messages sent to targets.
+ * @property packetTooBigNoSource ICMP Packet Too Big messages not sent (with [packetTooBig] [PacketTooBigStatus.Available])
+ *   because the address the target sent to is unknown: a socket of [UdpProxyConfig.socketFactory] bound to a wildcard address
+ *   that does not report each datagram's destination (the portable socket; the accelerated one reports it). A socket bound
+ *   to one address answers from that address.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyStats internal constructor(
@@ -386,6 +394,7 @@ public class UdpProxyStats internal constructor(
     public val ignoredUnreachable: Long,
     public val packetTooBig: PacketTooBigStatus,
     public val packetTooBigSent: Long,
+    public val packetTooBigNoSource: Long,
 ) {
     /** The counters, for logs. */
     override fun toString(): String =
@@ -394,7 +403,7 @@ public class UdpProxyStats internal constructor(
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
             "clientBusy=$droppedClientBusy, tooLargeFromTarget=$droppedTooLargeFromTarget, closedUnreachable=$closedUnreachable, " +
             "ignoredUnreachable=$ignoredUnreachable, " +
-            "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent)"
+            "packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent, packetTooBigNoSource=$packetTooBigNoSource)"
 }
 
 /** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */

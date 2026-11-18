@@ -169,6 +169,11 @@ internal class ClosingIo(
         ecnMarkingDisabled = true
     }
 
+    /** The address the socket says it is bound to, when a test makes it another than its own (a wildcard bind). */
+    @kotlin.concurrent.Volatile var boundTo: InetSocketAddress? = null
+
+    override val localAddress: InetSocketAddress get() = boundTo ?: io.localAddress
+
     /** Reports each received datagram's destination as the socket's address, as the accelerated socket does on a wildcard bind. */
     @kotlin.concurrent.Volatile var reportLocal = false
 
@@ -847,6 +852,9 @@ class ConnectUdpTest {
     /** A recording [PtbSink] for the tests: what was sent, how often it was closed. */
     private class RecordingSink : PtbSink {
         val sent = Channel<InetSocketAddress>(Channel.UNLIMITED)
+
+        /** The source address of each message sent: the address the target sent to. */
+        val locals = Channel<InetSocketAddress>(Channel.UNLIMITED)
         var closed = 0
 
         override fun send(
@@ -857,6 +865,7 @@ class ConnectUdpTest {
             mtu: Int,
         ): Boolean {
             sent.trySend(target)
+            locals.trySend(local)
             return true
         }
 
@@ -935,6 +944,76 @@ class ConnectUdpTest {
                 a.close()
                 b.close()
             }
+        }
+
+    /**
+     * RFC 9298 section 6.1 from a socket bound to one address that does not report each datagram's destination (the portable
+     * socket, or the accelerated one off a wildcard bind): the target sent to the socket's own address, so the Packet Too Big
+     * leaves from it.
+     */
+    @Test fun packetTooBigFromASpecificBindLeavesFromTheSocketsAddress() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink()
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                assertFalse(rig.sockets.single().reportLocal, "no destination per datagram")
+                t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400)))
+                assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size)
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedTooLargeForClient == 1L && rig.proxy.stats.packetTooBigSent == 1L }
+                }
+                assertEquals(echoAt, sink.sent.receive())
+                assertEquals(rig.proxySocket(1), sink.locals.receive(), "from the address the socket is bound to")
+                t.close()
+            }
+        }
+
+    /**
+     * RFC 9298 section 6.1 from a socket bound to a wildcard address that does not report each datagram's destination (the
+     * portable socket): there is no address the message could leave from, so none goes, and the drop is counted.
+     */
+    @Test fun negative_wildcardBindWithoutDestinationsSendsNoPacketTooBig() =
+        h3Test {
+            val rig = rig()
+            val sink = RecordingSink()
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = { sink }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                rig.sockets.single().boundTo = InetSocketAddress("0.0.0.0", rig.proxySocket(1).port)
+                repeat(2) { t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(2) { assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size) }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedTooLargeForClient == 2L && rig.proxy.stats.packetTooBigNoSource == 2L }
+                }
+                assertEquals(0, rig.proxy.stats.packetTooBigSent)
+                assertEquals(null, sink.sent.tryReceive().getOrNull(), "nothing sent")
+                assertEquals(0, rig.proxy.impl.ptbSinksOpened.load(), "no sender opened")
+                t.close()
+            }
+            // an IPv6 wildcard alike
+            assertEquals(null, sourceOf(null, InetSocketAddress("::", 4433)))
+            assertEquals(null, sourceOf(null, InetSocketAddress("10.0.0.2", 0)), "a port not known")
+            val v6 = InetSocketAddress("2001:db8::1", 4433)
+            assertEquals(v6, sourceOf(null, v6))
+            assertEquals(v6, sourceOf(v6, InetSocketAddress("0.0.0.0", 4433)), "the datagram's own destination first")
         }
 
     /** One client has at most 4 name lookups at once (a blocked one counts until it returns); a fifth is refused 503. */

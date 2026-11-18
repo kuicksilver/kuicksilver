@@ -131,6 +131,7 @@ internal class UdpProxyImpl(
     internal val closedUnreachable = AtomicLong(0)
     internal val ignoredUnreachable = AtomicLong(0)
     internal val packetTooBigSent = AtomicLong(0)
+    internal val packetTooBigNoSource = AtomicLong(0)
 
     /** RFC 9298 section 6.1: probed once, at the first tunnel, when the configuration asks for it. */
     private val packetTooBig =
@@ -221,6 +222,7 @@ internal class UdpProxyImpl(
             ignoredUnreachable.load(),
             packetTooBig.load(),
             packetTooBigSent.load(),
+            packetTooBigNoSource.load(),
         )
 
     suspend fun serve(
@@ -663,19 +665,25 @@ private class ProxyTunnel(
     /**
      * RFC 9298 section 6.1: "the UDP proxy SHOULD drop the UDP payload and send an ICMP Packet Too Big message to the
      * target". [d] is the HTTP datagram that did not fit (Context ID 0, then the payload); [maxDatagram] the largest that
-     * does, from which the MTU to report follows (the UDP and IP headers on top of the largest payload). Needs the address
-     * the target sent to ([local], which the accelerated socket reports; the portable one does not), the privilege, and a
-     * token of the target's and of the proxy's limits ([UdpProxyImpl.sendPacketTooBig]).
+     * does, from which the MTU to report follows (the UDP and IP headers on top of the largest payload). Needs the privilege,
+     * a token of the target's and of the proxy's limits ([UdpProxyImpl.sendPacketTooBig]) and the address the target sent
+     * to: [local], the datagram's destination, which the accelerated socket reports on a wildcard bind (IP_PKTINFO /
+     * IPV6_PKTINFO), else the socket's own address when it is bound to one ([sourceOf]). A wildcard socket that does not
+     * report it (the portable socket) has none: the message is not sent and counted in [UdpProxyImpl.packetTooBigNoSource].
      */
     private suspend fun packetTooBig(
         local: InetSocketAddress?,
         d: ByteArray,
         maxDatagram: Int,
     ) {
-        if (local == null) return
+        val from = sourceOf(local, io.io.localAddress)
+        if (from == null) {
+            if (proxy.packetTooBigAvailable()) proxy.count(proxy.packetTooBigNoSource)
+            return
+        }
         // the largest UDP payload that fits (the datagram less its one-byte Context ID) and the headers it would travel in
         val mtu = (maxDatagram - 1).coerceAtLeast(0) + if (':' in target.ipLiteral()) IPV6_UDP_OVERHEAD else IPV4_UDP_OVERHEAD
-        if (proxy.sendPacketTooBig(target, local, d.copyOfRange(1, d.size), d.size - 1, mtu)) proxy.count(proxy.packetTooBigSent)
+        if (proxy.sendPacketTooBig(target, from, d.copyOfRange(1, d.size), d.size - 1, mtu)) proxy.count(proxy.packetTooBigSent)
     }
 
     /** Datagrams from the socket: only the target's (section 3.1), each one an HTTP datagram with Context ID 0. */
@@ -723,6 +731,23 @@ private class ProxyTunnel(
                 }
             }
         }
+    }
+}
+
+/**
+ * The address a target's datagram was sent to, the source of the Packet Too Big that answers it: [local], the destination
+ * the socket reported for the datagram, else [bound], the socket's own address, when it names one address and port (a
+ * socket bound to one address takes only datagrams sent to it). Null for a wildcard socket that reported none.
+ */
+internal fun sourceOf(
+    local: InetSocketAddress?,
+    bound: InetSocketAddress,
+): InetSocketAddress? {
+    if (local != null) return local
+    if (bound.port == 0) return null
+    return when (bound.ipLiteral()) {
+        "0.0.0.0", "::", "::ffff:0.0.0.0" -> null
+        else -> bound
     }
 }
 

@@ -46,6 +46,9 @@ its targets (section 7). A client that wants QUIC through the tunnel needs the t
 - The ICMP Packet Too Big of section 6.1 is sent only where the process may open a raw ICMP socket (Linux and Android with
   `CAP_NET_RAW`; owner's decision, 2026-11-18): `ksl_icmp_*`, probed once, on by default (`UdpProxyConfig.packetTooBig`),
   rate-limited per target. Without the privilege, and on Apple platforms and Windows, the payload is dropped and counted.
+  It leaves from the address the target sent to: the datagram's destination, which the accelerated socket reports on a
+  wildcard bind (`IP_PKTINFO`), else the socket's own address when it is bound to one; a wildcard socket that reports no
+  destination (the portable one) sends none (`packetTooBigNoSource`).
 - The proxy refuses its own addresses by default (the address a request's connection reached, the listener's own); the
   host's other addresses (NAT aliases, other interfaces) are the operator's to add (`UdpTargetFilter.excluding`).
 - Limits are per client as well as per tunnel: an IPv6 client is its /64, its tunnels share one rate, and a silent
