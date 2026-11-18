@@ -232,6 +232,7 @@ internal class KslQuicTlsSession(
     private val event = KslEvent()
     private var presented: List<Certificate> = emptyList()
     private var alpn: String? = null
+    private var group: String? = null
     private var failure: DriveResult.Failed? = null
     private var done = false
     private val verification = Verification(ctx.config)
@@ -524,6 +525,7 @@ internal class KslQuicTlsSession(
     private fun completed() {
         done = true
         alpn = Ksl.sslGet(s(), KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
+        group = groupOf(s())
         val active = active
         val config = active.config
         val pinsApply =
@@ -708,6 +710,8 @@ internal class KslQuicTlsSession(
         } else {
             presented
         }
+
+    override val keyExchangeGroup: String? get() = group
 
     // a server that accepted 0-RTT knows the protocol from the ClientHello, before the handshake completes
     override val negotiatedAlpn: String? get() =

@@ -1338,6 +1338,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.PinScope
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsIdentity
@@ -1511,10 +1512,11 @@ The Ktor server engine can watch the CA file too: `EngineMain`'s `kuicksilver.tl
 A server's `sniSelector` chooses each handshake's identity from the ClientHello (RFC 6066 section 3), over TCP
 (`TlsConnection`) and QUIC (`QuicTlsSession`, HTTP/3) alike. It sees a `ClientHelloInfo` (the server name, null without
 SNI; the ALPN offer; the signature schemes) while the handshake is paused, and returns a
-`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling`, experimental) or null:
+`ServerTlsOverride(identity, alpn, clientAuth, trust)` (with `ocspStapling` and `keyExchangeGroups`, experimental) or
+null:
 
-- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust` and staple replace the configuration's
-  for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
+- an override: its chain and key answer, and its `alpn`, `clientAuth`, `trust`, staple and key-exchange groups replace
+  the configuration's for that connection (`localCertificates` reports the chosen chain). Over TCP its `alpn` goes without `h3`, which
   identifies HTTP/3 over QUIC only (RFC 9114 section 3.1); a list of `h3` alone serves the name over QUIC only, and its
   TCP handshake ends with `no_application_protocol` (120, RFC 7301 section 3.2), as does that of a client without ALPN
   where `alpnFallback` is set and the list leaves it out ([Configuration](#configuration));
@@ -1536,7 +1538,7 @@ Session tickets are bound to the server name and to the certificate they were is
 under another name than its own.
 
 The context built for an answer is kept and shared by the next handshakes with the same answer (the same identity,
-trust and `OcspStapling` objects, equal `alpn` and `clientAuth`), so a selector that returns `ServerTlsOverride(identity)`
+trust and `OcspStapling` objects, equal `alpn`, `clientAuth` and `keyExchangeGroups`), so a selector that returns `ServerTlsOverride(identity)`
 for a known identity costs a handshake little; a `TlsIdentity.Reloadable` still reaches the next handshake after a
 reload. Hand out the same `TrustConfig` and `OcspStapling` objects for a name: a new object per call is a new answer
 and builds a context each time. Up to 64 answers are kept per configuration, the least recently used going first, and
@@ -1806,12 +1808,42 @@ val debugClient = tlsConfig(TlsRole.Client) {
 
 ### Key exchange groups
 
-Both roles negotiate TLS 1.3 key exchange from one list: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`,
-`secp521r1`. A client sends key shares for the post-quantum hybrid and for X25519, so a server of either kind picks its
-group in one flight. A server takes the client's X25519 share when that is all the client sent, even if the client also
-lists the hybrid as supported: OpenSSL's default would answer with a HelloRetryRequest for `X25519MLKEM768`, and that
-extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche (interop `handshakeloss`). The
-list is not configurable.
+By default both roles negotiate key exchange from one list: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`,
+`secp384r1`, `secp521r1` (`KeyExchangeGroups.Default`). A client sends key shares for the post-quantum hybrid and for
+X25519, so a server of either kind picks its group in one flight.
+
+A server picks by its own order, a group the client sent a key share for first: among the client's shares it takes the
+first group of its list, so it takes the client's X25519 share when that is all the client sent, even if the client
+also lists the hybrid as supported (OpenSSL's default would answer with a HelloRetryRequest for `X25519MLKEM768`, and that
+extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche, interop `handshakeloss`). With no
+usable share it asks with a HelloRetryRequest for the first group of its list the client supports (RFC 9846 section
+4.2.1); with no group in common the handshake ends with `handshake_failure` (40; over QUIC, CRYPTO_ERROR 0x0128). A
+server that took another group than its first names its list in its EncryptedExtensions (RFC 9846 section 4.3.7).
+
+`keyExchangeGroups` (experimental) replaces the list, most preferred first, for clients, servers and `sniSelector`
+answers (`ServerTlsOverride.keyExchangeGroups`). A client's `keyShares` are the groups it sends shares for in its first
+ClientHello, 1 to 4 of them; left out, the first group and the first later one of the other kind (hybrid or classical),
+as BoringSSL does:
+
+```kotlin
+// guide:tls:key-exchange-groups
+val client = tlsConfig(TlsRole.Client) {
+    serverName = "server.test"
+    keyExchangeGroups = KeyExchangeGroups(
+        groups = listOf(KeyExchangeGroups.X25519MLKEM768, KeyExchangeGroups.X25519, KeyExchangeGroups.SECP256R1),
+        keyShares = setOf(KeyExchangeGroups.X25519),   // one small share; a server that wants the hybrid asks again
+    )
+}
+```
+
+The names are `X25519MLKEM768`, `SecP256r1MLKEM768`, `SecP384r1MLKEM1024`, `x25519`, `x448`, `secp256r1`, `secp384r1` and
+`secp521r1` (the constants of `KeyExchangeGroups`, case ignored). An unknown name, a duplicate, an empty list or key shares
+outside the list throw `TlsException.Config` when the `KeyExchangeGroups` is made; `build()` throws it for a group the
+OpenSSL in use does not provide (a system OpenSSL built without one, a FIPS provider), for `keyShares` on a server and
+for `Tls12And13` without an elliptic curve in the list (TLS 1.2 has no hybrid). A HelloRetryRequest costs a round trip
+and rejects 0-RTT (RFC 9001 section 4.6.2); a session ticket resumes under other groups, its key exchange being fresh.
+`TlsConnection.keyExchangeGroup`, `QuicTlsSession.keyExchangeGroup` and `QuicConnection.keyExchangeGroup` report the
+group a handshake used.
 
 ## HTTP/3 with Kuicksilver
 
@@ -5494,6 +5526,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `revocation` (*experimental*) | `RevocationPolicy` | `StapledIfPresent` | clients; `RequireStapled` only with a trust `ksl` verifies (`AnchoredCa`, `Platform` on Linux Native) | 0.3.0 | how the OCSP response the server staples is checked: `Off`, `StapledIfPresent` (soft-fail without one), `RequireStapled`; a must-staple certificate needs one under every policy but `Off`. Alerts: 113 for every failed staple check (also with `genericAlerts`); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#configuration)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
+| `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two) | 1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with `Tls12And13` at least one elliptic curve | 0.3.0 | key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, `handshake_failure` with none in common ([Key exchange groups](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-exchange-groups)) |
 
 #### SessionTicketConfig
 
@@ -5508,9 +5541,6 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 The keys stay in native memory: generated keys never reach Kotlin, explicit keys are
 copied there when the configuration is built and the given arrays are zeroed (keep the keys in your secret store, not
 in the arrays).
-
-Key exchange groups are not configurable: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`, `secp521r1`
-([Key exchange groups](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-exchange-groups)).
 
 ### TrustConfig
 
@@ -5745,6 +5775,7 @@ rate limits, …) keep their defaults and are not configurable from the engine. 
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` |  | 0.3.0 | the OCSP response stapled on TCP and QUIC ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true turns off the `421 Misdirected Request` for hosts the connection's certificate does not name (RFC 9110 section 7.4), only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `versions` (*experimental*) | `TlsVersions` | `Tls13` |  | 0.3.0 | `Tls12And13` serves TLS 1.2 clients over TCP too, under the RFC 9325 profile (ECDHE and AEAD only, Extended Master Secret, no renegotiation); HTTP/3 stays TLS 1.3 ([TLS 1.2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#tls-12-on-the-server)) |
+| `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` | no key shares; with `versions` `Tls12And13` at least one elliptic curve | 0.3.0 | the server's key-exchange groups for TCP and HTTP/3, in its order of preference ([Key exchange groups](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-exchange-groups)) |
 
 `EngineMain` keys ([EngineMain and configuration keys](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#enginemain-and-configuration-keys)):
 `kuicksilver.tls.certificateChain` and `kuicksilver.tls.privateKey` (PEM files, set together),

@@ -11,6 +11,7 @@ import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.ClientHelloInfo
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.OcspStapling
 import io.kuicksilver.tls.ServerTlsOverride
 import io.kuicksilver.tls.TlsConfig
@@ -63,6 +64,9 @@ public class KuicksilverTlsConnector private constructor(
     /** The TLS versions of the TCP side; QUIC is always TLS 1.3. See [Builder.versions]. */
     @ExperimentalKuicksilverApi
     public val versions: TlsVersions,
+    /** The key-exchange groups of TCP and QUIC, in the server's order of preference. See [Builder.keyExchangeGroups]. */
+    @ExperimentalKuicksilverApi
+    public val keyExchangeGroups: KeyExchangeGroups,
 ) : EngineConnectorConfig {
     /** Always HTTPS. */
     override val type: ConnectorType get() = ConnectorType.HTTPS
@@ -93,6 +97,7 @@ public class KuicksilverTlsConnector private constructor(
             cipherSuites = this@KuicksilverTlsConnector.cipherSuites
             sniSelector = this@KuicksilverTlsConnector.sniSelector?.let { if (quic) forHttp3(it) else it }
             ocspStapling = this@KuicksilverTlsConnector.ocspStapling
+            keyExchangeGroups = this@KuicksilverTlsConnector.keyExchangeGroups
             if (!quic) {
                 versions = this@KuicksilverTlsConnector.versions
                 // RFC 9113 section 3.3: "HTTP/2 connections over TLS MUST use protocol negotiation in TLS": a client without
@@ -111,7 +116,11 @@ public class KuicksilverTlsConnector private constructor(
         { hello ->
             selector(hello)?.let { o ->
                 val alpn = o.alpn
-                if (alpn == null || "h3" !in alpn) o else ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling)
+                if (alpn == null || "h3" !in alpn) {
+                    o
+                } else {
+                    ServerTlsOverride(o.identity, null, o.clientAuth, o.trust, o.ocspStapling, o.keyExchangeGroups)
+                }
             }
         }
 
@@ -129,6 +138,7 @@ public class KuicksilverTlsConnector private constructor(
             ocspStapling,
             trustedGateway,
             versions,
+            keyExchangeGroups,
         )
 
     /** For logs. */
@@ -213,6 +223,16 @@ public class KuicksilverTlsConnector private constructor(
         @ExperimentalKuicksilverApi
         public var versions: TlsVersions = TlsVersions.Tls13
 
+        /**
+         * The key-exchange groups of TCP and QUIC handshakes, in the server's order of preference (`TlsConfig.Builder.keyExchangeGroups`);
+         * default [KeyExchangeGroups.Default]. The server takes the first of them a client sent a key share for, else asks for
+         * the first the client supports with a HelloRetryRequest; a client with none of them is refused with `handshake_failure`.
+         * Key shares are a client's setting: a list with them makes the server's start fail. With [versions] Tls12And13 the
+         * list needs an elliptic curve, the hybrids being TLS 1.3 only.
+         */
+        @ExperimentalKuicksilverApi
+        public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
+
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */
         @OptIn(ExperimentalKuicksilverApi::class)
         public fun build(): KuicksilverTlsConnector {
@@ -228,6 +248,7 @@ public class KuicksilverTlsConnector private constructor(
                 ocspStapling,
                 trustedGateway,
                 versions,
+                keyExchangeGroups,
             )
         }
     }

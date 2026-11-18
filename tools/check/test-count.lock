@@ -2507,6 +2507,7 @@ kuicksilver-ktor-network/src/commonTest	io.kuicksilver.ktor.network.websocket.Pe
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.availabilitySample
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.clientCaRotationSample
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.clientConfigSample
+kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.keyExchangeGroupsSample
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.keylogSample
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.pemRootsSample
 kuicksilver-ktor-network/src/jvmTest	io.kuicksilver.ktor.network.GuideSamplesTest.revocationSample
@@ -2850,6 +2851,8 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerIdentity
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerIdentityReloadTest.negative_reloadIntervalBelowOneSecondRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerIdentityReloadTest.negative_reloadIntervalWithoutIdentityFilesFailsTheStart
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerIdentityReloadTest.tcpAndQuicServeReloadedLeafKeepOpenConnections
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerKeyExchangeGroupsTest.negative_keySharesOrNoTls12CurveFailWhenTheConfigurationIsMade
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerKeyExchangeGroupsTest.theConnectorsGroupsReachTcpAndQuic
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerMisdirectedRequestTest.h1HostsTheCertificateNames
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerMisdirectedRequestTest.negative_h1CertificateChosenBySniIsTheOneChecked
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerMisdirectedRequestTest.negative_h1HostTheCertificateDoesNotNameGets421
@@ -3858,6 +3861,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.streamEch
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.tlsFailureMapsToCryptoError
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.transportParametersCidAuthentication
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.HandshakeTest.verifyPauseRoundTrip
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.aHelloRetryRequestCompletesTheConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.negative_noCommonGroupCloses0x0128
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyExchangeGroupsCoreTest.negative_zeroRttAfterAHelloRetryRequestIsRejectedAndTheConnectionCompletes
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.ackOfNewPhaseCarriedWithNewKeysIsFine
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_ackOfNewPhaseCarriedWithOldKeys
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.KeyPhaseOrderingTest.negative_afterOwnUpdateNewPhaseBelowOldPacket
@@ -5385,6 +5391,20 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.ipLiteralsDetecte
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.lowercaseAndTrailingDot
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.negative_nonAsciiHostRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.HostNameTest.wildcardNotAllowed
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.defaultIsTheListOfTheContextsAndTwoShares
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.derivedKeyShares
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.everyGroupIsAvailableInTheBundledOpenSsl
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.namesInAnyCaseAreCanonical
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.negative_anOverrideWithKeySharesEndsTheHandshake
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.negative_buildRefusesGroupsTheRoleOrVersionsCannotUse
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.negative_invalidGroupListsAreRefusedWhenBuilt
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.negative_quicListsWithoutACommonGroupFailWithHandshakeFailure
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.negative_tcpListsWithoutACommonGroupFailWithHandshakeFailure
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.quicListsMeetingOnANonFirstGroupCompleteAfterAHelloRetryRequest
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.quicServerPicksByItsOwnOrder
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.quicSniOverrideBringsItsOwnGroups
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.tcpListsMeetingOnANonFirstGroupComplete
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeyExchangeGroupsTest.tcpTls12And13KeepsTheServerOrderAmongShares
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.explicitSinkReceivesRfc9850Lines
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.noSinkMeansNoLines
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.KeylogTest.tcpConnectionLogsBothSides

@@ -131,6 +131,14 @@ Pre-release status: with `loops > 1` each loop answers with a stateless reset on
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
 - **Verification:** the committed fuzzing corpora run as regression tests in `jvmTest`, and `tools/c-test.sh` runs `ksl` under ASan/UBSan, both in the local gate (`tools/ci/local-matrix.sh`); the weekly hosted campaign (`.github/workflows/fuzz.yml`) never publishes a finding's input or stack trace, which is why ClusterFuzzLite, which would, is not enabled (`.clusterfuzzlite/` is kept for a future OSS-Fuzz application).
 
+0.3.0: a server's `ksl_client_hello_cb` reads the ClientHello's `key_share` extension itself (B1, before OpenSSL has
+checked it) to pick the group by the server's own order (`ksl_key_share_choice`, `kuicksilver-native/src/c/ksl_ctx.c`):
+every entry's group and length are read within the extension's bytes, a length past the end, an empty key_exchange or a
+trailing byte make it malformed, and a malformed extension changes nothing (OpenSSL then answers it with
+`decode_error`); the work is one pass over the extension against at most 8 groups, nothing is allocated (CWE-125,
+CWE-20). C `negative_key_share_scan_bounds` under ASan/UBSan; the ksl fuzz target's ClientHello modes (3, 4, 7, 0xfd)
+reach it with every input, their seeds carry real key shares.
+
 0.3.0: the DNS parser of the HTTPS records (RFC 9460, `kuicksilver-ktor-client/.../dns/`) reads answers from the system
 resolver or a DNS-over-HTTPS exchange, which may be on the attacker's path: every read is bounds-checked, a name follows
 at most 128 compression pointers and each must point back, names are at most 255 bytes, and nothing is allocated beyond

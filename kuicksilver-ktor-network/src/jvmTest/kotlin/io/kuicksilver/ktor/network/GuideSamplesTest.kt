@@ -16,6 +16,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.CertificateRevocationList
 import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.OcspStapling
 import io.kuicksilver.tls.PinScope
 import io.kuicksilver.tls.RevocationPolicy
@@ -76,6 +77,20 @@ class GuideSamplesTest {
                 this.identity = identity
             }
         assertEquals(1, server.identity!!.chain.size)
+    }
+
+    @Test fun keyExchangeGroupsSample() {
+        // guide:tls:key-exchange-groups
+        val client =
+            tlsConfig(TlsRole.Client) {
+                serverName = "server.test"
+                keyExchangeGroups =
+                    KeyExchangeGroups(
+                        groups = listOf(KeyExchangeGroups.X25519MLKEM768, KeyExchangeGroups.X25519, KeyExchangeGroups.SECP256R1),
+                        keyShares = setOf(KeyExchangeGroups.X25519), // one small share; a server that wants the hybrid asks again
+                    )
+            }
+        assertEquals(listOf(KeyExchangeGroups.X25519), client.keyExchangeGroups.keyShares)
     }
 
     @Test fun trustSample() {

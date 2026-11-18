@@ -186,6 +186,14 @@ public class TlsConnection private constructor(
     public var protocolVersion: TlsVersion = TlsVersion.Tls13
         private set
 
+    /**
+     * The key-exchange group of the handshake ([KeyExchangeGroups] names, e.g. [KeyExchangeGroups.X25519MLKEM768]; in TLS 1.2
+     * the ECDHE curve); null until the handshake completed.
+     */
+    @ExperimentalKuicksilverApi
+    public var keyExchangeGroup: String? = null
+        private set
+
     private fun s(): Long {
         if (closed || ssl == 0L) throw IllegalStateException("connection closed")
         return ssl
@@ -393,6 +401,7 @@ public class TlsConnection private constructor(
         negotiatedAlpn = Ksl.sslGet(s(), KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
         protocolVersion = if (Ksl.sslGet(s(), KslConst.GET_VERSION)[1].toInt() == 0x03) TlsVersion.Tls12 else TlsVersion.Tls13
         reused = Ksl.sslGet(s(), KslConst.GET_SESSION_REUSED)[0].toInt() == 1
+        keyExchangeGroup = groupOf(s())
         presented = chain()
         val effective = overrideCtx?.ctx?.config ?: config
         if (effective.role == TlsRole.Client) {

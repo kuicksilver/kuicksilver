@@ -9,6 +9,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.native.Ksl
+import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
 import kotlin.time.Duration
@@ -184,6 +185,8 @@ public class TlsConfig private constructor(
     @property:ExperimentalKuicksilverApi public val ocspStapling: OcspStapling?,
     /** The protocol a TLS-over-TCP client without ALPN speaks, null for none; see [Builder.alpnFallback]. */
     @property:ExperimentalKuicksilverApi public val alpnFallback: String? = null,
+    /** The key-exchange groups and a client's key shares; see [Builder.keyExchangeGroups]. */
+    @property:ExperimentalKuicksilverApi public val keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default,
     /** Made by [withOverride] for one sniSelector answer: its contexts are kept apart from the base configuration's ([SharedServerContexts]). */
     internal val isOverride: Boolean = false,
 ) {
@@ -195,6 +198,8 @@ public class TlsConfig private constructor(
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {
         val overrideAlpn = o.alpn?.toList()?.also { validateAlpn(it) } // copy first: the stored list is the one validated
         checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)
+        val groups = o.keyExchangeGroups ?: keyExchangeGroups
+        checkGroups(groups, role, versions)
         return TlsConfig(
             role,
             overrideAlpn ?: alpn,
@@ -212,6 +217,7 @@ public class TlsConfig private constructor(
             revocation,
             o.ocspStapling,
             alpnFallback,
+            groups,
             isOverride = true,
         )
     }
@@ -373,9 +379,20 @@ public class TlsConfig private constructor(
         public var alpnFallback: String? = null
 
         /**
+         * The key-exchange groups, most preferred first, and the groups a client sends key shares for (RFC 9846 sections 4.3.7 and
+         * 4.3.8); default [KeyExchangeGroups.Default]: X25519MLKEM768, X25519, P-256, X448, P-384, P-521, a client sending
+         * shares for the first two. A server picks by its own order, a group the client sent a share for first; see
+         * [KeyExchangeGroups] for the HelloRetryRequest and the `handshake_failure` a mismatch costs. [build] throws
+         * [TlsException.Config] for a group the OpenSSL in use does not provide, for key shares on a server, and for
+         * [TlsVersions.Tls12And13] with no elliptic curve in the list (TLS 1.2 has no hybrid).
+         */
+        @ExperimentalKuicksilverApi
+        public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
+
+        /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
@@ -399,6 +416,7 @@ public class TlsConfig private constructor(
                 if (fallback == ALPN_H3) throw TlsException.Config("alpnFallback cannot be h3: HTTP/3 runs over QUIC only")
                 validateAlpn(listOf(fallback))
             }
+            checkGroups(keyExchangeGroups, role, versions)
             return TlsConfig(
                 role,
                 validAlpn,
@@ -416,8 +434,37 @@ public class TlsConfig private constructor(
                 revocation,
                 ocspStapling,
                 fallback,
+                keyExchangeGroups,
             )
         }
+    }
+}
+
+/**
+ * The checks of [TlsConfig.Builder.keyExchangeGroups] that need the role, the versions or the OpenSSL in use (the names were
+ * checked by [KeyExchangeGroups]): key shares on a server, no elliptic curve for TLS 1.2, a group this OpenSSL does not provide.
+ */
+@OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
+private fun checkGroups(
+    groups: KeyExchangeGroups,
+    role: TlsRole,
+    versions: TlsVersions,
+) {
+    if (role == TlsRole.Server && groups.sharesGiven) {
+        throw TlsException.Config("keyShares apply to clients: a server picks from the client's key shares")
+    }
+    if (versions == TlsVersions.Tls12And13 && !groups.hasTls12Group) {
+        throw TlsException.Config("Tls12And13 needs an elliptic curve among the key-exchange groups: TLS 1.2 has no hybrid")
+    }
+    if (groups == KeyExchangeGroups.Default) return // every context starts with it
+    KslLoader.ensureLoaded()
+    val h = Ksl.ctxNew(KslConst.CLIENT)
+    try {
+        Ksl.ctxSetGroups(h, groups.kslList(TlsRole.Server))
+    } catch (e: KslException.Internal) {
+        throw TlsException.Config("key-exchange groups refused: ${e.message}")
+    } finally {
+        Ksl.ctxFree(h)
     }
 }
 
@@ -516,5 +563,32 @@ public class ServerTlsOverride(
         ocspStapling: OcspStapling?,
     ) : this(identity, alpn, clientAuth, trust) {
         this.ocspStapling = ocspStapling
+    }
+
+    /**
+     * The key-exchange groups the server picks from on this connection (its own order decides, RFC 9846 section 4.3.7); null
+     * keeps [TlsConfig.keyExchangeGroups]. Applied once the selector answered, so a ClientHello without a key share for them
+     * gets a HelloRetryRequest for this list's group, as under [TlsConfig.keyExchangeGroups]. An override with key shares (a
+     * client's setting) aborts the handshake with [TlsException.Config], as [TlsConfig.Builder.build] refuses them.
+     */
+    @ExperimentalKuicksilverApi
+    public var keyExchangeGroups: KeyExchangeGroups? = null
+        private set
+
+    /**
+     * An override with its own [keyExchangeGroups][ServerTlsOverride.keyExchangeGroups] (see the primary constructor for the
+     * rest).
+     */
+    @ExperimentalKuicksilverApi
+    public constructor(
+        identity: TlsIdentity,
+        alpn: List<String>?,
+        clientAuth: ClientAuth?,
+        trust: TrustConfig?,
+        ocspStapling: OcspStapling?,
+        keyExchangeGroups: KeyExchangeGroups?,
+    ) : this(identity, alpn, clientAuth, trust) {
+        this.ocspStapling = ocspStapling
+        this.keyExchangeGroups = keyExchangeGroups
     }
 }

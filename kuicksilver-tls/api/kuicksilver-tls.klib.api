@@ -201,6 +201,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
         abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
     open val earlyDataAccepted // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted|{}earlyDataAccepted[0]
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val keyExchangeGroup // io.kuicksilver.tls/QuicTlsSession.keyExchangeGroup|{}keyExchangeGroup[0]
+        open fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/QuicTlsSession.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     open val localCertificates // io.kuicksilver.tls/QuicTlsSession.localCertificates|{}localCertificates[0]
         open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
 
@@ -610,6 +612,41 @@ final class io.kuicksilver.tls/InMemoryKeylog : io.kuicksilver.tls/KeylogSink { 
     final fun log(kotlin/String) // io.kuicksilver.tls/InMemoryKeylog.log|log(kotlin.String){}[0]
 }
 
+final class io.kuicksilver.tls/KeyExchangeGroups { // io.kuicksilver.tls/KeyExchangeGroups|null[0]
+    constructor <init>(kotlin.collections/List<kotlin/String>, kotlin.collections/Set<kotlin/String>? = ...) // io.kuicksilver.tls/KeyExchangeGroups.<init>|<init>(kotlin.collections.List<kotlin.String>;kotlin.collections.Set<kotlin.String>?){}[0]
+
+    final val groups // io.kuicksilver.tls/KeyExchangeGroups.groups|{}groups[0]
+        final fun <get-groups>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/KeyExchangeGroups.groups.<get-groups>|<get-groups>(){}[0]
+    final val keyShares // io.kuicksilver.tls/KeyExchangeGroups.keyShares|{}keyShares[0]
+        final fun <get-keyShares>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/KeyExchangeGroups.keyShares.<get-keyShares>|<get-keyShares>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/KeyExchangeGroups.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/KeyExchangeGroups.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/KeyExchangeGroups.Companion|null[0]
+        final const val SECP256R1 // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP256R1|{}SECP256R1[0]
+            final fun <get-SECP256R1>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP256R1.<get-SECP256R1>|<get-SECP256R1>(){}[0]
+        final const val SECP256R1MLKEM768 // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP256R1MLKEM768|{}SECP256R1MLKEM768[0]
+            final fun <get-SECP256R1MLKEM768>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP256R1MLKEM768.<get-SECP256R1MLKEM768>|<get-SECP256R1MLKEM768>(){}[0]
+        final const val SECP384R1 // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP384R1|{}SECP384R1[0]
+            final fun <get-SECP384R1>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP384R1.<get-SECP384R1>|<get-SECP384R1>(){}[0]
+        final const val SECP384R1MLKEM1024 // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP384R1MLKEM1024|{}SECP384R1MLKEM1024[0]
+            final fun <get-SECP384R1MLKEM1024>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP384R1MLKEM1024.<get-SECP384R1MLKEM1024>|<get-SECP384R1MLKEM1024>(){}[0]
+        final const val SECP521R1 // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP521R1|{}SECP521R1[0]
+            final fun <get-SECP521R1>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.SECP521R1.<get-SECP521R1>|<get-SECP521R1>(){}[0]
+        final const val X25519 // io.kuicksilver.tls/KeyExchangeGroups.Companion.X25519|{}X25519[0]
+            final fun <get-X25519>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.X25519.<get-X25519>|<get-X25519>(){}[0]
+        final const val X25519MLKEM768 // io.kuicksilver.tls/KeyExchangeGroups.Companion.X25519MLKEM768|{}X25519MLKEM768[0]
+            final fun <get-X25519MLKEM768>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.X25519MLKEM768.<get-X25519MLKEM768>|<get-X25519MLKEM768>(){}[0]
+        final const val X448 // io.kuicksilver.tls/KeyExchangeGroups.Companion.X448|{}X448[0]
+            final fun <get-X448>(): kotlin/String // io.kuicksilver.tls/KeyExchangeGroups.Companion.X448.<get-X448>|<get-X448>(){}[0]
+
+        final val Default // io.kuicksilver.tls/KeyExchangeGroups.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.kuicksilver.tls/KeyExchangeGroups // io.kuicksilver.tls/KeyExchangeGroups.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
 final class io.kuicksilver.tls/OcspStapling { // io.kuicksilver.tls/OcspStapling|null[0]
     constructor <init>(kotlin/ByteArray? = ...) // io.kuicksilver.tls/OcspStapling.<init>|<init>(kotlin.ByteArray?){}[0]
 
@@ -639,6 +676,7 @@ final class io.kuicksilver.tls/QuicSessionTicket : kotlin/AutoCloseable { // io.
 final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerTlsOverride|null[0]
     constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>? = ..., io.kuicksilver.tls/ClientAuth? = ..., io.kuicksilver.tls/TrustConfig? = ...) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?){}[0]
     constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>?, io.kuicksilver.tls/ClientAuth?, io.kuicksilver.tls/TrustConfig?, io.kuicksilver.tls/OcspStapling?) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?;io.kuicksilver.tls.OcspStapling?){}[0]
+    constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>?, io.kuicksilver.tls/ClientAuth?, io.kuicksilver.tls/TrustConfig?, io.kuicksilver.tls/OcspStapling?, io.kuicksilver.tls/KeyExchangeGroups?) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?;io.kuicksilver.tls.OcspStapling?;io.kuicksilver.tls.KeyExchangeGroups?){}[0]
 
     final val alpn // io.kuicksilver.tls/ServerTlsOverride.alpn|{}alpn[0]
         final fun <get-alpn>(): kotlin.collections/List<kotlin/String>? // io.kuicksilver.tls/ServerTlsOverride.alpn.<get-alpn>|<get-alpn>(){}[0]
@@ -649,6 +687,8 @@ final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerT
     final val trust // io.kuicksilver.tls/ServerTlsOverride.trust|{}trust[0]
         final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.tls/ServerTlsOverride.trust.<get-trust>|<get-trust>(){}[0]
 
+    final var keyExchangeGroups // io.kuicksilver.tls/ServerTlsOverride.keyExchangeGroups|{}keyExchangeGroups[0]
+        final fun <get-keyExchangeGroups>(): io.kuicksilver.tls/KeyExchangeGroups? // io.kuicksilver.tls/ServerTlsOverride.keyExchangeGroups.<get-keyExchangeGroups>|<get-keyExchangeGroups>(){}[0]
     final var ocspStapling // io.kuicksilver.tls/ServerTlsOverride.ocspStapling|{}ocspStapling[0]
         final fun <get-ocspStapling>(): io.kuicksilver.tls/OcspStapling? // io.kuicksilver.tls/ServerTlsOverride.ocspStapling.<get-ocspStapling>|<get-ocspStapling>(){}[0]
 }
@@ -704,6 +744,8 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final fun <get-handshakeTimeout>(): kotlin.time/Duration // io.kuicksilver.tls/TlsConfig.handshakeTimeout.<get-handshakeTimeout>|<get-handshakeTimeout>(){}[0]
     final val identity // io.kuicksilver.tls/TlsConfig.identity|{}identity[0]
         final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.tls/TlsConfig.identity.<get-identity>|<get-identity>(){}[0]
+    final val keyExchangeGroups // io.kuicksilver.tls/TlsConfig.keyExchangeGroups|{}keyExchangeGroups[0]
+        final fun <get-keyExchangeGroups>(): io.kuicksilver.tls/KeyExchangeGroups // io.kuicksilver.tls/TlsConfig.keyExchangeGroups.<get-keyExchangeGroups>|<get-keyExchangeGroups>(){}[0]
     final val keylog // io.kuicksilver.tls/TlsConfig.keylog|{}keylog[0]
         final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.keylog.<get-keylog>|<get-keylog>(){}[0]
     final val ocspStapling // io.kuicksilver.tls/TlsConfig.ocspStapling|{}ocspStapling[0]
@@ -750,6 +792,9 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var identity // io.kuicksilver.tls/TlsConfig.Builder.identity|{}identity[0]
             final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.tls/TlsConfig.Builder.identity.<get-identity>|<get-identity>(){}[0]
             final fun <set-identity>(io.kuicksilver.tls/TlsIdentity?) // io.kuicksilver.tls/TlsConfig.Builder.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity?){}[0]
+        final var keyExchangeGroups // io.kuicksilver.tls/TlsConfig.Builder.keyExchangeGroups|{}keyExchangeGroups[0]
+            final fun <get-keyExchangeGroups>(): io.kuicksilver.tls/KeyExchangeGroups // io.kuicksilver.tls/TlsConfig.Builder.keyExchangeGroups.<get-keyExchangeGroups>|<get-keyExchangeGroups>(){}[0]
+            final fun <set-keyExchangeGroups>(io.kuicksilver.tls/KeyExchangeGroups) // io.kuicksilver.tls/TlsConfig.Builder.keyExchangeGroups.<set-keyExchangeGroups>|<set-keyExchangeGroups>(io.kuicksilver.tls.KeyExchangeGroups){}[0]
         final var keylog // io.kuicksilver.tls/TlsConfig.Builder.keylog|{}keylog[0]
             final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.Builder.keylog.<get-keylog>|<get-keylog>(){}[0]
             final fun <set-keylog>(io.kuicksilver.tls/KeylogSink?) // io.kuicksilver.tls/TlsConfig.Builder.keylog.<set-keylog>|<set-keylog>(io.kuicksilver.tls.KeylogSink?){}[0]
@@ -791,6 +836,8 @@ final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuic
     final val sessionReused // io.kuicksilver.tls/TlsConnection.sessionReused|{}sessionReused[0]
         final fun <get-sessionReused>(): kotlin/Boolean // io.kuicksilver.tls/TlsConnection.sessionReused.<get-sessionReused>|<get-sessionReused>(){}[0]
 
+    final var keyExchangeGroup // io.kuicksilver.tls/TlsConnection.keyExchangeGroup|{}keyExchangeGroup[0]
+        final fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     final var negotiatedAlpn // io.kuicksilver.tls/TlsConnection.negotiatedAlpn|{}negotiatedAlpn[0]
         final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
     final var protocolVersion // io.kuicksilver.tls/TlsConnection.protocolVersion|{}protocolVersion[0]

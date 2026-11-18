@@ -44,6 +44,13 @@ public interface QuicConnection : AutoCloseable {
      */
     public val negotiatedAlpn: String?
 
+    /**
+     * The key-exchange group of the handshake, a `KeyExchangeGroups` name such as `X25519MLKEM768` (RFC 9846 section 4.3.7);
+     * null until the handshake completed.
+     */
+    @ExperimentalKuicksilverApi
+    public val keyExchangeGroup: String? get() = null
+
     /** The connection's paths; the first is the one it was established on (RFC 9000 section 9). */
     public val paths: List<QuicPath>
 

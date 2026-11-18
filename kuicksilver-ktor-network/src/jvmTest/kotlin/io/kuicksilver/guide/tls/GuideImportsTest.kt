@@ -17,6 +17,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.KeyExchangeGroups
 import io.kuicksilver.tls.PinScope
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsIdentity
@@ -52,6 +53,7 @@ suspend fun everyTlsImport(
             serverName = "server.test"
             this.trust = trust
             keylog = keylogFile("/tmp/keys.txt")
+            keyExchangeGroups = KeyExchangeGroups.Default
         }
     val selector = SelectorManager(Dispatchers.IO)
     val socket = aSocket(selector).tcp().connect("server.test", 443).tls(client)
