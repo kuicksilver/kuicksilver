@@ -6,6 +6,8 @@ package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
@@ -14,6 +16,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
+import kotlinx.io.Source
 import kotlinx.io.readString
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -45,12 +49,14 @@ class H1PipelineSelectRaceTest {
 
     private fun TestScope.pipeline(
         draining: Job?,
+        input: (ByteChannel) -> ByteReadChannel = { it },
         handler: suspend H1RequestScope.(Request) -> Unit,
     ): Conn {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
+        val connection = H1Connection(input(toServer), fromServer, null, null)
         val job =
-            backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 1.hours, 1.hours, draining = draining) {
+            backgroundScope.startH1Pipeline(connection, 1.hours, 1.hours, draining = draining) {
                 handled += it.uri.toString()
                 handler(it)
             }
@@ -94,6 +100,80 @@ class H1PipelineSelectRaceTest {
             val got = c.fromServer.readBuffer().readString()
             assertTrue(got.endsWith("late"), "the request whose head had arrived was not answered: '$got'")
             assertEquals(listOf("/late"), handled)
+        }
+
+    /**
+     * The socket's input as a socket that is slow to hand over: its wait for bytes never returns, while the bytes that came
+     * sit in its buffer, as when the stop cancels a wait whose bytes arrived but whose resumption had not run yet.
+     */
+    @OptIn(InternalAPI::class)
+    private class NeverWakes(
+        private val inner: ByteChannel,
+    ) : ByteReadChannel {
+        override val closedCause: Throwable? get() = inner.closedCause
+        override val isClosedForRead: Boolean get() = inner.isClosedForRead
+        override val readBuffer: Source get() = inner.readBuffer
+
+        override suspend fun awaitContent(min: Int): Boolean = awaitCancellation()
+
+        override fun cancel(cause: Throwable?) = inner.cancel(cause)
+    }
+
+    /**
+     * The path the stop's side takes in production: the wait for the head is cancelled while it waits in the socket's own
+     * awaitContent, with the head's bytes already in the socket's buffer (not yet moved into the pipeline's). The request is
+     * read from there and answered. A recheck of the pipeline's buffer alone missed them and closed without an answer.
+     */
+    @Test fun negative_aHeadInTheSocketsBufferAsTheServerStoppedIsAnswered() =
+        runTest {
+            val draining = Job()
+            val c = pipeline(draining, input = { NeverWakes(it) }) { respond("buffered") }
+            c.send("GET /buffered HTTP/1.1\r\nHost: s\r\n\r\n")
+            runCurrent()
+            assertEquals(emptyList(), handled, "the wait handed the head over")
+            draining.complete()
+            runCurrent()
+            assertTrue(c.job.isCompleted, "the connection stayed open after the stop")
+            val got = c.fromServer.readBuffer().readString()
+            assertTrue(got.endsWith("buffered"), "the request in the socket's buffer was not answered: '$got'")
+            assertEquals(listOf("/buffered"), handled)
+        }
+
+    /** The client closed its side as the server stopped (an end, nothing to read): the connection ends, unanswered. */
+    @Test fun aClientThatClosedAsTheServerStoppedEndsTheConnection() =
+        runTest {
+            val draining = Job()
+            val reached = CompletableDeferred<Unit>()
+            val c = pipeline(draining) { respond("never") }
+            requestStartForTest = {
+                if (it === c.toServer) {
+                    reached.complete(Unit)
+                    awaitCancellation() // the stop is the only side that can win
+                }
+            }
+            c.toServer.flushAndClose()
+            runCurrent()
+            assertTrue(reached.isCompleted, "the wait never saw the end of the input")
+            draining.complete()
+            runCurrent()
+            assertTrue(c.job.isCompleted, "the connection stayed open after the stop")
+            assertEquals(emptyList(), handled, "a request was read from an input that ended")
+        }
+
+    /**
+     * The client's side failed while the wait was in the socket's awaitContent (which never hands back here) and the server
+     * stopped: the stop's side sees the failure, and the connection ends without a request read from it.
+     */
+    @Test fun aClientThatFailedAsTheServerStoppedEndsTheConnection() =
+        runTest {
+            val draining = Job()
+            val c = pipeline(draining, input = { NeverWakes(it) }) { respond("never") }
+            c.toServer.cancel(IOException("reset by the peer"))
+            runCurrent()
+            draining.complete()
+            runCurrent()
+            assertTrue(c.job.isCompleted, "the connection stayed open after the stop")
+            assertEquals(emptyList(), handled, "a request was read from an input that failed")
         }
 
     /**
