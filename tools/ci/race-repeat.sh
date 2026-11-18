@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Runs the test classes a branch added or changed that test races, 10 times under CPU load, before the gate's matrix: a
+# race test passes on a quiet machine whichever way the race goes, and a single run under load says little about the other
+# way. Picked: the test files changed since the base (added, modified or renamed; `git diff <base>...HEAD`) that hold a race
+# test as tools/check/race-tests.py names them (race, racing, "as the deadline fires", a file named *Race*), or that assign
+# a test hook (`somethingForTest = ...`). Each such class runs through tools/ci/flake-hunt.sh: the classes of
+# commonTest, jvmTest and jvmCommonTest on the JVM (one build, -Pkuicksilver.test.repeat), those of nativeTest, appleTest
+# and posixTest as macosArm64Test (one build per run, on a macOS host only); other source sets are listed, not run.
+#
+# Usage: tools/ci/race-repeat.sh [--list] [--base <rev>] [-n runs] [-b burners] [-g gradle] [-o outdir]
+#   --list       print what would run and exit (no Gradle)
+#   --base rev   compare with this commit (default: the merge base of HEAD and main, else origin/main)
+#   -n runs      runs per class (default 10)
+#   -b burners   CPU burners for flake-hunt.sh (default: its own, half the CPUs)
+#   -g gradle    the Gradle command for flake-hunt.sh (default ./gradlew; extra arguments in FLAKE_HUNT_GRADLE_ARGS)
+#   -o outdir    where flake-hunt.sh writes (default build/race-repeat/<jvm|macos>)
+# Exit status: 0 when nothing is to repeat or every run passed; 1 when a run failed; 2 on a usage error or a base that is
+# not a commit.
+set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/../.." && pwd)"; cd "$root" || exit 2
+list=0; base=""; runs=10; burners=""; gradle=""; outdir=""
+usage() { sed -n '11,18p' "$0" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list) list=1; shift ;;
+    --base) [ $# -ge 2 ] || usage; base="$2"; shift 2 ;;
+    -n) [ $# -ge 2 ] || usage; runs="$2"; shift 2 ;;
+    -b) [ $# -ge 2 ] || usage; burners="$2"; shift 2 ;;
+    -g) [ $# -ge 2 ] || usage; gradle="$2"; shift 2 ;;
+    -o) [ $# -ge 2 ] || usage; outdir="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+case "$runs" in ''|*[!0-9]*|0) echo "race-repeat: -n needs a positive number" >&2; exit 2 ;; esac
+if [ -z "$base" ]; then
+  base=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null) \
+    || { echo "race-repeat: no merge base with main or origin/main; give --base" >&2; exit 2; }
+fi
+git rev-parse --verify --quiet "$base^{commit}" > /dev/null || { echo "race-repeat: '$base' is not a commit" >&2; exit 2; }
+changed=$(git diff --name-only --diff-filter=AMR "$base"...HEAD -- 'kuicksilver-*/src/*Test/*.kt' 'kuicksilver-*/src/test/*.kt') \
+  || { echo "race-repeat: git diff against $base failed" >&2; exit 2; }
+# <target> <module> <class> <why> lines, one per class to repeat
+plan=$(printf '%s\n' "$changed" | python3 -I -c '
+import importlib.util, os, re, sys
+spec = importlib.util.spec_from_file_location("race_tests", os.path.join(sys.argv[1], "tools/check/race-tests.py"))
+rt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+HOOK = re.compile(r"(?<![\w$])\w+ForTest\s*(?:=(?!=)|\+=|-=)")
+JVM = ("commonTest", "jvmTest", "jvmCommonTest")
+NATIVE = ("nativeTest", "appleTest", "posixTest")
+for f in filter(None, (l.strip() for l in sys.stdin)):
+    path = os.path.join(sys.argv[1], f)
+    if not os.path.isfile(path):
+        continue
+    text = open(path, encoding="utf-8").read()
+    races = [name for _, name, _ in rt.race_tests(f, text)]
+    hooks = bool(HOOK.search(rt.ks.blank(text)))
+    if not races and not hooks:
+        continue
+    module, sset = f.split("/")[0], f.split("/")[2]
+    target = "jvm" if sset in JVM else "macos" if sset in NATIVE else "none:" + sset
+    why = ("race tests " + ",".join(races)) if races else "assigns a test hook"
+    print(target, module, os.path.basename(f)[:-3], why)
+' "$root") || { echo "race-repeat: reading the changed tests failed" >&2; exit 2; }
+if [ -z "$plan" ]; then echo "race-repeat: no race test or test hook changed since $(git rev-parse --short "$base")"; exit 0; fi
+echo "race-repeat: since $(git rev-parse --short "$base"), $runs runs under load of:"
+printf '%s\n' "$plan" | while read -r target module cls why; do
+  case "$target" in none:*) ;; *) printf '  %-6s %s %s (%s)\n' "$target" "$module" "$cls" "$why" ;; esac
+done
+skipped=$(printf '%s\n' "$plan" | awk '$1 ~ /^none:/ { print "  not repeated: " $2 " " $3 " (" substr($1, 6) ": no repeat runner)" }')
+[ -z "$skipped" ] || printf '%s\n' "$skipped"
+[ "$list" = 0 ] || exit 0
+rc=0
+for target in jvm macos; do
+  sel=$(printf '%s\n' "$plan" | awk -v t="$target" '$1 == t')
+  [ -n "$sel" ] || continue
+  if [ "$target" = macos ] && [ "$(uname -s)" != Darwin ]; then
+    echo "race-repeat: the Native classes need a macOS host; not run here:"; printf '%s\n' "$sel" | sed 's/^/  /'; continue
+  fi
+  args=(-n "$runs" -t "$target" -o "${outdir:-build/race-repeat}/$target")
+  [ -z "$burners" ] || args+=(-b "$burners")
+  [ -z "$gradle" ] || args+=(-g "$gradle")
+  modules=($(printf '%s\n' "$sel" | awk '{ print $2 }' | sort -u))
+  while read -r _ _ cls _; do args+=(-T "*.$cls"); done <<< "$sel"
+  echo "race-repeat: tools/ci/flake-hunt.sh ${args[*]} ${modules[*]}"
+  bash "$here/flake-hunt.sh" "${args[@]}" "${modules[@]}" || rc=1
+done
+exit $rc
