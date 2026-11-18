@@ -5,7 +5,8 @@
 # `udpTemplate`, [split][template][path] with the templates of RFC 9298 section 2 and paths of section 3 (valid, IPv6,
 # unencoded colons, zone IDs, out-of-range ports), and `udpDatagrams`, [cut][capsules] with DATAGRAM capsules of Context
 # ID 0 and others, a non-minimal Context ID, a truncated one and an announced payload above 65527 bytes. Usage:
-# tools/fuzz/gen-connect-udp-seeds.py (the output is committed)
+# tools/fuzz/gen-connect-udp-seeds.py (the output is committed; files named crash-* are kept reproducers of fuzz findings
+# and are not written here)
 import os
 root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 base = os.path.join(root, "kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs")

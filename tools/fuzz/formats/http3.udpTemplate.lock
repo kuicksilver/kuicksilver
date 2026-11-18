@@ -3,6 +3,7 @@
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/absolute	7a4e20eba2f91152	8b9327e8a61a9505
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/absolute-well-known	5410d333a97d4a59	22f747206b848d54
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/ambiguous	74a36279c83b556b	0610bace33c464dd
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/crash-value-past-empty-expressions	bcad03472d366e76	341894095a1cbbbb
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/forbidden-operators	c74f4c6543b358d2	57fcdd405ea04eea
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/level4	754ba004a561b12e	7f8cbe43de99d55b
 kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpTemplate/query-continuation	3536d40affe85f2b	ef4caafbe22709c9
