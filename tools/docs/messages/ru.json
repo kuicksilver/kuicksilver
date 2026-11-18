@@ -67,7 +67,7 @@
   "conformance.intro": "Сторонние наборы тестов, которые проверяют реализацию протокола на соответствие спецификации.",
   "conformance.notInCi": "не запускается в hosted CI",
   "conformance.notYet": "пока нет",
-  "conformance.local": "h2spec запускается в локальном релизном гейте (tools/interop/h2spec.sh, все случаи должны пройти); последние результаты записаны в",
+  "conformance.local": "h2spec запускается в CI на сервере linuxX64 и в локальном релизном гейте (tools/interop/h2spec.sh; все случаи должны пройти); более ранние результаты, с серверами на JVM и macOS, записаны в",
   "col.suite": "Набор",
   "fuzzing.intro": "Фазз-целей: {targets}. Они нагружают парсеры уровней TLS, QUIC, HTTP/3 и HTTP/2 и C-прослойки (Jazzer на JVM, libFuzzer для C).",
   "fuzzing.regression": "Регрессионный корпус в CI",
@@ -89,7 +89,7 @@
   "sizes.jni": "Нативные библиотеки JVM (JNI)",
   "sizes.klib": "Kotlin/Native klib (размер в распакованном виде, сумма klib и cinterop-klib публикуемых модулей)",
   "sizes.ios": "iOS-фреймворк",
-  "sizes.iosNone": "В CI не измеряется: размер Kuicksilver в iOS-приложении измеряется локально (tools/check/ios-size.sh).",
+  "sizes.iosNone": "Нет данных: прогон CI этого коммита не собрал Kuicksilver.xcframework.",
   "col.file": "Файл",
   "col.platform": "Платформа",
   "col.size": "Размер",
@@ -129,5 +129,6 @@
   "how.step6": "Релиз",
   "how.release": "Как проверить, что скачанные артефакты — именно выпущенные, а нативные библиотеки — это то, что собирается из исходников тега:",
   "how.source": "Документ о процессе — единственный источник; эта страница только ссылается на него:",
-  "col.fuzzTarget": "Фазз-цель"
+  "col.fuzzTarget": "Фазз-цель",
+  "sizes.iosNote": "Kuicksilver.xcframework в том виде, в каком его поставляет Swift-пакет: динамический бинарник фреймворка каждого среза (slice) — то, что встраивается в приложение, zip — то, что скачивает SwiftPM. Долю Kuicksilver в собранном приложении по источникам измеряет tools/check/ios-size.sh."
 }

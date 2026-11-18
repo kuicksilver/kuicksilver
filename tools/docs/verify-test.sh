@@ -228,9 +228,17 @@ cat > "$aws/kuicksilver-engine-interop/build/test-results/jvmTest/TEST-io.kuicks
 </testsuite>
 XML
 printf '[==========] 2 tests from 1 test cases ran. (1 ms total)\r\n[  PASSED  ] 2 tests.\r\n' | iconv -f UTF-8 -t UTF-16 > "$aws/logs/kuicksilver-quic.log"
+# an expected h2c report that is missing, and an XCFramework with two slices (plus a dSYM, which is no framework binary)
+for sl in ios-arm64 ios-arm64_x86_64-simulator; do
+  mkdir -p "$aws/xcf/Kuicksilver.xcframework/$sl/Kuicksilver.framework" "$aws/xcf/Kuicksilver.xcframework/$sl/dSYMs/Kuicksilver.framework.dSYM"
+  head -c 7000 /dev/zero > "$aws/xcf/Kuicksilver.xcframework/$sl/Kuicksilver.framework/Kuicksilver"
+  head -c 10 /dev/zero > "$aws/xcf/Kuicksilver.xcframework/$sl/Kuicksilver.framework/Info.plist"
+done
+(cd "$aws/xcf" && zip -qr Kuicksilver.xcframework.zip Kuicksilver.xcframework)
 rm -rf "$tmp/adata"
 if (cd "$aws" && "${py[@]}" collect --lane apple --host h --out "$tmp/adata/verify-apple/apple.json" --sha "$SHA" --run-id 1001 \
-      --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop --gtest 'mingwX64:logs/*.log' 2> /dev/null) \
+      --junit 'jvm:*/build/test-results/jvmTest/*.xml' --cases kuicksilver-engine-interop --gtest 'mingwX64:logs/*.log' \
+      --h2spec 'h2c:h2spec/missing.txt' --size 'xcframework:xcf/Kuicksilver.xcframework' --size 'zip:xcf/*.zip' 2> /dev/null) \
   && build "$tmp/asite" --meta "$fx/meta.json" --data "$tmp/adata" 2> /dev/null \
   && python3 -I - "$tmp/asite/0.3.0" <<'PY'
 import json, sys
@@ -239,12 +247,19 @@ d = json.load(open(f"{v}/verify/data.json"))
 p = {x["target"]: x for x in d["platforms"]}
 assert p["jvm"]["status"] == "fail" and "kuicksilver-tls" in p["jvm"]["hosts"][0]["problems"], p["jvm"]   # truncated report
 assert p["mingwX64"]["status"] == "pass" and p["mingwX64"]["hosts"][0]["tests"] == 2, p["mingwX64"]      # UTF-16 log
+c = d["conformance"]
+assert len(c) == 1 and c[0]["variant"] == "h2c" and c[0]["status"] == "error", c                     # expected, missing
+assert '<span class="fail">incomplete</span>' in open(f"{v}/verify/conformance.html", encoding="utf-8").read()
+fw = sorted((x["target"], x["bytes"]) for x in d["sizes"] if x["kind"] == "framework")
+assert fw == [("ios-arm64", 7000), ("ios-arm64_x86_64-simulator", 7000)], d["sizes"]
+sizes = open(f"{v}/verify/sizes.html", encoding="utf-8").read()
+assert "Kuicksilver.xcframework.zip" in sizes and "6.8 KiB" in sizes and "built no Kuicksilver.xcframework" not in sizes
 for l in ("", "ru/", "zh/"):
     t = open(f"{v}/{l}verify/interop.html", encoding="utf-8").read()
     assert "<script>" not in t and "x&lt;script&gt;alert(1)&lt;/script&gt;" in t, l
 PY
-then pass "attacks: a truncated report is a failure, markup in a test name is escaped, a UTF-16 log is read"
-else fail "attacks: a truncated report is a failure, markup in a test name is escaped, a UTF-16 log is read"; fi
+then pass "attacks: a truncated report fails, markup is escaped, a UTF-16 log is read, a missing h2c report is incomplete; XCFramework slices"
+else fail "attacks: a truncated report fails, markup is escaped, a UTF-16 log is read, a missing h2c report is incomplete; XCFramework slices"; fi
 
 # --- negative controls: the message files of every language
 msg_case() { # <name> <python statement on t (the table of the file)> <file>

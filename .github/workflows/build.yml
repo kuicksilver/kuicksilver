@@ -705,6 +705,9 @@ jobs:
           $G $KSL_IOS_COMPILE
       - name: 'native: prefix whitelist (apple)'
         run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+      - name: 'native: Kuicksilver.xcframework (release, both slices; its size for the documentation site)'
+        # the framework the Swift package ships (tools/release/xcframework.sh builds the release asset the same way)
+        run: $G -p samples/ios -Pkuicksilver.openssl.prebuilt=true :kuicksilver-swift:zipKuicksilverXCFramework
       - name: 'verify: results for the documentation site (tools/docs/verify.py)'
         if: '!cancelled()'
         env: { IOS_DEVICE: '${{ steps.ios-device.outcome }}' }
@@ -712,7 +715,9 @@ jobs:
           python3 -I tools/docs/verify.py collect --lane apple-native --host 'macOS arm64 (Xcode 27)' --out "$RUNNER_TEMP/verify/apple-native.json" \
             --junit 'macosArm64:*/build/test-results/macosArm64Test/*.xml' \
             --junit 'iosSimulatorArm64:*/build/test-results/iosSimulatorArm64Test/*.xml' \
-            --compiled "iosArm64:$IOS_DEVICE" --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
+            --compiled "iosArm64:$IOS_DEVICE" \
+            --size 'xcframework:samples/ios/kuicksilver-swift/build/XCFrameworks/release/Kuicksilver.xcframework' \
+            --size 'zip:samples/ios/kuicksilver-swift/build/spm/Kuicksilver.xcframework.zip' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/klib/*' --size 'klib:kuicksilver-*/build/classes/kotlin/*/main/cinterop/kuicksilver-native-cinterop-ksl' --skip-module kuicksilver-testing
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: '!cancelled()'
         with: { name: 'verify-apple-native', path: '${{ runner.temp }}/verify', if-no-files-found: error, retention-days: 30 }

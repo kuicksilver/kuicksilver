@@ -67,7 +67,7 @@
   "conformance.intro": "Third-party test suites that check a protocol implementation against its specification.",
   "conformance.notInCi": "not run in hosted CI",
   "conformance.notYet": "not yet",
-  "conformance.local": "h2spec runs in the local release gate (tools/interop/h2spec.sh, every case must pass); its last results are recorded in",
+  "conformance.local": "h2spec runs in CI on the linuxX64 server and in the local release gate (tools/interop/h2spec.sh; every case must pass); earlier results, with the JVM and macOS servers, are recorded in",
   "col.suite": "Suite",
   "fuzzing.intro": "{targets} fuzz targets exercise the parsers of the TLS, QUIC, HTTP/3 and HTTP/2 layers and of the C shim (Jazzer on the JVM, libFuzzer for C).",
   "fuzzing.regression": "Regression corpus in CI",
@@ -89,7 +89,7 @@
   "sizes.jni": "JVM native libraries (JNI)",
   "sizes.klib": "Kotlin/Native klibs (unpacked size, sum of the published modules' klibs and cinterop klibs)",
   "sizes.ios": "iOS framework",
-  "sizes.iosNone": "Not measured in CI: the size of Kuicksilver in an iOS app is measured locally (tools/check/ios-size.sh).",
+  "sizes.iosNone": "No data: the CI run of this commit built no Kuicksilver.xcframework.",
   "col.file": "File",
   "col.platform": "Platform",
   "col.size": "Size",
@@ -129,5 +129,6 @@
   "how.step6": "The release",
   "how.release": "To check that the artifacts you download are the ones released, and that the native libraries are what the tagged sources build, see",
   "how.source": "The process document is the single source; this page only links to it:",
-  "col.fuzzTarget": "Fuzz target"
+  "col.fuzzTarget": "Fuzz target",
+  "sizes.iosNote": "Kuicksilver.xcframework as the Swift package ships it: the dynamic framework binary of each slice is what an app embeds, the zip is what SwiftPM downloads. Kuicksilver's share of a linked app, by origin, is measured with tools/check/ios-size.sh."
 }

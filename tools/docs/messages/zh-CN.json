@@ -67,7 +67,7 @@
   "conformance.intro": "依据规范检查协议实现的第三方测试套件。",
   "conformance.notInCi": "未在托管 CI 中运行",
   "conformance.notYet": "尚未提供",
-  "conformance.local": "h2spec 在本地发布关卡中运行（tools/interop/h2spec.sh，所有用例必须通过）；最近的结果记录在",
+  "conformance.local": "h2spec 在 CI 中针对 linuxX64 服务器运行，也在本地发布关卡中运行（tools/interop/h2spec.sh，所有用例必须通过）；早先使用 JVM 和 macOS 服务器的结果记录在",
   "col.suite": "套件",
   "fuzzing.intro": "共 {targets} 个模糊测试目标，覆盖 TLS、QUIC、HTTP/3 和 HTTP/2 各层以及 C 适配层的解析器（JVM 上使用 Jazzer，C 使用 libFuzzer）。",
   "fuzzing.regression": "CI 中的回归语料库",
@@ -89,7 +89,7 @@
   "sizes.jni": "JVM 原生库（JNI）",
   "sizes.klib": "Kotlin/Native klib（解包后的大小，已发布模块的 klib 与 cinterop klib 之和）",
   "sizes.ios": "iOS 框架",
-  "sizes.iosNone": "未在 CI 中测量：Kuicksilver 在 iOS 应用中的大小在本地测量（tools/check/ios-size.sh）。",
+  "sizes.iosNone": "无数据：该提交的 CI 运行未构建 Kuicksilver.xcframework。",
   "col.file": "文件",
   "col.platform": "平台",
   "col.size": "大小",
@@ -129,5 +129,6 @@
   "how.step6": "发布",
   "how.release": "如需确认下载的构件就是已发布的构件，且原生库与标签源码的构建结果一致，请参阅",
   "how.source": "流程文档是唯一的信息来源；本页仅链接到它：",
-  "col.fuzzTarget": "模糊测试目标"
+  "col.fuzzTarget": "模糊测试目标",
+  "sizes.iosNote": "Swift 包所发布的 Kuicksilver.xcframework：每个切片（slice）的动态框架二进制文件即应用所嵌入的内容，zip 为 SwiftPM 下载的文件。Kuicksilver 在已链接应用中按来源划分的占比由 tools/check/ios-size.sh 测量。"
 }

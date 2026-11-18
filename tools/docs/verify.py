@@ -16,7 +16,8 @@ Two steps, so that the CI jobs upload a few kilobytes of counts instead of their
         --compiled TARGET:OUTCOME   a target that is compiled but not run (OUTCOME: the step's outcome, success or other)
         --size KIND:GLOB            artifact sizes; KIND aar (with the libksl .so of each ABI inside), jni (the platform
                                     from the libksl_<abi>_<platform> name), klib (a file or an unpacked directory under
-                                    build/classes/kotlin/<target>/), jar
+                                    build/classes/kotlin/<target>/), jar, zip, xcframework (the framework binary of
+                                    each slice of an .xcframework directory)
         --skip-module MODULE        no size of MODULE (a module that is not published)
         --h2spec VARIANT:FILE       an h2spec run's output (tools/interop/h2spec.sh writes build/h2spec/<kind>/h2spec.txt)
         --interop-runner IMAGE:GLOB QUIC Interop Runner result files (tools/interop/run-local.sh)
@@ -216,7 +217,14 @@ def collect(args):
                 m = re.match(r"^libksl_\d+_(.+)\.(?:so|dylib|dll)$", name)
                 rec["sizes"].append({"kind": "jni", "name": name, "target": m.group(1) if m else os.path.basename(os.path.dirname(f)),
                                      "bytes": os.path.getsize(f)})
-            elif kind in ("aar", "jar"):
+            elif kind == "xcframework":
+                # each slice's framework binary (<slice>/<Name>.framework/<Name>): what an app embeds
+                for b in sorted(glob.glob(os.path.join(f, "*", "*.framework", "*"))):
+                    fw = os.path.basename(os.path.dirname(b))
+                    if os.path.isfile(b) and os.path.basename(b) == fw[: -len(".framework")]:
+                        rec["sizes"].append({"kind": "framework", "name": fw, "target": os.path.basename(os.path.dirname(os.path.dirname(b))),
+                                             "bytes": os.path.getsize(b)})
+            elif kind in ("aar", "jar", "zip"):
                 rec["sizes"].append({"kind": kind, "name": name, "target": "", "bytes": os.path.getsize(f)})
                 if kind == "aar":
                     with zipfile.ZipFile(f) as z:
@@ -788,7 +796,14 @@ def page_sizes(m, model):
         out.append(table([esc(m("col.target")), esc(m("col.modules")), esc(m("col.size"))], rows, nums=(1, 2)))
     else:
         out.append(nodata(m, "nodata.lane"))
-    out.append(f"<h2>{esc(m('sizes.ios'))}</h2>\n" + nodata(m, "sizes.iosNone"))
+    out.append(f"<h2>{esc(m('sizes.ios'))}</h2>")
+    ios = [x for x in s if x["kind"] == "framework" or (x["kind"] == "zip" and "xcframework" in x["name"])]
+    if ios:
+        out.append(table([esc(m("col.file")), esc(m("col.platform")), esc(m("col.size"))],
+                         [[f"<code>{esc(x['name'])}</code>", esc(x["target"]), kib(x["bytes"])] for x in ios], nums=(2,)))
+        out.append(f'<p class="note">{esc(m("sizes.iosNote"))}</p>')
+    else:
+        out.append(nodata(m, "sizes.iosNone"))
     return "\n".join(out)
 
 
