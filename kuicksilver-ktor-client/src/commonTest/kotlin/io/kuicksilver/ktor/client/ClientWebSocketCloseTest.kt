@@ -238,7 +238,7 @@ class ClientWebSocketCloseTest {
                             val output = s.openWriteChannel(autoFlush = true)
                             output.writeStringUtf8(switchingProtocols(input.readWebSocketKey()))
                             released.await() // reads nothing before the client gave the connection up
-                            probing(output) { readClientFrames(input) }
+                            probing(output) { readClientFrames(input, it) }
                         }
                     }
                 testClient(engine = { eventListener = events }, block = { install(WebSockets) }).use { c ->
@@ -304,12 +304,23 @@ internal suspend fun unwrittenCloseAttempts(attempt: suspend (data: ByteArray, f
 internal const val MAX_UNWRITTEN_FRAMES: Int = 8
 
 /**
- * Runs [block] (reading what a client sent) while a byte is written to the client every 100 ms: a probe, so that a client
- * whose connection is gone answers with a reset. The abort's own reset always goes out, but macOS does not take one that
- * reaches a socket whose receive window is 0, as this server's is when the client aborts (it read nothing): on lo0 each
- * abort's reset (flags R and ACK) is on the wire, and in 8 of 22 runs without the probe the server stayed ESTABLISHED until its own close,
- * which the client answered with the same reset, taken then. A segment to a connection that is gone is always answered
- * with one. Writes that fail are ignored: they fail once the client reset the connection.
+ * Runs [block] (reading what a client sent, counting it in the [ReadProgress] it is given) and, once the reading has
+ * stalled, writes a byte to the client every 100 ms: a probe, so that a client whose connection is gone answers with a
+ * reset. The abort's own reset always goes out, but macOS does not take one that reaches a socket whose receive window is
+ * 0, as this server's is when the client aborts (it read nothing): on lo0 each abort's reset (flags R and ACK) is on the
+ * wire, and in 8 of 22 runs without the probe the server stayed ESTABLISHED until its own close, which the client
+ * answered with the same reset, taken then. A segment to a connection that is gone is always answered with one. Writes
+ * that fail are ignored: they fail once the client reset the connection.
+ *
+ * The probe waits until nothing was read for [PROBE_STALL_TICKS] ticks of 100 ms, so that it cannot change the end it is
+ * there to see. A byte that reaches a client which closed its socket makes the client's kernel answer with a reset, and a
+ * reset drops what that kernel still had to send: a FIN turned into a reset. With the probe from the start, the FIN that
+ * ended a cut frame (the bug `WebSocketTransportEndTest.negative_aWriterThatEndedInsideAFrameIsReset` guards) read as a
+ * reset in all 5 such attempts of 40 in Docker (2026-11-18), and the test passed; it failed only when the FIN won the
+ * race, in the local matrix. And on Linux a pending reset is reported once, to the first call that sees it: the reads
+ * take the received data first, but a write in between takes the reset as its own error, and the reads then end as at
+ * a FIN. While the reads progress, the client's data is still arriving; a stall is what the dropped reset of macOS
+ * leaves.
  *
  * The probe also wakes the client's selector when the client's socket is still open (it had a read interest), which
  * releases a close the JDK deferred: these tests pass without `releaseClosedChannels`. The guard of that fix is
@@ -317,35 +328,57 @@ internal const val MAX_UNWRITTEN_FRAMES: Int = 8
  */
 internal suspend fun <T> probing(
     output: io.ktor.utils.io.ByteWriteChannel,
-    block: suspend () -> T,
+    block: suspend (ReadProgress) -> T,
 ): T =
     coroutineScope {
+        val progress = ReadProgress()
         val probe =
             launch {
                 runCatching {
+                    var seen = -1L
+                    var still = 0
                     while (true) {
-                        output.writeFully(byteArrayOf(0))
-                        output.flush()
                         kotlinx.coroutines.delay(100)
+                        val now = progress.bytes
+                        if (now != seen) {
+                            seen = now
+                            still = 0
+                        } else if (++still >= PROBE_STALL_TICKS) {
+                            output.writeFully(byteArrayOf(0))
+                            output.flush()
+                        }
                     }
                 }
             }
         try {
-            block()
+            block(progress)
         } finally {
             probe.cancel()
         }
     }
 
+/** How long, in ticks of 100 ms without a byte read, [probing] waits before it probes. */
+private const val PROBE_STALL_TICKS = 10
+
+/** The bytes [readClientFrames] has read so far, for [probing]. */
+internal class ReadProgress {
+    @kotlin.concurrent.Volatile
+    var bytes: Long = 0
+}
+
 /**
  * The client's frames on [input] (masked, RFC 6455 section 5.3) up to its Close or the end of the stream: `binary <size>`,
  * `text <size>`, `close <code> <reason>`; when the stream ended without a Close, `end` between two frames, `cut` inside one
  * (the frame it cut keeps its line), `reset` when it failed (the client reset the connection) wherever it was.
+ * [progress], when given, counts the bytes read as they come.
  */
-internal suspend fun readClientFrames(input: ByteReadChannel): List<String> {
+internal suspend fun readClientFrames(
+    input: ByteReadChannel,
+    progress: ReadProgress? = null,
+): List<String> {
     val frames = ArrayList<String>()
     try {
-        readFramesInto(input, frames)
+        readFramesInto(input, frames, progress)
     } catch (e: Exception) {
         frames +=
             when {
@@ -364,11 +397,13 @@ internal suspend fun readClientFrames(input: ByteReadChannel): List<String> {
 private suspend fun readFramesInto(
     input: ByteReadChannel,
     frames: MutableList<String>,
+    progress: ReadProgress?,
 ) {
     while (true) {
         val b0 = input.readByte().toInt() and 0xff // the stream may end here, between frames
+        progress?.let { it.bytes++ }
         try {
-            readFrameAfter(b0, input, frames)
+            readFrameAfter(b0, input, frames, progress)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: FrameCut) {
@@ -390,6 +425,7 @@ private suspend fun readFrameAfter(
     b0: Int,
     input: ByteReadChannel,
     frames: MutableList<String>,
+    progress: ReadProgress?,
 ) {
     val b1 = input.readByte().toInt() and 0xff
     val length =
@@ -410,17 +446,32 @@ private suspend fun readFrameAfter(
 
         0x2 -> {
             frames += "binary $length"
-            if (input.discard(length) < length) throw EOFException("frame cut")
+            discardCounted(input, length, progress)
         }
 
         0x1 -> {
             frames += "text $length"
-            if (input.discard(length) < length) throw EOFException("frame cut")
+            discardCounted(input, length, progress)
         }
 
         else -> {
             frames += "opcode ${b0 and 0x0f} $length"
-            if (input.discard(length) < length) throw EOFException("frame cut")
+            discardCounted(input, length, progress)
         }
+    }
+}
+
+/** Discards [length] bytes of [input] in pieces, counted in [progress]; [EOFException] when the stream ends first. */
+private suspend fun discardCounted(
+    input: ByteReadChannel,
+    length: Long,
+    progress: ReadProgress?,
+) {
+    var left = length
+    while (left > 0) {
+        val n = input.discard(minOf(left, 64L * 1024))
+        if (n == 0L) throw EOFException("frame cut")
+        left -= n
+        progress?.let { it.bytes += n }
     }
 }

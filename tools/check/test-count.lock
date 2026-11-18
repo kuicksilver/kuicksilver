@@ -2199,6 +2199,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketCo
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketConnectingTest.sharedHostWaitsForTheRelease
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketConnectingTest.tryAcquireTakesFreeKeysOnly
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.everyCombinationFollowsTheRule
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_aWriterThatEndedInsideAFrameIsReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_framesStillQueuedWhenTheCloseWaitCutTheSessionAreReset
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h1.WebSocketTransportEndTest.negative_wholeFramesStillQueuedWhenTheCallIsCancelledGoOutInOrder
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.h2.H2ReleaseFailureTest.negative_aWebSocketClosedInOrderLogsTheReleaseFailureAfterTheCloseWait

@@ -1336,6 +1336,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   taken by the kernel and the server's never came, or cancelled while idle between frames) is closed cleanly instead: a
   FIN, and over TLS close_notify first (RFC 9846 section 6.1), where before the TLS session was dropped without one.
   HTTP/2 and HTTP/3 streams were already reset.
+- Ktor client: an HTTP/1.1 WebSocket session cut by its close wait inside a frame (a large frame behind a server that
+  does not read) could still get a FIN after the part of the frame that went out, as if the stream were whole: Ktor's
+  `WebSocketWriter` ends its channel in order also when it is cancelled, and that end counted as a finished writer. Only
+  the frame guard's position now says that the stream is whole; such a connection is reset (`SO_LINGER` 0), as
+  documented. Seen in Docker as a server reading a 16 MiB frame cut after about 5 MB and then a clean end.
 - WebSockets close their transport in RFC 6455's order (sections 5.5.1 and 7.1.1; RFC 8441 section 5, RFC 9220 section
   3), client and server, over HTTP/1.1, HTTP/2 and HTTP/3. The client engine no longer closes its side right after its
   own Close (Ktor's writer ends its channel then): it waits for the server's TCP FIN (close_notify first over TLS, which
