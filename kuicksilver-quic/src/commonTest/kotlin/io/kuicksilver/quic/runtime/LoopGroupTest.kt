@@ -388,7 +388,7 @@ class LoopGroupTest {
                 val group = LoopGroup.create(config, listOf(net.open(serverAddr), net.open(otherAddr)))
                 try {
                     val loop = group.loopForTest(0)
-                    loop.forwarded.trySend(
+                    loop.forward(
                         EndpointLoop.Forwarded(
                             ByteArray(30) { 0x40 },
                             clientAddr,
@@ -417,7 +417,7 @@ class LoopGroupTest {
                     val before = loop.afterReceiveCount
                     kotlinx.coroutines.withContext(loop.dispatcher) {
                         repeat(1000) {
-                            loop.forwarded.trySend(
+                            loop.forward(
                                 EndpointLoop.Forwarded(
                                     ByteArray(30) {
                                         0x40
@@ -435,6 +435,43 @@ class LoopGroupTest {
                         rounds >= 1000 / EndpointLoop.FORWARD_BATCH,
                         "admission + flush ran after every batch of forwarded datagrams: $rounds rounds for 1000",
                     )
+                } finally {
+                    group.close()
+                }
+            }
+        }
+
+    /**
+     * The forwarded queue takes part in the drain before an idle close (RFC 9000 section 10.1): a datagram handed to the
+     * forward loop while it waits in its receive leaves the channel at once, before it is processed, so the channel looks
+     * empty; the round still waits for it, counted until processed.
+     */
+    @Test fun aForwardedDatagramNotYetProcessedHoldsTheDrainRound(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val group = LoopGroup.create(config, listOf(net.open(serverAddr), net.open(otherAddr)))
+                try {
+                    val loop = group.loopForTest(0)
+
+                    fun junk() =
+                        EndpointLoop.Forwarded(ByteArray(30) { 0x40 }, clientAddr, io.kuicksilver.quic.Ecn.NotEct, asReceived = false)
+                    assertTrue(loop.forward(junk()))
+                    // processed: the forward loop waits in its receive again
+                    withTimeout(10.seconds) { while (loop.forwardedCount.load() < 1) kotlinx.coroutines.yield() }
+                    val round =
+                        kotlinx.coroutines.withContext(loop.dispatcher) {
+                            assertTrue(loop.forward(junk())) // handed over; the forward loop runs only after this block
+                            loop.drainRoundWanted = true
+                            loop.startDrainRound()
+                            assertTrue(loop.forwardDrainServed < loop.drainRound, "the round waits for the forwarded datagram")
+                            loop.drainRound
+                        }
+                    withTimeout(10.seconds) {
+                        while (kotlinx.coroutines.withContext(loop.dispatcher) { loop.forwardDrainServed } < round) {
+                            kotlinx.coroutines.yield()
+                        }
+                    }
                 } finally {
                     group.close()
                 }

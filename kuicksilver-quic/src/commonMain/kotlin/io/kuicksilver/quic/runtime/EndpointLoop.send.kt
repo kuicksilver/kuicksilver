@@ -229,7 +229,9 @@ private inline fun EndpointLoop.flushBody(
                     // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
                     if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
                     outBatch.clear()
-                    if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
+                    // held for a drain past its idle deadline: nothing goes out (an application write would restart the timer,
+                    // RFC 9000 section 10.1; the core's poll refuses it too) until the drain decides
+                    if (!(c.idleHeld && c.idleDeadline() <= now) && c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
                     rt.drainEvents()
                     rt.tick()
                 } catch (e: Throwable) {

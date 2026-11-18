@@ -340,6 +340,12 @@ can sit in a receive's hands unseen while the decision is made. Rejected:
 - **Waiting for the receive in flight without interrupting it.** NIO and ktor-network wait without limit on an idle
   socket, and while one connection's close waited, every other connection's timers would have waited too.
 
+Accepted limits: the kernel queue of a socket the loops share in process (`loops > 1` on Darwin and Windows; the
+dispatcher's thread reads it, the loop drains only its ring), the kernel queue behind ktor-network's receiver on Native
+(only its channel is drained), another loop's socket of a group, a caller's own `DatagramIo`, and on `ksl` an idle close up
+to one 100 ms wait slice late. Nothing is sent past the idle deadline meanwhile, an application write included
+(`ConnectionCore.poll` sends nothing then), so the hold cannot keep a connection the timer already ended.
+
 ### Servers on Kotlin/Native
 
 The portable Native socket (`KtorDatagramIo`, `ktor-network`) stays client-only: its `capabilities` restrict it to the

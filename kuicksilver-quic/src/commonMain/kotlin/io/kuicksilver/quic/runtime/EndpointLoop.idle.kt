@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class)
+@file:OptIn(ExperimentalKuicksilverApi::class, InternalKuicksilverApi::class, ExperimentalAtomicApi::class)
 
 package io.kuicksilver.quic.runtime
 
@@ -11,6 +11,7 @@ import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.idleDeadline
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 // The sockets are drained before an idle timer closes a connection.
 //
@@ -38,11 +39,16 @@ internal class HeldForDrain(
     val since: TimeMark,
 )
 
-/** The receiver [r] of one of this loop's sockets takes part in drain rounds from now on; it owes nothing for earlier ones. */
+/**
+ * The receiver [r] of one of this loop's sockets takes part in drain rounds from now on. It owes nothing for rounds that
+ * ended, but the round still open while a connection is held (a migration path's socket added meanwhile may hold that
+ * connection's datagrams) is asked of it too.
+ */
 internal fun EndpointLoop.registerReceiver(r: BatchReceiver) {
-    r.startAtDrainRound(drainRound)
+    r.startAtDrainRound(if (held.isEmpty()) drainRound else drainRound - 1)
     r.onDrained = drainedSignal
     receivers += r
+    if (held.isNotEmpty()) r.requestDrain(drainRound)
 }
 
 /** [r]'s socket is gone: the rounds stop waiting for it. */
@@ -79,9 +85,8 @@ internal fun EndpointLoop.startDrainRound() {
     val round = ++drainRound
     idleDrainRoundsForTest++
     for (i in 0 until receivers.size) receivers[i].requestDrain(round)
-    // the forwarded queue: the forward loop is queued or running whenever it holds something
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    if (forwarded.isEmpty) {
+    // the forwarded queue: counted until processed, since one handed to the waiting forward loop has left the channel already
+    if (forwardedPending.load() == 0) {
         forwardDrainServed = round
     } else {
         forwardDrainRequested = round
@@ -89,7 +94,7 @@ internal fun EndpointLoop.startDrainRound() {
     }
 }
 
-/** The forward loop finished a round of [taken] datagrams, [dry] when its queue ran empty. Loop dispatcher only. */
+/** The forward loop finished a round of [taken] datagrams, [dry] when nothing forwarded waits any more. Loop dispatcher only. */
 internal fun EndpointLoop.forwardRoundDone(
     taken: Int,
     dry: Boolean,
@@ -140,6 +145,7 @@ internal fun EndpointLoop.releaseHeld(now: TimeMark) {
         } catch (e: Throwable) {
             c.failInternal(e) // sans-IO, not suspending: even a CancellationException is the connection's failure
         }
+        onIdleReleasedForTest?.invoke(c)
     }
 }
 

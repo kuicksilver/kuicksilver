@@ -41,6 +41,7 @@ import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.finishPathResponses
 import io.kuicksilver.quic.core.glitch
+import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
@@ -1031,6 +1032,10 @@ public class ConnectionCore internal constructor(
         now: TimeMark,
     ): Int {
         if (state == ConnectionState.Closed || state == ConnectionState.Draining) return 0
+        // past the idle deadline the connection is idle whatever is queued (RFC 9000 section 10.1): a packet sent now would
+        // restart the timer ("when sending an ack-eliciting packet if no other ack-eliciting packets have been sent since
+        // last receiving and processing a packet") and keep it; onTimeout closes it. NEVER while closing: the close goes out
+        if (idleDeadline() <= now) return 0
         this.now = now
         // a reverted path with no connection ID of the peer it may use: nothing can go out (RFC 9000 sections 9.3, 9.5)
         if (paths.active.waitsForPeerCid) return 0

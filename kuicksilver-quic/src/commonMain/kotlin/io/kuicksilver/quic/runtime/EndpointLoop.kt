@@ -168,6 +168,9 @@ internal class EndpointLoop private constructor(
 
     /** Test hook: runs on the loop each time a connection is held for a drain, with the number now held. */
     internal var onIdleHeldForTest: ((Int) -> Unit)? = null
+
+    /** Test hook: runs on the loop for each held connection once its timers ran again (the drain's verdict is its state). */
+    internal var onIdleReleasedForTest: ((ConnectionCore) -> Unit)? = null
     internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()
@@ -199,6 +202,21 @@ internal class EndpointLoop private constructor(
     )
 
     internal val forwarded = Channel<Forwarded>(FORWARD_QUEUE)
+
+    /**
+     * Forwarded datagrams handed to this loop and not processed yet. Not the channel's emptiness: one handed straight to the
+     * forward loop waiting in its receive has left the channel before it is processed (the drain rounds, [startDrainRound]).
+     */
+    internal val forwardedPending = AtomicInt(0)
+
+    /** Hands [f] to this loop's [forwarded] queue (any thread); false when the queue does not take it. */
+    internal fun forward(f: Forwarded): Boolean {
+        forwardedPending.incrementAndFetch() // before the hand-over: the forward loop may process it at once
+        if (forwarded.trySend(f).isSuccess) return true
+        forwardedPending.decrementAndFetch()
+        return false
+    }
+
     internal val forwardedCount = AtomicLong(0)
 
     /** Test hook: every datagram received on this socket is handed to loop [testMisrouteTo] as if the kernel had hashed it there. */

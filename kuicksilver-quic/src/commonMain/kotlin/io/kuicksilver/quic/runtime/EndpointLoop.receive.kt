@@ -27,6 +27,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
 
@@ -156,13 +157,14 @@ internal suspend fun EndpointLoop.forwardLoop() {
             } else {
                 core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket, f.local)
             }
+            forwardedPending.decrementAndFetch() // processed
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             val drained = forwarded.isEmpty
             if (++sinceRound == FORWARD_BATCH || drained) {
                 val taken = sinceRound
                 sinceRound = 0
                 afterReceive(now)
-                forwardRoundDone(taken, drained)
+                forwardRoundDone(taken, dry = forwardedPending.load() == 0)
                 yield()
             }
         }

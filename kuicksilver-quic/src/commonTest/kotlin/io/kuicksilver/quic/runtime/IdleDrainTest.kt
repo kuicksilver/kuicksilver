@@ -9,6 +9,7 @@ import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeByte
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
@@ -56,6 +57,9 @@ class IdleDrainTest {
     /** Completed by the next datagram the network delivers towards the client. */
     @Volatile private var nextToClient: CompletableDeferred<Unit>? = null
 
+    /** Datagrams the client sent (the network's count). */
+    @Volatile private var clientSends = 0
+
     /** The server's datagrams to the client are lost (nothing it sends reaches the client's queue). */
     @Volatile private var dropToClient = false
 
@@ -69,6 +73,7 @@ class IdleDrainTest {
     private suspend fun endpoints(idle: Duration): Endpoints {
         val net = MemoryNetwork()
         net.lose = { from, to, bytes ->
+            if (from == clientAddr) clientSends++
             if (from == serverAddr && to == clientAddr) {
                 record(bytes)
                 nextToClient?.complete(Unit)
@@ -134,6 +139,26 @@ class IdleDrainTest {
         return c to s
     }
 
+    /**
+     * The verdict of the drain for each of [cs], taken the first time the loop releases it ([EndpointLoop.onIdleReleasedForTest]):
+     * true when the connection outlived its idle timer. A connection kept that way would otherwise reach its next deadline
+     * while the test still waits (the acknowledgments it reads only at the drain inflate its RTT and with it the 3 x PTO
+     * floor), so the client reads as usual again from the first connection kept.
+     */
+    private fun verdicts(
+        e: Endpoints,
+        vararg cs: QuicConnection,
+    ): List<CompletableDeferred<Boolean>> {
+        val ds = cs.map { CompletableDeferred<Boolean>() }
+        val byCore = cs.map { (it as ConnectionRuntime).core }.zip(ds).toMap()
+        e.client.onIdleReleasedForTest = { core ->
+            val kept = core.state != ConnectionState.Closed
+            byCore[core]?.complete(kept)
+            if (kept) e.cio.stalled = false
+        }
+        return ds
+    }
+
     private fun idleTimeout(why: Throwable?) {
         val t = assertIs<QuicException.ConnectionLost.Timeout>(why, "closed by the idle timer: $why")
         assertEquals(TimeoutKind.Idle, t.kind)
@@ -147,14 +172,15 @@ class IdleDrainTest {
                 try {
                     val (c, s) = connect(e, idle)
                     val down = s.openUni()
+                    val (kept) = verdicts(e, c)
                     e.cio.stalled = true // from now on the client's receive hands nothing back
                     val queued = CompletableDeferred<Unit>().also { nextToClient = it }
                     down.output.writeByte(7)
                     down.output.flush()
                     queued.await() // the server's datagram waits in the client's socket
                     // the client's idle deadline passes with it unread: the loop takes it first, and it restarts the timer
+                    assertTrue(kept.await(), "closed: ${runCatching { c.closed.getCompleted() }}")
                     assertEquals(7, c.acceptStream().input.readByte())
-                    assertFalse(c.closed.isCompleted, "closed: ${runCatching { c.closed.getCompleted() }}")
                     assertTrue(e.client.idleDrainRoundsForTest >= 1, "the loop drained its socket before the idle close")
                 } finally {
                     e.client.close()
@@ -281,6 +307,7 @@ class IdleDrainTest {
                     try {
                         val (c, s) = connect(e, idle)
                         val down = s.openUni()
+                        val (verdict) = verdicts(e, c)
                         e.cio.stalled = true
                         repeat(junk) { i ->
                             e.net.deliver(serverAddr, clientAddr, ByteArray(40) { (it * 7 + i).toByte() }.also { it[0] = 0x43 })
@@ -289,9 +316,9 @@ class IdleDrainTest {
                         down.output.writeByte(9)
                         down.output.flush()
                         queued.await()
+                        assertEquals(kept, verdict.await(), "$junk junk datagrams ahead")
                         if (kept) {
                             assertEquals(9, c.acceptStream().input.readByte(), "$junk junk datagrams ahead")
-                            assertFalse(c.closed.isCompleted)
                         } else {
                             idleTimeout(c.closed.await())
                         }
@@ -313,14 +340,15 @@ class IdleDrainTest {
                     val (quiet, _) = connect(e, idle)
                     val (spoke, s) = connect(e, idle)
                     val down = s.openUni()
+                    val (spokeKept) = verdicts(e, spoke)
                     e.cio.stalled = true
                     val queued = CompletableDeferred<Unit>().also { nextToClient = it }
                     down.output.writeByte(3)
                     down.output.flush()
                     queued.await()
                     idleTimeout(quiet.closed.await())
+                    assertTrue(spokeKept.await(), "closed: ${runCatching { spoke.closed.getCompleted() }}")
                     assertEquals(3, spoke.acceptStream().input.readByte())
-                    assertFalse(spoke.closed.isCompleted, "closed: ${runCatching { spoke.closed.getCompleted() }}")
                 } finally {
                     e.client.close()
                     e.server.close()
@@ -344,6 +372,7 @@ class IdleDrainTest {
                     val down = s.openUni()
                     val bothHeld = CompletableDeferred<Unit>()
                     e.client.onIdleHeldForTest = { held -> if (held >= 2) bothHeld.complete(Unit) }
+                    val (secondKept) = verdicts(e, second)
                     e.cio.interruptGate = gate
                     e.cio.stalled = true
                     val queued = CompletableDeferred<Unit>().also { nextToClient = it }
@@ -354,8 +383,8 @@ class IdleDrainTest {
                     assertFalse(first.closed.isCompleted)
                     gate.complete(Unit)
                     idleTimeout(first.closed.await())
+                    assertTrue(secondKept.await(), "closed: ${runCatching { second.closed.getCompleted() }}")
                     assertEquals(5, second.acceptStream().input.readByte())
-                    assertFalse(second.closed.isCompleted)
                 } finally {
                     gate.complete(Unit)
                     e.client.close()
@@ -385,6 +414,73 @@ class IdleDrainTest {
                     assertEquals(0L, e.cio.queuedTaken)
                 } finally {
                     gate.complete(Unit)
+                    e.client.close()
+                    e.server.close()
+                }
+            }
+        }
+
+    /**
+     * The application writes while its connection is held past the idle deadline (RFC 9000 section 10.1: an ack-eliciting
+     * packet sent then would restart the timer). Nothing goes out, and the connection still closes as idle.
+     */
+    @Test fun negative_aWriteDuringAnOpenHoldStillClosesAsIdle(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val idle = 300.milliseconds
+                val e = endpoints(idle)
+                val gate = CompletableDeferred<Unit>() // never completed: the hold lasts until its limit
+                try {
+                    val (c, _) = connect(e, idle)
+                    val up = c.openUni()
+                    val held = CompletableDeferred<Int>()
+                    e.client.onIdleHeldForTest = { held.complete(clientSends) }
+                    dropToClient = true
+                    e.cio.interruptGate = gate
+                    e.cio.stalled = true
+                    val sentBefore = held.await()
+                    runCatching {
+                        up.output.writeByte(2)
+                        up.output.flush()
+                    }
+                    idleTimeout(c.closed.await())
+                    assertEquals(sentBefore, clientSends, "datagrams sent after the idle deadline")
+                } finally {
+                    gate.complete(Unit)
+                    e.client.close()
+                    e.server.close()
+                }
+            }
+        }
+
+    /** A receiver that joins while a hold is open (a migration path's socket) owes the open round too. */
+    @Test fun aReceiverJoiningDuringAnOpenHoldDrainsForIt(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val idle = 300.milliseconds
+                val e = endpoints(idle)
+                val gate = CompletableDeferred<Unit>()
+                val extra = e.net.open(InetSocketAddress("10.0.0.1", 1112))
+                try {
+                    connect(e, idle)
+                    val held = CompletableDeferred<Unit>()
+                    e.client.onIdleHeldForTest = { held.complete(Unit) }
+                    e.cio.interruptGate = gate
+                    e.cio.stalled = true
+                    held.await()
+                    kotlinx.coroutines.withContext(e.client.dispatcher) {
+                        val r = BatchReceiver(extra, e.client.clock)
+                        e.client.registerReceiver(r)
+                        try {
+                            assertEquals(e.client.drainRound, r.drainRequested, "asked for the open round")
+                            assertTrue(r.drainServed < e.client.drainRound, "and not counted as done")
+                        } finally {
+                            e.client.unregisterReceiver(r)
+                        }
+                    }
+                } finally {
+                    gate.complete(Unit)
+                    extra.close()
                     e.client.close()
                     e.server.close()
                 }

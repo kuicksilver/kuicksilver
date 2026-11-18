@@ -129,6 +129,11 @@ internal class BatchReceiver(
         val free = into.capacity - into.count
         val n = queuedIo!!.receiveQueued(into)
         servingTaken += n
+        // fewer than the free slots is taken for "the socket ran dry". Both exceptions only end a round early with datagrams
+        // still to come, which the receives after the round take as usual: the accelerated socket hands out the segments of a
+        // GRO datagram across calls (a call that fills every slot may leave some in its scratch, and one that does not fill
+        // them took them all), and ktor-network's receiver hands its channel one datagram at a time, so the channel can be
+        // empty while the kernel still holds more (not reached at all: the limits in EndpointLoop.idle.kt)
         if (n < free || servingTaken >= DRAIN_BUDGET) {
             servedPending = serving // the socket ran dry, or the budget is spent: done once this batch is processed
             serving = 0L
