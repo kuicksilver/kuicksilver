@@ -12,27 +12,28 @@ import io.kuicksilver.native.KslConst
  * sends a key share for in its first ClientHello. Every invalid value throws [TlsException.Config] here; a group the OpenSSL in
  * use does not provide throws it when the configuration is built ([TlsConfig.Builder.build]).
  *
- * - A client offers [groups] in this order in `supported_groups` and key shares for [keyShares], in the same order. A server it
- *   shares no group with ends the handshake with `handshake_failure` (40; over QUIC, CRYPTO_ERROR 0x0128); one that takes a
- *   group the client sent no share for answers with a HelloRetryRequest (RFC 9846 section 4.2.1), which costs a round trip and
- *   rejects 0-RTT (RFC 9001 section 4.6.2).
- * - A server picks by its own order: among the groups the client sent a key share for, the first of [groups]; with none of them,
- *   a HelloRetryRequest for the first of [groups] the client supports; with no group in common, `handshake_failure`. It ignores
- *   [keyShares]. An `sniSelector` answer may bring its own ([ServerTlsOverride.keyExchangeGroups]).
- * - TLS 1.2 ([TlsVersions.Tls12And13], TCP) takes the elliptic curves of [groups] ([X25519], [X448], [SECP256R1], [SECP384R1],
- *   [SECP521R1]) in the same order; the hybrids are TLS 1.3 only. There the list also names the curves of the peer's ECDSA
- *   certificates an endpoint accepts (RFC 8422 section 5.1): a client without [SECP256R1] refuses a TLS 1.2 server's P-256
- *   certificate with `handshake_failure`, and a server without it refuses a P-256 client certificate with `illegal_parameter`
- *   (47; OpenSSL holds client certificates to the server's own list). TLS 1.3 negotiates signatures apart.
+ * - A client offers [KeyExchangeGroups.groups] in this order in `supported_groups` and key shares for [KeyExchangeGroups.keyShares], in
+ *   the same order. A server it shares no group with ends the handshake with `handshake_failure` (40; over QUIC, CRYPTO_ERROR 0x0128);
+ *   one that takes a group the client sent no share for answers with a HelloRetryRequest (RFC 9846 section 4.2.1), which costs a round
+ *   trip and rejects 0-RTT (RFC 9001 section 4.6.2).
+ * - A server picks by its own order: among the groups the client sent a key share for, the first of [KeyExchangeGroups.groups]; with
+ *   none of them, a HelloRetryRequest for the first of [KeyExchangeGroups.groups] the client supports; with no group in common,
+ *   `handshake_failure`. It ignores [KeyExchangeGroups.keyShares]. An `sniSelector` answer may bring its own
+ *   ([ServerTlsOverride.keyExchangeGroups]).
+ * - TLS 1.2 ([TlsVersions.Tls12And13], TCP) takes the elliptic curves of [KeyExchangeGroups.groups] ([X25519], [X448], [SECP256R1],
+ *   [SECP384R1], [SECP521R1]) in the same order; the hybrids are TLS 1.3 only. There the list also names the curves of the peer's ECDSA
+ *   certificates an endpoint accepts (RFC 8422 section 5.1): a client without [SECP256R1] refuses a TLS 1.2 server's P-256 certificate
+ *   with `handshake_failure`, and a server without it refuses a P-256 client certificate with `illegal_parameter` (47; OpenSSL holds
+ *   client certificates to the server's own list). TLS 1.3 negotiates signatures apart.
  *
  * A session ticket does not depend on the group: a resumption runs a fresh key exchange (`psk_dhe_ke`) under the groups in effect.
  *
  * @param groups the group names, most preferred first: the constants of the companion, in any case; never empty, each at most once
  *   (RFC 9846 section 4.3.7: "The "named_group_list" MUST NOT contain any duplicate entries").
- * @param keyShares the groups of [groups] a client sends key shares for, 1 to 4 of them (each share is sent whole: an
+ * @param keyShares the groups of [KeyExchangeGroups.groups] a client sends key shares for, 1 to 4 of them (each share is sent whole: an
  *   [X25519MLKEM768] share alone is 1,216 bytes). Null: the first group, and the first later one of the other kind (hybrid or
- *   classical) when the first is of one, so a client offers a post-quantum and a classical share as BoringSSL does. Servers
- *   refuse a configuration that sets it.
+ *   classical) when the first is of one, so a client offers a post-quantum and a classical share as BoringSSL does. Servers refuse a
+ *   configuration that sets it.
  */
 @ExperimentalKuicksilverApi
 public class KeyExchangeGroups(
@@ -42,10 +43,10 @@ public class KeyExchangeGroups(
     /** The groups in their canonical spelling (the companion's constants), most preferred first. */
     public val groups: List<String>
 
-    /** The groups a client sends a key share for in its first ClientHello, in the order of [groups]. */
+    /** The groups a client sends a key share for in its first ClientHello, in the order of [KeyExchangeGroups.groups]. */
     public val keyShares: List<String>
 
-    /** Whether [keyShares] was given (a server refuses that), not derived from [groups]. */
+    /** Whether `keyShares` was given (a server refuses that), not derived from [KeyExchangeGroups.groups]. */
     internal val sharesGiven: Boolean = keyShares != null
 
     init {

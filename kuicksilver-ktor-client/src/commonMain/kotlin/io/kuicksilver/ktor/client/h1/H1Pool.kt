@@ -33,6 +33,8 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.PriorityUpdaterKey
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.cleartextNotPermitted
+import io.kuicksilver.ktor.client.cleartextPolicyHost
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.evictEldest
 import io.kuicksilver.ktor.client.h2.H2Conn
@@ -917,11 +919,8 @@ internal class H1Pool(
         val url = data.url
         val secure = url.protocol.isSecure()
         if (!secure) {
-            val host = url.host.removePrefix("[").removeSuffix("]") // an IPv6 literal as the policy knows it
-            if (!cleartextPermitted(host)) {
-                throw io.kuicksilver.ktor.client
-                    .cleartextNotPermitted(host)
-            }
+            val host = cleartextPolicyHost(url.host)
+            if (!cleartextPermitted(host)) throw cleartextNotPermitted(host)
         }
         // through an HTTP proxy, plain http goes in the absolute form (RFC 9112 section 3.2.2); TLS and WebSockets, ws://
         // included (RFC 6455 section 4.1, as browsers), through a CONNECT tunnel; through SOCKS5 everything is tunneled

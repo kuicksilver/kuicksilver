@@ -2553,6 +2553,19 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- Ktor client on Android: the Network Security Configuration was asked about the host of an `http://` or `ws://` URL
+  as written, and it matches strings, so a rule for an address was passed by another spelling of it (`127.1` or
+  `2130706433` for `127.0.0.1`, `[0:0:0:0:0:0:0:1]` for `::1`, `[::ffff:192.168.1.1]` for `192.168.1.1`). It is now
+  asked about one spelling per address, which the refusal names too: an inet_aton-form IPv4 host as the dotted quad it
+  names; an IPv4-mapped literal as its dotted quad, the address the connection goes to; another IPv6 literal in the text
+  RFC 5952 recommends (lower case, no leading zeros, the longest run of zero groups as `::`), without its zone: the
+  policy knows no interfaces, so a rule for `fe80::1` holds for `fe80::1%wlan0`. A host that has no such spelling now
+  fails with an `IOException` before the policy is asked: a numeric host that platforms read differently (`010.0.0.1`,
+  before a cleartext refusal), an IP literal that is no IPv6 address (before, the policy was asked about it as written),
+  a host beginning with a dot (Android's policy threw `IllegalArgumentException` for it), and a name with non-ASCII
+  characters, since the engine does not map an internationalised name to the A-label the rules name: the URL must carry
+  the A-label. The [Ktor guide](docs/guide/ktor.md) lists the spellings. Pinned by `CleartextPolicyHostTest` and the
+  `ClientH1Test` cleartext tests.
 - HTTP/2 (RFC 9113 section 10.5; CVE-2019-9514, CVE-2019-9516, MadeYouReset CVE-2025-8671): two kinds of streams the
   peer makes us reset cost it nothing. A malformed request or response (section 8.1.1: missing or invalid pseudo-header
   fields, a zero-length field block, connection-specific fields, a content-length that does not match) is reset by the

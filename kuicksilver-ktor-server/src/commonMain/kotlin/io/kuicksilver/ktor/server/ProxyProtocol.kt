@@ -14,13 +14,13 @@ import kotlin.time.Duration.Companion.seconds
  * TCP peer (the proxy). Made by `proxyProtocol { ... }` on `plainConnector { }` or `tlsConnector(identity) { }`; off by
  * default.
  *
- * On such a connector every connection must start with a valid header, version 1 or 2, before TLS on a TLS connector:
- * the spec says the receiver "MUST not try to guess whether the protocol header is present or not". A connection whose
- * TCP peer is not one of [trustedSources] is closed at accept, before a byte is read: only the configured proxies may
- * speak the protocol ("The receiver SHOULD ensure proper access filtering so that only trusted proxies are allowed to use
- * this protocol"), and a client that reaches the port directly cannot set its own address. A header that is malformed,
- * longer than [maxHeaderSize] or not complete within [headerTimeout] closes the connection. HTTP/3 (QUIC, UDP) on a TLS
- * connector's port is not affected: the protocol is defined for connection-oriented transports in front of the server, so
+ * On such a connector every connection must start with a valid header, version 1 or 2, before TLS on a TLS connector: the spec says the
+ * receiver "MUST not try to guess whether the protocol header is present or not". A connection whose TCP peer is not one of
+ * [ProxyProtocolConfig.trustedSources] is closed at accept, before a byte is read: only the configured proxies may speak the protocol
+ * ("The receiver SHOULD ensure proper access filtering so that only trusted proxies are allowed to use this protocol"), and a client
+ * that reaches the port directly cannot set its own address. A header that is malformed, longer than
+ * [ProxyProtocolConfig.maxHeaderSize] or not complete within [ProxyProtocolConfig.headerTimeout] closes the connection. HTTP/3 (QUIC,
+ * UDP) on a TLS connector's port is not affected: the protocol is defined for connection-oriented transports in front of the server, so
  * HTTP/3 requests report their UDP peer.
  */
 @ExperimentalKuicksilverApi
