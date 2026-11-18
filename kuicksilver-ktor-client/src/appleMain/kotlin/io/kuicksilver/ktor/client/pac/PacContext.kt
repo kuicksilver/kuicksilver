@@ -4,16 +4,17 @@
 
 package io.kuicksilver.ktor.client.pac
 
-import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.allocArrayOf
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.staticCFunction
-import kotlinx.cinterop.toKString
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.JavaScriptCore.JSContextGetGlobalObject
 import platform.JavaScriptCore.JSContextRef
@@ -27,10 +28,9 @@ import platform.JavaScriptCore.JSObjectIsFunction
 import platform.JavaScriptCore.JSObjectMakeFunctionWithCallback
 import platform.JavaScriptCore.JSObjectRef
 import platform.JavaScriptCore.JSObjectSetProperty
-import platform.JavaScriptCore.JSStringCreateWithUTF8CString
+import platform.JavaScriptCore.JSStringCreateWithCharacters
+import platform.JavaScriptCore.JSStringGetCharactersPtr
 import platform.JavaScriptCore.JSStringGetLength
-import platform.JavaScriptCore.JSStringGetMaximumUTF8CStringSize
-import platform.JavaScriptCore.JSStringGetUTF8CString
 import platform.JavaScriptCore.JSStringRef
 import platform.JavaScriptCore.JSStringRelease
 import platform.JavaScriptCore.JSValueIsNull
@@ -57,26 +57,49 @@ internal class PacScriptException(
 ) : Exception(message)
 
 /**
+ * A PAC script's text made ready for JavaScriptCore: its size checked against [PAC_MAX_SCRIPT_BYTES] (a script given
+ * inline in the settings gets the cap of a downloaded one, [PacScripts]) and its UTF-16 characters copied into a
+ * JavaScriptCore string as they are. No script code runs here: this is the engine's own work, bounded by the cap, and
+ * [PacRunner] does it before a run's time limit starts, so a device slow at it (a script of the largest size on an old
+ * phone or a busy machine) does not lose the script's answer to it. Released with [close].
+ */
+internal class PacSource(
+    script: String,
+) {
+    val text: JSStringRef
+
+    init {
+        // characters <= UTF-8 bytes
+        if (script.length > PAC_MAX_SCRIPT_BYTES || script.encodeToByteArray().size > PAC_MAX_SCRIPT_BYTES) {
+            throw PacScriptException("the script is larger than $PAC_MAX_SCRIPT_BYTES bytes")
+        }
+        PacRunner.preparedForTest?.invoke() // before the string is made: a hook that throws leaks nothing
+        text = jsString(script)
+    }
+
+    fun close() {
+        JSStringRelease(text)
+    }
+}
+
+/**
  * One PAC script in a JavaScriptCore context of its own (`JSGlobalContextCreate`): ECMAScript's built-ins, the PAC
  * utility functions ([PAC_UTILS_JS]) and four native ones ([PacHost]: `dnsResolve`, `dnsResolveEx`, `myIpAddress`,
  * `myIpAddressEx`), nothing else: no network, file, timer or module API, and nothing of the process reaches the script.
- * Not thread-safe: [PacRunner] creates, uses and releases it on its one thread.
+ * The script's top-level code runs here, so [PacRunner] creates it within a run's time limit, from a [source] prepared
+ * before that limit started (the source stays the caller's to release). Not thread-safe: [PacRunner] creates, uses and
+ * releases it on its one thread.
  */
 internal class PacContext(
-    script: String,
+    source: PacSource,
 ) {
     private val ctx: JSGlobalContextRef = JSGlobalContextCreate(null) ?: throw PacScriptException("no JavaScript context")
 
     init {
-        // a script given inline in the settings gets the cap of a downloaded one (PacScripts); characters <= UTF-8 bytes
-        if (script.length > PAC_MAX_SCRIPT_BYTES || script.encodeToByteArray().size > PAC_MAX_SCRIPT_BYTES) {
-            JSGlobalContextRelease(ctx)
-            throw PacScriptException("the script is larger than $PAC_MAX_SCRIPT_BYTES bytes")
-        }
         try {
             for ((name, fn) in NATIVES) define(name, fn)
             evaluate(PAC_UTILS_JS, "pac-utils.js")
-            evaluate(script, "proxy.pac")
+            evaluate(source.text, "proxy.pac")
             if (function("FindProxyForURLEx") == null && function("FindProxyForURL") == null) {
                 throw PacScriptException("the script defines no FindProxyForURL")
             }
@@ -128,6 +151,8 @@ internal class PacContext(
             }
             val text = stringText(js)
             if (text.any { it.code > 0x7F }) throw PacScriptException("FindProxyForURL returned a string that is not ASCII")
+            // read whole, a NUL would hide what follows it from the grammar (`PROXY a:1<NUL>junk`): no answer has one
+            if ('\u0000' in text) throw PacScriptException("FindProxyForURL returned a string with a NUL")
             return text
         } finally {
             JSStringRelease(js)
@@ -162,17 +187,27 @@ internal class PacContext(
     private fun evaluate(
         code: String,
         source: String,
+    ): JSValueRef? {
+        val s = jsString(code)
+        try {
+            return evaluate(s, source)
+        } finally {
+            JSStringRelease(s)
+        }
+    }
+
+    private fun evaluate(
+        code: JSStringRef,
+        source: String,
     ): JSValueRef? =
         memScoped {
-            val s = jsString(code)
             val url = jsString(source)
             try {
                 val exception = alloc<JSValueRefVar>()
-                val v = JSEvaluateScript(ctx, s, null, url, 1, exception.ptr)
+                val v = JSEvaluateScript(ctx, code, null, url, 1, exception.ptr)
                 exception.value?.let { throw PacScriptException("$source: ${errorText(it)}") }
                 v
             } finally {
-                JSStringRelease(s)
                 JSStringRelease(url)
             }
         }
@@ -215,9 +250,33 @@ internal class PacContext(
     private fun toText(v: JSValueRef): String = jsText(ctx, v)
 }
 
+/** A context of [script], its source prepared here and released once the script is loaded (tests). */
+internal fun PacContext(script: String): PacContext {
+    val source = PacSource(script)
+    try {
+        return PacContext(source)
+    } finally {
+        source.close()
+    }
+}
+
 private typealias JSCallback = platform.JavaScriptCore.JSObjectCallAsFunctionCallback
 
-private fun jsString(s: String): JSStringRef = JSStringCreateWithUTF8CString(s) ?: throw PacScriptException("string")
+/**
+ * [s] as a JavaScriptCore string, its UTF-16 characters copied as they are (JavaScriptCore's own form): a copy of the
+ * array, where a conversion through a UTF-8 C string took a tenth of a second per MiB in a debug build and ended the text
+ * at its first NUL.
+ */
+private fun jsString(s: String): JSStringRef {
+    val chars = s.toCharArray()
+    val js =
+        if (chars.isEmpty()) {
+            JSStringCreateWithCharacters(null, 0u)
+        } else {
+            chars.usePinned { JSStringCreateWithCharacters(it.addressOf(0).reinterpret(), chars.size.convert()) }
+        }
+    return js ?: throw PacScriptException("string")
+}
 
 private fun jsValue(
     ctx: JSContextRef?,
@@ -243,13 +302,15 @@ private fun jsText(
     }
 }
 
+/**
+ * [js]'s UTF-16 characters as they are, the whole string: a NUL in it stays (a copy through a C string ended there, so
+ * `a.test<NUL>x` read as `a.test`).
+ */
 private fun stringText(js: JSStringRef): String {
-    val size = JSStringGetMaximumUTF8CStringSize(js)
-    return memScoped {
-        val buf = allocArray<ByteVar>(size.toLong())
-        JSStringGetUTF8CString(js, buf, size)
-        buf.toKString()
-    }
+    val length = JSStringGetLength(js).toInt()
+    if (length == 0) return ""
+    val chars = JSStringGetCharactersPtr(js) ?: return ""
+    return CharArray(length) { chars[it].toInt().toChar() }.concatToString()
 }
 
 /** The longest thrown value whose text a [PacScriptException] message repeats. */
@@ -258,7 +319,10 @@ private const val MAX_ERROR_CHARS = 512
 /** The longest argument a native function takes (a host name has at most 253 characters). */
 private const val MAX_NATIVE_ARGUMENT = 1024
 
-/** The first argument as a string, or null without one or when it is longer than [MAX_NATIVE_ARGUMENT]. */
+/**
+ * The first argument as a string, or null without one, when it is longer than [MAX_NATIVE_ARGUMENT] or when it holds a
+ * NUL (no host name has one: `a.test<NUL>x` is no lookup of `a.test`).
+ */
 private fun firstArgument(
     ctx: JSContextRef?,
     count: ULong,
@@ -267,7 +331,7 @@ private fun firstArgument(
     if (count == 0uL || args == null) return null
     val js = JSValueToStringCopy(ctx, args[0], null) ?: return null
     try {
-        return if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) null else stringText(js)
+        return if (JSStringGetLength(js) > MAX_NATIVE_ARGUMENT.toULong()) null else stringText(js).takeIf { '\u0000' !in it }
     } finally {
         JSStringRelease(js)
     }
