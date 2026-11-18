@@ -199,14 +199,17 @@ closed). Targets listed in
 small decoders not traced yet; `server.proxyHeader` reads only a mode byte before the header's own bytes), and neither is a Jazzer target that is not in the campaign's table
 (`BbrInvariantFuzzTest`). The reason rule needs the history: the hosted lint job checks out all of it and compares a push to `main` or `release/**` with the commit before it, anything else with its merge base with `origin/main` (`KSL_FUZZ_FORMATS_BASE`); without a base it skips the rule and says so.
 
-`select-races.py` follows a clause's subject only to a `val` or `var` of the same function started with `launch` or
-`async`: work started in another function (a Job in a field, a parameter), a Deferred completed by a callback, a started
-Job reached through another name, and races that are no select (two coroutines completing one Deferred) are not seen;
+`select-races.py` follows a clause's subject only to a `val` or `var` of the same function declared as started with
+`launch` or `async` (also through `this@f.` or `CoroutineScope(ctx).`): work started in another function (a Job in a
+field, a parameter), a Deferred completed by a callback, a channel of `produce` or `actor`, a started Job reached through
+another name or assigned to a `var` declared earlier (`job = launch { }`), and races that are no select (two coroutines
+completing one Deferred) are not seen;
 `seam` is checked syntactically (a `*ForTest` call in the started block), not that the hook decides the race.
 `race-tests.py` knows a race test by its name, so a race test named otherwise is not asked for a seam, and it follows
 calls within the file only: a seam reached through a fixture of another file needs an entry. `wall-bounds.py` reads a
-bound written as a literal or as a constant of the same file; a bound held in a local variable or computed
-(`timeout * 2`), one on the left of the comparison, and one checked by `if (...) fail()` are not seen, and the numbers of
+bound written as a literal, as a constant of the same file or as a range of literals (`in a..b`); a bound held in a local
+variable or computed (`timeout * 2`, `toDuration`, `Duration.parse`), one on the left of the comparison, a comparison
+written as `compareTo`, and one checked by `if (...) fail()` are not seen, and the numbers of
 an entry are what its author measured and read, not a measurement of the check.
 
 **Race tests repeated under load.** [`tools/ci/race-repeat.sh`](../tools/ci/race-repeat.sh) repeats what a branch changed

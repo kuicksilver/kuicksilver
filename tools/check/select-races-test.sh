@@ -5,7 +5,8 @@
 # function started (a channel and a Job passed in, one clause only, a select in a comment or a string), test sources; a
 # judged site; a seam verdict whose started block calls a *ForTest hook; a tested-each verdict naming two existing tests.
 # Fail, each named with its function: an unjudged select on an async (also started UNDISPATCHED, through a scope, against
-# onTimeout, qualified as kotlinx.coroutines.selects.select, selectUnbiased with type arguments) and on a launch; a site in
+# onTimeout, qualified as kotlinx.coroutines.selects.select, selectUnbiased with type arguments, through `this@x` and
+# `CoroutineScope(ctx)`) and on a launch; a site in
 # a lambda judged under its function; a second site in a judged function; a stale entry; a seam verdict without a hook in
 # the started block (a hook elsewhere in the function does not count); a tested-each verdict naming one test, or a test
 # that does not exist; an entry without a reason, with an unknown verdict, a count of 0, or twice for one function.
@@ -90,6 +91,18 @@ case_ 1 "a launch against onTimeout, select qualified" "$A:3 | select in f |" "$
         job.onJoin { }
         onTimeout(10) { }
     }
+}'
+case_ 1 "an async through a labelled receiver" "$A:4 | select in f |" "$A" \
+'import kotlinx.coroutines.selects.select
+suspend fun f(stop: kotlinx.coroutines.Job) = kotlinx.coroutines.coroutineScope outer@{
+    val started = this@outer.async { 1 }
+    select<Int> { started.onAwait { it }; stop.onJoin { 0 } }
+}'
+case_ 1 "a launch through a constructed scope" "$A:4 | select in f |" "$A" \
+'import kotlinx.coroutines.selects.select
+suspend fun f(ctx: kotlin.coroutines.CoroutineContext, stop: kotlinx.coroutines.Job) {
+    val job = kotlinx.coroutines.CoroutineScope(ctx).launch { }
+    select<Unit> { job.onJoin { }; stop.onJoin { } }
 }'
 case_ 1 "selectUnbiased with type arguments" "$A:4 | select in f |" "$A" \
 'import kotlinx.coroutines.selects.selectUnbiased

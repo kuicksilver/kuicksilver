@@ -5,7 +5,8 @@
 # (virtual time: a test scheduler's markNow), a plain number in an assertion that names no time, a bound in a comment or
 # a string, main sources; a bound judged separated with numbers that separate it; a justified one. Fail, each named with
 # its function and bound: an unjudged upper bound (a duration literal, `3.5.seconds`, a constant of the file, a plain
-# number of milliseconds next to `took`), an unjudged lower bound, both sides of a two-sided window; a separated entry
+# number of milliseconds next to `took`, a range `in a..b`), an unjudged lower bound, both sides of a two-sided window;
+# a separated entry
 # whose good and bad are less than twice apart, have less than 1 s to the bound, or sit on one side of it; a separated
 # upper bound below 2 s; one side of a two-sided window judged separated; a justified entry with a short reason; a stale
 # entry, a second site of a judged bound; malformed entries (no numbers, a bad bound, an unknown verdict, twice).
@@ -64,6 +65,8 @@ case_ 1 "a constant of the file" "| f <10s |" "$A" "$(one 'kotlin.test.assertTru
 case_ 1 "a plain number of milliseconds next to a time" "| f <800ms |" "$A" "$(one 'kotlin.test.assertTrue(took.inWholeMilliseconds < 800)')"
 case_ 1 "an unjudged lower bound" "| f >=300ms |" "$A" "$(one 'kotlin.test.assertTrue(took >= 300.milliseconds)')"
 case_ 1 "both sides of a two-sided window" "| f >1.5s |" "$A" "$(one 'kotlin.test.assertTrue(took > 1_500.milliseconds && took < 3_500.milliseconds)')"
+case_ 1 "a range of durations is two bounds" "| f >=1s |" "$A" "$(one 'kotlin.test.assertTrue(took in 1.seconds..5.seconds)')"
+case_ 1 "a range of durations is two bounds (the upper)" "| f <=5s |" "$A" "$(one 'kotlin.test.assertTrue(took in 1.seconds..5.seconds)')"
 UP="$(one 'kotlin.test.assertTrue(took < 10.seconds)')"
 allow "$A | f | <10s | 1 | separated | good 300ms, bad 30s | the refusal against the handshake timeout"
 case_ 0 "a separated bound with numbers that separate it" "1 bound(s), 0 finding(s)" "$A" "$UP"

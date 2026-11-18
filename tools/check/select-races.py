@@ -14,7 +14,8 @@ path and function: the file and the innermost named function around the select (
 holds it); count: the sites in that function (one more fails until it is judged and the count raised); reason: at least
 three words. A site: a `select { }` (or `selectUnbiased`, with type arguments, qualified or not) with at least two clauses
 (`x.onAwait`, `onJoin`, `onReceive`, `onReceiveCatching`, `onSend`, `onTimeout(...)`), at least one of them on a Job or
-Deferred that the same function started with `launch` or `async` (`val x = launch`, `val x = scope.async(...)`) before
+Deferred that the same function started with `launch` or `async` (`val x = launch`, `val x = scope.async(...)`, also
+through a labelled or constructed receiver: `this@f.async`, `CoroutineScope(ctx).launch`) before
 the select. A select only on things others own (a channel, a Job passed in) is not a site: nothing of the function's own
 work is left half done by it.
 Verdicts:
@@ -28,8 +29,9 @@ Verdicts:
                test source set
 An entry naming a site that is gone (fewer sites than its count) is a finding too. Comments and string literals are left
 out. Not seen: a select whose clauses race work started in another function (a Job held in a field, a parameter), work
-started otherwise than by launch or async (a CompletableDeferred completed by a callback), a started Job reached through
-another name (`val j = x`), and races that are not selects (two coroutines that both complete one Deferred).
+started otherwise than by launch or async (a CompletableDeferred completed by a callback, `produce`, `actor`), a started
+Job reached through another name (`val j = x`) or assigned to a `var` declared earlier (`job = launch { }`), and races
+that are not selects (two coroutines that both complete one Deferred).
 Usage: select-races.py [root]   (exit 1 on any finding)
 """
 import os
@@ -46,7 +48,8 @@ MAIN_KT = re.compile(r"^(?:.+/)?src/(?:[A-Za-z0-9]*Main|main)/.*\.kt$")
 SELECT = re.compile(r"(?<![\w$.`])(?:kotlinx\s*\.\s*coroutines\s*\.\s*selects\s*\.\s*)?select(?:Unbiased)?\s*(?:<[^{()]*>)?\s*\{")
 CLAUSE = re.compile(r"(?<![\w$])([A-Za-z_]\w*(?:\s*\??\.\s*[A-Za-z_]\w*)*)\s*\??\.\s*on(?:Await|Join|Receive|ReceiveCatching|Send)\b")
 TIMEOUT = re.compile(r"(?<![\w$.])onTimeout\s*\(")
-START = r"(?<![\w$])(?:val|var)\s+{name}\b[^=\n]*=\s*(?:\n\s*)?(?:[\w.]+\s*\.\s*)?(?:launch|async)\b"
+START = (r"(?<![\w$])(?:val|var)\s+{name}\b[^=\n]*=\s*(?:\n\s*)?"
+         r"(?:[\w@]+(?:\([^()\n]*\))?(?:\s*\.\s*[\w@]+(?:\([^()\n]*\))?)*\s*\.\s*)?(?:launch|async)\b")
 SEAM = re.compile(r"(?<![\w$])\w+ForTest\b")
 TEST_SET = re.compile(r"^(?:.+/)?src/(?:[A-Za-z0-9]*Test|test)/.*\.kt$")
 TEST_NAME = re.compile(r"\b([A-Z]\w*Test)\.(\w+)\b")

@@ -11,7 +11,7 @@ says Race. It passes when its body, or a function of the same file it calls (fol
 
   a seam        a name ending in ForTest (a test hook of the main code that holds one side)
   virtual time  runTest, TestScope, StandardTestDispatcher, testScheduler, advanceTimeBy, runCurrent
-  the simulator Simulator or MemoryNetwork's scripted links (the seeded network of kuicksilver-testing)
+  the simulator Simulator (the seeded network simulator of kuicksilver-testing)
 
 Otherwise it needs an entry in tools/check/race-tests.allow:
 

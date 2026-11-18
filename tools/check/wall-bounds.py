@@ -15,7 +15,8 @@ catch takes (a lower bound: the bad path is the fast one). Durations: `300ms`, `
 source set of a file that reads a real clock (`TimeSource.Monotonic`, `markNow()` not of a test scheduler,
 `System.nanoTime()`, `System.currentTimeMillis()`, `measureTime`), a comparison `<`, `<=`, `>` or `>=` against a duration
 literal (`10.seconds`, `1500.milliseconds`, `3.5.seconds`, `2.minutes`, or a constant of the file holding one,
-`val FIN_WITHIN = 10.seconds`) inside `assertTrue(...)`, `assertFalse(...)` or
+`val FIN_WITHIN = 10.seconds`), or a range of two such literals (`took in 1.seconds..5.seconds`: a lower and an upper
+bound, two-sided) inside `assertTrue(...)`, `assertFalse(...)` or
 `assert(...)`, or against a plain number when the condition names a time (took, elapsed, millis, ms, nanos, time, waited).
 Verdicts:
   separated  the numbers are checked: good and bad on either side of the bound, at least twice apart, with at least 1 s
@@ -24,7 +25,8 @@ Verdicts:
   justified  the bound cannot be separated so (a window both of whose sides are the subject, a short path that is the
              property); the reason, at least eight words, says why a loaded machine cannot fail it
 An entry naming a site that is gone (fewer sites than its count) is a finding too. Comments and string literals are left
-out. Not seen: a bound held in a local variable, a constant of another file, or computed (`timeout * 2`), the literal on the left (`5.seconds > took`), a
+out. Not seen: a comparison written as `compareTo` (`took.compareTo(x) < 0`), a bound built with `toDuration` or
+`Duration.parse`, a bound held in a local variable, a constant of another file, or computed (`timeout * 2`), the literal on the left (`5.seconds > took`), a
 bound checked otherwise than by an assertion (`if (took > x) fail()`, `withTimeout`, which bounds a wait and is no
 measurement), a clock read through a helper of another file.
 Usage: wall-bounds.py [root]   (exit 1 on any finding)
@@ -48,6 +50,8 @@ COMPARE = re.compile(r"(?<![-=<>!])(<=|>=|<|>)(?![=>])\s*([0-9][0-9_]*(?:\.[0-9]
 NAMED = re.compile(r"(?<![-=<>!])(<=|>=|<|>)(?![=>])\s*([A-Z][A-Z0-9_]*)\b(?!\s*[.(])")
 CONST = re.compile(r"(?<![\w$])va[lr]\s+([A-Z][A-Z0-9_]*)\s*(?::\s*[\w.]+\s*)?=\s*([0-9][0-9_]*(?:\.[0-9]+)?)\s*\.\s*"
                    r"(milliseconds|seconds|minutes)\b")
+LIT = r"([0-9][0-9_]*(?:\.[0-9]+)?)\s*\.\s*(milliseconds|seconds|minutes)\b"
+RANGE = re.compile(r"(?<![\w$])in\s+" + LIT + r"\s*(\.\.<?|\s+until\s+)\s*" + LIT)
 TIMEISH = re.compile(r"took|elapsed|millis|\bms\b|nanos|time|waited", re.I)
 BOUND = re.compile(r"^(<=|>=|<|>)\s*([0-9]+(?:\.[0-9]+)?)(ms|s|min)$")
 DURATION = re.compile(r"^([0-9]+(?:\.[0-9]+)?)(ms|s|min)$")
@@ -92,6 +96,11 @@ def sites_of(text):
                 continue
             ms = float(c.group(2).replace("_", "")) * UNIT_MS.get(unit, 1)
             found.append((m.end() + c.start(), c.group(1), ms))
+        for c in RANGE.finditer(cond):
+            lo = float(c.group(1).replace("_", "")) * UNIT_MS[c.group(2)]
+            hi = float(c.group(4).replace("_", "")) * UNIT_MS[c.group(5)]
+            found.append((m.end() + c.start(), ">=", lo))
+            found.append((m.end() + c.start(), "<=" if c.group(3).strip() == ".." else "<", hi))
         for c in NAMED.finditer(cond):
             if c.group(2) in consts:
                 found.append((m.end() + c.start(), c.group(1), consts[c.group(2)]))
