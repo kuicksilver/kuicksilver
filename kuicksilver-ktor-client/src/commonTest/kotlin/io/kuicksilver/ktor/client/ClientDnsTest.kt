@@ -63,6 +63,101 @@ class ClientDnsTest {
         suspend fun asked(): List<String> = lock.withLock { names.toList() }
     }
 
+    /** Every DNS event of a client, as text, in order ([KuicksilverEventListener.dnsStart], [KuicksilverEventListener.dnsEnd]). */
+    private class DnsEvents : KuicksilverEventListener() {
+        val seen = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+        override fun dnsStart(
+            request: io.ktor.client.request.HttpRequestData,
+            host: String,
+            ipv6: Boolean?,
+        ) {
+            seen.trySend("start $host ${family(ipv6)} ${request.url.encodedPath}")
+        }
+
+        override fun dnsEnd(
+            request: io.ktor.client.request.HttpRequestData,
+            host: String,
+            ipv6: Boolean?,
+            addresses: List<IpAddress>,
+            failure: Throwable?,
+        ) {
+            seen.trySend("end $host ${family(ipv6)} $addresses ${failure?.message}")
+        }
+
+        private fun family(ipv6: Boolean?) =
+            if (ipv6 == null) {
+                "both"
+            } else if (ipv6) {
+                "v6"
+            } else {
+                "v4"
+            }
+
+        fun drain(): List<String> = generateSequence { seen.tryReceive().getOrNull() }.toList()
+    }
+
+    /**
+     * As OkHttp's `dnsStart` and `dnsEnd`: one pair per lookup the engine makes, the end with what it connects to (after the
+     * destination check) or with the failure. A plain [Dns] is one lookup of both families, a [FamilyDns] and the system's
+     * one per family; an address literal is no lookup.
+     */
+    @Test fun dnsEventsBracketEveryLookup() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/{p}") { call.respondText("ok") } } }
+            try {
+                val plain = DnsEvents()
+                testClient(engine = {
+                    dns = Dns { listOf(loopback, IpAddress.parse("0.0.0.0")) }
+                    eventListener = plain
+                }).use { c ->
+                    c.get("https://server.test:$port/a")
+                    assertEquals(listOf("start server.test both /a", "end server.test both [127.0.0.1] null"), plain.drain())
+                    c.get("https://127.0.0.1:$port/b")
+                    assertEquals(emptyList(), plain.drain(), "a literal is no lookup")
+                }
+                val failing = DnsEvents()
+                testClient(engine = {
+                    dns = Dns { throw IOException("boom") }
+                    eventListener = failing
+                }).use { c ->
+                    assertFailsWith<IOException> { c.get("https://server.test:$port/c") }
+                    assertEquals(listOf("start server.test both /c", "end server.test both [] boom"), failing.drain())
+                }
+                val perFamily = DnsEvents()
+                setSystemLookupForTest { name, ipv6 ->
+                    if (name == "server.test" &&
+                        !ipv6
+                    ) {
+                        listOf(
+                            io.kuicksilver.ktor.network
+                                .TcpAddress(byteArrayOf(127, 0, 0, 1), 0),
+                        )
+                    } else {
+                        emptyList()
+                    }
+                }
+                try {
+                    testClient(engine = { eventListener = perFamily }).use { c ->
+                        c.get("https://server.test:$port/d")
+                        assertEquals(
+                            setOf(
+                                "start server.test v6 /d",
+                                "end server.test v6 [] null",
+                                "start server.test v4 /d",
+                                "end server.test v4 [127.0.0.1] null",
+                            ),
+                            perFamily.drain().toSet(),
+                        )
+                    }
+                } finally {
+                    setSystemLookupForTest(null)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun theDefaultIsTheSystemResolver() {
         val config = KuicksilverEngineConfig()
         assertSame(Dns.System, config.dns)

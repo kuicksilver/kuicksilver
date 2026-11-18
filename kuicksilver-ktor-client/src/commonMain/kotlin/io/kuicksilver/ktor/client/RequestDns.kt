@@ -50,12 +50,15 @@ internal class RequestDns private constructor(
     private val answers: HashMap<Pair<String, Boolean>, CompletableDeferred<Result<List<TcpAddress>>>>,
     /** Every lookup goes to this host and port instead (an HTTPS record's endpoint, [connectTo]). */
     private val endpoint: Pair<String, Int>?,
+    /** The request's DNS events of each lookup of one family ([resolveFamily] reports a lookup of both itself); null: none. */
+    private val familyEvents: DnsObserver?,
 ) {
     constructor(
         nat64: Nat64 = Nat64.system,
         newSort: () -> DestinationSort = { DestinationSort() },
+        familyEvents: DnsObserver? = null,
         resolveFamily: suspend (String, Boolean) -> List<TcpAddress> = ::resolveFamily,
-    ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null)
+    ) : this(resolveFamily, nat64, newSort, Mutex(), HashMap(), null, familyEvents)
 
     /** Whether this is the system's resolution ([Dns.System]), made as before the application resolver existed (tests). */
     internal var isSystemForTest: Boolean = false
@@ -71,7 +74,7 @@ internal class RequestDns private constructor(
     fun connectTo(
         host: String,
         port: Int,
-    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port)
+    ): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, host to port, familyEvents)
 
     /**
      * Takes [addresses] (4 or 16 bytes each), the A/AAAA records an HTTPS answer carried, for [host]: RFC 9460 section 5,
@@ -253,7 +256,7 @@ internal class RequestDns private constructor(
         return found + found.filter { it.bytes.size == 4 }.flatMap { nat64.synthesize(it.bytes, port) }
     }
 
-    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null)
+    private fun root(): RequestDns = RequestDns(resolveFamily, nat64, newSort, lock, answers, null, familyEvents)
 
     /** One family of [name] (port 0) from this request's answers, looked up by the first caller that needs it. */
     private suspend fun family(
@@ -275,7 +278,7 @@ internal class RequestDns private constructor(
                 val result =
                     try {
                         // no answer, the system's included, is a destination no packet may go to (usableAsDestination)
-                        Result.success(resolveFamily(name, ipv6).filter(::usableAsDestination))
+                        Result.success(familyEvents.observing(name, ipv6) { resolveFamily(name, ipv6).filter(::usableAsDestination) })
                     } catch (e: CancellationException) {
                         // this caller goes: no answer is left behind, and a caller waiting for it asks again. Cancel first,
                         // then remove without being cancellable: a busy lock must not leave the entry behind
@@ -313,15 +316,20 @@ internal class RequestDns private constructor(
  * families ([KuicksilverEngineConfig.resolverForTest]) is asked once per name, and its answer split by family.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-internal fun KuicksilverEngineConfig.newRequestDns(): RequestDns {
-    familyResolverForTest?.let { return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }, it) }
+internal fun KuicksilverEngineConfig.newRequestDns(events: DnsObserver? = null): RequestDns {
+    familyResolverForTest?.let { return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }, events, it) }
     resolverForTest?.let { both ->
-        val once = OncePerName { name -> both(name, 0) }
+        val once = OncePerName { name -> events.observing(name, null) { both(name, 0) } }
         return RequestDns(nat64ForTest ?: Nat64.offForTest(), { RequestDns.dualStackSortForTest() }) { name, ipv6 ->
             once.get(name).filter { it.isIpv6 == ipv6 }
         }
     }
-    if (dns === Dns.System) return RequestDns().also { it.isSystemForTest = true }
+    if (dns === Dns.System) return RequestDns(familyEvents = events).also { it.isSystemForTest = true }
     // the same NAT64 handling and RFC 6724 sort as the system's answers: only the source of the addresses differs
-    return RequestDns(nat64ForTest ?: Nat64.system, resolveFamily = dns.familyResolver())
+    val app = dns
+    return RequestDns(
+        nat64ForTest ?: Nat64.system,
+        familyEvents = events.takeIf { app is FamilyDns },
+        resolveFamily = app.familyResolver(events),
+    )
 }

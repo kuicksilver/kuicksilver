@@ -1990,7 +1990,10 @@ with the HTTP/3 failure itself (not the `FallbackReason`, which is on the respon
 did not process after GOAWAY, HTTP_1_1_REQUIRED over HTTP/2, a stale pooled HTTP/1.1 connection, a 417); `connectionAcquired`
 (reused or new) and `connectionReleased` (kept for the next request or closed); `connectionMigrated` (an HTTP/3 connection
 followed the network, [Connection migration](#connection-migration)); `webSocketFailed` (a coroutine of a WebSocket
-session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close);
+`dnsStart` and `dnsEnd` (since 0.3.0, as OkHttp's: one pair per name lookup, per address family for the system's resolver
+and a `FamilyDns`, once for both with a plain `Dns`; the end carries the addresses the engine may connect to, or the
+failure; no lookup and no event for an address literal, [Name resolution](#name-resolution-experimental)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin

@@ -402,7 +402,7 @@ internal class KuicksilverEngine(
         reason: ProtocolReason,
         d: ProtocolDiagnostics,
         preopened: H1Pool.Opened? = null,
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         proxy: ResolvedProxy? = null,
         after: () -> Unit = {},
     ): HttpResponseData =
@@ -425,7 +425,7 @@ internal class KuicksilverEngine(
         if (records != null && url.protocol == io.ktor.http.URLProtocol.HTTP && !isIpLiteral(url.host) && proxyFor(url) == null) {
             // a new network first (section 12, MUST): the decision must not rest on the old network's records
             checkNetwork()
-            upgradeDns = config.newRequestDns()
+            upgradeDns = config.newRequestDns(events.dnsObserver(data))
             httpsUpgrade(records, data, callContext, upgradeDns)?.let { return it }
         }
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
@@ -463,7 +463,7 @@ internal class KuicksilverEngine(
                 }
             // the kill switch turns HTTP/3 off, not HTTP/2: the TCP path still offers h2
             // no Alt-Svc is used or learned through a proxy
-            val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(), proxy = proxy)
+            val r = tcp(data, callContext, reason, d, dns = upgradeDns ?: config.newRequestDns(events.dnsObserver(data)), proxy = proxy)
             // switched off, Auto keeps learning Alt-Svc, so switching back needs no warm-up
             if (disabled && proxy == null && config.http3.discovery == Http3DiscoveryMode.Auto) {
                 learnAltSvc(url, r, verifiedTls = true)
@@ -771,7 +771,7 @@ internal class KuicksilverEngine(
         extraHeaders: List<Pair<String, String>>,
         d: ProtocolDiagnostics,
         // one resolution for both sides of the race and a fallback after it (RFC 8305 section 3)
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         // the TCP side's: an HTTPS record's endpoint (RFC 9460 section 3) instead of the origin's addresses
         tcpDns: RequestDns = dns,
         // a failure to set up any connection is EndpointUnreachable: the next endpoint of the records is tried
@@ -1124,7 +1124,7 @@ internal class KuicksilverEngine(
         alt: AltSvcEntry?,
     ): HttpResponseData {
         val url = data.url
-        val dns = config.newRequestDns()
+        val dns = config.newRequestDns(events.dnsObserver(data))
         val supported = supportedAlpn(webSocket)
         val secure = config.http3.httpsRecords.isSecure()
         val altAuthority = alt?.let { (it.host ?: url.host) to it.port }
@@ -1449,7 +1449,7 @@ internal class KuicksilverEngine(
         callContext: CoroutineContext,
         d: ProtocolDiagnostics,
         extraHeaders: List<Pair<String, String>> = emptyList(),
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         prefer: io.kuicksilver.http3.Http3Connection? = null, // the race's connection, used even if since retired
         tcpDns: RequestDns = dns, // where the fallback over TCP connects
     ): HttpResponseData =

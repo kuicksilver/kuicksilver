@@ -249,18 +249,55 @@ private class BlockingDns(
 }
 
 /**
+ * Reports the lookups of one request to the engine's [KuicksilverEventListener] ([KuicksilverEventListener.dnsStart],
+ * [KuicksilverEventListener.dnsEnd]): one start and one end per lookup, the end with the addresses or the failure.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal class DnsObserver(
+    private val events: EngineEvents,
+    private val request: io.ktor.client.request.HttpRequestData,
+) {
+    /** [lookup] of [host] ([ipv6]: the family, null for both) between a start and an end event. */
+    suspend fun observe(
+        host: String,
+        ipv6: Boolean?,
+        lookup: suspend () -> List<TcpAddress>,
+    ): List<TcpAddress> {
+        events.emit("dnsStart") { dnsStart(request, host, ipv6) }
+        val found =
+            try {
+                lookup()
+            } catch (e: Throwable) {
+                events.emit("dnsEnd") { dnsEnd(request, host, ipv6, emptyList(), e) }
+                throw e
+            }
+        events.emit("dnsEnd") { dnsEnd(request, host, ipv6, found.map { IpAddress.of(it.bytes, it.scopeId) }, null) }
+        return found
+    }
+}
+
+/** [lookup] through [this] observer, or as it is without one. */
+internal suspend fun DnsObserver?.observing(
+    host: String,
+    ipv6: Boolean?,
+    lookup: suspend () -> List<TcpAddress>,
+): List<TcpAddress> = this?.observe(host, ipv6, lookup) ?: lookup()
+
+/**
  * The resolver of one [RequestDns] over this application [Dns]: one family of a host name (port 0) as the engine connects
  * to it ([usableAnswer]). A plain [Dns] is asked once per name and its answer split by family ([OncePerName]); a
  * [FamilyDns] once per name and family (the [RequestDns] shares each family's answer within the request). A host with the
  * form of an IPv4 address is answered here and never asked for ([numericAnswer]). A failure becomes the lookup's
  * ([asking]).
  */
-internal fun Dns.familyResolver(): suspend (String, Boolean) -> List<TcpAddress> {
+internal fun Dns.familyResolver(observer: DnsObserver? = null): suspend (String, Boolean) -> List<TcpAddress> {
     val dns = this
     if (dns is FamilyDns) {
+        // the per-family events are the RequestDns's, which calls this once per name and family
         return { name, ipv6 -> numericAnswer(name, ipv6) ?: usableAnswer(asking(name) { dns.lookup(name, ipv6) }, ipv6) }
     }
-    val once = OncePerName { name -> usableAnswer(asking(name) { dns.lookup(name) }, null) }
+    // one lookup of both families: its events are here, once, not per family
+    val once = OncePerName { name -> observer.observing(name, null) { usableAnswer(asking(name) { dns.lookup(name) }, null) } }
     return { name, ipv6 -> numericAnswer(name, ipv6) ?: once.get(name).filter { it.isIpv6 == ipv6 } }
 }
 

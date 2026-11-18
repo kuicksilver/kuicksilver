@@ -477,7 +477,7 @@ internal class H1Pool(
      */
     suspend fun open(
         data: HttpRequestData,
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
     ): Opened = obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let { Opened(it.connection, it.reused, it.h2) }
 
     /**
@@ -822,7 +822,7 @@ internal class H1Pool(
         data: HttpRequestData,
         callContext: CoroutineContext,
         preopened: Opened? = null,
-        dns: RequestDns = config.newRequestDns(),
+        dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         proxy: ResolvedProxy? = null,
         onSelected: ((HttpProtocolVersion) -> Unit)? = null,
     ): HttpResponseData {

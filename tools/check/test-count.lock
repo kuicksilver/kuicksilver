@@ -1327,6 +1327,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aFamilyDnsIsAskedForEachFamily
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.aProxysNameIsResolvedAndTheOriginsIsNot
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.anAlternativesHostIsResolvedByTheDns
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.dnsEventsBracketEveryLookup
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_aCancellationTheDnsThrowsFailsTheCall
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_aDnsThatThrowsFailsTheCall
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDnsTest.negative_aHugeAnswerIsBounded

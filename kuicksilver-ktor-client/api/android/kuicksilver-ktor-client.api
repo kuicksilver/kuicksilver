@@ -347,6 +347,8 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun connectionAcquired (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
 	public fun connectionMigrated (Ljava/lang/String;Lio/kuicksilver/quic/MigrationEvent;)V
 	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
+	public fun dnsEnd (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;Ljava/lang/Boolean;Ljava/util/List;Ljava/lang/Throwable;)V
+	public fun dnsStart (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;Ljava/lang/Boolean;)V
 	public fun fallback (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
 	public fun httpsRecordUsed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;)V
 	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V

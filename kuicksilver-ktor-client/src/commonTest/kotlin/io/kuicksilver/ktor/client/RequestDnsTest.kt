@@ -44,7 +44,7 @@ class RequestDnsTest {
     private fun dns(
         sort: () -> DestinationSort = dual,
         resolve: suspend (String, Boolean) -> List<TcpAddress>,
-    ) = RequestDns(Nat64.offForTest(), sort, resolve)
+    ) = RequestDns(Nat64.offForTest(), sort, resolveFamily = resolve)
 
     private suspend fun RequestDns.texts(host: String) = lookup(host, 443).map { it.toString() }
 

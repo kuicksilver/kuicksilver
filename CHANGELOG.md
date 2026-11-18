@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   duplicates, unspecified, multicast and broadcast addresses are dropped and at most 32 addresses per family kept; a
   failure or an empty answer fails the connection as an unresolvable name does. SNI and certificate verification use the
   host name, never the answer (threat model 3.25, ADR-0020).
+- Ktor client: DNS events on `KuicksilverEventListener` (experimental), as OkHttp's `dnsStart` and `dnsEnd`: one pair per
+  name lookup the engine makes, through the system's resolver (per address family) or `dns` (per family for a
+  `FamilyDns`, once for both with a plain `Dns`); `dnsEnd` carries the addresses the engine may connect to, or the
+  failure (a cancellation included). An address literal is no lookup and has no events.
 - Building from source: the native build scripts (`tools/build-jni.sh`, `tools/build-android-so.sh`,
   `tools/build-ksl-a.sh`, `tools/openssl/build.sh`) add the builder's `CPPFLAGS`, `CFLAGS` and `LDFLAGS` after their own
   flags, and use `CC` where the compiler is the host's (the JNI library on macOS and Linux, `libksl.a` for macOS); the
