@@ -56,8 +56,8 @@ internal object HqInteropClient {
         val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
         val client = QuicClientConfig.Builder(tls).apply { this.quic = quic; earlyData = plan.earlyData }.build()
         val remote = InetSocketAddress(first.host, first.port)
-        val v6 = (remote.resolveAddress()?.size ?: 4) == 16   /* `server6` resolves to an IPv6 address: the local socket must be of that family */
-        val endpoint = QuicEndpoint.bind(InetSocketAddress(if (v6) "::" else "0.0.0.0", 0), QuicEndpointConfig.Builder().build())
+        /* `server6` resolves to an IPv6 address: the local socket must be of that family; a loopback server, from loopback */
+        val endpoint = QuicEndpoint.bind(clientLocalAddress(remote.resolveAddress()), QuicEndpointConfig.Builder().build())
         try {
             return withTimeout(600.seconds) {
                 if (plan.earlyData != EarlyDataState.Disabled) {

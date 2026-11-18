@@ -138,7 +138,11 @@ public class Http3ClientConfig {
     /**
      * The client QUIC endpoint (dispatcher, crypto provider, socket factory). Its `connectionIdLength` and the one of
      * [KuicksilverEngineConfig.quic] are kept equal: the one left at its default follows the other, and two different explicit
-     * values fail the engine's creation with [IllegalArgumentException].
+     * values fail the engine's creation with [IllegalArgumentException]. The engine binds it to the wildcard address
+     * (`0.0.0.0:0`, dual-stack); connections to a loopback server leave from up to two more endpoints of this configuration,
+     * one per family, bound to 127.0.0.1 (for 127.0.0.0/8 and its IPv4-mapped form) and ::1, each created at its first use,
+     * so that no other local process holding that port on the loopback address gets the server's replies. The endpoints
+     * share the engine's session tickets.
      */
     public var endpoint: QuicEndpointConfig = QuicEndpointConfig.Default
 

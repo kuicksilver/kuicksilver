@@ -60,7 +60,7 @@ internal class LoopGroup private constructor(
             .Shared(KslRandom.newSource())
 
     /** The client's session tickets, shared by every loop: `connect` picks loops round-robin (ADR-0015). */
-    private val sessions = io.kuicksilver.tls.SessionCache()
+    private val sessions = config.sessionCache ?: io.kuicksilver.tls.SessionCache()
     private val next = AtomicInt(0)
     override val localAddress: InetSocketAddress get() = loops[0].localAddress
 

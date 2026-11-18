@@ -138,6 +138,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `logger` (*experimental*) | `KuicksilverLogger` | `KuicksilverLogger.Stderr` (warnings and errors on standard error) |  | 0.2.0 | the endpoint's diagnostics; `KuicksilverLogger.None`, `KuicksilverLogger.stderr(LogLevel.Debug)` or your own ([Observability](quic.md#observability)) |
 | `listener` (*experimental*) | `ConnectionListener?` | `null` |  | 0.2.0 | lifecycle callbacks of every connection, on the loop |
 | `loadBalancer` (*experimental*) | `QuicLbConfig?` | `null` | needs a `server`, `connectionIdLength` = 1 + server ID + nonce and at least 8, a key next to a `preferredAddress` | 0.3.0 | QUIC-LB server connection IDs (draft-ietf-quic-load-balancers-21); change with `QuicEndpoint.updateLoadBalancer` ([Behind a load balancer](quic.md#behind-a-load-balancer)) |
+| `sessionCache` (*internal*) | `SessionCache?` | `null` (the endpoint's own, closed with it) |  | 0.3.0 | the client session tickets the endpoint takes and stores, owned by the caller and left open when the endpoint closes; the Ktor client engine shares one across its endpoints |
 
 ## Other QUIC options
 
@@ -152,7 +153,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `qlogDirectory(context, name)` (Android, *experimental*) | | `name = "kuicksilver-qlog"` | a `DirectoryQlogSink` in the app's cache directory, created owner-only at once; API 26 and up (refused below) |
 | `AsyncQlogSink(delegate, queueCapacity, sampleEvery, dispatcher)` (*experimental*) | | 8192 records, 1 (every connection), `Dispatchers.IO.limitedParallelism(1)` | runs a sink off the endpoint loop; a full queue drops records (`dropped`) |
 | `NetworkMigrator(connection, networks, openIo, scope)` (*experimental*) | | no defaults; client connections only | follows a `Flow` of networks ([Network changes](quic.md#network-changes)) |
-| `QuicConnection.rebind(local, prefer)` (*experimental*) | | `null` (wildcard of the peer's family), `Accelerated` | moves the connection to a fresh socket |
+| `QuicConnection.rebind(local, prefer)` (*experimental*) | | `null` (loopback of a loopback peer's family, else the wildcard of the peer's family), `Accelerated` | moves the connection to a fresh socket |
 | `followDefaultNetwork(connectivity, scope, local, prefer)` (Android), `followDefaultNetwork(scope, local, prefer)` (Apple) (*experimental*) | | `null`, `Accelerated` | a started `NetworkMigrator` on the default network |
 | `QuicEndpoint.shutdown(grace, code, reason)` (*experimental*) | | `code = 0`, `reason = "shutdown"` | graceful shutdown ([Graceful shutdown](quic.md#graceful-shutdown)) |
 
@@ -357,7 +358,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | 0.2.0 | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with `IllegalArgumentException` |
 | `networkId` | `() -> String?` | `{ null }` (one network) | 0.2.0 | identifies the current network; a change forgets broken marks, QUIC confirmation, HTTPS records and alternatives without `persist=1`; when it is not set, the networks `connectionMigration` follows take its place; the engine caches HTTPS records only when it sees the network |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings of the engine's connections |
-| `endpoint` | `QuicEndpointConfig` | `QuicEndpointConfig.Default` | 0.2.0 | the client QUIC endpoint (bound to `0.0.0.0:0`, a dual-stack socket on the accelerated transport) |
+| `endpoint` | `QuicEndpointConfig` | `QuicEndpointConfig.Default` | 0.2.0 | the client QUIC endpoint (bound to `0.0.0.0:0`, a dual-stack socket on the accelerated transport; a loopback server, `127.0.0.0/8` or `::1`, is reached from up to two more, one per family, bound to `127.0.0.1` and `::1` and created at first use; all share the session tickets) |
 | `earlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | 0-RTT for GET, HEAD and OPTIONS without a body on resumed connections |
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |

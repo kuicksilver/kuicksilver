@@ -1146,6 +1146,9 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineR
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aDrainWrittenAsTheDeadlineFiresIsNotReportedUnwritten
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtDeadlineRaceTest.aBlockStillWaitingGivesNull
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtDeadlineRaceTest.negative_aBlockThatCompletesAfterTheDeadlineWasChosenKeepsItsResult
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.loopbackServersAreReachedFromLoopback
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.negative_lookalikesAreNotLoopback
+kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.ClientLocalTest.otherServersAreReachedFromTheWildcardOfTheirFamily
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.bbrModeTransfersAFile
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.chacha20CaseRestrictsSuites
 kuicksilver-interop/src/jvmTest	io.kuicksilver.interop.HqInteropTest.clientDownloadsAllRequestsOnOneConnection
@@ -1476,6 +1479,13 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Connec
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.negative_originsAtOneAddressGetAConnectionAndTlsConfigurationEach
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.poolKeysByDestinationName
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.sameOriginSharesOneConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv4LoopbackServerIsReachedFromLoopback
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.anIpv6LoopbackServerIsReachedFromLoopback
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aCloseBeforeTheStoreLeavesNoEndpoint
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aCloseDuringTheBindLeavesNoEndpoint
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointChoiceTest.negative_aServerElsewhereIsReachedFromTheWildcard
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3EndpointCloseTest.closeClosesEveryEndpoint
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3SharedTicketsTest.aTicketFromIpv4ResumesOverIpv6
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.aCallRacingCloseFailsAsClosed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.cancelledCallResetsStream
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3Test.chunkedAndH3BodiesReadWhole
@@ -3200,6 +3210,8 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KeyFileSecretsJvm
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.buildKtorPasses
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.eachAnchorComesFromItsArtifact
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.KtorArtifactsTest.everyArtifactTheEngineDependsOnIsChecked
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.LoopbackSquatterTest.loopbackServerPasses
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.LoopbackSquatterTest.negative_wildcardServerIsShadowedOnLoopback
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.nodeClientAgainstOurServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.NodeH2WebSocketInteropTest.ourClientAgainstNodeServer
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.RespondBytesHeapJvmTest.negative_largeBytesResponseFitsAHeapWithoutRoomForACopy
@@ -3368,6 +3380,9 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aPa
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.negative_aRemovedConnectionNotReleasedFailsTheEndpointsClose
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.FixtureLeakTest.overlappingPairsCloseInEitherOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.GuideCompleteExampleTest.customAlpnSample
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.anIpv4MappedLoopbackIsIpv4Loopback
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.loopbackPeersGetTheLoopbackOfTheirFamily
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.LoopbackLocalTest.negative_lookalikesAreNoLoopback
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.aFailedSlotAllocationFreesTheSlotsMadeBeforeIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.PacketBatchAllocationTest.closeFreesEverySlot
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicConfigTest.defaultControllerIsCubic

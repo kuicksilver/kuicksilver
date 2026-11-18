@@ -263,6 +263,7 @@ internal class KuicksilverEngine(
                     h1.closeAll()
                     migrationJob.cancel() // the migrators end before their connections
                     h3.close()
+                    withContext(NonCancellable) { h3.closeSessions() }
                     selector.close()
                 }
             }

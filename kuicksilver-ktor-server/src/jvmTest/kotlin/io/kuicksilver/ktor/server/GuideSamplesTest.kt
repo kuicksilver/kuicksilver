@@ -100,7 +100,10 @@ class GuideSamplesTest {
         // guide:ktor:server-observability
         val observed =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 logger = KuicksilverLogger.stderr(LogLevel.Info)
                 qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
                 eventListener =
@@ -118,7 +121,10 @@ class GuideSamplesTest {
         // guide:ktor:zero-rtt-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 quicEarlyData = true
                 http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: unsafe requests wait
             }, module = Application::module)
@@ -152,7 +158,10 @@ class GuideSamplesTest {
         // guide:ktor:webtransport-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 webTransport = true
             }) {
                 routing {
@@ -175,7 +184,10 @@ class GuideSamplesTest {
         val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainPem, keyChars)) // the key array is zeroed after import
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }, module = Application::module)
         // later, when the renewed files are in place: new TCP and QUIC handshakes present them, open connections keep theirs
         identity.reload(TlsIdentity.fromPem(renewedChainPem, renewedKeyChars))
@@ -197,6 +209,7 @@ class GuideSamplesTest {
             embeddedServer(Kuicksilver, configure = {
                 tlsConnector(identity) {
                     port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                     clientAuth = ClientAuth.Required
                     trust = clientCa
                 }
@@ -216,7 +229,10 @@ class GuideSamplesTest {
         // guide:ktor:http3-advertising
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }, module = Application::module)
         // later, when the remote configuration says so: clients fall back to HTTP/1.1 over TLS
         server.engine.http3Advertising = Http3Advertising.Drain
@@ -232,7 +248,10 @@ class GuideSamplesTest {
         // guide:ktor:http2-server
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 http2 = true // offer h2 before http/1.1 in ALPN
                 http2Settings = Http2Settings(maxConcurrentStreams = 50) // windows and flood limits are Http2Settings'
             }, module = Application::module)
@@ -258,7 +277,10 @@ class GuideSamplesTest {
         // guide:deployment:quic-limits
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 quicMaxConnectionsPerIp = 4_096 // behind kube-proxy (externalTrafficPolicy: Cluster): clients share node addresses
             }) {
                 routing { get("/") { call.respondText("ok") } }
@@ -284,7 +306,10 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }) {
                 intercept(ApplicationCallPipeline.Plugins) {
                     // an Alt-Svc the application sets is never replaced, so it follows engine.http3Advertising itself
@@ -304,6 +329,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     val get = "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n"
 
                     fun altSvc(resp: String) = resp.lines().filter { it.startsWith("Alt-Svc", ignoreCase = true) }
@@ -328,6 +354,7 @@ class GuideSamplesTest {
                     embeddedServer(Kuicksilver, configure = {
                         // guide:ktor:trusted-gateway
                         tlsConnector(internalIdentity) {
+                            host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
                             port = 0
                             trustedGateway = true // every client of this port is the gateway
                         }
@@ -340,6 +367,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     // a name the certificate does not carry, forwarded by the gateway: served
                     val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: public.example\r\nConnection: close\r\n\r\n")
                     assertTrue(r.startsWith("HTTP/1.1 200 "), r)
@@ -486,7 +514,10 @@ class GuideSamplesTest {
         val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }, module = Application::module)
         server.start(wait = false)
         try {
@@ -516,7 +547,10 @@ class GuideSamplesTest {
         lateinit var engine: KuicksilverApplicationEngine
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }) {
                 routing {
                     // for the readiness and liveness probes: the kubelet probes over TCP (httpGet with scheme HTTPS)
@@ -545,6 +579,7 @@ class GuideSamplesTest {
                             .resolvedConnectors()
                             .first()
                             .port
+                    assertNoLoopbackSquatter(port)
                     val health = rawHttp(port, "GET /healthz HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                     assertTrue(health.startsWith("HTTP/1.1 200") && health.endsWith("ok"), health)
                     val metrics = rawHttp(port, "GET /metrics/quic HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -567,7 +602,10 @@ class GuideSamplesTest {
             })
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
                 quicEarlyData = true
                 http3Settings = http3Settings { earlyData = policy }
             }) {
@@ -627,7 +665,10 @@ class GuideSamplesTest {
         val identity = TlsIdentity.reloadable(TlsIdentity.fromPem(chainFile.readText(), readKeyChars(keyFile)))
         val server =
             embeddedServer(Kuicksilver, configure = {
-                tlsConnector(identity) { port = 0 }
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
             }) {
                 launch {
                     var served = chainFile.lastModified()

@@ -41,6 +41,13 @@ public fun InetSocketAddress.withLiteralHost(port: Int = this.port): InetSocketA
 internal expect fun InetSocketAddress.ipBytesNoDns(): ByteArray?
 
 /**
+ * The bytes of the IP literal the address was written with (4 or 16, an IPv4-mapped literal as its 16 bytes), or null when it
+ * was written as a name, resolved or not. Never a resolver call; the same on every platform (on the JVM [ipBytesNoDns]
+ * gives a resolved name's bytes too, and an IPv4-mapped literal as 4 bytes).
+ */
+internal expect fun InetSocketAddress.literalBytesNoDns(): ByteArray?
+
+/**
  * The zone ID of a scoped IPv6 address (`fe80::1%en0`: the interface name, or the numeric scope when the address has no
  * interface name), or null; never a resolver call.
  */

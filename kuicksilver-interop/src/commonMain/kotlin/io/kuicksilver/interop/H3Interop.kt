@@ -96,8 +96,7 @@ internal object H3InteropClient {
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf(Http3Endpoint.H3); serverName = first.host.takeUnless { it.contains(':') }; this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
         val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
         val remote = InetSocketAddress(first.host, first.port)
-        val v6 = (remote.resolveAddress()?.size ?: 4) == 16
-        val endpoint = Http3Endpoint.bind(InetSocketAddress(if (v6) "::" else "0.0.0.0", 0), QuicEndpointConfig.Builder().build())
+        val endpoint = Http3Endpoint.bind(clientLocalAddress(remote.resolveAddress()), QuicEndpointConfig.Builder().build())
         try {
             return withTimeout(600.seconds) {
                 val conn = endpoint.connect(remote, tls, quic)

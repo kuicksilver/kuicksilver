@@ -109,7 +109,7 @@ class GuideCompleteExampleTest {
                         alpn = myProtocol
                         trust = TrustConfig.AnchoredCa(Certificate.parsePem(caPem)) // a private CA; TrustConfig.Platform for a public one
                     }
-                val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
                 val connection = client.connect(InetSocketAddress("127.0.0.1", server.localAddress.port), quicClientConfig(clientTls))
                 val stream = connection.openBidi()
                 stream.output.writeStringUtf8("ping\n")

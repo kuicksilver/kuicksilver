@@ -84,7 +84,9 @@ internal class EndpointLoop private constructor(
     private val pendingAccept: AtomicInt = AtomicInt(0),
     private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
     /** The client's session tickets (per endpoint, single use; ADR-0015): a group's loops share one, `connect` picks any loop. */
-    internal val sessions: SessionCache = SessionCache(),
+    internal val sessions: SessionCache = config.sessionCache ?: SessionCache(),
+    /** Whether closing this loop closes [sessions]: not when the config's owner passed them in ([QuicEndpointConfig.sessionCache]). */
+    private val ownsSessions: Boolean = config.sessionCache == null,
     /** A group's Retry and NEW_TOKEN keys, shared by its loops (RFC 9000 section 8.1); null: the endpoint core makes its own. */
     tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
     /** A group's QUIC-LB state, shared by its loops; null: the endpoint core makes its own when the config has a `loadBalancer`. */
@@ -674,7 +676,9 @@ internal class EndpointLoop private constructor(
                 // created first: a failure of the body below is the one rethrown, the releases' failures are suppressed into it
                 val r = Releaser()
                 try {
-                    sessions.close() // a group's loops close together (LoopGroup.closeWith), so the shared cache can close too
+                    // a group's loops close together (LoopGroup.closeWith), so the shared cache can close too; one passed in
+                    // through the config is its owner's
+                    if (ownsSessions) sessions.close()
                     val now = now()
                     for (c in core.connections().toList()) {
                         c.close(code, reason, now)
@@ -886,6 +890,7 @@ internal class EndpointLoop private constructor(
                 pendingAccept,
                 acceptQueue,
                 sessions,
+                config.sessionCache == null,
                 tokens,
                 lb,
                 preferredIos,

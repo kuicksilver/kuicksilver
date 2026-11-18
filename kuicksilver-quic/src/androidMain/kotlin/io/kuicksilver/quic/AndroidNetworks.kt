@@ -66,7 +66,7 @@ private fun ConnectivityManager.registerDefaultNetworks(): Flow<Network?> =
 /**
  * Keeps this client connection on the device's default network: a started [NetworkMigrator] over
  * [ConnectivityManager.defaultNetworks] that opens each new socket with [DatagramIo.Companion.open] bound to the new network
- * (at [local]: the wildcard address of the server's family by default, any port). The default network when this is called is
+ * (at [local]: by default `rebindLocal`, the loopback address of a loopback server's family, else the wildcard address of the server's family, any port). The default network when this is called is
  * taken as the one the connection is on (an unbound socket follows the default network). Collect
  * [NetworkMigrator.events] right after this call to see every event; [NetworkMigrator.close] stops following.
  */
@@ -78,6 +78,6 @@ public fun QuicConnection.followDefaultNetwork(
     local: InetSocketAddress? = null,
     prefer: IoPreference = IoPreference.Accelerated,
 ): NetworkMigrator<Network> {
-    val bindTo = local ?: wildcardLocal()
+    val bindTo = local ?: rebindLocal()
     return NetworkMigrator(this, connectivity.defaultNetworks(), { n -> DatagramIo.open(bindTo, n, prefer) }, scope).also { it.start() }
 }

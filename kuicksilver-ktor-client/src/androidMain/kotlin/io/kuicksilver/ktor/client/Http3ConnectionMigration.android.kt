@@ -10,7 +10,7 @@ import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.defaultNetworks
 import io.kuicksilver.quic.open
-import io.kuicksilver.quic.wildcardLocal
+import io.kuicksilver.quic.rebindLocal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
@@ -35,7 +35,7 @@ public fun Http3ConnectionMigration.Companion.followDefaultNetwork(connectivity:
             scope: CoroutineScope,
         ): NetworkMigrator<*> {
             @OptIn(InternalKuicksilverApi::class)
-            val bindTo = connection.wildcardLocal()
+            val bindTo = connection.rebindLocal()
             return NetworkMigrator(connection, connectivity.defaultNetworks(), { n -> DatagramIo.open(bindTo, n) }, scope)
         }
 

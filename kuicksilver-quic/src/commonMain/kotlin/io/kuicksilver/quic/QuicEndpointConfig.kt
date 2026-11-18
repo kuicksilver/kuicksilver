@@ -284,6 +284,13 @@ public class QuicEndpointConfig private constructor(
      */
     @property:ExperimentalKuicksilverApi
     public val loadBalancer: QuicLbConfig?,
+    /**
+     * The client session tickets (0-RTT, resumption) this endpoint takes and stores, owned by the caller: several endpoints
+     * of one client (the Ktor engine's, one per local address) share them, and closing an endpoint leaves them to their
+     * owner, who closes them. Null: the endpoint keeps its own, closed with it.
+     */
+    @property:InternalKuicksilverApi
+    public val sessionCache: io.kuicksilver.tls.SessionCache?,
 ) {
     /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */
     @KuicksilverDsl
@@ -358,6 +365,10 @@ public class QuicEndpointConfig private constructor(
         @ExperimentalKuicksilverApi
         public var loadBalancer: QuicLbConfig? = null
 
+        /** Default null: the endpoint's own tickets. See `QuicEndpointConfig.sessionCache`. */
+        @InternalKuicksilverApi
+        public var sessionCache: io.kuicksilver.tls.SessionCache? = null
+
         /**
          * An immutable [QuicEndpointConfig]; IllegalArgumentException for a value out of range or a combination that cannot work
          * (connection ID lengths that differ, loops without a server).
@@ -409,6 +420,7 @@ public class QuicEndpointConfig private constructor(
                 logger,
                 listener,
                 loadBalancer,
+                sessionCache,
             )
         }
     }
@@ -435,6 +447,7 @@ public class QuicEndpointConfig private constructor(
             it.logger = logger
             it.listener = listener
             it.loadBalancer = loadBalancer
+            it.sessionCache = sessionCache
         }
 
     /** Holds [Default]. */
