@@ -118,6 +118,8 @@ internal class Verification(
     suspend fun verify(
         presented: List<Certificate>,
         reference: HostName,
+        // the certificate of an ECH rejection, checked for the configuration's public_name (RFC 9849 section 6.1.7)
+        echPublicName: Boolean = false,
     ): VerifyResult {
         if (presented.isEmpty()) return VerifyResult.Rejected(VerifyReason.NoCertificate)
         val base =
@@ -154,7 +156,7 @@ internal class Verification(
                 }
 
                 is TrustConfig.Tofu -> {
-                    tofu(base.store, presented, reference)
+                    tofu(base.store, presented, reference, firstContact = !echPublicName)
                 }
 
                 is TrustConfig.AnchoredCa -> {
@@ -173,6 +175,10 @@ internal class Verification(
             }
         if (baseResult is VerifyResult.Rejected) return baseResult
         val validated = (baseResult as VerifyResult.Accepted).validatedChain.ifEmpty { presented }
+        // pins are the origin's keys (RFC 7469 section 2.6): an ECH rejection presents the public_name's certificate, which the
+        // base trust above authenticated for that name (RFC 9849 section 6.1.7). The connection only reports the rejection and
+        // its retry configurations; the retry is held to the pins against the origin's certificate
+        if (echPublicName) return VerifyResult.Accepted(validated)
         return pinCheck(validated)
     }
 
@@ -194,10 +200,17 @@ internal class Verification(
         store: TofuStore,
         presented: List<Certificate>,
         reference: HostName,
+        // false for an ECH rejection's public_name: no first contact is taken from a connection that is only used to report
+        // the rejection (RFC 9849 section 6.1.7), so an unknown public_name is not authenticated and nothing is stored
+        firstContact: Boolean = true,
     ): VerifyResult {
         val leaf = presented[0].spkiSha256
         val known = store.get(reference.value)
         return when {
+            known == null && !firstContact -> {
+                VerifyResult.Rejected(VerifyReason.Custom("no pin known for the ECH public_name ${reference.value}"))
+            }
+
             known == null -> {
                 store.put(reference.value, leaf)
                 VerifyResult.Accepted(presented)

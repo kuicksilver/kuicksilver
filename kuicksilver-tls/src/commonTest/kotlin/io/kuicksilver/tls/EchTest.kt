@@ -165,6 +165,94 @@ class EchTest {
         }
     }
 
+    /** A client whose rejection goes through the paused path with [trust]: the pump after a server with key B. */
+    private fun rejectedThrough(trust: TrustConfig): Pump {
+        val c = KslQuicCrypto.newSession(Fixtures.client(trust = trust) { echConfigList = listA })
+        val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        c.setTransportParameters(Fixtures.tp)
+        s.setTransportParameters(Fixtures.tp)
+        val p = Pump(c, s)
+        p.run(onVerify = { runBlocking { c.verifyPeer(it.chain) } })
+        return p
+    }
+
+    /**
+     * Pins are the origin's (RFC 7469 section 2.6: a pinned host's own keys): during a rejection the certificate is the
+     * public_name's, authenticated by the base trust for that name (RFC 9849 section 6.1.7), and the origin's pins do not
+     * apply to it; the connection is never used for data, and the retry checks the pins against the origin's certificate.
+     * The paused path (a platform verifier under the pins) through [Verification].
+     */
+    @Test fun pinsDoNotApplyToThePublicNameCertificate(): Unit =
+        runBlocking {
+            val chain = listOf(Certificate(TestCerts.server))
+            val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32) { 7 }))))
+            val v = Verification(config, platform = { c, _, _ -> PlatformVerdict(VerifyResult.Accepted(c), c) })
+            assertIs<VerifyResult.Accepted>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))
+            // the origin's own certificate is held to them as always
+            assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize("server.test")))
+        }
+
+    /** The OpenSSL path under pins: a rejection authenticated by the CA for the public_name reports the retry configurations. */
+    @Test fun pinsDoNotFailAnAnchoredRejection() {
+        val trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32) { 7 })), base = TrustConfig.AnchoredCa(listOf(Fixtures.testCa)))
+        val p = quic(Fixtures.client(trust = trust) { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyB)) })
+        try {
+            assertEquals(listB, assertIs<TlsException.EchRejected>(assertIs<DriveResult.Failed>(p.cs.last).exception).retryConfigs)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The base trust still decides for the public_name under pins: a platform verifier that refuses it fails the rejection. */
+    @Test fun negative_pinnedRejectionStillNeedsTheBaseTrust(): Unit =
+        runBlocking {
+            val chain = listOf(Certificate(TestCerts.server))
+            val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(chain[0].spkiSha256)))
+            val v =
+                Verification(config, platform = { _, h, _ ->
+                    PlatformVerdict(VerifyResult.Rejected(VerifyReason.HostnameMismatch(h.value, emptyList())), null)
+                })
+            assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))
+        }
+
+    /**
+     * Trust on first use cannot authenticate a public_name it has no pin for: a rejection is no first contact (RFC 9849
+     * section 6.1.7: the certificate MUST be valid for the public_name; such connections are only used to trigger retries),
+     * so nothing is stored and the rejection fails; with a pin stored for the public_name it is checked against it.
+     */
+    @Test fun negative_tofuDoesNotTrustAPublicNameOnFirstContact() {
+        val store = MemoryTofu()
+        val p = rejectedThrough(TrustConfig.Tofu(store))
+        try {
+            assertIs<TlsException.Verify>(assertIs<DriveResult.Failed>(p.cs.last).exception)
+            assertTrue(store.map.isEmpty(), "nothing stored for ${store.map.keys}")
+        } finally {
+            p.close()
+        }
+        // a pin of the public_name taken on a direct contact authenticates the rejection
+        val leaf = Certificate(TestCerts.server)
+        runBlocking { store.put(EchTestKeys.PUBLIC_NAME, leaf.spkiSha256) }
+        val known = rejectedThrough(TrustConfig.Tofu(store))
+        try {
+            assertIs<TlsException.EchRejected>(assertIs<DriveResult.Failed>(known.cs.last).exception)
+        } finally {
+            known.close()
+        }
+    }
+
+    private class MemoryTofu : TofuStore {
+        val map = HashMap<String, SpkiSha256>()
+
+        override suspend fun get(name: String): SpkiSha256? = map[name]
+
+        override suspend fun put(
+            name: String,
+            pin: SpkiSha256,
+        ) {
+            map[name] = pin
+        }
+    }
+
     /** A certificate that does not cover the public_name: the rejection is not authenticated, nothing to retry with. */
     @Test fun negative_quicUnauthenticatedRejectionHasNoRetryConfigs() {
         val p =

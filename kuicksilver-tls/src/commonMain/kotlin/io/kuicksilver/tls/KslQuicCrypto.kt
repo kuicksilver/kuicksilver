@@ -573,8 +573,10 @@ internal class KslQuicTlsSession(
     }
 
     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
-    override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult =
-        verification.verify(chain, if (ssl != 0L) verifyNameOf(s(), reference, echOffered) else reference)
+    override suspend fun verifyPeer(chain: List<Certificate>): VerifyResult {
+        val name = if (ssl != 0L) verifyNameOf(s(), reference, echOffered) else reference
+        return verification.verify(chain, name, echPublicName = name != reference)
+    }
 
     /**
      * Reads only immutable state ([ctx]'s configuration and kind) and builds a context of its own, so it runs off the loop while

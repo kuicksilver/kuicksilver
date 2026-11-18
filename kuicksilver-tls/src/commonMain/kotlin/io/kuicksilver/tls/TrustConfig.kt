@@ -108,6 +108,9 @@ public sealed interface TrustConfig {
 
     /**
      * [base][TrustConfig.Pinned.base] trust AND one of [pins][TrustConfig.Pinned.pins] must match the validated chain within [scope][TrustConfig.Pinned.scope].
+     * The pins are the origin's: when a server rejects Encrypted Client Hello, the certificate it presents is checked by
+     * [base][TrustConfig.Pinned.base] for the configuration's `public_name` only (RFC 9849 section 6.1.7), since that
+     * connection only reports the rejection ([TlsException.EchRejected]); the retry is held to the pins.
      *
      * @property scope which certificates of the validated chain may match; default [PinScope.Leaf], the strictest.
      * @property base the trust that must accept the chain as well (AND, never OR: ADR-0011); default [Platform]. [Tofu],
@@ -143,7 +146,8 @@ public sealed interface TrustConfig {
      *
      * The chain is not validated against any CA: the first connection to a name trusts whatever key it meets, so an attacker
      * present at that moment is trusted from then on. The host name is still checked; a later key change fails with
-     * [VerifyReason.PinMismatch]. Clients only in v1.
+     * [VerifyReason.PinMismatch]. Clients only in v1. An Encrypted Client Hello rejection is no first contact: its
+     * `public_name` must have a stored key (from a direct connection to it), or the rejection fails ([TlsException.Verify]).
      *
      * @property store where the leaf SPKI hash of each name is kept.
      */

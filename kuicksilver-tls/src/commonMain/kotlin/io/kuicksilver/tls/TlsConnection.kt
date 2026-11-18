@@ -341,7 +341,8 @@ public class TlsConnection private constructor(
                 KslConst.WANT_VERIFY -> {
                     presented = chain()
                     // after an ECH rejection the certificate is the public_name's (RFC 9849 section 6.1.7)
-                    val r = verification.verify(presented, verifyNameOf(s(), reference!!, echOffered))
+                    val name = verifyNameOf(s(), reference!!, echOffered)
+                    val r = verification.verify(presented, name, echPublicName = name != reference)
                     lock.withLock { resume(r) }
                 }
 
