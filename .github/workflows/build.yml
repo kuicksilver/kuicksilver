@@ -44,11 +44,13 @@ on:
         default: false
 permissions: {}
 concurrency:
-  # A newer push to the same branch or pull request cancels the older run: the workflow publishes nothing, and
-  # release.yml asks for a green run of the release commit, which is the newest one when it is released. Scheduled and
-  # manual runs have groups of their own and are never cancelled by a push.
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  # A newer push to a pull request cancels its older run: the workflow publishes nothing. A push to main or release/**
+  # is never cancelled, nor left pending behind another: each push has a group of its own (its commit), because the lint
+  # job checks the fuzz formats against the commit before the push (github.event.before), so a cancelled push would
+  # leave its changes unchecked; release.yml asks for a green run of the release commit, which every push still gets.
+  # Scheduled and manual runs have groups of their own and are never cancelled by a push.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
     shell: bash
