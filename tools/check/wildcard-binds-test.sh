@@ -10,10 +10,13 @@
 # variable), NIO bind(null) and bind(null, backlog), bind(localAddress = null), DatagramSocket(0, null),
 # ServerSocket(0, 50, null), embeddedServer(Netty, port = 0) and embeddedServer(Netty, 0) (also a port variable) without host, bindTcp(selector, "0.0.0.0", 0), a wildcard
 # val written over several lines, a file whose only loopback mention is [::1]; an allowlist entry that matches nothing
-# (stale), one without a reason. Pass: the same binds on 127.0.0.1 or ::1,
+# (stale), one without a reason; in a common or native test set a ktor-network socket bound to an IPv6 address (udp and tcp,
+# a literal, an InetSocketAddress, a named localAddress or hostname, a val, a chain over several lines, a file without
+# loopback). Pass: the same binds on 127.0.0.1 or ::1,
 # a host set inside a nested block, embeddedServer(Netty, 0, "127.0.0.1"), embeddedServer(Netty, environment), a null
 # that is not the address, a wildcard bind in a file that never talks to loopback, a main source set, binds named
-# in comments, KDoc and strings, the function definitions, another function named connector(...), a judged line.
+# in comments, KDoc and strings, the function definitions, another function named connector(...), a judged line, a
+# ktor-network socket on 127.0.0.1 in a common test set and on ::1 in a JVM or Android one, DatagramIo.open and bindTcp on ::1.
 # Usage: wildcard-binds-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +24,9 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 r="$tmp/repo"; rc=0
 t="kuicksilver-x/src/jvmTest/kotlin/x"
 mkdir -p "$r/tools/check" "$r/$t" "$r/kuicksilver-x/src/commonMain/kotlin/x" "$r/kuicksilver-x/src/androidDeviceTest/kotlin/x" \
-  "$r/kuicksilver-bench/src/commonMain/kotlin/x" "$r/kuicksilver-x/src/jvmTest/java/x"
+  "$r/kuicksilver-bench/src/commonMain/kotlin/x" "$r/kuicksilver-x/src/jvmTest/java/x" "$r/kuicksilver-x/src/commonTest/kotlin/x" \
+  "$r/kuicksilver-x/src/nativeTest/kotlin/x" "$r/kuicksilver-x/src/androidHostTest/kotlin/x"
+ct="kuicksilver-x/src/commonTest/kotlin/x"
 
 cat > "$r/$t/Bad.kt" <<'EOF'
 package x
@@ -147,6 +152,46 @@ class Good {
     }
 }
 EOF
+cat > "$r/$ct/BadKtor6.kt" <<'EOF'
+package x
+class BadKtor6 {
+    suspend fun a() = aSocket(selector).udp().bind(InetSocketAddress("::1", 0))                          // BAD-k6-udp
+    suspend fun b() = aSocket(selector).tcp().bind("::1", 0)                                              // BAD-k6-tcp
+    suspend fun c() = aSocket(selector).udp().bind(localAddress = InetSocketAddress("::1", 0))           // BAD-k6-named
+    suspend fun d(v6: Boolean) {
+        val host = if (v6) "::1" else "127.0.0.1"
+        aSocket(selector).udp().bind(InetSocketAddress(host, 0))                                          // BAD-k6-val
+    }
+    suspend fun e() =
+        io.ktor.network.sockets
+            .aSocket(selector)                                                                            // BAD-k6-multiline
+            .tcp()
+            .bind("[::1]", 0)
+    suspend fun f() = aSocket(selector).udp().bind(InetSocketAddress(hostname = "fe80::1", port = 0))     // BAD-k6-hostname
+}
+EOF
+cat > "$r/kuicksilver-x/src/nativeTest/kotlin/x/BadKtor6Far.kt" <<'EOF'
+package x
+suspend fun far6() = aSocket(selector).udp().bind(InetSocketAddress("2001:db8::5", 0))                   // BAD-k6-noloop
+EOF
+cat > "$r/$ct/GoodKtor6.kt" <<'EOF'
+package x
+// a comment: aSocket(selector).udp().bind(InetSocketAddress("::1", 0))
+class GoodKtor6 {
+    suspend fun a() = aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0))
+    suspend fun b() = DatagramIo.open(InetSocketAddress("::1", 0))
+    suspend fun c() = bindTcp(selector, "::1", 0)
+    suspend fun d() = aSocket(selector).tcp().connect("127.0.0.1", 443)
+    val message = "not aSocket(selector).tcp().bind(::1, 0)"
+}
+EOF
+cat > "$r/kuicksilver-x/src/androidHostTest/kotlin/x/GoodKtor6Host.kt" <<'EOF'
+package x
+suspend fun host6() = aSocket(selector).udp().bind(InetSocketAddress("::1", 0))
+EOF
+cat >> "$r/$t/Good.kt" <<'EOF'
+suspend fun jvm6() = aSocket(selector).tcp().bind("::1", 0)
+EOF
 cat > "$r/$t/NoLoopback.kt" <<'EOF'
 package x
 // a wildcard server whose clients are elsewhere (a container): this file never talks to loopback
@@ -182,20 +227,27 @@ expect "kuicksilver-x/src/jvmTest/java/x/BadJava.java" BAD-java
 expect "kuicksilver-x/src/androidDeviceTest/kotlin/x/BadDevice.kt" BAD-device
 expect "kuicksilver-bench/src/commonMain/kotlin/x/BadBench.kt" BAD-bench
 expect "$t/OnlyBracketed.kt" BAD-bracketed
+k6=$(grep -c -- "BAD-k6-" "$r/$ct/BadKtor6.kt")
+for m in BAD-k6-udp BAD-k6-tcp BAD-k6-named BAD-k6-val BAD-k6-multiline BAD-k6-hostname; do expect "$ct/BadKtor6.kt" "$m"; done
+expect "kuicksilver-x/src/nativeTest/kotlin/x/BadKtor6Far.kt" BAD-k6-noloop
+grep -q "^$ct/BadKtor6.kt:.*KTOR-10017" <<< "$out" || { echo "FAIL: the ktor IPv6 finding does not name KTOR-10017"; rc=1; }
+for f in "$ct/GoodKtor6.kt" "kuicksilver-x/src/androidHostTest/kotlin/x/GoodKtor6Host.kt"; do
+  if grep -q "^$f:" <<< "$out"; then echo "FAIL: findings in $f:"; grep "^$f:" <<< "$out"; rc=1; fi
+done
 grep -q "wildcard-binds.allow:3: stale" <<< "$out" || { echo "FAIL: the stale allowlist entry is not reported"; rc=1; }
 grep -q "wildcard-binds.allow:4: want" <<< "$out" || { echo "FAIL: an entry without a reason is not reported"; rc=1; }
 for f in Good.kt NoLoopback.kt; do
   if grep -q "^$t/$f:" <<< "$out"; then echo "FAIL: findings in $f:"; grep "^$t/$f:" <<< "$out"; rc=1; fi
 done
 if grep -q "^kuicksilver-x/src/commonMain/" <<< "$out"; then echo "FAIL: a main source set was checked"; rc=1; fi
-bad=$(grep -c -- "BAD-" "$r/$t/Bad.kt"); want=$((bad + 4 + 2)) # Bad.kt (its val case marked too), Java, device, bench; two allowlist problems
+bad=$(grep -c -- "BAD-" "$r/$t/Bad.kt"); want=$((bad + 4 + 2 + k6 + 1)) # Bad.kt (its val case marked too), Java, device, bench; two allowlist problems; ktor IPv6
 got=$(grep -c "^kuicksilver-\|wildcard-binds.allow:" <<< "$out")
 [ "$got" -eq "$want" ] || { echo "FAIL: $got findings, want $want:"; echo "$out"; rc=1; }
 [ "$status" -eq 1 ] || { echo "FAIL: exit $status with findings, want 1"; rc=1; }
 
 # a clean tree passes
 rm -f "$r/$t/Bad.kt" "$r/$t/OnlyBracketed.kt" "$r/kuicksilver-x/src/jvmTest/java/x/BadJava.java" "$r/kuicksilver-x/src/androidDeviceTest/kotlin/x/BadDevice.kt" \
-  "$r/kuicksilver-bench/src/commonMain/kotlin/x/BadBench.kt"
+  "$r/kuicksilver-bench/src/commonMain/kotlin/x/BadBench.kt" "$r/$ct/BadKtor6.kt" "$r/kuicksilver-x/src/nativeTest/kotlin/x/BadKtor6Far.kt"
 sed -i.bak '3,4d' "$r/tools/check/wildcard-binds.allow"
 out=$(python3 -I "$here/wildcard-binds.py" "$r"); status=$?
 [ "$status" -eq 0 ] || { echo "FAIL: a clean tree fails (exit $status):"; echo "$out"; rc=1; }
