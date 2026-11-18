@@ -122,7 +122,7 @@ public object EngineMain {
         require(echFiles == null || chain != null) { "kuicksilver.tls.echKeys needs kuicksilver.tls.certificateChain and privateKey" }
         if (echFiles != null) {
             @OptIn(ExperimentalKuicksilverApi::class)
-            tlsEchKeys = io.kuicksilver.tls.EchServerKeys(echFiles.map { io.kuicksilver.tls.EchKey(readEchKeyFile(it)) })
+            tlsEchKeys = io.kuicksilver.tls.EchServerKeys(echFiles.map { readEchKeyFile(it) })
         }
         // before the identity: a refused client CA leaves no native key behind
         loadClientCa(config, chain != null, reload != null)
@@ -315,11 +315,15 @@ public object EngineMain {
             require(it.isNotEmpty()) { "kuicksilver.tls.echKeys: at least one PEM file" }
         }
 
-    /** An ECH key file (a private key and its ECHConfigList, 1 MiB at most), as the text `EchKey` takes. */
-    private fun readEchKeyFile(path: String): String {
+    /**
+     * An ECH key file (a private key and its ECHConfigList, 1 MiB at most) as an `EchKey`: the characters read go to it
+     * without a `String` being made, and are zeroed (the key zeroes its copy once `EchServerKeys` has read it).
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    private fun readEchKeyFile(path: String): io.kuicksilver.tls.EchKey {
         val chars = readPemKey(path)
         try {
-            return chars.concatToString()
+            return io.kuicksilver.tls.EchKey(chars)
         } finally {
             chars.fill('\u0000')
         }

@@ -27,6 +27,7 @@ internal actual object PlatformVerifier {
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
+        offline: Boolean,
     ): PlatformVerdict = JvmTrust.evaluateWith(JvmTrust.defaultTrustManager(), chain, role)
 }
 

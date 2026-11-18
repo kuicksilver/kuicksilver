@@ -24,6 +24,7 @@ import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeByteArray
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.dns.HttpsEndpoint
 import io.kuicksilver.ktor.client.dns.SvcbRecord
 import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.ktor.network.bindTcp
@@ -34,6 +35,7 @@ import io.kuicksilver.tls.EchKey
 import io.kuicksilver.tls.EchServerKeys
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsVersions
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.channels.Channel
@@ -95,9 +97,11 @@ class ClientEchTest {
         names: Names,
         hits: AtomicInt = AtomicInt(0),
         onHello: suspend (String?) -> Unit = {},
+        earlyData: Boolean = false,
     ): Pair<TestServer, Int> {
         val server =
             embeddedServer(KuicksilverServer, configure = {
+                quicEarlyData = earlyData
                 tlsConnector(ClientFixtures.identity()) {
                     host = "127.0.0.1"
                     port = 0
@@ -245,6 +249,21 @@ class ClientEchTest {
     }
 
     /**
+     * A host configuration without a usable ECHConfig is refused when the engine is created: it would otherwise send the
+     * host's name in the clear (GREASE) on every connection. The message says what is wrong with the list.
+     */
+    @Test fun negative_hostConfigurationWithoutUsableConfigIsRefused() {
+        val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
+        val unusable = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                client(more = { ech { configLists = mapOf("server.test" to unusable) } }).close()
+            }
+        assertTrue("server.test" in e.message!! && "no ECHConfig" in e.message!!, e.message)
+        client(more = { ech { configLists = mapOf("server.test" to listA) } }).close()
+    }
+
+    /**
      * Through an HTTP CONNECT proxy the TLS session inside the tunnel is the origin's, with the origin's ECH: the proxy hop
      * is plain TCP and carries no ClientHello of its own (it learns the origin's name from the CONNECT line anyway).
      */
@@ -311,7 +330,17 @@ class ClientEchTest {
             val names = Names()
             val hits = AtomicInt(0)
             val keys = EchServerKeys(listOf(keyA))
-            val (server, port) = echServer(keys, names, hits)
+            // the server answers the rejected 0-RTT connection's ClientHello only once the client handed that connection to the
+            // request (H3Pool.afterAcquireForTest): the rejection then reaches the request, not the connection's setup (whose
+            // own retry would hide this path). The server issues tickets that allow 0-RTT, or there would be no early data.
+            val requestHasConnection = CompletableDeferred<Unit>()
+            val gateArmed = AtomicInt(0)
+            val (server, port) =
+                echServer(keys, names, hits, earlyData = true, onHello = { name ->
+                    if (name == EchTestKeys.PUBLIC_NAME && gateArmed.compareAndSet(1, 0)) {
+                        withTimeout(10.seconds) { requestHasConnection.await() }
+                    }
+                })
             try {
                 client(Http3DiscoveryMode.H3Only, more = {
                     http3 { earlyData = true }
@@ -322,7 +351,12 @@ class ClientEchTest {
                     // the ticket arrives after the handshake: forget the connection, so the next request resumes in 0-RTT
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
                     keys.rotate(listOf(keyB))
+                    gateArmed.store(1)
+                    engine.h3.afterAcquireForTest = { requestHasConnection.complete(Unit) }
+                    val retries = engine.h3.echEarlyRetriesForTest.load()
                     assertEquals("ok", c.get("https://server.test:$port/").bodyAsText())
+                    assertTrue(requestHasConnection.isCompleted)
+                    assertEquals(retries + 1, engine.h3.echEarlyRetriesForTest.load(), "the early request went again on the retry")
                 }
                 assertEquals(listOf<String?>("server.test", EchTestKeys.PUBLIC_NAME, "server.test"), names.all())
                 assertEquals(2, hits.load(), "the early request was processed once, on the retry")
@@ -406,6 +440,26 @@ class ClientEchTest {
                 server.stopSuspend(0, 0)
             }
         }
+
+    /**
+     * Routes of HTTPS record endpoints: the QUIC and TCP sides of one record share one (one retry for both), but two records
+     * for the same host and port with different `ech` values each offer their own configuration.
+     */
+    @Test fun echRoutesAreKeyedByTheRecordsEchValue() {
+        val listB = listOf(EchTestKeys.B)
+        val routes = EchRoutesOfEndpoints()
+        val quicA = HttpsEndpoint("svc.test", 443, quic = true, tcp = false, ech = listA.bytes)
+        val tcpA = HttpsEndpoint("svc.test", 443, quic = false, tcp = true, ech = listA.bytes.copyOf())
+        val tcpB = HttpsEndpoint("svc.test", 443, quic = false, tcp = true, ech = listB.bytes)
+        val a = assertNotNull(routes.of(quicA))
+        assertTrue(a === routes.of(tcpA), "one record's sides share a route")
+        val b = assertNotNull(routes.of(tcpB))
+        assertTrue(a !== b, "another ech value for the same target: another route")
+        assertEquals(listA, a.offer.list)
+        assertEquals(listB, b.offer.list)
+        assertNull(routes.of(HttpsEndpoint("svc.test", 443, quic = true, tcp = true)))
+        assertNull(routes.of(null))
+    }
 
     @Test fun echRouteRetriesOnceAndSharesTheRetryBetweenSiblings() {
         val route = EchRoute(listA)

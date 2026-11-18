@@ -853,7 +853,7 @@ class GuideSamplesTest {
             val ech1 = File(dir, "ech-1.pem").apply { writeText(EchTestKeys.A) }
             val ech2 = File(dir, "ech-2.pem").apply { writeText(EchTestKeys.B) }
             // guide:ktor:ech-server
-            val keys = EchServerKeys(listOf(EchKey(ech1.readText())))
+            val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
             val server =
                 embeddedServer(Kuicksilver, configure = {
                     tlsConnector(identity) {
@@ -862,9 +862,12 @@ class GuideSamplesTest {
                     }
                 }) { routing { get("/") { call.respondText("hidden") } } }
             // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
-            keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfigs = false)))
+            keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))
 
-            assertTrue(server.engine.configuration.connectors.single() is KuicksilverTlsConnector)
+            assertTrue(
+                server.engine.configuration.connectors
+                    .single() is KuicksilverTlsConnector,
+            )
         } finally {
             dir.deleteRecursively()
         }

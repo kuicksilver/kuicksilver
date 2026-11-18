@@ -559,12 +559,16 @@ group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none
 Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a connection from the path: the ClientHello
 the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
 needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
-The Ktor engines do not use it yet; through `TlsConfig` it works over QUIC and TCP.
+Through `TlsConfig` it works over QUIC and TCP; the Ktor engines use it too, the client from the HTTPS records or
+per host ([Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)) and the server with its keys
+([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)).
 
 A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
-extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one; a list with none
-usable offers nothing. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
+extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one. A list with none
+usable is refused by `build()` (`TlsException.Config`, "no ECHConfig of echConfigList is usable"), and so is any list in a
+build without ECH (a system OpenSSL; "this build has no Encrypted Client Hello"): a configured list never silently becomes a
+connection that sends the name in the clear. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
 stand out. ECH is TLS 1.3 only: `echConfigList` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
 
 When the server rejects ECH (its key changed, or it no longer has one), the client checks the certificate against the
@@ -572,12 +576,15 @@ When the server rejects ECH (its key changed, or it no longer has one), the clie
 `ech_required` and throws `TlsException.EchRejected`, whose `retryConfigs` are the server's current configurations: retry
 once, on a new connection, with them. Nothing of the rejected connection is used, and a second rejection is not retried.
 Without `retryConfigs` the server has stopped supporting ECH; connecting without it reveals the name, so it is the
-caller's choice. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
+caller's choice. Session tickets of connections that offered ECH are kept apart from those of connections without it
+(GREASE counts as without): a ticket is never offered on a connection of the other kind, where its PSK identity would link
+the hidden name to the visible one. `TlsConnection.echStatus` and `QuicTlsSession.echStatus` report `Accepted`, `Grease`, `Rejected` or
 `Offered`.
 
 A server takes its keys as `EchServerKeys`: each `EchKey` is the PEM `openssl ech -public_name <name> -out key.pem`
 writes (the private key and the `ECHCONFIG` block whose base64 goes into the HTTPS record), at least one of them marked for
-`retry_configs`. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
+`retry_configs`. Given as a `ByteArray` or `CharArray`, the PEM is zeroed, and the key's own copy too once it was read into
+native memory (such a key is used once); a `String` cannot be wiped. `rotate` replaces the set for handshakes that start afterwards, also under contexts already in use; keep the
 previous key, `inRetryConfigs = false`, while clients may still hold its configuration (the DNS TTL). A client whose ECH is
 rejected verifies the certificate against the `public_name`, so the server must present one valid for it then (an
 `sniSelector` sees the `public_name` as the server name of such a handshake).
@@ -593,6 +600,23 @@ val client = tlsConfig(TlsRole.Client) {
     echConfigList = EchConfigList.parseBase64(echParameterFromTheHttpsRecord)
 }
 ```
+
+When ECH is accepted, verifying the certificate must not reveal the hidden name through the network either (RFC 9849
+section 10.7: "clients SHOULD take steps to minimize or protect such requests during certificate validation"). Under
+`TrustConfig.Platform` (also beneath `Pinned` or `ExpectedName`) the platform verifier is then asked to stay offline, and
+a resumption's re-verification under ECH too:
+
+- **Windows**: chain building retrieves URLs (AIA intermediates, CRLs, OCSP) and revocation answers from the cache only
+  (`CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL`, `CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY`); an uncached status is unknown, which
+  is a soft fail as always, and a missing intermediate that is not cached fails the chain.
+- **Apple**: `SecTrustSetNetworkFetchAllowed(false)`: no OCSP, CRL or intermediate fetch.
+- **JVM**: the default trust manager fetches nothing unless the process enabled it (`com.sun.net.ssl.checkRevocation`
+  with `ocsp.enable` or CRL distribution points, `com.sun.security.enableAIAcaIssuers`); those settings are process-wide
+  and are not turned off per connection, so leave them off where ECH matters.
+- **Android**: the platform trust manager makes no revocation or AIA requests during the handshake.
+- **Linux Native** (`Platform` is OpenSSL with the system directory) and `AnchoredCa`: `ksl` fetches nothing; revocation
+  comes from stapled OCSP and configured CRLs only. A `TrustConfig.Custom` verifier is the application's code and must
+  take the same care.
 
 ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
 remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in

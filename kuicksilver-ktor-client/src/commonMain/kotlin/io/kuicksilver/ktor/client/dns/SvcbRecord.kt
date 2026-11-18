@@ -204,7 +204,7 @@ internal object SvcbCodec {
     }
 
     /**
-     * `ech` (RFC 9848 section 3): "the value of the parameter is an ECHConfigList (Section 4 of [ECH]), including the
+     * `ech` (RFC 9848 section 3): "the value of the parameter is an ECHConfigList (Section 4 of \[ECH\]), including the
      * redundant length prefix", that is `ECHConfig ECHConfigList<4..2^16-1>` (RFC 9849 section 4), each ECHConfig a version
      * and a length-prefixed body (section 4: the framing every version keeps, so one of another version is skipped, not
      * malformed). A value whose framing does not hold is a malformed SvcParamValue (RFC 9460 section 2.2): the RRset is
@@ -468,7 +468,10 @@ internal const val MAX_ENDPOINTS = 32
  * protocol in [supported] is left out (section 7.1.2, SHOULD NOT attempt), and so is one whose name a socket cannot take.
  * At most [MAX_ENDPOINTS]. Empty when the RRset has an AliasMode record: its ServiceMode records are then ignored
  * (section 2.4.1, MUST). With [ech] (the client offers ECH, RFC 9848) each endpoint carries its record's `ech` value;
- * without it the value is dropped, and a record whose `mandatory` names `ech` is incompatible (section 8).
+ * without it the value is dropped, and a record whose `mandatory` names `ech` is incompatible (section 8). Such a record
+ * is incompatible too when its `ech` has no ECHConfig this client can use ([echUsable]): `mandatory=ech` says the endpoint
+ * must not be reached without ECH (RFC 9848 section 5, figure 5), and the GREASE a client sends without a usable
+ * configuration (RFC 9849 section 6.1) is no ECH. A record without `mandatory=ech` keeps such a value (GREASE then).
  */
 internal fun serviceEndpoints(
     records: List<SvcbRecord>,
@@ -476,6 +479,10 @@ internal fun serviceEndpoints(
     supported: Set<String>,
     random: Random = Random,
     ech: Boolean = false,
+    echUsable: (ByteArray) -> Boolean = {
+        io.kuicksilver.ktor.client
+            .parsedEch(it) != null
+    },
 ): List<HttpsEndpoint> {
     if (records.any { it.isAlias }) return emptyList()
     return records
@@ -484,7 +491,7 @@ internal fun serviceEndpoints(
         .sortedBy { it.key }
         .flatMap { it.value.shuffled(random) }
         .mapNotNull { r ->
-            if (r.echMandatory && !ech) return@mapNotNull null
+            if (r.echMandatory && (!ech || r.ech?.let(echUsable) != true)) return@mapNotNull null
             val set = r.alpnSet() intersect supported
             val quic = "h3" in set
             val tcp = "h2" in set || HTTPS_DEFAULT_ALPN in set

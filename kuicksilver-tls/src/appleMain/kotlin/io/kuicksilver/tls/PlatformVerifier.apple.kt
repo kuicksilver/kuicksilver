@@ -46,6 +46,7 @@ import platform.Security.SecTrustRef
 import platform.Security.SecTrustRefVar
 import platform.Security.SecTrustSetAnchorCertificates
 import platform.Security.SecTrustSetAnchorCertificatesOnly
+import platform.Security.SecTrustSetNetworkFetchAllowed
 import platform.Security.SecTrustSetVerifyDate
 import platform.Security.errSecCertificateExpired
 import platform.Security.errSecCertificateNotValidYet
@@ -62,7 +63,8 @@ internal actual val platformTrustViaOpenSsl: Boolean = false
 
 /**
  * Apple: `SecTrust` with `SecPolicyCreateSSL(server, host)`; host is never nil (ADR-0011). The evaluation may fetch
- * intermediates (AIA) and revocation status (OCSP) over the network, which takes seconds on a slow link, so it never runs on a
+ * intermediates (AIA) and revocation status (OCSP) over the network (never for an `offline` evaluation, a name ECH hid:
+ * `SecTrustSetNetworkFetchAllowed(false)`), which takes seconds on a slow link, so it never runs on a
  * Kotlin thread: `SecTrustEvaluateAsyncWithError` on a global dispatch queue answers through a callback and the caller only
  * suspends. A slow server's verification therefore holds no thread of `Dispatchers.Default` and cannot stall other
  * connections' handshakes.
@@ -95,11 +97,13 @@ internal actual object PlatformVerifier {
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
+        offline: Boolean,
     ): PlatformVerdict {
         val owned = ArrayList<CFTypeRef?>() // released once the evaluation answered (or could not start)
         val trust =
             try {
-                createTrust(chain, host, role, owned) ?: return PlatformVerdict(VerifyResult.Rejected(VerifyReason.BadEncoding), null)
+                createTrust(chain, host, role, owned, offline)
+                    ?: return PlatformVerdict(VerifyResult.Rejected(VerifyReason.BadEncoding), null)
             } catch (e: IllegalStateException) {
                 owned.forEach { it?.let(::CFRelease) }
                 return PlatformVerdict(
@@ -137,6 +141,7 @@ internal actual object PlatformVerifier {
         host: HostName,
         role: TlsRole,
         owned: MutableList<CFTypeRef?>,
+        offline: Boolean,
     ): SecTrustRef? =
         memScoped {
             val certs = chain.map { secCertificate(it.encoded) }
@@ -153,6 +158,10 @@ internal actual object PlatformVerifier {
             val trust = trustVar.value
             owned += trust
             if (status != 0 || trust == null) throw IllegalStateException("SecTrustCreateWithCertificates failed ($status)")
+            // a name ECH hid: no OCSP, CRL or intermediate (AIA) fetch reveals it (RFC 9849 section 10.7); cached answers only
+            if (offline && SecTrustSetNetworkFetchAllowed(trust, false) != 0) {
+                throw IllegalStateException("SecTrustSetNetworkFetchAllowed failed")
+            }
             verifyDateForTest?.let { epoch ->
                 val date = CFDateCreate(kCFAllocatorDefault, (epoch - CF_EPOCH_OFFSET).toDouble())
                 owned += date

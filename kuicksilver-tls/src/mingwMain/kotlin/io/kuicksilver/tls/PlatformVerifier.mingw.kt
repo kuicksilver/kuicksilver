@@ -34,12 +34,14 @@ import platform.posix.memset
 import platform.windows.AUTHTYPE_CLIENT
 import platform.windows.AUTHTYPE_SERVER
 import platform.windows.CERT_CHAIN_CACHE_END_CERT
+import platform.windows.CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL
 import platform.windows.CERT_CHAIN_CONTEXT
 import platform.windows.CERT_CHAIN_ENGINE_CONFIG
 import platform.windows.CERT_CHAIN_POLICY_IGNORE_ALL_REV_UNKNOWN_FLAGS
 import platform.windows.CERT_CHAIN_POLICY_PARA
 import platform.windows.CERT_CHAIN_POLICY_STATUS
 import platform.windows.CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT
+import platform.windows.CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY
 import platform.windows.CERT_CHAIN_REVOCATION_CHECK_END_CERT
 import platform.windows.CERT_CONTEXT
 import platform.windows.CERT_E_CN_NO_MATCH
@@ -86,7 +88,8 @@ internal actual object PlatformVerifier {
         chain: List<Certificate>,
         host: HostName,
         role: TlsRole,
-    ): PlatformVerdict = withContext(Dispatchers.IO) { WindowsTrust.evaluate(chain, host, role) }
+        offline: Boolean,
+    ): PlatformVerdict = withContext(Dispatchers.IO) { WindowsTrust.evaluate(chain, host, role, offline = offline) }
 }
 
 /**
@@ -97,7 +100,9 @@ internal actual object PlatformVerifier {
  *    intermediates `CertGetCertificateChain` may use (it can also fetch missing ones through AIA, as browsers do);
  * 2. the chain is built for the extended key usage of the peer's role (`serverAuth` for a server, `clientAuth` for a
  *    client; a certificate without the extension allows any use) with the leaf's revocation checked, network fetches
- *    bounded by [URL_TIMEOUT_MS] in total;
+ *    bounded by [URL_TIMEOUT_MS] in total; for a name ECH hid (`offline`) nothing is fetched, only cached URLs and
+ *    revocation answers are used (`CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL`, `CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY`), so an
+ *    uncached status is unknown (soft fail, below);
  * 3. `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` decides, with the reference identifier as the server name
  *    for a server; an unknown revocation status is ignored (soft fail, like rustls-platform-verifier, OpenSSL and Secure
  *    Transport), a revoked leaf is not;
@@ -141,6 +146,8 @@ internal object WindowsTrust {
         host: HostName,
         role: TlsRole,
         exclusiveRoots: List<Certificate>? = null,
+        // a name ECH hid (RFC 9849 section 10.7): URL retrieval (AIA, CRL, OCSP) and the revocation check from the cache only
+        offline: Boolean = false,
     ): PlatformVerdict {
         if (chain.isEmpty()) return PlatformVerdict(VerifyResult.Rejected(VerifyReason.NoCertificate), null)
         return memScoped {
@@ -164,7 +171,7 @@ internal object WindowsTrust {
                         exclusiveEngine(roots)
                             ?: return@memScoped rejected(VerifyReason.Custom("CertCreateCertificateChainEngine failed"))
                 }
-                context = buildChain(engine, leaf, store, role)
+                context = buildChain(engine, leaf, store, role, offline)
                     ?: return@memScoped rejected(VerifyReason.Custom("CertGetCertificateChain failed"))
                 val status =
                     policy(context, host, role)
@@ -224,6 +231,7 @@ internal object WindowsTrust {
         leaf: CPointer<CERT_CONTEXT>?,
         store: CPointer<*>,
         role: TlsRole,
+        offline: Boolean,
     ): CPointer<CERT_CHAIN_CONTEXT>? {
         check(sizeOf<_CERT_CHAIN_PARA>() == 32L) { "unexpected CERT_CHAIN_PARA layout" }
         val raw = allocArray<ByteVar>(CHAIN_PARA_FULL_SIZE)
@@ -237,8 +245,9 @@ internal object WindowsTrust {
         para.RequestedUsage.Usage.cUsageIdentifier = 1u
         para.RequestedUsage.Usage.rgpszUsageIdentifier = oids
         (raw + CHAIN_PARA_URL_TIMEOUT_OFFSET)!!.reinterpret<UIntVar>().pointed.value = URL_TIMEOUT_MS
-        val flags =
+        val online =
             CERT_CHAIN_REVOCATION_CHECK_END_CERT or CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT or CERT_CHAIN_CACHE_END_CERT
+        val flags = if (offline) online or CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL or CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY.toInt() else online
         val out = alloc<PCCERT_CHAIN_CONTEXTVar>()
         if (CertGetCertificateChain(engine, leaf, null, store, para.ptr, flags.toUInt(), null, out.ptr) == 0) return null
         return out.value

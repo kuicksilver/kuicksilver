@@ -93,6 +93,19 @@ internal class KuicksilverEngine(
         require(config.ech.configLists.isEmpty() || config.echCapable()) {
             "ech.configLists needs TLS 1.3 only: the tls block allows TLS 1.2 (RFC 9849 section 6.1)"
         }
+        // a list given for a host is offered or refused now: one without a usable ECHConfig, or any in a build without ECH,
+        // would otherwise send the host's name in the clear (with GREASE) on every connection
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        for ((host, list) in config.ech.configLists) {
+            try {
+                io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                    config.tls(this)
+                    echConfigList = list
+                }
+            } catch (e: io.kuicksilver.tls.TlsException.Config) {
+                throw IllegalArgumentException("ech.configLists[\"$host\"]: ${e.message}", e)
+            }
+        }
     }
 
     /** Whether connections offer the `ech` of the HTTPS records (RFC 9848; `ech.fromHttpsRecords`, TLS 1.3 only). */
@@ -1186,12 +1199,9 @@ internal class KuicksilverEngine(
         val triedQuic = HashSet<String>()
         val triedTcp = HashSet<String>()
         // one ECH route per endpoint with `ech` (RFC 9848), shared by its QUIC and TCP sides: one retry for both
-        val echRoutes = HashMap<String, EchRoute>()
+        val echRoutes = EchRoutesOfEndpoints()
 
-        fun echOf(e: HttpsEndpoint?): EchRoute? {
-            val bytes = e?.ech ?: return null
-            return echRoutes.getOrPut("${e.host}:${e.port}") { EchRoute(parsedEch(bytes)) }
-        }
+        fun echOf(e: HttpsEndpoint?): EchRoute? = echRoutes.of(e)
         var misdirected = false
         var lastFailure: Throwable? = null
         for (a in attempts) {

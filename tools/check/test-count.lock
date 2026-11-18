@@ -1371,12 +1371,14 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.earlyDataUnderARejectedEchIsSentAgainOnTheRetry
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echGoesInsideAConnectTunnel
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echRouteRetriesOnceAndSharesTheRetryBetweenSiblings
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.echRoutesAreKeyedByTheRecordsEchValue
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.greaseByDefault
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.hostConfigurationIsOfferedAndAcceptedOverTcp
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.httpsRecordEchIsOffered
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_aRejectedRetryIsNotRetriedAgain
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_echReliantRequestNeverFallsBackToTheOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationNeedsTls13Only
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_hostConfigurationWithoutUsableConfigIsRefused
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.negative_serverWithoutEchIsRetriedWithoutEch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceOverHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientEchTest.rejectionIsRetriedOnceWithTheRetryConfigurationsOverTcp
@@ -2173,6 +2175,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecord
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_labelOver63IsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_malformedEchValues
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryCheckReadsEachKeyAtMostOnce
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryEchWithoutUsableConfigIsSkipped
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryEmptyOrOddIsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryKeyMissingIsMalformed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.dns.SvcbRecordTest.negative_mandatoryKeysOutOfOrderIsMalformed
@@ -5564,6 +5567,7 @@ kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.negative_cus
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.negative_secTrustRefusalOfAWeakChainIsBadCertificate
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleBuiltPathTest.platformAcceptsAWeakCrossCertificateOffItsPath
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleTrustAsyncTest.negative_pinsNeverReplaceThePlatformBase
+kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleTrustAsyncTest.offlineEvaluationAllowsNoNetworkFetch
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleTrustAsyncTest.pinsOnTopOfThePlatformBase
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleTrustAsyncTest.platformTrustsARootInstalledBesideTheSystemStore
 kuicksilver-tls/src/appleTest	io.kuicksilver.tls.AppleTrustAsyncTest.stalledEvaluationsHoldNoThreadAndDoNotStallOthers
@@ -5616,8 +5620,11 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.platfor
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.tofuAcceptsASha1SelfSignedLeafWithAStrongKey
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.ChainSecurityLevelTest.weakReasonsPrintTheirName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.base64OfTheRecordParses
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.keyMaterialArraysAreWiped
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.listParsingKeepsUsableConfigs
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_configurationsInTheWrongPlaceAreRefused
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_echTicketsAreNotOfferedWithoutEch
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_explicitListWithoutUsableConfigIsRefused
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_malformedListsAreRefused
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_pinnedRejectionStillNeedsTheBaseTrust
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_quicRejectedReportsRetryConfigs
@@ -5626,6 +5633,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_quicUnauthent
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.negative_tofuDoesNotTrustAPublicNameOnFirstContact
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.pinsDoNotApplyToThePublicNameCertificate
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.pinsDoNotFailAnAnchoredRejection
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.platformVerifierIsOfflineForAHiddenName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicAccepted
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicGreaseByDefault
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.EchTest.quicPausedVerifierSeesThePublicNameOnRejection
@@ -5956,6 +5964,9 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerifyReasonMessageTest.verify
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.ClientAlertJdkServerTest.negative_aJdkServerReadsTheAlertOfAClientThatRefusesItsCertificate
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.aBlockStillWaitingGivesNull
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.CompletedWithinTest.negative_aResultThatRacesTheDeadlineIsKept
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.concurrentRotationsGetDistinctVersions
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.keysAreAppliedWhenTheContextIsBuilt
+kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.EchKeysRaceJvmTest.racingAppliesNeverLeaveAnOlderSet
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KeylogFileNoNioTest.negative_keylogFileWithoutNioIsRefused
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsRaceTest.negative_anAnswerThatCameAsTheTimeoutFiresIsTheAnswer
 kuicksilver-tls/src/jvmTest	io.kuicksilver.tls.KslDnsTest.answerForms

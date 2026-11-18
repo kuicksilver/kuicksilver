@@ -16,22 +16,28 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - TLS: Encrypted Client Hello (RFC 9849; experimental; in the Ktor engines too, see below).
   Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
-  RFC 9848; unusable ECHConfigs are ignored one by one), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
+  RFC 9848; unusable ECHConfigs are ignored one by one, and `build()` refuses a list with none usable, or any list in a
+  build without ECH, each with its own message), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
   with the server's retry configurations after an authenticated rejection, the certificate checked against the
   `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
-  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory)
+  `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory; given as a `ByteArray` or
+  `CharArray` it is zeroed once read)
   with `rotate`, shared mode only. Over QUIC and TCP, TLS 1.3 only. During a rejection the certificate is checked for the
   `public_name` by the base trust alone: the origin's pins (`TrustConfig.Pinned`) do not apply to it, and
   `TrustConfig.Tofu` needs a key stored for the `public_name` (a rejection is no first contact, and stores nothing).
+  Session tickets of connections with ECH and without it are cached apart, never offered on the other kind.
+  With ECH accepted, `TrustConfig.Platform` verifies offline (RFC 9849 section 10.7): Windows retrieves URLs and
+  revocation from its cache only, Apple turns off SecTrust's network fetches.
 - Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
   Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
   on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by
-  default), over TCP and HTTP/3 and inside a proxy's tunnel. A rejection is retried once on a new connection with the
+  default), over TCP and HTTP/3 and inside a proxy's tunnel; a `configLists` entry with nothing usable (or any, in a build
+  without ECH) fails the engine's creation. A rejection is retried once on a new connection with the
   server's retry configurations, or without ECH when it sent none; a rejected retry fails the request
   (`TlsException.EchRejected` in its causes). A 0-RTT request on a rejected connection is sent again on the retry. With the
   records' ECH no ClientHello goes out before the records resolved (the request waits up to the connect timeout instead of
   `httpsRecordExtraWait`), and a request whose endpoints all have `ech` never falls back to a connection without it. The
-  SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible) and an ECH
+  SVCB codec reads the `ech` SvcParam (a malformed value drops the RRset, `mandatory=ech` is compatible when the value has a usable ECHConfig) and an ECH
   rejection no longer marks an HTTP/3 alternative broken.
 - Ktor server: `KuicksilverTlsConnector.Builder.echKeys` (experimental) for TCP and HTTP/3, rotated with
   `EchServerKeys.rotate`, and the `EngineMain` key `kuicksilver.tls.echKeys` (PEM files; docs/guide/ktor.md, "Encrypted

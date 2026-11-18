@@ -1106,6 +1106,10 @@ internal class H3Pool(
     /** A setup whose race made no connection within the connect timeout. */
     private class SetupTimedOut : Exception("no QUIC connection within the connect timeout")
 
+    /** Test hook: requests sent in 0-RTT on a connection whose ECH was rejected, and sent again ([execute]). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val echEarlyRetriesForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
     /** Test hook: callers that waited for a setup another caller started. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
@@ -1607,6 +1611,7 @@ internal class H3Pool(
                 val echRejected = echRejectionIn(e)
                 if (echRejected != null && !echRetried && !conn.quic.isHandshakeComplete) {
                     echRetried = true
+                    echEarlyRetriesForTest.addAndFetch(1)
                     val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
                     route.offer.takeIf { !it.retry }?.let { route.rejected(it, echRejected) }
                     lock.withLock { connections[t.key]?.let { if (it === entry) connections.remove(t.key) } }

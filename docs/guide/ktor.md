@@ -369,7 +369,7 @@ openssl ech -public_name cover.example.com -out ech-1.pem   # the PEM: the priva
 val ech1 = File("/etc/kuicksilver/ech-1.pem")
 val ech2 = File("/etc/kuicksilver/ech-2.pem")
 // guide:ktor:ech-server
-val keys = EchServerKeys(listOf(EchKey(ech1.readText())))
+val keys = EchServerKeys(listOf(EchKey(ech1.readBytes())))
 val server =
     embeddedServer(Kuicksilver, configure = {
         tlsConnector(identity) {
@@ -378,7 +378,7 @@ val server =
         }
     }) { routing { get("/") { call.respondText("hidden") } } }
 // later: a new key; the old one still decrypts for clients that hold it, but is not sent in retry configurations
-keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfigs = false)))
+keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryConfigs = false)))
 ```
 
 - **The public name.** A client whose configuration the server cannot decrypt (an old key, or GREASE) gets the keys' retry
@@ -386,6 +386,9 @@ keys.rotate(listOf(EchKey(ech2.readText()), EchKey(ech1.readText(), inRetryConfi
   6.1.7): the connector's certificate must cover that name. With an `sniSelector` the selector is asked for the
   `public_name` then (the outer ClientHello's name), and its answer is the certificate the client checks; after an
   accepted ECH it is asked for the inner name, as without ECH.
+- **Key material.** `EchKey` takes the PEM as a `ByteArray` or `CharArray` and zeroes it; its own copy is zeroed once
+  `EchServerKeys` (or `rotate`) has read it into native memory, so such a key is used once. A `String` cannot be wiped and
+  stays in memory as long as the key. `kuicksilver.tls.echKeys` reads its files without making a `String`.
 - **Rotation.** `rotate` replaces the whole set for handshakes that start afterwards, on TCP and QUIC; handshakes in
   progress keep the set they started with. Keep a replaced key (`inRetryConfigs = false`) until the DNS TTL of the old
   record has run out.
@@ -1538,6 +1541,12 @@ val client =
   proxy is plain TCP, so it carries no ClientHello of its own; the proxy learns the origin's name from the CONNECT line.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
   the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
+- **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
+  ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
+  given for a host never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` with nothing usable
+  is different: that connection sends GREASE, as RFC 9849 section 6.1 allows ("If no compatible configuration is found,
+  then the client SHOULD proceed as described in Section 6.2"); a record whose `mandatory` names `ech` is skipped then,
+  since it must not be reached without ECH (RFC 9848 section 5).
 - **What it does not hide.** The DNS queries for the origin's records and addresses (protect them with DNS over HTTPS),
   the server's address, and the traffic's sizes and timing.
 

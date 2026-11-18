@@ -4,6 +4,7 @@
 
 package io.kuicksilver.tls
 
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.runBlocking
@@ -99,6 +100,48 @@ class EchTest {
         }
     }
 
+    /**
+     * A list given explicitly is offered or refused when the configuration is built: one without a usable ECHConfig never
+     * becomes GREASE with the real name in the clear (and neither does any list in a build without ECH, with its own message).
+     */
+    @Test fun negative_explicitListWithoutUsableConfigIsRefused() {
+        assertTrue(echInThisBuild, "this build has ECH")
+        val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
+        val onlyOther = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val e = assertFailsWith<TlsException.Config> { Fixtures.client { echConfigList = onlyOther } }
+        assertEquals(unusableEchMessage(hasEch = true), e.message)
+        assertTrue("no ECHConfig" in e.message!!)
+        assertFailsWith<TlsException.Config> { TcpFixtures.client { echConfigList = onlyOther } }
+        val noEch = unusableEchMessage(hasEch = false)
+        assertTrue("this build has no Encrypted Client Hello" in noEch && noEch != e.message, noEch)
+        // the usable list and no list at all still build
+        Fixtures.client { echConfigList = listA }
+        Fixtures.client()
+    }
+
+    /**
+     * A key given as bytes or characters: the caller's array is zeroed at once, the key's copy once the keys were read into
+     * native memory (a second use is refused); a String key can be used again.
+     */
+    @Test fun keyMaterialArraysAreWiped() {
+        val bytes = EchTestKeys.A.encodeToByteArray()
+        val fromBytes = EchKey(bytes)
+        assertTrue(bytes.all { it == 0.toByte() }, "the caller's bytes are zeroed")
+        val chars = EchTestKeys.A.toCharArray()
+        val fromChars = EchKey(chars)
+        assertTrue(chars.all { it == '\u0000' }, "the caller's characters are zeroed")
+        for (k in kotlin.collections.listOf(fromBytes, fromChars)) {
+            val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(k)) })
+            p.close()
+            assertEquals(EchStatus.Accepted, p.c.echStatus)
+            val e = assertFailsWith<TlsException.Config> { EchServerKeys(listOf(k)) }
+            assertTrue("already used" in e.message!!, e.message)
+        }
+        val text = EchKey(EchTestKeys.A)
+        EchServerKeys(listOf(text))
+        EchServerKeys(listOf(text)) // a String key stays usable
+    }
+
     @Test fun quicAccepted() {
         val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyA)) })
         try {
@@ -165,6 +208,43 @@ class EchTest {
         }
     }
 
+    /**
+     * RFC 9849 section 10.7: the platform verifier fetches nothing over the network (OCSP, CRL, AIA) for a name ECH hid. It
+     * is asked offline exactly when ECH was accepted; for a rejection (the public_name, visible anyway), GREASE and no ECH
+     * it may go online as before.
+     */
+    @Test fun platformVerifierIsOfflineForAHiddenName() {
+        val asked = ArrayList<Pair<String, Boolean>>()
+        platformForTest = { chain, host, _, offline ->
+            asked += host.value to offline
+            PlatformVerdict(VerifyResult.Accepted(chain), chain)
+        }
+        try {
+            fun run(
+                list: EchConfigList?,
+                key: EchKey,
+            ): EchStatus {
+                val c = KslQuicCrypto.newSession(Fixtures.client(trust = TrustConfig.Platform) { echConfigList = list })
+                val s = KslQuicCrypto.newSession(Fixtures.server { echKeys = EchServerKeys(listOf(key)) })
+                c.setTransportParameters(Fixtures.tp)
+                s.setTransportParameters(Fixtures.tp)
+                val p = Pump(c, s)
+                p.run(onVerify = { runBlocking { c.verifyPeer(it.chain) } })
+                p.close()
+                return p.c.echStatus
+            }
+            assertEquals(EchStatus.Accepted, run(listA, keyA))
+            assertEquals(EchStatus.Rejected, run(listA, keyB))
+            assertEquals(EchStatus.Grease, run(null, keyA))
+            assertEquals(
+                kotlin.collections.listOf("server.test" to true, EchTestKeys.PUBLIC_NAME to false, "server.test" to false),
+                asked,
+            )
+        } finally {
+            platformForTest = null
+        }
+    }
+
     /** A client whose rejection goes through the paused path with [trust]: the pump after a server with key B. */
     private fun rejectedThrough(trust: TrustConfig): Pump {
         val c = KslQuicCrypto.newSession(Fixtures.client(trust = trust) { echConfigList = listA })
@@ -186,7 +266,7 @@ class EchTest {
         runBlocking {
             val chain = listOf(Certificate(TestCerts.server))
             val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32) { 7 }))))
-            val v = Verification(config, platform = { c, _, _ -> PlatformVerdict(VerifyResult.Accepted(c), c) })
+            val v = Verification(config, platform = { c, _, _, _ -> PlatformVerdict(VerifyResult.Accepted(c), c) })
             assertIs<VerifyResult.Accepted>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))
             // the origin's own certificate is held to them as always
             assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize("server.test")))
@@ -209,7 +289,7 @@ class EchTest {
             val chain = listOf(Certificate(TestCerts.server))
             val config = Fixtures.client(trust = TrustConfig.Pinned(setOf(chain[0].spkiSha256)))
             val v =
-                Verification(config, platform = { _, h, _ ->
+                Verification(config, platform = { _, h, _, _ ->
                     PlatformVerdict(VerifyResult.Rejected(VerifyReason.HostnameMismatch(h.value, emptyList())), null)
                 })
             assertIs<VerifyResult.Rejected>(v.verify(chain, HostName.normalize(EchTestKeys.PUBLIC_NAME), echPublicName = true))
@@ -339,6 +419,50 @@ class EchTest {
             assertContentEquals(listB.bytes, e.retryConfigs?.bytes)
             assertFailsWith<TlsException> { withTimeout(10.seconds) { rs.await() } }
         }
+
+    /** One TCP connection with a byte each way (so the ticket arrives); whether it resumed. [ech]: the partition of its ticket. */
+    private fun tcpOnce(
+        client: TlsConfig,
+        server: TlsConfig,
+        ech: Boolean,
+    ): Boolean =
+        runBlocking {
+            val (cd, sd) = connect(client, server)
+            val c = withTimeout(20.seconds) { cd.await() }
+            val s = withTimeout(20.seconds) { sd.await() }
+            c.output.writeFully(byteArrayOf(1), 0, 1)
+            c.output.flush()
+            s.input.readExactly(1)
+            s.output.writeFully(byteArrayOf(2), 0, 1)
+            s.output.flush()
+            c.input.readExactly(1)
+            val reused = c.sessionReused
+            // the server's tickets precede its byte, so they are cached by now (SessionResumptionTest.ticketCachedBeforeTheDataThatFollowsIt)
+            val key = SessionCache.key(client.serverName, "server.test", client.trust, client.identity, ech = ech)
+            assertTrue(SessionCache.Default.peek(key), "the ticket is cached under its own partition")
+            c.close()
+            s.close()
+            reused
+        }
+
+    /**
+     * A ticket from a connection with ECH is never offered on one without it (its PSK identity would go in the clear
+     * ClientHello and link the hidden name to the visible one), nor one from a connection without ECH on one with it; each
+     * kind resumes its own.
+     */
+    @Test fun negative_echTicketsAreNotOfferedWithoutEch() {
+        val server = TcpFixtures.server { echKeys = EchServerKeys(listOf(keyA)) }
+        val withEch = TcpFixtures.client { echConfigList = listA }
+        val plain = TcpFixtures.client()
+        assertFalse(tcpOnce(withEch, server, ech = true), "first ECH connection: a full handshake")
+        assertFalse(tcpOnce(plain, server, ech = false), "the ECH connection's ticket is not offered without ECH")
+        assertTrue(tcpOnce(withEch, server, ech = true), "control: an ECH connection resumes the ECH ticket")
+        assertTrue(tcpOnce(plain, server, ech = false), "control: a connection without ECH resumes its own ticket")
+        assertTrue(
+            SessionCache.key("a", "a", plain.trust, null, ech = true) != SessionCache.key("a", "a", plain.trust, null),
+            "QUIC tickets use the same partition (SessionCache.takeQuic / putQuic)",
+        )
+    }
 
     @Test fun base64OfTheRecordParses() {
         assertEquals(listA, EchConfigList.parseBase64(Base64.encode(listA.bytes)))

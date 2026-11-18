@@ -20,8 +20,9 @@ import kotlin.io.encoding.Base64
  * HTTPS record carries them (RFC 9848), as a server sends them in `retry_configs`, or as an application got them out of band.
  * [parse] checks the framing and keeps the configurations this OpenSSL can use: one of another version, with an unsupported
  * key encapsulation, cipher suite or mandatory extension, or whose `public_name` is no DNS name or could be read as an IPv4
- * address is ignored, as RFC 9849 sections 4, 4.2 and 6.1.7 require. A list that parses but keeps nothing is not [isUsable]: a
- * client then offers no ECH with it (and sends GREASE ECH instead, [TlsConfig.Builder.echGrease]).
+ * address is ignored, as RFC 9849 sections 4, 4.2 and 6.1.7 require. A list that parses but keeps nothing is not [isUsable]
+ * (in a build without ECH no list is): [TlsConfig.Builder.build] refuses it, so a configuration given explicitly never
+ * silently turns into a connection that sends the real name in the clear.
  */
 @ExperimentalKuicksilverApi
 public class EchConfigList private constructor(
@@ -108,13 +109,41 @@ public enum class EchStatus {
  * block followed by the `ECHCONFIG` block of its ECHConfigList (publish that block's base64 in the HTTPS record's `ech`
  * parameter). [inRetryConfigs]: whether a server that rejects ECH sends this key's configuration in `retry_configs` (RFC
  * 9849 section 7.1); during a rotation the new key is, the old one is kept only to decrypt clients that still hold it.
+ *
+ * Prefer the `ByteArray` and `CharArray` constructors: the array given is zeroed at once, the key keeps its own copy only
+ * until an [EchServerKeys] (or its [EchServerKeys.rotate]) has read it into native memory, then zeroes that copy too, so
+ * such a key is used once (a second use throws [TlsException.Config]). A `String` cannot be wiped: a key made from one
+ * keeps that text for its life (and can be used again).
  */
 @ExperimentalKuicksilverApi
-public class EchKey(
-    pem: String,
-    public val inRetryConfigs: Boolean = true,
+@OptIn(ExperimentalAtomicApi::class)
+public class EchKey private constructor(
+    private val text: String?,
+    bytes: ByteArray?,
+    public val inRetryConfigs: Boolean,
 ) {
-    internal val pem: ByteArray = pem.encodeToByteArray()
+    /** The PEM as text, which stays in memory as long as this key (prefer the `ByteArray` or `CharArray` constructor). */
+    public constructor(pem: String, inRetryConfigs: Boolean = true) : this(pem, null, inRetryConfigs)
+
+    /** The PEM as bytes (ASCII); [pem] is zeroed before this returns. */
+    public constructor(pem: ByteArray, inRetryConfigs: Boolean = true) : this(null, pem.copyOf().also { pem.fill(0) }, inRetryConfigs)
+
+    /** The PEM as characters (ASCII; no `String` of it is made); [pem] is zeroed before this returns. */
+    public constructor(pem: CharArray, inRetryConfigs: Boolean = true) :
+        this(null, ByteArray(pem.size) { pem[it].code.toByte() }.also { pem.fill('\u0000') }, inRetryConfigs)
+
+    // the bytes of an array key until they are read (then null: zeroed by the reader)
+    private val bytes = AtomicReference(bytes)
+
+    /**
+     * The PEM bytes, for the caller to zero after use: a new array for a `String` key; for an array key its copy, taken out
+     * of the key (a second take throws).
+     */
+    internal fun takePem(): ByteArray {
+        text?.let { return it.encodeToByteArray() }
+        return bytes.exchange(null)
+            ?: throw TlsException.Config("ECH key already used: its key material was wiped after it was read; make a new EchKey")
+    }
 
     override fun toString(): String = "EchKey(inRetryConfigs=$inRetryConfigs)"
 }
@@ -135,11 +164,28 @@ public class EchServerKeys(
 ) {
     private val current = AtomicReference(Native(parse(keys), 1))
 
-    /** Replaces the whole set (see the class); the old set is freed once no context still uses it. */
+    /**
+     * Replaces the whole set (see the class); the old set is freed once no context still uses it. Concurrent rotations are
+     * ordered: each one's set gets a version above the set it replaced, so a context never takes an older set for a newer one.
+     */
     public fun rotate(keys: List<EchKey>) {
-        val next = Native(parse(keys), current.load().version + 1)
-        current.exchange(next).release()
+        val handle = parse(keys)
+        while (true) {
+            val old = current.load()
+            val next = Native(handle, old.version + 1)
+            beforeSwapForTest?.invoke()
+            if (current.compareAndSet(old, next)) {
+                old.release()
+                return
+            }
+        }
     }
+
+    /** Test hook: runs in [rotate] between reading the current set and replacing it. */
+    internal var beforeSwapForTest: (() -> Unit)? = null
+
+    /** Test hook: runs in [applyTo] before (true) and after (false) the native context takes the set of that version. */
+    internal var applyHookForTest: ((Boolean, Int) -> Unit)? = null
 
     /** The version of the current set: a context applies a set once ([applyTo]). */
     internal val version: Int get() = current.load().version
@@ -150,7 +196,9 @@ public class EchServerKeys(
             val n = current.load()
             if (!n.tryAcquire()) continue // rotated and freed between the load and the acquire: take the newer one
             try {
+                applyHookForTest?.invoke(true, n.version)
                 Ksl.ctxSetEchKeys(ctx, n.handle)
+                applyHookForTest?.invoke(false, n.version)
                 return n.version
             } catch (e: KslException.Internal) {
                 throw TlsException.Config("ECH keys refused: ${e.message}")
@@ -186,26 +234,32 @@ public class EchServerKeys(
                 throw TlsException.Config("ECH keys: at least one goes into retry_configs (RFC 9849 section 7.1)")
             }
             KslLoader.ensureLoaded()
-            var size = 0
-            for (k in keys) size += 5 + k.pem.size
-            val framed = ByteArray(size)
-            var at = 0
-            for (k in keys) {
-                val l = k.pem.size + 1
-                framed[at] = (l ushr 24).toByte()
-                framed[at + 1] = (l ushr 16).toByte()
-                framed[at + 2] = (l ushr 8).toByte()
-                framed[at + 3] = l.toByte()
-                framed[at + 4] = if (k.inRetryConfigs) 1 else 0
-                k.pem.copyInto(framed, at + 5)
-                at += 4 + l
-            }
+            val pems = ArrayList<ByteArray>(keys.size)
+            var framed: ByteArray? = null
             try {
-                return Ksl.echKeysNew(framed)
+                for (k in keys) pems += k.takePem()
+                var size = 0
+                for (p in pems) size += 5 + p.size
+                val f = ByteArray(size)
+                framed = f
+                var at = 0
+                for ((i, p) in pems.withIndex()) {
+                    val l = p.size + 1
+                    f[at] = (l ushr 24).toByte()
+                    f[at + 1] = (l ushr 16).toByte()
+                    f[at + 2] = (l ushr 8).toByte()
+                    f[at + 3] = l.toByte()
+                    f[at + 4] = if (keys[i].inRetryConfigs) 1 else 0
+                    p.copyInto(f, at + 5)
+                    at += 4 + l
+                }
+                return Ksl.echKeysNew(f)
             } catch (e: KslException.Internal) {
                 throw TlsException.Config("ECH keys refused: ${e.message}")
             } finally {
-                framed.fill(0)
+                // the key material lives on in native memory only
+                framed?.fill(0)
+                pems.forEach { it.fill(0) }
             }
         }
     }
@@ -225,6 +279,34 @@ internal fun echRejection(
     val retry = Ksl.sslGet(ssl, KslConst.GET_ECH_RETRY_CONFIGS).takeIf { it.isNotEmpty() }?.let(EchConfigList::parse)
     return TlsException.EchRejected(retry)
 }
+
+/**
+ * Whether this build has ECH (the bundled OpenSSL 4; a system OpenSSL has none): `ksl` keeps a well-formed ECHConfigList of
+ * RFC 9849's mandatory suite (X25519, HKDF-SHA256, AES-128-GCM) exactly when it can offer ECH.
+ */
+internal val echInThisBuild: Boolean by lazy {
+    KslLoader.ensureLoaded()
+    val publicName = "ech.probe.test".encodeToByteArray()
+    val body =
+        byteArrayOf(7, 0, 0x20, 0, 32) + ByteArray(32) { (9 + it).toByte() } +
+            byteArrayOf(0, 4, 0, 1, 0, 1, 0, publicName.size.toByte()) + publicName + byteArrayOf(0, 0)
+    val config = byteArrayOf(0xfe.toByte(), 0x0d, (body.size ushr 8).toByte(), body.size.toByte()) + body
+    val list = byteArrayOf((config.size ushr 8).toByte(), config.size.toByte()) + config
+    Ksl.echConfigListCheck(list)?.isNotEmpty() == true
+}
+
+/**
+ * Why an explicitly configured ECHConfigList cannot be offered: [hasEch] false, this build has no ECH at all; else the list
+ * holds no ECHConfig this OpenSSL can use.
+ */
+internal fun unusableEchMessage(hasEch: Boolean): String =
+    if (!hasEch) {
+        "ECH: this build has no Encrypted Client Hello (it needs the bundled OpenSSL 4; a system OpenSSL has none), " +
+            "so echConfigList cannot be offered"
+    } else {
+        "ECH: no ECHConfig of echConfigList is usable (another version, an unsupported key encapsulation, cipher suite or " +
+            "mandatory extension, or a public_name that is no DNS name; RFC 9849 sections 4, 4.2, 6.1.7)"
+    }
 
 /** The ECH outcome of [ssl]. */
 @OptIn(ExperimentalKuicksilverApi::class)
