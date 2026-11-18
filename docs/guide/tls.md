@@ -563,8 +563,10 @@ The Ktor engines do not use it yet; through `TlsConfig` it works over QUIC and T
 
 A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
-extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one; a list with none
-usable offers nothing. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
+extension, a `public_name` that is no DNS name or reads as an IPv4 address) are ignored one by one. A list with none
+usable is refused by `build()` (`TlsException.Config`, "no ECHConfig of echConfigList is usable"), and so is any list in a
+build without ECH (a system OpenSSL; "this build has no Encrypted Client Hello"): a configured list never silently becomes a
+connection that sends the name in the clear. Without a list, `echGrease` (default true) sends a GREASE extension so that clients with ECH do not
 stand out. ECH is TLS 1.3 only: `echConfigList` with `TlsVersions.Tls12And13` throws `TlsException.Config`.
 
 When the server rejects ECH (its key changed, or it no longer has one), the client checks the certificate against the

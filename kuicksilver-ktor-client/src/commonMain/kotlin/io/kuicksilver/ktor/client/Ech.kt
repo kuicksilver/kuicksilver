@@ -23,8 +23,10 @@ public class EchClientConfig {
      * ECHConfigLists given out of band, by the request's host exactly as in request URLs (as [HostPort] compares hosts):
      * every connection for that origin offers it (directly, to an `Alt-Svc` alternative, and inside a proxy's CONNECT or
      * SOCKS5 tunnel), unless an HTTPS record's endpoint brings its own. Empty by default. The engine refuses an entry when
-     * the `tls` block allows TLS 1.2 (ECH is TLS 1.3 only, RFC 9849 section 6.1), with IllegalArgumentException when it
-     * is created.
+     * the `tls` block allows TLS 1.2 (ECH is TLS 1.3 only, RFC 9849 section 6.1), when the list holds no usable ECHConfig,
+     * and in a build without ECH, with IllegalArgumentException when it is created (each with its own message): a list
+     * given here never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` without a usable
+     * ECHConfig is different: the connection sends GREASE then, as RFC 9849 section 6.1 allows.
      */
     public var configLists: Map<String, EchConfigList> = emptyMap()
 

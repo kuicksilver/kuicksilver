@@ -20,8 +20,9 @@ import kotlin.io.encoding.Base64
  * HTTPS record carries them (RFC 9848), as a server sends them in `retry_configs`, or as an application got them out of band.
  * [parse] checks the framing and keeps the configurations this OpenSSL can use: one of another version, with an unsupported
  * key encapsulation, cipher suite or mandatory extension, or whose `public_name` is no DNS name or could be read as an IPv4
- * address is ignored, as RFC 9849 sections 4, 4.2 and 6.1.7 require. A list that parses but keeps nothing is not [isUsable]: a
- * client then offers no ECH with it (and sends GREASE ECH instead, [TlsConfig.Builder.echGrease]).
+ * address is ignored, as RFC 9849 sections 4, 4.2 and 6.1.7 require. A list that parses but keeps nothing is not [isUsable]
+ * (in a build without ECH no list is): [TlsConfig.Builder.build] refuses it, so a configuration given explicitly never
+ * silently turns into a connection that sends the real name in the clear.
  */
 @ExperimentalKuicksilverApi
 public class EchConfigList private constructor(
@@ -244,6 +245,34 @@ internal fun echRejection(
     val retry = Ksl.sslGet(ssl, KslConst.GET_ECH_RETRY_CONFIGS).takeIf { it.isNotEmpty() }?.let(EchConfigList::parse)
     return TlsException.EchRejected(retry)
 }
+
+/**
+ * Whether this build has ECH (the bundled OpenSSL 4; a system OpenSSL has none): `ksl` keeps a well-formed ECHConfigList of
+ * RFC 9849's mandatory suite (X25519, HKDF-SHA256, AES-128-GCM) exactly when it can offer ECH.
+ */
+internal val echInThisBuild: Boolean by lazy {
+    KslLoader.ensureLoaded()
+    val publicName = "ech.probe.test".encodeToByteArray()
+    val body =
+        byteArrayOf(7, 0, 0x20, 0, 32) + ByteArray(32) { (9 + it).toByte() } +
+            byteArrayOf(0, 4, 0, 1, 0, 1, 0, publicName.size.toByte()) + publicName + byteArrayOf(0, 0)
+    val config = byteArrayOf(0xfe.toByte(), 0x0d, (body.size ushr 8).toByte(), body.size.toByte()) + body
+    val list = byteArrayOf((config.size ushr 8).toByte(), config.size.toByte()) + config
+    Ksl.echConfigListCheck(list)?.isNotEmpty() == true
+}
+
+/**
+ * Why an explicitly configured ECHConfigList cannot be offered: [hasEch] false, this build has no ECH at all; else the list
+ * holds no ECHConfig this OpenSSL can use.
+ */
+internal fun unusableEchMessage(hasEch: Boolean): String =
+    if (!hasEch) {
+        "ECH: this build has no Encrypted Client Hello (it needs the bundled OpenSSL 4; a system OpenSSL has none), " +
+            "so echConfigList cannot be offered"
+    } else {
+        "ECH: no ECHConfig of echConfigList is usable (another version, an unsupported key encapsulation, cipher suite or " +
+            "mandatory extension, or a public_name that is no DNS name; RFC 9849 sections 4, 4.2, 6.1.7)"
+    }
 
 /** The ECH outcome of [ssl]. */
 @OptIn(ExperimentalKuicksilverApi::class)

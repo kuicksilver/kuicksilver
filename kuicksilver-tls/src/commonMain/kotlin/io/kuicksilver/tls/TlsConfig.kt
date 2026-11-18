@@ -405,9 +405,10 @@ public class TlsConfig private constructor(
          * given out of band; default none. With a usable list the ClientHello the path sees names the configuration's
          * `public_name`, and the real [serverName] travels encrypted; when the server rejects it the handshake fails with
          * [TlsException.EchRejected] after authenticating the `public_name`, and the caller may retry once with its
-         * [TlsException.EchRejected.retryConfigs]. A list without a usable configuration offers nothing (GREASE then, see
-         * [echGrease]). [build] throws [TlsException.Config] on a server and with [TlsVersions.Tls12And13] (ECH is TLS 1.3 only, and
-         * the TLS 1.2 support of `ksl` cannot be combined with it on OpenSSL 4.1, ADR-0019).
+         * [TlsException.EchRejected.retryConfigs]. [build] throws [TlsException.Config] on a server, with [TlsVersions.Tls12And13]
+         * (ECH is TLS 1.3 only, and the TLS 1.2 support of `ksl` cannot be combined with it on OpenSSL 4.1, ADR-0019), for a list
+         * without a usable configuration ([EchConfigList.isUsable]), and in a build without ECH (a system OpenSSL), each with
+         * its own message: a list given here is never replaced by GREASE and the real name in the clear.
          */
         @ExperimentalKuicksilverApi
         public var echConfigList: EchConfigList? = null
@@ -431,7 +432,7 @@ public class TlsConfig private constructor(
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
          * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
-         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
+         * AnchoredCa or ReloadableCa [trust], a ReloadableCa on a client, an [alpnFallback] on a client, `h3` or not 1..255 bytes, [keyExchangeGroups] this OpenSSL lacks, key shares on a server or groups without one TLS 1.2 can use under [TlsVersions.Tls12And13], an invalid [serverName] or ExpectedName, and an [echConfigList] that cannot be offered (see there). Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
@@ -447,6 +448,8 @@ public class TlsConfig private constructor(
                 if (echConfigList != null && versions != TlsVersions.Tls13) {
                     throw TlsException.Config("ECH needs versions = Tls13 (RFC 9849 section 6.1; ADR-0019)")
                 }
+                // a list given explicitly is offered or refused here, never dropped for GREASE and the real name in the clear
+                if (echConfigList?.isUsable == false) throw TlsException.Config(unusableEchMessage(echInThisBuild))
                 if (clientAuth != ClientAuth.None) throw TlsException.Config("clientAuth applies to servers")
                 if (ocspStapling != null) throw TlsException.Config("ocspStapling applies to servers")
                 refuseReloadableOnClient(trust)

@@ -245,6 +245,21 @@ class ClientEchTest {
     }
 
     /**
+     * A host configuration without a usable ECHConfig is refused when the engine is created: it would otherwise send the
+     * host's name in the clear (GREASE) on every connection. The message says what is wrong with the list.
+     */
+    @Test fun negative_hostConfigurationWithoutUsableConfigIsRefused() {
+        val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
+        val unusable = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                client(more = { ech { configLists = mapOf("server.test" to unusable) } }).close()
+            }
+        assertTrue("server.test" in e.message!! && "no ECHConfig" in e.message!!, e.message)
+        client(more = { ech { configLists = mapOf("server.test" to listA) } }).close()
+    }
+
+    /**
      * Through an HTTP CONNECT proxy the TLS session inside the tunnel is the origin's, with the origin's ECH: the proxy hop
      * is plain TCP and carries no ClientHello of its own (it learns the origin's name from the CONNECT line anyway).
      */

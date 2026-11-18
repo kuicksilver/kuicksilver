@@ -1538,6 +1538,11 @@ val client =
   proxy is plain TCP, so it carries no ClientHello of its own; the proxy learns the origin's name from the CONNECT line.
 - **TLS 1.3 only.** ECH needs TLS 1.3 (RFC 9849 section 6.1): with a `tls` block that allows TLS 1.2, `configLists` fails
   the engine's creation and the records' `ech` is not used. The ECH values of the `tls` block itself are not used.
+- **Unusable configurations.** A `configLists` entry with no ECHConfig this build can use, or any entry in a build without
+  ECH (a system OpenSSL), fails the engine's creation with `IllegalArgumentException` (two different messages): a list
+  given for a host never turns into GREASE with the host's name in the clear. An HTTPS record's `ech` with nothing usable
+  is different: that connection sends GREASE, as RFC 9849 section 6.1 allows ("If no compatible configuration is found,
+  then the client SHOULD proceed as described in Section 6.2").
 - **What it does not hide.** The DNS queries for the origin's records and addresses (protect them with DNS over HTTPS),
   the server's address, and the traffic's sizes and timing.
 

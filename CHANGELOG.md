@@ -16,7 +16,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - TLS: Encrypted Client Hello (RFC 9849; experimental; in the Ktor engines too, see below).
   Clients: `TlsConfig.Builder.echConfigList` (`EchConfigList.parse`, `parseBase64`: the `ech` parameter of an HTTPS record,
-  RFC 9848; unusable ECHConfigs are ignored one by one), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
+  RFC 9848; unusable ECHConfigs are ignored one by one, and `build()` refuses a list with none usable, or any list in a
+  build without ECH, each with its own message), GREASE ECH by default (`echGrease`), `TlsException.EchRejected`
   with the server's retry configurations after an authenticated rejection, the certificate checked against the
   `public_name` then (a platform or custom verifier is asked for that name), `echStatus` on `TlsConnection` and
   `QuicTlsSession`. Servers: `echKeys` (`EchServerKeys` of `EchKey`s, the PEM `openssl ech` writes, kept in native memory)
@@ -26,7 +27,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: Encrypted Client Hello (experimental, `ech { }`, `EchClientConfig`; docs/guide/ktor.md, "Encrypted Client
   Hello"). Each connection offers the `ech` parameter of the HTTPS record of its endpoint (RFC 9848, `fromHttpsRecords`,
   on by default with `http3.httpsRecords` in `Auto`), else `configLists` for the host, else GREASE (`grease`, on by
-  default), over TCP and HTTP/3 and inside a proxy's tunnel. A rejection is retried once on a new connection with the
+  default), over TCP and HTTP/3 and inside a proxy's tunnel; a `configLists` entry with nothing usable (or any, in a build
+  without ECH) fails the engine's creation. A rejection is retried once on a new connection with the
   server's retry configurations, or without ECH when it sent none; a rejected retry fails the request
   (`TlsException.EchRejected` in its causes). A 0-RTT request on a rejected connection is sent again on the retry. With the
   records' ECH no ClientHello goes out before the records resolved (the request waits up to the connect timeout instead of

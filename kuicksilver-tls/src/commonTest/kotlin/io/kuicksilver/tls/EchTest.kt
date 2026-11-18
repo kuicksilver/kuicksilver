@@ -99,6 +99,25 @@ class EchTest {
         }
     }
 
+    /**
+     * A list given explicitly is offered or refused when the configuration is built: one without a usable ECHConfig never
+     * becomes GREASE with the real name in the clear (and neither does any list in a build without ECH, with its own message).
+     */
+    @Test fun negative_explicitListWithoutUsableConfigIsRefused() {
+        assertTrue(echInThisBuild, "this build has ECH")
+        val other = byteArrayOf(0xfe.toByte(), 0x0c, 0, 3, 1, 2, 3)
+        val onlyOther = EchConfigList.parse(byteArrayOf(0, other.size.toByte()) + other)
+        val e = assertFailsWith<TlsException.Config> { Fixtures.client { echConfigList = onlyOther } }
+        assertEquals(unusableEchMessage(hasEch = true), e.message)
+        assertTrue("no ECHConfig" in e.message!!)
+        assertFailsWith<TlsException.Config> { TcpFixtures.client { echConfigList = onlyOther } }
+        val noEch = unusableEchMessage(hasEch = false)
+        assertTrue("this build has no Encrypted Client Hello" in noEch && noEch != e.message, noEch)
+        // the usable list and no list at all still build
+        Fixtures.client { echConfigList = listA }
+        Fixtures.client()
+    }
+
     @Test fun quicAccepted() {
         val p = quic(Fixtures.client { echConfigList = listA }, Fixtures.server { echKeys = EchServerKeys(listOf(keyA)) })
         try {
