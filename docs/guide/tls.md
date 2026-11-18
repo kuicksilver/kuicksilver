@@ -559,7 +559,9 @@ group a handshake used; a TLS 1.2 abbreviated handshake (a resumption) uses none
 Encrypted Client Hello (ECH, RFC 9849; experimental) hides the server name of a connection from the path: the ClientHello
 the network sees names the configuration's `public_name`, and the real name travels encrypted under the server's key. It
 needs the server's ECH configuration list, which a server publishes in the `ech` parameter of its HTTPS record (RFC 9848).
-The Ktor engines do not use it yet; through `TlsConfig` it works over QUIC and TCP.
+Through `TlsConfig` it works over QUIC and TCP; the Ktor engines use it too, the client from the HTTPS records or
+per host ([Encrypted Client Hello](ktor.md#encrypted-client-hello-experimental)) and the server with its keys
+([Encrypted Client Hello on the server](ktor.md#encrypted-client-hello-on-the-server)).
 
 A client offers a list with `echConfigList` (`EchConfigList.parse` for its bytes, `EchConfigList.parseBase64` for the
 record's presentation form). ECHConfigs this OpenSSL cannot use (another version, an unsupported suite or mandatory
