@@ -143,9 +143,9 @@ class KslUdpSocketTest {
 
     /**
      * A close ends a receive that waits inside the native receive: it returns 0 well before its timeout. The close comes
-     * once the native receive counted its first, empty recvmsg (the socket's receive syscalls): from there it goes
-     * straight to poll on the socket and on its wake pipe, so the close lands either in that poll or just before it, and
-     * either way only the wake pipe, which the close writes, ends it, never a refusal at the door of a receive not yet
+     * once the native receive counted the start of its wait (`ksl_udp_get` KSL_UDP_GET_WAITS, counted right before the
+     * poll on the socket and its wake on every platform, WSAPoll on Windows), so the close lands in that wait or just before
+     * it, and either way only the wake, which the close raises, ends it, never a refusal at the door of a receive not yet
      * entered. A run whose receive never got that far within 10 s does not count, and the next one tries again.
      */
     @Test fun closeUnblocksReceive() {
@@ -164,9 +164,9 @@ class KslUdpSocketTest {
                         (System.nanoTime() - t0) / 1_000_000
                 }
             val giveUp = System.nanoTime() + 10_000_000_000L
-            while (s.stats.receiveSyscalls == 0L && System.nanoTime() < giveUp) Thread.onSpinWait()
-            // past its first recvmsg, and still in the receive (nothing is sent to it, its timeout is 30 s)
-            val insideAtClose = s.stats.receiveSyscalls > 0 && t.isAlive
+            while (s.waitsForTest <= 0L && System.nanoTime() < giveUp) Thread.onSpinWait()
+            // its wait began, and it is still in the receive (nothing is sent to it, its timeout is 30 s)
+            val insideAtClose = s.waitsForTest > 0 && t.isAlive
             s.close()
             t.join(20_000)
             assertFalse(t.isAlive, "the receive still waits after the close")

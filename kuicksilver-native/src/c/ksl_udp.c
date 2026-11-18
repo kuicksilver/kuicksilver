@@ -428,6 +428,12 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
         be32(out + 8, KSL_RELAXED(u->gso_fallbacks));
         *len = 12;
         return KSL_OK;
+    case KSL_UDP_GET_WAITS:
+        if (cap < 4)
+            return KSL_ERROR;
+        be32(out, KSL_RELAXED(u->waits));
+        *len = 4;
+        return KSL_OK;
     case KSL_UDP_GET_ERROR: {
         if (cap < 4)
             return KSL_ERROR;

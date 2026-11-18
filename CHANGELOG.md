@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
+  datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
+  socket while its receive is in the native wait on every platform.
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
   resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller

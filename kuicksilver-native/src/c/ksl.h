@@ -454,11 +454,14 @@ int ksl_key_ecb16(
                                         Never granted on a specific address, where the socket's address is the source anyway. Additive in ABI 7 */
 /* clang-format on */
 #define KSL_UDP_ADDR_LEN 20
-#define KSL_UDP_GET_FD 1     /* 4 bytes BE */
-#define KSL_UDP_GET_CAPS 2   /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
-#define KSL_UDP_GET_LOCAL 3  /* KSL_UDP_ADDR_LEN bytes */
-#define KSL_UDP_GET_ERROR 4  /* errno:4 BE | message */
-#define KSL_UDP_GET_STATS 5  /* 12 bytes: send syscalls:4 BE | recv syscalls:4 BE | gso fallbacks:4 BE */
+#define KSL_UDP_GET_FD 1    /* 4 bytes BE */
+#define KSL_UDP_GET_CAPS 2  /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
+#define KSL_UDP_GET_LOCAL 3 /* KSL_UDP_ADDR_LEN bytes */
+#define KSL_UDP_GET_ERROR 4 /* errno:4 BE | message */
+#define KSL_UDP_GET_STATS 5 /* 12 bytes: send syscalls:4 BE | recv syscalls:4 BE | gso fallbacks:4 BE */
+#define KSL_UDP_GET_WAITS                                                                                              \
+    6 /* 4 bytes BE: waits a receive began for a datagram (each poll / WSAPoll, counted before it blocks);
+                                the same on every platform. Additive in ABI 7 */
 #define KSL_UDP_MAX_BATCH 64 /* slots per ksl_udp_send / ksl_udp_recv call */
 typedef struct ksl_udp ksl_udp;
 ksl_udp *ksl_udp_open(

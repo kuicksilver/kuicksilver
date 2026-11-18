@@ -98,7 +98,7 @@ struct ksl_udp {
     uint8_t pend_ecn;
     int closed,
         in_recv; /* atomics: closed with KSL_ALOAD and the exchange in ksl_udp_shutdown, in_recv with __atomic_* */
-    uint32_t sends, recvs, gso_fallbacks;
+    uint32_t sends, recvs, gso_fallbacks, waits; /* waits: before each WSAPoll (KSL_UDP_GET_WAITS) */
     volatile LONG64 emsgsize;
     volatile LONG emsgsize_last; /* sends lost to WSAEMSGSIZE (ksl_udp_emsgsize) */
     /* sender clones (ksl_udp_sender, as ksl_udp_internal.h): base is the socket a clone sends on (NULL on the socket ksl_udp_open
@@ -539,6 +539,12 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
         be32(out + 8, KSL_RELAXED(u->gso_fallbacks));
         *len = 12;
         return KSL_OK;
+    case KSL_UDP_GET_WAITS:
+        if (cap < 4)
+            return KSL_ERROR;
+        be32(out, KSL_RELAXED(u->waits));
+        *len = 4;
+        return KSL_OK;
     case KSL_UDP_GET_ERROR: {
         if (cap < 4)
             return KSL_ERROR;
@@ -974,6 +980,7 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
         pf[1].fd = u->wake;
         pf[1].events = POLLRDNORM;
         int pr;
+        KSL_COUNT(u->waits);
 #ifdef KSL_TEST
         KSL_COUNT(u->polls);
         if (u->fake_pollerr) {

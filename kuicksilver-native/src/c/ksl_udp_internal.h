@@ -97,7 +97,8 @@ struct ksl_udp {
     uint8_t pend_ecn;
     int closed,
         in_recv; /* atomics: closed with KSL_ALOAD and the exchange in ksl_udp_shutdown, in_recv with __atomic_* */
-    uint32_t sends, recvs, gso_fallbacks, polls; /* KSL_COUNT / KSL_RELAXED */
+    uint32_t sends, recvs, gso_fallbacks, polls,
+        waits; /* KSL_COUNT / KSL_RELAXED; waits: before each poll (KSL_UDP_GET_WAITS) */
     /* ICMP hints (ADR-0006): recverr is on with DF on Linux; the receiver fills the Packet Too Big ring, ksl_udp_take_ptb empties it
        (ptb_mu); the sender counts EMSGSIZE (atomics) */
     int recverr;
