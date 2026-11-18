@@ -2,7 +2,7 @@ OpenSSL 4.1.0: an ECH rejection after a HelloRetryRequest ends with illegal_para
 
 Upstream code: the ssl/statem/statem_clnt.c hunk of OpenSSL PR #33233 (open, in review), verbatim. Its test hunks
 (test/ech_test.c, test/ech_corrupt_test.c) are omitted: the bundled build is configured with no-tests.
-PR #33233 head commit: TODO(owner): fill in the PR head commit hash this hunk was taken from.
+PR #33233 head commit: openssl/openssl@20afff2322367c7c107109d2e9c6434469d96ca0 (the PR's one commit).
 Carried by Kuicksilver under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), the second of the two carried patches (applied
 after openssl-4.1.0-ech-hrr-custom-ext.patch); pinned by its SHA-256 in gradle/openssl.toml as patch_2, applied by
 tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that has the PR's fix.

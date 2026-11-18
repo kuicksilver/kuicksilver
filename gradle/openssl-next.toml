@@ -16,4 +16,4 @@ patch_sha256 = "948946d06b17dc0344e4b6db9ff792917d9c1a40ed533e3f2cc9f56c00335e41
 # The second carried patch (ADR-0019, bug C: an ECH rejection after a HelloRetryRequest), applied after the first. Upstream
 # code (pull request #33233, in review); dropped with the first release that merges it.
 patch_2 = "tools/openssl/patches/openssl-4.1.0-ech-hrr-rejection.patch"
-patch_2_sha256 = "544283df8aebbfd156da5ae7a0e68814be5748b0eb1b827c73a05442211c6681"
+patch_2_sha256 = "eb23e1ba5067175b8550c6595837922b97d9008661d856342a426c0fd535e160"
