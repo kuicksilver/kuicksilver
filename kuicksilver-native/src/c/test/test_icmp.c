@@ -36,6 +36,9 @@ static unsigned be16at(const uint8_t *p) {
     return (unsigned)p[0] << 8 | p[1];
 }
 
+/* ksl_udp.c, the receiver's note of an ICMP unreachable (the Linux error queue calls it; a test calls it directly) */
+void ksl_udp_note_unreachable(ksl_udp *u, const uint8_t dst[KSL_UDP_ADDR_LEN]);
+
 void run_icmp(void) {
     SECTION("icmp");
     static const uint8_t t4[4] = {198, 51, 100, 7}, l4[4] = {192, 0, 2, 1};
@@ -125,5 +128,24 @@ void run_icmp(void) {
 #endif
     CHECK(ksl_icmp_open(5, &err) == -1 && err == (int)KSL_E_BAD_ARG || (err == (int)KSL_E_NOT_SUPPORTED),
           "probe of an unknown family");
+#if defined(__linux__) || defined(__APPLE__)
+    /* ksl_udp_take_unreachable: each note is reported once, with the latest destination (RFC 9298 section 3.1) */
+    static const uint8_t lo[4] = {127, 0, 0, 1};
+    uint8_t loa[KSL_UDP_ADDR_LEN], got[KSL_UDP_ADDR_LEN];
+    addr(loa, 4, lo, 0);
+    uint32_t uerr = 0;
+    char msg[128];
+    ksl_udp *u = ksl_udp_open(loa, 0, &uerr, msg, sizeof msg);
+    CHECK(u != NULL, "a loopback UDP socket");
+    if (u) {
+        CHECK(ksl_udp_take_unreachable(u, got) == 0, "nothing reported before an unreachable");
+        ksl_udp_note_unreachable(u, ta);
+        ksl_udp_note_unreachable(u, t6a);
+        CHECK(ksl_udp_take_unreachable(u, got) == 1 && !memcmp(got, t6a, KSL_UDP_ADDR_LEN), "the latest destination");
+        CHECK(ksl_udp_take_unreachable(u, got) == 0, "reported once");
+        CHECK(ksl_udp_take_unreachable(NULL, got) == 0 && ksl_udp_take_unreachable(u, NULL) == 0, "bad arguments");
+        ksl_udp_close(u);
+    }
+#endif
     END();
 }

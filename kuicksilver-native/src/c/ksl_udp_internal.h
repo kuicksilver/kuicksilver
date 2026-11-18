@@ -109,6 +109,10 @@ struct ksl_udp {
         uint8_t dst[KSL_UDP_ADDR_LEN];
     } ptb[PTB_RING];
     uint32_t ptb_head, ptb_count, ptb_dropped, errqueue_reads;
+    /* ICMP port or host unreachable for a datagram we sent (ptb_mu): how many, how many ksl_udp_take_unreachable reported,
+       and the latest one's destination */
+    uint32_t unreach_count, unreach_seen;
+    uint8_t unreach_dst[KSL_UDP_ADDR_LEN];
     uint64_t emsgsize;
     uint32_t emsgsize_last;
     /* sender clones (ksl_udp_sender): base is the socket a clone sends on (NULL on the socket ksl_udp_open made); refs, on that
@@ -130,7 +134,8 @@ extern void (*ksl_test_udp_recv_entered)(void);
 #endif
 
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
-                      uint32_t mtu); /* ksl_udp.c */
+                      uint32_t mtu);                                            /* ksl_udp.c */
+void ksl_udp_note_unreachable(ksl_udp *u, const uint8_t dst[KSL_UDP_ADDR_LEN]); /* ksl_udp.c */
 
 /* strerror is not thread-safe; strerror_r is the XSI one (int) or, with _GNU_SOURCE on glibc and on bionic from API 23, the GNU one
    (char *, maybe not buf): _Generic picks the matching reader, NULL when the XSI call failed */

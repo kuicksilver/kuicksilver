@@ -163,6 +163,19 @@ public class KslUdpSocket private constructor(
         }
     }
 
+    /**
+     * Whether an ICMP port or host unreachable for a datagram this socket sent arrived since the last call (Linux and Android,
+     * with [DF]; never elsewhere); [dst] ([ADDR_LEN] bytes) then holds the latest one's destination. Spoofable like any ICMP.
+     */
+    public fun takeUnreachable(dst: ByteArray): Boolean {
+        if (!enter()) return false
+        try {
+            return Ksl.udpTakeUnreachable(handle, dst)
+        } finally {
+            leave()
+        }
+    }
+
     /** Datagrams [send] lost to EMSGSIZE so far (larger than the path MTU the kernel knows), the latest one's length in `lastSize[0]`. */
     public fun emsgsize(lastSize: IntArray): Long {
         if (!enter()) return 0

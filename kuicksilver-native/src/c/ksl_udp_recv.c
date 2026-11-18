@@ -71,6 +71,17 @@ static void drain_errqueue(ksl_udp *u) {
             memcpy(&ee, CMSG_DATA(c), sizeof ee);
             int ptb = (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && ee.ee_code == 4) ||
                       (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 2);
+            /* port or host unreachable (ICMP type 3 code 3 or 1; ICMPv6 type 1 code 4 or 3): the kernel matched the quoted
+               datagram to this socket; its destination is in msg_name (RFC 9298 section 3.1: a socket "no longer usable") */
+            int unreach =
+                (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && (ee.ee_code == 3 || ee.ee_code == 1)) ||
+                (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 1 && (ee.ee_code == 4 || ee.ee_code == 3));
+            if (unreach && m.msg_namelen != 0) {
+                uint8_t udst[KSL_UDP_ADDR_LEN];
+                from_sockaddr(&ss, udst);
+                ksl_udp_note_unreachable(u, udst);
+                continue;
+            }
             if (!ptb || ee.ee_info < 68 || ee.ee_info > 65535 || m.msg_namelen == 0)
                 continue;
             uint8_t dst[KSL_UDP_ADDR_LEN];

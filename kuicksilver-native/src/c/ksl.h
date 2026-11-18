@@ -473,6 +473,10 @@ int ksl_udp_recv_dst(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint
             share their train's. Additive in ABI 7 */
 int ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 #define KSL_UDP_PTB_QUOTE 64 /* bytes of the quoted datagram kept per Packet Too Big */
+/* Additive under 7 (RFC 9298 section 3.1): 1 when an ICMP port or host unreachable (ICMPv6 port or address unreachable) for a
+   datagram this socket sent arrived since the last call, dst its destination (the latest); Linux and Android with
+   KSL_UDP_DF only (the error queue), 0 elsewhere */
+int ksl_udp_take_unreachable(ksl_udp *, uint8_t dst[KSL_UDP_ADDR_LEN]);
 int ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN],
                      uint32_t *mtu);
 

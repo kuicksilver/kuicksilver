@@ -859,6 +859,17 @@ static void j_icmp_close(JNIEnv *e, jclass c, jint fd) {
     (void)c;
     ksl_icmp_close(fd);
 }
+/* ksl_udp_take_unreachable: dst (KSL_UDP_ADDR_LEN bytes) the latest unreachable destination when one is new */
+static jboolean j_udp_take_unreachable(JNIEnv *e, jclass c, jlong h, jbyteArray dst) {
+    (void)c;
+    if (!dst || (*e)->GetArrayLength(e, dst) < KSL_UDP_ADDR_LEN)
+        return JNI_FALSE;
+    uint8_t d[KSL_UDP_ADDR_LEN];
+    if (!ksl_udp_take_unreachable(P(ksl_udp, h), d))
+        return JNI_FALSE;
+    (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
+    return JNI_TRUE;
+}
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     (void)c;
     uint32_t l = 0;
@@ -1056,6 +1067,7 @@ static const JNINativeMethod methods[] = {
     {"udpShutdown", "(J)V", (void *)j_udp_shutdown},
     {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},
+    {"udpTakeUnreachable", "(J[B)Z", (void *)j_udp_take_unreachable},
     {"icmpPtbBuild", "([B[B[B[BII)I", (void *)j_icmp_ptb_build},
     {"icmpOpen", "(I[I)I", (void *)j_icmp_open},
     {"icmpSend", "(I[BI[B[B)Z", (void *)j_icmp_send},

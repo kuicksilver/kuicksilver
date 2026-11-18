@@ -165,3 +165,9 @@ not offered elsewhere (`KSL_E_NOT_SUPPORTED`); `ksl_icmp_send(fd, msg, len, targ
 (`IP_PKTINFO`, `IPV6_PKTINFO`); `ksl_icmp_close(fd)`. New functions, no `KSL_OPT` or `KSL_GET` number (`ksl_icmp.c`).
 JNI `KslNative.icmpPtbBuild` / `icmpOpen` / `icmpSend` / `icmpClose`, cinterop `ksl_icmp_*`, Kotlin `Ksl.icmpPtbBuild` /
 `icmpOpen` / `icmpSend` / `icmpClose`. 92 functions.
+
+The proxy's notice of an ICMP unreachable, additive under 7 (RFC 9298 section 3.1, ADR-0024):
+`ksl_udp_take_unreachable(u, dst)` answers 1 and the destination of the latest datagram an ICMP port or host unreachable was
+received for (the accelerated socket's error queue on Linux and Android, read with the DF probe), once; 0 when none came or
+the platform reports none (Apple platforms, Windows). New function, no `KSL_OPT` or `KSL_GET` number. JNI
+`KslNative.udpTakeUnreachable`, Kotlin `Ksl.udpTakeUnreachable`. 93 functions.

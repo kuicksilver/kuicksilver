@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
 ) : DatagramIo,
+    UnreachableReports,
     DirectReceive,
     NonSuspendingSend,
     PacketTooBigSource {
@@ -265,6 +266,10 @@ internal class KslDatagramIo private constructor(
             sink(ptbQuote, ptbMeta[0], peerOf(ptbDst, 0), ptbMeta[1])
         }
     }
+
+    private val unreachDst = ByteArray(KslUdpSocket.ADDR_LEN)
+
+    override fun takeUnreachable(): InetSocketAddress? = if (socket.takeUnreachable(unreachDst)) peerOf(unreachDst, 0) else null
 
     private val emsgLast = IntArray(1)
     private var emsgSeen = 0L

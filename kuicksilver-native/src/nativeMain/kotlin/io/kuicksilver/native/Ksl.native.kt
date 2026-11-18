@@ -950,6 +950,14 @@ public actual object Ksl {
 
     public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))
 
+    public actual fun udpTakeUnreachable(
+        udp: Long,
+        dst: ByteArray,
+    ): Boolean {
+        require(dst.size >= KslConst.UDP_ADDR_LEN) { "udpTakeUnreachable buffer too small" }
+        return dst.usePinned { d -> ksl_udp_take_unreachable(udp(udp), d.addressOf(0).reinterpret()) == 1 }
+    }
+
     public actual fun icmpPtbBuild(
         out: ByteArray,
         target: ByteArray,

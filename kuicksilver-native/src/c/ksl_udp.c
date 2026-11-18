@@ -533,6 +533,25 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
         *last_size = __atomic_load_n(&u->emsgsize_last, __ATOMIC_RELAXED);
     return __atomic_load_n(&u->emsgsize, __ATOMIC_RELAXED);
 }
+int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN]) {
+    if (!u || !dst)
+        return 0;
+    pthread_mutex_lock(&u->ptb_mu);
+    int news = u->unreach_count != u->unreach_seen;
+    if (news) {
+        memcpy(dst, u->unreach_dst, KSL_UDP_ADDR_LEN);
+        u->unreach_seen = u->unreach_count;
+    }
+    pthread_mutex_unlock(&u->ptb_mu);
+    return news;
+}
+/* the receiver's note of an unreachable (ksl_udp_recv.c): the latest destination wins */
+void ksl_udp_note_unreachable(ksl_udp *u, const uint8_t dst[KSL_UDP_ADDR_LEN]) {
+    pthread_mutex_lock(&u->ptb_mu);
+    memcpy(u->unreach_dst, dst, KSL_UDP_ADDR_LEN);
+    u->unreach_count++;
+    pthread_mutex_unlock(&u->ptb_mu);
+}
 /* the receiver's side of the ring (ksl_udp_recv.c): a full ring keeps the older messages, a flood only costs the newest */
 void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN],
                       uint32_t mtu) {
@@ -680,6 +699,11 @@ uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
     (void)u;
     if (last_size)
         *last_size = 0;
+    return 0;
+}
+int ksl_udp_take_unreachable(ksl_udp *u, uint8_t dst[KSL_UDP_ADDR_LEN]) {
+    (void)u;
+    (void)dst;
     return 0;
 }
 #ifdef KSL_TEST

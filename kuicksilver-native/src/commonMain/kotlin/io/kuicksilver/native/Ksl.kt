@@ -457,6 +457,15 @@ public expect object Ksl {
     public fun udpClose(udp: Long)
 
     /**
+     * `ksl_udp_take_unreachable`: true when an ICMP port or host unreachable for a datagram this socket sent arrived since the
+     * last call (Linux and Android with DF only; ABI 7, additive), [dst] (`UDP_ADDR_LEN` bytes) then the latest one's destination.
+     */
+    public fun udpTakeUnreachable(
+        udp: Long,
+        dst: ByteArray,
+    ): Boolean
+
+    /**
      * `ksl_icmp_ptb_build`: the ICMP (IPv4 type 3 code 4) or ICMPv6 (type 2) Packet Too Big for a UDP datagram of
      * `payload[0, len)` received from [target] at [local] (`UDP_ADDR_LEN` bytes each, one family) that cannot go on within
      * [mtu], written into [out] (at least [KslConst.ICMP_PTB_MAX] bytes); its length, 0 for bad arguments (RFC 9298 section 6.1;
