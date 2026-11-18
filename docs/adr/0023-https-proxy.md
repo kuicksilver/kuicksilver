@@ -29,7 +29,7 @@ or the wrong trust (CWE-295) would hand the CONNECT, the credentials and the ori
 - **`ResolvedProxy.https(host, port, credentials)`**, its `tls` property, and the configuration paths that produce it:
   an `https://` proxy URL off the JVM (Ktor's `ProxyConfig` is a URL there; a `java.net.Proxy` has no scheme, so on the
   JVM a resolver names it), `https_proxy` and the other variables with an `https://` value (port 443 by default, as
-  Chrome and Go; curl documents 1080 for every proxy scheme), a Windows Internet settings entry whose value starts with
+  curl (despite its manual's 1080), Chrome and Go), a Windows Internet settings entry whose value starts with
   `https://` (as Chrome reads it; `https=host:port` stays the plain proxy of `https` URLs), and a PAC answer's
   `HTTPS host:port` (Chromium's extension of the grammar). CFNetwork's `kCFProxyTypeHTTPS` keeps its meaning, a plain
   proxy for `https` URLs.
@@ -70,12 +70,18 @@ or the wrong trust (CWE-295) would hand the CONNECT, the credentials and the ori
 
 ## Consequences
 
+- On the JVM and Android an HTTP `java.net.Proxy` on port 443 as the explicit `proxy` is refused (amended 2026-11-18):
+  it has no scheme, `ProxyBuilder.http(Url("https://proxy"))` produces exactly that, and plain HTTP to it would send the
+  CONNECT and the credentials in clear. The stricter rule (refused with or without `proxyCredentials`) is kept: without
+  credentials the origin's name and the CONNECT still leak, a plain proxy on 443 is rare, and it stays reachable through
+  `proxyResolver { ResolvedProxy.http(host, 443) }`; the exception says both ways.
+- The proxies' TLS session tickets live in a cache of their own per engine (amended 2026-11-18), never the origins'.
 - The credentials of an `https://` proxy never cross the network in clear; those of an `http://` proxy still do, as with
   curl, Go and OkHttp, and the guide and the threat model say so.
-- No TLS session resumption with the proxy: each new connection to it runs a full handshake (the origin's sessions inside
-  the tunnel resume as before). The pool keeps connections, so this costs one handshake per pooled connection.
+- A new connection to the proxy resumes a session of an earlier one from that proxy cache (TLS 1.3 tickets); the origin's
+  sessions inside the tunnel resume from the origins' cache as before.
 - On the JVM an explicit `ProxyBuilder.http(Url("https://..."))` cannot be told from a plain proxy (Ktor's
-  `ProxyConfig` is a `java.net.Proxy` without a scheme) and speaks plain HTTP to it; the KDoc of `proxy` says to use a
-  resolver there. What `ProxySelector.getDefault()` answers on the JVM and Android is a `java.net.Proxy` too, so
+  `ProxyConfig` is a `java.net.Proxy` without a scheme); on port 443, where that URL lands, it is refused (above), and an
+  `https://` proxy there comes from a resolver. What `ProxySelector.getDefault()` answers on the JVM and Android is a `java.net.Proxy` too, so
   `ProxyResolvers.System` there never yields an `https://` proxy.
 - HTTP/2 to the proxy can be added later behind an option without changing this API.

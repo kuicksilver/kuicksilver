@@ -41,6 +41,12 @@ internal class ProxySeen {
     private val helloList = ArrayList<ClientHelloInfo>()
     private val headList = ArrayList<List<String>>()
     private val failureList = ArrayList<Throwable>()
+    private val resumedList = ArrayList<Boolean>()
+
+    /** For each completed handshake with the proxy, whether it resumed a session. */
+    suspend fun resumed(): List<Boolean> = lock.withLock { resumedList.toList() }
+
+    suspend fun handshake(resumed: Boolean) = lock.withLock { resumedList += resumed }
 
     suspend fun accepted(): Int = lock.withLock { acceptedCount }
 
@@ -82,13 +88,15 @@ internal suspend fun tlsProxy(
     val selector = SelectorManager(Dispatchers.IO)
     val listener = bindTcp(selector, "127.0.0.1", 0)
     val seen = ProxySeen()
+    // one identity for every handshake: the server's session context, so its tickets, belong to it
+    val identity = TlsIdentity.fromDer(listOf(cert), key.copyOf())
     val config =
         tlsConfig(TlsRole.Server) {
             this.alpn = alpn
-            identity = TlsIdentity.fromDer(listOf(cert), key.copyOf())
+            this.identity = identity
             sniSelector = { info ->
                 seen.hello(info)
-                ServerTlsOverride(TlsIdentity.fromDer(listOf(cert), key.copyOf()))
+                ServerTlsOverride(identity)
             }
         }
     try {
@@ -128,6 +136,7 @@ private suspend fun serveProxyConnection(
             seen.failed(e) // tlsServer closed the raw socket
             return
         }
+    seen.handshake(tls.tls.sessionReused)
     try {
         val input = tls.openReadChannel()
         val output = tls.openWriteChannel(autoFlush = true)
@@ -144,7 +153,9 @@ private suspend fun serveProxyConnection(
                 continue
             }
             output.writeStringUtf8(connectResponse)
-            if (!connectResponse.startsWith("HTTP/1.1 2")) continue
+            // the final status decides (interim 1xx heads may come first)
+            val final = connectResponse.split("\r\n").last { it.startsWith("HTTP/1.1 ") }
+            if (!final.startsWith("HTTP/1.1 2")) continue
             connectTcp(selector, InetSocketAddress("127.0.0.1", originPort)).use { o ->
                 val oIn = o.openReadChannel()
                 val oOut = o.openWriteChannel(autoFlush = true)

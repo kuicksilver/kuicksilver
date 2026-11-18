@@ -198,7 +198,9 @@ internal fun requireSocks5Password(credentials: ProxyCredentials) {
  * The engine's `proxy` as a [ResolvedProxy], null for `java.net.Proxy.NO_PROXY` (a direct connection). Credentials come from the proxy URL's user info (not on the JVM, whose
  * `ProxyConfig` is a `java.net.Proxy` without them), else [fallback]. An `https://` proxy URL (only expressible off the
  * JVM) is [ResolvedProxy.https]. A type other than HTTP and SOCKS fails with UnsupportedOperationException rather than
- * being bypassed.
+ * being bypassed, and so does, on the JVM and Android, an HTTP `java.net.Proxy` on port 443 ([JVM_PROXY_ON_443]): it has no
+ * scheme, and Ktor's `ProxyBuilder.http(Url("https://proxy"))` makes exactly that, so speaking plain HTTP to it would send
+ * the CONNECT, the origin's name and the credentials in clear to what was meant as an `https://` proxy (CWE-319).
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedProxy? {
@@ -212,12 +214,21 @@ internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedP
     // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native): its address, not a reverse lookup of it
     val address = resolveAddress()
     val credentials = platformProxyCredentials() ?: fallback
+    val tls = platformProxyUsesTls()
+    // fail closed: a scheme-less HTTP proxy on the https port is most likely an https:// URL whose scheme was lost
+    if (kind == ResolvedProxy.Kind.Http && tls == null && address.port == 443) throw UnsupportedOperationException(JVM_PROXY_ON_443)
     return when {
         kind == ResolvedProxy.Kind.Socks5 -> ResolvedProxy.socks5(address.address, address.port, credentials)
-        platformProxyUsesTls() -> ResolvedProxy.https(address.address, address.port, credentials)
+        tls == true -> ResolvedProxy.https(address.address, address.port, credentials)
         else -> ResolvedProxy.http(address.address, address.port, credentials)
     }
 }
+
+internal const val JVM_PROXY_ON_443: String =
+    "an HTTP java.net.Proxy on port 443: a java.net.Proxy has no scheme (ProxyBuilder.http(Url(\"https://...\")) makes one), " +
+        "and plain HTTP to an https:// proxy would send the CONNECT and the credentials in clear; for TLS to the proxy use " +
+        "proxyResolver = ProxyResolver { ResolvedProxy.https(host, 443, credentials) }, for a plain proxy on 443 use " +
+        "ResolvedProxy.http(host, 443, credentials)"
 
 /** The credentials in the proxy URL's user info, percent-decoded; null on the JVM and without user info. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -226,8 +237,11 @@ internal expect fun ProxyConfig.platformProxyCredentials(): ProxyCredentials?
 /** Whether this is `java.net.Proxy.NO_PROXY` (only on the JVM). */
 internal expect fun ProxyConfig.platformProxyIsDirect(): Boolean
 
-/** Whether the proxy URL is `https://` (only expressible off the JVM): TLS to the proxy ([ResolvedProxy.https]). */
-internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean
+/**
+ * Whether the proxy URL is `https://`: TLS to the proxy ([ResolvedProxy.https]); null where the `ProxyConfig` has no scheme
+ * to tell (a `java.net.Proxy` on the JVM and Android).
+ */
+internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean?
 
 /**
  * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), else what its

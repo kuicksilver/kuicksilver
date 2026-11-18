@@ -154,8 +154,8 @@ private val URI_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*")
 
 /**
  * A proxy URL as curl takes it: `http://`, `https://` (TLS to the proxy), `socks5://`, `socks5h://` or no scheme (HTTP),
- * user info as credentials (percent-decoded), port 1080 when none is given (443 for `https://`, as Chrome and Go's
- * `net/http` default it; curl's documentation gives 1080 for every scheme), a path ignored. A `://` after the first `/` is in the path, not a
+ * user info as credentials (percent-decoded), port 1080 when none is given (443 for `https://`, as curl (despite its
+ * manual's 1080), Chrome and Go), a path ignored. A `://` after the first `/` is in the path, not a
  * scheme's end. Another scheme fails with UnsupportedOperationException, a text before `://` that is not a scheme (RFC
  * 3986 section 3.1; it may be user info) with IllegalArgumentException, a bad port or a broken percent-escape in the user
  * info with IllegalArgumentException. No message repeats any part of the value, not even an unsupported scheme (a user

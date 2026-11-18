@@ -19,6 +19,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.readText
 import io.kuicksilver.ktor.network.bindTcp
@@ -608,7 +609,12 @@ class ClientHttpsProxyTest {
             val listener = bindTcp(selector, "127.0.0.1", 0)
             try {
                 coroutineScope {
-                    val held = async { listener.accept() } // accepted and never read
+                    // accepted, its first byte read, never answered
+                    val held =
+                        async {
+                            val s = listener.accept()
+                            s to s.openReadChannel().readByte()
+                        }
                     val proxyPort = (listener.localAddress as InetSocketAddress).port
                     testClient(engine = {
                         through(ResolvedProxy.https("proxy.internal", proxyPort))
@@ -616,11 +622,97 @@ class ClientHttpsProxyTest {
                     }).use { c ->
                         assertFailsWith<ConnectTimeoutException> { c.get("https://server.test:1/").bodyAsText() }
                     }
-                    held.await().close()
+                    val (socket, first) = held.await()
+                    socket.close()
+                    // the stall was in TLS with the proxy: what it got was a handshake record (22), not a CONNECT in clear
+                    assertEquals(22, first.toInt(), "the request stalled before TLS with the proxy")
                 }
             } finally {
                 listener.close()
                 selector.close()
+            }
+        }
+
+    /**
+     * `Proxy-Authorization` goes only on a hop to a proxy: a request without a proxy sends a field of its own to the origin
+     * neither over HTTP/1.1 nor over HTTP/2 (RFC 9110 section 11.7.2: it is for the proxy that asked for it). Before 0.3.0
+     * HTTP/1.1 dropped it only inside a tunnel.
+     */
+    @Test fun negative_proxyAuthorizationNeverGoesDirectToTheOrigin() =
+        clientTest {
+            for (h2 in listOf(false, true)) {
+                origin(http2 = h2) { originPort ->
+                    testClient(engine = {
+                        dns = Recording(setOf("server.test"))
+                        proxyResolver = ProxyResolvers.None
+                    }).use { c ->
+                        val r = c.get("https://server.test:$originPort/") { header(HttpHeaders.ProxyAuthorization, "Basic Ym9iOng=") }
+                        assertEquals(
+                            if (h2) io.ktor.http.HttpProtocolVersion.HTTP_2_0 else io.ktor.http.HttpProtocolVersion.HTTP_1_1,
+                            r.version,
+                        )
+                        assertEquals("through|null", r.bodyAsText(), "the origin got Proxy-Authorization (h2 = $h2)")
+                    }
+                }
+            }
+        }
+
+    /**
+     * A second connection to the `https://` proxy resumes the TLS session of the first, from the engine's cache of proxy
+     * tickets; the proxy's tickets never go to the origins' cache (a plain `http` origin leaves it empty), and an origin's
+     * never to the proxies' (a direct `https` request leaves that one empty).
+     */
+    @Test fun proxySessionsResumeFromACacheOfTheirOwn() =
+        clientTest {
+            tlsProxy(absolute = { _, out -> out.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabs") }) { proxyPort, seen ->
+                testClient(engine = { through(ResolvedProxy.https("proxy.internal", proxyPort)) }).use { c ->
+                    // two routes, so two connections to the proxy
+                    assertEquals("abs", c.get("http://a.test:8080/").bodyAsText())
+                    assertEquals("abs", c.get("http://b.test:8080/").bodyAsText())
+                    val h1 = (c.engine as KuicksilverEngine).h1
+                    assertTrue(h1.proxySessions.size() > 0, "no proxy ticket kept")
+                    assertEquals(0, h1.sessions.size(), "a proxy ticket went to the origins' cache")
+                }
+                assertEquals(listOf(false, true), seen.resumed(), "the second connection to the proxy did not resume")
+            }
+            origin { originPort ->
+                testClient(engine = {
+                    dns = Recording(setOf("server.test"))
+                    proxyResolver = ProxyResolvers.None
+                }).use { c ->
+                    assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
+                    val h1 = (c.engine as KuicksilverEngine).h1
+                    assertTrue(h1.sessions.size() > 0, "no origin ticket kept")
+                    assertEquals(0, h1.proxySessions.size(), "an origin ticket went to the proxies' cache")
+                }
+            }
+        }
+
+    /** Interim responses before the proxy's 200 are skipped inside TLS too (RFC 9110 section 15.2), sent in one write with it. */
+    @Test fun interimResponsesBeforeTheConnectAnswerAreSkippedOverTls() =
+        clientTest {
+            origin { originPort ->
+                val interim = "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n"
+                tlsProxy(originPort, connectResponse = interim + CONNECT_OK) { proxyPort, _ ->
+                    testClient(engine = { through(ResolvedProxy.https("proxy.internal", proxyPort)) }).use { c ->
+                        assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
+                    }
+                }
+            }
+        }
+
+    /**
+     * The bytes after a 2xx head are the tunnel's whatever its `Content-Length` says (RFC 9110 section 9.3.6), inside TLS
+     * to the proxy too: a 200 with `Content-Length: 5` must not hold the ClientHello back for five bytes.
+     */
+    @Test fun contentLengthOnConnectResponseIsIgnoredOverTls() =
+        clientTest {
+            origin { originPort ->
+                tlsProxy(originPort, connectResponse = "HTTP/1.1 200 Connection established\r\nContent-Length: 5\r\n\r\n") { proxyPort, _ ->
+                    testClient(engine = { through(ResolvedProxy.https("proxy.internal", proxyPort)) }).use { c ->
+                        assertEquals("through|null", c.get("https://server.test:$originPort/").bodyAsText())
+                    }
+                }
             }
         }
 }

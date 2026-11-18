@@ -938,9 +938,11 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   origin's `TlsException`, never a `ProxyException`. The pool's route key holds the proxy's scheme. HTTP/3, `Alt-Svc`
   and HTTPS records are not used through any proxy (`ResolvedProxy.carriesHttp3` is false; a proxy that claimed it would
   fail the request rather than be gone around). Residue: an `http://` proxy still gets its credentials in clear, as with
-  curl, Go and OkHttp (the KDoc of `proxyCredentials` and the guide say so); on the JVM a `java.net.Proxy` cannot say
-  `https`, so `ProxyBuilder.http(Url("https://..."))` there is a plain proxy (documented; the resolvers can say it);
-  no TLS session resumption with the proxy.
+  curl, Go and OkHttp (the KDoc of `proxyCredentials` and the guide say so). On the JVM and Android a `java.net.Proxy`
+  cannot say `https`, so the explicit HTTP `proxy` on port 443 (what `ProxyBuilder.http(Url("https://..."))` becomes) is
+  refused rather than spoken to in clear (fail closed; a plain proxy on another port stays plain, as configured). The
+  proxies' TLS tickets are kept in a cache of their own, never the origins'. A request's own `Proxy-Authorization` goes
+  only on a hop to a proxy: HTTP/1.1, HTTP/2 and HTTP/3 drop it toward an origin, directly or in a tunnel.
 - **Verification:** `ClientHttpsProxyTest.httpsOriginGoesThroughTlsToTheProxy` (SNI and ALPN to the proxy, the CONNECT,
   `dns` asked for the proxy's name only), `.plainOriginGoesInAbsoluteFormOverTlsAndIsPooled`,
   `.negative_proxyCertificateFromAnUntrustedCaFails` (and no credentials on the wire), 
@@ -951,6 +953,8 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   request's own `Proxy-Authorization` and the absolute form), `.negative_proxyAuthenticationLoopEndsAfterOneAttempt`,
   `.negative_proxyClosingMidHandshakeFails`, `.negative_h3OnlyThroughAnHttpsProxyFails`,
   `.negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `.negative_httpAndHttpsProxiesAreDifferentRoutes`,
+  `.negative_proxyAuthorizationNeverGoesDirectToTheOrigin`, `.proxySessionsResumeFromACacheOfTheirOwn`,
+  `.negative_silentProxyHandshakeEndsAtTheConnectTimeout`, `ProxyConfigJvmTest.negative_schemelessHttpProxyOn443IsRefused`,
   `.negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization` (a request's own `Proxy-Authorization` stays out of the
   HTTP/2 fields to the origin, as out of HTTP/1.1 inside a tunnel; before, `h2Fields` passed it on),
   `.proxyTrustDropsTheOriginsNameAndPins`, `.negative_proxyOfferingNoCommonAlpnFails`,
@@ -1004,7 +1008,7 @@ PROXY protocol (§3.27):
 15. `negative_headerFromAnUntrustedSourceIsRefused`, `negative_connectionWithoutAHeaderIsClosed`, `negative_malformedHeadersAreClosed`, `negative_headerNotCompleteWithinTheTimeoutIsCut`, `negative_unknownPeerIsNotTrusted`, `negative_ipv6BlocksDoNotTakeMappedIpv4Peers`, `negative_invalidConfigurationsAreRefused`, `negative_v1WithoutCrlfWithin107BytesIsRefused`, `negative_v1LineEndsOtherThanCrlfAreRefused`, `negative_v1MalformedFieldsAreRefused`, `negative_v2BadVersionCommandOrFamilyIsRefused`, `negative_v2LocalWithAnInvalidNibbleIsRefused`, `negative_v2ProxyWithAnUnlistedCombinationIsRefused`, `negative_v2AddressBlockShorterThanItsFamilyIsRefused`, `negative_v2HugeLengthIsRefusedFromTheFixedPartAlone`, `negative_v2TlvOverrunningTheHeaderIsRefused`, `negative_v2CrcMismatchIsRefused`, `negative_v2CrcTlvOfAnotherLengthOrTwiceIsRefused`, `negative_readerFailsOnAConnectionThatEndsInsideTheHeader`, `negative_readerRefusesAHugeV2LengthWithoutWaitingForTheBody`, `negative_readerRefusesAV1LineWithoutCrlfWithoutWaitingForMore`, `negative_proxyProtocolKeysWithSslPortRefused`, `negative_aPenaltyOnTheProxysAddressDoesNotRefuseItsClients`, `negative_aFloodBehindAHeaderWithoutAClientStrikesNobody`, `negative_proxyProtocolWithARequestHeadDeadlineBelowThreeSecondsDoesNotStart`, `negative_floodsBehindAnUnknownProxyHeaderDoNotRefuseTheProxy`, `negative_proxyProtocolKeysWithAShortRequestHeadDeadlineRefused` (`ServerProxyProtocolTest`, `ServerH2FloodTest`, `ProxyProtocolConfigTest`, `ProxyProtocolCodecTest` on the JVM and every Native target; `EngineMainTest` on the JVM)
 
 HTTPS proxies (§3.28):
-16. `negative_proxyCertificateFromAnUntrustedCaFails`, `negative_proxyCertificateValidForTheOriginButNotTheProxyFails`, `negative_originTlsFailureIsNotAProxyFailure`, `negative_proxyCredentialsNeverCrossThePlainSocket`, `negative_proxyAuthenticationLoopEndsAfterOneAttempt`, `negative_proxyClosingMidHandshakeFails`, `negative_h3OnlyThroughAnHttpsProxyFails`, `negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `negative_httpAndHttpsProxiesAreDifferentRoutes`, `negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization`, `negative_proxyOfferingNoCommonAlpnFails`, `negative_proxyTlsBlockCannotChangeTheProxysName`, `negative_httpsProxyUrlNeverSpeaksPlainToTheProxy` (`ClientHttpsProxyTest`, `ProxyConfigNativeTest`; JVM and Native)
+16. `negative_proxyCertificateFromAnUntrustedCaFails`, `negative_proxyCertificateValidForTheOriginButNotTheProxyFails`, `negative_originTlsFailureIsNotAProxyFailure`, `negative_proxyCredentialsNeverCrossThePlainSocket`, `negative_proxyAuthenticationLoopEndsAfterOneAttempt`, `negative_proxyClosingMidHandshakeFails`, `negative_h3OnlyThroughAnHttpsProxyFails`, `negative_altSvcIsNotLearnedThroughAnHttpsProxy`, `negative_httpAndHttpsProxiesAreDifferentRoutes`, `negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization`, `negative_proxyAuthorizationNeverGoesDirectToTheOrigin`, `negative_schemelessHttpProxyOn443IsRefused`, `negative_proxyOfferingNoCommonAlpnFails`, `negative_proxyTlsBlockCannotChangeTheProxysName`, `negative_httpsProxyUrlNeverSpeaksPlainToTheProxy` (`ClientHttpsProxyTest`, `ProxyConfigNativeTest`; JVM and Native)
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (no test of this name: the export checks with nm/dumpbin on all platforms, including Android)

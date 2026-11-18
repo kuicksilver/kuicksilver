@@ -1584,13 +1584,16 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsFai
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsFailureTest.malformedRrsetFallsBackEvenOverSecureDns
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsFailureTest.negative_failureOverSecureDnsAbandonsTheRequest
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsFailureTest.negative_timeoutOverSecureDnsAbandonsTheRequest
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.contentLengthOnConnectResponseIsIgnoredOverTls
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.httpsOriginGoesThroughTlsToTheProxy
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.interimResponsesBeforeTheConnectAnswerAreSkippedOverTls
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_altSvcIsNotLearnedThroughAnHttpsProxy
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_h3OnlyThroughAnHttpsProxyFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_httpAndHttpsProxiesAreDifferentRoutes
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_originHttp2InsideTheTunnelGetsNoProxyAuthorization
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_originTlsFailureIsNotAProxyFailure
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_proxyAuthenticationLoopEndsAfterOneAttempt
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_proxyAuthorizationNeverGoesDirectToTheOrigin
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_proxyCertificateFromAnUntrustedCaFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_proxyCertificateValidForTheOriginButNotTheProxyFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_proxyClosingMidHandshakeFails
@@ -1600,6 +1603,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsPro
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.negative_silentProxyHandshakeEndsAtTheConnectTimeout
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.plainOriginGoesInAbsoluteFormOverTlsAndIsPooled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.proxyNamedByAddressIsCheckedAgainstTheAddressWithoutSni
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.proxySessionsResumeFromACacheOfTheirOwn
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.proxyTrustDropsTheOriginsNameAndPins
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.proxyTrustIsConfiguredSeparately
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientHttpsProxyTest.proxyWithoutAlpnIsSpokenToInHttp11
@@ -2311,6 +2315,7 @@ kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.k
 kuicksilver-ktor-client/src/iosTest	io.kuicksilver.ktor.client.HostInteropTest.rawQuicEchoToTheHost
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.aBlockingDnsRunsOnItsDispatcher
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.DnsJvmTest.inetAddressesConvert
+kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.negative_schemelessHttpProxyOn443IsRefused
 kuicksilver-ktor-client/src/jvmCommonTest	io.kuicksilver.ktor.client.ProxyConfigJvmTest.noProxyIsDirect
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.guide.both.GuideBothEnginesTest.bothEnginesSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.ClientConnectDeadlineRaceTest.negative_aConnectionObtainedAsTheConnectTimeoutFiresIsUsed

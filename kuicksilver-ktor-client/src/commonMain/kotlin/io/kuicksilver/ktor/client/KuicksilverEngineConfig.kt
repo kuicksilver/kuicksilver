@@ -370,9 +370,11 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
      * in clear to an `http://` or SOCKS5 proxy (RFC 1929 section 5, RFC 7617 section 4) and only inside TLS to an
      * `https://` one (after its certificate verified), never to the origin, and never into the engine's logs or events.
-     * On the JVM the `proxy` is a `java.net.Proxy`, which has no scheme: `ProxyBuilder.http(Url("https://..."))` there
-     * makes a plain HTTP proxy, so name an `https://` proxy with a [proxyResolver] (`ResolvedProxy.https`) or the
-     * environment instead. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
+     * On the JVM and Android the `proxy` is a `java.net.Proxy`, which has no scheme: `ProxyBuilder.http(Url("https://..."))`
+     * there makes an HTTP proxy on port 443, which the engine refuses (every request fails with
+     * UnsupportedOperationException) rather than send the CONNECT and these credentials in clear to it; name an `https://`
+     * proxy with a [proxyResolver] (`ResolvedProxy.https`) or the environment, and a plain proxy on port 443 with a
+     * resolver's `ResolvedProxy.http`. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
      * [IllegalArgumentException]: RFC 1929 section 2 gives the password 1 to 255 octets (curl and Go send an empty one
      * anyway, outside the protocol).
      */

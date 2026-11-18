@@ -25,7 +25,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with the proxy is the new `ProxyTlsException` (a `ProxyException`, which is now open and takes a cause); an origin
   failure stays its `TlsException`. The pool keys routes by the proxy's scheme too. HTTP/3 never goes through a proxy
   (threat model 3.28). A request's own `Proxy-Authorization` is no longer sent in HTTP/2 or HTTP/3 fields (they go to
-  origins only; through a tunnel it had reached the origin over HTTP/2), as HTTP/1.1 already kept it on the CONNECT.
+  origins only; through a tunnel it had reached the origin over HTTP/2), nor over HTTP/1.1 to an origin reached
+  directly (before, only a tunnel dropped it). On the JVM and Android an HTTP `java.net.Proxy` on port 443 as the
+  explicit `proxy` fails each request with `UnsupportedOperationException` instead of being spoken to in clear (it has no
+  scheme: `ProxyBuilder.http(Url("https://..."))` produces it). Connections to an `https://` proxy resume TLS sessions
+  from a ticket cache of their own.
 
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking

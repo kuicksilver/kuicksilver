@@ -243,7 +243,7 @@ class ProxyResolverTest {
     }
 
     /**
-     * An `https://` proxy URI is TLS to the proxy, port 443 unless given (Chrome's and Go's default for the scheme): in the
+     * An `https://` proxy URI is TLS to the proxy, port 443 unless given (as curl, despite its manual's 1080, Chrome and Go): in the
      * environment, with its credentials, and in Windows' settings, where `https=` alone only names the proxy of `https`
      * URLs (a plain one). Before 0.3.0 such a proxy failed the request.
      */

@@ -410,6 +410,12 @@ internal class H1Pool(
     /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
+    /**
+     * The TLS session tickets of `https://` proxies, apart from [sessions]: a proxy's ticket never goes to an origin nor an
+     * origin's to a proxy, whatever their names (one host can be both); closed with [sessions].
+     */
+    internal val proxySessions = SessionCache()
+
     /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
     fun recycle(c: H1Connection) = pool.release(c)
 
@@ -449,6 +455,7 @@ internal class H1Pool(
                 closers.coroutineContext[Job]!!.cancelAndJoin()
                 h2Scope.cancel()
                 sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+                proxySessions.close()
             }
         }
     }
@@ -1617,7 +1624,7 @@ internal class H1Pool(
 
     /**
      * TLS with the `https://` [proxy] over [raw] ([KuicksilverEngineConfig.proxyTlsConfigFor]): the proxy's host as SNI and
-     * reference identifier, ALPN `http/1.1`. A failed handshake (a certificate that does not verify, an alert, a connection
+     * reference identifier, ALPN `http/1.1`, resuming from [proxySessions]. A failed handshake (a certificate that does not verify, an alert, a connection
      * that ended) fails with [io.kuicksilver.ktor.client.ProxyTlsException] around the TLS layer's error; [raw] is closed
      * then (by `Socket.tls`). A cancellation (the connect timeout) passes as it is.
      */
@@ -1634,7 +1641,7 @@ internal class H1Pool(
                 throw e
             }
         return try {
-            raw.tls(tlsConfig, callContextOrEmpty())
+            raw.tls(tlsConfig, callContextOrEmpty(), proxySessions)
         } catch (e: CancellationException) {
             throw e
         } catch (e: TlsException.Config) {

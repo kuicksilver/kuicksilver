@@ -4109,7 +4109,7 @@ names with their subdomains (`example.com` covers `a.example.com`, not `badexamp
 an entry with a port (`example.com:8080`, `[2001:db8::1]:443`) exempts that port only, as Go does. On Windows
 environment names are case-insensitive, so there an `HTTP_PROXY` variable is read as `http_proxy` (curl has the same
 caveat).
-A value is `http://host:port`, `https://host[:port]` (TLS to the proxy; port 443 by default, as Chrome and Go, where curl documents 1080), `socks5://`
+A value is `http://host:port`, `https://host[:port]` (TLS to the proxy; port 443 by default, as curl (despite its manual's 1080), Chrome and Go), `socks5://`
 (names resolved by the client), `socks5h://` (by the proxy) or a bare `host:port`; user info in it becomes the
 credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
 `proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
@@ -4123,7 +4123,8 @@ section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS 
 no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
 Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
 that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
-its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+its own. A request's own `Proxy-Authorization` goes only on a hop to a proxy, never to an origin (directly or in a
+tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
 clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
@@ -4136,7 +4137,10 @@ answering 407 costs one CONNECT per request, never a loop; a plain `http` reques
 
 **`https://` proxies** (*experimental*, 0.3.0). `ResolvedProxy.https(host, port, credentials)`, an `https://` value in
 the environment, an `https://` entry of Windows' settings, a PAC answer's `HTTPS host:port`, or, off the JVM,
-`ProxyBuilder.http(Url("https://proxy:443"))` (a `java.net.Proxy` has no scheme, so on the JVM name it with a resolver)
+`ProxyBuilder.http(Url("https://proxy:443"))` (a `java.net.Proxy` has no scheme, so on the JVM name it with a resolver;
+there an HTTP `proxy` on port 443, which is what that URL becomes, fails every request with `UnsupportedOperationException`
+rather than speak plain HTTP to what may be an `https://` proxy: use `ResolvedProxy.https` for TLS to it, or
+`ResolvedProxy.http(host, 443)` from a resolver for a plain proxy on that port)
 makes the engine speak TLS to the proxy itself, as curl's HTTPS proxy and Chrome do, before anything else: the CONNECT
 or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target travel inside that TLS session
 ([ADR-0023](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0023-https-proxy.md)).
@@ -4154,7 +4158,8 @@ or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target
   (`h2` included). Plain `http` goes in the absolute form inside TLS to the proxy, and that connection is pooled per proxy
   (an `https://` and an `http://` proxy at the same address are different routes).
 - HTTP/2 to the proxy itself (CONNECT over HTTP/2, RFC 9113 section 8.5, several tunnels on one connection) is not
-  offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp.
+  offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp. A new connection to the
+  proxy resumes an earlier TLS session from a cache that holds proxy tickets only.
 
 **Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an `https://` proxy) nor
 SOCKS5 CONNECT carries (no CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
