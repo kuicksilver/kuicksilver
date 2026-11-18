@@ -170,3 +170,52 @@ class RealUdpConnectUdpTest {
             }
         }
 }
+
+/** The privilege probe of RFC 9298 section 6.1's Packet Too Big against the real `ksl`: never on macOS or Windows; on Linux only with CAP_NET_RAW. */
+class PacketTooBigProbeTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    @Test fun probeMatchesThePlatform() {
+        val p =
+            io.kuicksilver.quic.PacketTooBigSender
+                .probe()
+        val os = System.getProperty("os.name").lowercase()
+        if (!os.contains("linux")) assertEquals(false, p.available, p.reason)
+        // a message is built by the native code, whatever the privilege (nothing is sent)
+        val out = ByteArray(io.kuicksilver.native.KslConst.ICMP_PTB_MAX)
+        val target =
+            ByteArray(20).also {
+                it[0] = 4
+                it[1] = 1
+                it[2] = 0xbb.toByte()
+                it[3] = 198.toByte()
+                it[4] = 51
+                it[5] = 100
+                it[6] =
+                    7
+            }
+        val local =
+            ByteArray(20).also {
+                it[0] = 4
+                it[1] = 0xc3.toByte()
+                it[2] = 0x50
+                it[3] = 192.toByte()
+                it[4] = 0
+                it[5] = 2
+                it[6] =
+                    1
+            }
+        assertEquals(
+            8 + 20 + 8 + 1400 - 880,
+            io.kuicksilver.native.Ksl
+                .icmpPtbBuild(out, target, local, ByteArray(1400), 1400, 1280),
+        )
+        assertEquals(3, out[0].toInt())
+        assertEquals(
+            0,
+            io.kuicksilver.native.Ksl
+                .icmpPtbBuild(out, target, local, ByteArray(10), 10, 1280),
+            "an MTU above the datagram",
+        )
+    }
+}

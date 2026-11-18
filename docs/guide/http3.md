@@ -409,7 +409,9 @@ bytes aborts the stream with `H3_DATAGRAM_ERROR` (section 5), a payload above wh
 (`linkMtu` 1500 less 28 for IPv4, 48 for IPv6) is dropped, a DATAGRAM capsule without being buffered, and only datagrams
 from the target's address and port are taken from the socket (section 3.1). Packets to the target are marked Not-ECT
 (section 6.2). A target payload too large for the client's QUIC DATAGRAM frames is dropped rather than sent as a capsule
-(section 6.1). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
+(section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
+with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per tunnel); `stats.packetTooBig` says whether it
+does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
 tunnel, `unansweredLimit` (256 payloads to a target that has not answered yet), `maxTunnels` (4096; one more is 503) and
 `maxTunnelsPerClient` (64 per client IP address; one more is 429), both with `connection_limit_reached`. The tunnel ends,
 with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the

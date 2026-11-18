@@ -283,6 +283,10 @@ public fun interface UdpProxyResolver {
  * @property requireCapsuleProtocolField a request without `capsule-protocol: ?1` is answered 400 (as RFC 9298's examples
  *   send it; the RFC does not require it, so a proxy for clients that leave it out sets false).
  * @property proxyName this proxy's name in the `proxy-status` field of its refusals (RFC 9209 section 2), an sf-token.
+ * @property packetTooBig send an ICMP Packet Too Big to a target whose UDP payload is dropped because it does not fit the
+ *   client's QUIC DATAGRAM frames (RFC 9298 section 6.1), when the process may open a raw ICMP socket (Linux and Android
+ *   with CAP_NET_RAW); without that privilege, or with false, the payload is only dropped and counted. True by default;
+ *   [UdpProxyStats.packetTooBig] says which applies. At most 10 a second per tunnel, never more than the payloads dropped.
  * @property socketFactory opens the UDP socket of a tunnel on a wildcard address of the target's family (`0.0.0.0:0`
  *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment.
  */
@@ -301,6 +305,7 @@ public class UdpProxyConfig(
     public val unansweredLimit: Int = 256,
     public val requireCapsuleProtocolField: Boolean = true,
     public val proxyName: String = "proxy",
+    public val packetTooBig: Boolean = true,
     public val socketFactory: suspend (InetSocketAddress) -> DatagramIo = { DatagramIo.open(it) },
 ) {
     internal val template: UdpUriTemplate = UdpUriTemplate.parsePath(pathTemplate)
@@ -337,6 +342,9 @@ public class UdpProxyConfig(
  * @property droppedForeignSource datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").
  * @property droppedTooLargeForClient UDP payloads from targets too large for the client's QUIC DATAGRAM frames (section 6.1).
  * @property droppedClientBusy UDP payloads from targets dropped because the connection's datagram queue was full.
+ * @property packetTooBig whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its
+ *   first tunnel.
+ * @property packetTooBigSent ICMP Packet Too Big messages sent to targets.
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyStats internal constructor(
@@ -351,13 +359,34 @@ public class UdpProxyStats internal constructor(
     public val droppedForeignSource: Long,
     public val droppedTooLargeForClient: Long,
     public val droppedClientBusy: Long,
+    public val packetTooBig: PacketTooBigStatus,
+    public val packetTooBigSent: Long,
 ) {
     /** The counters, for logs. */
     override fun toString(): String =
         "UdpProxyStats(opened=$tunnelsOpened, refused=$requestsRefused, toTargets=$toTargets, fromTargets=$fromTargets, " +
             "unknownContext=$droppedUnknownContext, tooLargeForLink=$droppedTooLargeForLink, rateLimited=$droppedRateLimited, " +
             "unanswered=$droppedUnanswered, foreignSource=$droppedForeignSource, tooLargeForClient=$droppedTooLargeForClient, " +
-            "clientBusy=$droppedClientBusy)"
+            "clientBusy=$droppedClientBusy, packetTooBig=$packetTooBig, packetTooBigSent=$packetTooBigSent)"
+}
+
+/** Whether a [UdpProxy] sends ICMP Packet Too Big (RFC 9298 section 6.1). */
+@ExperimentalKuicksilverApi
+public enum class PacketTooBigStatus {
+    /** [UdpProxyConfig.packetTooBig] is false: payloads too large for the client are dropped and counted only. */
+    Off,
+
+    /** No tunnel has been opened yet, so the privilege was not probed. */
+    NotProbed,
+
+    /**
+     * The process cannot open a raw ICMP socket (no CAP_NET_RAW on Linux and Android; Apple platforms, Windows and the
+     * portable build do not offer it): payloads too large for the client are dropped and counted only.
+     */
+    Unavailable,
+
+    /** Raw ICMP sockets open: each such payload is answered with a Packet Too Big, within the rate limit. */
+    Available,
 }
 
 /**

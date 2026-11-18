@@ -163,6 +163,16 @@ internal class ClosingIo(
         ecnMarkingDisabled = true
     }
 
+    /** Reports each received datagram's destination as the socket's address, as the accelerated socket does on a wildcard bind. */
+    @kotlin.concurrent.Volatile var reportLocal = false
+
+    override suspend fun receive(into: io.kuicksilver.quic.PacketBatch): Int {
+        val first = into.count
+        val n = io.receive(into)
+        if (reportLocal) for (i in first until into.count) into.setLocalAddress(i, io.localAddress)
+        return n
+    }
+
     override suspend fun send(batch: io.kuicksilver.quic.PacketBatch): Int {
         onSend?.invoke()
         for (i in 0 until batch.count) ecnSent += batch.ecn(i)
@@ -730,6 +740,112 @@ class ConnectUdpTest {
                 }
                 t.send("small".encodeToByteArray())
                 assertContentEquals("echo:small".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                t.close()
+            }
+        }
+
+    /**
+     * RFC 9298 section 6.1 without the privilege (the probe fails: no CAP_NET_RAW, or not Linux): a target payload too large
+     * for the client's QUIC DATAGRAM frames is dropped and counted, and no Packet Too Big goes out.
+     */
+    @Test fun negative_withoutThePrivilegeAnOversizedTargetPayloadIsOnlyDropped() =
+        h3Test {
+            val rig = rig()
+            var sinks = 0
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(false, "no CAP_NET_RAW (test)")
+            }
+            rig.proxy.impl.senderForTest = {
+                sinks++
+                error("no sender without the privilege")
+            }
+            assertEquals(io.kuicksilver.http3.PacketTooBigStatus.NotProbed, rig.proxy.stats.packetTooBig)
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                rig.sockets.single().reportLocal = true
+                t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400)))
+                assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size)
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedTooLargeForClient == 1L }
+                }
+                assertEquals(io.kuicksilver.http3.PacketTooBigStatus.Unavailable, rig.proxy.stats.packetTooBig)
+                assertEquals(0, rig.proxy.stats.packetTooBigSent)
+                assertEquals(0, sinks)
+                t.close()
+            }
+        }
+
+    /**
+     * RFC 9298 section 6.1 with the privilege: each dropped payload is answered with a Packet Too Big to the target, from
+     * the address it sent to, with the MTU that fits the client's DATAGRAM frames, at most 5 at once (RFC 4443 section 2.4
+     * (f); a frozen clock refills nothing) and never more than the drops. The raw socket is replaced: tests send no ICMP.
+     */
+    @Test fun withThePrivilegeEachDropIsAnsweredWithinTheRateLimit() =
+        h3Test {
+            val rig = rig()
+            val sent = Channel<Triple<InetSocketAddress, InetSocketAddress, Pair<Int, Int>>>(Channel.UNLIMITED)
+            var closed = 0
+            rig.proxy.impl.clock = TestTimeSource()
+            rig.proxy.impl.probeForTest = {
+                io.kuicksilver.quic.PacketTooBigSender
+                    .Probe(true, "test")
+            }
+            rig.proxy.impl.senderForTest = {
+                object : PtbSink {
+                    override fun send(
+                        target: InetSocketAddress,
+                        local: InetSocketAddress,
+                        payload: ByteArray,
+                        len: Int,
+                        mtu: Int,
+                    ): Boolean {
+                        sent.trySend(Triple(target, local, len to mtu))
+                        return true
+                    }
+
+                    override fun close() {
+                        closed++
+                    }
+                }
+            }
+            rig.use { r ->
+                val p = r.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                rig.sockets.single().reportLocal = true
+                repeat(8) { t.stream.send(Capsule(CapsuleProtocol.DATAGRAM, byteArrayOf(0) + ByteArray(1400))) }
+                repeat(8) { assertEquals(1400, withTimeout(5.seconds) { got.receive() }.size) }
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedTooLargeForClient == 8L }
+                }
+                assertEquals(io.kuicksilver.http3.PacketTooBigStatus.Available, rig.proxy.stats.packetTooBig)
+                assertEquals(5, rig.proxy.stats.packetTooBigSent, "the burst of 5, nothing refilled")
+                val (target, local, sizes) = sent.receive()
+                assertEquals(echoAt, target)
+                assertEquals(rig.proxySocket(1), local)
+                assertEquals(1405, sizes.first) // the echo's payload that did not fit
+                val (_, mtu) = sizes
+                assertTrue(mtu in 68 until 1405 + 28, "MTU $mtu: the largest datagram that fits, with its UDP and IPv4 headers")
+                t.close()
+                // the tunnel's slot is released after its sender was closed
+                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+            }
+            assertEquals(1, closed, "the tunnel's sender is closed with it")
+        }
+
+    /** `packetTooBig = false`: no probe, no raw socket; the status says so. */
+    @Test fun packetTooBigOffNeverProbes() =
+        h3Test {
+            val rig = rig { f -> UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, packetTooBig = false, socketFactory = f) }
+            rig.proxy.impl.probeForTest = { error("probed although off") }
+            rig.use { r ->
+                val t = r.pair.client.connectUdp(template, "192.0.2.50", 5000)
+                assertEquals(io.kuicksilver.http3.PacketTooBigStatus.Off, rig.proxy.stats.packetTooBig)
                 t.close()
             }
         }

@@ -789,6 +789,16 @@ with the engine-level flood defences and h2spec 2.6.0 passing all 146 cases).
   `authenticate` block or an interceptor answers first, and the engine takes CONNECT-UDP only with `connectUdp = true`.
   The Ktor client never sends a request meant for the proxy over TCP or directly when the tunnel fails, and never
   resolves the origin's name itself (the proxy does).
+- **Raw ICMP socket (RFC 9298 §6.1, `UdpProxyConfig.packetTooBig`):** a proxy run with `CAP_NET_RAW` holds a raw ICMP
+  socket in a server process, which could forge any ICMP message to anyone (CWE-250, CWE-406) and, reading, would see the
+  host's ICMP traffic. Mitigations: the socket only sends (every type filtered on receive, never read), is non-blocking,
+  per tunnel, opened at its first message and closed with it; the only message `ksl` builds is a Packet Too Big to the
+  tunnel's own target (already allowed by the filter), from the address that target sent to, quoting a datagram that
+  target sent; `ksl_icmp_ptb_build` is a fixed-size, bounds-checked writer (lengths checked before any byte is written, at
+  most `KSL_ICMP_PTB_MAX` bytes, refusing mismatched families and out-of-range MTUs; C tests under ASan and UBSan); at
+  most 5 at once and 10 a second per tunnel, one per dropped payload. The privilege is the operator's choice: without it
+  the probe fails, nothing changes but the counter; `packetTooBig = false` never probes. Residual: a process that holds
+  `CAP_NET_RAW` for this has it for everything else it runs too.
 - **Residual:** a target that answers (an open UDP service) passes `unansweredLimit`, as RFC 9298 §7 notes, and the rate
   limit is per tunnel, so a client with many tunnels sends `maxTunnelsPerClient` times as much; the proxy's own public
   addresses are not refused unless configured; a client that sends from many addresses is limited by `maxTunnels` only.
@@ -916,7 +926,7 @@ weakness appears in different protocols.
 | 3.22 | HTTP/1.1 server slowloris and oversized heads | CWE-400, CWE-770 |
 | 3.23 | HTTP/2 and HPACK floods and bombs | CWE-400, CWE-409, CWE-770 |
 | 3.24 | forged NAT64 prefix | CWE-345 |
-| 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing | CWE-918, CWE-400, CWE-770, CWE-20 |
+| 3.29 | CONNECT-UDP proxy: request forgery to internal targets, floods, parsing; a raw ICMP socket | CWE-918, CWE-400, CWE-770, CWE-20; CWE-250, CWE-406 |
 
 Classes of the CWE Top 25 that do not apply, and why: injection into SQL, OS commands or web pages (CWE-89, CWE-78,
 CWE-79) and CSRF (CWE-352): the library runs no queries, no shell commands and renders no pages; unrestricted upload and

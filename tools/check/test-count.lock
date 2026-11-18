@@ -396,8 +396,11 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unansweredTargetIsNotFlooded
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unknownContextIdIsDroppedByTheClient
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_unknownContextIdIsDroppedByTheProxy
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_withoutThePrivilegeAnOversizedTargetPayloadIsOnlyDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.noUdpGoesToTheTargetBeforeTheAnswer
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.http3ThroughTheProxy
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ProxiedQuicTest.tunnelSocketShape
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.UdpTargetFilterTest.negative_configRefusesAnIdleTimeoutBelowTwoMinutesAndBadValues
@@ -1178,6 +1181,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.guideHasEver
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.qpackAndConnectSamples
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransportEchoSample
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.GuideSamplesTest.webTransportSamples
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.PacketTooBigProbeTest.probeMatchesThePlatform
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.http3ThroughTheProxyOverRealUdp
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.udpEchoThroughTheProxy
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.alpnWithoutH3Rejected

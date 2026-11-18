@@ -43,7 +43,9 @@ its targets (section 7). A client that wants QUIC through the tunnel needs the t
   pipeline so authentication runs first. No configuration-file key: a filter and a resolver are code.
 - The connection to the proxy must carry 1200-byte inner datagrams plus framing: a path MTU above about 1250, found by
   DPLPMTUD on sockets that set Don't Fragment; over a 1200-byte path proxied QUIC cannot work (RFC 9000 section 14).
-- The ICMP Packet Too Big of section 6.1 is not sent (no raw sockets in a library): the RFC row records the deviation.
+- The ICMP Packet Too Big of section 6.1 is sent only where the process may open a raw ICMP socket (Linux and Android with
+  `CAP_NET_RAW`; owner's decision, 2026-11-18): `ksl_icmp_*`, probed once, on by default (`UdpProxyConfig.packetTooBig`),
+  rate-limited per target. Without the privilege, and on Apple platforms and Windows, the payload is dropped and counted.
 - A proxy operator must add the proxy's own public addresses to the filter (`UdpTargetFilter.excluding`).
 
 ## Alternatives rejected

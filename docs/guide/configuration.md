@@ -299,6 +299,7 @@ threats and limits: threat model 3.29.
 | `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a tunnel sends before its target answers once; later ones are dropped until it does; 0 turns it off |
 | `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
 | `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
+| `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per tunnel; without the privilege the payload is only dropped (`stats.packetTooBig`) |
 | `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
 
 ## Http2Settings

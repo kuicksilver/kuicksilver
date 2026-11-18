@@ -481,6 +481,16 @@ public final class io/kuicksilver/http3/Http3Stream$DefaultImpls {
 	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
 }
 
+public final class io/kuicksilver/http3/PacketTooBigStatus : java/lang/Enum {
+	public static final field Available Lio/kuicksilver/http3/PacketTooBigStatus;
+	public static final field NotProbed Lio/kuicksilver/http3/PacketTooBigStatus;
+	public static final field Off Lio/kuicksilver/http3/PacketTooBigStatus;
+	public static final field Unavailable Lio/kuicksilver/http3/PacketTooBigStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/http3/PacketTooBigStatus;
+	public static fun values ()[Lio/kuicksilver/http3/PacketTooBigStatus;
+}
+
 public final class io/kuicksilver/http3/UdpProxy {
 	public fun <init> ()V
 	public fun <init> (Lio/kuicksilver/http3/UdpProxyConfig;)V
@@ -493,14 +503,15 @@ public final class io/kuicksilver/http3/UdpProxy {
 
 public final class io/kuicksilver/http3/UdpProxyConfig {
 	public fun <init> ()V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;Lkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;ZLkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/http3/UdpTargetFilter;Lio/kuicksilver/http3/UdpProxyResolver;JJIIIIIIZLjava/lang/String;ZLkotlin/jvm/functions/Function2;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getIdleTimeout-UwyO8pc ()J
 	public final fun getLinkMtu ()I
 	public final fun getMaxTunnels ()I
 	public final fun getMaxTunnelsPerClient ()I
 	public final fun getPacketBurst ()I
 	public final fun getPacketRate ()I
+	public final fun getPacketTooBig ()Z
 	public final fun getPathTemplate ()Ljava/lang/String;
 	public final fun getProxyName ()Ljava/lang/String;
 	public final fun getRequireCapsuleProtocolField ()Z
@@ -529,6 +540,8 @@ public final class io/kuicksilver/http3/UdpProxyStats {
 	public final fun getDroppedUnanswered ()J
 	public final fun getDroppedUnknownContext ()J
 	public final fun getFromTargets ()J
+	public final fun getPacketTooBig ()Lio/kuicksilver/http3/PacketTooBigStatus;
+	public final fun getPacketTooBigSent ()J
 	public final fun getRequestsRefused ()J
 	public final fun getToTargets ()J
 	public final fun getTunnelsOpened ()J
