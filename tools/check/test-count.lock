@@ -2819,6 +2819,7 @@ kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.s
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2Test.upgradeIs501AndReportedSo
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.http11AndH2cOnOnePort
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_aPrefixOfThePrefaceIsHttp11
+kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_aStopDoesNotWaitForAPrefaceInProgress
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_brokenPrefaceWithHttp11Gets505
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused
 kuicksilver-ktor-server/src/commonTest	io.kuicksilver.ktor.server.ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused

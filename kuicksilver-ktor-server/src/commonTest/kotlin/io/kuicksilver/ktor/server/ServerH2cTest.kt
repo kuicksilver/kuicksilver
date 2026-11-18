@@ -225,6 +225,25 @@ class ServerH2cTest {
         }
 
     /**
+     * A stopping server reads no further request: a connection still sending the preface on [H2cMode.WithHttp11] goes to
+     * HTTP/1.1, which closes it as idle at once, instead of holding the stop for the request-head deadline (60 s here).
+     */
+    @Test fun negative_aStopDoesNotWaitForAPrefaceInProgress() =
+        serverTest {
+            val (server, port) = h2cServer(H2cMode.WithHttp11, configure = { requestHeaderTimeoutSeconds = 60 })
+            RawH2Client.connectPlain(port).use { raw ->
+                raw.write("PRI * HTTP/2.0\r\n".encodeToByteArray())
+                withTimeout(10.seconds) { server.engine.openTcpSockets.first { it == 1 } }
+                val t =
+                    kotlin.time.TimeSource.Monotonic
+                        .markNow()
+                server.stopSuspend(10_000, 15_000)
+                assertTrue(t.elapsedNow() < 5.seconds, "the stop waited ${t.elapsedNow()}")
+                raw.readToEnd(within = 15.seconds)
+            }
+        }
+
+    /**
      * RFC 9113 section 3.1 deprecates `Upgrade: h2c`, and the server never takes it: such a request is served as HTTP/1.1
      * (RFC 9110 section 7.8 lets a server ignore an upgrade), with no 101.
      */

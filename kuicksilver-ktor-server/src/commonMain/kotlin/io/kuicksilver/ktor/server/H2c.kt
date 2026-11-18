@@ -5,6 +5,10 @@ package io.kuicksilver.ktor.server
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 
 /**
  * HTTP/2 over cleartext TCP ("h2c", RFC 9113 section 3.3: prior knowledge, no ALPN, no TLS) on a plain connector
@@ -63,3 +67,21 @@ internal suspend fun ByteReadChannel.startsWithH2Preface(): Boolean {
     }
     return true
 }
+
+/**
+ * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server reads no further request, so a
+ * connection still sending its first octets goes to HTTP/1.1, which closes it as idle at once instead of holding the
+ * stop for the request-head deadline. The check consumes nothing, so dropping it loses no octet.
+ */
+internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(stop: Job): Boolean =
+    coroutineScope {
+        val check = async { startsWithH2Preface() }
+        try {
+            select {
+                check.onAwait { it }
+                stop.onJoin { false }
+            }
+        } finally {
+            check.cancel()
+        }
+    }

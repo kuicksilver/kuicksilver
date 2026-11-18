@@ -386,10 +386,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             val i = sock.openDeliveringReadChannel()
                                             input = i
                                             // section 3.4: the preface, within the first request head's deadline; a client
-                                            // still sending it then goes to HTTP/1.1, whose own deadline has passed too
+                                            // still sending it then (or when the server stops) goes to HTTP/1.1, whose own
+                                            // deadline has passed too, or which closes it as idle
                                             h2c == H2cMode.Only ||
                                                 withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
-                                                    i.startsWithH2Preface()
+                                                    i.startsWithH2PrefaceUnless(draining)
                                                 } == true
                                         } catch (e: Throwable) {
                                             if (e is CancellationException) {

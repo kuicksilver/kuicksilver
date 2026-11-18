@@ -782,14 +782,14 @@ default.
 - **Preface detection** (`H2cMode.WithHttp11`): the first octets are compared as they arrive and none is consumed; the
   first that differs hands the connection to HTTP/1.1, so the check reads at most 24 octets and never holds a short
   HTTP/1.1 request; the wait is inside the request-head deadline, so a slowloris on the preface is closed as one on an
-  HTTP/1.1 head (3.22). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
+  HTTP/1.1 head (3.22), and a stopping server does not wait for it (the connection goes to HTTP/1.1, closed as idle). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
   HTTP/1.1 answer. Every limit of 3.23 (flood defences, field sections, deadlines, `http2RepeatOffenderPenalty`,
   `maxTcpConnections`) holds on h2c as on TLS.
 - **Client to the wrong port.** A listed origin that answers HTTP/1.1 or TLS fails the call (its answer is no SETTINGS
   frame, the connect timeout bounds the wait for one); there is no silent retry in another protocol.
 
 Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_invalidPrefaceOnAnH2cOnlyConnectorIsAProtocolError`,
-`.negative_slowPrefaceIsCutAtTheHeaderDeadline`, `.negative_shortHttp11RequestIsNotHeldForThePreface`,
+`.negative_slowPrefaceIsCutAtTheHeaderDeadline`, `.negative_aStopDoesNotWaitForAPrefaceInProgress`, `.negative_shortHttp11RequestIsNotHeldForThePreface`,
 `.negative_aPrefixOfThePrefaceIsHttp11`, `.negative_brokenPrefaceWithHttp11Gets505`, `.negative_httpsSchemeOverH2cIsMisdirected`,
 `.negative_smugglingFieldsOverH2cAreMalformed`, `.negative_rapidResetOverH2cEndsCalm`,
 `.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused`, `.upgradeH2cIsServedAsHttp11`; `H2cPrefaceCheckTest.negative_theFirstOctetThatDiffersDecides`,

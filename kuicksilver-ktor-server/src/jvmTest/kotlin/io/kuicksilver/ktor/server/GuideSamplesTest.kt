@@ -276,7 +276,9 @@ class GuideSamplesTest {
                 }
             }, module = Application::module)
 
-        val connector = server.engine.configuration.connectors.single() as KuicksilverPlainConnector
+        val connector =
+            server.engine.configuration.connectors
+                .single() as KuicksilverPlainConnector
         assertEquals(H2cMode.WithHttp11, connector.h2c) // ServerH2cTest serves it
     }
 
