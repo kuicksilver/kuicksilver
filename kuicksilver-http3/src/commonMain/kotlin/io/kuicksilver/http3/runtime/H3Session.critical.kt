@@ -69,7 +69,8 @@ internal suspend fun H3Session.writeCritical(
                     if (gen != criticalGen || c == null) return@withLock false
                     try {
                         pick(c).output.writeFully(b)
-                        written?.invoke(pick(c)) // handed to the stream: its qlog frame_created, as for every frame
+                        // the write returned: its qlog frame_created, as for every frame (a later flush failure does not retract it)
+                        written?.invoke(pick(c))
                         pick(c).output.flush()
                         if (again != null && gen == 0) earlyControl?.add(b to again)
                         true

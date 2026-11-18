@@ -105,8 +105,9 @@ a trace the endpoint loop owns, and what a trace may contain, since HTTP fields 
   `draining`, `closed`. The first state, `handshake_started`, is not: a server connection is made for an Initial
   before it is known to decrypt, and logging then would open a trace for every forged Initial.
 - **When an HTTP/3 frame is `created`.** `http:frame_created` (and `http:stream_type_set` for our streams) is logged once
-  the frame (or the stream type) was handed to its stream, the write call returned, and never for a write that
-  failed: a HEADERS or DATA frame the peer's STOP_SENDING refused, a control frame on a stream that is gone. The same
+  the frame's (or the stream type's) write call returned; a write that throws logs nothing (a HEADERS or DATA frame the
+  peer's STOP_SENDING refused, a control frame on a stream that is gone), and a later flush failure does not retract an
+  event already logged. The same
   for every frame: request and response heads and trailers, DATA, SETTINGS, GOAWAY, PRIORITY_UPDATE, GREASE, WebTransport
   signals.
 - **Field values redacted by default (CWE-532).** Every header and trailer field is written with its name; its value is

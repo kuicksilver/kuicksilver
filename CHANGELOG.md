@@ -803,7 +803,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   payloads are never written. 0-RTT packets are `0RTT` (before: `1RTT`). `connection_closed` is written once and the
   trace stays open through the closing period, until the connection releases it (before: it ended at the first
   `connection_closed`). HTTP/3 events queued for the loop take its time when they were stamped later, so transport
-  events keep theirs. `http:frame_created` follows the frame's write and is not logged when the write fails (before,
+  events keep theirs. `http:frame_created` is logged once the frame's write call returned, and not for a write that throws (before,
   HEADERS and DATA were logged ahead of it). `tools/interop/prohibited-port-rebind.py` counts a CONNECTION_CLOSE as not
   ack-eliciting and reads a trace up to its `connection_closed`.
 

@@ -104,7 +104,8 @@ model 3.26).
 - concurrency, size and failing sinks — `runtime.H3QlogTest.concurrentStreamsNeverInterleaveRecords`,
   `runtime.H3QlogTest.hugeHeadersStayOneValidRecord`, `runtime.H3QlogTest.negative_aThrowingSinkLeavesTheConnectionAlone`,
   `runtime.H3QlogTest.aStalledSinkNeverHoldsTheConnection`, `runtime.H3QlogTest.anUntracedConnectionHasNoRecorder`
-- `http:frame_created` follows the frame's write, never for one that failed — `runtime.H3QlogTest.negative_aFrameWhoseWriteFailedIsNotCreated`
+- `http:frame_created` is logged once the frame's write call returned; a write that throws logs nothing (a later flush
+  failure does not retract it) — `runtime.H3QlogTest.negative_aFrameWhoseWriteFailedIsNotCreated`
 - peer bytes never break a record; the schema check refuses corrupt and off-schema records —
   `runtime.H3QlogTest.negative_peerBytesNeverBreakARecord`, `runtime.H3QlogTest.negative_theSchemaCheckRefusesWhatQvisWouldNot`
 

@@ -51,7 +51,8 @@ internal fun Http3Headers.neverIndexNames(): Set<String> =
 
 /**
  * Encodes [fields] and writes them as a HEADERS frame on [st] (RFC 9114 section 7.2.2). Its `http:frame_created` follows
- * the write, as every frame's does: logged once the frame was handed to the stream, never for a write that failed.
+ * the write, as every frame's does: logged once the frame's write call returned; a write that throws logs nothing (a
+ * later flush failure does not retract it).
  */
 internal suspend fun H3Session.writeHeadersFrame(
     st: QuicStream,
