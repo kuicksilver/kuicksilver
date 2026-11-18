@@ -277,8 +277,9 @@ static int wait_queued(ksl_udp *u, int n, int ms) {
     }
 }
 /* xfer: transfers in the UDP tests that loopback may lose. Counted over the whole udp section: the transfers, and the ones that
-   had to be sent again; at most one in two may be (checked at the end of run_udp), so a ksl send that drops datagrams fails even
-   though each resend hides one loss */
+   had to be sent again; at most 3 may be (checked at the end of run_udp; a loaded Mac needed 0 or 1 of 15). That cap catches a
+   ksl send that loses most datagrams, not one that loses some: a clone's send path losing 40 % of single datagrams still passes on
+   Darwin. Linux, where nothing is sent again, is the real guard against a send that loses datagrams */
 static uint32_t xfer_calls, xfer_resends;
 static uint8_t xfer_tag;
 /* the payload of datagram i of the attempt [tag]: tag, i, then bytes that follow from both */
@@ -735,17 +736,23 @@ static void udp_pktinfo_cases(void) {
                     }
                 freeifaddrs(ifs);
             }
-            int sock = have ? socket(AF_INET, SOCK_DGRAM, 0) : -1, one = 1;
+            /* a wildcard socket of its own, closed after: a broadcast that arrives late cannot reach w, where the next
+               transfer would take it for a bad datagram */
+            ksl_udp *wb = have ? ksl_udp_open(any4, KSL_UDP_PKTINFO, &err, msg, sizeof msg) : NULL;
+            uint8_t lwb[KSL_UDP_ADDR_LEN];
+            if (wb)
+                ksl_udp_get(wb, KSL_UDP_GET_LOCAL, lwb, KSL_UDP_ADDR_LEN, &n);
+            int sock = wb ? socket(AF_INET, SOCK_DGRAM, 0) : -1, one = 1;
             uint8_t buf[128];
             uint8_t *rb[1] = {buf};
             uint32_t rc[1] = {128}, rl[1] = {0}, got = 0;
             uint8_t re[1];
             if (sock >= 0 && setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof one) == 0) {
-                bc.sin_port = htons(port_of(lw));
+                bc.sin_port = htons(port_of(lwb));
                 memset(buf, 0x5a, 64);
                 sendto(sock, buf, 64, 0, (struct sockaddr *)&bc, sizeof bc);
                 for (int tries = 0; tries < 5 && !got; tries++)
-                    ksl_udp_recv_dst(w, rb, rc, rl, bfrom, bdst, re, 1, &got, 200);
+                    ksl_udp_recv_dst(wb, rb, rc, rl, bfrom, bdst, re, 1, &got, 200);
             }
             if (!got)
                 printf(
@@ -757,6 +764,8 @@ static void udp_pktinfo_cases(void) {
             }
             if (sock >= 0)
                 close(sock);
+            if (wb)
+                ksl_udp_close(wb);
         }
         /* negative_udp_pktinfo_foreign_source: a source this host does not own (TEST-NET-1) loses that slot only; the socket stays usable */
         {
@@ -857,6 +866,7 @@ struct sender_run {
     uint8_t id;
     uint32_t seq; /* the round's first sequence number */
     int failed;
+    int *done; /* __atomic: the clones of the round that finished */
 };
 static void sender_payload(uint8_t *p, uint8_t id, uint32_t seq) {
     p[0] = id;
@@ -887,12 +897,13 @@ static void *clone_sender(void *arg) {
         uint32_t sent = 0;
         if (ksl_udp_send(r->clone, bufs, lens, addrs, ecn, n, &sent) != KSL_OK) {
             r->failed = 1;
-            return NULL;
+            break;
         }
         seq += sent;
         if (!sent)
             sched_yield(); /* the kernel's queue is full: the rest goes later */
     }
+    __atomic_add_fetch(r->done, 1, __ATOMIC_RELEASE);
     return NULL;
 }
 static int64_t live_of(int which) {
@@ -903,9 +914,10 @@ static int64_t live_of(int which) {
 static void udp_sender_cases(void) {
     /* udp_sender_clones_send_concurrently: four threads, 10 000 datagrams each through four clones of one socket, in rounds of 16 per
        clone sent at once; the socket itself receives every round, each datagram once, intact and in its clone's order (clean under
-       KSL_TSAN=1: the clones share no mutable state). Loopback loses datagrams under a UDP flood before the kernel queues them
-       (Darwin, plain sockets alike), so where the queue can be counted (queued_now) a round ends when its 64 are queued or after
-       2 s, and every datagram queued must come out. What did not reach the queue is loopback's loss, within bounds: one stretch of
+       KSL_TSAN=1: the clones share no mutable state, nor with the socket receiving while they send). Loopback loses datagrams under
+       a UDP flood before the kernel queues them (Darwin, plain sockets alike), so where the queue can be counted (queued_now) the
+       socket receives while the round is sent, and once its clones are joined every datagram the kernel still holds must come
+       out (the rest of the 64 waited for up to 2 s). What did not reach the queue is loopback's loss, within bounds: one stretch of
        a clone's round (loss takes what was sent during a moment), in at most 10 of the 625 rounds, at most 2 % of all; a ksl send
        that drops datagrams here and there breaks the first two. Where the queue cannot be counted (Linux) all 40 000 must arrive.
        The rounds end at a 120 s deadline */
@@ -952,21 +964,31 @@ static void udp_sender_cases(void) {
             for (; round < SENDER_EACH / SENDER_BATCH && mono_ms() < deadline && !failed && !unhanded; round++) {
                 struct sender_run runs[SENDER_THREADS];
                 pthread_t th[SENDER_THREADS];
+                int done = 0;
                 for (int i = 0; i < SENDER_THREADS; i++) {
-                    runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, round * SENDER_BATCH, 0};
+                    runs[i] = (struct sender_run){clones[i], la, (uint8_t)i, round * SENDER_BATCH, 0, &done};
                     pthread_create(&th[i], NULL, clone_sender, &runs[i]);
                 }
-                for (int i = 0; i < SENDER_THREADS; i++) {
-                    pthread_join(th[i], NULL);
-                    failed |= runs[i].failed;
-                }
-                int whole = wait_queued(base, expect_round, 2000);
-                int expect = whole < 0 ? expect_round : queued_now(base), handed = 0;
+                /* the socket receives while its clones send; once they are joined, what is still to come is what the kernel
+                   holds (queued_now): every datagram of it must come out */
+                int whole = 1, joined = 0, expect = expect_round, handed = 0;
                 uint32_t got_mask[SENDER_THREADS] = {0};
-                int64_t until = mono_ms() + (whole < 0 ? 5000 : 2000);
-                while (handed < expect && mono_ms() < until) {
+                int64_t until = 0;
+                for (;;) {
+                    if (!joined && __atomic_load_n(&done, __ATOMIC_ACQUIRE) == SENDER_THREADS) {
+                        for (int i = 0; i < SENDER_THREADS; i++) {
+                            pthread_join(th[i], NULL);
+                            failed |= runs[i].failed;
+                        }
+                        joined = 1;
+                        whole = wait_queued(base, expect_round - handed, 2000);
+                        expect = whole < 0 ? expect_round : handed + queued_now(base);
+                        until = mono_ms() + (whole < 0 ? 5000 : 2000);
+                    }
+                    if (joined && (handed >= expect || mono_ms() >= until))
+                        break;
                     uint32_t got = 0;
-                    int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, 200);
+                    int r = ksl_udp_recv(base, rb, rc, rl, ra, re, 64, &got, joined ? 200 : 10);
                     if (r != KSL_OK && r != KSL_WANT_READ) {
                         bad++;
                         break;
@@ -999,7 +1021,12 @@ static void udp_sender_cases(void) {
                             got_mask[id] |= 1u << (seq % SENDER_BATCH);
                     }
                 }
-                if (whole >= 0 && handed < expect)
+                for (int i = 0; !joined && i < SENDER_THREADS;
+                     i++) { /* the receive failed before the clones were done */
+                    pthread_join(th[i], NULL);
+                    failed |= runs[i].failed;
+                }
+                if (joined && whole >= 0 && handed < expect)
                     unhanded++; /* where the queue cannot be counted, "all 40 000" below decides */
                 for (int i = 0; i < SENDER_THREADS; i++) {
                     uint32_t lost = ~got_mask[i] & ((1u << SENDER_BATCH) - 1);
@@ -1415,10 +1442,8 @@ void run_udp(void) {
                         other = 1;
                 }
                 CHECK(!other, "truncated datagram dropped: nothing but the marker handed out");
-                if (queued == 1)
-                    CHECK(other || marker, "a datagram the kernel queued is handed out");
-                else
-                    CHECK(other || marker, "the marker behind the dropped datagram arrives");
+                CHECK(other || marker, queued == 1 ? "a datagram the kernel queued is handed out"
+                                                   : "the marker behind the dropped datagram arrives");
                 free(rb[0]);
             }
             free(bufs[0]);
@@ -2356,9 +2381,8 @@ void run_udp(void) {
         ksl_udp_close(a);
         ksl_udp_close(b);
     }
-    /* the transfers loopback lost before the kernel queued them were sent again (xfer); a ksl send that drops datagrams would need
-       a resend for most of them, loopback under a flood was seen to need one or two per run */
-    CHECK(xfer_resends * 2 <= xfer_calls, "at most one transfer in two sent again");
+    /* the transfers loopback lost before the kernel queued them were sent again (xfer): at most 3 (see xfer_resends) */
+    CHECK(xfer_resends <= 3, "at most 3 transfers sent again");
     if (xfer_resends)
         printf("    note: %u of %u transfers sent again\n", xfer_resends, xfer_calls);
 #elif defined(_WIN32)
