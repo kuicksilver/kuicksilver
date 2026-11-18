@@ -643,6 +643,30 @@ public actual object Ksl {
 
     public actual fun udpClose(udp: Long): Unit = KslNative.udpClose(udp)
 
+    public actual fun icmpPtbBuild(
+        out: ByteArray,
+        target: ByteArray,
+        local: ByteArray,
+        payload: ByteArray,
+        len: Int,
+        mtu: Int,
+    ): Int = KslNative.icmpPtbBuild(out, target, local, payload, len, mtu)
+
+    public actual fun icmpOpen(
+        family: Int,
+        err: IntArray,
+    ): Int = KslNative.icmpOpen(family, err)
+
+    public actual fun icmpSend(
+        fd: Int,
+        msg: ByteArray,
+        len: Int,
+        target: ByteArray,
+        local: ByteArray,
+    ): Boolean = KslNative.icmpSend(fd, msg, len, target, local)
+
+    public actual fun icmpClose(fd: Int): Unit = KslNative.icmpClose(fd)
+
     public actual fun udpTakePtb(
         udp: Long,
         quote: ByteArray,

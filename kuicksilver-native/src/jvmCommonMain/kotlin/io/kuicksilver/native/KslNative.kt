@@ -398,6 +398,31 @@ internal object KslNative {
 
     @JvmStatic external fun udpClose(udp: Long)
 
+    /** message length, 0 for bad arguments (ksl_icmp_ptb_build); out has at least ICMP_PTB_MAX bytes */
+    @JvmStatic external fun icmpPtbBuild(
+        out: ByteArray,
+        target: ByteArray,
+        local: ByteArray,
+        payload: ByteArray,
+        len: Int,
+        mtu: Int,
+    ): Int
+
+    @JvmStatic external fun icmpOpen(
+        family: Int,
+        err: IntArray,
+    ): Int
+
+    @JvmStatic external fun icmpSend(
+        fd: Int,
+        msg: ByteArray,
+        len: Int,
+        target: ByteArray,
+        local: ByteArray,
+    ): Boolean
+
+    @JvmStatic external fun icmpClose(fd: Int)
+
     @JvmStatic external fun udpTakePtb(
         udp: Long,
         quote: ByteArray,

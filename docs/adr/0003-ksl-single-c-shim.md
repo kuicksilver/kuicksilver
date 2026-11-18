@@ -155,3 +155,13 @@ ClientHello, the second one after a HelloRetryRequest included, and `ksl_drive` 
 of it, and before the SNI pause, a present ALPN extension that is malformed gets decode_error in both modes. It is decided in
 `ksl` and not at the SNI pause because only `ksl` sees whether the extension is there at all (`ksl_ssl_client_hello` hands out
 the list without its length) and every ClientHello, which the pause sees once. No new function.
+
+A CONNECT-UDP proxy's ICMP Packet Too Big, additive under 7 (RFC 9298 section 6.1, ADR-0024; owner's decision 2026-11-18):
+`ksl_icmp_ptb_build(out, cap, target, local, payload, payload_len, mtu)` writes the IPv4 (type 3 code 4, Next-Hop MTU) or
+IPv6 (type 2) message for a UDP datagram the proxy received, quoting its rebuilt headers and payload within 576 or 1280 bytes
+with every checksum computed (pure, every platform; `KSL_ICMP_PTB_MAX` 1240); `ksl_icmp_open(family, err)` opens a send-only,
+non-blocking raw ICMP or ICMPv6 socket (every type filtered on receive), which needs `CAP_NET_RAW` on Linux and Android and is
+not offered elsewhere (`KSL_E_NOT_SUPPORTED`); `ksl_icmp_send(fd, msg, len, target, local)` sends from the given source
+(`IP_PKTINFO`, `IPV6_PKTINFO`); `ksl_icmp_close(fd)`. New functions, no `KSL_OPT` or `KSL_GET` number (`ksl_icmp.c`).
+JNI `KslNative.icmpPtbBuild` / `icmpOpen` / `icmpSend` / `icmpClose`, cinterop `ksl_icmp_*`, Kotlin `Ksl.icmpPtbBuild` /
+`icmpOpen` / `icmpSend` / `icmpClose`. 92 functions.

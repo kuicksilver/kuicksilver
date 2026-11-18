@@ -202,6 +202,9 @@ public object KslConst {
     public const val UDP_GET_STATS: Int = 5
     public const val UDP_MAX_BATCH: Int = 64
 
+    /** The largest ICMP Packet Too Big `ksl_icmp_ptb_build` writes (`KSL_ICMP_PTB_MAX`, ABI 7, additive). */
+    public const val ICMP_PTB_MAX: Int = 1240
+
     /** Bytes of the quoted datagram a Packet Too Big keeps (`KSL_UDP_PTB_QUOTE`, ABI 7). */
     public const val UDP_PTB_QUOTE: Int = 64
     public const val E_TRUNCATED: Int = 0xff0009

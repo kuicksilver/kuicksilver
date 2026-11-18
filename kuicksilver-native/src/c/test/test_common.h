@@ -168,6 +168,7 @@ void run_tcp(void);
 void run_verify(void);
 void run_revocation(void);
 void run_udp(void);
+void run_icmp(void);
 void run_security(void);
 void run_dns(void);
 void run_net(void);
