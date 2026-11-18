@@ -541,7 +541,8 @@ class LoopGroupTest {
     /**
      * [perLoop] clients on each of the group's two sockets handshake at once while nobody calls accept() (as a busy
      * application's accept loop lags behind a burst): returns the clients' outcomes (a connection still open, or the
-     * error that closed it) and the group-wide count of connections waiting for accept().
+     * error that closed it) and the group-wide count of connections waiting for accept(), read once every handshake was
+     * decided on the server's side and every refused client has learnt it.
      */
     private suspend fun burst(
         acceptQueue: Int,
@@ -566,18 +567,30 @@ class LoopGroupTest {
                     QuicEndpoint.bind(io.localAddress, client(io))
                 }
             try {
-                val outcomes =
+                val connects =
                     clients
                         .mapIndexed { i, ep ->
                             async {
                                 try {
-                                    val c = ep.connect(if (i % 2 == 0) serverAddr else otherAddr, clientConfig)
-                                    withTimeoutOrNull(3.seconds) { c.closed.await() }
+                                    ep.connect(if (i % 2 == 0) serverAddr else otherAddr, clientConfig)
                                 } catch (e: QuicException.ConnectionLost) {
                                     e
                                 }
                             }
                         }.awaitAll()
+                // states that stay, never an instant: every client ends either handed to the accept queue on the server's side
+                // (once per connection; a counter that only grows) or ended on its own side (its connect failed, or its
+                // connection closed: refused at its Initial or at its handshake's completion). Refusals are not counted on
+                // the server's side: a client refused at its Initial may retransmit it and be refused again. A slow host only
+                // takes longer to get there
+                val loops = (0..1).map { group.loopForTest(it) }
+
+                fun handedOff() = loops.sumOf { it.acceptHandOffsForTest }
+
+                fun ended() = connects.count { it !is QuicConnection || it.closed.isCompleted }
+                withTimeout(20.seconds) { while (handedOff() + ended() < clients.size) delay(5) }
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                val outcomes = connects.map { if (it is QuicConnection) it.closed.takeIf { d -> d.isCompleted }?.getCompleted() else it }
                 val waiting = group.loopForTest(0).pendingAcceptForTest
                 afterBurst(group, net)
                 outcomes to waiting
