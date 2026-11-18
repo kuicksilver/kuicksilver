@@ -8,7 +8,8 @@ SPDX-License-Identifier: Apache-2.0
 Thank you for helping. Kuicksilver is a network security component, so the bar for changes is high and the process is
 explicit: an issue first for anything that changes behaviour or API, and tests that fail before the fix.
 This document says how to build, test and propose changes; [docs/process.md](docs/process.md) describes
-every stage a change goes through before it reaches a release. By participating you agree to the
+every stage a change goes through before it reaches a release, and [GOVERNANCE.md](GOVERNANCE.md) who decides and how.
+By participating you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Building
@@ -39,6 +40,8 @@ renamed with a `ksl_ossl_` prefix (`tools/prefix`, ADR-0007) so that another Ope
 
 You rarely call these scripts by hand: the Gradle tasks (`opensslBuild<Target>`, `buildJniHost`, `buildAndroidJni`,
 `buildKslA<Target>`) run them on demand. Outputs land in `build/openssl/<target>` and `build/openssl-prefixed/<target>`.
+The scripts add your `CPPFLAGS`, `CFLAGS` and `LDFLAGS` (and, where the compiler is the host's, `CC`) to their own; releases
+are built without them ([Building from source](docs/guide/building.md#your-compiler-and-flags)).
 Never edit the pin without also updating the SHA-256 (and the key fingerprint if the signer changed), and never
 disable the signature check.
 
@@ -199,6 +202,21 @@ again) does the same on GitHub-hosted runners; the release gate is `tools/ci/loc
   `docs/spec/threat-model.md` in the same pull request.
 
 ## Tests
+
+**Policy: new functionality MUST come with automated tests, and a bug fix MUST come with a regression test that fails
+without the fix.** This covers new public API, new options and changed behaviour as well as new features; a pull
+request without such tests is not merged. The tests run in the automated suites (the gate and hosted CI,
+[docs/process.md](docs/process.md)), not by hand. Where they go:
+
+| What changed | Where the test goes |
+|---|---|
+| Behaviour common to all platforms (protocol logic, parsers, limits, the public API) | the module's `commonTest` source set, so it runs on the JVM, Android and every Native target |
+| Something only one platform has | that platform's source set of the module: `jvmTest`, `appleTest`, `linuxTest`, `mingwTest`, `nativeTest`, `androidHostTest`, `androidDeviceTest` (device and emulator) |
+| The `ksl` C shim | `kuicksilver-native/src/c/test/test_*.c`, run by `tools/c-test.sh` under ASan and UBSan |
+| A security check | a `negative_<what>` test that fails when the check is removed, listed in the [threat model](docs/spec/threat-model.md) |
+| An RFC requirement | a test named in the requirement's section of `docs/spec/rfc/<rfc>.md` (`tools/check/rfc-tests.py` checks it exists) |
+| A crash or hang found by fuzzing | the input under the fuzz target's test resources, a unit test, and a line in `tools/fuzz/reproducers.txt` (Fuzzing, below) |
+| A script under `tools/` | its `<name>-test.sh` next to it, with negative controls on a scratch copy |
 
 - **Test first.** A bug fix starts with a test that fails for the reason in the issue (RED), then the fix makes it pass
   (GREEN). Say in the pull request which test went red.
@@ -369,8 +387,9 @@ The maintainers use AI coding tools in this project, and contributors may too, u
 ## Pull request checklist
 
 - [ ] An issue exists for non-trivial changes and is linked.
-- [ ] Every commit is signed off (`git commit -s`); AI help is disclosed with `Assisted-by:`.
-- [ ] Tests: a test failed before the change and passes after it; new security checks have a `negative_*` control.
+- [ ] AI help is disclosed with `Assisted-by:` (no sign-off is needed: [License of contributions](#license-of-contributions)).
+- [ ] Tests ([policy](#tests)): new functionality has automated tests; a bug fix has a regression test that failed before
+      the fix and passes after it; new security checks have a `negative_*` control.
 - [ ] `checkSpdxHeaders`, `checkLayerDependencies`, the architecture checks and the affected module tests pass locally.
 - [ ] Public API: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` diff reviewed; new API is
       `@ExperimentalKuicksilverApi`.

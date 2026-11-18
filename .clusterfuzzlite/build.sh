@@ -25,10 +25,11 @@ JOBS="$(nproc)"; export JOBS
 
 # 1-2: OpenSSL and libksl (JNI headers from the JDK in JAVA_HOME)
 bash tools/openssl/fetch.sh
-# CFLAGS is cleared: OpenSSL's Configure would pick up the sanitizer flags OSS-Fuzz exports, and an ASan-instrumented
-# libksl cannot be loaded into the fuzzing JVM. The fuzzers target the Kotlin code; the C code has its own ASan tests.
-CC="${CC:-clang}" CFLAGS="" bash tools/openssl/build.sh linux-x64
-CC="${CC:-clang}" CFLAGS="" bash tools/build-jni.sh linux-x86_64 kuicksilver-native/build/jni
+# The builder's flags are cleared: both scripts add CPPFLAGS, CFLAGS and LDFLAGS to their own (docs/guide/building.md), so
+# the sanitizer flags OSS-Fuzz exports would reach OpenSSL and libksl, and an ASan-instrumented libksl cannot be loaded into
+# the fuzzing JVM. The fuzzers target the Kotlin code; the C code has its own ASan tests.
+CC="${CC:-clang}" CPPFLAGS="" CFLAGS="" LDFLAGS="" bash tools/openssl/build.sh linux-x64
+CC="${CC:-clang}" CPPFLAGS="" CFLAGS="" LDFLAGS="" bash tools/build-jni.sh linux-x86_64 kuicksilver-native/build/jni
 
 # The campaign's target table, <id> <kind> <module> <class> <method>: the targets of kind jvm and their modules
 table=$(awk '/^targets_table\(\) \{/ { t = 1; next } t && /^EOF$/ { exit } t && NF == 5' tools/fuzz/campaign.sh)

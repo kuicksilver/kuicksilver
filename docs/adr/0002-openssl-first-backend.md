@@ -1,6 +1,7 @@
 # ADR-0002. OpenSSL 3.5 is the first TLS backend; BoringSSL is the fallback; the transport depends on the `QuicCrypto` interface
 
-Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02).
+Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02). Superseded in part by
+[ADR-0019](0019-openssl-4-and-ech.md) (the OpenSSL 3.5 pin, 2026-11-18).
 
 ## Context
 

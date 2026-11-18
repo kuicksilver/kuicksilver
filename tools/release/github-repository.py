@@ -53,7 +53,12 @@ POM and module file inside the repository. The key is `tools/release/kuicksilver
 gpg --import kuicksilver-release-key.asc
 gpg --verify {top}.zip.asc {top}.zip
 gpg --verify kuicksilver-{version}-SHA256SUMS.asc kuicksilver-{version}-SHA256SUMS
+gpg --verify kuicksilver-{version}.intoto.jsonl.asc kuicksilver-{version}.intoto.jsonl
 ```
+
+`kuicksilver-{version}.intoto.jsonl` is the build provenance: an in-toto bundle whose one DSSE envelope, signed by the
+same key, holds a SLSA provenance statement with the SHA-256 of the files it describes (docs/release.md, "Build
+provenance").
 
 """ if signed else "")
     return f"""# Kuicksilver {version}: Maven repository

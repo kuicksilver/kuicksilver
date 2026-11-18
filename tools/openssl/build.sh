@@ -9,7 +9,16 @@
 #            linux-x64 linux-arm64 mingw-x64 linux-x64-kn linux-arm64-kn
 # Env: KSL_OPENSSL_PIN=<pin profile> (default gradle/openssl.toml; gradle/openssl-next.toml builds the 4.x of the CI job openssl-next),
 #      ANDROID_NDK_ROOT (android), KONAN_SYSROOT (-kn targets), CC override, OPT (default -Os),
-#      KSL_OPENSSL_FRESH=1  never take the cache: configure and compile from the source fetch.sh just verified (release)
+#      KSL_OPENSSL_FRESH=1  never take the cache: configure and compile from the source fetch.sh just verified (release),
+#      CPPFLAGS, CFLAGS, LDFLAGS  the builder's flags, added after the project's (below)
+# The builder's CPPFLAGS, CFLAGS and LDFLAGS: OpenSSL's Configure would read them from the environment and use them in
+# place of the target's own flags, so they are taken out of its environment and passed as Configure options after the
+# project's, which adds them (a later flag wins where two conflict). Each must be one word that starts with '-' (or '/', the
+# argument of the flag before it) and is not one of Configure's own options (-d -v -w -t -rpath -R -framework, --prefix
+# and the other --options); the script refuses anything else. They are part of the cache key, of configure-target.txt and
+# of --print-target, so -Pkuicksilver.openssl.prebuilt reuses a build only with the flags it was made with. CXXFLAGS and
+# LDLIBS are not used (no C++, no program is linked). A release and the reproducibility checks build with them unset
+# (docs/guide/building.md).
 # Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
 set -euo pipefail
@@ -24,6 +33,48 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$toml")
 src="$out/src/openssl-$version"
 [ "$print_only" = 1 ] || [ -d "$src" ] || { echo "run fetch.sh first" >&2; exit 1; }
 OPT="${OPT:--Os}"
+# the builder's flags, word by word into an array (never glob-expanded), refused where Configure would read a word as
+# something other than a compiler flag: its own options, -no-<feature> (Configure rewrites it to no-<feature>, which would
+# turn a feature off), -shared and --shared (rewritten to enable-shared), -static (it disables static, pic and threads),
+# a word starting /D or /I (read as a define or an include directory, so the argument of `-include /Data/x.h` would
+# become one), a word that is no flag, and %xx (decoded); also -D or -U of an OPENSSL_* macro, which would build the
+# libraries with a configuration other than the one their installed opensslconf.h and configuration.h declare
+user_args=(); read -r -a user_words <<< "${CPPFLAGS:-} ${CFLAGS:-} ${LDFLAGS:-}"
+for w in ${user_words[@]+"${user_words[@]}"}; do
+  case "$w" in
+    -no-integrated-as) user_args+=("$w") ;;
+    -DOPENSSL_*|-UOPENSSL_*|/DOPENSSL_*|/UOPENSSL_*)
+      echo "CPPFLAGS/CFLAGS/LDFLAGS: '$w' sets an OpenSSL configuration macro, which the installed headers would not match; refused (configure-flags.txt decides them)" >&2; exit 2 ;;
+    -d|-v|-w|-t|-rpath|-R|-framework|-no-*|-shared|--shared|-static|/D*|/I*|--prefix=*|--api=*|--libdir=*|--openssldir=*|--with-*|--fips-key=*|--banner=*|--cross-compile-prefix=*|--config=*|--strict-warnings|--debug|--release|*%*)
+      echo "CPPFLAGS/CFLAGS/LDFLAGS: '$w' is an option of OpenSSL's Configure, not a compiler flag; refused" >&2; exit 2 ;;
+    -?*|/*) user_args+=("$w") ;;
+    *) echo "CPPFLAGS/CFLAGS/LDFLAGS: '$w' does not start with '-' or '/'; refused (Configure would take it for a target or an option)" >&2; exit 2 ;;
+  esac
+done
+user_flags="${user_args[*]+"${user_args[*]}"}"
+# CC: used for macOS and Linux (passed to Configure). For Linux the project's own compiler is the image's devtoolset gcc,
+# which tools/openssl/build-docker.sh sets (the same path; native-flags-test.sh checks the two agree) together with the
+# marker KSL_OPENSSL_BUILD_IMAGE: only inside our image is that path not a builder's choice. On a bare Linux host the
+# same path (another devtoolset) counts like any other CC. The Kotlin/Native targets set their compiler below; Android, iOS and mingw use their toolchain's own
+# (the NDK's clang, Xcode's, the image's mingw gcc), so a CC from the builder is dropped there.
+project_linux_cc=/opt/rh/devtoolset-10/root/usr/bin/gcc
+case "$target" in
+  macos-*) user_cc="${CC:-}" ;;
+  linux-x64|linux-arm64) user_cc="${CC:-}"
+    [ "$user_cc" != "$project_linux_cc" ] || [ "${KSL_OPENSSL_BUILD_IMAGE:-}" != "kuicksilver-openssl-$target" ] || user_cc="" ;;
+  android-*|ios-*|mingw-x64) user_cc=""; unset CC ;;
+  *) user_cc="" ;;
+esac
+# One word that stands for all of the builder's flags and CC, paths included: configure-target.txt and --print-target name
+# it, so a build made with other flags or another CC is never reused (the comparison drops words that hold a path).
+user_id=""
+if [ ${#user_args[@]} -gt 0 ] || [ -n "$user_cc" ]; then
+  user_id="builder-flags-sha256=$( { printf 'CC=%s\0' "$user_cc"; printf '%s\0' ${user_args[@]+"${user_args[@]}"}; } | shasum -a 256 | cut -c1-16)"
+fi
+# Configure would use these instead of the target's flags; __CNF_*, OPENSSL_LOCAL_CONFIG_DIR, BUILDFILE and CROSS_COMPILE
+# would change its configuration as well, unrecorded
+unset CPPFLAGS CFLAGS CXXFLAGS LDFLAGS LDLIBS __CNF_CPPDEFINES __CNF_CPPINCLUDES __CNF_CPPFLAGS __CNF_CFLAGS __CNF_CXXFLAGS \
+  __CNF_LDFLAGS __CNF_LDLIBS OPENSSL_LOCAL_CONFIG_DIR BUILDFILE CROSS_COMPILE
 export SOURCE_DATE_EPOCH=1759363200
 export ZERO_AR_DATE=1   # Apple ar ignores SOURCE_DATE_EPOCH; this zeroes archive member timestamps
 JOBS="${JOBS:-4}"       # keep the host responsive (owner request)
@@ -60,12 +111,12 @@ esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
-if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra" | portable; echo; exit 0; fi
+if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id" | portable; echo; exit 0; fi
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
 ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)"
-key=$(printf '%s|%s|%s|%s|%s|%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" | shasum -a 256 | cut -c1-16)
+key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
 provenance() { # <dir>: what was built from what, checked by -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts)
@@ -81,7 +132,7 @@ work="$out/build/$target"
 rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
 cd "$work"
 # shellcheck disable=SC2086
-./Configure "$cfg" $flags --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
+./Configure "$cfg" $flags --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
 # The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the
 # compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
 # no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer
@@ -104,6 +155,6 @@ make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"
 cp libcrypto.a libssl.a "$cache/lib/"
 cp -R include/openssl "$cache/include/"
-cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra" > "$cache/configure-target.txt"; provenance "$cache"
+cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}" > "$cache/configure-target.txt"; provenance "$cache"
 rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"
 echo "built $target -> $dest (cache $key)"

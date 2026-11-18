@@ -312,10 +312,10 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
 - [kuicksilver.github.io/kuicksilver](https://kuicksilver.github.io/kuicksilver/) — the guide and the API reference
   (Dokka) of every release, from 0.3.0 on.
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
-- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, and what later releases bring.
+- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, what later releases bring, and what is not planned.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [deploying the HTTP/3 server](docs/guide/deployment.md), [iOS](docs/guide/ios.md),
-  [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)
+  [publishing on the App Store](docs/guide/app-store.md), [building from source](docs/guide/building.md) (your own compiler and flags), the [configuration reference](docs/guide/configuration.md)
   (every option with its default) and [troubleshooting](docs/guide/troubleshooting.md).
 - [docs/stability.md](docs/stability.md) — what 0.2.x promises: stable and experimental API, the ABI checks, the `ksl`
   ABI, the Ktor and OpenSSL version policies, supported platforms.
@@ -338,7 +338,7 @@ Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/in
   has the answers given in the OpenSSF Best Practices questionnaire (passing).
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
-  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [GOVERNANCE.md](GOVERNANCE.md) (roles, decisions, access continuity).
 
 A note on the name `ksl`: it is this project's C shim between Kotlin and OpenSSL (`kuicksilver-native/src/c/ksl.h`).
 It is unrelated to `fuzz/ksl.cc` in ngtcp2, which is a data structure of that project.

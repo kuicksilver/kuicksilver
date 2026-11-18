@@ -17,6 +17,7 @@ Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksi
 - [Deploying the HTTP/3 server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/deployment.md): UDP and TCP on one port, Alt-Svc, firewalls, Docker, Kubernetes, load balancers and proxies, UDP buffers, GSO, checking a deployment
 - [iOS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md): using Kuicksilver from iOS and Swift
 - [App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md): publishing an app that embeds Kuicksilver on the App Store
+- [Building from source](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/building.md): the native build scripts, adding your own compiler and flags (CC, CPPFLAGS, CFLAGS, LDFLAGS), and why releases are built without them
 - [Configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md): every option with its type, default, range, where it is set and since which release; HTTP/2 settings included
 - [Troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md): symptoms by exact error text or code (handshake timeout, certificate errors, ALPN mismatch, CONNECTION_REFUSED and connection limits, 0-RTT, HTTP/3 fallback reasons, HTTP/2 failures) with cause and action
 

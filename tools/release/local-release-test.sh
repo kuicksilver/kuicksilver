@@ -43,6 +43,7 @@ new_repo() { # <dir>: a repository with what the script reads before the gate, a
   git config user.email t@example.invalid; git config user.name t; git config commit.gpgsign false; git config core.hooksPath /dev/null
   mkdir -p tools/release tools/check kuicksilver-native/src/c gradle
   cp "$root/tools/check/llvm-tool.sh" tools/check/
+  cp "$root/tools/clean-build-env.sh" tools/
   cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
   mkdir -p tools/release/swift-package licenses; cp "$root/tools/release/swift-package.sh" tools/release/
   cp "$root"/tools/release/swift-package/*.in tools/release/swift-package/; cp "$root/LICENSE" "$root/NOTICE" .
@@ -109,6 +110,9 @@ t "release/0.2.x, 0.2.1"                                 ok:push_branch=release/
 t "release/0.2.x, 0.2.2 without the version bump"        "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2
 t "release/0.2.x, 0.2.2-rc1 without the version bump"    "refuse:0.2.1-SNAPSHOT"        release/0.2.x 0.2.2-rc1 --central-prerelease
 t "release/0.4.x, 0.4.0-rc1 (coordinates not checked)"   ok:push_branch=release/0.4.x   release/0.4.x 0.4.0-rc1 --central-prerelease
+# the environment that would change a native build is unset before anything else (tools/clean-build-env.sh)
+CCC_OVERRIDE_OPTIONS="+-include/nonexistent/probe.h" CPATH=/nonexistent SDKROOT=/nonexistent OPT=-O0 CFLAGS=-O0 \
+t "negative_releaseClearsBuildEnvironment"               "ok:note: CCC_OVERRIDE_OPTIONS is ignored" main 0.3.0
 # a prerelease goes to Central only when asked for (its quota), never by default
 t "negative_prereleaseWithoutMode"                       "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1
 t "negative_prereleaseWithoutModeDryRun"                 "refuse:is a prerelease: --github-prerelease" release/0.4.x 0.4.0-rc1 --dry-run
@@ -484,7 +488,7 @@ if [ -f "$doc" ] && grep -q "includeGroup(\"io.kuicksilver\")" "$doc" && grep -q
     && grep -q "not on Maven Central" "$doc" && grep -qF "kuicksilver-swift\", exact: \"$V\")" "$doc" && cmp -s "$doc" <(unzip -p "$zip" "kuicksilver-$V-maven-repository/README.md") \
     && ! grep -qE '/Users/|/home/' "$doc"; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L"; fi
-L="github repository: instructions that work (download, signatures, Kotlin Multiplatform)"
+L="github repository: instructions that work (download, signatures and the provenance, Kotlin Multiplatform)"
 # every asset SHA256SUMS lists must come with the documented download, or `shasum -c` fails on the missing ones
 cover=$(python3 -I - "$doc" "$V" <<'PY'
 import fnmatch, re, shlex, sys
@@ -501,6 +505,7 @@ PY
 )
 if [ "$cover" = ok ] && grep -qF "implementation(project.dependencies.platform(\"io.kuicksilver:kuicksilver-bom:$V\"))" "$doc" \
     && grep -q 'sourceSets.commonMain.dependencies' "$doc" && grep -q '^gpg --import kuicksilver-release-key.asc' "$doc" \
+    && grep -qxF "gpg --verify kuicksilver-$V.intoto.jsonl.asc kuicksilver-$V.intoto.jsonl" "$doc" \
     && grep -q 'every artifact,$' "$doc"; then
   pass=$((pass+1)); echo "ok   $L"; else fail=$((fail+1)); echo "FAIL $L: $cover"; fi
 L="github repository: the same input gives the same zip"

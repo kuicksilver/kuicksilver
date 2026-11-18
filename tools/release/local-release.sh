@@ -72,6 +72,9 @@
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
 set -euo pipefail
 started=$(date +%s); given="$*"
+# A release is built with the project's own compiler, flags and paths only, so that it is what the reproducibility checks
+# rebuild: the variables that would change a native build are unset (tools/clean-build-env.sh, docs/guide/building.md).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tools/clean-build-env.sh"; ksl_clean_build_env note
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 

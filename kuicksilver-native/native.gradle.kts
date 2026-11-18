@@ -14,10 +14,13 @@ abstract class KslArchiveTask : DefaultTask() {
     @get:OutputDirectory abstract val outDir: DirectoryProperty
     @TaskAction fun run() { execOps.exec { commandLine("bash", script.get().asFile.path, target.get()) } }
 }
+// The builder's compiler and flags, which tools/build-ksl-a.sh adds to its own (docs/guide/building.md): inputs, so a change reruns the build.
+val builderEnv = listOf("CC", "CPPFLAGS", "CFLAGS").associateWith { providers.environmentVariable(it).orElse("") }
 knTargets.forEach { (kt, t) ->
     tasks.register<KslArchiveTask>("buildKslA$kt") {
         group = "native"; description = "Builds libksl.a and the prefixed archives for $t"
         dependsOn("opensslPrefix" + t.split('-').joinToString("") { it.replaceFirstChar(Char::uppercase) })
         script.set(root.resolve("tools/build-ksl-a.sh")); sources.from(fileTree("src/c")); target.set(t); outDir.set(root.resolve("build/openssl-prefixed/$t"))
+        builderEnv.forEach { (name, value) -> inputs.property("env.$name", value) }
     }
 }

@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Builds libksl.so for one Android ABI with the NDK clang: ksl + JNI + static OpenSSL, JNI_OnLoad* only, 16 KiB pages.
 # Usage: build-android-so.sh <arm64-v8a|x86_64|armeabi-v7a> [out dir]   (NDK from ANDROID_NDK_ROOT, else the SDK's ndk/<pin of gradle/toolchains.toml>, else its newest ndk/)
+# The builder's CPPFLAGS and CFLAGS come after the project's compile flags and LDFLAGS after its link flags, so they add to
+# them (a later flag wins where two conflict); the compiler is always the NDK's clang (CC is not used). A release and the
+# reproducibility checks build with them unset (docs/guide/building.md). KSL_KEEP_DEBUG=1: the library is not stripped
+# (symbols and, with CFLAGS=-g, debug information stay), for a local build; a release never sets it.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; abi="${1:?abi}"; out="${2:-$root/kuicksilver-native/src/androidMain/jniLibs}"
 pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
@@ -11,6 +15,7 @@ ndk="${ANDROID_NDK_ROOT:-$( (ls -d "$HOME"/Library/Android/sdk/ndk/"${pin:-none}
 rev=$(sed -n 's/^Pkg.Revision *= *//p' "$ndk/source.properties" 2>/dev/null || true)
 [ "$rev" = "$pin" ] || echo "warning: NDK $rev at $ndk is not the pinned $pin (gradle/toolchains.toml); CI builds with the pin" >&2
 T=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin | head -1)
+read -r -a user_cflags <<< "${CPPFLAGS:-} ${CFLAGS:-}"; read -r -a user_ldflags <<< "${LDFLAGS:-}"   # word by word, never glob-expanded
 case "$abi" in
   arm64-v8a) target=aarch64-linux-android24; ossl=android-arm64 ;;
   x86_64)    target=x86_64-linux-android24;  ossl=android-x86_64 ;;
@@ -21,8 +26,8 @@ O="$root/build/openssl/$ossl"; [ -d "$O/lib" ] || { echo "OpenSSL for $ossl not 
 mkdir -p "$out/$abi" "$root/build/android-jni"; map="$root/build/android-jni/exports.map"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$map"
 src=$(ls "$root"/kuicksilver-native/src/c/ksl_*.c) 
 "$T/clang" --target="$target" -std=c11 -Os -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation \
-  -I"$O/include" -I"$root/kuicksilver-native/src/c" -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
-  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack \
+  -I"$O/include" -I"$root/kuicksilver-native/src/c" ${user_cflags[@]+"${user_cflags[@]}"} -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
+  -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack ${user_ldflags[@]+"${user_ldflags[@]}"} \
   $src "$root/kuicksilver-native/src/jni/ksl_jni.c" "$O/lib/libssl.a" "$O/lib/libcrypto.a" -llog -o "$out/$abi/libksl.so"
-"$T/llvm-strip" "$out/$abi/libksl.so"
+[ "${KSL_KEEP_DEBUG:-0}" = 1 ] || "$T/llvm-strip" "$out/$abi/libksl.so"
 echo "$out/$abi/libksl.so ($(wc -c < "$out/$abi/libksl.so" | tr -d ' ') bytes)"
