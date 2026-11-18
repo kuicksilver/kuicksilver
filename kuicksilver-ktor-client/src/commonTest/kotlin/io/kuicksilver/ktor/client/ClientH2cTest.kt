@@ -8,6 +8,7 @@ import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
@@ -60,37 +61,41 @@ class ClientH2cTest {
     private val h2Opened = MutableStateFlow(0)
     private val calls = MutableStateFlow(0)
 
-    private suspend fun h2cServer(mode: H2cMode = H2cMode.Only) =
-        testServer(plain = true, configure = {
-            connectors.clear()
-            plainConnector {
-                host = "127.0.0.1"
-                port = 0
-                h2c = mode
+    private suspend fun h2cServer(
+        mode: H2cMode = H2cMode.Only,
+        extendedConnect: Boolean = true,
+    ) = testServer(plain = true, configure = {
+        webSocketsOverHttp2 = extendedConnect
+        connectors.clear()
+        plainConnector {
+            host = "127.0.0.1"
+            port = 0
+            h2c = mode
+        }
+        http3 = false
+        eventListener =
+            object : KuicksilverServerEventListener() {
+                override fun connectionOpened(
+                    protocol: HttpProtocolVersion,
+                    remote: io.ktor.network.sockets.InetSocketAddress?,
+                ) {
+                    if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 }
+                }
             }
-            http3 = false
-            eventListener =
-                object : KuicksilverServerEventListener() {
-                    override fun connectionOpened(
-                        protocol: HttpProtocolVersion,
-                        remote: io.ktor.network.sockets.InetSocketAddress?,
-                    ) {
-                        if (protocol == HttpProtocolVersion.HTTP_2_0) h2Opened.update { it + 1 }
-                    }
-                }
-        }) {
-            install(ServerWebSockets)
-            routing {
-                get("/") {
-                    calls.update { it + 1 }
-                    call.respondText("${call.request.httpVersion} ${call.request.local.scheme}")
-                }
-                serverWebSocket("/ws") {
-                    val f = incoming.receive() as Frame.Text
-                    send(Frame.Text("echo:" + f.readText() + " " + call.request.httpVersion))
-                }
+    }) {
+        install(ServerWebSockets)
+        routing {
+            get("/") {
+                calls.update { it + 1 }
+                call.respondText("${call.request.httpVersion} ${call.request.local.scheme}")
+            }
+            get("/pa") { call.respondText(call.request.headers["Proxy-Authorization"] ?: "none") }
+            serverWebSocket("/ws") {
+                val f = incoming.receive() as Frame.Text
+                send(Frame.Text("echo:" + f.readText() + " " + call.request.httpVersion))
             }
         }
+    }
 
     private fun h2cClient(
         port: Int,
@@ -253,6 +258,97 @@ class ClientH2cTest {
                         assertEquals("HTTP/2 http", r.bodyAsText())
                     }
                     assertTrue(head().first().startsWith("CONNECT 127.0.0.1:$port "), "${head()}")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 9110 section 11.7.2: `Proxy-Authorization` is the proxy's. Through a CONNECT tunnel it goes on the CONNECT and
+     * never to the origin on the HTTP/2 stream, over h2c as over TLS h2 (HTTP/1.1 drops it in a tunnel too). Before, the
+     * HTTP/2 field list kept it and the origin got the proxy credentials.
+     */
+    @Test fun negative_proxyAuthorizationNeverReachesTheOriginOverH2() =
+        clientTest {
+            val (h2c, h2cPort) = h2cServer()
+            val (tls, tlsPort) =
+                testServer(configure = {
+                    http2 = true
+                    http3 = false
+                }) { routing { get("/pa") { call.respondText(call.request.headers["Proxy-Authorization"] ?: "none") } } }
+            try {
+                for ((scheme, port) in listOf("http" to h2cPort, "https" to tlsPort)) {
+                    ClientProxyTest().tunnelProxy(port) { proxyPort, head ->
+                        h2cClient(h2cPort, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }).use { c ->
+                            val r =
+                                c.get("$scheme://127.0.0.1:$port/pa") {
+                                    header("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0")
+                                }
+                            assertEquals(HttpProtocolVersion.HTTP_2_0, r.version, scheme)
+                            assertEquals("none", r.bodyAsText(), scheme)
+                        }
+                        assertTrue(head().any { it == "Proxy-Authorization: Basic cHJveHk6c2VjcmV0" }, "$scheme: ${head()}")
+                    }
+                }
+            } finally {
+                h2c.stop(100, 500)
+                tls.stop(100, 500)
+            }
+        }
+
+    /**
+     * A cold `ws://` to a listed origin (no connection yet): an h2c-only server has no HTTP/1.1 Upgrade to offer, so the
+     * WebSocket opens the route's h2c connection (pooled: the next request uses it), waits for its SETTINGS and goes as
+     * an Extended CONNECT (RFC 8441 section 3).
+     */
+    @Test fun aColdWebSocketToAnH2cOnlyOriginOpensTheH2cConnection() =
+        clientTest {
+            val (server, port) = h2cServer()
+            try {
+                h2cClient(port, block = { install(WebSockets) }).use { c ->
+                    var version: HttpProtocolVersion? = null
+                    var echo = ""
+                    withTimeout(20.seconds) {
+                        c.webSocket("ws://127.0.0.1:$port/ws") {
+                            version = call.response.version
+                            send(Frame.Text("cold"))
+                            echo = (incoming.receive() as Frame.Text).readText()
+                        }
+                    }
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, version)
+                    assertEquals("echo:cold HTTP/2", echo)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("http://127.0.0.1:$port/").version)
+                    assertEquals(1, h2Opened.value, "one h2c connection, the WebSocket's, then reused")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A server that does not allow Extended CONNECT (SETTINGS_ENABLE_CONNECT_PROTOCOL absent, RFC 8441 section 3) on a
+     * port with HTTP/1.1 too: the cold WebSocket's h2c connection says so in its SETTINGS, and the WebSocket goes as an
+     * HTTP/1.1 Upgrade; the h2c connection stays for the origin's requests.
+     */
+    @Test fun negative_aColdWebSocketWithoutExtendedConnectGoesOverHttp11() =
+        clientTest {
+            val (server, port) = h2cServer(H2cMode.WithHttp11, extendedConnect = false)
+            try {
+                h2cClient(port, block = { install(WebSockets) }).use { c ->
+                    var version: HttpProtocolVersion? = null
+                    var echo = ""
+                    withTimeout(20.seconds) {
+                        c.webSocket("ws://127.0.0.1:$port/ws") {
+                            version = call.response.version
+                            send(Frame.Text("cold"))
+                            echo = (incoming.receive() as Frame.Text).readText()
+                        }
+                    }
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, version)
+                    assertEquals("echo:cold HTTP/1.1", echo)
+                    assertEquals(HttpProtocolVersion.HTTP_2_0, c.get("http://127.0.0.1:$port/").version)
+                    assertEquals(1, h2Opened.value)
                 }
             } finally {
                 server.stop(100, 500)

@@ -182,7 +182,7 @@ internal suspend fun h2Exchange(
                 url.protocol.name,
                 url.authority(),
                 url.h3Path(),
-                h2Fields(data),
+                proxyFieldsDropped(conn, h2Fields(data)),
                 endStream = !hasBody,
                 urgency = local.urgency,
                 incremental = local.incremental,

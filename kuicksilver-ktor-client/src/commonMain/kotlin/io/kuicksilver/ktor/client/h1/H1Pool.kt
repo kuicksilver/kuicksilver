@@ -601,6 +601,48 @@ internal class H1Pool(
         }
     }
 
+    /**
+     * For a `ws://` WebSocket ([data]) to an h2c origin whose route [route] has no usable HTTP/2 connection: opens one through
+     * the path of any request to the origin (pooled, one dial per route, SETTINGS within the connect timeout) and leaves it
+     * in the pool for [webSocketConnection] to take, which waits for its SETTINGS within [h2WebSocketSettingsWaitMillis]
+     * and uses Extended CONNECT only when the server allows it (RFC 8441 section 3), else the WebSocket goes over HTTP/1.1
+     * as on any connection without the setting. False when the route has a connection already (in use, full, or without
+     * the setting: as for `wss://`, no second one is opened for the WebSocket) or got HTTP/1.1 (HTTP_1_1_REQUIRED). A
+     * connection that cannot be opened fails the WebSocket, as it fails any request to a listed origin (no fallback).
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    private suspend fun openH2cForWebSocket(
+        data: HttpRequestData,
+        route: String,
+        dns: RequestDns,
+        proxy: ResolvedProxy?,
+    ): Boolean {
+        if (h2.usable(route).isNotEmpty()) return false
+        val attributes = io.ktor.util.Attributes(concurrent = true)
+        for (k in data.attributes.allKeys) {
+            if (k == io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) continue
+            @Suppress("UNCHECKED_CAST")
+            attributes.put(k as io.ktor.util.AttributeKey<Any>, data.attributes[k])
+        }
+        val plain =
+            HttpRequestData(
+                io.ktor.http
+                    .URLBuilder(data.url)
+                    .apply { protocol = io.ktor.http.URLProtocol.HTTP }
+                    .build(),
+                io.ktor.http.HttpMethod.Get,
+                io.ktor.http.Headers.Empty,
+                io.ktor.client.utils.EmptyContent,
+                data.executionContext,
+                attributes,
+            )
+        val got = obtain(plain, route, dns, proxy, webSocketKeys = null)
+        got.connection?.let { pool.release(it) }
+        val c = got.h2 ?: return false
+        c.client.unreserve()
+        return true
+    }
+
     /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
     private fun upgrades(body: OutgoingContent): Boolean =
         when (body) {
@@ -648,6 +690,14 @@ internal class H1Pool(
                             stream = it
                             reused = true
                             return@attempt
+                        }
+                        // an h2c origin (prior knowledge) has no HTTP/1.1 to offer a new connection first: a cold `ws://`
+                        // opens the route's h2c connection as any request would, then decides on its SETTINGS
+                        if (h2cPriorKnowledge(data.url) && openH2cForWebSocket(data, h2RouteOf(key), dns, proxy)) {
+                            webSocketConnection(data, h2RouteOf(key))?.let {
+                                stream = it
+                                return@attempt
+                            }
                         }
                     }
                     // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
@@ -1584,7 +1634,7 @@ internal class H1Pool(
                         h2Owned = true
                         try {
                             afterH2StartForTest?.invoke(client, tcp)
-                            return H2Conn(client, key, clock(), peerIp)
+                            return H2Conn(client, key, clock(), peerIp, proxied = proxy != null)
                         } catch (e: Throwable) {
                             // a fault of ours over a sound transport: GOAWAY (INTERNAL_ERROR), then close_notify, then the FIN
                             // (RFC 9113 sections 5.4.1 and 6.8, RFC 9846 section 6.1), bounded by the runtime, which closes the
@@ -1640,7 +1690,7 @@ internal class H1Pool(
                     h2Owned = true
                     try {
                         afterH2StartForTest?.invoke(client, tcp)
-                        H2Conn(client, key, clock(), peerIp)
+                        H2Conn(client, key, clock(), peerIp, proxied = proxy != null)
                     } catch (e: Throwable) {
                         try {
                             client.abortInOrder(e)

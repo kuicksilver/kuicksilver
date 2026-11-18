@@ -3477,12 +3477,16 @@ grpc-go's `insecure.NewCredentials()` is per channel.
   `http://` origin learns no alternative, neither from `Alt-Svc` fields nor from ALTSVC frames on an h2c connection.
   With `http3 { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
 - **Proxies.** Through an HTTP proxy the h2c connection goes in a CONNECT tunnel (an absolute-form request would be
-  HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The pool keeps h2c connections per route (origin
+  HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The tunnel is a CONNECT to the origin's cleartext
+  port (80, say), which many proxies refuse (squid's default `SSL_ports` allows CONNECT to 443 only): such a proxy fails
+  the call with its answer to the CONNECT. `Proxy-Authorization` goes on the CONNECT only, never on the HTTP/2 stream. The pool keeps h2c connections per route (origin
   and proxy), apart from the `https://` ones of the same host.
 - **The rest is HTTP/2 on the client**: one multiplexed connection per route, repeats, deadlines (the server's SETTINGS
   within the connect timeout), `pingInterval`, `settings` and diagnostics (`HTTP_2_0`; `fallback` says `NotSecure`,
   why not HTTP/3). A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (`:scheme http`, RFC 8441 section
-  5) on an h2c connection that is open and whose server allows it, else over HTTP/1.1, as `wss://` does over TLS.
+  5) on the origin's h2c connection; with none open, the WebSocket opens it (pooled for the requests after it) and waits
+  for its SETTINGS (at most 1 s): an h2c-only server has no HTTP/1.1 Upgrade to offer. A server whose SETTINGS do not
+  allow Extended CONNECT (section 3) gets the HTTP/1.1 Upgrade on a connection of its own, as over TLS.
 - **Cleartext** (CWE-319): list only servers on a trusted network or behind a sidecar that protects the hop. On Android
   the app's cleartext policy applies as to any `http://` request.
 

@@ -74,9 +74,9 @@ host_run() { # <kind> <transport>: the server on this host, h2spec in its contai
   dir=$(out_dir "$kind" "$transport")
   mkdir -p "$dir"
   log="$dir/server.log"
-  local extra=() tls=(-t -k)
+  local extra=() h2spec_tls=(-t -k)
   if [ "$(uname -s)" = Darwin ]; then extra=(trusted-gateway); fi
-  if [ "$transport" = h2c ]; then extra+=(h2c); tls=(); fi
+  if [ "$transport" = h2c ]; then extra+=(h2c); h2spec_tls=(); fi
   bash tools/interop/h2-server.sh run "$kind" 127.0.0.1 0 ${extra[@]+"${extra[@]}"} > "$log" 2>&1 &
   pid=$!
   port=""
@@ -89,16 +89,16 @@ host_run() { # <kind> <transport>: the server on this host, h2spec in its contai
   [ -n "$port" ] || { stop_server "$pid"; echo "h2spec ($kind, $transport): the server did not start within 120 s; see $log" >&2; return 1; }
   local target=127.0.0.1 net=(--network host)
   if [ "$(uname -s)" = Darwin ]; then target=host.docker.internal; net=(); fi
-  docker run --rm --platform linux/amd64 ${net[@]+"${net[@]}"} -v "$root/$dir:/out" "$image" ${tls[@]+"${tls[@]}"} -h "$target" -p "$port" -o 5 -j /out/junit.xml \
+  docker run --rm --platform linux/amd64 ${net[@]+"${net[@]}"} -v "$root/$dir:/out" "$image" ${h2spec_tls[@]+"${h2spec_tls[@]}"} -h "$target" -p "$port" -o 5 -j /out/junit.xml \
     > "$dir/h2spec.txt" 2>&1 || true
   stop_server "$pid"
   verdict "$kind $transport" "$dir/h2spec.txt"
 }
 
 linux_run() { # <transport>: the linuxX64 server and h2spec in one linux/amd64 container
-  local transport=$1 dir exe cid server_arg="" tls="-t -k"
+  local transport=$1 dir exe cid server_arg="" h2spec_tls_flags="-t -k"
   dir=$(out_dir linux-x64 "$transport")
-  if [ "$transport" = h2c ]; then server_arg=h2c; tls=""; fi
+  if [ "$transport" = h2c ]; then server_arg=h2c; h2spec_tls_flags=""; fi
   mkdir -p "$dir"
   exe=$(bash tools/interop/h2-server.sh path linux-x64)
   [ -f "$exe" ] || { echo "h2spec (linux-x64): missing $exe (h2-server.sh build linux-x64)" >&2; return 1; }
@@ -111,7 +111,7 @@ linux_run() { # <transport>: the linuxX64 server and h2spec in one linux/amd64 c
     $exe 127.0.0.1 0 $server_arg > $dir/server.log 2>&1 &
     for i in \$(seq 1 120); do port=\$(sed -n 's/^h2spec-server listening on \\([0-9]*\\)\$/\\1/p' $dir/server.log); [ -n \"\$port\" ] && break; sleep 1; done
     [ -n \"\$port\" ] || { echo 'the server did not start within 120 s'; cat $dir/server.log; exit 1; }
-    $dir/h2spec $tls -h 127.0.0.1 -p \$port -o 5 -j $dir/junit.xml > $dir/h2spec.txt 2>&1 || true
+    $dir/h2spec $h2spec_tls_flags -h 127.0.0.1 -p \$port -o 5 -j $dir/junit.xml > $dir/h2spec.txt 2>&1 || true
   " || { echo "h2spec (linux-x64, $transport): the container run failed" >&2; return 1; }
   verdict "linux-x64 $transport" "$dir/h2spec.txt"
 }

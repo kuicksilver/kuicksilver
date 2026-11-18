@@ -276,8 +276,10 @@ public class Http2ClientConfig {
      * the connection with HTTP_1_1_REQUIRED gets HTTP/1.1 from then on, as over TLS. An `https://` URL never uses this
      * (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), nor HTTP/3 (an `http://` origin never learns
      * an alternative, `Alt-Svc` field or ALTSVC frame). Through an HTTP proxy the connection goes in a CONNECT tunnel
-     * (absolute-form requests are HTTP/1.1), through SOCKS5 as any other. A `ws://` WebSocket to a listed origin takes an
-     * h2c connection that is open already and allows Extended CONNECT (RFC 8441), else HTTP/1.1, as `wss://` does. On
+     * (absolute-form requests are HTTP/1.1; CONNECT to port 80, which many proxies refuse), through SOCKS5 as any other. A
+     * `ws://` WebSocket to a listed origin goes as an Extended CONNECT (RFC 8441, `:scheme http`) on the origin's h2c
+     * connection, which it opens itself when there is none (pooled, waiting for its SETTINGS at most 1 s); a server whose
+     * SETTINGS do not allow Extended CONNECT gets an HTTP/1.1 Upgrade instead, on a connection of its own. On
      * Android the app's cleartext policy applies as to any `http://` request. Ignored when [enabled] is false.
      */
     public var priorKnowledge: Set<HostPort> = emptySet()

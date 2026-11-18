@@ -1474,13 +1474,16 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2WebSoc
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2WebSocketTest.webSocketUsesAnH2ConnectionThatAllowsExtendedConnect
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2WebSocketTest.webSocketWaitsForTheServersSettings
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2WebSocketTest.webSocketWithoutTheSettingGoesOverH1
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.aColdWebSocketToAnH2cOnlyOriginOpensTheH2cConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.aListedHttpOriginGoesOverH2c
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.h2cThroughAnHttpProxyUsesConnect
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_aColdWebSocketWithoutExtendedConnectGoesOverHttp11
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_altSvcFrameOverH2cIsNotLearned
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_anUnlistedHttpOriginStaysHttp11
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_h2cToATlsPortFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_h2cToAnHttp11OnlyServerFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_httpsNeverUsesPriorKnowledge
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.negative_proxyAuthorizationNeverReachesTheOriginOverH2
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH2cTest.webSocketOverH2c
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.alternativeNameOfTheOriginsAddressLiteralReusesTheConnection
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientH3ConnectionReuseTest.alternativeUnderAnotherNameOfTheSameAddressReusesTheConnection

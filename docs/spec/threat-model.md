@@ -776,15 +776,21 @@ default.
 - **`https` over a cleartext hop.** A request with `:scheme https` on an h2c connection is misdirected (RFC 9110 §7.4,
   421) unless the connector's clients are trusted gateways; `request.local.scheme` is `http`.
 - **Request smuggling between an HTTP/1.1 front and an h2c back end.** A front that turns HTTP/1.1 into HTTP/2 must not
-  let a body carry a second request: the server's HTTP/2 message checks hold on h2c unchanged (a connection-specific
-  field such as `transfer-encoding`, a `content-length` the DATA does not match, a `host` that differs from `:authority`
-  are malformed, §8.1.1, §8.2.2, reset before the application). Framing comes from HTTP/2 frames only.
+  let a body carry a second request: framing comes from HTTP/2 frames only, never from fields, and the server's HTTP/2
+  message checks hold on h2c unchanged. A connection-specific field such as `transfer-encoding`, or a `host` that differs
+  from `:authority`, makes the request malformed before a handler runs (§8.1.1, §8.2.2: RST_STREAM PROTOCOL_ERROR); a
+  `content-length` the DATA does not match resets the stream too, and a handler that already started on the HEADERS
+  sees its body read fail: the excess octets never reach the application, as content or as another request.
 - **Preface detection** (`H2cMode.WithHttp11`): the first octets are compared as they arrive and none is consumed; the
   first that differs hands the connection to HTTP/1.1, so the check reads at most 24 octets and never holds a short
   HTTP/1.1 request; the wait is inside the request-head deadline, so a slowloris on the preface is closed as one on an
-  HTTP/1.1 head (3.22), and a stopping server does not wait for it (the connection goes to HTTP/1.1, closed as idle). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
+  HTTP/1.1 head (3.22), and a stopping server does not wait for it (on `WithHttp11` the connection goes to HTTP/1.1,
+  closed as idle; on `Only`, and on TLS h2, it gets GOAWAY with last stream 0 and the close). On `H2cMode.Only` an HTTP/1.1 request is an invalid preface (§3.4: PROTOCOL_ERROR), never an
   HTTP/1.1 answer. Every limit of 3.23 (flood defences, field sections, deadlines, `http2RepeatOffenderPenalty`,
   `maxTcpConnections`) holds on h2c as on TLS.
+- **Proxy credentials.** Through a CONNECT tunnel `Proxy-Authorization` goes on the CONNECT only, never on an HTTP/2
+  stream to the origin, over h2c as over TLS h2 (RFC 9110 §11.7.2; HTTP/1.1 drops it in a tunnel the same way): over
+  cleartext the origin hop would otherwise carry the proxy's credentials.
 - **Client to the wrong port.** A listed origin that answers HTTP/1.1 or TLS fails the call (its answer is no SETTINGS
   frame, the connect timeout bounds the wait for one); there is no silent retry in another protocol.
 
@@ -795,7 +801,7 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
 `.negative_h2cOnAConnectorTheIdentityMakesTlsIsRefused`, `.upgradeH2cIsServedAsHttp11`; `H2cPrefaceCheckTest.negative_theFirstOctetThatDiffersDecides`,
 `.negative_anInputThatEndsInsideThePreface`; `ClientH2cTest.negative_anUnlistedHttpOriginStaysHttp11`,
 `.negative_httpsNeverUsesPriorKnowledge`, `.negative_h2cToAnHttp11OnlyServerFails`, `.negative_h2cToATlsPortFails`,
-`.negative_altSvcFrameOverH2cIsNotLearned`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default).
+`.negative_altSvcFrameOverH2cIsNotLearned`, `.negative_proxyAuthorizationNeverReachesTheOriginOverH2`; `ServerH2Test.negative_h2cPrefaceOnPlainConnectorRejected` (off by default), `.negative_aStopDoesNotWaitForAPrefaceInProgress` (TLS h2).
 
 ### 3.24 NAT64 prefix discovery (RFC 8305 §7, RFC 7050 §3.1)
 
