@@ -44,11 +44,12 @@ static X509 *make_cert(EVP_PKEY *key, const char *cn, const char *san, int ca, E
     X509_NAME_free(n);
     X509V3_CTX v;
     X509V3_set_ctx(&v, issuer ? issuer : x, x, NULL, NULL, 0);
-    const char *exts[][2] = {{"basicConstraints", ca ? "critical,CA:TRUE" : "CA:FALSE"},
-                             {"keyUsage", ca ? "critical,keyCertSign,cRLSign" : "critical,digitalSignature"},
-                             {"subjectKeyIdentifier", "hash"},
-                             {ca ? NULL : "extendedKeyUsage", "serverAuth"},
-                             {san ? "subjectAltName" : NULL, san}};
+    const char *exts[][2] = {
+        {"basicConstraints", ca ? "critical,CA:TRUE" : "CA:FALSE"},
+        {"keyUsage", ca ? "critical,keyCertSign,cRLSign" : "critical,digitalSignature"},
+        {"subjectKeyIdentifier", "hash"},
+        {ca ? NULL : "extendedKeyUsage", "serverAuth,clientAuth"}, /* a leaf also serves as a client identity */
+        {san ? "subjectAltName" : NULL, san}};
     for (size_t i = 0; i < sizeof exts / sizeof exts[0]; i++) {
         if (!exts[i][0])
             continue;
@@ -258,6 +259,8 @@ typedef struct {
     uint8_t retry[512];
     size_t retry_len;
     char server_sni[256];
+    int server_got_cert;  /* the server holds a client certificate */
+    int client_resumable; /* the client holds a session it could resume (a ticket arrived) */
 } run;
 static void sni_seen(ksl_ssl *s, char *out, size_t cap) {
     out[0] = 0;
@@ -282,6 +285,9 @@ static void finish(run *r, ksl_ssl *c, ksl_ssl *s) {
     if (ksl_ssl_get(c, KSL_GET_ECH_RETRY_CONFIGS, r->retry, sizeof r->retry, &r->retry_len) != KSL_OK)
         r->retry_len = (size_t)-1;
     sni_seen(s, r->server_sni, sizeof r->server_sni);
+    r->server_got_cert = SSL_get0_peer_certificate(ksl_ssl_raw_for_test(s)) != NULL;
+    SSL_SESSION *sess = SSL_get0_session(ksl_ssl_raw_for_test(c));
+    r->client_resumable = sess != NULL && SSL_SESSION_is_resumable(sess);
 }
 static int accept_verify(ksl_ssl *s, int rc, void *a) {
     char *seen = a;
@@ -520,6 +526,40 @@ static void test_hrr(void) {
     ksl_ctx_free(cc);
     ksl_ctx_free(sc);
     free(ks.buf);
+    END();
+}
+/* RFC 9849 section 6.1.7: "If the server requests a client certificate, the client MUST respond with an empty Certificate
+   message" on a rejection: the server learns no certificate. OpenSSL 4.1 aborts with ech_required once the server's Finished
+   is verified (statem_lib.c tls_process_finished, statem_clnt.c tls_process_initial_server_flight), before the client's second
+   flight, so no Certificate message, empty or not, goes out; the accepted control shows the server would see one */
+static void test_reject_client_certificate(void) {
+    SECTION("ech_rejection_sends_no_client_certificate");
+    blob ka = keyset(1, &key_a, 1), kb = keyset(1, &key_b, 1);
+    ksl_ctx *cc = ech_client(KSL_VERIFY_OPENSSL, 0);
+    CHECK(ksl_ctx_set_identity(cc, id_inner.chain.buf, id_inner.chain.len, id_inner.key, id_inner.key_len) == KSL_OK,
+          "client identity");
+    for (int rejected = 0; rejected < 2; rejected++) {
+        ksl_ctx *sc = ech_server(&id_both, rejected ? &kb : &ka, NULL);
+        ksl_ctx_set_roots(sc, ca_root.buf, ca_root.len);
+        CHECK(ksl_ctx_set_option(sc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_OPTIONAL) == KSL_OK,
+              "server asks for a certificate");
+        run qs[2] = {quic_run(cc, sc, &key_a, NULL), tcp_run(cc, sc, &key_a)};
+        for (int m = 0; m < 2; m++) {
+            run r = qs[m];
+            /* nor a session ticket ("MUST ignore all session tickets and session IDs presented by the server") */
+            int ok = rejected ? (r.alert_c == 121 && r.status_c == KSL_ECH_REJECTED && !r.server_got_cert &&
+                                 !r.client_resumable)
+                              : (ACCEPTED(r) && r.server_got_cert);
+            CHECK(ok, rejected ? (m == 0 ? "negative_ech_rejected_no_client_certificate over QUIC" : "... over TCP")
+                               : (m == 0 ? "accepted: the server holds the client certificate (QUIC)" : "... (TCP)"));
+            if (!ok)
+                report(m == 0 ? "quic client cert" : "tcp client cert", r);
+        }
+        ksl_ctx_free(sc);
+    }
+    ksl_ctx_free(cc);
+    free(ka.buf);
+    free(kb.buf);
     END();
 }
 static void test_reject(void) {
@@ -887,6 +927,7 @@ void run_ech(void) {
     test_accept();
     test_hrr();
     test_reject();
+    test_reject_client_certificate();
     test_grease();
     test_rotation();
     test_set_rules();
