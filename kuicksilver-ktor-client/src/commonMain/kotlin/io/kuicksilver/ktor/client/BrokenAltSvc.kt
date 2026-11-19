@@ -65,10 +65,17 @@ internal class BrokenAltSvc(
         alt: String,
     ): FallbackReason? = marks[key(origin, alt)]?.takeIf(::live)?.reason
 
+    /**
+     * A completed handshake through [alt]: its mark goes, except one for a stall ([FallbackReason.QuicStalled]), which
+     * stays (expired, it no longer applies) so that its backoff level carries over: a network that cuts UDP flows lets
+     * handshakes through and stalls the requests after them, and each such stall must double the backoff (5 minutes, then
+     * 10, ...) instead of starting again at 5. A network change forgets it with the rest.
+     */
     fun markWorking(
         origin: String,
         alt: String,
     ) {
+        if (marks[key(origin, alt)]?.reason == FallbackReason.QuicStalled) return
         marks.remove(key(origin, alt))
     }
 

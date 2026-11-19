@@ -1148,6 +1148,13 @@ returns, and `connect`/`accept` throw `EndpointClosing` from then on. `pathEvent
 collecting it before `migrate` or `probe`. `stats` can be read from any thread; it is a snapshot whose fields are read
 without a lock.
 
+A quiet connection shows nothing of a path that stopped carrying packets: with nothing in flight no probe timeout fires
+(RFC 9002 section 6.2) until the idle timeout ends it. `ping()` (experimental) sends one PING to test the path (RFC 9000
+section 10.1.2): a live peer acknowledges it, and on a dead path it leads to probe timeouts that `stats.ptoCount` counts.
+It answers false before the handshake completed (the handshake's own probes test the path then) and once the connection
+is closing. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#stalled-http3-connections));
+`QuicConfig.keepAlive` sends PINGs on a timer instead.
+
 ### Observability
 
 Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, `QuicEndpoint.stats` with
@@ -3370,7 +3377,16 @@ val client = HttpClient(Kuicksilver) {
   HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
   the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
   is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
-  "CLEARTEXT communication to <host> not permitted by network security policy".
+  "CLEARTEXT communication to <host> not permitted by network security policy". The policy matches strings, so it is
+  asked about one spelling per address, and `<host>` in that message is this spelling: an IPv4 address in any form
+  inet_aton reads alike on every platform (`127.1`, `2130706433`) as its dotted quad (`127.0.0.1`); an IPv6 literal in
+  the text RFC 5952 recommends (`[0:0:0:0:0:0:0:1]` as `::1`), without its zone, so a rule for `fe80::1` holds on every
+  link and a `<domain>` written with a zone never matches; an IPv4-mapped literal (`[::ffff:192.0.2.1]`) as its dotted
+  quad (`192.0.2.1`), the address the connection goes to; and a name as it is. Write `<domain>` entries in these
+  spellings. A host that can be in none of them fails before the policy is asked, with an `IOException` of its own: an
+  IP literal that is no IPv6 address ("not an IP address"), an IPv4 form that platforms read differently (`010.0.0.1`),
+  a host beginning with a dot, and a name with non-ASCII characters: the engine does not map an internationalised name
+  to its A-label, so the URL must carry the A-label (`xn--...`), as the `<domain>` entry does.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
@@ -3932,6 +3948,45 @@ stop whose grace period ended with requests still open: RFC 9114 section 5.2) en
 falls back to HTTP/1.1 when it may (idempotent, before its response), and the alternative is not marked broken; a close
 with an error code after GOAWAY, or with H3_NO_ERROR but without a GOAWAY first, still marks it. So during a rolling restart the calls that meet a stopping instance fall back once each,
 and the next calls use HTTP/3 again, instead of minutes to days of HTTP/1.1 for the whole origin.
+
+#### Stalled HTTP/3 connections
+
+Some networks cut UDP flows: no answer to the first QUIC packet at all, or a handshake that completes and a flow that
+stops carrying packets in both directions a moment later. On its own a QUIC connection notices only at its idle timeout
+(RFC 9000 section 10.1; 30 s by default), so a request on it would wait that long before it fell back to TCP. The engine
+watches the HTTP/3 connections it chose over TCP (`Auto`, `Preferred`, `quicHints`; `http3 { stallDetection }`, on by
+default), as Chrome does, while a request runs on one (from before its wait for the handshake until its response body
+was read or abandoned). The signal is the transport's, never the response's:
+
+- after the handshake, a connection is stalled when `stallProbeTimeouts` probe timeouts in a row (3; RFC 9002
+  section 6.2: a PTO fires only while ack-eliciting data goes unacknowledged, and doubles each time, so 3 of them take
+  about 7 PTOs and grow with the RTT) went unanswered and no packet at all came back from the server for
+  `stallMinSilence` (2 s) since the first of them;
+- before it (a request on a 0-RTT connection, `earlyData`, on a network where QUIC worked before), when nothing at all
+  came back from the server — not even an Initial — for `stallMinSilence` after a probe timeout, instead of the
+  connect timeout (10 s). Elsewhere the race already bounds that wait: on a network where QUIC was never seen working
+  TCP starts 10 ms after QUIC ([Racing and fallback](#racing-and-fallback)), and a QUIC setup that loses keeps going in
+  the background until its handshake timeout, as in Chrome.
+
+A slow server acknowledges the request while it thinks, and an idle long-lived response (a long poll, server-sent events
+between two events) has nothing in flight: neither shows a probe timeout, so neither is a stall. Such a quiet watched
+connection sends a PING now and then (RFC 9000 section 10.1.2: after half of `stallMinSilence` without a packet, then at
+twice the previous gap, up to 15 s), so that a path cut while nothing is in flight shows as well: a live server
+acknowledges it, a dead path turns it into probe timeouts.
+
+On a stall the engine closes the connection, marks the alternative broken for its origin (RFC 7838 section 2.4: 5
+minutes, doubling; the backoff of a stall carries over the handshakes that work in between, since such a network lets
+handshakes through) and then, per request:
+
+- a request that may be repeated — an idempotent method (RFC 9110 section 9.2.2: GET, HEAD, OPTIONS, PUT, DELETE,
+  TRACE), a body that can be sent again (bytes, a writer, none), and no response yet — goes over TCP
+  (`fallback = QuicStalled`, the `fallback` event with a `QuicStalledException`, one `altSvcMarkedBroken` per stall);
+  a request that waited for the handshake was never sent and goes over TCP whatever its method;
+- any other fails at once with `QuicStalledException` (its `silence` and `probeTimeouts` say what was seen), and so
+  does the read of a response body that was under way: a response that began is never repeated.
+
+`stallDetection = false` waits for the QUIC idle timeout as before 0.3.0. `H3Only` (no TCP to go to), WebSockets and
+WebTransport sessions are not watched.
 
 #### Turning HTTP/3 off remotely
 
@@ -4516,6 +4571,7 @@ if (d != null && d.protocol != HttpProtocolVersion.HTTP_3_0) {
 | `GoAway` | the server refused the request with GOAWAY on every attempt | the server is stopping |
 | `StreamFailed` | one HTTP/3 stream failed and the idempotent request went again over HTTP/1.1 | `h3Failure` |
 | `Other` | any other HTTP/3 failure | `h3Failure` |
+| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request ([stall detection](#stalled-http3-connections)); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows (a firewall, NAT or VPN); `http3 { stallDetection }` |
 | `H2Refused` | the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this call or lately (the route offers only `http/1.1` for 5 minutes, doubling up to 2 days), so the call went over HTTP/1.1; why HTTP/3 was not used is in the log line as `h3Fallback=` | the server's HTTP/2 support for that route ([HTTP/2 on the client](#http2-on-the-client)) |
 
 The engine's `logger` gets one line per call that HTTP/3 could have served but did not (a lost race, a fallback, a
@@ -5869,6 +5925,9 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `httpsRecords` (*experimental*) | `HttpsRecordSource` | `HttpsRecordSource.Off` | 0.3.0 | HTTPS resource records (RFC 9460) as a source of HTTP/3 in `Auto`: `System` (the OS resolver) or `Exchange { query -> response }` (your DNS-over-HTTPS client) ([HTTPS records](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#https-records-experimental)) |
 | `httpsRecordExtraWait` (*experimental*) | `Duration` | 50 ms | 0.3.0 | how long a request waits for the HTTPS records after the origin's addresses resolved; 50 ms (RFC 9460 section 5.1) to 1 s, else the engine's creation fails with `IllegalArgumentException` |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | 0.2.0 | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5; INFINITE starts HTTP/1.1 only after HTTP/3 failed, on every network), else the engine's creation fails with `IllegalArgumentException` |
+| `stallDetection` (*experimental*) | `Boolean` | `true` | 0.3.0 | stall detection on the HTTP/3 connections the engine chose over TCP ([Stalled HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#stalled-http3-connections)): a path that stopped carrying packets closes the connection, marks the alternative broken and sends the request over TCP when it may be repeated (`fallback = QuicStalled`), else fails it with `QuicStalledException`; `false` waits for the QUIC idle timeout |
+| `stallProbeTimeouts` (*experimental*) | `Int` | `3` | 0.3.0 | probe timeouts in a row without an acknowledgement (RFC 9002 section 6.2) before a connection may count as stalled; 1..10, else the engine's creation fails with `IllegalArgumentException` |
+| `stallMinSilence` (*experimental*) | `Duration` | 2 s | 0.3.0 | the least time without any packet from the server, from the first unanswered probe timeout (before the handshake: without any answer at all), before a connection counts as stalled; 100 ms..60 s, else the engine's creation fails with `IllegalArgumentException` |
 | `networkId` | `() -> String?` | `{ null }` (one network) | 0.2.0 | identifies the current network; a change forgets broken marks, QUIC confirmation, HTTPS records and alternatives without `persist=1`; when it is not set, the networks `connectionMigration` follows take its place; the engine caches HTTPS records only when it sees the network |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | 0.2.0 | HTTP/3 settings of the engine's connections |
 | `endpoint` | `QuicEndpointConfig` | `QuicEndpointConfig.Default` | 0.2.0 | the client QUIC endpoint (bound to `0.0.0.0:0`, a dual-stack socket on the accelerated transport; a loopback server, `127.0.0.0/8` or `::1`, is reached from up to two more, one per family, bound to `127.0.0.1` and `::1` and created at first use; all share the session tickets) |
@@ -6056,6 +6115,7 @@ Search this page for the exact text or code you see; the table sends you to the 
 | `EndpointStats.connectionsRefused*`, `initialsDropped`, `statelessRateLimited` | [refusals and limits](#connections-are-refused-or-dropped) |
 | `421 Misdirected Request` from the Ktor server, `"421 Misdirected Request for <host>: …"` in its debug log | [the server answers 421](#the-server-answers-421-misdirected-request) |
 | a warning ending "it is not a trusted source of the PROXY protocol", `connectionRefused` with `PROXY protocol header`, a server behind a load balancer that resets every connection | [the PROXY protocol](#a-proxy-protocol-connector-resets-connections) |
+| `QuicStalledException`, `fallback = QuicStalled`, `"HTTP/3 connection stalled"` | [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `ConnectTimeoutException` on the Ktor client | [requests wait and then fail](#requests-wait-and-then-fail-with-connecttimeoutexception) |
 | a TLS 1.2 client refused with `protocol_version` or `handshake_failure`, `kuicksilver.tls.versions` refused | [TLS 1.2 clients](#a-tls-12-client-cannot-connect-to-the-server) |
 | `KslException.NativeLoad`, `Unavailable` | [native library](#kslexceptionnativeload-or-kslloaderavailability-is-unavailable) |
@@ -6576,6 +6636,7 @@ when a call that could have used HTTP/3 went over TCP; `null` when it went over 
 | `GoAway` | the server did not process the request (GOAWAY, `H3_REQUEST_REJECTED`) on any attempt |
 | `StreamFailed` | one request stream failed (reset, malformed response) and the idempotent request was repeated over HTTP/1.1 |
 | `Other` | any other HTTP/3 failure; `h3Failure` has the exception |
+| `QuicStalled` | the HTTP/3 connection stopped carrying packets under the request (a network that cuts UDP flows): the connection was closed, the alternative marked broken, and the request went over TCP: [stalled HTTP/3 connections](#calls-fail-with-quicstalledexception-or-fall-back-with-quicstalled) |
 | `H2Refused` | the server answered HTTP/2 with `HTTP_1_1_REQUIRED`: [HTTP/2 failures](#calls-over-http2-fail-or-a-server-misbehaves-with-http2) |
 
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
@@ -6589,6 +6650,22 @@ When HTTP/3 causes trouble on some networks or after a release and you need it o
 back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-remotely)). Clients in
 `H3Only` mode fail instead of using TCP. Before that, `response.kuicksilverDiagnostics` and a qlog trace
 ([Getting more information](#getting-more-information)) usually tell what goes wrong.
+
+#### Calls fail with `QuicStalledException`, or fall back with `QuicStalled`
+
+The HTTP/3 connection under the call stopped carrying packets in both directions: its probe timeouts went unanswered and
+nothing came back from the server for `stallMinSilence` (2 s), or a 0-RTT request got no answer at all ([Ktor: Stalled
+HTTP/3 connections](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
+drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine closed the
+connection and marked the alternative broken (5 minutes, doubling at each new stall on this network). An idempotent
+request without a response yet went over TCP (`fallback = QuicStalled`); a POST, a streamed body, or a response body
+under way failed with `QuicStalledException`, which the application may retry (the next call goes over TCP).
+
+- One stall now and then is the detection working. Many on one network: QUIC does not work there; the broken mark
+  already keeps the calls on TCP, and `networkId` makes a new network start afresh.
+- On a path with very long RTTs or long loss bursts, raise `stallMinSilence` or `stallProbeTimeouts`.
+- A qlog trace (`http3 { qlog }`) shows the probe timeouts (`pto_count`) and the silence.
+- `http3 { stallDetection = false }` waits for the QUIC idle timeout instead, as before 0.3.0.
 
 #### Requests go through a proxy, or not, unexpectedly
 

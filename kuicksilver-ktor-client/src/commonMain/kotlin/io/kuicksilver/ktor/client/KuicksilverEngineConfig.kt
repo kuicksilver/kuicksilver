@@ -117,6 +117,37 @@ public class Http3ClientConfig {
     public var hardDelay: Duration? = null
 
     /**
+     * Stall detection on HTTP/3 connections the engine chose over TCP (docs/guide/ktor.md, "Stalled HTTP/3 connections"):
+     * true by default. While a request runs on such a connection (`Auto`, `Preferred`, [quicHints]; not
+     * [Http3DiscoveryMode.H3Only], which has no TCP to go to, nor WebSockets and WebTransport sessions), a path that stopped
+     * carrying packets — [stallProbeTimeouts] probe timeouts in a row unanswered (RFC 9002 section 6.2) and no packet from the
+     * server for [stallMinSilence] — closes the connection, marks the alternative broken (RFC 7838 section 2.4) and sends the
+     * request over TCP when it may be repeated (an idempotent method, a body that can be sent again, no response yet:
+     * `FallbackReason.QuicStalled`); otherwise the call fails with [QuicStalledException] at once instead of at the idle
+     * timeout. A quiet watched connection sends a PING now and then (RFC 9000 section 10.1.2) so that a cut path shows.
+     * False waits for the QUIC idle timeout, as before 0.3.0.
+     */
+    @ExperimentalKuicksilverApi
+    public var stallDetection: Boolean = true
+
+    /**
+     * Probe timeouts in a row without an acknowledgement (RFC 9002 section 6.2) before a connection may count as stalled:
+     * 3 by default (with the PTO doubling at each, about 7 PTOs of time), 1..10; another value fails the engine's creation
+     * with [IllegalArgumentException]. See [stallDetection].
+     */
+    @ExperimentalKuicksilverApi
+    public var stallProbeTimeouts: Int = 3
+
+    /**
+     * The least time without any packet from the server, counted from the first unanswered probe timeout, before a
+     * connection counts as stalled: 2 s by default, 100 ms..60 s; another value fails the engine's creation with
+     * [IllegalArgumentException]. Before the handshake completed (a request on a 0-RTT connection) it is the time without
+     * any answer at all. See [stallDetection].
+     */
+    @ExperimentalKuicksilverApi
+    public var stallMinSilence: Duration = 2.seconds
+
+    /**
      * Identifies the current network; a change resets "broken" marks, QUIC confirmation and the HTTPS record cache, and drops
      * alternatives without `persist=1` ([clearOnNetworkChange]). null: one network. While it is not set, the networks
      * [connectionMigration] follows ([Http3ConnectionMigration.networks]) are the network, when it has them (the

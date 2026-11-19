@@ -388,6 +388,46 @@ internal class H3Pool(
             data.method.value in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS &&
             data.body.unwrap() is OutgoingContent.NoContent
 
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val stallSettings = StallSettings(config.http3.stallProbeTimeouts, config.http3.stallMinSilence)
+
+    /** The stall monitors of connections requests watch ([monitorFor]), under [lock]; each leaves as its connection ends. */
+    private val monitors = HashMap<Http3Connection, H3StallMonitor>()
+
+    /**
+     * Marks the alternatives of a stalled connection broken: the stall and the `origin|alternative` keys of the requests on
+     * it (the engine's; a stall during a response body happens after the request left the engine's fallback).
+     */
+    internal var stallMarker: (suspend (Stall, Set<String>) -> Unit)? = null
+
+    /** Called once per stalled connection, after the pool dropped it and before it is closed (tests). */
+    internal var stalledForTest: ((Http3Connection) -> Unit)? = null
+
+    /**
+     * [conn]'s stall monitor, started at its first use; on a stall the pool hands the connection to no new request (its
+     * entries go), the engine's logger hears of it, and the monitor closes it.
+     */
+    private suspend fun monitorFor(conn: Http3Connection): H3StallMonitor =
+        lock.withLock {
+            monitors[conn] ?: H3StallMonitor(conn, stallSettings, clock) { stall, keys ->
+                stallMarker?.let { mark -> (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch { mark(stall, keys) } }
+                launchUnderLock {
+                    connections.entries.removeAll { it.value.deferred.getCompletedOrNull() === conn }
+                    retired.removeAll { it.deferred.getCompletedOrNull() === conn }
+                    fresh.remove(conn)
+                }
+                if (events.logger.isEnabled(io.kuicksilver.quic.LogLevel.Warn)) {
+                    events.logger.log(io.kuicksilver.quic.LogLevel.Warn, stall.exception(null).message ?: "HTTP/3 connection stalled", null)
+                }
+                stalledForTest?.invoke(conn)
+            }.also { m ->
+                monitors[conn] = m
+                H3StallMonitor.launch(migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default), m) {
+                    launchUnderLock { monitors.remove(conn) }
+                }
+            }
+        }
+
     /** Connections past their lifetime that still carry requests: closed once they have none. */
     private val retired = ArrayList<H3Entry>()
 
@@ -1503,9 +1543,13 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>> = emptyList(),
         dns: RequestDns = config.newRequestDns(events.dnsObserver(data)),
         prefer: Http3Connection? = null,
+        // stall detection (`http3 { stallDetection }`): where TCP is the way out, never for a WebSocket
+        watchStall: Boolean = false,
     ): HttpResponseData {
         var attempts = 0
         data.attributes.remove(H3ClosedAfterGoAwayKey) // a mark of an earlier execution of the same request data
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val watched = watchStall && config.http3.stallDetection && !data.attributes.contains(WEBSOCKETS_KEY)
         while (true) {
             val (entry, conn) =
                 try {
@@ -1516,7 +1560,10 @@ internal class H3Pool(
                     throw H3NotSent(e)
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too
+            var watch: H3StallMonitor.Watch? = null
             try {
+                // from before the wait for the handshake: a request on a 0-RTT connection into a path that drops UDP
+                if (watched) watch = monitorFor(conn).watch("${io.kuicksilver.ktor.client.originKeyOf(data.url)}|${t.host}:${t.port}")
                 afterAcquireForTest?.invoke()
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
@@ -1543,7 +1590,7 @@ internal class H3Pool(
                     ) {
                         webSocket(conn, data, callContext, extraHeaders)
                     } else {
-                        exchange(conn, data, callContext, extraHeaders)
+                        exchange(conn, data, callContext, extraHeaders, watch)
                     }
                 // in use until the call ends (its body read or abandoned), not just until the response head; a WebSocket
                 // until its session ended, which may be after the call (WebSocketLifetime): a connection whose count fell to
@@ -1558,12 +1605,27 @@ internal class H3Pool(
                     }
                 val job = callContext[Job]
                 when {
-                    session != null -> session.invokeOnEnd { entry.release(clock()) }
-                    job == null -> entry.release(clock())
-                    else -> job.invokeOnCompletion { entry.release(clock()) }
+                    session != null -> {
+                        watch?.end()
+                        session.invokeOnEnd { entry.release(clock()) }
+                    }
+
+                    job == null -> {
+                        watch?.end()
+                        entry.release(clock())
+                    }
+
+                    else -> {
+                        val w = watch
+                        job.invokeOnCompletion {
+                            w?.end()
+                            entry.release(clock())
+                        }
+                    }
                 }
                 return r
             } catch (e: Throwable) {
+                watch?.end()
                 entry.release(clock())
                 // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
                 if (reported) {
@@ -1574,6 +1636,11 @@ internal class H3Pool(
                 // the server sent GOAWAY, then closed the connection under this request with H3_NO_ERROR (a stopping server at
                 // the end of its grace period): an orderly close (RFC 9114 section 5.2), not a failure of the alternative
                 if (conn.goAwayReceived.value != null && isPeerShutdownClose(e)) data.attributes.put(H3ClosedAfterGoAwayKey, Unit)
+                // the connection stalled under the request: the stall is the failure, with what the request saw as its cause
+                val stall = watch?.stall
+                if (stall != null && e !is CancellationException) {
+                    throw if (e is H3NotSent) H3NotSent(stall.exception(e.cause)) else stall.exception(e)
+                }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {
@@ -1603,6 +1670,7 @@ internal class H3Pool(
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>>,
+        watch: H3StallMonitor.Watch? = null,
     ): HttpResponseData {
         val requestTime = GMTDate()
         val body = data.body.unwrap()
@@ -1627,6 +1695,8 @@ internal class H3Pool(
                 )
             }
         data.attributes.put(PriorityUpdaterKey, response.priorityUpdater()) // for HttpResponse.updatePriority
+        // a stall while the body is read fails the read with QuicStalledException, before the connection's close does
+        watch?.onStall { response.body.cancel(it) }
         callContext[Job]?.invokeOnCompletion { cause ->
             // the call is over: an unread rest of the body is abandoned (STOP_SENDING); a reader still waiting sees why
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)

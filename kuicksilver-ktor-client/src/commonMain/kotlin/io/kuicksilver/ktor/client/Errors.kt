@@ -109,3 +109,35 @@ public class H3BodyConsumed(
     message: String,
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
+
+/**
+ * An HTTP/3 request's connection stalled (docs/guide/ktor.md, "Stalled HTTP/3 connections"; `http3 { stallDetection }`):
+ * the path stopped carrying packets — [probeTimeouts] probe timeouts in a row went unanswered (RFC 9002 section 6.2) and
+ * nothing came back from the server for [silence], or, while the request waited on a 0-RTT connection, nothing came back
+ * at all — as on a network that cuts UDP flows. The engine closed the connection and marked the HTTP/3 alternative broken
+ * (RFC 7838 section 2.4). A request that may be repeated (an idempotent method, RFC 9110 section 9.2.2, a body that can be
+ * sent again, no response yet) goes over TCP instead and never shows this exception, only `FallbackReason.QuicStalled`;
+ * one that may not fails with it at once, instead of at the connection's idle timeout (RFC 9000 section 10.1), and so does
+ * the read of a response body that was under way. [cause] is what the request itself saw when the connection was closed,
+ * if anything.
+ */
+@io.kuicksilver.annotations.ExperimentalKuicksilverApi
+public class QuicStalledException internal constructor(
+    internal val stall: io.kuicksilver.ktor.client.h3.Stall,
+    cause: Throwable?,
+) : kotlinx.io.IOException(stallMessage(stall), cause) {
+    /** How long nothing came back from the server when the stall was declared. */
+    public val silence: kotlin.time.Duration get() = stall.silence
+
+    /** The probe timeouts in a row without an acknowledgement then (RFC 9002 section 6.2). */
+    public val probeTimeouts: Int get() = stall.probeTimeouts
+}
+
+private fun stallMessage(s: io.kuicksilver.ktor.client.h3.Stall): String =
+    if (s.handshakeComplete) {
+        "HTTP/3 connection stalled: no packet from the server for ${s.silence.inWholeMilliseconds} ms after " +
+            "${s.probeTimeouts} probe timeouts in a row (UDP is likely cut on the path)"
+    } else {
+        "HTTP/3 connection stalled: no answer from the server for ${s.silence.inWholeMilliseconds} ms while the request " +
+            "waited for the QUIC handshake (UDP is likely blocked on the path)"
+    }

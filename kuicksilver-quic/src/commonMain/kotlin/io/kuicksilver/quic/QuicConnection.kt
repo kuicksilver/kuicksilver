@@ -158,6 +158,16 @@ public interface QuicConnection : AutoCloseable {
      */
     public suspend fun keyUpdate()
 
+    /**
+     * Sends one PING (RFC 9000 section 19.2) to test the path for liveness (section 10.1.2): the peer acknowledges it on a
+     * live path, and on a path that carries nothing any more it leads to probe timeouts (RFC 9002 section 6.2,
+     * [ConnectionStats.ptoCount]) where a quiet connection would show none. True when the PING was queued; false before
+     * the handshake completed (its own probes test the path then), once the connection is closing or closed, and for
+     * implementations outside this library (the default).
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun ping(): Boolean = false
+
     /** RFC 5705 exporter over the connection's TLS session; runs on the endpoint loop (the TLS object is not shared across threads). */
     public suspend fun exportKeyingMaterial(
         label: String,

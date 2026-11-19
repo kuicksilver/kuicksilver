@@ -254,6 +254,36 @@ class BrokenAltSvcTest {
         assertFalse(broken.isBroken("o", "a"))
     }
 
+    /**
+     * A stall (a network that cuts UDP flows after the handshake) keeps its backoff across the handshakes that work: each
+     * new stall doubles it, where a handshake would otherwise start the backoff again at 5 minutes.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun stallBackoffSurvivesAWorkingHandshake() {
+        broken.markBroken("o", "a", FallbackReason.QuicStalled)
+        now += 5.minutes.inWholeMilliseconds
+        assertFalse(broken.isBroken("o", "a"))
+        broken.markWorking("o", "a") // the next handshake completes...
+        assertFalse(broken.isBroken("o", "a"))
+        broken.markBroken("o", "a", FallbackReason.QuicStalled) // ...and the request after it stalls again
+        now += 5.minutes.inWholeMilliseconds
+        assertTrue(broken.isBroken("o", "a"), "10 minutes the second time")
+        now += 5.minutes.inWholeMilliseconds
+        assertFalse(broken.isBroken("o", "a"))
+    }
+
+    /** A live stall mark is not lifted by a handshake that completed (the race's background attempt, say). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_handshakeDoesNotLiftAStall() {
+        broken.markBroken("o", "a", FallbackReason.QuicStalled)
+        broken.markWorking("o", "a")
+        assertEquals(FallbackReason.QuicStalled, broken.brokenReason("o", "a"))
+        broken.onNetworkChanged()
+        assertNull(broken.brokenReason("o", "a"), "a new network forgets it")
+    }
+
     /** A peer cycling origins (or networks) cannot grow the marks without bound: the oldest go past `MAX_ORIGINS` (threat-model 3.18). */
     @Test fun negative_brokenMarksBounded() {
         val n = AltSvcCache.MAX_ORIGINS + 500

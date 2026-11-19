@@ -1105,6 +1105,18 @@ public class ConnectionCore internal constructor(
         return false
     }
 
+    /**
+     * Queues one PING (RFC 9000 section 19.2) for the next 1-RTT packet, as keep-alive does: an ack-eliciting packet that
+     * tests the path for liveness (section 10.1.2), which loss recovery then probes like any other (RFC 9002 section 6.2).
+     * False before the handshake completed (the handshake's own retransmissions and probes test the path then) and once
+     * the connection is closing.
+     */
+    internal fun requestPing(): Boolean {
+        if (state != ConnectionState.Established && state != ConnectionState.Confirmed) return false
+        timers.keepAlivePending = true
+        return true
+    }
+
     /** When a refused [initiateKeyUpdate] may succeed (3 x PTO after the confirming ACK): a timer, so a retrying caller is woken. */
     internal var keyUpdateRetryAt = TimeMark.NEVER
 

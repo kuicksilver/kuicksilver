@@ -14,6 +14,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Ktor client: stall detection on HTTP/3 connections (experimental `http3 { stallDetection }`, on by default, with
+  `stallProbeTimeouts`, 3, and `stallMinSilence`, 2 s; `docs/guide/ktor.md`, "Stalled HTTP/3 connections"), after a
+  field report from a network that cuts UDP flows: a request on an HTTP/3 connection the engine chose over TCP (`Auto`,
+  `Preferred`, `quicHints`) waited for the QUIC idle timeout (30 s) when the flow was cut after the handshake, and a 0-RTT
+  request into a path that drops UDP waited for the connect timeout (10 s). Now a connection whose probe timeouts go
+  unanswered (3 in a row, RFC 9002 section 6.2) with no packet from the server for 2 s, or, before the handshake, with no
+  answer at all for 2 s, is closed, its alternative marked broken (RFC 7838 section 2.4; the backoff of a stall carries
+  over the handshakes that work between stalls), and the request goes over TCP when it may be repeated (idempotent,
+  RFC 9110 section 9.2.2, a replayable body, no response yet: `FallbackReason.QuicStalled`), else fails at once with
+  `QuicStalledException`, as does a response body being read. A quiet watched connection sends a PING now and then
+  (RFC 9000 section 10.1.2) so that a slow server or an idle long-lived response (which acknowledge it) is never taken
+  for a stall while a path cut with nothing in flight still shows. `H3Only`, WebSockets and WebTransport are not watched.
+- QUIC: `QuicConnection.ping()` (experimental) sends one PING to test the path for liveness (RFC 9000 section 10.1.2);
+  on a dead path it leads to probe timeouts (`stats.ptoCount`) where a quiet connection shows none.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.

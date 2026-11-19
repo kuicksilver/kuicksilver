@@ -307,6 +307,7 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
     abstract suspend fun sendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...) // io.kuicksilver.quic/QuicConnection.sendDatagram|sendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
     open fun trySendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy, io.kuicksilver.quic/StreamPriority): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.quic/QuicConnection.trySendDatagram|trySendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy;io.kuicksilver.quic.StreamPriority){}[0]
     open suspend fun awaitHandshake() // io.kuicksilver.quic/QuicConnection.awaitHandshake|awaitHandshake(){}[0]
+    open suspend fun ping(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.ping|ping(){}[0]
     open suspend fun sendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy, io.kuicksilver.quic/StreamPriority) // io.kuicksilver.quic/QuicConnection.sendDatagram|sendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy;io.kuicksilver.quic.StreamPriority){}[0]
 }
 

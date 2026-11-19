@@ -88,6 +88,14 @@ internal class KuicksilverEngine(
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val wsLimit = config.webSocketMaxMessageSize
         require(wsLimit >= 1) { "webSocketMaxMessageSize must be at least 1, was $wsLimit" }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val stallPtos = config.http3.stallProbeTimeouts
+        require(stallPtos in 1..10) { "stallProbeTimeouts must be 1..10, was $stallPtos" }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val stallSilence = config.http3.stallMinSilence
+        require(stallSilence >= MIN_STALL_SILENCE && stallSilence <= MAX_STALL_SILENCE) {
+            "stallMinSilence must be 100 ms..60 s, was $stallSilence"
+        }
     }
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -184,6 +192,13 @@ internal class KuicksilverEngine(
     // internal for tests (0-RTT reconnects); one WebSocket CONNECTING per host over HTTP/1.1 and HTTP/3 together
     internal val h3 = H3Pool(config, events, migrationScope = migrationScope, webSocketConnecting = h1.webSocketConnecting)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
+
+    init {
+        // a stall marks the alternatives of the requests on the connection, also one found while a response body was read
+        h3.stallMarker = { stall, keys ->
+            for (k in keys) markStalled(stall, k.substringBefore('|'), k.substringAfter('|'))
+        }
+    }
     private val altSvcLock = Mutex()
 
     /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released; internal for tests. */
@@ -1454,7 +1469,7 @@ internal class KuicksilverEngine(
         tcpDns: RequestDns = dns, // where the fallback over TCP connects
     ): HttpResponseData =
         try {
-            h3.execute(target, data, callContext, extraHeaders, dns, prefer)
+            h3.execute(target, data, callContext, extraHeaders, dns, prefer, watchStall = true)
         } catch (
             e: CancellationException,
         ) {
@@ -1462,11 +1477,16 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
+            (e.cause as? QuicStalledException)?.let { markStalled(target, data, it, d) }
             fallbackToH1(target, data, callContext, e, tcpDns, d)
         } catch (
             e: Throwable,
         ) {
-            if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
+            // a stall marks the alternative broken whether or not the request may go again (RFC 7838 section 2.4)
+            if (e is QuicStalledException) markStalled(target, data, e, d)
+            // RFC 9110 section 9.2.2: only an idempotent request is repeated, and only before any response (execute returns
+            // with the response head: a failure after it is the body's, which the call reads, never here)
+            if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception || e is QuicStalledException) &&
                 data.body.isReplayable()
             ) {
                 fallbackToH1(target, data, callContext, e, tcpDns, d)
@@ -1474,6 +1494,32 @@ internal class KuicksilverEngine(
                 throw e
             }
         } // a streamed body HTTP/3 consumed is never replayed
+
+    /**
+     * The connection under [data] stalled ([QuicStalledException]): the alternative is marked broken, once per stall and
+     * (origin, alternative) however many requests the stall failed, so its backoff doubles once (RFC 7838 section 2.4).
+     */
+    private suspend fun markStalled(
+        target: H3Target,
+        data: HttpRequestData,
+        e: QuicStalledException,
+        d: ProtocolDiagnostics,
+    ) {
+        markStalled(e.stall, originKey(data.url), "${target.host}:${target.port}")
+        d.markedBroken = true
+    }
+
+    /** [alt] of [origin] stalled under [stall]: marked broken by the first of its requests or the pool's monitor ([H3Pool.stallMarker]). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun markStalled(
+        stall: io.kuicksilver.ktor.client.h3.Stall,
+        origin: String,
+        alt: String,
+    ) {
+        if (!stall.claim("$origin|$alt")) return
+        altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, FallbackReason.QuicStalled) }
+        events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
+    }
 
     private suspend fun fallbackToH1(
         target: H3Target,
@@ -1492,8 +1538,9 @@ internal class KuicksilverEngine(
         val reason = classifyH3Failure(cause) ?: FallbackReason.Other
         d.fallback = reason
         val r = tcp(data, callContext, ProtocolReason.Fallback, d, dns = dns)
-        // a connection the server closed with H3_NO_ERROR after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works
-        if (marksAlternativeBroken(h3Failure) && !data.attributes.contains(H3ClosedAfterGoAwayKey)) {
+        // a connection the server closed with H3_NO_ERROR after its GOAWAY ended in order (RFC 9114 section 5.2): the alternative works;
+        // a stall marked it already (markStalled)
+        if (marksAlternativeBroken(h3Failure) && cause !is QuicStalledException && !data.attributes.contains(H3ClosedAfterGoAwayKey)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"
             altSvcLock.withLock { brokenAltSvc.markBroken(origin, alt, reason) }
@@ -1553,6 +1600,12 @@ internal val MIN_HTTPS_RECORD_EXTRA_WAIT = kotlin.time.Duration.parse("50ms")
 
 /** The longest `httpsRecordExtraWait` allowed. */
 internal val MAX_HTTPS_RECORD_EXTRA_WAIT = 1.seconds
+
+/** The shortest `stallMinSilence` allowed. */
+internal val MIN_STALL_SILENCE = kotlin.time.Duration.parse("100ms")
+
+/** The longest `stallMinSilence` allowed. */
+internal val MAX_STALL_SILENCE = 60.seconds
 
 /** The longest an HTTPS record lookup runs, whatever the connect timeout. */
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds

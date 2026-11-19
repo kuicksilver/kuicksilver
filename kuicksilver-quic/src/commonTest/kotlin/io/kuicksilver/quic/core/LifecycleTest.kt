@@ -193,6 +193,48 @@ class LifecycleTest {
         }
     }
 
+    /**
+     * `QuicConnection.ping` (RFC 9000 section 10.1.2: a PING tests the connection for liveness): on a quiet connection
+     * nothing is in flight, so a path that stops carrying packets shows no probe timeout; a requested PING is ack-eliciting,
+     * the peer acknowledges it on a live path, and on a dead one it leads to probe timeouts (RFC 9002 section 6.2), the signal
+     * the client engine's stall detection reads.
+     */
+    @Test fun requestedPingIsAcknowledgedOnALivePath() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            silence(p, 1.seconds)
+            val sent = p.client.stats.packetsSent
+            assertTrue(p.client.requestPing())
+            silence(p, 500.milliseconds)
+            assertTrue(p.client.stats.packetsSent > sent, "the PING went out")
+            assertEquals(0L, p.client.stats.bytesInFlight, "and was acknowledged")
+            assertEquals(0, p.client.stats.ptoCount)
+        }
+    }
+
+    @Test fun requestedPingProbesADeadPath() {
+        val p = CorePair()
+        p.use { _ ->
+            assertTrue(p.handshake())
+            silence(p, 1.seconds)
+            p.filterToServer = { _, _ -> false }
+            p.filterToClient = { _, _ -> false }
+            silence(p, 3.seconds)
+            assertEquals(0, p.client.stats.ptoCount, "a quiet connection shows nothing of a dead path")
+            assertTrue(p.client.requestPing())
+            silence(p, 3.seconds)
+            assertTrue(p.client.stats.ptoCount >= 3, "probe timeouts after the PING: ${p.client.stats.ptoCount}")
+        }
+    }
+
+    @Test fun negative_noPingBeforeTheHandshakeCompleted() {
+        val p = CorePair()
+        p.use { _ ->
+            assertEquals(false, p.client.requestPing(), "before 1-RTT keys the handshake's own probes test the path")
+        }
+    }
+
     @Test fun keepAlivePingsKeepConnectionAlive() {
         val p = CorePair(clientQuic = quicConfig { keepAlive = 20.seconds })
         p.use { _ ->

@@ -209,6 +209,7 @@ private fun Char.isLogSafe(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || 
  * | [GoAway] | the server kept refusing the request with GOAWAY | the server is shutting down |
  * | [StreamFailed] | one request stream failed and the request was repeated over HTTP/1.1 | `h3Failure` |
  * | [Other] | any other HTTP/3 failure | `h3Failure` |
+ * | [QuicStalled] | the HTTP/3 connection stopped carrying packets under the request (stall detection); the request went over TCP and the alternative is marked broken | a network that cuts UDP flows: a firewall, NAT or VPN; `http3 { stallDetection }` |
  * | [H2Refused] | over HTTP/1.1: the server answered HTTP/2 with HTTP_1_1_REQUIRED (now or lately) | the server's HTTP/2 configuration; `http2 { enabled = false }` |
  *
  * New values may be added in later versions (docs/stability.md).
@@ -282,6 +283,14 @@ public enum class FallbackReason {
     Other,
 
     /**
+     * The HTTP/3 connection stalled under the request (`http3 { stallDetection }`): probe timeouts in a row went unanswered
+     * and nothing came back from the server (or, on a 0-RTT connection, nothing at all), as on a network that cuts UDP
+     * flows. The connection was closed, the alternative marked broken (RFC 7838 section 2.4), and the request, which could
+     * be repeated (RFC 9110 section 9.2.2), went over TCP; one that could not failed with `QuicStalledException`. Since 0.3.0.
+     */
+    QuicStalled,
+
+    /**
      * The call went over HTTP/1.1 because the server answered HTTP/2 with HTTP_1_1_REQUIRED (RFC 9113 section 7), on this
      * call (repeated over HTTP/1.1, when that was safe: otherwise the call failed with `Http11RequiredException`) or lately (its route offers only `http/1.1` for 5 minutes, doubling up to 2 days at
      * each new refusal). The reason HTTP/3 was not used is in the log line as `h3Fallback=`.
@@ -330,6 +339,10 @@ internal fun classifyH3Failure(e: Throwable?): FallbackReason? =
 
         is H3NotSent -> {
             classifyH3Failure(e.cause) ?: FallbackReason.Other
+        }
+
+        is QuicStalledException -> {
+            FallbackReason.QuicStalled
         }
 
         is ConnectTimeoutException -> {
