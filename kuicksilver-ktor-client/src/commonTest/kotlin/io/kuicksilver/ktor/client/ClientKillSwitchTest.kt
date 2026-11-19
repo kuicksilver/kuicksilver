@@ -547,6 +547,51 @@ class ClientKillSwitchTest {
             }
         }
 
+    /**
+     * The same after the server's GOAWAY, known to the client once the request holds the connection: the request is refused
+     * before anything of it went out (RequestNotProcessed.neverSent), its streamed body stays unread, and the engine sends
+     * it again on a new connection with that same body (an HTTP/3 request that ended its body on every failure lost it).
+     */
+    @Test fun streamedBodyRefusedByServerGoAwayIsRepeated() =
+        h3Test {
+            coroutineScope {
+                val gate = CompletableDeferred<Unit>().apply { complete(Unit) }
+                val accepted = AtomicReference(emptyList<Http3Connection>())
+                val ep = recordingH3(gate, accepted)
+                val port = ep.localAddress.port
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        val held = AtomicReference<Http3Connection?>(null)
+                        val fired = AtomicBoolean(false)
+                        engine.h3.beforeCountForTest = { conn -> held.compareAndSet(null, conn) }
+                        engine.h3.afterAcquireForTest = {
+                            if (fired.compareAndSet(false, true)) {
+                                launch { runCatching { accepted.load().single().goAway() } }
+                                withTimeoutOrNull(5.seconds) { held.load()!!.goAwayReceived.first { it != null } }
+                                    ?: fail("the client never received the server's GOAWAY")
+                            }
+                        }
+                        val r =
+                            c.post("https://127.0.0.1:$port/echo") {
+                                setBody(
+                                    io.ktor.utils.io
+                                        .ByteReadChannel("streamed body"),
+                                ) // a ReadChannelContent: not replayable
+                            }
+                        assertTrue(fired.load(), "the GOAWAY came while the request held the connection")
+                        assertEquals("streamed body", r.bodyAsText(), "the repeated request carried the same body")
+                        assertEquals(2, r.kuicksilverDiagnostics?.attempts, "the request went twice")
+                        assertEquals(2, accepted.load().size, "the second attempt used a new connection")
+                    }
+                } finally {
+                    ep.close()
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
     /** A race whose HTTP/3 setup was retired by closeHttp3Connections() still serves its request on it: one handshake. */
     @Test fun raceSetupRetiredMidwayIsStillUsed() =
         h3Test {

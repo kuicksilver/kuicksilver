@@ -65,7 +65,9 @@ public class Http3Connection private constructor(
      * [Http3Request]) throws IllegalArgumentException before a stream is opened; so do its trailers, which also abandon
      * the request (the stream is reset with H3_REQUEST_CANCELLED). A request with a `protocol` (Extended CONNECT) waits
      * for the peer's SETTINGS and throws IllegalArgumentException unless they enable it (RFC 9220 section 3); [connect]
-     * is the usual way to make one.
+     * is the usual way to make one. A request that fails ends its [Http3Request.body] with the failure, so a coroutine
+     * writing the body is released, except one that fails with [Http3Exception.RequestNotProcessed] whose `neverSent` is
+     * true: that body was never read and can be sent again.
      */
     public suspend fun request(request: Http3Request): Http3Response {
         check(role == Http3Role.Client) { "request() is client-only" }

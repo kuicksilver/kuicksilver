@@ -160,6 +160,25 @@ internal suspend fun H3Session.request(
     r: Http3Request,
     keepOpen: Boolean = false,
     caller: ContinuationInterceptor? = null,
+): Http3Response =
+    try {
+        requestRepeating(r, keepOpen, caller)
+    } catch (e: Throwable) {
+        // the request failed for good (a 0-RTT rejection was already repeated): an application writing its body is released,
+        // whether a sender ever read the body or not (a connection that ended, a request refused as malformed, a caller
+        // that gave up while the request waited for stream credit). Not one refused before anything of it left: its body
+        // was never read, RequestNotProcessed.neverSent promises it can be sent again, and the Ktor engine does so (on a
+        // new connection, or over HTTP/1.1). The transport reason itself: ktor-io drops a cancel cause that is a
+        // ClosedWriteChannelException (its copy is null)
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        if (!(e is Http3Exception.RequestNotProcessed && e.neverSent)) r.body?.cancel(H3Session.transportCause(e) ?: e)
+        throw e
+    }
+
+private suspend fun H3Session.requestRepeating(
+    r: Http3Request,
+    keepOpen: Boolean,
+    caller: ContinuationInterceptor?,
 ): Http3Response {
     val mayGoEarly =
         testSendUnsafeEarly || (r.allowEarlyData && !keepOpen && r.body == null && r.method in Http3EarlyDataPolicy.SAFE_METHODS)
@@ -346,14 +365,8 @@ private suspend fun H3Session.exchange(
             // a server that answered without the rest of the request may stop it before our FIN left (with H3_NO_ERROR, or
             // abruptly with another code): the upload ends, and the response, when one comes, still counts (RFC 9114 section
             // 4.1: clients MUST NOT discard complete responses because their request was terminated abruptly)
-            val stop = stoppedByPeer(e)
-            // the application writing the request body is released: only the sender (or its cancellation) ends the body
-            // otherwise, and a request that fails here (the connection ended while its HEADERS were flushed) has none. The
-            // transport reason itself: ktor-io drops a cancel cause that is a ClosedWriteChannelException (its copy is null).
-            // Not for a rejection of 0-RTT: request() sends the request again, body included, and nothing of it was read yet
-            val q = H3Session.transportCause(e)
-            if (sender == null && q !is QuicException.StreamError.EarlyDataRejected) r.body?.cancel(stop ?: q ?: e)
-            if (stop == null) throw e
+            val stop = stoppedByPeer(e) ?: throw e // released by request(), which ends the body of a failed request
+            if (sender == null) r.body?.cancel(stop) // the application writing the request body is released
         }
         val frames =
             RequestFrames(

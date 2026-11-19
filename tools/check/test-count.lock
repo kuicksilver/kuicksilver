@@ -939,6 +939,9 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.res
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.stopAndResetOfOneRequestSpendOneToken
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RapidResetTest.theStopWatchEndsWithTheCompleteResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RemoteAddressTest.requestRemoteAddressFollowsAMigrationTheSessionMissed
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.invalidRequestReleasesItsBody
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestOnAnEndedConnectionReleasesItsBody
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestBodyEndTest.requestRefusedByGoAwayKeepsItsBody
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestFramesTest.negative_headersLengthAboveIntRangeIsTooLarge
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aCallerCancelledAsTheRequestReturnsAbandonsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.RequestTest.aFewGreaseFramesOnRequestStreamsAreFree
@@ -1265,6 +1268,9 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3ConnectionSeededTest.s
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.capsules
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.H3FrameFuzzTest.h3Frames
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.QpackDecodeFuzzTest.qpackDecode
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.negative_requestRefusedByGoAwayWhileWaitingKeepsItsBody
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenItsCallerGivesUp
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.WaitingRequestBodyTest.requestWaitingForStreamCreditReleasesItsBodyWhenTheConnectionEnds
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.runtime.SectionDeadlineRaceTest.negative_aSectionReadAsItsDeadlineFiresIsTheSection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WebTransportRetentionTest.aClosedSessionIsNotHeldByItsConnection
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.webtransport.WtCloseDeadlineRaceTest.negative_aCloseWrittenAsTheDeadlineFiresIsNotReset
@@ -1793,6 +1799,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.raceSetupRetiredMidwayIsStillUsed
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.reEnableUsesLearnedAltSvc
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.streamedBodyRefusedByOwnGoAwayIsRepeated
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.streamedBodyRefusedByServerGoAwayIsRepeated
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.switchWarningAtMostOncePerFiveMinutes
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webSocketWhileDisabledIsHttp3Disabled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webTransportConnectingWhenClosedFails

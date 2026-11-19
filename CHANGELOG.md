@@ -1392,6 +1392,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: a request that failed before its body was sent left the body alone, so a coroutine writing it waited
+  forever: the connection ended while the request's HEADERS were flushed (a flaky `ConnectionEndTest` on macOS CI), it
+  had already ended, the request was refused as malformed, or its caller gave up while it waited for stream credit. Only
+  the body's sender, never started then, ended the body. A failed request now ends its body with the failure; one refused
+  before anything of it left (`RequestNotProcessed.neverSent`) still leaves it unread, and the Ktor engine still sends it
+  again with that body.
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the
