@@ -5871,6 +5871,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.aFailedClien
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.aFailedTransportIsTheCauseOfAHandshakeFailure
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.aFailedTransportIsTheCauseOfATruncation
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.aJobCancelledAsTheHandshakeCompletesDoesNotFreeTheSessionUnderIt
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.aLateTicketInTheDefaultCacheLeavesBothAFullHandshake
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.cancellationNotWrapped
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.cancellingTheCallersJobFreesTheNativeSession
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.TlsConnectionTest.clientFlightLargerThanTheBioPairCompletes
