@@ -4,7 +4,7 @@ Kuicksilver's own code, the third patch carried under ADR-0019 (docs/adr/0019-op
 openssl-4.1.0-ech-hrr-rejection.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_3, applied by
 tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes the upstream
 issue filed for it (research note M1; OpenSSL pull request #33405, open, fixes the per-entry part in the store decode but
-not the 1500-byte limit). Applies unchanged to OpenSSL master at df4c3359.
+not the 1500-byte limit). Applies unchanged to OpenSSL master at 4a5704abc6d2.
 
 The bug: SSL_ech_get1_retry_config decodes the server's retry_configs into an OSSL_ECHSTORE before handing them out,
 and that decode (ech_store.c ech_decode_and_flatten) fails the whole list when one ECHConfig fails

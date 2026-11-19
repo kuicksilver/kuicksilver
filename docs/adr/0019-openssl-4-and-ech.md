@@ -93,9 +93,8 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   - bugs B and C are known upstream (B: issue #33231, fixed; C: pull request #33233), and their patches carry
     upstream's code verbatim (source hunks only, the build has no tests). Patch 4's bug is known upstream (issue #32170, pull request #32930 with the same fix); for patch 3, pull request #33405
     covers part of the bug. The rest of patch 3 and patches 5 to 7 are drafted (2026-11-19) as one upstream report, to be
-    filed (drafts E, H, I, J, K). Only the section 6.1.7 deviation is filed (#33831). Patches 3 to 7 apply to master at
-    df4c3359 too (git apply); they are minimal, apply unchanged to OpenSSL master at df4c3359, and their
-    headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
+    filed (drafts E, H, I, J, K). Only the section 6.1.7 deviation is filed (#33831). Patches 3 to 7 are minimal, apply to OpenSSL master
+    at 4a5704abc6d2 and 3a3f13563825 too (git apply), and their headers name the bug and the fix. Each patch is dropped on its own condition above, or with the first release
     that fixes its issue;
   - the patches live in the repository and are pinned by their SHA-256 next to the tarball's pin (`patch`,
     `patch_sha256`, then `patch_2`, `patch_2_sha256`, and so on up to `patch_9`); `tools/openssl/build.sh` applies them in
@@ -111,12 +110,13 @@ quic-go, Android's platform TLS), and without it the server name of every connec
   - **Bug L (found 2026-11-19).** A store made by `OSSL_ECHSTORE_new_config` builds its HPKE info from other bytes than
     the same key read back from PEM or published in DNS, so a server using such a store directly decrypts no client
     configured from DNS. `ksl` loads keys from PEM only (`ksl_ech_keys_new`, `OSSL_ECHSTORE_read_pem`) and never hands
-    over a store made in memory; C test `ech_accept` pins that path. Drafted for the upstream report, to be filed.
+    over a store made in memory; C test `ech_accept` pins that path. Upstream: covered by OpenSSL pull request #32397
+    (open), so it is not filed again.
   - **Keys sharing a config_id (found 2026-11-19).** OpenSSL 4.1's server tries only the first key whose config_id
     matches and does not go on to the next when it does not decrypt (RFC 9849 section 7.1 has it go on). Two keys made
     apart share a config_id in 1 case of 256, and a client of the second would be rejected. `ksl_ech_keys_new` refuses
     such a set (section 4.1: distinct config_ids); the error says to make one of the keys again. Drafted for the upstream
-    report, to be filed.
+    report (2026-11-19), to be filed.
 - **On rejection the certificate is checked against the `public_name`**, in `ksl_verify.c` and on the paused path of the
   platform verifiers alike.
   The implementation comes with the move to 4.1.x, not with this ADR.

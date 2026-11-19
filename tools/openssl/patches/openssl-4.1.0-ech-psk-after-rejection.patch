@@ -3,7 +3,7 @@ OpenSSL 4.1.0: the ECH client resumes a session in the outer handshake after a r
 Kuicksilver's own code, the sixth patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
 openssl-4.1.0-ech-ee-checks.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_6, applied by
 tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
-report drafted 2026-11-19, to be filed). Applies to OpenSSL master at df4c3359 on top of the patches before it (git apply; extensions_clnt.c is 99
+report drafted 2026-11-19, to be filed). Applies to OpenSSL master at 4a5704abc6d2 on top of the patches before it (git apply; extensions_clnt.c is 99
 lines further down there).
 
 The bug: RFC 9849 section 6.1.2: "If ECH is rejected and the client-facing server replies with a "pre_shared_key"

@@ -3,7 +3,7 @@ OpenSSL 4.1.0: a GREASE ECH payload has a random length instead of a real offer'
 Kuicksilver's own code, the seventh patch carried under ADR-0019 (docs/adr/0019-openssl-4-and-ech.md), applied after
 openssl-4.1.0-ech-psk-after-rejection.patch; pinned by its SHA-256 in gradle/openssl.toml as patch_7, applied by
 tools/openssl/apply-patch.pl to the verified tarball, and dropped with the first OpenSSL release that fixes it (upstream
-report drafted 2026-11-19, to be filed). Applies to OpenSSL master at df4c3359 on top of the patches before it (git apply; extensions_clnt.c is 99
+report drafted 2026-11-19, to be filed). Applies to OpenSSL master at 4a5704abc6d2 on top of the patches before it (git apply; extensions_clnt.c is 99
 lines further down there).
 
 The bug: RFC 9849 section 6.2.1 has a GREASE client "Set the payload field to a randomly generated string of L+C bytes,

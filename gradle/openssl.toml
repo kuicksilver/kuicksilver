@@ -21,21 +21,21 @@ patch_2_sha256 = "eb23e1ba5067175b8550c6595837922b97d9008661d856342a426c0fd535e1
 # hands them over as sent, so one ECHConfig OpenSSL cannot use no longer drops the others (ksl checks each one). Kuicksilver's
 # own code; dropped with the first release that fixes the upstream issue.
 patch_3 = "tools/openssl/patches/openssl-4.1.0-ech-retry-configs-raw.patch"
-patch_3_sha256 = "9beb570284cc7a6541b3f4e65ddcb3f5286bd8cc7a22595dde352274149ff588"
+patch_3_sha256 = "4cf0a4719d453ce2667ac943b7d541bcc5a03d4a46b46159ff8d202b8dc91241"
 # The fourth carried patch (ADR-0019, S1-rfc): the inner server_name padding of RFC 9849 section 6.1.3, max(0, M - D) (4.1.0 pads
 # 9 bytes less). Kuicksilver's own code; upstream issue #32170 (pull request #32930); dropped with the first release that fixes it.
 patch_4 = "tools/openssl/patches/openssl-4.1.0-ech-sni-padding.patch"
-patch_4_sha256 = "3c1d08cf4186cc028e41209b76ecf8ab4c11f55e9e973b870595871e810accf8"
+patch_4_sha256 = "51aa52df86606da99e0c640ef0e9b6923c48d85f45dfa8c9b36f3ef809cd9a99"
 # The fifth carried patch (ADR-0019): the ECH client checks the encrypted_client_hello of EncryptedExtensions (RFC 9849
 # sections 5, 6.1.6, 6.2.1: unsupported_extension after an acceptance, decode_error for retry_configs that do not parse or
 # have bytes after them; none handed out after GREASE). Kuicksilver's own code; dropped with the first release that fixes it.
 patch_5 = "tools/openssl/patches/openssl-4.1.0-ech-ee-checks.patch"
-patch_5_sha256 = "224dd152aec31616f543e866f784dbef8ea5b33f355e3c8c8a5a8ff025625054"
+patch_5_sha256 = "03771c0f5206eaea3814967f785ae8c14721631ee083de1937762c4a49e921b4"
 # The sixth carried patch (ADR-0019): illegal_parameter for a pre_shared_key in the ServerHello after an ECH rejection (RFC 9849
 # section 6.1.2). Kuicksilver's own code; dropped with the first release that fixes it.
 patch_6 = "tools/openssl/patches/openssl-4.1.0-ech-psk-after-rejection.patch"
-patch_6_sha256 = "7072a4f9b0e85ae01949aad8532bf4c46d405d8961b8f11452686a944c0c9793"
+patch_6_sha256 = "e2b37d68ef29140306fafab17bdcd85bb4fd6eed65c04ba7be8ef943ed3c5b18"
 # The seventh carried patch (ADR-0019): a GREASE ECH payload of the length a real offer of the same ClientHello would have (RFC
 # 9849 section 6.2.1: L+C). Kuicksilver's own code; dropped with the first release that fixes it.
 patch_7 = "tools/openssl/patches/openssl-4.1.0-ech-grease-length.patch"
-patch_7_sha256 = "ab2a69ecd66c26b75434cbe99792368fb48907eee1e7b24fa28508ddfdf1b99f"
+patch_7_sha256 = "dd007b63bb37d0989dc49dd1eb609de966e3adf8ebbd8a0afb7b730108b74279"
