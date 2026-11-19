@@ -5949,6 +5949,7 @@ kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negat
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_pinNotInValidatedChain
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_quicServerPinnedClientCertRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_tofuKeyChange
+kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_wrongEkuRejected
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.negative_wrongKeySameName
 kuicksilver-tls/src/commonTest	io.kuicksilver.tls.VerificationNegativeTest.notYetValidIsAlert45

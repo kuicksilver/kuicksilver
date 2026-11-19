@@ -2581,6 +2581,11 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   holds and lets a drained one go, and a finished stream gives its buffer back. The allocation stays within the
   connection window plus twice what the streams hold unread (`stream.ReassemblyRetainedCapacityTest`); below that bound
   nothing changes. The fuzz invariant of every stream manager checks the count and the bound.
+- TLS, `TrustConfig.Tofu` (the class of curl #23475, host verification where peer verification is off): Tofu validates
+  no chain and the shared matcher refused a certificate for another name, but the key was stored for the host before
+  that check: a server presenting another name's certificate on first contact (a default virtual host, or someone on
+  the path) left its key pinned for the host, and the host's own key failed with `PinMismatch` from then on. The name
+  is now checked before the store is touched (`VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse`).
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

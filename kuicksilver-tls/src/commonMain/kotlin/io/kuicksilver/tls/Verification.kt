@@ -5,6 +5,7 @@
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import kotlinx.coroutines.Dispatchers
@@ -190,11 +191,21 @@ internal class Verification(
         }
     }
 
+    @OptIn(ExperimentalKuicksilverApi::class)
     private suspend fun tofu(
         store: TofuStore,
         presented: List<Certificate>,
         reference: HostName,
     ): VerifyResult {
+        // the name first (the shared matcher in ksl checks it again after this verdict): a certificate that does not name the
+        // host is no first contact with it, and its key is never stored for it (curl #23475 class: Tofu validates no chain, and
+        // used to remember the key of a server presenting another name's certificate, refused by the name check afterwards, so
+        // that the host's own key failed with PinMismatch from then on)
+        if (!presented[0].matchesHost(reference)) {
+            return VerifyResult.Rejected(
+                VerifyReason.HostnameMismatch(reference.value, runCatching { presented[0].dnsNames }.getOrDefault(emptyList())),
+            )
+        }
         val leaf = presented[0].spkiSha256
         val known = store.get(reference.value)
         return when {

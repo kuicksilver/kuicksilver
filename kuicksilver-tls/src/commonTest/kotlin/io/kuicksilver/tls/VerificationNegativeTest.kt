@@ -169,6 +169,29 @@ class VerificationNegativeTest {
         }, "key change")
     }
 
+    /**
+     * curl #23475 class (host verification lost where peer verification is off): Tofu validates no chain, and the name is still
+     * checked by the shared matcher, on first use too, and nothing is stored for a name the certificate does not carry.
+     */
+    @Test fun negative_tofuStillChecksTheNameOnFirstUse() {
+        val m = HashMap<String, SpkiSha256>()
+        val store =
+            object : TofuStore {
+                override suspend fun get(name: String) = m[name]
+
+                override suspend fun put(
+                    name: String,
+                    pin: SpkiSha256,
+                ) {
+                    m[name] = pin
+                }
+            }
+        expectReject(run(Fixtures.client(TrustConfig.Tofu(store), name = "wrong.test")), 42, {
+            true
+        }, "tofu first use but name mismatch -> ksl matcher")
+        assertEquals(null, m["wrong.test"], "no key remembered for a name the certificate does not carry")
+    }
+
     @Test fun negative_cnOnlyCertRejected() =
         expectReject(run(Fixtures.client(ca, name = "cn.test"), listOf(TestCerts.serverCnOnly), TestCerts.serverCnOnlyKey), 42, {
             it is VerifyReason.HostnameMismatch
