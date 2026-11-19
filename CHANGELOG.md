@@ -1294,7 +1294,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the application had stopped reading (the relay waited for room in the application's channel) or, for an abort, kept its
   write channel open without writing (the pump waited for its next bytes). The descriptor was closed; the coroutines
   stayed, one set per such connection. A close and an abort now end both pumps
-  (`TlsSocketReleaseTest`; found by the leak sentinel).
+  (`TlsSocketReleaseTest`; found by the leak sentinel). A behaviour change: once `close()` has closed the session and
+  the raw socket, the application's read channel gets nothing more; a read still waiting on it ends with a cancellation,
+  and plaintext the session had not handed to that channel yet is dropped (read what you need before you close).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

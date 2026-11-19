@@ -35,49 +35,67 @@ as a bug in the code; a test is changed only when it is wrong or fragile, and th
 
 ### The leak sentinel
 
-Every test, on every platform, must close what the library opened for it. The owners of the library's resources
-record themselves in `LeakRegistry` (`kuicksilver-native`, internal API) when they are made and remove themselves once
-they released everything: QUIC endpoints (until every coroutine of the loop ended), connections and streams, the portable
-UDP sockets, HTTP/3 sessions, server requests (while `activeServerRequests` holds them), WebTransport sessions and datagram
-flows (CONNECT-UDP and WebTransport), HTTP/2 connections, TCP sockets and listeners, a started Ktor server engine (until
-its job and everything under it ended) and a client engine (until the cleanup after `close()` ran). ksl's own counters
-add the native objects a connection or a socket makes and frees itself: TLS sessions, keys, session references, UDP
-sockets and their wake descriptors (`ksl.ssl`, `ksl.key`, `ksl.session`, `ksl.udp`, `ksl.wake`).
+Every test, on every platform it runs on, must close what the library opened for it. The owners of the library's
+resources record themselves in `LeakRegistry` (`kuicksilver-native`, internal API) when they are made and remove
+themselves once they released everything: QUIC endpoints (until every coroutine of the loop ended), connections and
+streams, the portable UDP sockets, HTTP/3 sessions, server requests (while `activeServerRequests` holds them),
+WebTransport sessions and datagram flows (CONNECT-UDP and WebTransport), HTTP/2 connections, TCP sockets (`tcp.socket` for
+one connected out, `tcp.accepted` for one a listener of ours accepted) and listeners, a started Ktor server engine (until
+its job and everything under it ended) and a client engine (until the cleanup after `close()` ran). ksl's own counters add
+the native objects a connection or a socket makes and frees itself: TLS sessions, keys, session references, UDP sockets
+and their wake descriptors (`ksl.ssl`, `ksl.key`, `ksl.session`, `ksl.udp`, `ksl.wake`).
 
-The sentinel (`kuicksilver-testing/sentinel`, copied into every module's test source sets by
-`build-logic/src/main/kotlin/kuicksilver.leak-sentinel.gradle.kts`) runs after each test, after its `@AfterTest` methods,
-and after each test class: on the JVM through a JUnit extension found by autodetection, on Kotlin/Native through the test
-executable's entry point (`leakSentinelTestMain` wraps the suites the compiler generated, since kotlin.test there has no
-global extension; a class's check is one more test of the class, `leakSentinelClassCheck`, as the launcher does not catch
-a failure after a class), on an Android device through the runner builder AndroidJUnitRunner is given. A test fails when an
-object it opened is still recorded, or a ksl counter is above where it was when the test started; teardown that ends
-after the test returned (a client's close, a connection's draining) is waited for, woken by every close and every native
-free, bounded by 10 s (`KUICKSILVER_LEAK_WAIT_MS`). The failure names each kind and its count;
-`KUICKSILVER_LEAK_SITES=1` keeps the stack that opened each object and prints it. `LeakSentinelTest` holds the negative
-controls: an object left open, a native key left open, an allow entry that covers only its kinds, and that the sentinel is
-installed in the run at all; `LeakSentinelEndpointTest` an endpoint left open.
+The sentinel (`kuicksilver-testing/sentinel`) is copied into the test source sets of every module with tests by
+`build-logic/src/main/kotlin/kuicksilver.leak-sentinel.gradle.kts`, which `kuicksilver.kmp` applies; the modules not built
+with it (`kuicksilver-engine-interop`, `-bench`, `-soak`, `-interop`) apply it themselves, and `tools/check/sentinel.py`
+fails on a module with tests that applies neither. It runs after each test, after its `@AfterTest` methods, and after each
+test class: on the JVM through a JUnit extension found by autodetection; on Kotlin/Native through the test executable's
+entry point (`leakSentinelTestMain` wraps the suites the compiler generated, since kotlin.test there has no global
+extension; a class's check is one more test of the class, `leakSentinelClassCheck`, as the launcher does not catch a
+failure after a class; it uses the launcher's `kotlin.native.internal.test` API, listed in
+[ktor-internal-api.md](ktor-internal-api.md#kotlin-internals-the-test-harness-depends-on) to re-check on Kotlin upgrades);
+on an Android device through the runner builder AndroidJUnitRunner is given. `LeakSentinelInstalledTest`, copied with it,
+runs in every module on every target and fails when the wiring broke.
+
+A test fails when an object it opened is still recorded, or a ksl counter is above where it was when the test started
+(the process caches are emptied before that count is taken). Teardown that ends after the test returned (a client's
+close, a connection's draining) is waited for, woken by every close and every native free, bounded by 10 s
+(`KUICKSILVER_LEAK_WAIT_MS`). The failure names each kind and its count; `KUICKSILVER_LEAK_SITES=1` keeps the stack that
+opened each object and prints it. Teardown that took longer than 1.5 s (`KUICKSILVER_LEAK_SLOW_MS`) is reported with its
+time, the test and the kinds it waited for, and fails the test with `KUICKSILVER_LEAK_STRICT=1`. Strict mode is not on in
+CI yet: in the JVM suites (2026-11-19), `ServerH1TimeoutTest.negative_abortedConnectionsReleaseTheirSockets` takes 3 s, the
+bound of its TLS clients' close, which waits for the server's `close_notify` behind a response the clients never read;
+the macOS suites of `kuicksilver-native` and `kuicksilver-ktor-network` pass it, the others were not run strict. A ksl counter that ends
+below its start (the test freed objects it did not make) is reported too: such a drop can hide a leak of the same kind.
+`LeakSentinelTest` holds the negative controls (an object left open, a native key left open, an allow entry that covers
+only its kinds, a slow close in strict mode, a native object freed that the test did not make);
+`LeakSentinelEndpointTest` an endpoint left open.
 
 Two things are no test's leak. A fixture that lives for the whole test process and is made by whichever test needs it
 first (the QUIC-LB keys of `QuicLbFixtures`, the shared server of the Ktor client contract tests, the 0-RTT ticket pool of
-the fuzz targets) is made inside `LeakSentinel.shared { }`. A cache of the library that lives for the process and holds
-native objects for no one in particular (`SessionCache.Default`, the TLS session cache of connections opened without an
-engine) registers with `LeakRegistry.processCache`; the sentinel empties it before it counts.
+the fuzz targets, the PAC download client) is made inside `LeakSentinel.shared { }` (from any thread). A cache of the
+library that lives for the process and holds native objects for no one in particular (`SessionCache.Default`, the TLS
+session cache of connections opened without an engine) registers with `LeakRegistry.processCache`, whether tracking is on
+or not (a cache made before the sentinel started is not missed); the sentinel empties it before it counts.
 
 In production the registry is off: an owner pays one volatile read when it is made and a `Long` field (no completion
-handler, no allocation; `DatagramDemux` makes its map of ids only while tracking), a close of id 0 returns at once, and a
-native free costs one more read. The hot paths (a packet, a frame, a read or a write) are not touched.
+handler is installed and nothing is allocated per owner; `DatagramDemux` makes its map of ids only while tracking), a
+close of id 0 returns at once, and a native free costs one more read. Once per process, the registry object itself is
+initialized and `SessionCache.Default` registers its cache. The hot paths (a packet, a frame, a read or a write) are not
+touched.
 
 [`tools/check/sentinel.allow`](../tools/check/sentinel.allow) lists what is tolerated for now, each line with
 its reason: `allow` lets a test class or a test leave the named kinds open (one a pending fix removes names its branch or
-commit; an entry naming a test also covers its class's check); `per-class` checks a class only after all its tests, for fixtures its tests share.
-[`tools/check/sentinel.py`](../tools/check/sentinel.py) checks the file ([repository checks](#repository-checks)),
-and the list only shrinks.
+commit; an entry naming a test also covers its class's check); `per-class` checks a class only after all its tests, for
+fixtures its tests share. [`tools/check/sentinel.py`](../tools/check/sentinel.py) checks the file
+([repository checks](#repository-checks)), and the list only shrinks.
 
 What it does not see: objects opened before a test class started (a top-level fixture) are judged by no test; the TLS
 contexts and private keys are cached across tests and not counted; a `PacketBuffer` is counted per thread and judged only
 by the sans-IO fixtures (`CorePair`, `EndpointPair`); file descriptors are not counted (Ktor's and the JDK's own come and
 go with class loading and selectors); timers and coroutines are seen only through the scope of their owner; on an Android
-device a class with a runner of its own (`@RunWith`) is not checked; Android host tests run JUnit 4 and are not checked.
+device a class with a runner of its own (`@RunWith`) is not checked, and an ignored class (`@Ignore`) is left to JUnit,
+which skips it; Android host tests are compiled by the gate, not run, and have no sentinel.
 
 ## 2. Review: the code and the RFC text
 
@@ -208,7 +226,7 @@ commit as the code it records, so the change is in the diff a reviewer reads.
 | [`test-hooks.py`](../tools/check/test-hooks.py) | a test that sets a global test hook (a `var <name>ForTest` at top level, in an object or a companion object, or a `set...ForTest(x)` function there) and does not put it back to its initial value in a `finally` after the set or in `@AfterTest` (`@After`, `@AfterEach`, `@AfterClass`, `@AfterAll`) of its class; a global hook without an initial value | none: the test resets it, or the hook becomes per instance |
 | [`tracked-hashes.py`](../tools/check/tracked-hashes.py) | in every tracked text file, a commit hash by the rule of `commit-msg.sh` above (the two scans are checked to agree): one that names a commit outside the history of `HEAD` and `origin/main`, or a strong cited one that names nothing; write another repository's as `<name>@<hash>` or a URL, a value in backticks | `tools/check/tracked-hashes.allow`, `<hash> \| <reason>`, for a hash of another repository that has to stand alone |
 | [`wildcard-binds.py`](../tools/check/wildcard-binds.py) | in the test source sets, the harness modules and the samples' tests, a socket bound to the wildcard address in a file that talks to loopback (`127.0.0.1`, `::1`, `localhost`, `getLoopbackAddress()`, ktor-server's `rawHttp`/`slowHttp`): a `tlsConnector`/`sslConnector`/`plainConnector`/Ktor `connector` without `host`, `host = "0.0.0.0"` or `"::"`, a wildcard `InetSocketAddress` handed to a bind or an open (also through a local `val`, or a `val` holding the wildcard host), `java.net.InetSocketAddress(port)`, a bare `"0.0.0.0"` argument of a bind, `.bind(port)`, `.bind(port = ...)`, `.bind()`, `.bind { }`, `.bind(null[, backlog])` or `.bind(localAddress = null)` without an address, `embeddedServer(..., port = ...)` or `embeddedServer(factory, port)` without `host`, `ServerSocket(port[, backlog[, null]])`, `DatagramSocket()`/`DatagramSocket(port)`/`DatagramSocket(port, null)`, an interop server without `host`; in a test source set that runs on Kotlin/Native (any but `jvm*Test` and `android*Test`), loopback or not, a ktor-network `aSocket(...).udp()`/`.tcp()` (a `.configure` between them included) bound to an IPv6 address (a literal, also with a zone ID or as a raw string, an `InetSocketAddress` by position or by `hostname =`, or a `val` whose initializer holds one; a wildcard `"::"` the other rules report counts once), which ktor-network on Native binds as the wildcard `::` and whose datagrams to `::1` never arrive (KTOR-10017: bind with `DatagramIo.open` or `bindTcp`); an entry that matches nothing. On macOS a wildcard socket shares its port with one another process holds on 127.0.0.1, and traffic to 127.0.0.1 reaches that one | `tools/check/wildcard-binds.allow`, `<path> \| <line> \| <reason>` |
-| [`sentinel.py`](../tools/check/sentinel.py) | in `tools/check/sentinel.allow` (the leak sentinel's allowlist, [The leak sentinel](#the-leak-sentinel)): a line without four fields, an unknown mode, an unknown kind (none a main source opens in `LeakRegistry`, nor a ksl counter), a `per-class` line with kinds, a reason under eight words, a class or test no test source declares, a line twice; against the merge base with `main`: a new line, or a line whose kinds grew | the allowlist itself; it only shrinks |
+| [`sentinel.py`](../tools/check/sentinel.py) | a module with tests whose build script applies neither `kuicksilver.kmp` nor `kuicksilver.leak-sentinel`; in `tools/check/sentinel.allow` (the leak sentinel's allowlist, [The leak sentinel](#the-leak-sentinel)): a line without four fields, an unknown mode, an unknown kind (none a main source opens in `LeakRegistry`, nor a ksl counter), a `per-class` line with kinds, a reason under eight words, a class or test no test source declares, a line twice; against the merge bases with `main` and `origin/main` (each that has the file): a new line, or a line whose kinds grew | the allowlist itself; it only shrinks |
 
 What the checks cannot see: `test-discovery.py` reads the brace structure of the sources, not their types, so a test
 whose value comes through a lambda (`= runBlocking { ... }`, a fixture helper) is judged by `test-bytecode.py` alone, and
