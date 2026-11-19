@@ -19,8 +19,9 @@ t() { # <name> <expected exit> <expected listed steps, or a pattern of the refus
 }
 t onlyListAndRange          0 "25 50 51 55"                          -- --only 25,50-51,55
 t onlyLeadingZeros          0 "5 7"                                  -- --only=05,007
-t fromWithDependencies      0 "$(seq 47 73 | tr '\n' ' ' | sed 's/ $//')" -- --from 47
-t onlyWithItsProducer       0 "41 42"                                -- --only 41,42
+t fromWithDependencies      0 "$(seq 49 76 | tr '\n' ' ' | sed 's/ $//')" -- --from 49
+t onlyWithItsProducer       0 "43 44"                                -- --only 43,44
+t oldPlatformSteps          0 "34 35 56"                             -- --only 34-35,56
 t negative_noValue          2 "needs a value"                        -- --only
 t negative_optionAsValue    2 "needs a value"                        -- --only --skip-android
 t negative_emptyList        2 "an empty step list"                   -- --only ""
@@ -33,13 +34,13 @@ t negative_negative         2 "not a step number"                    -- --only -
 t negative_halfRange        2 "not a step number"                    -- --only 3-
 t negative_backwards        2 "runs backwards"                       -- --only 5-3
 t negative_stepZero         2 "no step 0"                            -- --only 0-3
-t negative_pastLast         2 "past the last step"                   -- --only 3,74
+t negative_pastLast         2 "past the last step"                   -- --only 3,77
 t negative_hugeNumber       2 "past the last step"                   -- --only 3-123456789012345678901234
 t negative_fromLineBreak    2 "not a step number"                    -- --from $'44\n1'
-t negative_fromPastLast     2 "past the last step"                   -- --from 74
+t negative_fromPastLast     2 "past the last step"                   -- --from 77
 t negative_onlyTwice        2 "given twice"                          -- --only 3 --only 4
 t negative_onlyAndFrom      2 "together"                             -- --only 3 --from 4
-t negative_missingProducer  2 "select those steps too: --only 41,44" -- --only 44
-t negative_missingMarkers   2 "select those steps too: --only 63-65" -- --only 65
-t negative_fromMissesLink   2 "select those steps too: --only 58,66-73" -- --from 66
+t negative_missingProducer  2 "select those steps too: --only 43,46" -- --only 46
+t negative_missingMarkers   2 "select those steps too: --only 66-68" -- --only 68
+t negative_fromMissesLink   2 "select those steps too: --only 61,69-76" -- --from 69
 [ "$fails" = 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }

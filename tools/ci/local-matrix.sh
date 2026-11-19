@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # The CI matrix on the owner's macOS host: the same steps as .github/workflows/build.yml, with the same names and
 # the same module and interop case lists (tools/ci/matrix.sh), so moving to GitHub Actions is a change of runner, not of scripts. Docker provides Linux and mingw; the Android
-# emulator must be running for the device steps.
+# emulator must be running for the device steps but the API 24 one, which starts and stops its own (tools/ci/avd-api24.sh).
+# The old-platform steps (JVM tests on JDK 17 and 25, device tests on API 24) test only the modules changed since origin/main
+# and their dependents (tools/ci/changed-modules.sh); KSL_MATRIX_ALL_MODULES=1 makes them test every module.
 # Usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows] [--with-browser]
 #                                                      [--only <steps> | --from <n>]
 # --with-interop also runs the QUIC Interop Runner against every peer with both images (tools/interop/run-local.sh --check-required): hours, needs the peer images.
@@ -159,6 +161,32 @@ win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does
   grep -Eq 'tests +[1-9]' <<< "$summary" || { echo "FAIL: no tests ran"; return 1; }
   ! grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]' <<< "$summary"
 }
+jdk_tests() { # <N>: CI's jdk-compat job for JDK N: the JVM suites, compiled against the JDK 17 API as always, run on a JDK N
+  # toolchain (-Pkuicksilver.test.jdk, found through org.gradle.java.installations.paths as CI finds setup-java's), from
+  # JDK 24 on with restricted native access denied unless enabled (JEP 472); the modules of tools/ci/changed-modules.sh
+  local v="$1" home mods; local -a jvm_args=()
+  home=$(/usr/libexec/java_home -v "$v" 2>/dev/null) || home=""
+  if [ -z "$home" ] || ! grep -Eq "^JAVA_VERSION=\"${v}[.\"]" "$home/release" 2>/dev/null; then
+    echo "no JDK $v: /usr/libexec/java_home -v $v finds none (Homebrew: brew install openjdk@$v)"; return 2
+  fi
+  # shellcheck disable=SC2086
+  mods=$(bash tools/ci/changed-modules.sh $KSL_MODULES) || return
+  [ -n "$mods" ] || { echo "no module to test on JDK $v (KSL_MATRIX_ALL_MODULES=1 tests every one)"; return 0; }
+  [ "$v" -lt 24 ] || jvm_args=("-Pkuicksilver.test.jvmArgs=--illegal-native-access=deny --enable-native-access=ALL-UNNAMED")
+  echo "== JDK $v: $home"
+  # shellcheck disable=SC2046,SC2086
+  $G --continue -Pkuicksilver.test.jdk="$v" "-Porg.gradle.java.installations.paths=$home" ${jvm_args[@]+"${jvm_args[@]}"} $(ksl_tasks jvmTest $mods)
+}
+android_api24() { # CI's android job at API 24: androidConnectedCheck (with its one retry of a stalled APK install) of the
+  # kuicksilver.kmp modules tools/ci/changed-modules.sh selects, on the AVD ksl_api24 (emulator-5580), never another device
+  local mods
+  # shellcheck disable=SC2046
+  mods=$(bash tools/ci/changed-modules.sh $(grep -l 'id("kuicksilver.kmp")' kuicksilver-*/build.gradle.kts | cut -d/ -f1)) || return
+  [ -n "$mods" ] || { echo "no module to test on API 24 (KSL_MATRIX_ALL_MODULES=1 tests every one)"; return 0; }
+  # shellcheck disable=SC2086
+  KSL_CONNECTED_TASKS="$(ksl_tasks androidConnectedCheck $mods)" bash tools/ci/avd-api24.sh run \
+    bash tools/ci/android-connected-check.sh "--max-workers=${KSL_GATE_WORKERS:-2}" -q -Pkotlin.incremental=false
+}
 interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so it finds for the current ABI; only one built by
   # this run's Docker JVM steps is known to be of this commit, so without both of them the files are removed and rebuilt
   local nm k fresh=1
@@ -241,6 +269,8 @@ step --pre macos "c-tests: macos-arm64 (decoder-only)"     bash tools/c-test.sh 
 step "jvm: all module tests"                   bash -c "$G $KSL_JVM_TESTS :kuicksilver-engine-interop:compileTestKotlinJvm :kuicksilver-bench:compileTestKotlinJvm :kuicksilver-soak:compileTestKotlinJvm "'$(git ls-files "kuicksilver-*/src/androidHostTest/*" | cut -d/ -f1 | sort -u | sed "s/.*/:&:compileAndroidHostTest/") $(grep -l "id(\"kuicksilver.kmp\")" kuicksilver-*/build.gradle.kts | cut -d/ -f1 | sed "s/.*/:&:compileAndroidDeviceTest/") && python3 -I tools/check/test-bytecode.py'
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "jvm: engine interop (Ktor engines, OkHttp, JDK, Netty)" $G :kuicksilver-engine-interop:jvmTest   # docs/spec/interop.md "Engine interop"; about a minute
+step "jvm: module tests on JDK 17"              jdk_tests 17   # CI's jdk-compat (17): the changed modules and their dependents
+step "jvm: module tests on JDK 25"              jdk_tests 25   # CI's jdk-compat (25), restricted native access denied
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
 # the samples' test classes are read by tools/check/test-bytecode.py too (the instrumented test of the demo app compiled here)
 step "sample: compose-demo (build, tests)"     bash -c "$G -p samples/compose-demo :composeApp:allTests :composeApp:assembleAndroidMain :androidApp:assembleDebug :androidApp:compileDebugAndroidTestKotlin :composeApp:linkDebugFrameworkIosSimulatorArm64 :server:test && python3 -I tools/check/test-bytecode.py --targets samples"   # its own build, verified against gradle/verification-metadata.xml
@@ -259,12 +289,13 @@ step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-cl
 step --needs "android: AAR" "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
 step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh && bash tools/prefix/check-no-unprefixed-test.sh'
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
-step "check: local-matrix step selection"        bash tools/ci/local-matrix-test.sh   # --dry-run only: the refusals of --only/--from
+step "check: local-matrix step selection"        bash -c 'bash tools/ci/local-matrix-test.sh && bash tools/ci/changed-modules-test.sh && bash tools/ci/android-connected-check-test.sh'   # --dry-run only: the refusals of --only/--from; the module scope of the old-platform steps on fixed path lists
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
 step "android: connection migration (emulator, host peer)" $G :kuicksilver-ktor-client:androidMigrationDeviceTest   # a server on the host, reached as 10.0.2.2 across the emulator's own network
 step "android: compose demo migration (emulator, host server)" $G -p samples/compose-demo :androidApp:migrationDemoDeviceTest   # HTTP/3 survives the switch, OkHttp breaks; a skip fails
+step "android: device tests on API 24 (emulator)" android_api24   # CI's android (24): its own AVD and emulator, started and stopped here
 fi
 # shellcheck disable=SC2086
 step "native: macosArm64 tests"                 $G $KSL_MACOS_TESTS
@@ -373,6 +404,14 @@ if [ -n "$selection" ]; then
   echo "selection: --${selection%%=*} ${selection#*=}: $([ "$cnt" = 1 ] && echo step || echo steps) $(picked_ranges), $cnt of $total; a partial run, never a gate (its record: build/ci/gate/<commit>.partial)"
 fi
 pre_wanted=" "; for k in $(picked); do pre_wanted="$pre_wanted${pres[k]} "; done
+# the module scope of the old-platform steps, when one is selected (the steps themselves log it too)
+for k in $(picked); do
+  case "${names[k]}" in "jvm: module tests on JDK "*|"android: device tests on API 24 (emulator)") ;; *) continue ;; esac
+  echo "scope of the old-platform steps (JDK 17 and 25: these modules; API 24: those of them with the kuicksilver.kmp plugin):"
+  # shellcheck disable=SC2086
+  bash tools/ci/changed-modules.sh $KSL_MODULES 2>&1 >/dev/null | sed 's/^/  /'
+  break
+done
 wants() { [[ "$pre_wanted" == *" $1 "* ]]; }
 # "interop" (the JVM interop image) is the Linux OpenSSL of the platforms build-image.sh packs, found as it finds them:
 # KSL_INTEROP_PLATFORMS, else the Docker server's architecture (not uname -m, which a Rosetta shell reports as x86_64 on
