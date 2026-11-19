@@ -230,6 +230,7 @@ step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/
 step --pre macos "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
+step --pre mingw "c-tests: mingw-x64 (cross-built, -Werror)" bash tools/c-test.sh mingw-x64   # CI's linux-native step, built only (no Windows host): a POSIX-only helper a shared test calls fails here
 # shellcheck disable=SC2086
 # the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
 # value-returning, static or private test, one with parameters, in an object, a local or private class, an abstract class
@@ -294,7 +295,7 @@ step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
 # against this dll (-Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost); there is no Windows host
-# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; tools/c-test.sh mingw-x64
+# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; the step "c-tests: mingw-x64"
 # cross-builds it here).
 fi
 if [ "$with_interop" = 1 ]; then

@@ -107,7 +107,7 @@ refuses to start if any of them fails. What the steps cover:
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
 | Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
-| C | the `ksl` C tests under ASan and UBSan on macOS; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
+| C | the `ksl` C tests under ASan and UBSan on macOS; for mingw-x64 cross-built with `-Werror`, not run; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |
