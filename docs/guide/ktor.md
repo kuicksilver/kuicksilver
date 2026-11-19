@@ -931,6 +931,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.webSocketsOverHttp2` | accept RFC 8441 WebSockets on HTTP/2 connections (`true`); see [WebSockets over HTTP/2](#websockets-over-http2) |
 | `kuicksilver.udpSocketCount` | endpoint loops on the UDP port (`1`) |
 | `kuicksilver.proxyProtocol.trustedSources`, `.headerTimeout`, `.maxHeaderSize` | the PROXY protocol on the deployment port: the proxies allowed to send the header (a list, or one comma-separated string; unset: off), how long it may take (`5s`) and its largest size in bytes (`4096`); refused next to `-sslPort`; see [PROXY protocol](#proxy-protocol) |
+| `kuicksilver.quic.initialUdpPayloadSize`, `.maxSendUdpPayloadSize`, `.maxUdpPayloadSize`, `.pmtud`, `.maxIdleTimeout`, `.handshakeTimeout`, `.keepAlive`, `.maxBidiStreams`, `.maxUniStreams`, `.allowMigration` | the QUIC transport of the HTTP/3 listeners, each the `QuicConfig` option of its name (unset: its default); an unknown key under `kuicksilver.quic` or a value out of range fails the start; see [QUIC transport keys](configuration.md#quic-transport-keys) and, for tunnels, [Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard) |
 | `ktor.deployment.connectionIdleTimeoutSeconds` | idle HTTP/1.1 keep-alive timeout (`45`) |
 
 An `application.conf` (HOCON) for a TLS and HTTP/3 server on port 443 whose certificate certbot renews; every key not

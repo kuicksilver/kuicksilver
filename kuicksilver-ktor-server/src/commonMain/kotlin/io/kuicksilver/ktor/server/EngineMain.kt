@@ -9,6 +9,7 @@ import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.loadCommonConfiguration
 import io.ktor.util.logging.KtorSimpleLogger
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.KeyExchangeGroups
@@ -39,7 +40,11 @@ import kotlin.time.Duration.Companion.seconds
  * `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`,
  * `kuicksilver.webSocketsOverHttp3`, `kuicksilver.webSocketsOverHttp2` (on by default), `kuicksilver.udpSocketCount` (endpoint loops on the UDP port, every platform with a QUIC
  * server), `kuicksilver.proxyProtocol.trustedSources`, `headerTimeout` and `maxHeaderSize` (the PROXY protocol on the
- * deployment port, [ProxyProtocolConfig]; off by default).
+ * deployment port, [ProxyProtocolConfig]; off by default), and the QUIC transport of the HTTP/3 listeners under `kuicksilver.quic`
+ * ([KuicksilverApplicationEngine.Configuration.quic], each key the `QuicConfig` option of its name): `initialUdpPayloadSize`,
+ * `maxSendUdpPayloadSize`, `maxUdpPayloadSize` (bytes), `pmtud` and `allowMigration` (`true`/`false`), `maxIdleTimeout`,
+ * `handshakeTimeout` and `keepAlive` (durations such as `30s`; `0` is none for the idle timeout and off for keep-alive),
+ * `maxBidiStreams` and `maxUniStreams`.
  */
 public object EngineMain {
     /** Where configuration warnings go before the application exists (a client CA file with non-CA certificates). */
@@ -61,8 +66,9 @@ public object EngineMain {
      * or is set without the identity files,
      * `kuicksilver.tls.ocspStapling` is set without the identity files, a boolean key is not
      * `true`/`false`, or `kuicksilver.maxTcpConnections`,
-     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, or a
-     * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`. Throws
+     * `kuicksilver.maxTcpConnectionsPerIp` or one of the `kuicksilver.quic*` limits is not a whole number in range, a
+     * `kuicksilver.proxyProtocol.*` key is invalid or set without `trustedSources`, or a `kuicksilver.quic.*` key is not one of
+     * the QUIC keys, does not parse or is out of the range of its `QuicConfig` option (e.g. `initialUdpPayloadSize` below 1200). Throws
      * `kotlinx.io.IOException` when a PEM file (`kuicksilver.tls.certificateChain`, `privateKey`, `clientCa`) cannot be read
      * or is larger than 1 MiB, and when the chain file (with `kuicksilver.tls.reloadInterval`) or the client CA file also holds
      * a private key. Throws `TlsException.Config` when a PEM file holds no certificate or a damaged one, the key does not
@@ -216,6 +222,93 @@ public object EngineMain {
             ?.toInt()
             ?.let { udpSocketCount = it }
         deploymentProxyProtocol = parseProxyProtocol(config)
+        parseQuic(config, quic)?.let { quic = it }
+    }
+
+    /**
+     * The `kuicksilver.quic.*` keys ([QUIC_KEYS]) applied to [base]: null when none is set. Throws [IllegalArgumentException] naming
+     * the key for one that is not a QUIC key, a value that does not parse, or a value [QuicConfig] refuses.
+     */
+    @OptIn(ExperimentalKuicksilverApi::class)
+    internal fun parseQuic(
+        config: ApplicationConfig,
+        base: QuicConfig,
+    ): QuicConfig? {
+        val keys = config.keys().filter { it.startsWith("kuicksilver.quic.") }
+        if (keys.isEmpty()) return null
+        // a misspelt key would otherwise leave the default in place without a word: an operator tuning a tunnel must know
+        keys.firstOrNull { it !in QUIC_KEYS }?.let {
+            throw IllegalArgumentException(
+                "$it is not a QUIC key; the keys are ${QUIC_KEYS.joinToString { k ->
+                    k.removePrefix("kuicksilver.")
+                }}",
+            )
+        }
+
+        fun value(key: String): String? = config.propertyOrNull(key)?.getString()?.trim()
+        val b = base.toBuilder()
+        value("kuicksilver.quic.initialUdpPayloadSize")?.let {
+            b.initialUdpPayloadSize = parseCount("kuicksilver.quic.initialUdpPayloadSize", it)
+        }
+        value("kuicksilver.quic.maxSendUdpPayloadSize")?.let {
+            b.maxSendUdpPayloadSize = parseCount("kuicksilver.quic.maxSendUdpPayloadSize", it)
+        }
+        value("kuicksilver.quic.maxUdpPayloadSize")?.let { b.maxUdpPayloadSize = parseCount("kuicksilver.quic.maxUdpPayloadSize", it) }
+        value("kuicksilver.quic.pmtud")?.let { b.pmtud = parseBoolean("kuicksilver.quic.pmtud", it) }
+        value("kuicksilver.quic.maxIdleTimeout")?.let { b.maxIdleTimeout = parseDuration("kuicksilver.quic.maxIdleTimeout", it) }
+        value("kuicksilver.quic.handshakeTimeout")?.let { b.handshakeTimeout = parseDuration("kuicksilver.quic.handshakeTimeout", it) }
+        value("kuicksilver.quic.keepAlive")?.let {
+            b.keepAlive = parseDuration("kuicksilver.quic.keepAlive", it).takeUnless { d -> d == Duration.ZERO }
+        }
+        value("kuicksilver.quic.maxBidiStreams")?.let { b.maxBidiStreams = parseLong("kuicksilver.quic.maxBidiStreams", it) }
+        value("kuicksilver.quic.maxUniStreams")?.let { b.maxUniStreams = parseLong("kuicksilver.quic.maxUniStreams", it) }
+        value("kuicksilver.quic.allowMigration")?.let { b.allowMigration = parseBoolean("kuicksilver.quic.allowMigration", it) }
+        return try {
+            b.build()
+        } catch (e: IllegalArgumentException) {
+            // QuicConfig names the option: "initialUdpPayloadSize must be 1200..65527"
+            throw IllegalArgumentException("kuicksilver.quic: ${e.message}", e)
+        }
+    }
+
+    /** The `kuicksilver.quic.*` keys [parseQuic] reads, each a [QuicConfig] option of the same name. */
+    internal val QUIC_KEYS: List<String> =
+        listOf(
+            "kuicksilver.quic.initialUdpPayloadSize",
+            "kuicksilver.quic.maxSendUdpPayloadSize",
+            "kuicksilver.quic.maxUdpPayloadSize",
+            "kuicksilver.quic.pmtud",
+            "kuicksilver.quic.maxIdleTimeout",
+            "kuicksilver.quic.handshakeTimeout",
+            "kuicksilver.quic.keepAlive",
+            "kuicksilver.quic.maxBidiStreams",
+            "kuicksilver.quic.maxUniStreams",
+            "kuicksilver.quic.allowMigration",
+        )
+
+    /** A `true`/`false` key. */
+    private fun parseBoolean(
+        key: String,
+        value: String,
+    ): Boolean = value.toBooleanStrictOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not true or false")
+
+    /** A whole-number key of [Long] range; the builder checks its range. */
+    private fun parseLong(
+        key: String,
+        value: String,
+    ): Long = value.trim().toLongOrNull() ?: throw IllegalArgumentException("$key: \"$value\" is not a whole number")
+
+    /** A duration key: `0`, or a duration as `kotlin.time.Duration.parse` reads it (`30s`, `1m`, `PT30S`). */
+    private fun parseDuration(
+        key: String,
+        value: String,
+    ): Duration {
+        if (value == "0") return Duration.ZERO
+        return try {
+            Duration.parse(value)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("$key: \"$value\" is not a duration (30s, 1m)", e)
+        }
     }
 
     /**

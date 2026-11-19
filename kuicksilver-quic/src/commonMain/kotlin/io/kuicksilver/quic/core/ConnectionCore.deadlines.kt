@@ -214,14 +214,19 @@ internal fun ConnectionCore.runDueTimers(now: TimeMark) {
                         p.ecn.onPto()
                         ecnPathFailed(p)
                     }
-                    ; p.pmtud?.let { m ->
-                        if (loss.ptoCount >= 2 &&
-                            m.current > 1200 &&
-                            largePacketUnanswered(p)
-                        ) {
-                            m.onBlackHole(now)
-                            setMtu(p, m.current) // 1200
-                        }
+                }
+            }
+            // in every space: a configured start above 1200 (initialUdpPayloadSize) sends the handshake at that size, and a path that
+            // cannot carry it acknowledges nothing, so the handshake would never finish (RFC 9000 section 14.1 lets Initial datagrams
+            // exceed 1200 bytes only "if the sender believes that the network path and peer both support the size")
+            path.let { p ->
+                p.pmtud?.let { m ->
+                    if (loss.ptoCount >= 2 &&
+                        m.current > 1200 &&
+                        largePacketUnanswered(p)
+                    ) {
+                        m.onBlackHole(now)
+                        setMtu(p, m.current) // 1200
                     }
                 }
             }

@@ -526,14 +526,15 @@ bottleneck.
 
 ## Path MTU
 
-Datagrams start at 1200 bytes. On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
-towards min(`maxUdpPayloadSize`, the peer's `max_udp_payload_size`) (1452 by default; `QuicEndpoint` refuses a value above
+Datagrams start at 1200 bytes, or at `initialUdpPayloadSize` (experimental, see [Tunnels and NAT paths](#tunnels-and-nat-paths-wireguard)).
+On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
+towards min(`maxUdpPayloadSize`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size`) (1452 by default; `QuicEndpoint` refuses a value above
 its 1500-byte datagram slots at `bind`/`connect`, the sans-IO core takes up to 65527), twenty bytes at a time, at most three tries per
-size; probes are not congestion controlled and their loss is not a congestion signal. Three consecutive lost large
-packets, or two PTOs in a row while sending above 1200, mean the path shrank: the connection drops back to 1200, tells
+size; probes count in the congestion window but their loss is not a congestion signal. Three consecutive lost large
+packets, or two PTOs in a row while a packet above 1200 is unanswered (during the handshake too), mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF where the JDK has the
+dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling. The portable socket sets DF where the JDK has the
 option (`IP_DONTFRAGMENT`, JDK 19 and later; RFC 9000 section 14: "MUST be set if possible") but reports no DF capability,
 so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
@@ -557,6 +558,53 @@ smaller initial window after a restore: an MTU change never raises the window in
 | Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE (with several loops on one shared socket, each Packet Too Big is offered to every loop, each counting it as accepted or ignored; one a loop has no room for counts as ignored) |
 | macOS, iOS, Windows (accelerated socket) | EMSGSIZE only (no usable ICMP for an unconnected socket) |
 | Portable socket (NIO, ktor-network) | none (no DF) |
+
+### Tunnels and NAT paths (WireGuard)
+
+A tunnel lowers the MTU below what the search would try first, and a NAT or a firewall may drop large datagrams without an
+ICMP message. Inside WireGuard (interface MTU 1420) a UDP payload of at most 1392 bytes fits over IPv4 and 1372 over IPv6
+(1420 minus the 20- or 40-byte IP header and the 8-byte UDP header). Two options (experimental) tune the size for such a path:
+
+- `initialUdpPayloadSize` (1200..65527, default 1200; less is refused, RFC 9000 section 14): the size the connection's first path
+  starts with, Initial packets included, which are padded to it (section 14.1: they "MAY exceed 1200 bytes if the sender
+  believes that the network path and peer both support the size"). A value above `maxSendUdpPayloadSize` or `maxUdpPayloadSize`
+  is lowered to it, and to the peer's `max_udp_payload_size` once its transport parameters arrive (a client's first flight goes
+  before that; a server knows the client's from its first Initial). Only a socket that sets DF uses it; elsewhere the size stays 1200.
+- `maxSendUdpPayloadSize` (1200..65527, default 65527: no cap of its own): the largest datagram sent, initial size and DPLPMTUD
+  probes included (RFC 8899 section 4.4: "The MAX_PLPMTU MAY be reduced by an application that sets a maximum to the size of
+  datagrams it will send"). Unlike `maxUdpPayloadSize` it is not advertised, so the peer's datagrams to us are not limited by it.
+
+The configured size is a guess, not a fact, so a wrong one cannot break a connection for good: DPLPMTUD's black-hole detection
+watches it from the first datagram. A client whose 1400-byte Initials vanish on a 1300-byte path falls back to 1200 at its
+second PTO, about 2 s into the handshake at the default `initialRtt`, and the handshake completes; the same holds for a
+server's first flight. Should the 1400-byte packet be acknowledged after all (a slow first answer), the size comes back. A
+path that stops carrying the size later falls back the same way. With `pmtud` on, the search goes on upwards from the start;
+with `pmtud = false` the start is also the ceiling, and after a fall back probes only go up to it again. A path to another IP
+address (a migration) starts at 1200, since its MTU is unknown; a NAT rebinding keeps the size and its black-hole detection.
+
+```kotlin
+// guide:quic:wireguard
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val tunnel = quicConfig {
+    initialUdpPayloadSize = 1350   // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
+    maxSendUdpPayloadSize = 1372   // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
+}
+```
+
+A Ktor server started with `EngineMain` takes the same options as `application.conf` keys under `kuicksilver.quic`
+([configuration reference](configuration.md#quic-transport-keys)); the `kuicksilver-ktor-server` tests load this block as it stands:
+
+```hocon
+kuicksilver {
+    quic {
+        initialUdpPayloadSize = 1350
+        maxSendUdpPayloadSize = 1372
+        pmtud = true                   # false: never above initialUdpPayloadSize
+        maxIdleTimeout = 60s
+        keepAlive = 15s                # PINGs keep a NAT's UDP mapping open while the application is quiet
+    }
+}
+```
 
 ## ECN
 

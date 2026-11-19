@@ -59,7 +59,7 @@ internal class Path(
     var state: PathState = PathState.Unknown
     val amplification = AmplificationLimit()
 
-    /** Datagram size in use; 1200 until PMTUD raises it. */
+    /** Datagram size in use; 1200 (the first path: `QuicConfig.initialUdpPayloadSize` on a DF socket) until PMTUD changes it. */
     var mtu: Int = 1200
 
     /** Client: the path to the server's preferred address (RFC 9000 section 9.6), switched to once validated. */
@@ -170,7 +170,7 @@ internal class Path(
     /** When [ecn] started over for a new address (null: with the path): packets sent before went to the old one and feed it nothing. */
     var ecnSince: TimeMark? = null
 
-    /** DPLPMTUD of this path; null without `df` on the socket or with `QuicConfig.pmtud = false` (then the MTU stays 1200). */
+    /** DPLPMTUD of this path; null without `df` on the socket, or with `QuicConfig.pmtud = false` and a start of 1200 (then the MTU stays 1200). */
     var pmtud: Pmtud? = null
     var ecnFailureReported: Boolean = false
 

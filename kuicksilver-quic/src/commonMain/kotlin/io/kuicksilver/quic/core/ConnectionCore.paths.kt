@@ -31,8 +31,44 @@ import kotlin.time.Duration.Companion.seconds
 // Paths of a [ConnectionCore]: PMTUD and ECN per path, peer connection IDs, path validation, migration and NAT rebinding (RFC 9000
 // sections 5.1, 8.2, 9 and 13.4; RFC 8899).
 
-internal fun ConnectionCore.pmtudUpperBound(): Int =
-    minOf(config.maxUdpPayloadSize.toLong(), peerTp?.maxUdpPayloadSize ?: Long.MAX_VALUE).toInt()
+/**
+ * The largest datagram a path may send (RFC 8899 MAX_PLPMTU, section 4.4: "the minimum of the local MTU and EMTU_R", which "MAY be
+ * reduced by an application"): our `max_udp_payload_size`, `maxSendUdpPayloadSize`, the peer's `max_udp_payload_size` once known
+ * (RFC 9000 section 18.2: "an additional constraint on datagram size in the same way as the path MTU"), and with `pmtud` off the
+ * configured start, which the path then never exceeds.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun ConnectionCore.pmtudUpperBound(): Int {
+    var b = minOf(config.maxUdpPayloadSize, config.maxSendUdpPayloadSize).toLong()
+    peerTp?.let { b = minOf(b, it.maxUdpPayloadSize) }
+    if (!config.pmtud) b = minOf(b, config.initialUdpPayloadSize.toLong())
+    return b.toInt()
+}
+
+/**
+ * Whether a path on a socket that sets DF runs [Pmtud]: with `pmtud` on, and with it off when the configured start is above 1200,
+ * so black-hole detection watches that size (RFC 9000 section 14.2: without DPLPMTUD or PMTUD "QUIC endpoints SHOULD NOT send
+ * datagrams larger than the smallest allowed maximum datagram size").
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal val ConnectionCore.runsPmtud: Boolean get() = config.pmtud || config.initialUdpPayloadSize > 1200
+
+/** The size the connection's first path starts with on a DF socket: `initialUdpPayloadSize` within [pmtudUpperBound]. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun ConnectionCore.configuredStartSize(): Int = maxOf(1200, minOf(config.initialUdpPayloadSize, pmtudUpperBound()))
+
+/**
+ * The peer's transport parameters arrived (RFC 9000 section 14.3): every path's search stays at or below its `max_udp_payload_size`,
+ * and a path already sending more (a configured start above it) drops to it.
+ */
+internal fun ConnectionCore.applyPeerMaxUdpPayloadSize() {
+    for (i in 0 until paths.all.size) {
+        val p = paths.all[i]
+        val m = p.pmtud ?: continue
+        m.limitUpperBound(pmtudUpperBound())
+        if (m.current != p.mtu) setMtu(p, m.current)
+    }
+}
 
 internal fun ConnectionCore.setMtu(
     p: Path,
@@ -98,8 +134,10 @@ internal fun ConnectionCore.acceptPacketTooBig(
  * A new DPLPMTUD search for a path now at [start] bytes. Probes already sent, by a search it replaces, are not its own: their late
  * acknowledgments concern the old address or the old capabilities and must not raise the new search's size.
  */
-internal fun ConnectionCore.newPmtud(start: Int): Pmtud =
-    Pmtud(upperBound = pmtudUpperBound(), start = start, sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
+internal fun ConnectionCore.newPmtud(start: Int): Pmtud {
+    val upper = pmtudUpperBound()
+    return Pmtud(upperBound = upper, start = minOf(start, upper), sentAfterPn = loss.space(SpaceId.Application).nextPn - 1)
+}
 
 /** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */
 internal fun ConnectionCore.onEmsgsize(size: Int) {
@@ -134,8 +172,13 @@ internal fun ConnectionCore.ecnPathFailed(p: Path) {
  * peer stalls) say nothing about the MTU.
  */
 internal fun ConnectionCore.largePacketUnanswered(p: Path): Boolean {
-    for (s in loss.space(SpaceId.Application).sent) {
-        if (s.ackEliciting && s.pathId == p.id.value && s.size > 1200 && s.frames.flags and SentFrames.PMTU_PROBE == 0) return true
+    // the Initial and Handshake spaces too: a configured start above 1200 sends the handshake at that size, and a path that cannot
+    // carry it gets no ACK at all, so only repeated PTOs show it (RFC 8899 section 4.3)
+    for (space in SpaceId.entries) {
+        if (spaceDiscarded[space.ordinal]) continue
+        for (s in loss.space(space).sent) {
+            if (s.ackEliciting && s.pathId == p.id.value && s.size > 1200 && s.frames.flags and SentFrames.PMTU_PROBE == 0) return true
+        }
     }
     return false
 }
@@ -591,7 +634,7 @@ private fun ConnectionCore.initPathOnSocket(
 ) {
     p.caps = socketCaps[socketKey(p.socket, p.remote)] ?: onSocket.caps
     if (p.caps.ecnSend) p.ecn.enable()
-    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = newPmtud(p.mtu)
+    if (p.caps.df && runsPmtud && p.pmtud == null) p.pmtud = newPmtud(p.mtu)
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */

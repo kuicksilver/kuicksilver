@@ -45,7 +45,7 @@ variables](#system-properties-and-environment-variables) · [fixed limits](#fixe
 
 | Object | Kotlin API | Ktor client | Ktor server | `EngineMain` key |
 |---|---|---|---|---|
-| [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | |
+| [`QuicConfig`](#quicconfig) | `quicConfig { }` | `engine { quic = … }` | `quic = …` (`quicMaxIdleTimeout`) | [`kuicksilver.quic.*`](#quic-transport-keys) (some options) |
 | [`QuicEndpointConfig`](#quicendpointconfig) | `quicEndpointConfig { }` | `engine { http3 { endpoint = … } }` | only `quicMaxConnections`, `quicMaxConnectionsPerIp`, `quicAcceptQueue`, `quicAdmission`, `quicLoadBalancer`, `logger`, `qlog`, `connectionListener` and `udpSocketCount` (`loops`) reach it; the other limits keep their defaults | `kuicksilver.udpSocketCount`, `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp`, `kuicksilver.quicAcceptQueue` |
 | [`TlsConfig`](#tlsconfig) | `tlsConfig(role) { }` | `engine { trust = …; identity = …; tls { } }` | `tlsConnector(identity) { }` | `kuicksilver.tls.*` |
 | [`Http3Settings`](#http3settings) | `http3Settings { }` | `engine { http3 { settings = … } }` | `http3Settings = …` | `kuicksilver.http3` (on/off) |
@@ -74,7 +74,9 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `ackDelayExponent` | `Int` | 3 | 0..20 | 0.2.0 | our `ack_delay_exponent` |
 | `activeConnectionIdLimit` | `Int` | 4 | at least 2 | 0.2.0 | our `active_connection_id_limit`: connection IDs of the peer kept for migration and rotation |
 | `connectionIdLength` | `Int` (bytes) | 8 | 4..20; must equal `QuicEndpointConfig.connectionIdLength` | 0.2.0 | length of the connection IDs we issue |
-| `maxUdpPayloadSize` | `Int` (bytes) | 1452 | 1200..65 527; a `QuicEndpoint` refuses more than 1500 at `bind`/`connect` | 0.2.0 | advertised `max_udp_payload_size` and the upper bound of PMTUD ([Path MTU](quic.md#path-mtu)) |
+| `maxUdpPayloadSize` | `Int` (bytes) | 1452 | 1200..65 527; a `QuicEndpoint` refuses more than 1500 at `bind`/`connect` | 0.2.0 | advertised `max_udp_payload_size`, and a ceiling of the datagrams sent: `initialUdpPayloadSize` and PMTUD stay at or below it ([Path MTU](quic.md#path-mtu)) |
+| `initialUdpPayloadSize` (*experimental*) | `Int` (bytes) | 1200 | 1200..65 527 (less is refused, RFC 9000 §14); lowered to `maxSendUdpPayloadSize`, `maxUdpPayloadSize` and the peer's `max_udp_payload_size` | 0.3.0 | the datagram size the connection's first path starts with, Initial padding included, on a socket that sets DF (1200 elsewhere); black-hole detection drops it to 1200 when the path does not carry it, during the handshake too; with `pmtud = false` also the ceiling ([Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard)) |
+| `maxSendUdpPayloadSize` (*experimental*) | `Int` (bytes) | 65 527 | 1200..65 527 | 0.3.0 | the largest datagram sent, initial size and PMTUD probes included (RFC 8899 §4.4 MAX_PLPMTU); not advertised, unlike `maxUdpPayloadSize`; e.g. 1372 inside WireGuard ([Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard)) |
 | `versions` | `List<VersionProfile>` | `listOf(VersionProfile.V1)` | non-empty, no duplicates | 0.2.0 | versions in preference order; `listOf(V2, V1)` opts into QUIC v2 (RFC 9368/9369) |
 | `initialVersion` | `VersionProfile?` | `null` (first of `versions`) | one of `versions` | 0.2.0 | the version of a client's first flight |
 | `initialRtt` | `Duration` | 333 ms | (0, 10 s] | 0.2.0 | RTT assumed before the first sample: the first PTO is 3 x this (1 s, 2 s, 4 s at the default) and a path validation lasts at least 6 x this. A client endpoint replaces it with the last smoothed RTT to the same server address (see [fixed limits](#fixed-limits)) |
@@ -85,7 +87,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `glitchProtection` | `Boolean` | `true` |  | 0.2.0 | close a connection whose peer keeps making us do useless work ([Glitch protection](quic.md#glitch-protection)) |
 | `allowMigration` | `Boolean` | `true` |  | 0.2.0 | server: follow a client to a new address; `false` advertises `disable_active_migration` and drops datagrams from other addresses |
 | `allowMigrationToLoopback` | `Boolean` | `false` |  | 0.2.0 | server: accept a move to a loopback or link-local address from a connection that did not start on one |
-| `pmtud` | `Boolean` | `true` |  | 0.2.0 | DPLPMTUD (RFC 8899) on sockets that set DF; `false` keeps 1200 bytes |
+| `pmtud` | `Boolean` | `true` |  | 0.2.0 | DPLPMTUD (RFC 8899) on sockets that set DF, from `initialUdpPayloadSize` upwards; `false` keeps `initialUdpPayloadSize` (1200 by default) as the ceiling, with black-hole detection when it is above 1200 |
 | `followPreferredAddress` (*experimental*) | `Boolean` | `true` |  | 0.3.0 | client: move to the server's preferred address after the handshake, once the path there is validated ([Migration and paths](quic.md#migration-and-paths)) |
 | `pmtudIcmpHints` (*experimental*) | `Boolean` | `true` |  | 0.3.0 | validated ICMP Packet Too Big (Linux, Android) and EMSGSIZE speed up DPLPMTUD as hints; a lower size drops the MTU to 1200 only until a probe of the old size is acknowledged ([Path MTU](quic.md#path-mtu)) |
 | `maxDatagramFrameSize` | `Long` | 65 535 | 0..65 535 | 0.2.0 | our `max_datagram_frame_size` (RFC 9221); 0 turns datagrams off |
@@ -445,8 +447,8 @@ of them separated by `:` or `,`),
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`,
 `kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string; turns the PROXY protocol on for the
-deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuicksilver.proxyProtocol.maxHeaderSize`, and
-`ktor.deployment.connectionIdleTimeoutSeconds`.
+deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuicksilver.proxyProtocol.maxHeaderSize`,
+the QUIC transport keys `kuicksilver.quic.*` ([below](#quic-transport-keys)), and `ktor.deployment.connectionIdleTimeoutSeconds`.
 
 ### Plain connector
 
@@ -468,6 +470,28 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | `trustedSources` (`trust(…)`) | `MutableList<String>` | empty | at least one; IPv4 or IPv6 addresses or CIDR blocks without bits past the prefix, no zone IDs | 0.3.0 | the TCP peers allowed to send the header; any other peer is closed at accept. IPv4 peers match IPv4 blocks only, also when reported as IPv4-mapped IPv6 |
 | `headerTimeout` | `Duration` | 5 s | at least 3 s (the spec's "at least 3 seconds to cover a TCP retransmit"); cut to what is left of `requestHeaderTimeoutSeconds`, which must be at least 3 on a PROXY connector (the start fails below) | 0.3.0 | the whole header must arrive within it, counted from accept, or the connection is closed |
 | `maxHeaderSize` | `Int` (bytes) | 4096 | 232..65 551 | 0.3.0 | the longest version 2 header taken (its length field is checked before the rest is read); version 1 is at most 107 bytes |
+
+### QUIC transport keys
+
+`EngineMain` reads these `application.conf` keys into `quic` (`QuicConfig`, the HTTP/3 listeners' transport), each the
+`QuicConfig` option of its name with that option's range ([QuicConfig](#quicconfig)); a key not set keeps the option's
+default. A key that is not one of these, a value that does not parse and a value out of range fail the start with an
+`IllegalArgumentException` that names the key (`kuicksilver.quic: initialUdpPayloadSize must be 1200..65527`). With any of
+them set, `quic` counts as assigned (so `quicMaxIdleTimeout` no longer applies). Guide:
+[Tunnels and NAT paths](quic.md#tunnels-and-nat-paths-wireguard).
+
+| Key | Value | Since | Sets |
+|---|---|---|---|
+| `kuicksilver.quic.initialUdpPayloadSize` | bytes, 1200..65 527 | 0.3.0 | `initialUdpPayloadSize`: the datagram size a connection starts with |
+| `kuicksilver.quic.maxSendUdpPayloadSize` | bytes, 1200..65 527 | 0.3.0 | `maxSendUdpPayloadSize`: the largest datagram sent |
+| `kuicksilver.quic.maxUdpPayloadSize` | bytes, 1200..1500 (the endpoint's datagram slots) | 0.3.0 | `maxUdpPayloadSize`: the advertised `max_udp_payload_size` |
+| `kuicksilver.quic.pmtud` | `true`/`false` | 0.3.0 | `pmtud`: DPLPMTUD above the start |
+| `kuicksilver.quic.maxIdleTimeout` | a duration (`30s`, `1m`); `0` advertises none | 0.3.0 | `maxIdleTimeout` |
+| `kuicksilver.quic.handshakeTimeout` | a positive duration | 0.3.0 | `handshakeTimeout` |
+| `kuicksilver.quic.keepAlive` | a duration, at most 3/4 of the idle timeout; `0` is off | 0.3.0 | `keepAlive`: PINGs that keep a quiet connection (and a NAT's mapping) open |
+| `kuicksilver.quic.maxBidiStreams` | 0..2^60 | 0.3.0 | `maxBidiStreams`: concurrent request streams per connection |
+| `kuicksilver.quic.maxUniStreams` | 3..2^60 with HTTP/3 | 0.3.0 | `maxUniStreams` |
+| `kuicksilver.quic.allowMigration` | `true`/`false` | 0.3.0 | `allowMigration`: follow a client to a new address |
 
 ## ktor-network
 

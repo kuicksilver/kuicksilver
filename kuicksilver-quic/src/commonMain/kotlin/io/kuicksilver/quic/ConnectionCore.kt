@@ -29,6 +29,7 @@ import io.kuicksilver.quic.core.amplificationLeavesNoProbe
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkTlsInput
+import io.kuicksilver.quic.core.configuredStartSize
 import io.kuicksilver.quic.core.dcidFor
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.drainStreamEvents
@@ -46,7 +47,6 @@ import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.largestDatagramPayload
 import io.kuicksilver.quic.core.memoryCeiling
 import io.kuicksilver.quic.core.newPmtud
-import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probePreferredFrom
 import io.kuicksilver.quic.core.pto
 import io.kuicksilver.quic.core.refreshLocalTp
@@ -54,6 +54,7 @@ import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.releasePathCid
 import io.kuicksilver.quic.core.revertHandshakeMove
 import io.kuicksilver.quic.core.runDueTimers
+import io.kuicksilver.quic.core.runsPmtud
 import io.kuicksilver.quic.core.serverWithKeys
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.startValidation
@@ -292,12 +293,29 @@ public class ConnectionCore internal constructor(
     ) {
         p.caps = caps
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
+        // the connection's first path starts at the configured size the first time it gets DF (RFC 9000 section 14: Initial
+        // datagrams "MAY exceed 1200 bytes"); any other path, or a later description of the same one, keeps its size
+        val start =
+            if (caps.df && runsPmtud && !startSizeApplied && p.id == PathId.Initial) {
+                startSizeApplied = true
+                maxOf(p.mtu, configuredStartSize())
+            } else {
+                p.mtu
+            }
         p.pmtud =
-            if (caps.df && config.pmtud) newPmtud(p.mtu) else null
+            if (caps.df && runsPmtud) newPmtud(start) else null
         // RFC 9000 section 14: "UDP datagrams MUST NOT be fragmented at the IP layer"; without DF (or without DPLPMTUD to watch the
         // size) only the 1200 bytes every QUIC path carries are safe
-        if (p.pmtud == null) setMtu(p, 1200)
+        val m = p.pmtud
+        if (m == null) {
+            setMtu(p, 1200)
+        } else if (m.current != p.mtu) {
+            setMtu(p, m.current)
+        }
     }
+
+    /** Whether the first path already got `initialUdpPayloadSize` ([applyCapabilities]). */
+    private var startSizeApplied = false
 
     internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
 

@@ -97,8 +97,31 @@ public class QuicConfig private constructor(
      * `QuicEndpointConfig.connectionIdLength`.
      */
     public val connectionIdLength: Int,
-    /** Advertised `max_udp_payload_size`; datagrams stay at 1200 bytes until PMTUD. The coroutine runtime ([QuicEndpoint]) handles datagrams of up to 1500 bytes and refuses a larger value at `bind`/`connect`; the sans-IO core takes up to 65527 with batches sized for it. */
+    /**
+     * Advertised `max_udp_payload_size` (RFC 9000 section 18.2), also a ceiling of the datagrams we send ([initialUdpPayloadSize] and
+     * DPLPMTUD stay at or below it). The coroutine runtime ([QuicEndpoint]) handles datagrams of up to 1500 bytes and refuses a larger
+     * value at `bind`/`connect`; the sans-IO core takes up to 65527 with batches sized for it.
+     */
     public val maxUdpPayloadSize: Int,
+    /**
+     * The UDP payload size, in bytes, a connection's first path starts with, Initial padding included (RFC 9000 section 14: "Datagrams
+     * containing Initial packets MAY exceed 1200 bytes if the sender believes that the network path and peer both support the size
+     * that it chooses"). 1200..65527, 1200 by default; it takes effect only on a socket that sets DF, and is lowered to
+     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and, once known, the peer's `max_udp_payload_size`. The size is not trusted: DPLPMTUD's
+     * black-hole detection watches it from the first packet (two PTOs in a row with a packet above 1200 unanswered, during the
+     * handshake too, or three lost large packets) and drops the path to 1200 when it does not get through. With [pmtud] off it is
+     * also the most the path ever sends. A new path to another IP address starts at 1200 (its MTU is unknown).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val initialUdpPayloadSize: Int,
+    /**
+     * The largest UDP payload, in bytes, this endpoint sends (RFC 8899 section 4.4: "The MAX_PLPMTU MAY be reduced by an application
+     * that sets a maximum to the size of datagrams it will send"), 1200..65527: a cap on [initialUdpPayloadSize] and on DPLPMTUD,
+     * below [maxUdpPayloadSize] when only the sending side should be limited (a tunnel). 65527 by default: no cap beyond
+     * [maxUdpPayloadSize] and the peer's `max_udp_payload_size`.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val maxSendUdpPayloadSize: Int,
     /** Versions in preference order (RFC 9368 section 3: the client's Available Versions). Default is v1 only. */
     public val versions: List<VersionProfile>,
     /**
@@ -131,7 +154,11 @@ public class QuicConfig private constructor(
     public val allowMigration: Boolean,
     /** Server: accept a move to a loopback or link-local address when the connection did not start on one (off by default: such a "client" is a reflection target). */
     public val allowMigrationToLoopback: Boolean,
-    /** Probe the path MTU above 1200 bytes with DPLPMTUD (RFC 8899) on sockets that set DF; off keeps 1200. */
+    /**
+     * Search for a larger path MTU with DPLPMTUD (RFC 8899) on sockets that set DF, from [initialUdpPayloadSize] up to
+     * [maxSendUdpPayloadSize], [maxUdpPayloadSize] and the peer's limit. Off, no path sends more than [initialUdpPayloadSize] (1200 by
+     * default); above 1200 its black-hole detection still runs, and after a fall back to 1200 probes go only up to that size again.
+     */
     public val pmtud: Boolean,
     /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.pmtudIcmpHints]. */
     @property:ExperimentalKuicksilverApi
@@ -171,6 +198,10 @@ public class QuicConfig private constructor(
         require(maxSendBuffer in 1..(1L shl 62)) { "maxSendBuffer must be 1..2^62" }
         require(connectionIdLength in 4..20) { "connectionIdLength must be 4..20" }
         require(maxUdpPayloadSize in 1200..65527) { "maxUdpPayloadSize must be 1200..65527" }
+        // RFC 9000 section 14: "QUIC MUST NOT be used if the network path cannot support a maximum datagram size of at least 1200
+        // bytes"; section 14.1: datagrams carrying Initial packets are at least 1200 bytes
+        require(initialUdpPayloadSize in 1200..65527) { "initialUdpPayloadSize must be 1200..65527" }
+        require(maxSendUdpPayloadSize in 1200..65527) { "maxSendUdpPayloadSize must be 1200..65527" }
         require(activeConnectionIdLimit >= 2) { "activeConnectionIdLimit must be at least 2" }
         require(ackDelayExponent in 0..20) { "ackDelayExponent must be 0..20" }
         require(maxAckDelay < 16384.milliseconds) { "maxAckDelay must be below 2^14 ms" }
@@ -208,6 +239,8 @@ public class QuicConfig private constructor(
             activeConnectionIdLimit,
             connectionIdLength,
             maxUdpPayloadSize,
+            initialUdpPayloadSize,
+            maxSendUdpPayloadSize,
             versions,
             initialVersion,
             rtt,
@@ -287,6 +320,17 @@ public class QuicConfig private constructor(
         public var maxUdpPayloadSize: Int = 1452
 
         /**
+         * Default 1200 bytes (1200..65527; less is refused): the datagram size a connection starts with, e.g. 1350 on a path known to
+         * carry it. See [QuicConfig.initialUdpPayloadSize].
+         */
+        @ExperimentalKuicksilverApi
+        public var initialUdpPayloadSize: Int = 1200
+
+        /** Default 65527 (no cap of its own; 1200..65527): the largest datagram sent, e.g. 1380 inside a WireGuard tunnel. See [QuicConfig.maxSendUdpPayloadSize]. */
+        @ExperimentalKuicksilverApi
+        public var maxSendUdpPayloadSize: Int = 65527
+
+        /**
          * Default `listOf(VersionProfile.V1)`; `listOf(VersionProfile.V2, VersionProfile.V1)` opts into QUIC v2 (RFC 9368/9369). Non-empty,
          * no duplicates.
          */
@@ -320,7 +364,7 @@ public class QuicConfig private constructor(
         /** Default false; see [QuicConfig.allowMigrationToLoopback]. */
         public var allowMigrationToLoopback: Boolean = false
 
-        /** Default true; see [QuicConfig.pmtud] (RFC 8899). */
+        /** Default true; see [QuicConfig.pmtud] (RFC 8899). False: no path sends more than [initialUdpPayloadSize]. */
         public var pmtud: Boolean = true
 
         /**
@@ -380,6 +424,8 @@ public class QuicConfig private constructor(
                 activeConnectionIdLimit,
                 connectionIdLength,
                 maxUdpPayloadSize,
+                initialUdpPayloadSize,
+                maxSendUdpPayloadSize,
                 versions.toList(),
                 initialVersion,
                 initialRtt,
@@ -421,6 +467,8 @@ public class QuicConfig private constructor(
             it.activeConnectionIdLimit = activeConnectionIdLimit
             it.connectionIdLength = connectionIdLength
             it.maxUdpPayloadSize = maxUdpPayloadSize
+            it.initialUdpPayloadSize = initialUdpPayloadSize
+            it.maxSendUdpPayloadSize = maxSendUdpPayloadSize
             it.initialVersion = initialVersion
             it.initialRtt = initialRtt
             it.defaultStreamErrorCode = defaultStreamErrorCode

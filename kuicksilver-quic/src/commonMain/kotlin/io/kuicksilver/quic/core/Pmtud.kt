@@ -206,11 +206,27 @@ internal class Pmtud(
         if (high - low < step && high <= current) finish(now)
     }
 
-    /** The peer's `max_udp_payload_size` lowers the range (RFC 9000 section 14.3). */
+    /**
+     * The peer's `max_udp_payload_size` lowers the range (RFC 9000 section 14.3; [peerMax] is at least the base, RFC 9000 section 18.2).
+     * A [current] above it, a configured start the peer cannot take, comes down to it, and so does every state that could raise
+     * [current] again (a black-hole verdict to undo, a size a Packet Too Big disputed).
+     */
     fun limitUpperBound(peerMax: Int) {
-        if (peerMax < upperBound) {
-            upperBound = peerMax
-            if (high > upperBound) high = upperBound
+        if (peerMax >= upperBound) return
+        upperBound = peerMax
+        if (high > upperBound) high = upperBound
+        if (current > upperBound) current = upperBound
+        if (low > upperBound) low = upperBound
+        if (undoCurrent > upperBound) undoCurrent = upperBound
+        if (undoLow > upperBound) undoLow = upperBound
+        if (undoHigh > upperBound) undoHigh = upperBound
+        if (ptbFrom > upperBound) ptbFrom = upperBound
+        if (ptbLow > upperBound) ptbLow = upperBound
+        if (ptbHigh > upperBound) ptbHigh = upperBound
+        if (ptbDisproveSize > upperBound) ptbDisproveSize = upperBound
+        if (probeInFlight && probeSize > upperBound) {
+            probeInFlight = false // its acknowledgment still counts: the datagram did get through
+            probeLosses = 0
         }
     }
 
@@ -284,11 +300,13 @@ internal class Pmtud(
 
     /** The probe sent as packet [pn] of [size] bytes was acknowledged at [now]; one sent before the last PTB drop changes nothing. */
     fun onProbeAcked(
-        size: Int,
+        ackedSize: Int,
         pn: Long,
         now: TimeMark,
     ) {
         if (pn <= ptbAfterPn) return
+        // a datagram the path carried, but never a size above the range: the peer's limit may have come down since
+        val size = minOf(ackedSize, upperBound)
         val disputed = if (ptbFrom > 0) ptbFrom else ptbDisproveSize
         if (disputed > 0 && size >= disputed) {
             // the size the PTB disputed gets through: the PTB was wrong (forged or stale); PTBs are not processed for a while
@@ -457,8 +475,8 @@ internal class Pmtud(
                 searchDone = undoSearchDone
                 researchAt = undoResearchAt
             } else {
-                current = size
-                low = size
+                current = minOf(size, upperBound)
+                low = current
                 high = undoHigh
                 searchDone = false
                 researchAt = TimeMark.NEVER

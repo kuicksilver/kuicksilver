@@ -73,6 +73,18 @@ class GuideSamplesTest {
         assertEquals(100.milliseconds, lossyMobile.initialRtt)
     }
 
+    @Test fun wireguardSample() {
+        // guide:quic:wireguard
+        val tunnel =
+            quicConfig {
+                initialUdpPayloadSize = 1350 // the handshake at 1350 bytes: fits WireGuard over IPv4 and IPv6
+                maxSendUdpPayloadSize = 1372 // never more than WireGuard carries over IPv6; DPLPMTUD searches up to it
+            }
+        assertEquals(1350, tunnel.initialUdpPayloadSize)
+        assertEquals(1372, tunnel.maxSendUdpPayloadSize)
+        assertTrue(tunnel.pmtud)
+    }
+
     @Test fun zeroRttSample(): Unit =
         runBlocking {
             // the server binds a free port and the sample connects to the address it got: a port found free and closed
