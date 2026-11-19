@@ -155,7 +155,13 @@ public class EchKey private constructor(
  * from a configuration that holds this object, and handshakes in progress keep the set they started with. The last set stays
  * in native memory for the life of the process.
  *
- * @throws TlsException.Config when a key does not read, none is for retry_configs, or ECH is not available in this build.
+ * The keys of one set need distinct config_ids (RFC 9849 section 4.1): OpenSSL 4.1 tries only the first key of a
+ * config_id and does not go on to the next one (section 7.1 has it go on), so a client of the other key would be rejected.
+ * Two keys made apart share one in 1 case of 256; such a set is refused with "two ECH keys share a config_id", and
+ * running `openssl ech` again for the newer key gives it another one.
+ *
+ * @throws TlsException.Config when a key does not read, none is for retry_configs, two keys share a config_id, or ECH is
+ *   not available in this build.
  */
 @ExperimentalKuicksilverApi
 @OptIn(ExperimentalAtomicApi::class)

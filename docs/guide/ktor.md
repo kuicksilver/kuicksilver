@@ -391,7 +391,9 @@ keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryCon
   stays in memory as long as the key. `kuicksilver.tls.echKeys` reads its files without making a `String`.
 - **Rotation.** `rotate` replaces the whole set for handshakes that start afterwards, on TCP and QUIC; handshakes in
   progress keep the set they started with. Keep a replaced key (`inRetryConfigs = false`) until the DNS TTL of the old
-  record has run out.
+  record has run out. The keys of a set need distinct config_ids: one sharing a config_id with another (1 case in 256
+  for keys made apart) is refused with "two ECH keys share a config_id"; make the new key again with `openssl ech`
+  before publishing it.
 - **Shared mode only.** The connector is both the client-facing and the backend server; split mode (a front end that
   forwards to a backend) is not supported.
 - `EngineMain`: `kuicksilver.tls.echKeys` (above).
