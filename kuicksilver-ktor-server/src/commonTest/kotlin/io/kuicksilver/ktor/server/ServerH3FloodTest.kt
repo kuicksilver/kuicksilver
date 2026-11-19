@@ -9,6 +9,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.glitchClockForTest
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
@@ -209,13 +210,21 @@ class ServerH3FloodTest {
             }
         }
 
-    /** A flood of requests reset at once: every reset spends a glitch token, and the connection ends with H3_EXCESSIVE_LOAD. */
-    @Test fun negative_h3RapidResetFloodEndsWithExcessiveLoad() =
+    /**
+     * A flood of requests reset at once: every reset spends a token of the request-reset budget, and the connection ends with
+     * H3_EXCESSIVE_LOAD. The server's budget clock is frozen, so exactly its 1000 tokens are spent whatever the host's
+     * speed: with the clock running, a host that lets fewer than 33 resets a second through (a hosted Windows runner) refills
+     * the bucket as fast as the flood empties it, and the connection never ended.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun negative_h3RapidResetFloodEndsWithExcessiveLoad() =
         h3ServerTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            server.engine.h3ConnectionForTest = { it.glitchClockForTest = { 0L } } // no refill: exactly 1000 tokens
             val (ep, c) = rawH3(port)
             try {
-                runCatching { repeat(5_000) { c.rapidReset("/") } }
+                runCatching { repeat(5_000) { c.rapidReset("/") } } // fails once the server closed
                 val closed = withTimeout(15.seconds) { c.closed.await() }
                 assertEquals(H3_EXCESSIVE_LOAD, assertIs<QuicException.ConnectionLost.ApplicationClosed>(closed).code)
                 // the server still serves a new connection
