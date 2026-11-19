@@ -303,7 +303,23 @@ class EngineMainTest {
             "kuicksilver.quic: maxSendUdpPayloadSize must be 1200..65527",
             refused("-P:kuicksilver.quic.maxSendUdpPayloadSize=1000"),
         )
-        assertEquals("kuicksilver.quic: maxUdpPayloadSize must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=70000"))
+        assertEquals(
+            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 70000",
+            refused("-P:kuicksilver.quic.maxUdpPayloadSize=70000"),
+        )
+        // what QuicConfig takes but the HTTP/3 listener's endpoint would refuse only at bind, once the server starts
+        assertEquals(
+            "kuicksilver.quic.maxUdpPayloadSize must be at most 1500 (the endpoint's datagram slots), not 1501",
+            refused("-P:kuicksilver.quic.maxUdpPayloadSize=1501"),
+        )
+        assertEquals("kuicksilver.quic: maxUdpPayloadSize must be 1200..65527", refused("-P:kuicksilver.quic.maxUdpPayloadSize=1199"))
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        assertEquals(
+            1500,
+            EngineMain
+                .createServer(arrayOf("-host=127.0.0.1", "-port=0", "-P:kuicksilver.quic.maxUdpPayloadSize=1500"))
+                .engine.configuration.quic.maxUdpPayloadSize,
+        )
         assertEquals(
             "kuicksilver.quic.initialUdpPayloadSize: \"1350b\" is not a whole number",
             refused("-P:kuicksilver.quic.initialUdpPayloadSize=1350b"),
@@ -324,7 +340,10 @@ class EngineMainTest {
         assertEquals("kuicksilver.quic.maxUniStreams: \"many\" is not a whole number", refused("-P:kuicksilver.quic.maxUniStreams=many"))
         // a misspelt key does not leave the default in place silently
         val typo = refused("-P:kuicksilver.quic.initialPacketSize=1350")
-        assertTrue(typo.startsWith("kuicksilver.quic.initialPacketSize is not a QUIC key; the keys are quic.initialUdpPayloadSize"), typo)
+        assertTrue(
+            typo.startsWith("kuicksilver.quic.initialPacketSize is not a QUIC key; the keys are kuicksilver.quic.initialUdpPayloadSize"),
+            typo,
+        )
     }
 
     /**

@@ -234,15 +234,12 @@ public object EngineMain {
         config: ApplicationConfig,
         base: QuicConfig,
     ): QuicConfig? {
-        val keys = config.keys().filter { it.startsWith("kuicksilver.quic.") }
+        // every key of QUIC_KEYS starts so (each written whole there, for tools/check/config-table.sh)
+        val keys = config.keys().filter { k -> QUIC_KEYS.any { k.startsWith(it.substringBeforeLast('.') + '.') } }
         if (keys.isEmpty()) return null
         // a misspelt key would otherwise leave the default in place without a word: an operator tuning a tunnel must know
         keys.firstOrNull { it !in QUIC_KEYS }?.let {
-            throw IllegalArgumentException(
-                "$it is not a QUIC key; the keys are ${QUIC_KEYS.joinToString { k ->
-                    k.removePrefix("kuicksilver.")
-                }}",
-            )
+            throw IllegalArgumentException("$it is not a QUIC key; the keys are ${QUIC_KEYS.joinToString()}")
         }
 
         fun value(key: String): String? = config.propertyOrNull(key)?.getString()?.trim()
@@ -253,7 +250,14 @@ public object EngineMain {
         value("kuicksilver.quic.maxSendUdpPayloadSize")?.let {
             b.maxSendUdpPayloadSize = parseCount("kuicksilver.quic.maxSendUdpPayloadSize", it)
         }
-        value("kuicksilver.quic.maxUdpPayloadSize")?.let { b.maxUdpPayloadSize = parseCount("kuicksilver.quic.maxUdpPayloadSize", it) }
+        value("kuicksilver.quic.maxUdpPayloadSize")?.let {
+            val n = parseCount("kuicksilver.quic.maxUdpPayloadSize", it)
+            // the HTTP/3 listener's QuicEndpoint refuses more at bind, after the configuration was read: name the key now
+            require(n <= QUIC_ENDPOINT_SLOT) {
+                "kuicksilver.quic.maxUdpPayloadSize must be at most $QUIC_ENDPOINT_SLOT (the endpoint's datagram slots), not $n"
+            }
+            b.maxUdpPayloadSize = n
+        }
         value("kuicksilver.quic.pmtud")?.let { b.pmtud = parseBoolean("kuicksilver.quic.pmtud", it) }
         value("kuicksilver.quic.maxIdleTimeout")?.let { b.maxIdleTimeout = parseDuration("kuicksilver.quic.maxIdleTimeout", it) }
         value("kuicksilver.quic.handshakeTimeout")?.let { b.handshakeTimeout = parseDuration("kuicksilver.quic.handshakeTimeout", it) }
@@ -270,6 +274,9 @@ public object EngineMain {
             throw IllegalArgumentException("kuicksilver.quic: ${e.message}", e)
         }
     }
+
+    /** The largest datagram a `QuicEndpoint` handles (its 1500-byte slots), which bounds `maxUdpPayloadSize` at bind. */
+    private const val QUIC_ENDPOINT_SLOT = 1500
 
     /** The `kuicksilver.quic.*` keys [parseQuic] reads, each a [QuicConfig] option of the same name. */
     internal val QUIC_KEYS: List<String> =
