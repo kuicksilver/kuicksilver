@@ -379,7 +379,8 @@ internal class NativeTcpSocket(
     override val coroutineContext: CoroutineContext get() = socketContext
 
     init {
-        trackLeak("tcp.socket")
+        // a socket a listener of ours accepted is its child ([parent]); a connected one has none
+        trackLeak(if (parent != null) "tcp.accepted" else "tcp.socket")
     }
 
     /** The local address, taken by [recordLocalAddress] once the socket is connected. */

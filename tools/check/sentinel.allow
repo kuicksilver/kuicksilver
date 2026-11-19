@@ -5,6 +5,6 @@
 #              that a pending fix removes names its branch or commit)
 #   per-class  <target> (a test class) is checked once after all its tests, not after each (fixtures shared across its
 #              tests); <kinds> is `-`
-allow | io.kuicksilver.ktor.client.contract.ContentTest.testBodyChannelCancelledWhenCallerScopeIsCancelled | tcp.socket | Ktor's vendored contract tests share one server; when the client cancels a download, the server's side of that connection ends with the handler's next write, after the test
-allow | io.kuicksilver.ktor.client.contract.ContentTest.testDownloadStreamChannelWithCancel | tcp.socket | as the entry above: the shared server's side of the cancelled download ends with the handler's next write, after the test
-allow | io.kuicksilver.ktor.client.contract.HttpTimeoutTest | tcp.socket | Ktor's vendored contract tests share one server whose timeout routes wait up to 10 s between writes; the server's side of a connection the client gave up on ends with the next write, after the test
+allow | io.kuicksilver.ktor.client.contract.ContentTest.testBodyChannelCancelledWhenCallerScopeIsCancelled | tcp.accepted | Ktor's vendored contract tests share one server; when the client cancels a download, the server's side of that connection ends with the handler's next write, after the test
+allow | io.kuicksilver.ktor.client.contract.ContentTest.testDownloadStreamChannelWithCancel | tcp.accepted | as the entry above: the shared server's side of the cancelled download ends with the handler's next write, after the test
+allow | io.kuicksilver.ktor.client.contract.HttpTimeoutTest | tcp.accepted | Ktor's vendored contract tests share one server whose timeout routes wait up to 10 s between writes; the server's side of a connection the client gave up on ends with the next write, after the test
