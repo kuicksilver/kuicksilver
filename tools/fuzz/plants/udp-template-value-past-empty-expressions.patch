@@ -1,0 +1,24 @@
+diff --git a/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/UdpUriTemplate.kt b/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/UdpUriTemplate.kt
+index 667d66d8b..9e028d9c3 100644
+--- a/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/UdpUriTemplate.kt
++++ b/kuicksilver-http3/src/commonMain/kotlin/io/kuicksilver/http3/message/UdpUriTemplate.kt
+@@ -134,17 +134,8 @@ internal class UdpUriTemplate private constructor(
+         return target(raw)
+     }
+ 
+-    /**
+-     * The first character of the next literal after part [i], past the expressions in between (they may have expanded to
+-     * nothing: an undefined variable, RFC 6570 section 3.2.1), or null when the template ends first.
+-     */
+-    private fun stopChar(i: Int): Char? {
+-        for (j in i + 1 until parts.size) {
+-            val p = parts[j]
+-            if (p is Part.Literal) return p.text.first()
+-        }
+-        return null
+-    }
++    /** The first character of the literal after part [i], or null when an expression or the end follows. */
++    private fun stopChar(i: Int): Char? = (parts.getOrNull(i + 1) as? Part.Literal)?.text?.first()
+ 
+     /** Where a value starting at [from] ends: at [stop], at a query or form separator, or at the end. */
+     private fun valueEnd(

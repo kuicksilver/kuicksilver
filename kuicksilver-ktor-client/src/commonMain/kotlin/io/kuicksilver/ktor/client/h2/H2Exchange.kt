@@ -142,8 +142,10 @@ private fun localPriority(data: HttpRequestData): StreamPriority =
         ?: StreamPriority.Default
 
 /**
- * The request's regular fields for HTTP/2 (RFC 9113 section 8.2): lowercase names, no connection-specific fields and no
- * `host` (`:authority` carries it, section 8.3.1), `content-length` when the body knows its length; the request's own
+ * The request's regular fields for HTTP/2 (RFC 9113 section 8.2): lowercase names, no connection-specific fields (RFC 9110
+ * section 7.6.1), no `proxy-authorization` (the proxy's, sent on the CONNECT only, RFC 9110 section 11.7.2: HTTP/2 goes to
+ * the origin, over TLS or h2c, directly or through a tunnel) and no `host` (`:authority` carries it, section 8.3.1),
+ * `content-length` when the body knows its length; all as `H3Pool.HOP_BY_HOP` filters them; the request's own
  * priority as the end-to-end `priority` field (RFC 9218 section 5; the core adds the RFC 7540 signal of section 2.1.1).
  */
 private fun h2Fields(data: HttpRequestData): List<Pair<String, String>> {

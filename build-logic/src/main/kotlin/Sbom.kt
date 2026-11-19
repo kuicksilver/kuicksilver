@@ -26,9 +26,9 @@ import java.util.UUID
 
 // CycloneDX 1.6 SBOMs of the published modules (docs/release.md, "Supply chain"), written without a third-party plugin: one
 // document per publication, from the resolved graph Gradle publishes for it, plus one per module that aggregates them. The
-// statically linked native code Gradle cannot see is added as components: the ksl C shim and the pinned OpenSSL (version,
-// tarball SHA-256 and configure flags from gradle/openssl.toml), under every publication that embeds or depends on
-// kuicksilver-native. Deterministic: the timestamp is the commit's, the serial number a name-based UUID of the content.
+// statically linked native code Gradle cannot see is added as components: the ksl C shim, the pinned OpenSSL (version,
+// tarball SHA-256 and configure flags from gradle/openssl.toml) and the zlib and brotli compiled into its libcrypto
+// (gradle/compression-libs.toml), under every publication that embeds or depends on kuicksilver-native. Deterministic: the timestamp is the commit's, the serial number a name-based UUID of the content.
 
 /** One platform publication of a Kotlin Multiplatform module: its artifactId and the configuration its consumers resolve. */
 abstract class SbomPublication {
@@ -73,6 +73,9 @@ abstract class CyclonedxSbomTask : DefaultTask() {
     @get:Input abstract val opensslConfigureFlags: ListProperty<String>
 
     @get:Input abstract val kslAbi: Property<String>
+
+    /** The compression libraries in libcrypto, one entry per table of gradle/compression-libs.toml: name, version, sha256, url. */
+    @get:Input abstract val compressionLibs: ListProperty<List<String>>
 
     /** The modules of a BOM (java-platform) publication, which has constraints and no graph. */
     @get:Input @get:Optional abstract val platformConstraints: ListProperty<String>
@@ -162,6 +165,11 @@ abstract class CyclonedxSbomTask : DefaultTask() {
             doc.add(ksl); doc.add(ssl)
             doc.dependsOn(nativeRef, ksl.ref)
             doc.dependsOn(ksl.ref, ssl.ref)
+            for (lib in compressionLibs.get().map(::compressionLib)) {
+                doc.add(lib)
+                doc.dependsOn(ssl.ref, lib.ref)
+                doc.dependencies.getOrPut(lib.ref) { linkedSetOf() }
+            }
             doc.dependencies.getOrPut(ssl.ref) { linkedSetOf() }
         }
         return doc
@@ -199,6 +207,34 @@ abstract class CyclonedxSbomTask : DefaultTask() {
         }
     }
 
+    // zlib and brotli are compiled with libcrypto's flags and appended to libcrypto.a (tools/openssl/compression.mk)
+    private fun compressionLib(entry: List<String>): Component {
+        val (name, v, sha, url) = entry
+        val (licenseId, supplierOf, cpeOf) = when (name) {
+            "zlib" -> Triple("Zlib", "Jean-loup Gailly and Mark Adler" to "https://zlib.net", "cpe:2.3:a:zlib:zlib:$v:*:*:*:*:*:*:*")
+            "brotli" -> Triple("MIT", "Google" to "https://github.com/google/brotli", "cpe:2.3:a:google:brotli:$v:*:*:*:*:*:*:*")
+            else -> error("no SBOM data for the compression library $name")
+        }
+        // the projects' own GitHub repositories and release tags (package-url's github type), with the tarball and its SHA-256
+        val repo = if (name == "zlib") "madler/zlib" else "google/brotli"
+        val purl = "pkg:github/$repo@v$v?download_url=${url.replace(":", "%3A")}&checksum=sha256%3A$sha"
+        return Component(
+            ref = "pkg:github/$repo@v$v", group = null, name = name, version = v,
+            purl = purl,
+            description = "$name, built from the pinned release tarball with OpenSSL's flags and linked statically into its libcrypto (TLS certificate compression)",
+            own = false,
+        ).apply {
+            sha256 = sha
+            cpe = cpeOf
+            supplier = supplierOf
+            distribution = url
+            license = licenseId
+            properties += "kuicksilver:linkage" to "static"
+            // ADR-0025: the client-mostly platforms ship brotli's decoder only
+            if (name == "brotli") properties += "kuicksilver:brotli:encoder" to "built on JVM, macOS, Linux and Windows (static tables computed on first use); not on Android and iOS (decoder only)"
+        }
+    }
+
     private fun component(purl: String, g: String?, n: String, v: String, desc: String?, own: Boolean) =
         Component(purl, g, n, v, purl, desc, own).apply { if (own) vcsRevision = gitCommit.get() }
 
@@ -217,6 +253,7 @@ abstract class CyclonedxSbomTask : DefaultTask() {
         var supplier: Pair<String, String>? = null
         var distribution: String? = null
         var vcsRevision: String? = null
+        var license: String? = null
         val properties = mutableListOf<Pair<String, String>>()
 
         fun toMap(): Map<String, Any?> = linkedMapOf(
@@ -225,7 +262,7 @@ abstract class CyclonedxSbomTask : DefaultTask() {
                 ?: if (own) KUICKSILVER else null),
             "group" to group, "name" to name, "version" to version, "description" to description,
             "hashes" to sha256?.let { listOf(mapOf("alg" to "SHA-256", "content" to it)) },
-            "licenses" to if (own || name == "openssl") listOf(mapOf("license" to mapOf("id" to "Apache-2.0"))) else null,
+            "licenses" to (license ?: if (own || name == "openssl") "Apache-2.0" else null)?.let { listOf(mapOf("license" to mapOf("id" to it))) },
             "cpe" to cpe, "purl" to purl,
             "externalReferences" to listOfNotNull(
                 distribution?.let { mapOf("type" to "distribution", "url" to it) },

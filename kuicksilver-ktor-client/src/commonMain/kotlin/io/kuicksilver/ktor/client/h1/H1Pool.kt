@@ -48,6 +48,7 @@ import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.newWebSocketKey
 import io.kuicksilver.ktor.client.platformCleartextPermitted
+import io.kuicksilver.ktor.client.proxyTlsConfigFor
 import io.kuicksilver.ktor.client.requestTimeoutMillis
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
@@ -58,6 +59,7 @@ import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
+import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -256,7 +258,8 @@ private suspend fun drainToEnd(input: ByteReadChannel) {
 private val DONE: Job = Job().also { it.complete() }
 
 /**
- * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3.
+ * The TCP path: HTTP/1.1, and HTTP/2 when the server picks `h2` in ALPN (RFC 9113 section 3.2; ADR-0017), over TLS 1.3, or
+ * over cleartext TCP with prior knowledge for the origins in `http2 { priorKnowledge }` (h2c, section 3.3; ADR-0018).
  * An HTTP/2 connection takes one slot of the limits below and serves its route's requests as streams ([H2Pool]): one
  * connection per route while it has a free stream, a second only when it is full. HTTP/1.1 keeps keep-alive and the
  * connection limits ([ConnectionPool]): at most
@@ -290,14 +293,14 @@ internal class H1Pool(
     internal var orderlyCloseTimeoutForTest: Duration = ORDERLY_CLOSE_TIMEOUT
 
     /**
-     * Ends [tls] in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
+     * Ends [tls] (none for h2c) in order and then the socket under it: what the application wrote, then close_notify (RFC 9846 section 6.1:
      * "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has already
      * sent some error alert"), a short wait for the peer's, then [rawOut] flushed so that it all reaches the wire before the
      * FIN. Bounded by [ORDERLY_CLOSE_TIMEOUT]; past it, and when the engine is closed meanwhile, the connection is closed
      * hard. Runs in [closers], never in the caller.
      */
     private fun closeOrderly(
-        tls: TlsConnection,
+        tls: TlsConnection?,
         rawOut: ByteWriteChannel,
         tcp: Socket,
     ) {
@@ -307,11 +310,11 @@ internal class H1Pool(
             try {
                 val bound = orderlyCloseTimeoutForTest
                 withTimeoutOrNull(bound) {
-                    tls.shutdown(drainTimeout = bound)
+                    tls?.shutdown(drainTimeout = bound)
                     rawOut.flushAndClose()
                 }
             } finally {
-                tls.close()
+                tls?.close()
                 tcp.close()
             }
         }
@@ -430,6 +433,12 @@ internal class H1Pool(
     /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
+    /**
+     * The TLS session tickets of `https://` proxies, apart from [sessions]: a proxy's ticket never goes to an origin nor an
+     * origin's to a proxy, whatever their names (one host can be both); closed with [sessions].
+     */
+    internal val proxySessions = SessionCache()
+
     /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
     fun recycle(c: H1Connection) = pool.release(c)
 
@@ -469,6 +478,7 @@ internal class H1Pool(
                 closers.coroutineContext[Job]!!.cancelAndJoin()
                 h2Scope.cancel()
                 sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+                proxySessions.close()
             }
         }
     }
@@ -521,7 +531,7 @@ internal class H1Pool(
     )
 
     /**
-     * Whether [data] may open or use an HTTP/2 connection on [key]: enabled, `https` (no h2c, ADR-0017), not a WebSocket
+     * Whether [data] may open or use an HTTP/2 connection on [key]: enabled, `https` or an h2c origin ([h2cPriorKnowledge]), not a WebSocket
      * (one takes HTTP/2 only on a connection that is there already, [webSocketConnection]: a new connection for it
      * offers `http/1.1` only, as Chromium's) and the route did not answer HTTP_1_1_REQUIRED lately.
      */
@@ -531,12 +541,25 @@ internal class H1Pool(
         key: String,
     ): Boolean = h2Usable(data, key) && !data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) && !upgrades(data.body)
 
-    /** HTTP/2 is enabled, the request is `https` (no h2c) and the route did not answer HTTP_1_1_REQUIRED lately. */
+    /**
+     * HTTP/2 is enabled, the request is `https` or for an h2c origin ([h2cPriorKnowledge]) and the route did not answer
+     * HTTP_1_1_REQUIRED lately.
+     */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private fun h2Usable(
         data: HttpRequestData,
         key: String,
-    ): Boolean = config.http2.enabled && data.url.protocol.isSecure() && !h2Refused.isRefused(key)
+    ): Boolean = config.http2.enabled && (data.url.protocol.isSecure() || h2cPriorKnowledge(data.url)) && !h2Refused.isRefused(key)
+
+    /**
+     * RFC 9113 section 3.3: [url] is `http`/`ws` and its origin is in `http2 { priorKnowledge }`, so its connections are
+     * h2c (HTTP/2 over cleartext TCP, the preface at once). Never for `https`/`wss`, which negotiate `h2` by ALPN.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun h2cPriorKnowledge(url: Url): Boolean =
+        !url.protocol.isSecure() && config.http2.priorKnowledge.isNotEmpty() &&
+            io.kuicksilver.ktor.client
+                .HostPort(url.host, url.port) in config.http2.priorKnowledge
 
     /** How long a WebSocket waits for the SETTINGS of a new HTTP/2 connection before it goes over HTTP/1.1 (tests lower it). */
     internal var h2WebSocketSettingsWaitMillis: Long = 1_000
@@ -609,6 +632,52 @@ internal class H1Pool(
         }
     }
 
+    /**
+     * For a `ws://` WebSocket ([data]) to an h2c origin whose route [route] has no usable HTTP/2 connection: opens one through
+     * the path of any request to the origin (pooled, one dial per route, SETTINGS within the connect timeout) and leaves it
+     * in the pool for [webSocketConnection] to take, which waits for its SETTINGS within [h2WebSocketSettingsWaitMillis]
+     * and uses Extended CONNECT only when the server allows it (RFC 8441 section 3), else the WebSocket goes over HTTP/1.1
+     * as on any connection without the setting. False when the route has a connection already (in use, full, or without
+     * the setting: as for `wss://`, no second one is opened for the WebSocket), is marked HTTP_1_1_REQUIRED, or got
+     * HTTP/1.1 (HTTP_1_1_REQUIRED on the new connection). A
+     * connection that cannot be opened fails the WebSocket, as it fails any request to a listed origin (no fallback).
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    private suspend fun openH2cForWebSocket(
+        data: HttpRequestData,
+        route: String,
+        dns: RequestDns,
+        proxy: ResolvedProxy?,
+    ): Boolean {
+        // a route that answered HTTP_1_1_REQUIRED takes no HTTP/2 for a while: the dial below would open an HTTP/1.1
+        // connection the WebSocket does not use (the caller checks it too, through h2Usable; kept here so the function holds
+        // on its own)
+        if (h2Refused.isRefused(route) || h2.usable(route).isNotEmpty()) return false
+        val attributes = io.ktor.util.Attributes(concurrent = true)
+        for (k in data.attributes.allKeys) {
+            if (k == io.ktor.client.plugins.websocket.WEBSOCKETS_KEY) continue
+            @Suppress("UNCHECKED_CAST")
+            attributes.put(k as io.ktor.util.AttributeKey<Any>, data.attributes[k])
+        }
+        val plain =
+            HttpRequestData(
+                io.ktor.http
+                    .URLBuilder(data.url)
+                    .apply { protocol = io.ktor.http.URLProtocol.HTTP }
+                    .build(),
+                io.ktor.http.HttpMethod.Get,
+                io.ktor.http.Headers.Empty,
+                io.ktor.client.utils.EmptyContent,
+                data.executionContext,
+                attributes,
+            )
+        val got = obtain(plain, route, dns, proxy, webSocketKeys = null)
+        got.connection?.let { pool.release(it) }
+        val c = got.h2 ?: return false
+        c.client.unreserve()
+        return true
+    }
+
     /** A body that takes over the connection (`Upgrade`): HTTP/2 has no such thing (RFC 9113 section 8.6), so HTTP/1.1. */
     private fun upgrades(body: OutgoingContent): Boolean =
         when (body) {
@@ -658,6 +727,14 @@ internal class H1Pool(
                             stream = it
                             reused = true
                             return@attempt
+                        }
+                        // an h2c origin (prior knowledge) has no HTTP/1.1 to offer a new connection first: a cold `ws://`
+                        // opens the route's h2c connection as any request would, then decides on its SETTINGS
+                        if (h2cPriorKnowledge(data.url) && openH2cForWebSocket(data, h2RouteOf(key), dns, proxy)) {
+                            webSocketConnection(data, h2RouteOf(key))?.let {
+                                stream = it
+                                return@attempt
+                            }
                         }
                     }
                     // a request that may use HTTP/2 also watches its route: a stream that frees up, or a connection that
@@ -973,7 +1050,7 @@ internal class H1Pool(
             // HTTP/1.1 where HTTP/2 would have been offered, but the route answered HTTP_1_1_REQUIRED lately
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
             if (h2c == null && diagnostics != null && webSocketKeys == null && !h2Allowed(data, key) &&
-                config.http2.enabled && secure && h2Refused.isRefused(h2RouteOf(key))
+                config.http2.enabled && (secure || h2cPriorKnowledge(url)) && h2Refused.isRefused(h2RouteOf(key))
             ) {
                 diagnostics.h2Refused = true
             }
@@ -1458,8 +1535,8 @@ internal class H1Pool(
     }
 
     /**
-     * TCP, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect timeout, which bounds every
-     * step of a proxy's handshake too.
+     * TCP, TLS to an `https://` proxy, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect
+     * timeout, which bounds every step of a proxy's handshake too.
      */
     private suspend fun connect(
         data: HttpRequestData,
@@ -1483,7 +1560,11 @@ internal class H1Pool(
             // module's connects on Kotlin/Native, not ktor-network's (Ktor issue KTOR-10017, security, under coordinated
             // disclosure)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            val raw = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            // an https:// proxy: everything from here on (the CONNECT or the absolute-form request, the credentials, the
+            // origin's own TLS) goes inside TLS with the proxy, whose name its certificate must carry; the TLS socket
+            // stands for the TCP one, so closing, aborting and the orderly close end both
+            val tcp = if (proxy?.tls == true) proxyTls(raw, proxy) else raw
             // set once an HTTP/2 connection has started on it: the transport is the connection's to close from then on
             var h2Owned = false
             try {
@@ -1502,7 +1583,9 @@ internal class H1Pool(
                         }
                     }
 
-                    proxy.tunnels(data) -> {
+                    // h2c through an HTTP proxy goes in a tunnel too: an absolute-form request is HTTP/1.1 (OkHttp's
+                    // Route.requiresTunnel does the same for H2_PRIOR_KNOWLEDGE)
+                    proxy.tunnels(data) || (h2Ok && !secure) -> {
                         startTunnel(
                             url,
                             data.headers[HttpHeaders.UserAgent],
@@ -1618,6 +1701,43 @@ internal class H1Pool(
                         tcpIn = rawIn,
                         tcpOut = rawOut,
                     )
+                } else if (h2Ok) {
+                    // RFC 9113 section 3.3: h2c with prior knowledge, for an origin the application listed
+                    // (http2 { priorKnowledge }): the preface and our SETTINGS go out at once, the request right after them
+                    // (section 3.4); the server's preface must arrive within what the connect timeout left
+                    val peerIp = WebSocketConnecting.peerIp(tcp.remoteAddress)
+
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    val client =
+                        H2ClientConnection.start(
+                            rawIn,
+                            rawOut,
+                            config.http2.settings,
+                            h2Scope,
+                            config.http2.pingInterval,
+                            closeTransport = { tcp.close() },
+                            // the last GOAWAY is in rawOut: it goes out, then the FIN (RFC 9113 sections 5.4.1 and 6.8)
+                            closeTransportGracefully = { closeOrderly(null, rawOut, tcp) },
+                            onChange = { h2.bump(key) },
+                            prefaceTimeout =
+                                (data.connectTimeoutMillis(config).milliseconds - connectStarted.elapsedNow())
+                                    .coerceAtLeast(1.milliseconds),
+                            // no ALTSVC frame is heard: nothing authenticates a cleartext server, and an http origin never
+                            // learns an alternative (threat model 3.18), as its Alt-Svc fields are not
+                            onAltSvc = null,
+                        )
+                    h2Owned = true
+                    try {
+                        afterH2StartForTest?.invoke(client, tcp)
+                        H2Conn(client, key, clock(), peerIp)
+                    } catch (e: Throwable) {
+                        try {
+                            client.abortInOrder(e)
+                        } catch (s: Throwable) {
+                            if (s !== e) e.addSuppressed(s)
+                        }
+                        throw e
+                    }
                 } else {
                     H1Connection(tcp, null, rawIn, rawOut, key, clock())
                 }
@@ -1630,6 +1750,39 @@ internal class H1Pool(
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
+
+    /**
+     * TLS with the `https://` [proxy] over [raw] ([KuicksilverEngineConfig.proxyTlsConfigFor]): the proxy's host as SNI and
+     * reference identifier, ALPN `http/1.1`, resuming from [proxySessions]. A failed handshake (a certificate that does not verify, an alert, a connection
+     * that ended) fails with [io.kuicksilver.ktor.client.ProxyTlsException] around the TLS layer's error; [raw] is closed
+     * then (by `Socket.tls`). A cancellation (the connect timeout) passes as it is.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun proxyTls(
+        raw: Socket,
+        proxy: ResolvedProxy,
+    ): Socket {
+        val tlsConfig =
+            try {
+                config.proxyTlsConfigFor(proxy.host)
+            } catch (e: Throwable) {
+                raw.close()
+                throw e
+            }
+        return try {
+            raw.tls(tlsConfig, callContextOrEmpty(), proxySessions)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TlsException.Config) {
+            throw e // the proxyTls block's own error, not the proxy's
+        } catch (e: Throwable) {
+            if (e !is TlsException && e !is kotlinx.io.IOException) throw e
+            throw io.kuicksilver.ktor.client.ProxyTlsException(
+                "TLS with the proxy $proxy failed: ${e.message ?: e::class.simpleName}",
+                e,
+            )
+        }
+    }
 
     /**
      * The SOCKS5 destinations for [host], in order: an address literal as ATYP 1 or 4; a name as itself for the proxy to

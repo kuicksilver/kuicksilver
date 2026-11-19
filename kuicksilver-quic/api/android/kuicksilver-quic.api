@@ -104,6 +104,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun getMaxDatagramPayload ()I
 	public final fun getMaxSendBuffer ()J
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
+	public final fun getPeerCertificateCompression ()Lio/kuicksilver/tls/CertificateCompression;
 	public final fun getPeerCertificates ()Ljava/util/List;
 	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
 	public final fun getState ()Lio/kuicksilver/quic/ConnectionState;
@@ -957,6 +958,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPathEvents ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getPaths ()Ljava/util/List;
+	public fun getPeerCertificateCompression ()Lio/kuicksilver/tls/CertificateCompression;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun getPeerSupportsDatagrams ()Z
 	public fun getResetStreamAtEnabled ()Z
@@ -982,6 +984,7 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
 	public static fun getKeyExchangeGroup (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/String;
 	public static fun getLocalCertificates (Lio/kuicksilver/quic/QuicConnection;)Ljava/util/List;
+	public static fun getPeerCertificateCompression (Lio/kuicksilver/quic/QuicConnection;)Lio/kuicksilver/tls/CertificateCompression;
 	public static fun getResetStreamAtEnabled (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;

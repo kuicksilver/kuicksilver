@@ -77,11 +77,13 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.ktor.server.priority
 import io.kuicksilver.ktor.server.receivedEarly
@@ -124,6 +126,8 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
@@ -359,8 +363,9 @@ arrive over HTTP/3): [Deploying the HTTP/3 server](deployment.md).
 
 `http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
 offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
-`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
-is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
+`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors serve HTTP/2 only with
+their own opt-in ([h2c on the server](#h2c-on-the-server)); without it a client's `PRI * HTTP/2.0` preface is refused with
+`505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
 section 9.2).
 
@@ -434,7 +439,63 @@ the source address). Never behind a NAT, CGNAT, an L4 load balancer or Kubernete
 addresses (`externalTrafficPolicy: Cluster`) or a TCP proxy such as HAProxy in TCP mode: every client there shares one
 address, and one flooder would lock them all out.
 
-The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`, over TLS and over h2c). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+
+### h2c on the server
+
+HTTP/2 over cleartext TCP with prior knowledge (h2c, RFC 9113 section 3.3; experimental, off by default; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md))
+is for a server behind a TLS-terminating proxy or load balancer, inside a service mesh whose sidecar does the TLS, and
+for gRPC between services: the hop from the proxy to the server keeps HTTP/2's multiplexing instead of falling back to
+HTTP/1.1. It is turned on per plain connector:
+
+```kotlin
+// guide:ktor:h2c-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    plainConnector {
+        port = 8080
+        h2c = H2cMode.WithHttp11      // HTTP/1.1 and h2c (prior knowledge) on this cleartext port; H2cMode.Only: h2c alone
+    }
+}, module = Application::module)
+```
+
+`EngineMain` takes `kuicksilver.h2c = off | withHttp11 | only` for the cleartext deployment port (not together with the
+`kuicksilver.tls.*` identity files: a TLS port negotiates `h2` by ALPN, `kuicksilver.http2`). A connector that the
+configuration's `identity` turns into a TLS one refuses h2c at the start (IllegalArgumentException).
+
+- **One port or two.** `WithHttp11` tells the two apart by the client connection preface (`PRI * HTTP/2.0
+
+SM
+
+`,
+  RFC 9113 section 3.4), as Go's `golang.org/x/net/http2/h2c` handler and Netty's `CleartextHttp2ServerUpgradeHandler`
+  do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
+  hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
+  of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
+  stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a connection
+  that has sent nothing is closed at once, and one that has started is treated as a request head that started on
+  HTTP/1.1: waited for within the request-head deadline and the stop's grace period. A whole preface is HTTP/2, which
+  serves the requests that came with it and ends with the graceful two-step GOAWAY (RFC 9113 section 6.8); the first
+  octet that differs hands the connection to HTTP/1.1, which answers that request with `Connection: close`; a client
+  that stops part way is closed at the deadline with HTTP/1.1's 408. "Arrived" means read by the server from the socket:
+  bytes still in the kernel's buffer, or a TLS record not yet decrypted, when the stop begins are not seen, and such a
+  connection counts as one that has sent nothing. `Only` (a gRPC port) skips the check: a client that sends anything
+  else, an HTTP/1.1 request included, gets the connection error of an invalid preface (GOAWAY with PROTOCOL_ERROR, then
+  the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
+- **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers
+  it is served as HTTP/1.1, as any `Upgrade` the server does not take (RFC 9110 section 7.8), never answered 101.
+- **Everything else is HTTP/2 on the server, unchanged**: `http2Settings`, the deadlines, the flood defences and
+  `http2RepeatOffenderPenalty`, RFC 9218 priorities, WebSockets over HTTP/2 (`ws://`, RFC 8441, with
+  `webSocketsOverHttp2`), the two-step GOAWAY at a stop, `maxTcpConnections`, the event listener and the probe. The
+  call's `request.local.scheme` is `http`. No `Alt-Svc` and no ALTSVC frame: HTTP/3 is for `https` origins.
+- **`:scheme https` over h2c** (a proxy that terminated TLS and forwards the original scheme) is a misdirected request
+  on a plain connection (RFC 9110 section 7.4): 421, unless the connector's clients are trusted gateways
+  (`trustedGateway = true`, [Misdirected requests](#misdirected-requests)).
+
+**Cleartext.** Nothing authenticates the client or protects the bytes (CWE-319): serve h2c only behind a trusted network
+or proxy (a loopback hop, a private network, a sidecar that does mTLS), never on a port the internet reaches. When the
+front is an HTTP/1.1 proxy that turns requests into h2c, the server's HTTP/2 message checks (connection-specific fields,
+`content-length` against the content) reject what would smuggle a second request ([threat model 3.23.1](../spec/threat-model.md#3-23-1-h2c)).
 
 ### Turning HTTP/3 off on the server
 
@@ -639,6 +700,33 @@ wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :k
 dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
+
+### CONNECT-UDP over HTTP/3 (experimental)
+
+With `connectUdp = true` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
+`:protocol` `connect-udp`) into Ktor's pipeline, and a `connectUdp(proxy)` route serves them with a `UdpProxy` of
+`kuicksilver-http3` ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)): the proxy reads the target from the path
+with its `pathTemplate`, checks it with its `targetFilter` (`UdpTargetFilter.PublicOnly` by default: loopback, private,
+link-local, multicast and broadcast targets are refused with 403) and its limits, answers and relays the tunnel; the call
+ends with the tunnel. The route matches only such a request, at any path, over HTTP/3; HTTP/1.1 and HTTP/2 do not carry
+CONNECT-UDP (ADR-0024). Without `connectUdp = true` the engine answers CONNECT-UDP with 501; a CONNECT-UDP request no route
+takes gets Ktor's 404, and one another route answers with a 2xx gets 501, since no tunnel was opened. Give the route one
+`UdpProxy` (its limits count the tunnels of every request) and put it behind authentication: "HTTP servers that support
+UDP proxying ought to restrict its use to authenticated users" (RFC 9298 section 7); a 401 or 407 from a check in front
+of it goes out as it is. The proxy's configuration is code (a filter, a resolver), so it has no configuration-file key.
+
+```kotlin
+// guide:ktor:connect-udp-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val proxyServer = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    connectUdp = true
+}) {
+    routing {
+        connectUdp(UdpProxy())                     // behind your authentication; public targets only by default
+    }
+}
+```
 
 ### Misdirected requests
 
@@ -923,6 +1011,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.trustedGateway` | `true`: every client of the deployment port is a trusted gateway (RFC 9110 section 7.4), so no request is answered `421 Misdirected Request`: with the identity files, for a host the certificate does not name; without them, for an absolute-form `https` target on the cleartext port behind a TLS-terminating proxy (`false`); with the identity files it is refused next to `-sslPort`, and without them it is accepted there but exempts only the cleartext port, never Ktor's `-sslPort` connector; see [Misdirected requests](#misdirected-requests) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.h2c` | HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port: `off` (unset), `withHttp11` (both on one port, told apart by the preface) or `only`; refused with the identity files; see [h2c on the server](#h2c-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
@@ -1062,7 +1151,7 @@ This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is 
 as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
 switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
 
-- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c). A WebSocket opens no HTTP/2 connection of its own: see
+- **Not HTTP/2.** `http://`, unless its origin is listed for h2c ([h2c on the client](#h2c-on-the-client)). A WebSocket opens no HTTP/2 connection of its own: see
   WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
   ends the connection), and no connection coalescing across origins. `priority(...)` goes as the end-to-end `priority`
   field, with an RFC 7540 weight in the HEADERS until the server says it ignores those (RFC 9218 section 2.1.1).
@@ -1131,6 +1220,48 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   was cancelled once the session was open closes it with a Close (1001 Going Away, or the application's own code) as one
   cancelled after its Close does (see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
+
+### h2c on the client
+
+```kotlin
+// guide:ktor:h2c-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        http2 {
+            // these http:// origins speak HTTP/2 over cleartext TCP (h2c, prior knowledge); every other stays HTTP/1.1
+            priorKnowledge = setOf(HostPort("backend.internal", 8080))
+        }
+    }
+}
+```
+
+An `http://` request whose origin (host and port as in the URL) is in `http2 { priorKnowledge }` goes over HTTP/2 on
+cleartext TCP (RFC 9113 section 3.3, experimental; [ADR-0018](../adr/0018-h2c-and-coalescing-in-030.md)): the client
+connection preface right after the TCP connect, no TLS, no ALPN, never `Upgrade: h2c` (deprecated by section 3.1). The
+list is per origin, where OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a whole client to h2c: the application names the
+servers it knows, and every other `http://` request stays HTTP/1.1. Nothing is learned (section 3.3: a server that once
+spoke h2c may not again), and a listed origin does not have to be on loopback; the per-origin opt-in is the gate, as
+grpc-go's `insecure.NewCredentials()` is per channel.
+
+- **No fallback.** A listed server that speaks HTTP/1.1 only, or a TLS port, fails the call (its answer is no SETTINGS
+  frame); only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1, as over TLS.
+- **Never for `https://`** (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), and never HTTP/3: an
+  `http://` origin learns no alternative, neither from `Alt-Svc` fields nor from ALTSVC frames on an h2c connection.
+  With `http3 { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
+- **Proxies.** Through an HTTP proxy the h2c connection goes in a CONNECT tunnel (an absolute-form request would be
+  HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The tunnel is a CONNECT to the origin's cleartext
+  port (80, say), which many proxies refuse (squid's default `SSL_ports` allows CONNECT to 443 only): such a proxy fails
+  the call with its answer to the CONNECT. `Proxy-Authorization` goes on the CONNECT only, never on the HTTP/2 stream. The pool keeps h2c connections per route (origin
+  and proxy), apart from the `https://` ones of the same host.
+- **The rest is HTTP/2 on the client**: one multiplexed connection per route, repeats, deadlines (the server's SETTINGS
+  within the connect timeout), `pingInterval`, `settings` and diagnostics (`HTTP_2_0`; `fallback` says `NotSecure`,
+  why not HTTP/3). A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (`:scheme http`, RFC 8441 section
+  5) on the origin's h2c connection; with none open, the WebSocket opens it (pooled for the requests after it) and waits
+  for its SETTINGS (at most 1 s): an h2c-only server has no HTTP/1.1 Upgrade to offer. A server whose SETTINGS do not
+  allow Extended CONNECT (section 3) gets the HTTP/1.1 Upgrade on a connection of its own, as over TLS.
+- **Cleartext** (CWE-319): list only servers on a trusted network or behind a sidecar that protects the hop. On Android
+  the app's cleartext policy applies as to any `http://` request.
 
 ### Connection pool
 
@@ -1686,10 +1817,10 @@ Where a request's proxy comes from:
 
 | Target | `ProxyResolvers.System` | PAC / WPAD |
 |---|---|---|
-| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
+| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings; its HTTP proxies (`https.proxyHost`/`https.proxyPort` included: the `https` names the URLs it serves) are always plain HTTP proxies, as on Android, since a `java.net.Proxy` has no scheme; TLS to a proxy needs `proxyResolver = ProxyResolver { ResolvedProxy.https(..) }` | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
-| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer with only proxies the engine cannot use (`HTTPS`, `SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list; the settings' "HTTPS" proxy is the plain proxy for `https` URLs) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer entry `HTTPS host:port` (Chrome's extension) is an `https://` proxy, port 443 by default; an answer with only proxies the engine cannot use (`SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`; an entry whose value starts with `https://` is an `https://` proxy, as Chrome reads it, while `https=host:port` is the plain proxy for `https` URLs) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
 What a PAC script sees. A PAC script is code from the network: whoever answers WPAD on the local network, or serves a
@@ -1731,30 +1862,62 @@ names with their subdomains (`example.com` covers `a.example.com`, not `badexamp
 an entry with a port (`example.com:8080`, `[2001:db8::1]:443`) exempts that port only, as Go does. On Windows
 environment names are case-insensitive, so there an `HTTP_PROXY` variable is read as `http_proxy` (curl has the same
 caveat).
-A value is `http://host:port`, `socks5://` (names resolved by the client), `socks5h://` (by the proxy) or a bare
-`host:port`; user info in it becomes the credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
+A value is `http://host:port`, `https://host[:port]` (TLS to the proxy; port 443 by default, as curl (despite its manual's 1080), Chrome and Go), `socks5://`
+(names resolved by the client), `socks5h://` (by the proxy) or a bare `host:port`; user info in it becomes the
+credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
 `proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
 `*.localhost` and loopback addresses directly whatever the settings say.
 
-A proxy the engine cannot use (`socks4://`, an `https://` proxy, an unknown type) fails the request with
-`UnsupportedOperationException`: it is never bypassed.
+A proxy the engine cannot use (`socks4://`, an unknown type) fails the request with `UnsupportedOperationException`: it
+is never bypassed.
 
 How a proxy is used. An HTTP proxy gets `CONNECT` tunnels for `https` and for WebSockets, `ws://` included (RFC 6455
 section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS proxy is SOCKS5 (RFC 1928, CONNECT only;
 no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
 Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
 that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
-its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+its own. A request's own `Proxy-Authorization` goes only on a hop to a proxy, never to an origin (directly or in a
+tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
-clear to the proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
+them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
 resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
-`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
+`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried, so a proxy that keeps
+answering 407 costs one CONNECT per request, never a loop; a plain `http` request gets the proxy's 407 as its response).
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
-RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**`https://` proxies** (*experimental*, 0.3.0). `ResolvedProxy.https(host, port, credentials)`, an `https://` value in
+the environment, an `https://` entry of Windows' settings, a PAC answer's `HTTPS host:port`, or, off the JVM,
+`ProxyBuilder.http(Url("https://proxy:443"))` (a `java.net.Proxy` has no scheme, so on the JVM name it with a resolver;
+there an HTTP `proxy` on port 443, which is what that URL becomes, fails every request with `UnsupportedOperationException`
+rather than speak plain HTTP to what may be an `https://` proxy: use `ResolvedProxy.https` for TLS to it, or
+`ResolvedProxy.http(host, 443)` from a resolver for a plain proxy on that port)
+makes the engine speak TLS to the proxy itself, as curl's HTTPS proxy and Chrome do, before anything else: the CONNECT
+or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target travel inside that TLS session
+([ADR-0023](../adr/0023-https-proxy.md)).
+
+- The proxy's certificate is verified against the proxy's host as configured (a DNS name, or an IP address as an IP-ID;
+  RFC 9525), which is also its SNI unless it is an IP address (RFC 6066 section 3); the name goes through the engine's
+  `dns`. A failed handshake (a certificate that does not verify, an alert, a proxy that closes) fails the request with
+  `ProxyTlsException`, a `ProxyException` whose `cause` is the TLS layer's error; a failure of the origin's TLS inside
+  the tunnel stays the origin's `TlsException`.
+- Trust: `proxyTls = { ... }` (*experimental*) configures that connection on its own. By default it takes the origin's
+  `tls` block and `trust` without what names the origin (an `ExpectedName` gives way to its base, a `Pinned` to its base:
+  the proxy has another name and another key, as curl's `--pinnedpubkey` is not applied to its proxy) and without the
+  client certificate. Whatever the block sets, the server name is the proxy's host and ALPN `http/1.1` alone.
+- Inside the tunnel the origin's TLS runs as without a proxy (TLS in TLS): its own SNI, certificate check, pins, ALPN
+  (`h2` included). Plain `http` goes in the absolute form inside TLS to the proxy, and that connection is pooled per proxy
+  (an `https://` and an `http://` proxy at the same address are different routes).
+- HTTP/2 to the proxy itself (CONNECT over HTTP/2, RFC 9113 section 8.5, several tunnels on one connection) is not
+  offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp. A new connection to the
+  proxy resumes an earlier TLS session from a cache that holds proxy tickets only.
+
+**Through an HTTP, HTTPS or SOCKS5 proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an
+`https://` proxy) nor SOCKS5 CONNECT carries (SOCKS5 UDP ASSOCIATE is not supported), as with Chrome and curl. HTTP/3 goes
+through a CONNECT-UDP proxy instead: [HTTP/3 through a CONNECT-UDP proxy](#http3-through-a-connect-udp-proxy-experimental).
+A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
@@ -1778,6 +1941,55 @@ val perHost = HttpClient(Kuicksilver) {
             if (url.host.endsWith(".internal.test")) null // direct
             else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
         }
+    }
+}
+// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+val overTls = HttpClient(Kuicksilver) {
+    engine {
+        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+    }
+}
+```
+
+### HTTP/3 through a CONNECT-UDP proxy (experimental)
+
+`connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
+origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
+origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](http3.md#connect-udp-experimental)). The proxy is
+reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
+tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+resolves it: the engine does not look it up.
+
+What it changes, for the `https` URLs its `applies` admits (all of them by default):
+
+- They go over HTTP/3 through the tunnel only, whatever the discovery mode (H3Only, Auto, Preferred): never over HTTP/1.1
+  or HTTP/2 and never directly, since both would leave the proxy out. An origin without HTTP/3, a refused tunnel
+  (`Http3Exception.ConnectRejected`, its `proxy-status` in `headers`) or a failed handshake fails the request instead of
+  falling back. `http3 { discovery = H1Only }` and an `http3Allowed` that says no fail it with UnsupportedOperationException.
+- `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
+- `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
+  URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
+  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
+  HTTP and SOCKS proxies only.
+- Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
+  origin cannot link a proxied connection to the client's own address by the ticket it resumes.
+
+`credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
+must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
+finds a path MTU above about 1250 bytes within a few round trips; over a path that does not carry that, the handshake
+through the tunnel times out.
+
+```kotlin
+// guide:ktor:connect-udp-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectUdpProxy = ConnectUdpProxy(
+            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+            ProxyCredentials("user", password),
+        ) { url -> !url.host.endsWith(".internal.test") }   // these go the usual way
     }
 }
 ```
@@ -2204,7 +2416,11 @@ once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same gr
 CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
 connection gets GOAWAY at once, and the calls in flight finish. An HTTP/1.1 connection reads no further request: one
 idle between requests (keep-alive) closes at once, one with a request in flight (or whose request head has started to
-arrive) closes after that response, which says `Connection: close`. An HTTP/2 connection gets GOAWAY in two steps (RFC 9113
+arrive) closes after that response, which says `Connection: close`. A connection that has received nothing yet is new,
+not idle: its first request may be on its way, and a client whose new connection closes without an answer cannot tell
+whether a non-idempotent request was processed (RFC 9112 section 9.3.1). Its first byte is waited for until 2 s after the
+connection was accepted (within the request-head deadline and the grace period; Go's `Server.Shutdown` waits 5 s), so a
+silent new connection can hold the stop that long. An HTTP/2 connection gets GOAWAY in two steps (RFC 9113
 section 6.8: first with the largest stream identifier and a PING, then with the last stream it took, once the PING comes
 back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
 as soon as they have: each HTTP/3

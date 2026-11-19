@@ -7,13 +7,21 @@
 # it is installed, else is only built. KSL_TSAN=1 (host targets): ThreadSanitizer instead of ASan/UBSan, into ksl_test_tsan; any
 # report fails the run, so a data race between threads cannot pass as a green test: halt_on_error stops at the first report (on
 # macOS by abort, exit 134; exitcode=66 is what a run that got to its end with reports exits with).
+# --decoder-only (first argument): against the host OpenSSL built without brotli's encoder, as Android and iOS ship it
+# (KSL_BROTLI_ENCODER=0, ADR-0025), built here into build/openssl-decoder-only (its own cache entry); the expectations of
+# test_certcomp.c follow what the build compresses with (KSL_GET_CERT_COMPRESSORS).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; cd "$root"
+if [ "${1:-}" = "--decoder-only" ]; then
+  shift; host_target="$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )"
+  export KSL_OPENSSL_OUT="$root/build/openssl-decoder-only"
+  KSL_BROTLI_ENCODER=0 bash "$root/tools/openssl/build.sh" "${1:-$host_target}" > /dev/null
+fi
 target="${1:-$( [ "$(uname)" = Darwin ] && echo macos-arm64 || ( [ "$(uname -m)" = aarch64 ] && echo linux-arm64 || echo linux-x64 ) )}"
 O="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built (tools/openssl/build.sh $target)"; exit 2; }
 out="$root/build/c-test"; mkdir -p "$out"
 CC="${CC:-clang}"; san="${SAN--fsanitize=address,undefined -fno-sanitize-recover=undefined}"   # SAN= (empty) disables the sanitizers (manylinux gcc has no libasan)
-libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl" ); defs="-DKSL_TEST_TCP -DKSL_TEST"; exe=ksl_test
+libs=$( [ "$(uname)" = Darwin ] || echo "-lresolv -lpthread -ldl -lm" ); defs="-DKSL_TEST_TCP -DKSL_TEST"; exe=ksl_test
 if [ "${KSL_TSAN:-0}" = 1 ]; then san="-fsanitize=thread"; exe=ksl_test_tsan; export TSAN_OPTIONS="halt_on_error=1 exitcode=66 ${TSAN_OPTIONS:-}"; fi
 if [ "$target" = mingw-x64 ]; then
   # the LLVM and mingw sysroot this build's Kotlin/Native uses (the konan.properties of its compiler bundle), not the newest
@@ -27,7 +35,9 @@ if [ "$target" = mingw-x64 ]; then
   [ -f "$props" ] && konan_tools
   if [ ! -f "$props" ] || [ ! -x "$llvm/bin/clang" ] || [ ! -d "$sysroot" ]; then bash tools/ci/konan-bootstrap.sh mingw_x64 >&2; konan_tools; fi
   if [ ! -x "$llvm/bin/clang" ] || [ ! -d "$sysroot" ]; then echo "no Kotlin/Native $kv LLVM or mingw sysroot in $kdeps" >&2; exit 2; fi
-  CC="$llvm/bin/clang --target=x86_64-w64-windows-gnu --sysroot=$sysroot -fuse-ld=lld -D_WIN32_WINNT=0x0A00"; san=""; libs="-lws2_32 -lcrypt32 -lbcrypt -ldnsapi"; defs="-DKSL_TEST"; exe=ksl_test.exe
+  # -femulated-tls: libcrypto.a is built by mingw-w64 GCC, whose thread-locals are emulated (__emutls_v.*, through libgcc's
+  # emutls and winpthreads, hence -lpthread); clang's default native TLS would not find them (ksl_brotli_decode_peak)
+  CC="$llvm/bin/clang --target=x86_64-w64-windows-gnu --sysroot=$sysroot -fuse-ld=lld -femulated-tls -D_WIN32_WINNT=0x0A00"; san=""; libs="-lws2_32 -lcrypt32 -lbcrypt -ldnsapi -lpthread"; defs="-DKSL_TEST"; exe=ksl_test.exe
 fi
 $CC -std=c11 -O1 -g $san -Wall -Wextra -Werror -Wno-misleading-indentation ${2:-} $defs -I"$O/include" -Ikuicksilver-native/src/c \
   kuicksilver-native/src/c/*.c kuicksilver-native/src/c/test/*.c "$O/lib/libssl.a" "$O/lib/libcrypto.a" $libs -o "$out/$exe"

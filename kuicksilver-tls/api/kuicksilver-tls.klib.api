@@ -20,6 +20,21 @@ final enum class io.kuicksilver.tls/Aead : kotlin/Enum<io.kuicksilver.tls/Aead> 
     final fun values(): kotlin/Array<io.kuicksilver.tls/Aead> // io.kuicksilver.tls/Aead.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.tls/CertificateCompression : kotlin/Enum<io.kuicksilver.tls/CertificateCompression> { // io.kuicksilver.tls/CertificateCompression|null[0]
+    enum entry Brotli // io.kuicksilver.tls/CertificateCompression.Brotli|null[0]
+    enum entry Zlib // io.kuicksilver.tls/CertificateCompression.Zlib|null[0]
+
+    final val codePoint // io.kuicksilver.tls/CertificateCompression.codePoint|{}codePoint[0]
+        final fun <get-codePoint>(): kotlin/Int // io.kuicksilver.tls/CertificateCompression.codePoint.<get-codePoint>|<get-codePoint>(){}[0]
+    final val entries // io.kuicksilver.tls/CertificateCompression.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/CertificateCompression> // io.kuicksilver.tls/CertificateCompression.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/CertificateCompression // io.kuicksilver.tls/CertificateCompression.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/CertificateCompression> // io.kuicksilver.tls/CertificateCompression.values|values#static(){}[0]
+
+    final object Companion // io.kuicksilver.tls/CertificateCompression.Companion|null[0]
+}
+
 final enum class io.kuicksilver.tls/ClientAuth : kotlin/Enum<io.kuicksilver.tls/ClientAuth> { // io.kuicksilver.tls/ClientAuth|null[0]
     enum entry None // io.kuicksilver.tls/ClientAuth.None|null[0]
     enum entry Optional // io.kuicksilver.tls/ClientAuth.Optional|null[0]
@@ -205,6 +220,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
         open fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/QuicTlsSession.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     open val localCertificates // io.kuicksilver.tls/QuicTlsSession.localCertificates|{}localCertificates[0]
         open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
+    open val peerCertificateCompression // io.kuicksilver.tls/QuicTlsSession.peerCertificateCompression|{}peerCertificateCompression[0]
+        open fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.tls/QuicTlsSession.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
 
     abstract fun drive(): io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/QuicTlsSession.drive|drive(){}[0]
     abstract fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/QuicTlsSession.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
@@ -734,6 +751,8 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.alpn.<get-alpn>|<get-alpn>(){}[0]
     final val alpnFallback // io.kuicksilver.tls/TlsConfig.alpnFallback|{}alpnFallback[0]
         final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
+    final val certificateCompression // io.kuicksilver.tls/TlsConfig.certificateCompression|{}certificateCompression[0]
+        final fun <get-certificateCompression>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.certificateCompression.<get-certificateCompression>|<get-certificateCompression>(){}[0]
     final val cipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites|{}cipherSuites[0]
         final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
     final val clientAuth // io.kuicksilver.tls/TlsConfig.clientAuth|{}clientAuth[0]
@@ -777,6 +796,9 @@ final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[
         final var alpnFallback // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback|{}alpnFallback[0]
             final fun <get-alpnFallback>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<get-alpnFallback>|<get-alpnFallback>(){}[0]
             final fun <set-alpnFallback>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.alpnFallback.<set-alpnFallback>|<set-alpnFallback>(kotlin.String?){}[0]
+        final var certificateCompression // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression|{}certificateCompression[0]
+            final fun <get-certificateCompression>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression.<get-certificateCompression>|<get-certificateCompression>(){}[0]
+            final fun <set-certificateCompression>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.certificateCompression.<set-certificateCompression>|<set-certificateCompression>(kotlin.Boolean){}[0]
         final var cipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites|{}cipherSuites[0]
             final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
             final fun <set-cipherSuites>(io.kuicksilver.tls/CipherSuites) // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<set-cipherSuites>|<set-cipherSuites>(io.kuicksilver.tls.CipherSuites){}[0]
@@ -840,6 +862,8 @@ final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuic
         final fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     final var negotiatedAlpn // io.kuicksilver.tls/TlsConnection.negotiatedAlpn|{}negotiatedAlpn[0]
         final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
+    final var peerCertificateCompression // io.kuicksilver.tls/TlsConnection.peerCertificateCompression|{}peerCertificateCompression[0]
+        final fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.tls/TlsConnection.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
     final var protocolVersion // io.kuicksilver.tls/TlsConnection.protocolVersion|{}protocolVersion[0]
         final fun <get-protocolVersion>(): io.kuicksilver.tls/TlsVersion // io.kuicksilver.tls/TlsConnection.protocolVersion.<get-protocolVersion>|<get-protocolVersion>(){}[0]
 

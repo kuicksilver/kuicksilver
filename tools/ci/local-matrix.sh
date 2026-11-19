@@ -171,7 +171,7 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
-export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
+export SIZE_LIMIT="${SIZE_LIMIT:-3200000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
@@ -206,7 +206,7 @@ step "lint: doc refs and test gates, negatives" bash -c 'rc=0
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
-step "lint: reliability report (fixtures)"      bash tools/report/reliability-test.sh
+step "lint: reliability report and verification pages (fixtures)" bash -c 'bash tools/report/reliability-test.sh && bash tools/docs/verify-test.sh'
 step "lint: RFC compliance summary table"      bash -c 'bash tools/check/rfc-table.sh && bash tools/check/rfc-table-test.sh'
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
@@ -230,6 +230,7 @@ step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/
 step --pre macos "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
+step --pre macos "c-tests: macos-arm64 (decoder-only)"     bash tools/c-test.sh --decoder-only macos-arm64   # brotli's decoder only, as on Android and iOS (ADR-0025)
 # shellcheck disable=SC2086
 # the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
 # value-returning, static or private test, one with parameters, in an object, a local or private class, an abstract class
@@ -256,7 +257,7 @@ step --needs "android: AAR" "android: 16 KiB pages"                    bash tool
 step --needs "android: AAR" "android: consumer keep rules (R8)"        env KSL_R8_REQUIRED=1 bash tools/check/android-keep-rules.sh "$aar"   # a minified app must still load libksl (0.2.1 review)
 step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-client:jvmJar :kuicksilver-ktor-client:bundleAndroidMainAar"' && env KSL_R8_REQUIRED=1 bash tools/check/service-keep-rules.sh "$(ls -t kuicksilver-ktor-client/build/libs/kuicksilver-ktor-client-jvm-*.jar | head -1)" kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar'   # HttpClient() must still find the engine in a shrunk app
 step --needs "android: AAR" "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
-step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh'
+step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh && bash tools/prefix/check-no-unprefixed-test.sh'
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
 step "check: local-matrix step selection"        bash tools/ci/local-matrix-test.sh   # --dry-run only: the refusals of --only/--from
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
@@ -279,7 +280,7 @@ step "native: link linux/mingw tests"           $G $(ksl_tasks linkDebugTestLinu
 step --pre mingw "c-tests: mingw-x64 (cross-built, -Werror)" bash tools/c-test.sh mingw-x64
 step --needs "native: link linux/mingw tests" "native: glibc floors"                     bash -c 'bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25'
 step "native: prefix whitelist (linux/mingw)"   bash -c "$G :kuicksilver-native:buildKslALinuxX64 :kuicksilver-native:buildKslALinuxArm64 :kuicksilver-native:buildKslAMingwX64"' && for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done'
-step --pre macos "repro: double build (macos-arm64)"        bash -c 'bash tools/check/double-build.sh macos-arm64 && bash tools/check/native-flags-test.sh'   # the second: the builder's flags (docs/guide/building.md)
+step --pre macos "repro: double build (macos-arm64)"        bash -c 'bash tools/check/double-build.sh macos-arm64 && bash tools/check/native-flags-test.sh && bash tools/openssl/fetch-test.sh && bash tools/openssl/brotli-pin-check-test.sh'   # the second: the builder's flags; then zlib and brotli verification (docs/guide/building.md)
 if [ "$skip_docker" = 0 ]; then
 [ "$mode" = list ] || [ "$dry" = 1 ] || rm -f build/ci/recverr-ran-*   # the markers of this run only
 step --pre linux-x64 "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
@@ -292,7 +293,7 @@ step --needs "native: link linux/mingw tests" "docker: test.kexe linux-arm64 (al
 step --pre linux-x64 --pre deps "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step --pre linux-arm64 --pre deps "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
-step --pre linux-x64 "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
+step --pre linux-x64 "docker: h2spec (HTTP/2 server over TLS and h2c, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0 per transport, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0@sha256:5f4a65c30cae8569558ced048b4bfe0dcf01a221e36767ae504ccd8348a7aeb0, the pin of tools/interop/h2spec.sh), never pulls it itself
 step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025

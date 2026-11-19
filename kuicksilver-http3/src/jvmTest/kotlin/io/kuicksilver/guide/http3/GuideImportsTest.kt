@@ -12,16 +12,22 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.ConnectUdp
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.UdpProxy
+import io.kuicksilver.http3.UdpProxyConfig
+import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.io.readString
@@ -69,4 +75,9 @@ suspend fun everyHttp3Import(
     stream.output.writeFully("ping".encodeToByteArray())
     stream.output.writeStringUtf8("\n")
     println(stream.input.readBuffer().readString())
+    val proxy = UdpProxy(UdpProxyConfig())
+    val request = server.accept().acceptRequest()
+    if (ConnectUdp.isConnectUdp(request)) proxy.serve(request)
+    val tunnel = connection.connectUdp(UdpProxyTemplate.wellKnown("proxy.example"), "192.0.2.10", 443)
+    println(tunnel.payloads.first().size)
 }

@@ -41,6 +41,7 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitSendStopped
 import io.kuicksilver.quic.markTunnel
+import io.kuicksilver.quic.ownAddresses
 import io.kuicksilver.quic.readAhead
 import io.kuicksilver.quic.releaseStreamCredit
 import kotlinx.coroutines.CancellationException
@@ -325,20 +326,36 @@ private suspend fun H3Session.handleArmedRequestStream(
             return
         }
         onDelivered() // the application holds it now: it gives the stream's credit back
-        // a stop of the response before it is complete abandons the request as a reset does, and spends the same token
-        scope.launch {
-            val code =
-                try {
-                    st.awaitSendStopped()
-                } catch (_: QuicException) {
-                    null
+        // a stop of the response before it is complete abandons the request as a reset does, and spends the same token. The
+        // watch ends with the complete response ([ServerRequestImpl.responseComplete]), after which a stop costs nothing: left
+        // waiting for the stream's end, its frame held the request (its body channel, headers, deferreds) for as long as the
+        // stream lived, an idle connection's last request included
+        if (!req.respondedInFull) {
+            val watch =
+                scope.launch {
+                    val code =
+                        try {
+                            st.awaitSendStopped()
+                        } catch (_: QuicException) {
+                            null
+                        }
+                    if (code != null) {
+                        try {
+                            countClientStop(req)
+                        } catch (e: H3ProtocolError) {
+                            // not cancellable: the complete response cancels this watch, and once fail completed `closed` it
+                            // must still send the CONNECTION_CLOSE (a cancel inside quic.close dropped it)
+                            withContext(NonCancellable) { fail(e.code, e.message ?: "") }
+                        }
+                    }
                 }
-            if (code != null) {
-                try {
-                    countClientStop(req)
-                } catch (e: H3ProtocolError) {
-                    fail(e.code, e.message ?: "")
-                }
+            stopWatchStartedForTest?.invoke(req, watch)
+            req.stopWatch = watch
+            // the response may complete on the writer's thread meanwhile: it sets respondedInFull before it reads stopWatch, this
+            // sets stopWatch before it reads respondedInFull, so one of the two cancels the watch
+            if (req.respondedInFull) {
+                watch.cancel()
+                req.stopWatch = null
             }
         }
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
@@ -544,6 +561,12 @@ internal class ServerRequestImpl(
     var abandonmentCounted = false
 
     /**
+     * The watch for the client's STOP_SENDING on the response ([H3Session.countClientStop]): cancelled once the response is
+     * complete, when a stop no longer abandons anything.
+     */
+    @Volatile var stopWatch: Job? = null
+
+    /**
      * The application is done with this request: its response ended (complete or abandoned), it reset the request, or a
      * call to answer it failed. The stream's MAX_STREAMS credit may go back to the client once the stream is finished at
      * the transport too; until then a request the client reset still counts, so a client cannot run more handlers than it
@@ -628,7 +651,11 @@ internal class ServerRequestImpl(
         private set
 
     fun responseComplete() {
-        if (!tunnel) respondedInFull = true
+        if (!tunnel) {
+            respondedInFull = true
+            stopWatch?.cancel() // nothing left to abandon: a stop from now on is free ([H3Session.countClientStop])
+            stopWatch = null
+        }
         if (tunnel) {
             sendEnded = true
             if (receiveEnded) done()
@@ -643,6 +670,15 @@ internal class ServerRequestImpl(
     }
 
     private val datagramChannel = if (hasDatagramSemantics(method, protocol)) session.datagrams.register(st.id) else null
+
+    /** This host's addresses the request's connection shows ([io.kuicksilver.quic.ownAddresses]): a proxy refuses them as targets. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal val connectionOwnAddresses: List<io.ktor.network.sockets.InetSocketAddress>
+        get() = session.quic.ownAddresses
+
+    /** Tests: datagrams for this request wait to be read (they arrived before its CONNECT was answered). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    internal val datagramsWaitingForTest: Boolean get() = datagramChannel?.isEmpty == false
 
     /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
     var tunnel = false

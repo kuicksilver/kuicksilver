@@ -54,6 +54,8 @@ internal class H2Call(
     userDispatcher: CoroutineContext,
     /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
     webSocketMaxMessageSize: Long,
+    /** The connection's scheme: `https` over TLS, `http` over h2c (RFC 9113 section 3.3). */
+    scheme: String = "https",
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -66,6 +68,7 @@ internal class H2Call(
             bodyIdle,
             if (webSocket) HttpMethod.Get else method(h2),
             idleBounded = !webSocket,
+            scheme = scheme,
         )
     override val response: H2Response =
         if (webSocket) {

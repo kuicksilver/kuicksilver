@@ -35,16 +35,22 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.ConnectUdp
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.UdpProxy
+import io.kuicksilver.http3.UdpProxyConfig
+import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.io.readString
@@ -385,7 +391,100 @@ so collect `capsules` even when only datagrams matter, or list no `knownTypes`. 
 `sendDatagram` have no deadline of their own while the peer withholds flow-control credit; cancelling `close()` leaves
 the writer running in the connection, so bound them with `withTimeout` and `reset` the stream when it expires. Options:
 [configuration reference](configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
-HTTP/1.1 and HTTP/2 upgrades are not supported.
+HTTP/1.1 and HTTP/2 upgrades are not supported. CONNECT-UDP builds on it: [CONNECT-UDP](#connect-udp-experimental).
+
+## CONNECT-UDP (experimental)
+
+CONNECT-UDP (RFC 9298, "Proxying UDP in HTTP", the UDP part of MASQUE) tunnels UDP through an HTTP/3 proxy: the client
+sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the target, and from then on UDP payloads
+travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
+and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
+and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024), and the
+Ktor engines do not offer CONNECT-UDP yet.
+
+A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
+default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
+authenticated users" (section 7).
+
+```kotlin
+val proxy = UdpProxy(UdpProxyConfig())   // public targets only; the template /.well-known/masque/udp/{target_host}/{target_port}/
+// guide:http3:connect-udp (proxy)
+val request = connection.acceptRequest()
+if (ConnectUdp.isConnectUdp(request)) proxy.serve(request) else request.respond(404).finish()
+```
+
+`serve` returns when the tunnel ended. It reads `target_host` and `target_port` from the request's path with
+`UdpProxyConfig.pathTemplate` (a path of another shape is answered 404, an invalid value 400: an empty one, a port outside
+1..65535, an IPv6 literal whose colons are not percent-encoded or that carries a zone ID) and wants `capsule-protocol:
+?1` (400 without it; `requireCapsuleProtocolField = false` accepts clients that leave it out, which the RFC allows). A
+DNS name is resolved before the answer, as section 3.1 requires: a failure is 502 with `proxy-status: proxy;
+error=dns_error`, a timeout (`resolveTimeout`, 5 s) 504 with `dns_timeout`. Then `targetFilter` decides
+(`UdpTargetFilter.PublicOnly` by default): loopback, private, link-local, multicast, broadcast and the other special-purpose
+addresses are refused with 403 and `destination_ip_prohibited` before any socket exists, an IPv4-mapped, NAT64 or 6to4
+address is judged by its IPv4 address, and the socket sends to the very address the filter allowed, so a later DNS answer
+cannot move it. The proxy's own addresses are refused as well (`refuseOwnAddresses`: the address the request's
+connection reached, the listener's own); other addresses of the host (NAT aliases) go to `and UdpTargetFilter.excluding(...)`;
+`UdpTargetFilter.addresses`, `hosts` and `ports` build allow-lists. Only then the socket is opened (`socketFactory`, on a
+wildcard address of the target's family) and the request answered 200 with `capsule-protocol: ?1`; nothing goes to the
+target before that answer.
+
+While the tunnel lasts, datagrams with another Context ID are dropped (section 4), one whose UDP payload exceeds 65527
+bytes aborts the stream with `H3_DATAGRAM_ERROR` (section 5), a payload above what the link carries unfragmented
+(`linkMtu` 1500 less 28 for IPv4, 48 for IPv6) is dropped, a DATAGRAM capsule without being buffered, and only datagrams
+from the target's address and port are taken from the socket (section 3.1). Packets to the target are marked Not-ECT
+(section 6.2). A target payload too large for the client's QUIC DATAGRAM frames is dropped rather than sent as a capsule
+(section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
+with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per target and 100 over the proxy); `stats.packetTooBig` says whether it
+does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). The
+message leaves from the address the target sent to: the default sockets (wildcard, accelerated) report it per datagram,
+and a `socketFactory` binding one address answers from it; a wildcard portable socket cannot, so it sends none
+(`stats.packetTooBigNoSource`); one the raw socket does not send (no socket for the family opened, the kernel refused
+it, or the sender ruled out its addresses) is counted in `stats.packetTooBigFailed`. Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
+tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
+across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
+`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port
+unreachable for the target that quotes a payload the tunnel sent closes the tunnel (Linux and Android; a forged or host
+unreachable is ignored and counted in `stats.ignoredUnreachable`). The system resolver runs 16 lookups at once at most,
+4 of one client (a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
+with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
+socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
+minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.
+Options: [configuration reference](configuration.md#udpproxyconfig-experimental).
+
+A client opens a tunnel with `connectUdp` on a connection to the proxy. The template is checked against section 2 when
+it is parsed and the target against section 3 before anything is sent (`IllegalArgumentException`); an answer other than
+a 2xx fails with `Http3Exception.ConnectRejected`, whose `headers` carry the proxy's `proxy-status`.
+
+```kotlin
+// guide:http3:connect-udp (client)
+val template = UdpProxyTemplate.parse("https://proxy.example/.well-known/masque/udp/{target_host}/{target_port}/")
+val tunnel = connection.connectUdp(template, "192.0.2.10", 443)   // an IPv6 target goes as 2001%3Adb8%3A%3A1
+tunnel.send("hello".encodeToByteArray())                           // one UDP payload, at most 65527 bytes
+val reply = tunnel.payloads.first()                                 // the target's answers, as they come
+tunnel.close()                                                      // FIN; the proxy closes its socket
+```
+
+`UdpProxyTemplate.wellKnown("proxy.example:4443")` is the default template for a proxy known only by host and port.
+
+**Proxied QUIC.** `tunnel.asDatagramIo()` is the tunnel as a UDP socket for a QUIC endpoint, so a QUIC or HTTP/3
+connection runs end to end through the proxy (TLS to the target, the proxy sees only UDP):
+
+```kotlin
+// guide:http3:connect-udp (proxied QUIC)
+val tunnel = connection.connectUdp(template, "example.com", 443)    // the proxy resolves the name
+val inner = Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), QuicEndpointConfig.Builder().apply { io = { tunnel.asDatagramIo() } }.build())
+val h3 = inner.connect(tunnel.remoteAddress, tls)                   // tls names example.com
+val response = h3.request(http3Request("GET", "example.com", "/"))
+```
+
+Every datagram the inner endpoint sends goes to the tunnel's one target, and every one it receives is reported from
+`tunnel.remoteAddress` (the target's literal, or 192.0.2.1 for a name, which the client never resolves). The socket has
+no ECN, GSO or Don't Fragment, so the inner connection keeps to 1200-byte datagrams; those must fit the HTTP datagrams of
+the connection to the proxy, which needs that connection's path MTU above about 1250 bytes: the accelerated socket sets
+Don't Fragment and DPLPMTUD finds it within a few round trips, while over a 1200-byte path the inner handshake times out
+(RFC 9000 section 14 needs 1200-byte datagrams end to end). A server's preferred address is unreachable through a tunnel;
+closing the inner endpoint closes its tunnel.
 
 ## WebTransport (experimental)
 

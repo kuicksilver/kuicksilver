@@ -63,9 +63,10 @@ private suspend fun wpadScript(deadline: Long): Pair<String, String>? {
 }
 
 /**
- * A `FindProxyForURL` answer as [CfProxy] entries, in order: `DIRECT`, `PROXY`/`HTTP host:port` (an HTTP proxy), `SOCKS`
- * and `SOCKS5 host:port` (SOCKS5, as CFNetwork reads `SOCKS`). `HTTPS` (TLS to the proxy) and `SOCKS4`, which the engine
- * does not speak, are [CfProxy.Type.Unsupported] (they fail closed, `pickCfProxyWithPac`). An entry that breaks the
+ * A `FindProxyForURL` answer as [CfProxy] entries, in order: `DIRECT`, `PROXY`/`HTTP host:port` (an HTTP proxy), `HTTPS
+ * host:port` (TLS to the proxy, port 443 by default: Chromium's extension of the grammar, [CfProxy.Type.TlsHttp]), `SOCKS`
+ * and `SOCKS5 host:port` (SOCKS5, as CFNetwork reads `SOCKS`). `SOCKS4`, which the engine does not speak, is
+ * [CfProxy.Type.Unsupported] (it fails closed, `pickCfProxyWithPac`). An entry that breaks the
  * grammar is skipped, as Chromium's `ProxyList` skips it: an unknown type, `DIRECT` with anything after it, a host that is
  * no DNS name (letters, digits, `-`, `_`, `.`; at most 253 characters) nor an IP address, a port that is not 1..65535.
  * An answer with no entry left fails the run ([evaluatePac]), so the next setting counts.
@@ -80,7 +81,7 @@ internal fun parsePacResult(answer: String): List<CfProxy> =
         when (kind) {
             "PROXY", "HTTP" -> CfProxy(CfProxy.Type.Http, h, p ?: 80)
             "SOCKS", "SOCKS5" -> CfProxy(CfProxy.Type.Socks, h, p ?: 1080)
-            "HTTPS" -> CfProxy(CfProxy.Type.Unsupported, h, p ?: 443)
+            "HTTPS" -> CfProxy(CfProxy.Type.TlsHttp, h, p ?: 443)
             "SOCKS4" -> CfProxy(CfProxy.Type.Unsupported, h, p ?: 1080)
             else -> null
         }

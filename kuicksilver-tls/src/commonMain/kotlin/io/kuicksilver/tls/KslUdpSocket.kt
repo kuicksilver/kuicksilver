@@ -163,6 +163,24 @@ public class KslUdpSocket private constructor(
         }
     }
 
+    /**
+     * Whether an ICMP port or host unreachable for a datagram this socket sent was queued (Linux and Android, with [DF]; never
+     * elsewhere), the oldest first: [dst] ([ADDR_LEN] bytes) its destination, [quote] (at least [PTB_QUOTE] bytes) the start of
+     * the payload it quoted, `info[0]` that length and `info[1]` [UNREACH_PORT] or [UNREACH_HOST]. Spoofable like any ICMP.
+     */
+    public fun takeUnreachable(
+        dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
+    ): Boolean {
+        if (!enter()) return false
+        try {
+            return Ksl.udpTakeUnreachable(handle, dst, quote, info)
+        } finally {
+            leave()
+        }
+    }
+
     /** Datagrams [send] lost to EMSGSIZE so far (larger than the path MTU the kernel knows), the latest one's length in `lastSize[0]`. */
     public fun emsgsize(lastSize: IntArray): Long {
         if (!enter()) return 0
@@ -284,6 +302,8 @@ public class KslUdpSocket private constructor(
         public const val ADDR_LEN: Int = KslConst.UDP_ADDR_LEN
         public const val MAX_BATCH: Int = KslConst.UDP_MAX_BATCH
         public const val PTB_QUOTE: Int = KslConst.UDP_PTB_QUOTE
+        public const val UNREACH_PORT: Int = KslConst.UNREACH_PORT
+        public const val UNREACH_HOST: Int = KslConst.UNREACH_HOST
         private const val SHUT = 1 shl 30
         private const val CLOSED = 1 shl 29
         private const val COUNT = CLOSED - 1

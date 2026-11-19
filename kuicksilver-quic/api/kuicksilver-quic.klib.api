@@ -305,6 +305,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         open fun <get-keyExchangeGroup>(): kotlin/String? // io.kuicksilver.quic/QuicConnection.keyExchangeGroup.<get-keyExchangeGroup>|<get-keyExchangeGroup>(){}[0]
     open val localCertificates // io.kuicksilver.quic/QuicConnection.localCertificates|{}localCertificates[0]
         open fun <get-localCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/QuicConnection.localCertificates.<get-localCertificates>|<get-localCertificates>(){}[0]
+    open val peerCertificateCompression // io.kuicksilver.quic/QuicConnection.peerCertificateCompression|{}peerCertificateCompression[0]
+        open fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.quic/QuicConnection.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
     open val resetStreamAtEnabled // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled|{}resetStreamAtEnabled[0]
         open fun <get-resetStreamAtEnabled>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.resetStreamAtEnabled.<get-resetStreamAtEnabled>|<get-resetStreamAtEnabled>(){}[0]
 
@@ -757,6 +759,8 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
         final fun <get-maxSendBuffer>(): kotlin/Long // io.kuicksilver.quic/ConnectionCore.maxSendBuffer.<get-maxSendBuffer>|<get-maxSendBuffer>(){}[0]
     final val negotiatedAlpn // io.kuicksilver.quic/ConnectionCore.negotiatedAlpn|{}negotiatedAlpn[0]
         final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.quic/ConnectionCore.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
+    final val peerCertificateCompression // io.kuicksilver.quic/ConnectionCore.peerCertificateCompression|{}peerCertificateCompression[0]
+        final fun <get-peerCertificateCompression>(): io.kuicksilver.tls/CertificateCompression? // io.kuicksilver.quic/ConnectionCore.peerCertificateCompression.<get-peerCertificateCompression>|<get-peerCertificateCompression>(){}[0]
     final val peerCertificates // io.kuicksilver.quic/ConnectionCore.peerCertificates|{}peerCertificates[0]
         final fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/ConnectionCore.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
     final val role // io.kuicksilver.quic/ConnectionCore.role|{}role[0]

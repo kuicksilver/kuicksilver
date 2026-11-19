@@ -40,6 +40,7 @@ import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
@@ -103,6 +104,9 @@ internal class ConnectionRuntime(
 
     @Volatile private var earlyAccepted: Boolean? = null
     override val earlyDataAccepted: Boolean? get() = earlyAccepted
+
+    @Volatile private var certificateCompression: CertificateCompression? = null
+    override val peerCertificateCompression: CertificateCompression? get() = certificateCompression
 
     override suspend fun awaitHandshake() {
         handshake.await()
@@ -671,6 +675,7 @@ internal class ConnectionRuntime(
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
                     earlyAccepted = core.earlyDataAccepted
+                    certificateCompression = core.peerCertificateCompression // read once, on the loop, like the certificates
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     ownCertificates = core.localCertificates
                     group = core.keyExchangeGroup

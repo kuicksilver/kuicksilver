@@ -73,6 +73,7 @@ import kotlinx.io.Source
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
 
 /**
  * An end of an HTTP/1.1 connection as its connection point reports it: the IP literal (`ipLiteral()`: RFC 5952 text, an
@@ -381,6 +382,11 @@ internal class MalformedRequestBody(
  * first byte of its next request head ends at once (RFC 9112 section 9.5: a server MAY close an idle connection at any
  * time; Go's `Server.Shutdown` closes idle connections the same way); a request in flight, or one whose head has started
  * to arrive, is answered first, its response with `Connection: close` when it is written after [draining] completed.
+ * A connection that has received nothing yet is not idle but new: its first request may be on its way, and a client
+ * whose new connection closes without an answer cannot tell whether a non-idempotent request was processed (RFC 9112
+ * section 9.3.1). With [newConnectionUntil] (the engine's: [NEW_CONNECTION_FIRST_BYTE] after the connection was
+ * accepted), the first head's first byte is waited for until then, within the head's deadline and the stop's grace
+ * period, before the connection is closed as idle (Go's `Server.Shutdown` takes a new connection for idle after 5 s).
  */
 @OptIn(InternalAPI::class)
 internal fun CoroutineScope.startH1Pipeline(
@@ -391,6 +397,7 @@ internal fun CoroutineScope.startH1Pipeline(
     draining: Job? = null,
     maxHeadBytes: Int = MAX_REQUEST_HEAD_BYTES,
     sendTimeout: Duration = sendStallTimeout(timeout),
+    newConnectionUntil: TimeMark? = null,
     handler: suspend H1RequestScope.(request: Request) -> Unit,
 ): Job =
     launch(PipelineName) {
@@ -422,6 +429,11 @@ internal fun CoroutineScope.startH1Pipeline(
         // by then (it may still be writing an earlier response the client reads slowly)
         val responseFailed = Job()
         responseFailed.invokeOnCompletion { stopReading.complete() }
+        // the reading ends for the connection's own sake (a failed response, the writer stopped): unlike the server's
+        // stop, no head read after it is processed, so the wait for one ends at once, even for a head that has started
+        val readingEnded = Job()
+        writerStopped.invokeOnCompletion { readingEnded.complete() }
+        responseFailed.invokeOnCompletion { readingEnded.complete() }
         // the input is lingered on once at most, by whichever path ends the connection first
         var lingered = false
 
@@ -438,10 +450,11 @@ internal fun CoroutineScope.startH1Pipeline(
 
         try {
             var headBudget = firstHeadTimeout
+            var firstByteBy = newConnectionUntil // the first head only
             while (true) { // parse requests loop
                 val request =
                     try {
-                        readRequestHead(input, headBudget, unwritten, stopReading)
+                        readRequestHead(input, headBudget, unwritten, stopReading, readingEnded, firstByteBy)
                     } catch (e: RequestHeadTimeout) {
                         if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
                         break
@@ -475,6 +488,14 @@ internal fun CoroutineScope.startH1Pipeline(
                         break
                     } ?: break
                 headBudget = headerTimeout
+                firstByteBy = null
+                // the wait for a head ends on any stop of the reading (the server's stop, the writer stopped, a failed
+                // response), and a head the input already held is read all the same: only the server's stop lets it be
+                // processed. After a failed response or a stopped writer no later request is (RFC 9112 section 9.3.2)
+                if (responseFailed.isCompleted || writerStopped.isCompleted) {
+                    request.release()
+                    break
+                }
 
                 val fields = requestFields(request, input.keptFieldValues, HttpProtocolVersion.parse(request.version))
                 // faulty framing: 400 and close before anything of the request is handed on (RFC 9112 sections 6.1, 6.3)
@@ -701,6 +722,7 @@ internal fun CoroutineScope.startH1Pipeline(
             actorChannel.close()
             drainingHandle?.dispose()
             stopReading.cancel()
+            readingEnded.cancel()
         }
         // the writer ended the connection after a failed response (its FIN is out), or a handler failed: the client may still
         // be sending, and a close over unread input is a reset that can destroy the responses before it (RFC 9112 section 9.6)
@@ -714,34 +736,63 @@ internal fun CoroutineScope.startH1Pipeline(
 private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS", "TRACE")
 
 /**
+ * How long after its acceptance a connection that has received nothing is taken for new rather than idle when the server
+ * stops: its first byte is waited for until then (within the request-head deadline and the stop's grace period), so a
+ * first request that was on its way as the stop began is answered, not cut off without an answer ([startH1Pipeline]).
+ * Short, since a silent new connection holds the stop for that long; Go's `Server.Shutdown` waits 5 s.
+ */
+internal val NEW_CONNECTION_FIRST_BYTE: Duration = 2.seconds
+
+/**
  * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser
- * reports), false when [draining] completes first and nothing is there to read. A byte that arrives as [draining]
- * completes is a head that started: true, whichever side the race picked ([HeadLimitedInput.hasInput] after the wait
- * ended).
+ * reports), false when [draining] completes first and nothing is there to read, or as soon as [readingEnded] completes
+ * (no head read after it would be processed). A byte that arrives as [draining] completes is a head that started: true,
+ * whichever side the race picked ([HeadLimitedInput.hasInput] after the wait ended). A stop that completed before the
+ * wait began is the same: bytes ktor has already read from the socket (a connection accepted as the server stopped, or
+ * handed over by the h2c preface check) are a head that started, read and answered. A connection that has received
+ * nothing yet when the server stops gets until [firstByteBy] for its first byte ([NEW_CONNECTION_FIRST_BYTE]).
  */
 @OptIn(InternalAPI::class)
 private suspend fun awaitRequestStart(
     input: HeadLimitedInput,
     draining: Job,
+    readingEnded: Job?,
+    firstByteBy: TimeMark?,
 ): Boolean {
-    if (!input.readBuffer.exhausted() || input.isClosedForRead) return true
-    if (draining.isCompleted) return false
-    return coroutineScope {
-        val started =
-            async(start = CoroutineStart.UNDISPATCHED) {
-                input.awaitContent().also { requestStartForTest?.invoke(input.sourceForTest) }
+    if (readingEnded?.isCompleted == true) return false
+    // the pipeline's own buffer and its source channel's (what ktor has already read from the socket; bytes the socket
+    // still holds are not seen): no other coroutine reads the input here, so hasInput may look at both
+    if (input.hasInput() || input.isClosedForRead) return true
+    if (!draining.isCompleted) {
+        val outcome =
+            coroutineScope {
+                val started =
+                    async(start = CoroutineStart.UNDISPATCHED) {
+                        input.awaitContent().also { requestStartForTest?.invoke(input.sourceForTest) }
+                    }
+                select {
+                    started.onAwait { true }
+                    draining.onJoin {
+                        // the stop won, but a byte may have come with it: the wait is ended (joined, so nothing else reads
+                        // the input meanwhile) and the input looked at again. A head that has started to arrive is read and
+                        // answered, as the pipeline's contract says; a connection with nothing to read goes on below
+                        started.cancelAndJoin()
+                        when {
+                            readingEnded?.isCompleted == true -> false
+                            input.hasInput() -> true
+                            else -> null
+                        }
+                    }
+                }
             }
-        select {
-            started.onAwait { true }
-            draining.onJoin {
-                // the stop won, but a byte may have come with it: the wait is ended (joined, so nothing else reads the
-                // input meanwhile) and the input looked at again. A head that has started to arrive is read and answered,
-                // as the pipeline's contract says; only a connection with nothing to read ends here
-                started.cancelAndJoin()
-                input.hasInput()
-            }
-        }
+        if (outcome != null) return outcome
     }
+    if (readingEnded?.isCompleted == true) return false
+    // the server stops with nothing read: a new connection's first request may still be on its way
+    val left = firstByteBy?.let { -it.elapsedNow() } ?: Duration.ZERO
+    if (left <= Duration.ZERO) return false
+    // awaitContent takes no byte: one that came as the bound fired is looked at again
+    return withTimeoutOrNull(left) { input.awaitContent() } != null || input.hasInput()
 }
 
 @OptIn(InternalAPI::class)
@@ -965,6 +1016,9 @@ private class RequestHeadTimeout(
 /** Cancels the read of a request head at its deadline; private, so no other cancellation is mistaken for it. */
 private class HeadDeadline : CancellationException("request head deadline")
 
+/** Ends the read of a request head when the reading ends for the connection's own sake (a failed response). */
+private class ReadingEnded : CancellationException("no further request is processed")
+
 /**
  * Parses the next request head from [input] within its size limit, or throws [RequestHeadTooLarge] when it is larger.
  */
@@ -973,11 +1027,13 @@ private suspend fun readRequestHead(
     budget: Duration,
     unwritten: StateFlow<Int>,
     draining: Job?,
+    readingEnded: Job? = null,
+    firstByteBy: TimeMark? = null,
 ): Request? {
     input.startHead()
     val request =
         try {
-            readRequestHeadInTime(input, budget, unwritten, draining)
+            readRequestHeadInTime(input, budget, unwritten, draining, readingEnded, firstByteBy)
         } catch (e: Throwable) {
             // a head cut at the limit ends like a closed connection: an EOF, a parser error or no request at all
             if (input.exceeded && e !is RequestHeadTimeout) throw RequestHeadTooLarge()
@@ -994,7 +1050,8 @@ private suspend fun readRequestHead(
 /**
  * Parses the next request head, or throws [RequestHeadTimeout] when it is not complete [budget] after every earlier
  * response has been written ([unwritten] is zero), or [RequestHeadRefused] for a head [checkRequestHead] refuses. Waiting for the first byte separately tells an idle connection from
- * one that started a request. Returns null, as at the end of the input, when [draining] completes before a head starts.
+ * one that started a request. Returns null, as at the end of the input, when [draining] completes before a head starts,
+ * and at once when [readingEnded] completes, also in the middle of a head (no head read after it is processed).
  */
 @OptIn(InternalAPI::class)
 private suspend fun readRequestHeadInTime(
@@ -1002,12 +1059,9 @@ private suspend fun readRequestHeadInTime(
     budget: Duration,
     unwritten: StateFlow<Int>,
     draining: Job?,
+    readingEnded: Job?,
+    firstByteBy: TimeMark?,
 ): Request? {
-    if (budget == Duration.INFINITE) {
-        if (draining != null && !awaitRequestStart(input, draining)) return null
-        if (input.skipEmptyLines()) input.checkRequestHead()
-        return parseRequest(input)
-    }
     var started = false
     // a head parsed as the deadline fires (the deadline cancels this scope from another thread after parseRequest returned,
     // before the scope completed) is the request, never a 408 for a head that arrived whole
@@ -1016,14 +1070,25 @@ private suspend fun readRequestHeadInTime(
         return coroutineScope {
             val head = coroutineContext.job
             val deadline =
-                launch {
-                    unwritten.first { it <= 0 }
-                    delay(budget)
-                    head.cancel(HeadDeadline())
+                if (budget == Duration.INFINITE) {
+                    null
+                } else {
+                    launch {
+                        unwritten.first { it <= 0 }
+                        delay(budget)
+                        head.cancel(HeadDeadline())
+                    }
+                }
+            val ended =
+                readingEnded?.let { e ->
+                    launch {
+                        e.join()
+                        head.cancel(ReadingEnded())
+                    }
                 }
             try {
                 // the server stopping ends a connection that is waiting for its next head (h1-client's draining)
-                if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
+                if (draining != null && !awaitRequestStart(input, draining, readingEnded, firstByteBy)) return@coroutineScope null
                 started = input.skipEmptyLines()
                 if (started) input.checkRequestHead()
                 // no suspension point between the return and the store
@@ -1032,13 +1097,15 @@ private suspend fun readRequestHeadInTime(
                     headParsedForTest?.invoke(input.sourceForTest)
                 }
             } finally {
-                deadline.cancel()
+                deadline?.cancel()
+                ended?.cancel()
             }
         }
     } catch (e: CancellationException) {
         currentCoroutineContext().ensureActive() // the connection itself was cancelled: not a deadline
         parsed.load()?.let { return it }
         if (e is HeadDeadline) throw RequestHeadTimeout(started)
+        if (e is ReadingEnded) return null
         throw e
     }
 }

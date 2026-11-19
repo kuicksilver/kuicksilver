@@ -23,6 +23,7 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.native.KslLoader
@@ -72,12 +73,14 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:server" in guide, "marker server")
         assertTrue("guide:ktor:minimal-server" in guide, "marker minimal-server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
+        assertTrue("guide:ktor:connect-udp-server" in guide, "marker connect-udp-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
         assertTrue("guide:ktor:client-ca-rotation" in guide, "marker client-ca-rotation")
         assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
         assertTrue("guide:ktor:http3-advertising" in guide, "marker http3-advertising")
         assertTrue("guide:ktor:http2-server" in guide, "marker http2-server")
+        assertTrue("guide:ktor:h2c-server" in guide, "marker h2c-server")
         assertTrue("guide:ktor:mtls-server" in guide, "marker mtls-server")
         assertTrue("guide:ktor:drain-wait" in guide, "marker drain-wait")
         assertTrue("guide:ktor:reload-from-files" in guide, "marker reload-from-files")
@@ -178,6 +181,26 @@ class GuideSamplesTest {
         assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
     }
 
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun connectUdpSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:connect-udp-server
+        val proxyServer =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                }
+                connectUdp = true
+            }) {
+                routing {
+                    connectUdp(UdpProxy())
+                }
+            }
+        assertTrue(proxyServer.engine.configuration.connectUdp) // ServerConnectUdpTest runs such a route
+    }
+
     @Test fun certificateRotationSample() {
         val renewedChainPem =
             TestCerts.toPem("CERTIFICATE", TestCerts.serverViaIntermediate) + TestCerts.toPem("CERTIFICATE", TestCerts.intermediate)
@@ -263,6 +286,23 @@ class GuideSamplesTest {
         assertTrue(configuration.http2, "the TLS connector offers h2") // ServerHttp2*Test serve it
         assertEquals(50, configuration.http2Settings.maxConcurrentStreams)
         identity.close()
+    }
+
+    @Test fun h2cServerSample() {
+        // guide:ktor:h2c-server
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                plainConnector {
+                    port = 0
+                    host = "127.0.0.1" // a test reaches its servers over 127.0.0.1; the wildcard address shares the port there
+                    h2c = H2cMode.WithHttp11 // HTTP/1.1 and h2c (prior knowledge) on this cleartext port; H2cMode.Only: h2c alone
+                }
+            }, module = Application::module)
+
+        val connector =
+            server.engine.configuration.connectors
+                .single() as KuicksilverPlainConnector
+        assertEquals(H2cMode.WithHttp11, connector.h2c) // ServerH2cTest serves it
     }
 
     @Test fun deploymentGuideHasEveryMarker() {

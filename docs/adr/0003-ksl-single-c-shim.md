@@ -170,3 +170,29 @@ supports. OpenSSL's own way to the server's order, `SSL_OP_CIPHER_SERVER_PREFERE
 suites too, which keep the client's order (`tcp_tls12_server_suite_choice`). The session context's list (an SNI override's
 once applied) is the one used. `KSL_GET_GROUP` reports the group's IANA code point. JNI `KslNative.ctxSetGroups`, cinterop
 `ksl_ctx_set_groups`, Kotlin `Ksl.ctxSetGroups`. 89 functions.
+
+TLS certificate compression, additive under 7 (RFC 8879; [ADR-0025](0025-zlib-and-brotli-in-libcrypto.md)):
+`KSL_OPT_CERT_COMPRESSION` on either context, 1 (the default) to offer brotli, then zlib, and to compress a server's chain once
+at `ksl_ctx_freeze`, 0 for neither; `KSL_GET_CERT_COMPRESSION` (2 bytes) for the algorithm the peer's certificate came in,
+noted by `ksl_msg_cb` (installed on a QUIC server session too when it asks for a client certificate). A server session that
+staples an OCSP response sends its Certificate uncompressed. Both take the number 14, after the `KSL_GET_GROUP` 13 of the
+key-exchange groups. No new function.
+
+A CONNECT-UDP proxy's ICMP Packet Too Big, additive under 7 (RFC 9298 section 6.1, ADR-0024; owner's decision 2026-11-18):
+`ksl_icmp_ptb_build(out, cap, target, local, payload, payload_len, mtu)` writes the IPv4 (type 3 code 4, Next-Hop MTU) or
+IPv6 (type 2) message for a UDP datagram the proxy received, quoting its rebuilt headers and payload within 576 or 1280 bytes
+with every checksum computed (pure, every platform; `KSL_ICMP_PTB_MAX` 1240); `ksl_icmp_open(family, err)` opens a send-only,
+non-blocking raw ICMP or ICMPv6 socket (every type filtered on receive), which needs `CAP_NET_RAW` on Linux and Android and is
+not offered elsewhere (`KSL_E_NOT_SUPPORTED`); `ksl_icmp_send(fd, msg, len, target, local)` sends from the given source
+(`IP_PKTINFO`, `IPV6_PKTINFO`); `ksl_icmp_close(fd)`. New functions, no `KSL_OPT` or `KSL_GET` number (`ksl_icmp.c`).
+JNI `KslNative.icmpPtbBuild` / `icmpOpen` / `icmpSend` / `icmpClose`, cinterop `ksl_icmp_*`, Kotlin `Ksl.icmpPtbBuild` /
+`icmpOpen` / `icmpSend` / `icmpClose`. 93 functions.
+
+The proxy's notice of an ICMP unreachable, additive under 7 (RFC 9298 section 3.1, ADR-0024):
+`ksl_udp_take_unreachable(u, dst, quote, cap, quote_len, kind)` answers 1 and the oldest of a ring of 8 ICMP port or host
+unreachable reports for datagrams the socket sent (the accelerated socket's error queue on Linux and Android, read with the
+DF probe): the datagram's destination, the start of its payload as the message quoted it (at most `KSL_UDP_PTB_QUOTE`
+bytes, none when the headers only were quoted) for the caller's RFC 8085 section 5.2 check, and `KSL_UNREACH_PORT` or
+`KSL_UNREACH_HOST`; a full ring keeps the older reports; 0 when none is queued or the platform reports none (Apple
+platforms, Windows). New function, no `KSL_OPT` or `KSL_GET` number. JNI
+`KslNative.udpTakeUnreachable`, Kotlin `Ksl.udpTakeUnreachable`. 94 functions.

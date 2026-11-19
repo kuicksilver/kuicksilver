@@ -85,7 +85,10 @@ internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnect
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
     val s = h3SettingsWithin(configuration.http3Settings, configuration.requestHeaderTimeoutSeconds.seconds)
-    val connect = (configuration.webSocketsOverHttp3 || configuration.webTransport) && !s.enableConnectProtocol
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val connect =
+        (configuration.webSocketsOverHttp3 || configuration.webTransport || configuration.connectUdp) && !s.enableConnectProtocol
     val wt = configuration.webTransport && !s.webTransport
     if (!connect && !wt) return s
     return s
@@ -313,14 +316,21 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     authorityCheck: AuthorityCheck,
 ) {
     // Extended CONNECT (RFC 9220): WebSockets (when webSocketsOverHttp3 is on, also with Extended CONNECT advertised for
-    // WebTransport) and WebTransport go through Ktor's pipeline; other protocols are not served here and get 501 (section 3).
+    // WebTransport), WebTransport and, with connectUdp, CONNECT-UDP (RFC 9298) go through Ktor's pipeline; other protocols
+    // are not served here and get 501 (section 3).
     // Upgrade tokens match in any case (RFC 9110 section 7.8)
     val webSocket =
         configuration.webSocketsOverHttp3 && req.method == "CONNECT" && req.protocol.equals(WebSocketOverH3.PROTOCOL, ignoreCase = true)
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     val webTransport = configuration.webTransport && req.isWebTransport
-    if (req.method == "CONNECT" && !webSocket && !webTransport) {
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val connectUdp =
+        configuration.connectUdp &&
+            io.kuicksilver.http3.ConnectUdp
+                .isConnectUdp(req)
+    if (req.method == "CONNECT" && !webSocket && !webTransport && !connectUdp) {
         runCatching { req.respond(501).finish() }
         return
     }
@@ -354,6 +364,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 beforeH3UpgradeForTest,
                 h3AltSvc,
                 configuration.webSocketMaxMessageSize,
+                connectUdp,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         // RFC 9110 section 10.1.1: `Expect: 100-continue` with content to follow gets an immediate 100 (Continue) as the call

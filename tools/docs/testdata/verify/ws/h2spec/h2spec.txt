@@ -1,0 +1,3 @@
+Finished in 3s
+
+146 tests, 146 passed, 0 skipped, 0 failed

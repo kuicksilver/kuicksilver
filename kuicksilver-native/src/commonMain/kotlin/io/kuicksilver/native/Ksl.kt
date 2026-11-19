@@ -467,6 +467,55 @@ public expect object Ksl {
     public fun udpClose(udp: Long)
 
     /**
+     * `ksl_udp_take_unreachable`: true when an ICMP port or host unreachable for a datagram this socket sent was queued (the
+     * oldest of a ring of 8; Linux and Android with DF only; ABI 7, additive). Then [dst] (`UDP_ADDR_LEN` bytes) holds that
+     * datagram's destination, [quote] (at least [KslConst.UDP_PTB_QUOTE] bytes) the start of its payload as quoted, `info[0]`
+     * its length (0: the headers only) and `info[1]` the kind ([KslConst.UNREACH_PORT] or [KslConst.UNREACH_HOST]).
+     */
+    public fun udpTakeUnreachable(
+        udp: Long,
+        dst: ByteArray,
+        quote: ByteArray,
+        info: IntArray,
+    ): Boolean
+
+    /**
+     * `ksl_icmp_ptb_build`: the ICMP (IPv4 type 3 code 4) or ICMPv6 (type 2) Packet Too Big for a UDP datagram of
+     * `payload[0, len)` received from [target] at [local] (`UDP_ADDR_LEN` bytes each, one family) that cannot go on within
+     * [mtu], written into [out] (at least [KslConst.ICMP_PTB_MAX] bytes); its length, 0 for bad arguments (RFC 9298 section 6.1;
+     * ABI 7, additive).
+     */
+    public fun icmpPtbBuild(
+        out: ByteArray,
+        target: ByteArray,
+        local: ByteArray,
+        payload: ByteArray,
+        len: Int,
+        mtu: Int,
+    ): Int
+
+    /**
+     * `ksl_icmp_open`: a send-only raw ICMP ([family] 4) or ICMPv6 (6) socket, or -1 with `err[0]` set (Linux and Android
+     * without CAP_NET_RAW: the errno; elsewhere `E_NOT_SUPPORTED`).
+     */
+    public fun icmpOpen(
+        family: Int,
+        err: IntArray,
+    ): Int
+
+    /** `ksl_icmp_send`: [msg]'s first [len] bytes to [target] from [local]; true when the kernel took them whole. */
+    public fun icmpSend(
+        fd: Int,
+        msg: ByteArray,
+        len: Int,
+        target: ByteArray,
+        local: ByteArray,
+    ): Boolean
+
+    /** `ksl_icmp_close`. */
+    public fun icmpClose(fd: Int)
+
+    /**
      * `ksl_udp_take_ptb`: the oldest queued ICMP Packet Too Big (Linux and Android only; ABI 7). True when one was taken: [quote]
      * (at least [KslConst.UDP_PTB_QUOTE] bytes) holds the start of our datagram the message quoted, `meta[0]` its length, `meta[1]`
      * the MTU the message reports, [dst] (`UDP_ADDR_LEN` bytes) where that datagram went. A spoofable hint the caller validates.

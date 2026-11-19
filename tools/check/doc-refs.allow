@@ -24,3 +24,7 @@ docs/spec/threat-model.md | symbol | `negative_forgotSetHostOrVerifyPeer` # the 
 docs/spec/threat-model.md | symbol | `negative_channelBindingTls12NoEms` # the C section tcp_tls12_profile_and_ems, marked in §5
 docs/spec/threat-model.md | symbol | `negative_systemOpenSslWithKeylogEnvRefused` # tools/ci/system-openssl.sh, marked in §5
 docs/spec/threat-model.md | symbol | `negative_exportedOpenSslSymbols` # the export scripts, marked in §5
+
+# The Russian labels of the documentation site's generated pages (tools/docs/i18n.py, tools/docs/verify.py): a
+# translation on purpose, in the one file per language that holds them.
+tools/docs/messages/ru.json | private | Cyrillic text # the Russian message file of the site's generated pages

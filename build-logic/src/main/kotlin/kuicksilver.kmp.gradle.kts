@@ -17,9 +17,12 @@ group = "io.kuicksilver"
 version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
 // API reference (Dokka HTML), aggregated by kuicksilver.docs in the root project and published by tools/docs/site.sh.
-// Source links point at the release tag v<version>; a -SNAPSHOT has no tag and links to main.
+// Source links point at the release tag v<version>; a -SNAPSHOT has no tag and links to main, or to the commit that
+// -Pkuicksilver.docs.sourceRef names (tools/docs/site.sh --dev: a development snapshot links to its own commit).
 private val docsVersion = version.toString()
-private val docsSourceRef = if (docsVersion.endsWith("-SNAPSHOT")) "main" else "v$docsVersion"
+private val docsSourceRef =
+    providers.gradleProperty("kuicksilver.docs.sourceRef").orNull
+        ?: if (docsVersion.endsWith("-SNAPSHOT")) "main" else "v$docsVersion"
 private val defaultLinkLists = mapOf(
     "kotlinStdlib" to "kotlinStdlib.package-list",
     "jdk" to "jdk.element-list",
@@ -171,21 +174,23 @@ kotlin {
 val jvmDocsClasspath = configurations.named("jvmCompileClasspath")
 dokka { dokkaSourceSets.matching { it.name == "jvmCommonMain" }.configureEach { classpath.from(jvmDocsClasspath) } }
 
-// Every published artifact (jar, AAR) carries the project LICENSE and NOTICE and the OpenSSL license it links statically (Apache-2.0 section 4(a)/(d)).
+// Every published artifact (jar, AAR) carries the project LICENSE and NOTICE and the licenses of what it links statically:
+// OpenSSL (Apache-2.0 section 4(a)/(d)), and zlib and brotli inside OpenSSL's libcrypto (their license texts ask for it).
+val thirdPartyLicenses = listOf("openssl", "zlib", "brotli").map { rootProject.file("licenses/LICENSE.$it.txt") }
 val licenseResources = tasks.register<Sync>("licenseResources") {
     from(rootProject.file("LICENSE")) { into("META-INF") }
     from(rootProject.file("NOTICE")) { into("META-INF") }
     // AGP strips META-INF/LICENSE and META-INF/NOTICE from an AAR by default, and an app that depends on several of our AARs
     // fails its resource merge on any path two of them share: the texts also travel under META-INF/licenses/<module>/
     val dir = "META-INF/licenses/${project.name}"
-    from(rootProject.file("licenses/LICENSE.openssl.txt")) { into(dir) }
+    from(thirdPartyLicenses) { into(dir) }
     from(rootProject.file("LICENSE")) { into(dir); rename { "LICENSE.txt" } }
     from(rootProject.file("NOTICE")) { into(dir); rename { "NOTICE.txt" } }
     into(layout.buildDirectory.dir("generated/license-resources"))
 }
 kotlin.sourceSets.getByName("commonMain").resources.srcDir(licenseResources.map { it.destinationDir })
 kotlin.sourceSets.getByName("androidMain").resources.srcDir(licenseResources.map { it.destinationDir })   // the AAR packages androidMain resources, not commonMain ones
-tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") }; from(rootProject.file("NOTICE")) { into("META-INF") }; from(rootProject.file("licenses/LICENSE.openssl.txt")) { into("META-INF/licenses") }; duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
+tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") }; from(rootProject.file("NOTICE")) { into("META-INF") }; from(thirdPartyLicenses) { into("META-INF/licenses") }; duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
 
 // Explicit native library for the JVM tests (Linux containers, CI): -Pkuicksilver.native.path=... is forwarded to the test JVM.
 tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }
