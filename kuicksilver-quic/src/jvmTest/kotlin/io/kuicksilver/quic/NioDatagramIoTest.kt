@@ -241,6 +241,9 @@ class NioDatagramIoTest {
                 }
             }
         assertTrue(e is PathMtuRefusedException && e.size == 1200 && e.destination == to, "refused twice: $e")
+        // the system's refusal stays the cause, and the text names it: a CONNECT-UDP proxy recognises it as too large
+        assertSame(tooLong, e.cause, "the SocketException is kept as the cause")
+        assertTrue("Message too long" in e.message!! && "EMSGSIZE" in e.message!!, e.message)
         assertEquals(2, calls)
         calls = 0
         assertSame(

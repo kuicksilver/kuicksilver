@@ -12,6 +12,8 @@ import kotlinx.io.IOException
  * QUIC (section 14: "cease sending QUIC packets ... on the affected path"): the endpoint loop closes the path when it is not
  * the connection's active one, else the connection with a CONNECTION_CLOSE of NO_VIABLE_PATH (an HTTP/3 client falls back to
  * TCP), instead of losing every datagram until the idle timeout. [destination]: where the refused datagram went, when known.
+ * [cause] is the system's own refusal (the JDK's `SocketException`), and the message names EMSGSIZE and "Message too long",
+ * so code that recognises a refusal as too large by its text (the CONNECT-UDP proxy) sees it as one.
  * The portable socket throws it only after a retry was refused too: a connected socket's one-shot socket error from an ICMP
  * message (Linux `sk_err`, even in probe mode) passes the retry.
  */
@@ -19,7 +21,7 @@ internal class PathMtuRefusedException(
     val size: Int,
     val destination: io.ktor.network.sockets.InetSocketAddress? = null,
     cause: Throwable? = null,
-) : IOException("the system refused a $size-byte datagram as above the path MTU it cached (EMSGSIZE)", cause)
+) : IOException("the system refused a $size-byte datagram as above the path MTU it cached (EMSGSIZE: Message too long)", cause)
 
 /** QUIC's smallest allowed maximum datagram size (RFC 9000 section 14): a refusal at or below it fails the path. */
 internal const val PATH_MTU_FLOOR = 1200
