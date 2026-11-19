@@ -2586,6 +2586,13 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   that check: a server presenting another name's certificate on first contact (a default virtual host, or someone on
   the path) left its key pinned for the host, and the host's own key failed with `PinMismatch` from then on. The name
   is now checked before the store is touched (`VerificationNegativeTest.negative_tofuStillChecksTheNameOnFirstUse`).
+- QUIC client, compatible version negotiation (RFC 9369 section 4.1, RFC 9368): until it had Handshake keys the client
+  switched its Initial keys to the version of every server Initial of another configured version, before the packet was
+  authenticated, so one that did not decrypt left the switch in place (RFC 9000 section 12.2: such a packet is discarded),
+  and a later Initial of the original version (from anyone who saw the client's first Initial) switched it back. A packet
+  of another version now switches the keys only if it decrypts under them, and the version is fixed by the first such
+  packet ("the first long header Version field that differs from the original version") or by a CRYPTO frame from the
+  server; server Initials of any other version are dropped from then on (`core.ClientVersionLatchTest`).
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

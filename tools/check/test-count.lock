@@ -3878,6 +3878,8 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_re
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_retirementBacklogBoundary
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_sequenceAtTheRetiredFloorIsKept
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.CidGapsTest.negative_sequenceNumberReusedForAnotherIdIsProtocolViolation
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionLatchTest.negative_aSpoofedInitialOfTheOriginalVersionDoesNotSwitchBack
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionLatchTest.negative_anInitialThatFailsToDecryptChangesNoVersion
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_secondVnIgnored
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_versionNegotiationAfterInitial
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.core.ClientVersionNegotiationTest.negative_versionNegotiationAfterRetryIgnored

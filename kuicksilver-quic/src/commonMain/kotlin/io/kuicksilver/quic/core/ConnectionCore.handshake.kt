@@ -341,6 +341,8 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     }
     handshake.session.close()
     version = next
+    flightVersion = next
+    clientVersionFixed = false
     handshake = HandshakeDriver(crypto.newSession(tlsConfig, earlyMode != EarlyDataState.Disabled), ConnectionHandshakeSink(this))
     handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp(), role, 27))
     handshake.session.setQuicVersion(next.version)
@@ -358,7 +360,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
 
 /** Client side: the server's Initial arrived in another configured version (RFC 9368 section 2.2). */
 internal fun ConnectionCore.switchClientVersion(profile: VersionProfile): Boolean {
-    if (readKeys[2] != null || profile !in config.versions) return false
+    if (readKeys[2] != null || clientVersionFixed || profile !in config.versions) return false
     handshake.session.setQuicVersion(profile.version)
     version = profile
     installInitialKeys(profile)

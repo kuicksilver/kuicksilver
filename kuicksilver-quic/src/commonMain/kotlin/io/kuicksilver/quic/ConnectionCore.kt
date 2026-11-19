@@ -127,6 +127,14 @@ public class ConnectionCore internal constructor(
         internal set
     internal val originalVersion: VersionProfile = startVersion
 
+    /**
+     * Client: the version of this attempt's first flight (the original version, or the one a Version Negotiation restart chose),
+     * and whether the negotiated version is known (RFC 9369 section 4.1: the first authenticated server packet of another
+     * version, or a CRYPTO frame from the server in this one); from then on server Initials of any other version are dropped.
+     */
+    internal var flightVersion: VersionProfile = startVersion
+    internal var clientVersionFixed: Boolean = false
+
     /** The DCID the Initial keys are derived from: the original DCID until a Retry replaces it with the server's Retry SCID (RFC 9001 section 5.2). */
     internal var initialKeyCid: ConnectionId = odcid
 

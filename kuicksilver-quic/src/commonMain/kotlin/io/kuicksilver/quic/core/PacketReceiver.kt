@@ -279,10 +279,17 @@ internal class PacketReceiver(
         if (type == PacketType.OneRtt && c.role == TlsRole.Server && !c.path.isRemote(from) && !c.migrationAllowedFrom(from)) return false
         // RFC 9369 section 4.1: a server takes 0-RTT only in the original version, whatever the negotiated one
         if (type == PacketType.ZeroRtt && hv.version != c.originalVersion.version) return false
+        // client: the Initial keys of another version are tried for this packet only; they stay once it authenticates
+        // (RFC 9000 section 12.2: a packet that fails to decrypt is discarded and changes nothing)
+        var switchedFrom: VersionProfile? = null
         if (type != PacketType.OneRtt && hv.version != c.version.version) {
             val profile = VersionProfile.of(hv.version) ?: return false
             if (c.role == TlsRole.Client) {
+                // RFC 9369 section 4.1: only an Initial can show the negotiated version (Handshake packets use it from the start)
+                if (type != PacketType.Initial) return false
+                val prev = c.version
                 if (!c.switchClientVersion(profile)) return false
+                switchedFrom = prev
             } else if (!((type == PacketType.Initial || type == PacketType.ZeroRtt) && hv.version == c.originalVersion.version)) {
                 return false
             }
@@ -353,13 +360,20 @@ internal class PacketReceiver(
             }
         } else {
             pn = PacketProtection.removeHeaderProtection(data, headerStart(), hv.pnOffset, hv.packetEnd, sp.ack.largestReceived, key, mask)
-            if (pn < 0) return false
+            if (pn < 0) {
+                switchedFrom?.let { c.switchClientVersion(it) }
+                return false
+            }
             if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, key)) {
                 // RFC 9001 section 6.6: failures count "across all keys", Initial ones included (their limit, 2^52 for AES-128-GCM,
                 // is out of reach for a forger as for anyone)
                 c.onAuthenticationFailure(key.aead)
+                switchedFrom?.let { c.switchClientVersion(it) }
                 return false
             }
+            // RFC 9369 section 4.1: "The client learns the negotiated version by observing the first long header Version field
+            // that differs from the original version"; a later Initial of the original version does not switch back
+            if (c.role == TlsRole.Client && hv.version != c.flightVersion.version) c.clientVersionFixed = true
         }
         if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=
             0
