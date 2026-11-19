@@ -5569,6 +5569,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.MultiLoopTest.loopsAboveOneOnPo
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.MultiLoopTest.zeroRttTicketsServeEveryLoop
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.closeRacingStartNeverLeavesItRunning
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NetworkMigratorConcurrencyTest.concurrentStartRunsOnce
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aFailedProbeIsNotAPermanentLackOfDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.aRefusalFailsThePathOnlyWhenTheRetryIsRefusedToo
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.anIpv4BindTakesAfInetOnlyWithDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocksReceive

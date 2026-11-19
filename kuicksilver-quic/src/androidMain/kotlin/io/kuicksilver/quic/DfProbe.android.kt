@@ -48,7 +48,7 @@ internal actual fun dfProbe(ch: DatagramChannel): Int =
             bits
         }
     } catch (_: Exception) {
-        -1
+        DF_PROBE_FAILED // the duplicate of the descriptor failed (out of file descriptors): not a lasting lack of DF
     }
 
 /** -1: the public `android.system.Os` sets socket options but reads none of these (the device test reads the bits instead). */

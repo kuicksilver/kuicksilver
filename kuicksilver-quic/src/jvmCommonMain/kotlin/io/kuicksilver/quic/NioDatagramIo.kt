@@ -268,13 +268,6 @@ internal class NioDatagramIo private constructor(
             to: java.net.InetSocketAddress,
         ): Boolean = (if (to.address is java.net.Inet4Address) 4 else 6) == noDf
 
-        /** The error for a send [refusesWithoutDf] refused, as the endpoint loop reports it. */
-        internal fun dfRefusal(family: IpFamily): QuicException.DontFragmentUnavailable =
-            QuicException.DontFragmentUnavailable(
-                family,
-                "this socket has no DF for ${family.label} (no ksl, the system refused both DF modes on that half, or an AF_INET socket)",
-            )
-
         /** [localizedEmsgsizeText], read once. */
         private val emsgsizeText: String? by lazy { localizedEmsgsizeText() }
 
@@ -371,12 +364,19 @@ internal class NioDatagramIo private constructor(
             }
         }
 
+        /**
+         * Whether a socket without DF stays so for the process ([QuicException.DontFragmentUnavailable.permanent]): not when the
+         * probe itself failed ([DF_PROBE_FAILED], Android out of descriptors), which a later socket may pass.
+         */
+        internal fun dfLackPermanent(bits: Int): Boolean = bits != DF_PROBE_FAILED
+
         /** Why DF could not be set, for [QuicException.DontFragmentUnavailable]. */
         internal fun dfUnavailableDetail(
             bits: Int,
             jdkOption: Boolean,
         ): String =
             when {
+                bits == DF_PROBE_FAILED -> "the DF probe itself failed (for example out of file descriptors); a later socket may get DF"
                 bits > 0 -> "the system refused both DF modes (probe and DO) on that half (bits $bits)"
                 bits == 0 -> "the system offers no DF option to set"
                 jdkOption -> "the JDK's IP_DONTFRAGMENT did not take and the ksl native library is not available"
@@ -483,7 +483,11 @@ internal class NioDatagramIo private constructor(
             val missing = noDfFamily(c.bits, c.jdk, c.inet, apple)
             if (missing == DF_NONE) {
                 c.ch.close()
-                throw QuicException.DontFragmentUnavailable(null, dfUnavailableDetail(c.bits, dontFragmentOption() != null))
+                throw QuicException.DontFragmentUnavailable(
+                    null,
+                    dfUnavailableDetail(c.bits, dontFragmentOption() != null),
+                    permanent = dfLackPermanent(c.bits),
+                )
             }
             if ((c.bits > 0 || (c.bits == 0 && linuxKernel)) && !probeComplete(c.bits) && probeMissingLogged.compareAndSet(false, true)) {
                 printWarning(
