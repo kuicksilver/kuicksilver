@@ -55,12 +55,14 @@ static ksl_ssl *qserver(ksl_ctx *c) {
     ksl_quic_set_transport_params(s, TP, sizeof TP);
     return s;
 }
+#ifdef KSL_TEST_TCP
 static ksl_ssl *tclient(ksl_ctx *c) {
     ksl_ssl *s = ksl_ssl_new(c, KSL_MODE_TCP);
     set_str(s, KSL_SET_SNI, "server.test");
     set_str(s, KSL_SET_VERIFY_NAME, "server.test");
     return s;
 }
+#endif
 /* A server context with the identity `leaf` (and `inter` after it when given), certificate compression `comp`, frozen; client
    certificates required (verified against test-ca) when `mtls`. */
 static ksl_ctx *srv(const char *leaf, const char *inter, int comp, int mtls) {
@@ -113,6 +115,7 @@ static int alert_of(ksl_ssl *s) {
 }
 
 /* --- TCP --- */
+#ifdef KSL_TEST_TCP /* the TCP tests and their helpers: run from main under KSL_TEST_TCP only */
 static size_t tshuttle(ksl_ssl *a, ksl_ssl *b) {
     uint8_t buf[4096];
     size_t total = 0, n, used;
@@ -216,6 +219,7 @@ static void test_peer_without_compression(void) {
     }
     END();
 }
+#endif /* KSL_TEST_TCP */
 static void test_option_values(void) {
     SECTION("negative_certcomp_option_values");
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
@@ -229,6 +233,7 @@ static void test_option_values(void) {
     END();
 }
 
+#ifdef KSL_TEST_TCP /* run from main under KSL_TEST_TCP only: a build without the TCP tests (mingw-x64) would leave it unused */
 /* TLS 1.2 (RFC 8879 section 3: the extension is ignored; RFC 9325 section 3.3: no TLS-level compression). A client that clears
    SSL_OP_NO_COMPRESSION and lowers its security level offers DEFLATE (OpenSSL's built-in method list has zlib now); the ksl server
    still chooses null, and a ksl client offers null alone. */
@@ -297,6 +302,7 @@ static void test_tls12(void) {
     }
     END();
 }
+#endif /* KSL_TEST_TCP */
 
 /* --- QUIC --- */
 /* What the test does with one side's Handshake-level messages: nothing, or rewrite its Certificate into a CompressedCertificate */
