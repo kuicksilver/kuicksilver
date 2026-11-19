@@ -20,4 +20,4 @@ internal actual fun ProxyConfig.platformProxyCredentials(): ProxyCredentials? =
 
 internal actual fun ProxyConfig.platformProxyIsDirect(): Boolean = false
 
-internal actual fun ProxyConfig.platformProxyUsesTls(): Boolean = url.protocol.name.equals("https", ignoreCase = true)
+internal actual fun ProxyConfig.platformProxyUsesTls(): Boolean? = url.protocol.name.equals("https", ignoreCase = true)

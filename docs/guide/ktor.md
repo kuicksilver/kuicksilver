@@ -1686,10 +1686,10 @@ Where a request's proxy comes from:
 
 | Target | `ProxyResolvers.System` | PAC / WPAD |
 |---|---|---|
-| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
+| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings; its HTTP proxies (`https.proxyHost`/`https.proxyPort` included: the `https` names the URLs it serves) are always plain HTTP proxies, as on Android, since a `java.net.Proxy` has no scheme; TLS to a proxy needs `proxyResolver = ProxyResolver { ResolvedProxy.https(..) }` | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
-| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer with only proxies the engine cannot use (`HTTPS`, `SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list; the settings' "HTTPS" proxy is the plain proxy for `https` URLs) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer entry `HTTPS host:port` (Chrome's extension) is an `https://` proxy, port 443 by default; an answer with only proxies the engine cannot use (`SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`; an entry whose value starts with `https://` is an `https://` proxy, as Chrome reads it, while `https=host:port` is the plain proxy for `https` URLs) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
 What a PAC script sees. A PAC script is code from the network: whoever answers WPAD on the local network, or serves a
@@ -1731,30 +1731,60 @@ names with their subdomains (`example.com` covers `a.example.com`, not `badexamp
 an entry with a port (`example.com:8080`, `[2001:db8::1]:443`) exempts that port only, as Go does. On Windows
 environment names are case-insensitive, so there an `HTTP_PROXY` variable is read as `http_proxy` (curl has the same
 caveat).
-A value is `http://host:port`, `socks5://` (names resolved by the client), `socks5h://` (by the proxy) or a bare
-`host:port`; user info in it becomes the credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
+A value is `http://host:port`, `https://host[:port]` (TLS to the proxy; port 443 by default, as curl (despite its manual's 1080), Chrome and Go), `socks5://`
+(names resolved by the client), `socks5h://` (by the proxy) or a bare `host:port`; user info in it becomes the
+credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
 `proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
 `*.localhost` and loopback addresses directly whatever the settings say.
 
-A proxy the engine cannot use (`socks4://`, an `https://` proxy, an unknown type) fails the request with
-`UnsupportedOperationException`: it is never bypassed.
+A proxy the engine cannot use (`socks4://`, an unknown type) fails the request with `UnsupportedOperationException`: it
+is never bypassed.
 
 How a proxy is used. An HTTP proxy gets `CONNECT` tunnels for `https` and for WebSockets, `ws://` included (RFC 6455
 section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS proxy is SOCKS5 (RFC 1928, CONNECT only;
 no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
 Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
 that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
-its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+its own. A request's own `Proxy-Authorization` goes only on a hop to a proxy, never to an origin (directly or in a
+tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
-clear to the proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
+them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
 resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
-`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
+`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried, so a proxy that keeps
+answering 407 costs one CONNECT per request, never a loop; a plain `http` request gets the proxy's 407 as its response).
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
-RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**`https://` proxies** (*experimental*, 0.3.0). `ResolvedProxy.https(host, port, credentials)`, an `https://` value in
+the environment, an `https://` entry of Windows' settings, a PAC answer's `HTTPS host:port`, or, off the JVM,
+`ProxyBuilder.http(Url("https://proxy:443"))` (a `java.net.Proxy` has no scheme, so on the JVM name it with a resolver;
+there an HTTP `proxy` on port 443, which is what that URL becomes, fails every request with `UnsupportedOperationException`
+rather than speak plain HTTP to what may be an `https://` proxy: use `ResolvedProxy.https` for TLS to it, or
+`ResolvedProxy.http(host, 443)` from a resolver for a plain proxy on that port)
+makes the engine speak TLS to the proxy itself, as curl's HTTPS proxy and Chrome do, before anything else: the CONNECT
+or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target travel inside that TLS session
+([ADR-0023](../adr/0023-https-proxy.md)).
+
+- The proxy's certificate is verified against the proxy's host as configured (a DNS name, or an IP address as an IP-ID;
+  RFC 9525), which is also its SNI unless it is an IP address (RFC 6066 section 3); the name goes through the engine's
+  `dns`. A failed handshake (a certificate that does not verify, an alert, a proxy that closes) fails the request with
+  `ProxyTlsException`, a `ProxyException` whose `cause` is the TLS layer's error; a failure of the origin's TLS inside
+  the tunnel stays the origin's `TlsException`.
+- Trust: `proxyTls = { ... }` (*experimental*) configures that connection on its own. By default it takes the origin's
+  `tls` block and `trust` without what names the origin (an `ExpectedName` gives way to its base, a `Pinned` to its base:
+  the proxy has another name and another key, as curl's `--pinnedpubkey` is not applied to its proxy) and without the
+  client certificate. Whatever the block sets, the server name is the proxy's host and ALPN `http/1.1` alone.
+- Inside the tunnel the origin's TLS runs as without a proxy (TLS in TLS): its own SNI, certificate check, pins, ALPN
+  (`h2` included). Plain `http` goes in the absolute form inside TLS to the proxy, and that connection is pooled per proxy
+  (an `https://` and an `http://` proxy at the same address are different routes).
+- HTTP/2 to the proxy itself (CONNECT over HTTP/2, RFC 9113 section 8.5, several tunnels on one connection) is not
+  offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp. A new connection to the
+  proxy resumes an earlier TLS session from a cache that holds proxy tickets only.
+
+**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an `https://` proxy) nor
+SOCKS5 CONNECT carries (no CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
@@ -1778,6 +1808,13 @@ val perHost = HttpClient(Kuicksilver) {
             if (url.host.endsWith(".internal.test")) null // direct
             else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
         }
+    }
+}
+// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+val overTls = HttpClient(Kuicksilver) {
+    engine {
+        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
     }
 }
 ```

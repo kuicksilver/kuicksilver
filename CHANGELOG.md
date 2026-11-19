@@ -17,6 +17,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
+- Ktor client: `https://` proxies, TLS to the proxy itself (experimental; `docs/guide/ktor.md`, "Proxies"; ADR-0023):
+  `ResolvedProxy.https(host, port, credentials)`, an `https://` proxy URL off the JVM, `https://` values of `https_proxy`
+  and the other variables (port 443 by default), an `https://` entry of Windows' Internet settings and a PAC answer's
+  `HTTPS host:port` (Chromium's extension), where 0.2 failed the request. The CONNECT or absolute-form request, its
+  `Proxy-Authorization` and the origin's name travel only inside TLS with the proxy; the proxy's certificate is verified
+  against the proxy's host (RFC 9525, SNI per RFC 6066 section 3), with the new `proxyTls` block, or by default the
+  origin's trust without its `ExpectedName` and pins and without the client certificate; ALPN offers `http/1.1` only (no
+  CONNECT over HTTP/2). The origin's TLS runs inside the tunnel unchanged (TLS in TLS, `h2` included). A failed handshake
+  with the proxy is the new `ProxyTlsException` (a `ProxyException`, which is now open and takes a cause); an origin
+  failure stays its `TlsException`. The pool keys routes by the proxy's scheme too. HTTP/3 never goes through a proxy
+  (threat model 3.28). A request's own `Proxy-Authorization` is no longer sent in HTTP/2 or HTTP/3 fields (they go to
+  origins only; through a tunnel it had reached the origin over HTTP/2), nor over HTTP/1.1 to an origin reached
+  directly (before, only a tunnel dropped it). On the JVM and Android an HTTP `java.net.Proxy` on port 443 as the
+  explicit `proxy` fails each request with `UnsupportedOperationException` instead of being spoken to in clear (it has no
+  scheme: `ProxyBuilder.http(Url("https://..."))` produces it). Connections to an `https://` proxy resume TLS sessions
+  from a ticket cache of their own.
 - Ktor client: a pluggable name resolver (experimental `dns`, after OkHttp's `Dns`; `docs/guide/ktor.md`, "Name
   resolution"): `Dns.System` (the default, the system's resolver exactly as before), `Dns.blocking { }` for a blocking
   resolver (run on a pool of 8 threads shared by every such resolver of the process, or a dispatcher you give; a caller

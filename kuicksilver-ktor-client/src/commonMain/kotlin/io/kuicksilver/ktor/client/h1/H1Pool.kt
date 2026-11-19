@@ -48,6 +48,7 @@ import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.newWebSocketKey
 import io.kuicksilver.ktor.client.platformCleartextPermitted
+import io.kuicksilver.ktor.client.proxyTlsConfigFor
 import io.kuicksilver.ktor.client.requestTimeoutMillis
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
@@ -58,6 +59,7 @@ import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.ktor.network.isAtWebSocketFrameBoundary
 import io.kuicksilver.ktor.network.openDeliveringReadChannel
+import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -430,6 +432,12 @@ internal class H1Pool(
     /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
+    /**
+     * The TLS session tickets of `https://` proxies, apart from [sessions]: a proxy's ticket never goes to an origin nor an
+     * origin's to a proxy, whatever their names (one host can be both); closed with [sessions].
+     */
+    internal val proxySessions = SessionCache()
+
     /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
     fun recycle(c: H1Connection) = pool.release(c)
 
@@ -469,6 +477,7 @@ internal class H1Pool(
                 closers.coroutineContext[Job]!!.cancelAndJoin()
                 h2Scope.cancel()
                 sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
+                proxySessions.close()
             }
         }
     }
@@ -1458,8 +1467,8 @@ internal class H1Pool(
     }
 
     /**
-     * TCP, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect timeout, which bounds every
-     * step of a proxy's handshake too.
+     * TCP, TLS to an `https://` proxy, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect
+     * timeout, which bounds every step of a proxy's handshake too.
      */
     private suspend fun connect(
         data: HttpRequestData,
@@ -1483,7 +1492,11 @@ internal class H1Pool(
             // module's connects on Kotlin/Native, not ktor-network's (Ktor issue KTOR-10017, security, under coordinated
             // disclosure)
             @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-            val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            val raw = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns.resolution(host, port), dns.order())
+            // an https:// proxy: everything from here on (the CONNECT or the absolute-form request, the credentials, the
+            // origin's own TLS) goes inside TLS with the proxy, whose name its certificate must carry; the TLS socket
+            // stands for the TCP one, so closing, aborting and the orderly close end both
+            val tcp = if (proxy?.tls == true) proxyTls(raw, proxy) else raw
             // set once an HTTP/2 connection has started on it: the transport is the connection's to close from then on
             var h2Owned = false
             try {
@@ -1630,6 +1643,39 @@ internal class H1Pool(
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
+
+    /**
+     * TLS with the `https://` [proxy] over [raw] ([KuicksilverEngineConfig.proxyTlsConfigFor]): the proxy's host as SNI and
+     * reference identifier, ALPN `http/1.1`, resuming from [proxySessions]. A failed handshake (a certificate that does not verify, an alert, a connection
+     * that ended) fails with [io.kuicksilver.ktor.client.ProxyTlsException] around the TLS layer's error; [raw] is closed
+     * then (by `Socket.tls`). A cancellation (the connect timeout) passes as it is.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun proxyTls(
+        raw: Socket,
+        proxy: ResolvedProxy,
+    ): Socket {
+        val tlsConfig =
+            try {
+                config.proxyTlsConfigFor(proxy.host)
+            } catch (e: Throwable) {
+                raw.close()
+                throw e
+            }
+        return try {
+            raw.tls(tlsConfig, callContextOrEmpty(), proxySessions)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: TlsException.Config) {
+            throw e // the proxyTls block's own error, not the proxy's
+        } catch (e: Throwable) {
+            if (e !is TlsException && e !is kotlinx.io.IOException) throw e
+            throw io.kuicksilver.ktor.client.ProxyTlsException(
+                "TLS with the proxy $proxy failed: ${e.message ?: e::class.simpleName}",
+                e,
+            )
+        }
+    }
 
     /**
      * The SOCKS5 destinations for [host], in order: an address literal as ATYP 1 or 4; a name as itself for the proxy to

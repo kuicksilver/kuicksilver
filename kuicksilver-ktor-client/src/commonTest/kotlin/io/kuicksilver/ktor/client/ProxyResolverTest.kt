@@ -242,10 +242,23 @@ class ProxyResolverTest {
         assertNull(parseWinInetProxy(null, null, Url("https://x.test/")))
     }
 
-    @Test fun negative_wininetHttpsProxyRefused() {
-        val e = assertFailsWith<UnsupportedOperationException> { parseWinInetProxy("https=https://p:443", null, Url("https://x.test/")) }
-        assertTrue("TLS to the proxy" in e.message!!, e.message)
-        assertFailsWith<UnsupportedOperationException> { env("https_proxy" to "https://p.test:443").at("https://x.test/") }
+    /**
+     * An `https://` proxy URI is TLS to the proxy, port 443 unless given (as curl, despite its manual's 1080, Chrome and Go): in the
+     * environment, with its credentials, and in Windows' settings, where `https=` alone only names the proxy of `https`
+     * URLs (a plain one). Before 0.3.0 such a proxy failed the request.
+     */
+    @Test fun httpsProxyUriIsTlsToTheProxy() {
+        val credentials = ProxyCredentials("u", "p w")
+        assertEquals(ResolvedProxy.https("p", 443), parseWinInetProxy("https=https://p", null, Url("https://x.test/")))
+        assertEquals(ResolvedProxy.https("p", 8443), parseWinInetProxy("https://p:8443", null, Url("http://x.test/")))
+        assertEquals(ResolvedProxy.http("p", 443), parseWinInetProxy("https=p:443", null, Url("https://x.test/")))
+        val r = env("https_proxy" to "https://u:p%20w@p.test", "http_proxy" to "HTTPS://q.test:8443/")
+        val secure = r.at("https://x.test/")!!
+        assertEquals(ResolvedProxy.https("p.test", 443, credentials), secure)
+        assertTrue(secure.tls)
+        assertEquals("https://p.test:443", secure.toString(), "the credentials stay out of its text")
+        assertEquals(ResolvedProxy.https("q.test", 8443), r.at("http://x.test/"))
+        assertEquals(ResolvedProxy.http("p.test", 1080), env("all_proxy" to "http://p.test").at("https://x.test/"), "http:// keeps 1080")
     }
 
     /** The pool key carries an opaque id per credentials instance, nothing derived from the password. */
@@ -348,7 +361,20 @@ class ProxyResolverTest {
     }
 
     /**
-     * A script that answers only with proxies the engine cannot use (TLS to the proxy, SOCKS4) asked for a proxy: the
+     * A PAC answer's `HTTPS host:port` (Chromium's extension of the grammar) is TLS to the proxy, port 443 unless given,
+     * and wins in its place in the list; before 0.3.0 it was a proxy the engine could not use.
+     */
+    @Test fun pacHttpsEntryIsTlsToTheProxy() {
+        val pac = CfProxy(CfProxy.Type.AutoConfiguration, null, null, pacScript = "x")
+        val answer = PacOutcome.Answer(listOf(CfProxy(CfProxy.Type.TlsHttp, "tls.test", 8443), CfProxy(CfProxy.Type.Http, "p", 1)))
+        val warnings = ArrayList<String>()
+        assertEquals(ResolvedProxy.https("tls.test", 8443), pickCfProxyWithPac(listOf(pac), { answer }) { warnings += it })
+        assertEquals(emptyList(), warnings)
+        assertEquals(ResolvedProxy.https("tls.test", 443), pickCfProxy(listOf(CfProxy(CfProxy.Type.TlsHttp, "tls.test", null))) {})
+    }
+
+    /**
+     * A script that answers only with proxies the engine cannot use (SOCKS4) asked for a proxy: the
      * next setting is used with a warning, and with none the lookup fails, never a direct connection. Before, such an
      * answer meant a direct connection.
      */
@@ -859,7 +885,7 @@ class ProxyResolverTest {
         try {
             val port = (origin.localAddress as InetSocketAddress).port
             testClient(
-                engine = { proxyResolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "https://127.0.0.1:1") },
+                engine = { proxyResolver = env("https_proxy" to "socks4://127.0.0.1:1", "http_proxy" to "ftp://127.0.0.1:1") },
             ).use { c ->
                 val e = assertFailsWith<UnsupportedOperationException> { c.get("https://origin.test:$port/") }
                 assertTrue("not supported" in e.message!! && "socks4" !in e.message!!, e.message)

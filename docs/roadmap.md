@@ -177,7 +177,8 @@ what the peers really do, and is delivered whole or not at all.
 - PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources: implemented, experimental
   ([ADR-0022](adr/0022-proxy-protocol.md), [details](spec/rfc/spec-haproxy-proxy-protocol.md#receiver)).
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
-- HTTPS proxies (TLS to the proxy).
+- HTTPS proxies (TLS to the proxy): implemented, experimental ([ADR-0023](adr/0023-https-proxy.md),
+  [details](spec/rfc/9110.md#https-proxy)).
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
   amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)). Prerequisite: OpenSSL is built `no-comp`

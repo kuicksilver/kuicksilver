@@ -71,9 +71,10 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a [tunneled] connection
- * (HTTP CONNECT or SOCKS5) the proxy's fields stay out: Proxy-Authorization applies only to the proxy that asked for it
- * (RFC 9110 section 11.7.2) and went on the CONNECT ([startTunnel]); the origin must not receive the proxy's credentials.
+ * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Proxy-Authorization applies
+ * only to the proxy that asked for it (RFC 9110 section 11.7.2): it goes out only in the absolute form ([overProxy]); to
+ * the origin, directly or inside a [tunneled] connection (HTTP CONNECT, where it went on the CONNECT ([startTunnel]), or
+ * SOCKS5), it is dropped, so the origin never receives the proxy's credentials. Inside a tunnel Proxy-Connection is dropped too.
  * In the absolute form [proxyAuthorization] (the configured credentials) is sent unless the request has its own. A
  * WebSocket handshake goes out with [webSocketKey] as its one `Sec-WebSocket-Key`, in place of the key of Ktor's
  * request body ([io.kuicksilver.ktor.client.newWebSocketKey]).
@@ -124,7 +125,10 @@ internal suspend fun writeHeaders(
             if (key == HttpHeaders.ContentLength || key == HttpHeaders.Expect) return@mergeHeaders
             if (key.equals(HttpHeaders.TransferEncoding, true)) return@mergeHeaders // the framing below
             if (ownPriority != null && key.equals("Priority", true)) return@mergeHeaders
-            if (tunneled && (key.equals(HttpHeaders.ProxyAuthorization, true) || key.equals("Proxy-Connection", true))) return@mergeHeaders
+            // Proxy-Authorization goes only on a hop to a proxy (the CONNECT, or this absolute-form request), never on one to
+            // the origin, directly or inside a tunnel (RFC 9110 section 11.7.2), as HTTP/2 and HTTP/3 drop it (HOP_BY_HOP)
+            if (!overProxy && key.equals(HttpHeaders.ProxyAuthorization, true)) return@mergeHeaders
+            if (tunneled && key.equals("Proxy-Connection", true)) return@mergeHeaders
             if (webSocketKey != null && key.equals(HttpHeaders.SecWebSocketKey, true)) return@mergeHeaders
             builder.headerLine(key, value)
         }
