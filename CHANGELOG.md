@@ -2569,6 +2569,18 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- QUIC, receive memory (RFC 9000 section 21.7; the class of picoquic #2333, a receive bound that stops holding once the
+  peer moved the window): the flow-control windows and the reassembly range limits were fixed ceilings, but a stream's
+  reassembly buffer kept its allocation after the application read it: up to 1 MiB once drained, and its whole size,
+  up to the 6 MiB stream window, when a gap was left and nothing more was readable, a stream nobody reads again. Flow
+  control bounds what is unread at any one time, not what stays allocated, so a peer that pushed one stream window
+  through each of its `max_streams` streams (one byte at the end of the window, then the rest) left the connection
+  holding the sum of its stream windows: 50 MiB with the defaults against a 15 MiB connection window, and up to
+  `max_streams` x 6 MiB with windows the auto-tuning grew. The bytes the reassembly buffers hold allocated are now
+  counted per connection; above `maxConnectionWindow` a read leaves its stream's buffer no larger than what it still
+  holds and lets a drained one go, and a finished stream gives its buffer back. The allocation stays within the
+  connection window plus twice what the streams hold unread (`stream.ReassemblyRetainedCapacityTest`); below that bound
+  nothing changes. The fuzz invariant of every stream manager checks the count and the bound.
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

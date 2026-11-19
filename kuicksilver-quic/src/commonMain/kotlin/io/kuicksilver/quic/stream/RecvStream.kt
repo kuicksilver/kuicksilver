@@ -58,6 +58,12 @@ internal class RecvStream(
         return credit
     }
 
+    /** Test hook: the bytes the reassembly buffer holds allocated, read or not. */
+    internal val capacityForTest: Int get() = reassembler.capacityForTest
+
+    /** Test hook: the stream span the reassembly buffer still holds, gaps included. */
+    internal val bufferedSpanForTest: Int get() = reassembler.bufferedBytes
+
     /** Drops buffered data after STOP_SENDING: nothing will read it. */
     fun discardBuffered() {
         reassembler.clear()
