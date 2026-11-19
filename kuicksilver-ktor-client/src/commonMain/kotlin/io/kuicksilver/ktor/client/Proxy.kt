@@ -65,7 +65,7 @@ public open class ProxyException(
 /**
  * The TLS handshake with an `https://` proxy ([ResolvedProxy.https]) failed: its certificate did not verify against the
  * proxy's name or trust (`KuicksilverEngineConfig.proxyTls`), it refused the handshake, or it closed the connection
- * during it. [cause] is what the TLS layer reported (a `TlsException`, whose `Verify` subclass says why the certificate
+ * during it. [cause][Throwable.cause] is what the TLS layer reported (a `TlsException`, whose `Verify` subclass says why the certificate
  * was rejected, or an IOException for a connection that ended). Nothing of the request, credentials included, was sent.
  * A TLS failure with the origin inside the proxy's tunnel is the origin's `TlsException`, never this one.
  * [replyCode][ProxyException.replyCode] is null.
@@ -95,8 +95,8 @@ public class ResolvedProxy private constructor(
     /** SOCKS5 only: true sends the origin's name for the proxy to resolve, false an address the engine resolved. */
     public val remoteDns: Boolean,
     /**
-     * TLS to the proxy itself ([https]): the engine speaks to the proxy inside TLS, its certificate verified against [host]
-     * (RFC 9525), before anything of the request goes out; false for [http] and [socks5].
+     * TLS to the proxy itself ([https]): the engine speaks to the proxy inside TLS, its certificate verified against
+     * [host][ResolvedProxy.host] (RFC 9525), before anything of the request goes out; false for [http] and [socks5].
      */
     public val tls: Boolean,
 ) {
@@ -108,7 +108,7 @@ public class ResolvedProxy private constructor(
         if (kind == Kind.Socks5) credentials?.let { requireSocks5Password(it) }
     }
 
-    /** [ProxyType.HTTP] (with or without [tls]) or [ProxyType.SOCKS] (SOCKS5). */
+    /** [ProxyType.HTTP] (with or without [tls][ResolvedProxy.tls]) or [ProxyType.SOCKS] (SOCKS5). */
     public val type: ProxyType get() = if (kind == Kind.Http) ProxyType.HTTP else ProxyType.SOCKS
 
     /**

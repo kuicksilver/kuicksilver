@@ -480,13 +480,12 @@ internal class UdpProxyImpl(
     /** Nanoseconds of [clock] since this proxy started, for the client buckets (TestTimeSource in tests). */
     private val clockStart by lazy { clock.markNow() }
 
-    /** An IPv4-mapped IPv6 address (`::ffff:0:0/96`) as its IPv4 address: it is one, and an IPv4 socket sends to it. */
-
-    /** The IPv4 address an IPv6 one is delivered to (mapped, NAT64, 6to4: [UdpAddressClass.embeddedV4]), else the address. */
+    /** The IPv4 address an IPv6 one is delivered to (mapped, NAT64, 6to4: `UdpAddressClass.embeddedV4`), else the address. */
     private fun canonical(a: ByteArray): ByteArray =
         io.kuicksilver.http3.message.UdpAddressClass
             .embeddedV4(a) ?: a
 
+    /** An IPv4-mapped IPv6 address (`::ffff:0:0/96`) as its IPv4 address: it is one, and an IPv4 socket sends to it. */
     private fun unmapped(a: ByteArray): ByteArray {
         if (a.size != 16) return a
         for (i in 0 until 10) if (a[i] != 0.toByte()) return a

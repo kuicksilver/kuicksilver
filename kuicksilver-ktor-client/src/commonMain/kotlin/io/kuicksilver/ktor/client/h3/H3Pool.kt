@@ -851,7 +851,7 @@ internal class H3Pool(
     }
 
     /**
-     * The session tickets of tunnelled connections, one cache per CONNECT-UDP proxy route ([ConnectUdpProxy.routeKey]),
+     * The session tickets of tunnelled connections, one cache per CONNECT-UDP proxy route (`ConnectUdpProxy.routeKey`),
      * never shared with direct connections: a ticket a direct connection got would let the origin link the proxied
      * connection that resumes it to the client's own address (RFC 8446 section C.4; RFC 9298 section 7 hides it).
      */

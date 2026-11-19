@@ -26,6 +26,7 @@ public enum class CertificateCompression(
     Brotli(2),
     ;
 
+    /** Holds `compressors`, the algorithms this platform's native library compresses certificates with. */
     public companion object {
         /**
          * The algorithms this platform's native library compresses certificates with (`KSL_GET_CERT_COMPRESSORS`): zlib and

@@ -279,17 +279,26 @@ public fun interface UdpProxyResolver {
  *   `linkMtu - 48` (IPv6) are dropped rather than sent fragmented (section 5); a datagram from a target above `linkMtu`
  *   bytes is dropped whole (never forwarded cut: a socket truncates what does not fit its buffer).
  * @property maxTunnels tunnels open at once; one more is answered 503 with `connection_limit_reached`.
- * @property maxTunnelsPerClient tunnels open at once per client ([clientIpv6Prefix]); one more is answered 429.
+ * @property maxTunnelsPerClient tunnels open at once per client ([clientIpv6Prefix][UdpProxyConfig.clientIpv6Prefix]);
+ *   one more is answered 429.
  * @property clientIpv6Prefix the prefix an IPv6 client is known by for its limits: 64 by default, so a client with a /64
  *   cannot pass for 2^64 clients; 1..128 (128: each address). An IPv4 client is its address.
  * @property clientPacketRate UDP payloads per second all of a client's tunnels together may send to targets, on top of each
- *   tunnel's [packetRate]: more tunnels do not multiply a client's rate.
+ *   tunnel's [packetRate][UdpProxyConfig.packetRate]: more tunnels do not multiply a client's rate.
  * @property clientPacketBurst the client bucket's size.
  * @property packetRate UDP payloads per second a tunnel may send to its target, a token bucket refilled at this rate;
  *   payloads beyond it are dropped, as UDP may drop them (section 7, CWE-400).
  * @property packetBurst the bucket's size, the payloads a tunnel may send at once.
  * @property unansweredLimit UDP payloads a tunnel may send before its target has answered once; later ones are dropped
  *   until it does (section 7: limits a flood of a target that never answers); 0 turns the limit off.
+ * @property refuseOwnAddresses refuse the proxy's own addresses as targets, 403 with `destination_ip_prohibited` before a
+ *   socket exists: the address the request's connection reached and the listener's when it is bound to one, an
+ *   IPv4-mapped, NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) target compared by the IPv4 address it carries. RFC 9298
+ *   section 7: a proxy that does not disallow "the UDP proxy's own addresses" lets clients reach services listening on
+ *   the proxy host itself, which a firewall in front of it does not see. On by default, applied whatever
+ *   [targetFilter][UdpProxyConfig.targetFilter] allows; set false only where a target on the proxy's own host is meant (a
+ *   test, a sidecar). Other addresses of the host (NAT aliases, other interfaces), which the library does not list, go to
+ *   [UdpTargetFilter.excluding].
  * @property requireCapsuleProtocolField a request without `capsule-protocol: ?1` is answered 400 (as RFC 9298's examples
  *   send it; the RFC does not require it, so a proxy for clients that leave it out sets false).
  * @property proxyName this proxy's name in the `proxy-status` field of its refusals (RFC 9209 section 2), an sf-token.
@@ -297,12 +306,13 @@ public fun interface UdpProxyResolver {
  *   client's QUIC DATAGRAM frames (RFC 9298 section 6.1), when the process may open a raw ICMP socket (Linux and Android
  *   with CAP_NET_RAW); without that privilege, or with false, the payload is only dropped and counted. True by default;
  *   [UdpProxyStats.packetTooBig] says which applies. At most 10 a second per target address (a burst of 5) and 100 a
- *   second over the proxy, never more than the payloads dropped. Sent from the address the target sent to: see [socketFactory].
+ *   second over the proxy, never more than the payloads dropped. Sent from the address the target sent to: see
+ *   [socketFactory][UdpProxyConfig.socketFactory].
  * @property socketFactory opens the UDP socket of a tunnel on a wildcard address of the target's family (`0.0.0.0:0`
  *   or `[::]:0`); [DatagramIo.open] by default, the accelerated socket where it exists, which sets Don't Fragment and, on
- *   the wildcard bind, reports each datagram's destination, the source of a [packetTooBig] message. A factory may bind one
- *   address instead (its Packet Too Big messages leave from it); a wildcard socket that does not report destinations (the
- *   portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource].
+ *   the wildcard bind, reports each datagram's destination, the source of a [packetTooBig][UdpProxyConfig.packetTooBig]
+ *   message. A factory may bind one address instead (its Packet Too Big messages leave from it); a wildcard socket that
+ *   does not report destinations (the portable one) sends none, counted in [UdpProxyStats.packetTooBigNoSource].
  */
 @ExperimentalKuicksilverApi
 public class UdpProxyConfig(
@@ -371,7 +381,8 @@ public class UdpProxyConfig(
  * @property packetTooBig whether this proxy sends ICMP Packet Too Big messages (RFC 9298 section 6.1), as probed at its
  *   first tunnel.
  * @property packetTooBigSent ICMP Packet Too Big messages sent to targets.
- * @property packetTooBigNoSource ICMP Packet Too Big messages not sent (with [packetTooBig] [PacketTooBigStatus.Available])
+ * @property packetTooBigNoSource ICMP Packet Too Big messages not sent (with
+ *   [packetTooBig][UdpProxyStats.packetTooBig] [PacketTooBigStatus.Available])
  *   because the address the target sent to is unknown: a socket of [UdpProxyConfig.socketFactory] bound to a wildcard address
  *   that does not report each datagram's destination (the portable socket; the accelerated one reports it). A socket bound
  *   to one address answers from that address.
