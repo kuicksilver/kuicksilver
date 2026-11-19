@@ -54,9 +54,14 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     inputs.property("leakStrict", providers.environmentVariable("KUICKSILVER_LEAK_STRICT").orElse(""))
 }
 
-// the same two variables for a Kotlin/Native test executable, which gets only what its task passes on
+// the same variables for a Kotlin/Native test executable, which gets only what its task passes on; on a simulator the
+// executable runs under `simctl spawn`, which hands the app only its SIMCTL_CHILD_* variables, without the prefix
 tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest>().configureEach {
+    val simulator = this is org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
     for (name in listOf("KUICKSILVER_LEAK_SITES", "KUICKSILVER_LEAK_WAIT_MS", "KUICKSILVER_LEAK_SLOW_MS", "KUICKSILVER_LEAK_STRICT")) {
-        providers.environmentVariable(name).orNull?.let { environment(name, it) }
+        providers.environmentVariable(name).orNull?.let {
+            environment(name, it)
+            if (simulator) environment("SIMCTL_CHILD_$name", it)
+        }
     }
 }

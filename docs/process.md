@@ -63,8 +63,9 @@ close, a connection's draining) is waited for, woken by every close and every na
 (`KUICKSILVER_LEAK_WAIT_MS`). The failure names each kind and its count; `KUICKSILVER_LEAK_SITES=1` keeps the stack that
 opened each object and prints it. Teardown that took longer than 1.5 s (`KUICKSILVER_LEAK_SLOW_MS`) is reported with its
 time, the test and the kinds it waited for, and fails the test with `KUICKSILVER_LEAK_STRICT=1`. Strict mode is on
-in CI (`build.yml`'s workflow env) and in `tools/ci/local-matrix.sh`, which passes it into its Docker steps; the Windows
-VM runner and the Android device runs do not get it. Its first finding was a product one: a TLS client's close waited
+in CI (`build.yml`'s workflow env) and in `tools/ci/local-matrix.sh`, which passes it into its Docker steps; a
+Kotlin/Native test task passes the sentinel's variables to its executable, on the iOS simulator as `SIMCTL_CHILD_*`
+(simctl hands the app only those, without the prefix); the Windows VM runner and the Android device runs do not get it. Its first finding was a product one: a TLS client's close waited
 up to its 3 s bound for the server's `close_notify` behind a response the application never read (`TlsSocketCloseTest`).
 A ksl counter that ends
 below its start (the test freed objects it did not make) is reported too: such a drop can hide a leak of the same kind.
