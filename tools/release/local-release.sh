@@ -9,7 +9,7 @@
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
 #      branch), and not main once that branch exists (release mode fetches origin first), nor a branch behind origin; the
 #      version is not on Maven Central yet (release mode); every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
-#      and, for a final version, the README and the iOS guide name it; the Swift package repository clones, has no tag
+#      and, for a final version, the README, docs/install.md and the iOS guide name it; the Swift package repository clones, has no tag
 #      <version> yet and its rendered manifest reads back (swift-package.sh prepare); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (every step, selection=all: Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
@@ -181,7 +181,7 @@ elif ! grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; t
   refuse "CHANGELOG.md: '$(grep -E "^## \[$version\]" CHANGELOG.md | head -1)' has no release date (## [$version] - YYYY-MM-DD)"
 fi
 # the tree is the line of $version (docs/release.md, "Every release", step 2): every Gradle and sample version fallback is
-# <X.Y.Z>-SNAPSHOT of it, and for a final version the README and the iOS guide name it as the version to depend on. A
+# <X.Y.Z>-SNAPSHOT of it, and for a final version the README, docs/install.md and the iOS guide name it as the version to depend on. A
 # release commit made without that step would ship README coordinates of the previous version, or be another line's tree.
 base="${version%%-*}"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
@@ -192,15 +192,17 @@ for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/
   [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"
 done
 if [ "$base" = "$version" ]; then
-  for f in README.md docs/guide/ios.md; do   # coordinates, the SwiftPM package version and xcframework URL, "X.Y.Z is on Maven Central"
+  for f in README.md docs/install.md docs/guide/ios.md; do   # coordinates, the SwiftPM package version and xcframework URL, "X.Y.Z is on Maven Central"
     have=$(grep -oE 'io\.kuicksilver:kuicksilver-[a-z0-9-]+:[0-9][-.A-Za-z0-9]*|releases/download/v[0-9][-.A-Za-z0-9]*/|kuicksilver-swift", \.upToNextMinor\(from: "[0-9][-.A-Za-z0-9]*"|[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]* is on Maven Central' "$f" 2>/dev/null \
       | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/download\/v([^/]*)\/$/\1/; s/^kuicksilver-swift", \.upToNextMinor\(from: "([^"]*)"$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
     [ "$have" = "$version " ] || refuse "$f names ${have:-no version }instead of $version (the commit that prepares $version sets the coordinates)"
   done
-  # while a version is prepared on main, the README says so; the release commit of that version removes it (docs/release.md)
-  if grep -qE "release in preparation|Until $(printf '%s' "$version" | sed 's/\./\\./g') is on Maven Central" README.md; then
-    refuse "README.md still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
-  fi
+  # while a version is prepared on main, the README and docs/install.md say so; the release commit of that version removes it (docs/release.md)
+  for f in README.md docs/install.md; do
+    if grep -qE "release in preparation|Until $(printf '%s' "$version" | sed 's/\./\\./g') is on Maven Central" "$f" 2>/dev/null; then
+      refuse "$f still calls $version the release in preparation (\"release in preparation\" or \"Until $version is on Maven Central\"): the release commit removes that note"
+    fi
+  done
 fi
 # the Swift package (tools/release/swift-package.sh): what could fail at the end of the release fails now instead, before
 # hours of building: the clone, a tag <version> already there, the manifest rendered and read back by SwiftPM (a dry run

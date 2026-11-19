@@ -852,6 +852,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Docs: the README is now one screen: what Kuicksilver is, the dependency lines, swapping the Ktor engine and one
+  platform table, with everything else linked. The Install section and the module list moved to `docs/install.md`, the
+  per-platform limits to `docs/stability.md` ("Limits per platform"), the interop numbers to `docs/how-we-verify.md`.
+  New pages: `docs/why-kuicksilver.md` (Kuicksilver against Cronet, URLSession, OkHttp, Netty QUIC, quiche and quic-go,
+  each claim with its source, and the measurements still missing) and `docs/how-we-verify.md` (RFC tables, interop,
+  fuzzing, the release gate, hosted CI, soak, threat model and reproducible builds, with the numbers and their dates).
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

@@ -54,7 +54,7 @@ new_repo() { # <dir>: a repository with what the script reads before the gate, a
 }
 git init -q --bare "$tmp/origin.git"; new_repo "$tmp/repo"
 
-tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and the iOS guide name> [<file to leave behind>]
+tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README, docs/install.md and the iOS guide name> [<file to leave behind>]
   local s="$1-SNAPSHOT" p="$2" f
   for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
       kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
@@ -65,12 +65,13 @@ tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and t
   printf 'version="${1:-%s}"\n' "$s" > tools/check/consumer-smoke.sh
   mkdir -p docs/guide
   printf '> The API can change between any two 0.x releases, and %s is on Maven Central.\n\n    implementation("io.kuicksilver:kuicksilver-ktor-client:%s")\n' "$p" "$p" > README.md
+  printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:%s"))\n.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n' "$p" "$p" > docs/install.md
   printf '        implementation("io.kuicksilver:kuicksilver-http3:%s")   // or -quic\n    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "%s")),\n            url: "https://github.com/kuicksilver/kuicksilver/releases/download/v%s/Kuicksilver.xcframework.zip",\n' "$p" "$p" "$p" > docs/guide/ios.md
 }
 commit() { git add -A; git commit -qm "$1"; }
 
 # base: the 0.2.1 line prepared (the fork point of release/0.2.x); main then moves to 0.3.0
-printf '# Changelog\n\n## [0.15.0] - 2028-01-01\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
+printf '# Changelog\n\n## [0.15.0] - 2028-01-01\n\n## [0.14.0] - 2027-12-01\n\n## [0.13.0] - 2027-11-01\n\n## [0.12.0] - 2027-10-01\n\n## [0.11.0] - 2027-09-01\n\n## [0.10.0] - 2027-08-01\n\n## [0.9.0] - 2027-07-01\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
 tree_version 0.2.1 0.2.1; commit base
 git remote add origin "$tmp/origin.git"; git push -q origin main
 git branch release/0.2.x
@@ -85,6 +86,10 @@ git checkout -q -b release/0.7.x main; tree_version 0.7.0 0.7.0; printf 'version
 git checkout -q -b release/0.8.x main; tree_version 0.8.0 0.8.0 kuicksilver-bom/build.gradle.kts; git rm -q kuicksilver-bom/build.gradle.kts; commit "0.8 line, no BOM fallback"
 git checkout -q -b release/0.9.x main; tree_version 0.9.0 0.9.0; printf '> This README describes 0.9.0, the release in preparation.\n' >> README.md; commit "0.9 line, README still says in preparation"
 git checkout -q -b release/0.10.x main; tree_version 0.10.0 0.10.0; printf 'Until 0.10.0 is on Maven Central, build it from a checkout.\n' >> README.md; commit "0.10 line, README still has the build-it-yourself note"
+git checkout -q -b release/0.11.x main; tree_version 0.11.0 0.11.0; printf '    implementation(platform("io.kuicksilver:kuicksilver-bom:0.3.0"))\n' >> docs/install.md; commit "0.11 line, a block of docs/install.md not moved"
+git checkout -q -b release/0.12.x main; tree_version 0.12.0 0.12.0; printf '**Until 0.12.0 is on Maven Central**, build it from a checkout of main.\n' >> docs/install.md; commit "0.12 line, docs/install.md still has the build-it-yourself note"
+git checkout -q -b release/0.13.x main; tree_version 0.13.0 0.13.0; rm docs/install.md; commit "0.13 line, docs/install.md missing"
+git checkout -q -b release/0.14.x main; tree_version 0.14.0 0.14.0; printf '.package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),\n' >> docs/install.md; commit "0.14 line, SwiftPM line in docs/install.md not moved"
 git checkout -q -b release/0.15.x main; tree_version 0.15.0 0.15.0; printf '    .package(url: "https://github.com/kuicksilver/kuicksilver-swift", .upToNextMinor(from: "0.3.0")),\n' >> docs/guide/ios.md; commit "0.15 line, SwiftPM line in the iOS guide not moved"
 git checkout -q main
 
@@ -139,6 +144,10 @@ t "release/0.7.x, 0.7.0, BOM fallback 0.3.0-SNAPSHOT"    "refuse:kuicksilver-bom
 t "release/0.8.x, 0.8.0, BOM fallback missing"           "refuse:kuicksilver-bom"       release/0.8.x 0.8.0
 t "release/0.9.x, 0.9.0, README 'in preparation'"        "refuse:in preparation"        release/0.9.x 0.9.0
 t "release/0.10.x, 0.10.0, README 'Until ... on Central'" "refuse:Until 0.10.0 is on Maven Central" release/0.10.x 0.10.0
+t "negative_installPageCoordinatesNotMoved"              "refuse:docs/install.md names 0.11.0 0.3.0 instead of 0.11.0" release/0.11.x 0.11.0
+t "negative_installPageMissing"                          "refuse:docs/install.md names no version instead of 0.13.0" release/0.13.x 0.13.0
+t "negative_installPageSwiftLineNotMoved"                "refuse:docs/install.md names 0.14.0 0.3.0 instead of 0.14.0" release/0.14.x 0.14.0
+t "negative_installPageStillInPreparation"               "refuse:docs/install.md still calls 0.12.0 the release in preparation" release/0.12.x 0.12.0
 # the Swift package (swift-package.sh prepare, before the gate): a tag of the version there means it is released already
 KSL_SWIFT_REPO="$tmp/swift-tagged.git" t "Swift package already tagged 0.2.1" "refuse:tag 0.2.1 is already in" release/0.2.x 0.2.1
 KSL_SWIFT_REPO="$tmp/no-such.git" t "Swift package repository unreachable" "refuse:Swift package cannot be prepared: cannot clone" release/0.2.x 0.2.1
@@ -735,23 +744,25 @@ tail_attack "negative_tailFinalVersion"               "is not a prerelease"     
 
 # the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
 # version of its fallbacks, except that before the release commit the README's status line names the last published
-# version ("X.Y.Z is on Maven Central") while its dependency blocks and the iOS guide already name the line's version;
+# version ("X.Y.Z is on Maven Central") while its dependency blocks, docs/install.md and the iOS guide already name the line's version;
 # with no published version to name (0.2.x are withdrawn) only the "release in preparation" note remains
 new_repo "$tmp/real"
 for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
     kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
     samples/ios/kuicksilver-swift/build.gradle.kts samples/compose-demo/build.gradle.kts \
-    tools/check/consumer-smoke.sh README.md docs/guide/ios.md; do
+    tools/check/consumer-smoke.sh README.md docs/install.md docs/guide/ios.md; do
   mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
 done
 line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
 published=$(grep -v 'Until [0-9.]* is on Maven Central' README.md \
   | sed -n 's/.* \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) is on Maven Central.*/\1/p' | head -1)
 printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
-# before the release the README names both versions and calls the line's version the release in preparation
-want=""; if [ -z "$published" ]; then want="README.md still calls $line the release in preparation"
-elif [ "$published" != "$line" ]; then want=$(printf 'README.md names %s instead of %s\nREADME.md still calls %s the release in preparation' \
-  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$line"); fi
+# before the release the README names both versions, and the README and docs/install.md call the line's version the release
+# in preparation
+prep=$(printf 'README.md still calls %s the release in preparation\ndocs/install.md still calls %s the release in preparation' "$line" "$line")
+want=""; if [ -z "$published" ]; then want="$prep"
+elif [ "$published" != "$line" ]; then want=$(printf 'README.md names %s instead of %s\n%s' \
+  "$(printf '%s\n%s\n' "$published" "$line" | sort -u | tr '\n' ' ' | sed 's/ $//')" "$line" "$prep"); fi
 want=$(grep . <<< "$want" | sort)
 out=$(bash tools/release/local-release.sh "$line" --dry-run 2>&1)
 have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' -e 's/ ("release in preparation".*//' | sort)
