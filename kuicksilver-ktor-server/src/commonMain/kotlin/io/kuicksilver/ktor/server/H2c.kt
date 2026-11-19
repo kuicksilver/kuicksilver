@@ -7,6 +7,7 @@ import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 
@@ -69,17 +70,44 @@ internal suspend fun ByteReadChannel.startsWithH2Preface(): Boolean {
 }
 
 /**
- * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server reads no further request, so a
- * connection still sending its first octets goes to HTTP/1.1, which closes it as idle at once instead of holding the
- * stop for the request-head deadline. The check consumes nothing, so dropping it loses no octet.
+ * Whether the octets already here are the whole HTTP/2 client connection preface, without waiting for any: false while
+ * fewer than its 24 octets arrived, at the first that differs, or when the input failed.
  */
-internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(stop: Job): Boolean =
+@OptIn(InternalAPI::class)
+private fun ByteReadChannel.prefaceArrived(): Boolean {
+    if (closedCause != null) return false
+    val seen = readBuffer.peek()
+    for (octet in H2_CLIENT_PREFACE) {
+        if (seen.exhausted() || seen.readByte() != octet) return false
+    }
+    return true
+}
+
+/**
+ * [startsWithH2Preface], or false as soon as [stop] completes first: a stopping server reads no further request, so a
+ * connection still sending its first octets goes to HTTP/1.1 instead of holding the stop for the request-head deadline.
+ * When the stop wins, the check is ended (joined, so nothing else reads the input meanwhile) and the octets looked at
+ * again: a whole preface that came with the stop is HTTP/2 all the same (RFC 9113 section 3.3: prior knowledge), and
+ * the HTTP/2 connection ends it with GOAWAY (section 6.8), never an HTTP/1.1 answer the client cannot read. The check
+ * consumes nothing, so dropping it loses no octet.
+ */
+internal suspend fun ByteReadChannel.startsWithH2PrefaceUnless(
+    stop: Job,
+    checkForTest: (suspend (ByteReadChannel) -> Unit)? = null,
+): Boolean =
     coroutineScope {
-        val check = async { startsWithH2Preface() }
+        val check =
+            async {
+                checkForTest?.invoke(this@startsWithH2PrefaceUnless)
+                startsWithH2Preface()
+            }
         try {
             select {
                 check.onAwait { it }
-                stop.onJoin { false }
+                stop.onJoin {
+                    check.cancelAndJoin()
+                    prefaceArrived()
+                }
             }
         } finally {
             check.cancel()

@@ -3638,6 +3638,7 @@ kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.ClientSignalCo
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDeadlineRaceTest.negative_aPrefaceReadAsItsDeadlineFiresIsThePreface
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverH2c
 kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aRequestTakenAsTheStopWinsIsServedOverTls
+kuicksilver-ktor-server/src/jvmTest	io.kuicksilver.ktor.server.h2.H2PrefaceDrainRaceTest.negative_aWholePrefaceAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.NativeServerH3Test.h3ServedAndAdvertisedOnNative
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.contentRoundTrips
 kuicksilver-ktor-server/src/nativeTest	io.kuicksilver.ktor.server.SecretFileNativeTest.descriptorIsCloseOnExec

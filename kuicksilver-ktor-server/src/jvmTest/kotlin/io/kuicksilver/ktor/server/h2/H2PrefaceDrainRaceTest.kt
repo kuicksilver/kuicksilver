@@ -16,12 +16,15 @@ import io.kuicksilver.ktor.server.kuicksilverServer
 import io.kuicksilver.ktor.server.serverTest
 import io.kuicksilver.ktor.server.tlsServer
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -30,8 +33,10 @@ import kotlin.time.Duration.Companion.seconds
  * the server starts to stop. The core reads on its own, so it may have taken the request when the stop wins the wait for
  * the preface; that request is then served (or, had nothing been taken, the GOAWAY says last stream 0), never left
  * unanswered under a GOAWAY that names it. The hooks hold the wait until the stop began and the core took stream 1, and
- * keep the preface's side of the race from completing, so the stop wins in every run. The hooks are the server
- * configuration's own, one server per test.
+ * keep the preface's side of the race from completing, so the stop wins in every run. On an h2c connector that also
+ * serves HTTP/1.1 the preface check before it races the stop too, and a whole preface that came with a stop that won is
+ * still HTTP/2 (RFC 9113 section 3.3), never handed to HTTP/1.1. The hooks are the server configuration's own, one
+ * server per test.
  */
 class H2PrefaceDrainRaceTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -102,6 +107,61 @@ class H2PrefaceDrainRaceTest {
                     .port,
                 tls = false,
             )
+        }
+
+    /**
+     * [H2cMode.WithHttp11]: the whole preface, SETTINGS and a GET are in when the stop wins the preface check (the check is
+     * held, so the stop is the only side that can win). The connection is HTTP/2 all the same: the server's SETTINGS
+     * first, then GOAWAY, never an HTTP/1.1 answer (a 505 to `PRI * HTTP/2.0`) that a prior-knowledge client cannot read.
+     */
+    @Test fun negative_aWholePrefaceAsTheStopWinsTheCheckIsHttp2OverH2cWithHttp11() =
+        serverTest {
+            val inCheck = CompletableDeferred<Unit>()
+            val server =
+                kuicksilverServer(null, configure = {
+                    plainConnector {
+                        host = "127.0.0.1"
+                        port = 0
+                        h2c = H2cMode.WithHttp11
+                    }
+                    http3 = false
+                    h2cPrefaceCheckForTest = { input ->
+                        input.awaitContent(RawH2Client.PREFACE.size) // the whole preface is in
+                        inCheck.complete(Unit)
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            server.startSuspend(wait = false)
+            val port =
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port
+            coroutineScope {
+                RawH2Client.connectPlain(port).use { raw ->
+                    val get = listOf(":method" to "GET", ":scheme" to "http", ":authority" to "server.test", ":path" to "/")
+                    raw.write(
+                        RawH2Client.PREFACE + RawH2Client.frame(RawFrame.SETTINGS, 0, 0) +
+                            RawH2Client.frame(RawFrame.HEADERS, 0x5, 1, RawH2Client.block(get)),
+                    )
+                    withTimeout(10.seconds) { inCheck.await() }
+                    val stop = async { server.stopSuspend(10_000, 15_000) }
+                    val frames =
+                        withTimeout(20.seconds) {
+                            buildList {
+                                while (true) add(raw.readFrame() ?: break)
+                            }
+                        }
+                    assertEquals(RawFrame.SETTINGS, frames.firstOrNull()?.type, "HTTP/2: the server's preface first: $frames")
+                    val goAway = assertNotNull(frames.firstOrNull { it.type == RawFrame.GOAWAY }, "GOAWAY: $frames")
+                    assertEquals(0L, goAway.errorCode, "NO_ERROR: $frames")
+                    if (goAway.lastStreamId >= 1) {
+                        assertTrue(frames.any { it.stream == 1 && it.type == RawFrame.HEADERS }, "stream 1 named, so answered: $frames")
+                    }
+                    raw.close()
+                    withTimeout(20.seconds) { stop.await() }
+                }
+            }
         }
 
     @Test fun negative_aRequestTakenAsTheStopWinsIsServedOverTls() =

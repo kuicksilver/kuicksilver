@@ -456,7 +456,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             // deadline has passed too, or which closes it as idle
                                             h2c == H2cMode.Only ||
                                                 withTimeoutOrNull((headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO)) {
-                                                    i.startsWithH2PrefaceUnless(draining)
+                                                    i.startsWithH2PrefaceUnless(draining, configuration.h2cPrefaceCheckForTest)
                                                 } == true
                                         } catch (e: Throwable) {
                                             if (e is CancellationException) {
