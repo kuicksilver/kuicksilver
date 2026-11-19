@@ -192,10 +192,11 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/select-races.py || rc=1; python3 -I tools/check/race-tests.py || rc=1
   python3 -I tools/check/wall-bounds.py || rc=1
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
+  python3 -I tools/check/sentinel.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
-  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds sentinel; do
     bash "tools/check/$t-test.sh" || rc=1
   done
   bash tools/ci/race-repeat-test.sh || rc=1
