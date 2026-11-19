@@ -359,6 +359,8 @@ internal open class LoopInbox(
     // the shared socket's address family without DF and this loop's skipped slots, through its sender
     override val noDfFamily: io.kuicksilver.quic.IpFamily? get() = (sender as? DfFamilyRestricted)?.noDfFamily
 
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = sender.noDontFragmentFamily
+
     override fun takeDfRefusals(): List<InetSocketAddress> = (sender as? DfFamilyRestricted)?.takeDfRefusals() ?: emptyList()
 
     /** This loop is done with the socket: its sender closes, and the last inbox to close closes the socket. */
@@ -407,6 +409,8 @@ internal class SerializedSender(
 
     override val noDfFamily: io.kuicksilver.quic.IpFamily? get() = (io as? DfFamilyRestricted)?.noDfFamily
 
+    override val noDontFragmentFamily: io.kuicksilver.quic.IpFamily? get() = io.noDontFragmentFamily
+
     override fun takeDfRefusals(): List<InetSocketAddress> {
         if (refused.isEmpty()) return emptyList()
         val out = refused.toList()
@@ -418,13 +422,22 @@ internal class SerializedSender(
         (io as? DfFamilyRestricted)?.let { refused += it.takeDfRefusals() }
     }
 
-    override suspend fun send(batch: PacketBatch): Int = lock.withLock { io.send(batch).also { collectRefusals() } }
+    // the refusals are collected even when the send throws part-way through a batch: they belong to this loop's batch
+    override suspend fun send(batch: PacketBatch): Int =
+        lock.withLock {
+            try {
+                io.send(batch)
+            } finally {
+                collectRefusals()
+            }
+        }
 
     override fun trySend(batch: PacketBatch): Int {
         if (!lock.tryLock()) return 0
         try {
-            return io.trySend(batch).also { collectRefusals() }
+            return io.trySend(batch)
         } finally {
+            collectRefusals()
             lock.unlock()
         }
     }

@@ -150,6 +150,29 @@ class LoopGroupTest {
             }
         }
 
+    /** A shared socket that skipped a slot for want of DF and then threw: the loop's sender still takes that refusal. */
+    @Test fun aSerializedSenderTakesTheRefusalsOfASendThatThrew() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val io = net.open(serverAddr)
+            val sender = SerializedSender(io, kotlinx.coroutines.sync.Mutex())
+            val batch = PacketBatch(1)
+            try {
+                batch.buffer(0).copyFrom(ByteArray(10), 0, 0, 10)
+                batch.setLength(0, 10)
+                batch.setAddress(0, clientAddr)
+                io.refuseThenThrow = true
+                kotlin.test.assertFails { sender.trySend(batch) }
+                assertEquals(listOf(clientAddr), sender.takeDfRefusals(), "taken although the send threw")
+                io.refuseThenThrow = true
+                kotlin.test.assertFails { sender.send(batch) }
+                assertEquals(listOf(clientAddr), sender.takeDfRefusals(), "the suspending send too")
+            } finally {
+                batch.close()
+                io.close()
+            }
+        }
+
     /** No accelerated socket for a group (none here, or one the system gave no DF and that is not used): the error names DF. */
     @Test fun loopsAboveOneWithoutTheAcceleratedSocketNamesDontFragment() =
         runBlocking {

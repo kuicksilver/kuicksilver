@@ -393,7 +393,6 @@ internal class KslDatagramIo private constructor(
             local: InetSocketAddress,
             reusePort: Boolean = false,
             logger: KuicksilverLogger = KuicksilverLogger.Stderr,
-            requireDf: Boolean = true,
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             val unsupported = unsupportedReason()
@@ -417,7 +416,7 @@ internal class KslDatagramIo private constructor(
                     } ?: return null
                 }
             // no DF, no QUIC (RFC 9000 section 14): a socket the system gave no DF is not used; the portable socket decides
-            if (requireDf && socket.grantedFlags and KslUdpSocket.DF == 0) {
+            if (socket.grantedFlags and KslUdpSocket.DF == 0) {
                 socket.close()
                 warnFallback(logger) { "accelerated UDP socket on $local got no Don't Fragment; trying the portable socket" }
                 return null

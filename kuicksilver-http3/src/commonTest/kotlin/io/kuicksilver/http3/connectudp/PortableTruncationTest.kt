@@ -16,7 +16,6 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.IoPreference
 import io.kuicksilver.quic.PacketBatch
-import io.kuicksilver.quic.openDatagramIoDfIfPossible
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
@@ -55,13 +54,22 @@ class PortableTruncationTest {
                 )
             val proxySocket = CompletableDeferred<DatagramIo>()
             val loopback = InetSocketAddress("127.0.0.1", 0)
-            val target = openDatagramIoDfIfPossible(loopback, IoPreference.Portable)
+            // no DF, no tunnel (RFC 9298 section 3.1): the Kotlin/Native portable socket cannot set DF, so it is not opened
+            // there; on the JVM the portable socket has DF (probe mode through ksl)
+            val target =
+                try {
+                    DatagramIo.open(loopback, IoPreference.Portable)
+                } catch (e: io.kuicksilver.quic.QuicException.DontFragmentUnavailable) {
+                    println("negative_aTargetDatagramAboveTheLinkMtuIsDroppedNotCut skipped: ${e.message}")
+                    pair.close()
+                    return@h3Test
+                }
             val rig =
                 ProxyRig(pair) { _ ->
                     UdpProxyConfig(
                         targetFilter = UdpTargetFilter.addresses("127.0.0.1"),
                         linkMtu = LINK_MTU,
-                        socketFactory = { openDatagramIoDfIfPossible(loopback, IoPreference.Portable).also { proxySocket.complete(it) } },
+                        socketFactory = { DatagramIo.open(loopback, IoPreference.Portable).also { proxySocket.complete(it) } },
                     )
                 }
             rig.serveAll()

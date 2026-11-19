@@ -74,6 +74,8 @@ internal class NioDatagramIo private constructor(
     internal var noDf: Int = DF_ALL
         private set
 
+    override val noDontFragmentFamily: IpFamily? get() = noDfFamily
+
     override val noDfFamily: IpFamily?
         get() =
             when (noDf) {
@@ -466,10 +468,7 @@ internal class NioDatagramIo private constructor(
          * This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability false); with probe mode it could
          * run here later. Returns the channel, the [dfProbe] bits and the address family without DF ([DF_ALL]: none).
          */
-        private fun openWithDf(
-            local: InetSocketAddress,
-            strictDf: Boolean,
-        ): Triple<DatagramChannel, Int, Int> {
+        private fun openWithDf(local: InetSocketAddress): Triple<DatagramChannel, Int, Int> {
             val localV6 = local.ipBytesNoDns()?.size == 16
             var c = newChannel(inet = false)
             if (!c.inet && triesInet(c.bits, localV6, apple, dontFragmentOption() != null)) {
@@ -482,8 +481,6 @@ internal class NioDatagramIo private constructor(
                 }
             }
             val missing = noDfFamily(c.bits, c.jdk, c.inet, apple)
-            // not for QUIC (a CONNECT-UDP target socket, RFC 9298 section 3.1: DF "if possible"): DF where it took, nothing refused
-            if (!strictDf) return Triple(c.ch, c.bits, DF_ALL)
             if (missing == DF_NONE) {
                 c.ch.close()
                 throw QuicException.DontFragmentUnavailable(null, dfUnavailableDetail(c.bits, dontFragmentOption() != null))
@@ -530,10 +527,9 @@ internal class NioDatagramIo private constructor(
          */
         fun open(
             local: InetSocketAddress,
-            strictDf: Boolean = true,
             configure: (DatagramChannel) -> Unit = {},
         ): NioDatagramIo {
-            val (ch, probe, noDf) = openWithDf(local, strictDf)
+            val (ch, probe, noDf) = openWithDf(local)
             val selector: Selector
             try {
                 configure(ch)

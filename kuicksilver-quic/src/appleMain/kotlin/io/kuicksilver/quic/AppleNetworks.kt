@@ -176,7 +176,7 @@ public suspend fun DatagramIo.Companion.open(
             } else {
                 null
             }
-        accelerated ?: openPortableDatagramIo(local, true)
+        accelerated ?: openPortableDatagramIo(local)
     }
 
 /** True for an AF_INET6 socket (`getsockname`). */

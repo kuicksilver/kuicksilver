@@ -35,6 +35,7 @@ import io.kuicksilver.http3.runtime.h3Test
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.IpFamily
 import io.kuicksilver.quic.PacketTooBigSender
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.ipLiteral
@@ -736,6 +737,54 @@ class ConnectUdpTest {
                 val c = p.client.connectUdp(template, "192.0.2.50", 5002)
                 b.close()
                 c.close()
+            }
+        }
+
+    /**
+     * No DF, no tunnel (RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"): a target of
+     * a family the proxy's sockets have no Don't Fragment for is refused with 500 `proxy_configuration_error` (RFC 9209
+     * section 2.3.24), whether the factory refuses the socket or the socket names that family; the other family is served.
+     */
+    @Test fun negative_aTargetFamilyWithoutDontFragmentIsRefused() =
+        h3Test {
+            val rig =
+                rig { f ->
+                    UdpProxyConfig(targetFilter = UdpTargetFilter.AllowAll, socketFactory = { a -> NoDfFor(f(a), IpFamily.V4) })
+                }
+            rig.use { r ->
+                val p = r.pair
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { p.client.connectUdp(template, "192.0.2.50", 5000) }
+                assertEquals(500, e.status)
+                assertEquals(
+                    "proxy; error=proxy_configuration_error; details=\"no Don't Fragment for IPv4 targets on this host\"",
+                    e.headers["proxy-status"],
+                )
+                // the other family: served
+                val got = rig.echo(InetSocketAddress("2001:db8::50", 5000))
+                val t = p.client.connectUdp(template, "2001:db8::50", 5000)
+                t.send("v6".encodeToByteArray())
+                assertContentEquals("v6".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                t.close()
+            }
+        }
+
+    /** A socket factory that cannot set DF at all (no DF, no QUIC or tunnel) refuses the tunnel the same way. */
+    @Test fun negative_aSocketFactoryWithoutDontFragmentRefusesTheTunnel() =
+        h3Test {
+            val rig =
+                rig { _ ->
+                    UdpProxyConfig(
+                        targetFilter = UdpTargetFilter.AllowAll,
+                        socketFactory = {
+                            throw io.kuicksilver.quic.QuicException
+                                .DontFragmentUnavailable(null, "test: no DF")
+                        },
+                    )
+                }
+            rig.use { r ->
+                val e = assertFailsWith<Http3Exception.ConnectRejected> { r.pair.client.connectUdp(template, "192.0.2.50", 5000) }
+                assertEquals(500, e.status)
+                assertTrue("error=proxy_configuration_error" in e.headers["proxy-status"]!!)
             }
         }
 
@@ -1468,3 +1517,11 @@ internal fun h3Code(e: Throwable): Long? =
             else -> null
         }
     }
+
+/** A proxy socket without Don't Fragment for [family] ([DatagramIo.noDontFragmentFamily]). */
+private class NoDfFor(
+    private val inner: io.kuicksilver.quic.DatagramIo,
+    private val family: IpFamily,
+) : io.kuicksilver.quic.DatagramIo by inner {
+    override val noDontFragmentFamily: IpFamily? get() = family
+}

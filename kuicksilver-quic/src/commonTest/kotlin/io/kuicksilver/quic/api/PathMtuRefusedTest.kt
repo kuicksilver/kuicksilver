@@ -273,6 +273,29 @@ class PathMtuRefusedTest {
             }
         }
 
+    /**
+     * A send that throws part-way through a batch after the socket skipped a slot for want of DF: the skipped slot is still
+     * taken with that batch (counted, its path failed), never left for the next batch.
+     */
+    @Test fun negative_aSkippedSlotIsTakenEvenWhenTheSendThrows() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, _) = p.connect()
+                    val io = p.clientIo
+                    io.refuseThenThrow = true
+                    val st = c.openBidi()
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }
+                    val closed = assertIs<QuicException.ConnectionLost.TransportClosed>(c.closed.await())
+                    assertEquals(TransportError.NO_VIABLE_PATH, closed.code)
+                    assertTrue(p.client.stats.datagramsSkippedNoDf >= 1, "${p.client.stats}")
+                }
+            }
+        }
+
     /** A refusal for a destination none of the connection's paths has is not this connection's: it goes on. */
     @Test fun aRefusalForAnotherDestinationIsIgnored() =
         runBlocking<Unit> {

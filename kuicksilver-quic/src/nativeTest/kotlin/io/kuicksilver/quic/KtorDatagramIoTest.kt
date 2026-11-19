@@ -34,10 +34,6 @@ class KtorDatagramIoTest {
                     DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).close()
                 }
             assertEquals(null, e.family)
-            // not for QUIC (a CONNECT-UDP target, RFC 9298 section 3.1: DF "if possible"): the portable socket opens
-            openDatagramIoDfIfPossible(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable).use {
-                assertTrue(it is KtorDatagramIo, "the portable socket, without DF")
-            }
         }
 
     @Test fun loopbackClientSendReceive() =

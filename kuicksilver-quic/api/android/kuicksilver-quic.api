@@ -339,6 +339,7 @@ public abstract interface class io/kuicksilver/quic/DatagramIo : java/lang/AutoC
 	public fun disableEcnMarking ()V
 	public abstract fun getCapabilities ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun getNoDontFragmentFamily ()Lio/kuicksilver/quic/IpFamily;
 	public abstract fun receive (Lio/kuicksilver/quic/PacketBatch;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun send (Lio/kuicksilver/quic/PacketBatch;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun trySend (Lio/kuicksilver/quic/PacketBatch;)I
@@ -351,6 +352,7 @@ public final class io/kuicksilver/quic/DatagramIo$Companion {
 
 public final class io/kuicksilver/quic/DatagramIo$DefaultImpls {
 	public static fun disableEcnMarking (Lio/kuicksilver/quic/DatagramIo;)V
+	public static fun getNoDontFragmentFamily (Lio/kuicksilver/quic/DatagramIo;)Lio/kuicksilver/quic/IpFamily;
 }
 
 public abstract interface class io/kuicksilver/quic/DatagramPacketWriter {

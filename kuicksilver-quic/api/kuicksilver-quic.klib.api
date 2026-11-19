@@ -223,6 +223,8 @@ abstract interface io.kuicksilver.quic/DatagramIo : kotlin/AutoCloseable { // io
         abstract fun <get-capabilities>(): kotlinx.coroutines.flow/StateFlow<io.kuicksilver.quic/IoCapabilities> // io.kuicksilver.quic/DatagramIo.capabilities.<get-capabilities>|<get-capabilities>(){}[0]
     abstract val localAddress // io.kuicksilver.quic/DatagramIo.localAddress|{}localAddress[0]
         abstract fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/DatagramIo.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    open val noDontFragmentFamily // io.kuicksilver.quic/DatagramIo.noDontFragmentFamily|{}noDontFragmentFamily[0]
+        open fun <get-noDontFragmentFamily>(): io.kuicksilver.quic/IpFamily? // io.kuicksilver.quic/DatagramIo.noDontFragmentFamily.<get-noDontFragmentFamily>|<get-noDontFragmentFamily>(){}[0]
 
     abstract fun trySend(io.kuicksilver.quic/PacketBatch): kotlin/Int // io.kuicksilver.quic/DatagramIo.trySend|trySend(io.kuicksilver.quic.PacketBatch){}[0]
     abstract suspend fun receive(io.kuicksilver.quic/PacketBatch): kotlin/Int // io.kuicksilver.quic/DatagramIo.receive|receive(io.kuicksilver.quic.PacketBatch){}[0]

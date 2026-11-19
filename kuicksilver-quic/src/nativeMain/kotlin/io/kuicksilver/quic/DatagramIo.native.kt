@@ -11,18 +11,11 @@ import io.ktor.network.sockets.InetSocketAddress
  * its descriptor, so DF cannot be set on it, and QUIC is not used there. The accelerated `ksl` socket, linked into every
  * Native binary, sets DF.
  */
-internal actual suspend fun openPortableDatagramIo(
-    local: InetSocketAddress,
-    strictDf: Boolean,
-): DatagramIo =
-    if (strictDf) {
-        throw QuicException.DontFragmentUnavailable(
-            null,
-            "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
-        )
-    } else {
-        KtorDatagramIo.open(local) // not for QUIC (a CONNECT-UDP target socket: DF "if possible", RFC 9298 section 3.1)
-    }
+internal actual suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo =
+    throw QuicException.DontFragmentUnavailable(
+        null,
+        "the Kotlin/Native portable socket (ktor-network) cannot set DF; the accelerated socket could not be used for $local",
+    )
 
 internal actual fun printWarning(line: String) {
     platform.posix.fputs(line + "\n", platform.posix.stderr)

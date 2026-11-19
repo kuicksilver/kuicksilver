@@ -25,8 +25,10 @@ import io.kuicksilver.http3.runtime.Http3StreamImpl
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.Ecn
+import io.kuicksilver.quic.IpFamily
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PacketTooBigSender
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.UnreachableReports
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.sameIpAs
@@ -329,9 +331,18 @@ internal class UdpProxyImpl(
                 OnceClosed(config.socketFactory(InetSocketAddress(if (v4) "0.0.0.0" else "::", 0)))
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: QuicException.DontFragmentUnavailable) {
+                return refuseNoDf(request, answered, if (v4) "IPv4" else "IPv6")
             } catch (_: Throwable) {
                 return refuse(request, answered, 502, "proxy_internal_error")
             }
+        // RFC 9298 section 3.1: "UDP proxies MUST NOT introduce fragmentation at the IP layer"; a socket without DF towards
+        // the target's family could (after an ICMP message lowered its cached path MTU): no DF, no tunnel
+        val targetFamily = if (v4) IpFamily.V4 else IpFamily.V6
+        if (io.io.noDontFragmentFamily == targetFamily) {
+            io.close()
+            return refuseNoDf(request, answered, targetFamily.label)
+        }
         try {
             // section 6.2: "it MUST set the ECN bits to Not-ECT on UDP packets it sends to the target"
             io.io.disableEcnMarking()
@@ -384,15 +395,38 @@ internal class UdpProxyImpl(
         }
     }
 
-    /** Answers [status] with `proxy-status: <name>; error=<error>` when [error] is given (RFC 9209 section 2). */
+    /**
+     * The target's address family has no Don't Fragment on this host, so a tunnel could fragment (RFC 9298 section 3.1:
+     * "UDP proxies MUST NOT introduce fragmentation at the IP layer"): 500 with `proxy_configuration_error` (RFC 9209
+     * section 2.3.24: "The intermediary encountered an error regarding its configuration", recommended status 500) and the
+     * reason in `details` (section 2.1.6).
+     */
+    private suspend fun refuseNoDf(
+        request: Http3ServerRequest,
+        answered: (Int) -> Unit,
+        family: String,
+    ) {
+        refuse(request, answered, 500, "proxy_configuration_error", "no Don't Fragment for $family targets on this host")
+    }
+
+    /**
+     * Answers [status] with `proxy-status: <name>; error=<error>` when [error] is given (RFC 9209 section 2), and
+     * `; details="<details>"` (a quoted string, section 2.1.6) when [details] is.
+     */
     private suspend fun refuse(
         request: Http3ServerRequest,
         answered: (Int) -> Unit,
         status: Int,
         error: String?,
+        details: String? = null,
     ) {
         count(refused)
-        val fields = if (error == null) emptyList() else listOf(PROXY_STATUS to "${config.proxyName}; error=$error")
+        val fields =
+            if (error == null) {
+                emptyList()
+            } else {
+                listOf(PROXY_STATUS to "${config.proxyName}; error=$error" + (details?.let { "; details=\"$it\"" } ?: ""))
+            }
         try {
             request.respond(status, Http3Headers(fields)).finish()
             answered(status)
