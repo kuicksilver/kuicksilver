@@ -54,6 +54,9 @@ public actual object KslLoader {
         state.ensureLoaded()
     }
 
+    /** Whether the library is loaded already (the leak sentinel's [LeakRegistry.nativeObjects]); never loads it. */
+    internal val loaded: Boolean get() = state.loaded
+
     @ExperimentalKuicksilverApi
     public actual fun availability(): NativeAvailability = state.availability()
 
@@ -898,3 +901,5 @@ internal object JvmLoader {
         throw failure ?: IllegalStateException("no work directory for the native library")
     }
 }
+
+internal actual fun kslLoaded(): Boolean = KslLoader.loaded

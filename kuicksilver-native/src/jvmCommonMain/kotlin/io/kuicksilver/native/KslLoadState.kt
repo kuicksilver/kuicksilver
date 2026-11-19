@@ -21,6 +21,9 @@ internal class KslLoadState(
             outcome ?: attempt().also { outcome = it }
         }
 
+    /** Whether the attempt ran and loaded the library; never attempts it. */
+    val loaded: Boolean get() = outcome is NativeAvailability.Available
+
     fun ensureLoaded() {
         val a = availability() as? NativeAvailability.Unavailable ?: return
         throw a.cause ?: KslException.NativeLoad(JvmNativeNames.os, JvmNativeNames.classifier, a.detail, null, a.reason)

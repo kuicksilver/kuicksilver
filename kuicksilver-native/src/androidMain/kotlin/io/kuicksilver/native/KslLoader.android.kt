@@ -17,6 +17,9 @@ public actual object KslLoader {
         state.ensureLoaded()
     }
 
+    /** Whether the library is loaded already (the leak sentinel's [LeakRegistry.nativeObjects]); never loads it. */
+    internal val loaded: Boolean get() = state.loaded
+
     @ExperimentalKuicksilverApi
     public actual fun availability(): NativeAvailability = state.availability()
 
@@ -44,3 +47,5 @@ public actual object KslLoader {
         if (init != 0) throw KslException.NativeLoad("android", abi, "ksl_init failed ($init)")
     }
 }
+
+internal actual fun kslLoaded(): Boolean = KslLoader.loaded
