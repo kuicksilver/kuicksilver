@@ -129,6 +129,12 @@ static int set_verify_name(ksl_ssl *s, const char *name) {
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: verify name must be a non-empty ASCII host or IP literal");
         return KSL_ERROR;
     }
+    if (s->ech_set &&
+        !SSL_in_before(s->ssl)) { /* after a rejection the outer handshake is checked against the public_name */
+        ksl_ssl_set_error(s, KSL_E_TOO_LATE,
+                          "ksl: the verify name of an ECH session is set before the handshake starts");
+        return KSL_ERROR;
+    }
     if (s->ech_set) { /* ECH names a host (RFC 9849 section 6.1): an IP literal is refused before anything changes */
         X509_VERIFY_PARAM *probe = X509_VERIFY_PARAM_new();
         int ip = probe != NULL && X509_VERIFY_PARAM_set1_ip_asc(probe, name) == 1;

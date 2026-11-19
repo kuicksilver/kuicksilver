@@ -31,7 +31,8 @@ struct ksl_ech_keys {
    twice (section 4.2: "there MUST NOT be more than one extension of the same type"). The contents of another version are opaque
    (section 4: ignored). 1 when it holds. What the server sends in retry_configs MUST pass this (section 6.1.6, 6.2.1: decode_error). */
 static int list_syntax_ok(const uint8_t *list, size_t len) {
-    if (list == NULL || len < 2 || len > ECH_LIST_MAX || (((size_t)list[0] << 8) | list[1]) != len - 2)
+    /* ECHConfigList<4..2^16-1>: an empty list does not parse */
+    if (list == NULL || len < 6 || len > ECH_LIST_MAX || (((size_t)list[0] << 8) | list[1]) != len - 2)
         return 0;
     size_t off = 2;
     while (off < len) {
@@ -195,6 +196,13 @@ int ksl_ech_set_config_list(ksl_ssl *s, const uint8_t *data, size_t len) {
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: ECH needs a host name, not an IP literal, as the verify name");
         return KSL_ERROR;
     }
+    /* RFC 9849 section 6.1.6: a rejection counts only once the outer handshake is authenticated for the public_name, which a
+       session that verifies nothing never does (it would report KSL_ECH_REJECTED and unauthenticated retry configurations) */
+    if (s->verify_mode == KSL_VERIFY_NONE) {
+        ksl_ssl_set_error(s, KSL_E_BAD_ARG,
+                          "ksl: ECH needs a client that verifies the server (KSL_VERIFY_NONE was set)");
+        return KSL_ERROR;
+    }
     uint8_t *checked = malloc(len > 2 ? len : 2);
     size_t n = 0;
     uint32_t code = KSL_E_NO_MEMORY;
@@ -277,6 +285,26 @@ static int session_reused(ksl_ssl *s) {
 #endif
     return SSL_session_reused(s->ssl) == 1;
 }
+/* RFC 9849 section 6.1.6: retry_configs with an ECHConfig of the supported version (0xfe0d) and none this client can use: the
+   server replaced the configuration ("at least one of the values contains a version supported by the client"), so ECH is not
+   securely disabled, and there is nothing to retry with either. 1 then (the handshake fails, no rejection is reported). */
+static int retry_unusable(ksl_ssl *s) {
+    unsigned char *raw;
+    size_t n;
+    if (retry_raw(s, &raw, &n) != 1) {
+        OPENSSL_free(raw);
+        return 0;
+    }
+    int supported = 0;
+    for (size_t off = 2; off + 4 <= n; off += 4 + (((size_t)raw[off + 2] << 8) | raw[off + 3]))
+        supported |= (((size_t)raw[off] << 8) | raw[off + 1]) == ECH_VERSION;
+    size_t k = 0;
+    uint32_t code = KSL_E_BAD_ARG;
+    int r = supported ? check_list(raw, n, NULL, 0, &k, &code) : KSL_OK;
+    OPENSSL_free(raw);
+    ERR_clear_error();
+    return supported && r != KSL_OK && code == KSL_E_NOT_SUPPORTED;
+}
 #endif
 
 int ksl_ech_status(ksl_ssl *s) {
@@ -303,7 +331,7 @@ int ksl_ech_status(ksl_ssl *s) {
        says why) when the server resumed a session in the outer handshake (section 6.1.2: illegal_parameter), or when its
        retry_configs are malformed (section 6.1.6: decode_error) */
     if (s->ech_required_sent)
-        return session_reused(s) || retry_state(s) < 0 ? KSL_ECH_OFFERED : KSL_ECH_REJECTED;
+        return session_reused(s) || retry_state(s) < 0 || retry_unusable(s) ? KSL_ECH_OFFERED : KSL_ECH_REJECTED;
     /* BAD_NAME: accepted, and OpenSSL's verifier refused the certificate (a separate failure of the handshake) */
     if (st == SSL_ECH_STATUS_SUCCESS || st == SSL_ECH_STATUS_BAD_NAME)
         return KSL_ECH_ACCEPTED;
@@ -406,10 +434,15 @@ void ksl_ech_check_failed(ksl_ssl *s) {
     } else if (retry_state(s) < 0) {
         why = "ksl: ECH rejected with retry_configs that do not parse (RFC 9849 section 6.1.6: decode_error)";
         alert = SSL_AD_DECODE_ERROR;
+    } else if (retry_unusable(s)) {
+        /* ech_required stays the alert: the RFC names none for this, and the server's message was well formed */
+        why =
+            "ksl: ECH rejected with retry_configs of the supported version, none of them usable (RFC 9849 section 6.1.6: "
+            "replaced, not securely disabled; no retry)";
     }
     if (why == NULL)
         return;
-    if (s->mode == KSL_MODE_QUIC)
+    if (s->mode == KSL_MODE_QUIC && alert != 0)
         s->last_alert = alert;
     ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, why);
 #else
@@ -538,7 +571,7 @@ static int pem_config_id(const uint8_t *pem, size_t len) {
             id = data[6]; /* list length 2, version 2, length 2, then config_id */
         OPENSSL_free(name);
         OPENSSL_free(header);
-        OPENSSL_free(data);
+        OPENSSL_clear_free(data, (size_t)dl); /* the PRIVATE KEY block is read too: its PKCS#8 bytes are wiped */
     }
     BIO_free(in);
     ERR_clear_error();

@@ -187,7 +187,9 @@ extern "C" {
                               the client ended it with ech_required (121; QUIC CRYPTO_ERROR 0x179), as RFC 9849 section 6.1.6 requires,
                               so nothing of the session reached the application; KSL_GET_ECH_RETRY_CONFIGS has the server's new
                               configurations, or none ("securely disabled", section 6.1.6). Never when the server resumed a session
-                              in the outer handshake (section 6.1.2) or sent retry_configs that do not parse (section 6.1.6): those
+                              in the outer handshake (section 6.1.2), sent retry_configs that do not parse (section 6.1.6), or sent
+                              ECHConfigs of version 0xfe0d none of which is usable (replaced, so not "securely disabled", and nothing
+                              to retry with; section 6.1.6): those
                               are KSL_ECH_OFFERED, the handshake failed with that error (illegal_parameter or decode_error, sent by
                               the patched OpenSSL of ADR-0019 before any ech_required). Server: the ClientHello carried an ECH
                               extension this server did not decrypt (another key, or GREASE); it answered with retry_configs */
@@ -221,11 +223,14 @@ extern "C" {
                                       section 4, the value of an HTTPS record's ech parameter, RFC 9848) in binary. Only its usable
                                       ECHConfigs are kept (ksl_ech_config_list_check); the ClientHello then carries ECH with one of them:
                                       the outer ClientHello names its public_name, the inner one the SNI of KSL_SET_SNI. KSL_E_BAD_ARG when
-                                      the list does not parse, on a server, or with an IP literal as the verify name; KSL_E_NOT_SUPPORTED
+                                      the list does not parse, on a server, with an IP literal as the verify name, or on a session that verifies nothing
+                                      (KSL_VERIFY_NONE: a rejection needs an authenticated outer handshake, section 6.1.6); KSL_E_NOT_SUPPORTED
                                       when no ECHConfig is usable, when the context allows TLS 1.2 (KSL_OPT_MIN_VERSION KSL_TLS1_2: the
                                       context then has ksl_tcp_abort's ClientHello extension, which OpenSSL 4.1.0 cannot combine with
                                       ECH; ADR-0019), or in a build without ECH; KSL_E_TOO_LATE once the handshake started or a list was
-                                      set. A rejected ECH ends the handshake with ech_required (KSL_GET_ECH_STATUS) */
+                                      set. A rejected ECH ends the handshake with ech_required (KSL_GET_ECH_STATUS). Once the handshake started, the
+                                      session's KSL_SET_VERIFY_NAME is KSL_E_TOO_LATE (after a rejection the outer handshake is checked
+                                      against the public_name) */
 /* clang-format on */
 
 /* ksl_ssl_get_peer_chain selector */
@@ -303,7 +308,7 @@ typedef struct ksl_client_hello {
 #define KSL_INIT_MISSING_SYMBOL (-3) /* no SSL_set_quic_tls_cbs */
 #define KSL_INIT_KEYLOG_ENV (-4)     /* SSLKEYLOGFILE set with a system libssl: refused */
 int ksl_init(void);                  /* idempotent */
-const char *ksl_version(void);       /* "ksl abi 6 / OpenSSL 4.1.0 ..." */
+const char *ksl_version(void);       /* "ksl abi 7 / OpenSSL 4.1.0 ..." */
 uint32_t ksl_abi_version(void);
 /* Live-object counters, process-wide (soak and churn tests; additive in ABI 6, see ADR-0003): objects ksl made and has not
  * freed yet. A handle-reference counter (pkey, session) counts the references ksl handed out and the caller has not dropped;
@@ -427,7 +432,7 @@ int ksl_ctx_set_crls(ksl_ctx *, const uint8_t *crls, size_t crls_len);
    version is not 0xfe0d, its KEM or every cipher suite is unsupported, it has an unsupported mandatory extension (section 4.2), or its
    public_name is not a DNS name or could be read as an IPv4 address (section 6.1.7). KSL_OK: *out_len is the length written, 0 when
    the list parses but holds nothing usable (or the build has no ECH). KSL_ERROR: the list does not parse (*out_len 0: a length that
-   does not match, an ECHConfig that does not fit, more than 65537 bytes), or out is too small (*out_len the size needed). Touches no
+   does not match, an empty list, an ECHConfig that does not fit, more than 65537 bytes), or out is too small (*out_len the size needed). Touches no
    context: safe from any thread. */
 int ksl_ech_config_list_check(const uint8_t *list, size_t len, uint8_t *out, size_t cap, size_t *out_len);
 /* A server's ECH keys, parsed once and kept in ksl (the private keys never leave it): framed as (uint32 big-endian length || entry)*,

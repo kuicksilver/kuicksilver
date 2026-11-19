@@ -729,9 +729,8 @@ static void test_list_check(void) {
     CHECK(ksl_ech_config_list_check(list, n, out, sizeof out, &on) == KSL_ERROR, "negative_ech_entry_overruns_list");
     CHECK(ksl_ech_config_list_check(list, 1, out, sizeof out, &on) == KSL_ERROR, "negative_ech_list_one_byte");
     CHECK(ksl_ech_config_list_check(NULL, 0, out, sizeof out, &on) == KSL_ERROR, "negative_ech_list_null");
-    uint8_t empty[2] = {0, 0};
-    CHECK(ksl_ech_config_list_check(empty, 2, out, sizeof out, &on) == KSL_OK && on == 0,
-          "an empty list: nothing usable");
+    uint8_t empty[2] = {0, 0}; /* ECHConfigList<4..2^16-1> (section 4) */
+    CHECK(ksl_ech_config_list_check(empty, 2, out, sizeof out, &on) == KSL_ERROR && on == 0, "negative_ech_list_empty");
     /* RFC 9849 section 4.2: "there MUST NOT be more than one extension of the same type"; and an ECHConfig's contents end with its
        extensions: a trailing byte, a field past the contents or an empty field is no ECHConfig, and the list does not parse */
     uint8_t dup[160], tail[160], bad[160];
@@ -1892,6 +1891,69 @@ static void test_first_keys_threads(void) {
     free(one.buf);
     END();
 }
+/* ---------- review of 2026-11-20 ---------- */
+static void test_review_guards(void) {
+    SECTION("ech_review_guards");
+    /* section 6.1.6: a rejection is acted on only after the outer handshake was authenticated for the public_name, which a
+       client that verifies nothing (KSL_VERIFY_NONE) never does: ECH is refused on such a session */
+    {
+        ksl_ctx *nc = ech_client(KSL_VERIFY_NONE, 0);
+        ksl_ssl *c = ksl_ssl_new(nc, KSL_MODE_QUIC);
+        uint32_t code = 0;
+        int a = 0;
+        char msg[200] = "";
+        int set = ksl_ssl_set(c, KSL_SET_ECH_CONFIG_LIST, key_a.list, key_a.list_len);
+        ksl_ssl_last_error(c, &code, &a, msg, sizeof msg);
+        CHECK(set == KSL_ERROR && strstr(msg, "KSL_VERIFY_NONE") != NULL,
+              "negative_ech_config_without_verification_refused");
+        if (set != KSL_ERROR || strstr(msg, "KSL_VERIFY_NONE") == NULL)
+            printf("  set %d code %08x msg %s\n", set, code, msg);
+        ksl_ssl_free(c);
+        ksl_ctx_free(nc);
+    }
+    /* the verify name of an ECH session is fixed once the handshake started: after a rejection the outer handshake is checked
+       against the public_name, and a new name would put the hidden one back */
+    {
+        ksl_ctx *cc = ech_client(KSL_VERIFY_OPENSSL, 0);
+        ksl_ssl *c = ech_session(cc, KSL_MODE_QUIC, &key_a);
+        (void)ksl_drive(c); /* the ClientHello is written: the handshake started */
+        CHECK(ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)INNER, strlen(INNER)) == KSL_ERROR,
+              "negative_ech_verify_name_fixed_after_the_handshake_started");
+        ksl_ssl_free(c);
+        ksl_ctx_free(cc);
+    }
+    /* section 6.1.6: retry_configs whose ECHConfigs are all of the supported version but none usable (here an unknown KEM) are
+       neither a usable replacement nor "securely disabled" (which needs no entry of a supported version): the handshake fails,
+       no rejection is reported, so no caller retries with the name in the clear. Entries of another version only: disabled */
+    {
+        blob kb = keyset(1, &key_b, 1);
+        ksl_ctx *cc = ech_client(KSL_VERIFY_OPENSSL, 0), *sb = ech_server(&id_both, &kb, NULL);
+        uint8_t kem[160], other[160], l[400];
+        size_t kl = ech_config(kem, 0xfe0d, 0x7777, PUBLIC, 0), ol = ech_config(other, 0xfe0c, 0x0020, PUBLIC, 0);
+        size_t n = ech_list(l, 1, kem, kl);
+        set_hooks(1, l, n, 0);
+        run rs[2] = {quic_run(cc, sb, &key_a, NULL), tcp_run(cc, sb, &key_a)};
+        for (int m = 0; m < 2; m++) {
+            run r = rs[m];
+            int ok = r.rc == KSL_ERROR && r.status_c == KSL_ECH_OFFERED && r.retry_len == 0 && r.alert_c == 121 &&
+                     strstr(last_msg_c, "6.1.6") != NULL;
+            CHECK(ok, m == 0 ? "negative_ech_retry_configs_supported_but_unusable: QUIC, no rejection reported"
+                             : "... over TCP");
+            if (!ok)
+                report("unusable retry", r);
+        }
+        n = ech_list(l, 1, other, ol);
+        set_hooks(1, l, n, 0);
+        run q = quic_run(cc, sb, &key_a, NULL);
+        CHECK(q.status_c == KSL_ECH_REJECTED && q.retry_len == 0,
+              "ech_retry_configs_of_another_version_only: securely disabled");
+        set_hooks(0, NULL, 0, 0);
+        ksl_ctx_free(cc);
+        ksl_ctx_free(sb);
+        free(kb.buf);
+    }
+    END();
+}
 void run_ech(void) {
     make_pki();
     key_a = make_echkey(PUBLIC);
@@ -1919,6 +1981,7 @@ void run_ech(void) {
     test_shared_config_id();
     test_wire_alerts();
     test_grease_length();
+    test_review_guards();
     free(key_a.pem);
     free(key_b.pem);
     free_pki();
@@ -1926,9 +1989,14 @@ void run_ech(void) {
 #else
 void run_ech(void) {
     SECTION("ech_unavailable");
-    uint8_t list[2] = {0, 0}, out[8];
+    uint8_t list[6] = {0, 4, 0xfe, 0x0d, 0, 0}, out[8];
     size_t n = 9;
-    CHECK(ksl_ech_config_list_check(list, 2, out, sizeof out, &n) == KSL_OK && n == 0, "no ECH: nothing usable");
+    static const uint8_t empty[2] = {0, 0};
+    CHECK(ksl_ech_config_list_check(empty, 2, out, sizeof out, &n) == KSL_ERROR && n == 0,
+          "no ECH: an empty list does not parse");
+    n = 9;
+    list[3] = 0x0c; /* one ECHConfig of another version: parses, nothing usable */
+    CHECK(ksl_ech_config_list_check(list, 6, out, sizeof out, &n) == KSL_OK && n == 0, "no ECH: nothing usable");
     ksl_ctx *s = ksl_ctx_new(KSL_SERVER);
     char msg[128];
     CHECK(ksl_ech_keys_new(list, 2, msg, sizeof msg) == NULL, "no ECH keys without ECH");
