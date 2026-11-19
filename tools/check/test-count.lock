@@ -3716,7 +3716,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.statsC
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.theListenerHearsTheLifecycleInOrder
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.ObservabilityTest.zeroRttCountsOfferedAndAccepted
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.aRefusalAbove1200IsALostDatagram
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.aRefusalForAnotherDestinationIsIgnored
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.aRefusedLengthIsPlacedOnlyWhenOneDestinationHasIt
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalAtOrBelow1200EndsTheClientConnection
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalForTheMappedSpellingOfThePeerEndsTheConnection
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalOnAProbedPathClosesThatPathOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusalOnTheServersSocketEndsThatConnectionOnly
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.api.PathMtuRefusedTest.negative_aRefusedStatelessSendDoesNotEndTheNextConnection
@@ -5362,7 +5365,7 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.closeUnblocks
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfChoicePerProbeOutcome
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.dfGapPerCase
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.emptyDatagramDoesNotStopReceive
-kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.ipv4BindGetsDfOnItsTraffic
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.inetChannelOnlyWhereItGetsDf
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.loopbackSendReceive
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.messageTooLongPerPlatform
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.NioDatagramIoTest.nioClearsTosAfterValidationFailure

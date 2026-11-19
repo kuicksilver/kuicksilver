@@ -294,32 +294,30 @@ internal class NioDatagramIo private constructor(
 
         /**
          * Why some traffic of the socket goes without DF, or null when none does: [bits] from [dfProbe], [jdkSet] whether the
-         * JDK's `IP_DONTFRAGMENT` took, [inet] whether the channel was opened AF_INET, [localV6] whether the bind address is
-         * IPv6 (the channel then stays dual-stack), [onApple] whether the JDK's option is Darwin's `IP_DONTFRAG` (which on an
-         * AF_INET6 socket covers v4-mapped traffic too); on Linux and Windows it covers the IPv6 half of an AF_INET6 socket only.
+         * JDK's `IP_DONTFRAGMENT` took, [inet] whether the channel was opened AF_INET, [onApple] whether the JDK's option is
+         * Darwin's. On an AF_INET6 socket that option is `IPV6_DONTFRAG` on Darwin, which covers v4-mapped traffic too:
+         * checked on macOS 26 with the host JVM, where 20000 bytes to `::ffff:127.0.0.1` through such a socket are refused
+         * (EMSGSIZE, above lo0's 16384) and go out fragmented without it, though `IP_DONTFRAG` cannot be read at the IPv4
+         * level of that socket (EINVAL). On Linux and Windows it covers the IPv6 half of an AF_INET6 socket only.
          */
         internal fun dfGap(
             bits: Int,
             jdkSet: Boolean,
             inet: Boolean,
-            localV6: Boolean,
             onApple: Boolean,
         ): String? {
             if (dfComplete(bits)) return null
-            if (!jdkSet) {
-                return if (bits >
-                    0
-                ) {
-                    "a half refused both probe and DO mode"
-                } else {
-                    "no means to set DF: the JVM without ksl below JDK 19, or Android refusing the options"
-                }
-            }
+            if (!jdkSet) return if (bits > 0) BOTH_REFUSED else NO_MEANS
             if (inet || onApple) return null
             // the JDK's option covered the IPv6 half of a dual-stack channel; the IPv4 half is only covered by ksl
             val v4 = bits > 0 && bits and (DF_V4 or DF_V4_DO) != 0
-            return if (v4 || !localV6) null else "IPv4-mapped traffic of a dual-stack socket bound to an IPv6 address (no ksl)"
+            return if (v4) null else MAPPED_WITHOUT_DF
         }
+
+        private const val BOTH_REFUSED = "a half refused both probe and DO mode"
+        private const val NO_MEANS = "no means to set DF: the JVM without ksl below JDK 19, or Android refusing the options"
+        private const val MAPPED_WITHOUT_DF =
+            "IPv4-mapped traffic of a dual-stack socket (an IPv6 bind address, or an AF_INET channel that took no DF either)"
 
         private fun jdkDontFragment(ch: DatagramChannel): Boolean {
             val opt = dontFragmentOption() ?: return false
@@ -375,18 +373,44 @@ internal class NioDatagramIo private constructor(
          * it or with a third-party `QuicCrypto`. This socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df`
          * capability false); with probe mode it could run here later. Returns the channel and the [dfProbe] bits.
          */
+
+        /**
+         * Whether to try an AF_INET channel for a bind address that is not IPv6 ([localV6] false): the dual-stack channel's
+         * IPv4 half has no DF ([bits] from [dfProbe]: no `ksl`, or `ksl` whose IPv4 half refused both modes), and the JDK's
+         * option, which on Linux and Windows sets only the IPv6 half of a dual-stack channel, exists ([jdkOption]). Not on
+         * Apple ([onApple]), where it covers v4-mapped traffic.
+         */
+        internal fun triesInet(
+            bits: Int,
+            localV6: Boolean,
+            onApple: Boolean,
+            jdkOption: Boolean,
+        ): Boolean {
+            if (localV6 || onApple || !jdkOption || dfComplete(bits)) return false
+            return bits <= 0 || (bits and DF_INET6 != 0 && bits and (DF_V4 or DF_V4_DO) == 0)
+        }
+
+        /** Whether the AF_INET channel [triesInet] opened is kept: only when DF took on it ([inetBits] from [dfProbe], [inetJdk]). */
+        internal fun keepsInet(
+            inetBits: Int,
+            inetJdk: Boolean,
+        ): Boolean = dfComplete(inetBits) || inetJdk
+
         private fun openWithDf(local: InetSocketAddress): Pair<DatagramChannel, Int> {
             val localV6 = local.ipBytesNoDns()?.size == 16
             var (ch, bits, jdk) = newChannel(inet = false)
             var inet = false
-            val v4Missing = bits <= 0 || (bits and DF_INET6 != 0 && bits and (DF_V4 or DF_V4_DO) == 0)
-            if (!localV6 && !apple && v4Missing && dontFragmentOption() != null && !dfComplete(bits)) {
-                ch.close()
+            if (triesInet(bits, localV6, apple, dontFragmentOption() != null)) {
                 val r = newChannel(inet = true)
-                ch = r.first
-                bits = r.second
-                jdk = r.third
-                inet = true
+                if (keepsInet(r.second, r.third)) {
+                    ch.close()
+                    ch = r.first
+                    bits = r.second
+                    jdk = r.third
+                    inet = true
+                } else {
+                    r.first.close() // DF did not take on it either: the dual-stack channel stays (it also reaches IPv6 peers)
+                }
             }
             if ((bits > 0 || (bits == 0 && linuxKernel)) && !probeComplete(bits) && probeMissingLogged.compareAndSet(false, true)) {
                 printWarning(
@@ -394,7 +418,7 @@ internal class NioDatagramIo private constructor(
                         "forged ICMP message can end its connections (RFC 9000 section 14.2.1)",
                 )
             }
-            val gap = dfGap(bits, jdk, inet, localV6, apple)
+            val gap = dfGap(bits, jdk, inet, apple)
             if (gap != null && dfMissingLogged.compareAndSet(false, true)) {
                 printWarning(
                     "kuicksilver: the portable UDP socket cannot set DF on all its traffic ($gap; bits $bits): RFC 9000 " +

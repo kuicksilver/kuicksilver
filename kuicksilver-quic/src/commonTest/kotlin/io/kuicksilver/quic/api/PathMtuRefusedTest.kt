@@ -132,6 +132,81 @@ class PathMtuRefusedTest {
             }
         }
 
+    /** A refusal for a destination none of the connection's paths has is not this connection's: it goes on. */
+    @Test fun aRefusalForAnotherDestinationIsIgnored() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, s) = p.connect()
+                    p.clientIo.sendFailuresLeft = 1
+                    p.clientIo.sendFailure = PathMtuRefusedException(1200, InetSocketAddress("10.9.9.9", 9))
+                    ping(c, s)
+                    assertTrue(p.clientIo.sendFailure == null, "the refusal happened")
+                    assertFalse(c.closed.isCompleted)
+                }
+            }
+        }
+
+    /** The refused destination as an IPv4-mapped literal is the same peer as its IPv4 spelling. */
+    @Test fun negative_aRefusalForTheMappedSpellingOfThePeerEndsTheConnection() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    val (c, _) = p.connect()
+                    p.clientIo.sendFailure = PathMtuRefusedException(1200, InetSocketAddress("::ffff:10.0.0.2", 2222))
+                    val st = c.openBidi()
+                    runCatching {
+                        st.output.writeFully(byteArrayOf(1), 0, 1)
+                        st.output.flush()
+                    }
+                    assertNoViablePath(c.closed.await())
+                }
+            }
+        }
+
+    /** The accelerated socket names a refused datagram by its length: placed only when one destination has that length. */
+    @Test fun aRefusedLengthIsPlacedOnlyWhenOneDestinationHasIt() {
+        val a = InetSocketAddress("10.0.0.2", 2222)
+        val b = InetSocketAddress("10.0.0.3", 3333)
+        PacketBatch(3).use { batch ->
+            fun slot(
+                i: Int,
+                len: Int,
+                to: InetSocketAddress,
+            ) {
+                batch.setLength(i, len)
+                batch.setAddress(i, to)
+            }
+            slot(0, 1200, a)
+            slot(1, 100, b)
+            slot(2, 1200, InetSocketAddress("::ffff:10.0.0.2", 2222))
+            assertEquals(
+                a,
+                io.kuicksilver.quic.runtime
+                    .slotOfLength(batch, 1200),
+                "one peer, two spellings",
+            )
+            assertEquals(
+                b,
+                io.kuicksilver.quic.runtime
+                    .slotOfLength(batch, 100),
+            )
+            assertEquals(
+                null,
+                io.kuicksilver.quic.runtime
+                    .slotOfLength(batch, 500),
+                "no datagram of that length",
+            )
+            slot(1, 1200, b)
+            assertEquals(
+                null,
+                io.kuicksilver.quic.runtime
+                    .slotOfLength(batch, 1200),
+                "two destinations: not placed",
+            )
+        }
+    }
+
     /**
      * A refusal reported after a stateless send (here a Version Negotiation answer, through an accelerated-style socket that
      * reports EMSGSIZE after the batch) is taken with that send: the next connection batch on the socket is not charged with it.

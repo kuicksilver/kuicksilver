@@ -38,6 +38,7 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.quic.emit
+import io.kuicksilver.quic.sameIpAs
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
@@ -318,8 +319,10 @@ internal class ConnectionRuntime(
         if (finished || core.state == ConnectionState.Closing || core.state == ConnectionState.Draining) return
         val p =
             pathList.firstOrNull {
-                (it.io ?: loop.io) === target && (to == null || it.remote == to) && it.stateFlow.value != PathState.Closed
+                (it.io ?: loop.io) === target && (to == null || it.remote.sameIpAs(to)) && it.stateFlow.value != PathState.Closed
             }
+        // a refusal for a destination none of this connection's paths on that socket has is not this connection's
+        if (p == null && to != null) return
         if (p != null && p.id != core.path.id) {
             loop.observer.logger.emit(LogLevel.Warn) {
                 "a $size-byte datagram to ${p.remote} refused as above the path MTU the system cached (EMSGSIZE): closing that path"

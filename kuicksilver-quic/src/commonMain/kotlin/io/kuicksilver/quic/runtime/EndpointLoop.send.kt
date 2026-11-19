@@ -20,6 +20,7 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.onEmsgsize
 import io.kuicksilver.quic.runtime.EndpointLoop.Companion.FLUSH_ROUNDS
+import io.kuicksilver.quic.sameIpAs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -110,7 +111,8 @@ private inline fun EndpointLoop.sendOrLoseWith(
                         val to = slotOfLength(batch, tooBig)
                         if (tooBig <= PATH_MTU_FLOOR) {
                             // DF in DO mode (probe refused) met a cached path MTU below QUIC's floor; a refusal that matches no
-                            // datagram of this batch is not this connection's
+                            // datagram of this batch is not this connection's, and one whose length several destinations share
+                            // (a probe on another path) cannot be placed: the socket reports only the length
                             if (to != null) rt.onPathMtuRefused(tooBig, target, to)
                         } else {
                             rt.core.onEmsgsize(tooBig)
@@ -142,13 +144,26 @@ private inline fun EndpointLoop.sendOrLoseWith(
     if (lost > 0) lose(lost, rt)
 }
 
-/** The destination of the first slot of [batch] that is [length] bytes long, or null when none is. */
-private fun slotOfLength(
+/**
+ * The one destination of the slots of [batch] that are [length] bytes long, or null when none is, or when such slots go to
+ * more than one destination (the accelerated socket reports a refused datagram by its length only, so the refusal cannot be
+ * placed on a path; a later batch places it).
+ */
+internal fun slotOfLength(
     batch: PacketBatch,
     length: Int,
 ): io.ktor.network.sockets.InetSocketAddress? {
-    for (i in 0 until batch.count) if (batch.length(i) == length) return batch.address(i)
-    return null
+    var found: io.ktor.network.sockets.InetSocketAddress? = null
+    for (i in 0 until batch.count) {
+        if (batch.length(i) != length) continue
+        val a = batch.address(i) ?: continue
+        if (found == null) {
+            found = a
+        } else if (!found.sameIpAs(a)) {
+            return null
+        }
+    }
+    return found
 }
 
 internal fun EndpointLoop.lose(
