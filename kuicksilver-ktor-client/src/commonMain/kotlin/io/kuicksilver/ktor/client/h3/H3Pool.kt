@@ -853,6 +853,7 @@ internal class H3Pool(
         dns: RequestDns,
         failures: MutableList<Throwable>,
         connected: (Http3Connection, TcpAddress) -> Unit = { _, _ -> },
+        chooseFailure: (List<Throwable>) -> Throwable = ::quicRaceFailure,
         connect: suspend (InetSocketAddress) -> Http3Connection,
     ): Http3Connection {
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -865,7 +866,7 @@ internal class H3Pool(
             connect = { a -> connect(InetSocketAddress(a.hostText, a.port)).also { connected(it, a) } },
             close = { it.close() },
             failures = failures,
-            chooseFailure = ::quicRaceFailure,
+            chooseFailure = chooseFailure,
         )
     }
 
@@ -1276,7 +1277,13 @@ internal class H3Pool(
             } catch (
                 x: SetupTimedOut,
             ) {
-                d.completeExceptionally(ConnectTimeoutException(data, x).withAttempts(failures))
+                val timeout = ConnectTimeoutException(data, x).withAttempts(failures)
+                // through a CONNECT-UDP proxy, a proxy that failed TLS on one address is the failure to report, not the
+                // timeout another address of the race ran into (the timeout is kept, suppressed)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                val proxyTls =
+                    if (t.udpProxy == null) null else failures.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException }
+                d.completeExceptionally(proxyTls?.also { it.addSuppressed(timeout) } ?: timeout)
                 forget(t, e)
             } catch (
                 x: CancellationException,
@@ -1318,7 +1325,7 @@ internal class H3Pool(
         // (proxyTls, else the origin's without ExpectedName and pins), no client certificate of the origin's; h3
         val proxyTls = config.proxyTlsConfigFor(p.host, listOf(Http3Endpoint.H3))
         val outer =
-            raceQuic(p.host, p.port, dns, failures) { destination ->
+            raceQuic(p.host, p.port, dns, failures, chooseFailure = ::proxyRaceFailure) { destination ->
                 val (ep, remote) = endpointFor(destination, proxyHop)
                 try {
                     ep.connect(remote, proxyTls, quic, config.http3.settings)
@@ -1389,6 +1396,15 @@ internal class H3Pool(
             tls,
         )
     }
+
+    /**
+     * The failure of a race to a CONNECT-UDP proxy's addresses: a [io.kuicksilver.ktor.client.ProxyTlsException] when an
+     * address answered and failed TLS (the proxy's certificate or alert), even when a later address only timed out or
+     * refused; else as for a direct race ([quicRaceFailure]).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun proxyRaceFailure(attempts: List<Throwable>): Throwable =
+        attempts.lastOrNull { it is io.kuicksilver.ktor.client.ProxyTlsException } ?: quicRaceFailure(attempts)
 
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)

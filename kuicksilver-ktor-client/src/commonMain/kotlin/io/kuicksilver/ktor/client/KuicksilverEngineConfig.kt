@@ -422,7 +422,9 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * proxy that wants a client certificate, `versions`...). Whatever it says, the server name, which is both SNI and
      * the name the certificate is verified against (RFC 9525), is the proxy's host and ALPN offers `http/1.1` only (`h3` to a CONNECT-UDP proxy); set
      * after the block. The origin's TLS inside the proxy's tunnel keeps [trust], [identity] and [tls], as without a
-     * proxy. docs/guide/ktor.md, "Proxies".
+     * proxy. QUIC is TLS 1.3 only (RFC 9001 section 4.2): `versions` limited to TLS 1.2 here fails every handshake with a
+     * CONNECT-UDP proxy. An ECH configuration (`echConfigList`) set here is offered to the proxy as given, and a rejection
+     * fails the request without the retry of RFC 9849 section 6.1.6. docs/guide/ktor.md, "Proxies".
      */
     @ExperimentalKuicksilverApi
     public var proxyTls: (TlsConfig.Builder.() -> Unit)? = null

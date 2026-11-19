@@ -24,15 +24,22 @@ import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
@@ -42,7 +49,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The TLS of the QUIC connection to a CONNECT-UDP proxy (RFC 9298) is the proxy's, as for the TCP hop to an `https://`
@@ -104,6 +114,8 @@ class ClientConnectUdpProxyTlsTest {
         seen: Seen,
         proxyCert: ByteArray = TestCerts.proxy,
         proxyKey: ByteArray = TestCerts.proxyKey,
+        // QUIC session tickets come with 0-RTT on (QuicServerConfig.earlyData), which excludes client certificates
+        proxyIssuesTickets: Boolean = false,
         block: suspend (proxyPort: Int, originPort: Int) -> Unit,
     ) {
         val (origin, originPort) =
@@ -116,9 +128,12 @@ class ClientConnectUdpProxyTlsTest {
                 }
             }
         val (proxyServer, proxyPort) =
-            testServer(configure = { connectUdp = true }, tls = {
+            testServer(configure = {
+                connectUdp = true
+                quicEarlyData = proxyIssuesTickets
+            }, tls = {
                 identity = TlsIdentity.fromDer(listOf(proxyCert), proxyKey.copyOf())
-                askForClientCertificate()
+                if (!proxyIssuesTickets) askForClientCertificate()
             }) {
                 routing {
                     get("/") { call.respondText("proxy as an origin") }
@@ -263,28 +278,136 @@ class ClientConnectUdpProxyTlsTest {
         }
 
     /**
-     * The QUIC connection to the proxy leaves from endpoints of its own, whose session tickets are the proxies' (as the
-     * TCP hop's `proxySessions`): a ticket the proxy hop got never resumes a direct connection to the same host, nor the
-     * reverse, whatever their names (one host can be both). Here the proxy is also reached directly, as an origin.
+     * No session of the proxy hop resumes a connection to an origin, even one to the same host (the proxy reached as an
+     * origin): the proxy hop takes and stores no ticket at all (a full handshake each time, `Http3Endpoint.connect`), and
+     * leaves from endpoints of its own whose cache is the proxies' (as the TCP hop's `proxySessions`). Here the proxy issues
+     * tickets (0-RTT on, so it asks for no client certificate) and the client sends 0-RTT where it can: after a request
+     * through the proxy, both caches are empty, the first direct connection to `proxy.internal` attempts no 0-RTT (no
+     * ticket of that host), and only the second, with the ticket of the first, does (the control: this setup resumes).
      */
     @Test fun negative_proxyHopKeepsItsOwnEndpointsAndTickets() =
         h3Test {
             val seen = Seen()
-            withProxyAndOrigin(loopbackProxy(), seen) { proxyPort, originPort ->
+            withProxyAndOrigin(loopbackProxy(), seen, proxyIssuesTickets = true) { proxyPort, originPort ->
                 testClient(Http3DiscoveryMode.H3Only, engine = {
                     dns = ProxyName
                     connectUdpProxy = udpProxy(proxyPort)
+                    http3 { earlyData = true }
                 }).use { c ->
                     val h3 = (c.engine as KuicksilverEngine).h3
                     val chosen = AtomicReference(emptyList<Pair<Int, Http3Endpoint>>())
                     h3.endpointChosenForTest = { remote, ep -> chosen.update { it + (remote.port to ep) } }
                     assertEquals("origin", c.get("https://127.0.0.1:$originPort/").bodyAsText()) // through the proxy
+                    // the tunnelled connection and with it the connection to the proxy end: a ticket the proxy hop had
+                    // received would be stored by now
+                    h3.dropConnectionsForTest().forEach { conn ->
+                        conn.close()
+                        withTimeout(10.seconds) { conn.quic.closed.await() }
+                    }
+                    assertEquals(0, h3.proxyTicketsForTest.size(), "the proxy hop stored a ticket")
+                    assertEquals(0, h3.directTicketsForTest.size(), "a proxy ticket went to the origins' cache")
                     assertEquals("proxy as an origin", c.get("https://proxy.internal:$proxyPort/").bodyAsText()) // direct
-                    val toProxy = chosen.load().filter { it.first == proxyPort }.map { it.second }
-                    assertEquals(2, toProxy.size, "$toProxy")
-                    assertTrue(toProxy[0] !== toProxy[1], "the proxy hop left from a direct connections' endpoint")
-                    assertTrue(h3.proxyTicketsForTest !== h3.directTicketsForTest, "the proxies' tickets are the origins'")
+                    val first = h3.dropConnectionsForTest().single()
+                    assertNull(first.quic.earlyDataAccepted, "the first direct connection resumed a session of the proxy hop")
+                    first.close()
+                    assertEquals("proxy as an origin", c.get("https://proxy.internal:$proxyPort/").bodyAsText())
+                    val second = h3.connectionsForTest().single()
+                    assertEquals(true, second.quic.earlyDataAccepted, "the control: the direct connection's own ticket resumes")
+                    val toProxy = chosen.load().filter { it.first == proxyPort }.map { it.second }.distinct()
+                    assertEquals(2, toProxy.size, "the proxy hop left from a direct connections' endpoint: $toProxy")
                 }
+            }
+        }
+
+    /** A raw QUIC server for the proxy's port with [tls] (no HTTP/3 behind it); [block] gets its port. */
+    private suspend fun withQuicProxy(
+        tls: TlsConfig,
+        block: suspend (proxyPort: Int) -> Unit,
+    ) {
+        val ep =
+            QuicEndpoint.bind(
+                InetSocketAddress("127.0.0.1", 0),
+                QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
+            )
+        try {
+            block(ep.localAddress.port)
+        } finally {
+            ep.closeAndJoin()
+        }
+    }
+
+    private fun proxyServerTls(block: TlsConfig.Builder.() -> Unit = {}) =
+        tlsConfig(TlsRole.Server) {
+            identity = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
+            alpn = listOf(Http3Endpoint.H3)
+            block()
+        }
+
+    /** The request through [proxyPort] fails with [ProxyTlsException] well before the 30-second connect timeout. */
+    private suspend fun assertProxyTlsFailure(proxyPort: Int): ProxyTlsException {
+        lateinit var e: ProxyTlsException
+        testClient(Http3DiscoveryMode.H3Only, engine = {
+            dns = ProxyName
+            identity = clientIdentity()
+            connectUdpProxy = udpProxy(proxyPort)
+            connectTimeout = 30.seconds
+        }).use { c ->
+            val started = TimeSource.Monotonic.markNow()
+            e = assertFailsWith<ProxyTlsException> { c.get("https://127.0.0.1:1/").bodyAsText() }
+            assertTrue(started.elapsedNow() < 20.seconds, "failed only after ${started.elapsedNow()}: $e")
+        }
+        return e
+    }
+
+    /**
+     * A proxy whose ALPN shares nothing with `h3` ends the handshake (RFC 7301 section 3.2, RFC 9001 section 8.1:
+     * no_application_protocol): [ProxyTlsException], as over TCP (`ClientHttpsProxyTest.negative_proxyOfferingNoCommonAlpnFails`).
+     */
+    @Test fun negative_quicProxyOfferingNoCommonAlpnFails() =
+        h3Test {
+            withQuicProxy(proxyServerTls { alpn = listOf("hq-interop") }) { proxyPort ->
+                val e = assertProxyTlsFailure(proxyPort)
+                assertIs<TlsException>(e.cause, "$e")
+            }
+        }
+
+    /**
+     * A proxy that ends the handshake once it has the ClientHello (its certificate choice fails) fails the request at once
+     * with [ProxyTlsException], not after the connect timeout and not as an origin failure, as over TCP
+     * (`ClientHttpsProxyTest.negative_proxyClosingMidHandshakeFails`).
+     */
+    @Test fun negative_quicProxyClosingMidHandshakeFails() =
+        h3Test {
+            val hellos = AtomicReference(0)
+            val tls =
+                proxyServerTls {
+                    sniSelector = {
+                        hellos.update { it + 1 }
+                        throw IllegalStateException("the proxy gives up")
+                    }
+                }
+            withQuicProxy(tls) { proxyPort ->
+                val e = assertProxyTlsFailure(proxyPort)
+                assertIs<TlsException>(e.cause, "$e")
+            }
+            assertTrue(hellos.load() > 0, "the proxy got no ClientHello")
+        }
+
+    /**
+     * A proxy that requires a client certificate gets none (the origin's `identity` is not the proxy's, and `proxyTls` gives
+     * none): it answers with certificate_required (RFC 8446 section 6.2), a [ProxyTlsException] around the
+     * [TlsException.AlertReceived].
+     */
+    @Test fun negative_quicProxyRequiringAClientCertificateGetsNoneOfTheOrigins() =
+        h3Test {
+            val tls =
+                proxyServerTls {
+                    clientAuth = ClientAuth.Required
+                    trust = ClientFixtures.trust
+                }
+            withQuicProxy(tls) { proxyPort ->
+                val e = assertProxyTlsFailure(proxyPort)
+                assertIs<TlsException.AlertReceived>(e.cause, "$e")
             }
         }
 }

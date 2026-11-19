@@ -14,7 +14,9 @@ import kotlin.io.encoding.Base64
  * end to the origin: the proxy sees the origin's name and port and UDP, never the requests.
  *
  * @property template the proxy's URI Template (RFC 9298 section 2), checked when it was parsed; its authority is the proxy's
- *   host and port (443 when it has none), reached over HTTP/3 directly, with the engine's trust.
+ *   host and port (443 when it has none), reached over HTTP/3 directly with the proxy's TLS settings
+ *   (`KuicksilverEngineConfig.proxyTls`, by default the engine's trust without what names the origin and without the client
+ *   certificate, as an `https://` proxy over TCP; ADR-0023); a failed handshake with it is a [ProxyTlsException].
  * @property credentials sent to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT, never to the origin;
  *   null for none.
  * @property applies whether a request's URL goes through the proxy; every `https` URL by default. A URL it does not apply to

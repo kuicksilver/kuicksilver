@@ -595,15 +595,19 @@ A request that fails with `UnsupportedOperationException` ("the proxy URL's sche
 setting the engine cannot use, such as `socks4://`; it is never bypassed. The message does not name the scheme a proxy
 URL from the environment gave: a user name before `://` reads as one.
 
-### Requests through an `https://` proxy fail with `ProxyTlsException`
+### Requests through an `https://` or CONNECT-UDP proxy fail with `ProxyTlsException`
 
-The TLS handshake with the proxy itself failed; nothing of the request was sent. Its `cause` says why: a
+The TLS handshake with the proxy itself failed (over TCP to an `https://` proxy, over QUIC to a `connectUdpProxy`);
+nothing of the request was sent. Its `cause` says why: a
 `TlsException.Verify` whose `reason` is `HostnameMismatch` means the proxy's certificate does not name the proxy's host
 as configured (an address where the certificate names a host, or the reverse; the origin's `ExpectedName` and pins do
 not apply to the proxy), another reason that its chain is not trusted: the proxy's trust is the engine's `trust`
 without pins unless `proxyTls = { trust = ... }` says otherwise, so a proxy under a corporate CA needs that CA there.
 An alert or a closed connection usually means the proxy does not speak TLS on that port (an `http://` proxy named as
-`https://`). A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
+`https://`); from a CONNECT-UDP proxy, `AlertReceived` with certificate_required (116) means it wants a client
+certificate, which only `proxyTls = { identity = ... }` gives (the engine's `identity` is the origin's), and
+no_application_protocol (120) that it does not offer `h3`. A `proxyTls` limited to TLS 1.2 cannot reach a CONNECT-UDP
+proxy at all: QUIC is TLS 1.3. A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
 
 ### `H3Only` requests time out
 

@@ -1961,8 +1961,12 @@ reached directly over HTTP/3 (its template's authority, port 443 when it names n
 an `https://` proxy over TCP ([Proxies](#proxies)): `proxyTls`, or by default the engine's trust without an
 `ExpectedName` or pins and without the client certificate (`identity` goes to the origin only); the certificate is
 verified against the proxy's host, and a failed handshake with the proxy is a `ProxyTlsException`. Each tunnelled
-connection has its own connection to the proxy, closed with it; connections to proxies keep their session tickets apart
-from those to origins. Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
+connection has its own connection to the proxy, closed with it, a full handshake each time (no session resumption, and no
+ticket of the proxy's ever shared with origins). Through several addresses of the proxy, an address whose TLS failed
+makes the request's failure a `ProxyTlsException` even when a later address only timed out (the timeout is then among
+its suppressed exceptions). QUIC is TLS 1.3 only (RFC 9001 section 4.2), so a `proxyTls` limited to TLS 1.2 cannot reach a
+CONNECT-UDP proxy; an ECH configuration that `proxyTls` gives the proxy is offered as given and not retried after a
+rejection (RFC 9849 section 6.1.6 applies to the origin's connection). Inside the tunnel the origin's connection has the engine's `trust`, `identity` and `tls`, as a
 direct one. The origin's name goes to the proxy, which
 resolves it: the engine does not look it up.
 
