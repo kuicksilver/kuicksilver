@@ -6,8 +6,10 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.ByteReadChannel
@@ -20,7 +22,9 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -173,6 +177,78 @@ class ClientOrderlyCloseTest {
                     assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
                 }
                 release.complete(Unit)
+            }
+        }
+
+    /**
+     * The server sends [head] and then more body than every buffer on the way holds, and waits for the client's close_notify
+     * before its own; [call] makes the request and leaves the response. The client's orderly close (its bound stretched to
+     * 30 s) must end well within it, the server must see close_notify, and its writes must all go through: the client read
+     * and dropped them until the server's close_notify, rather than closing under them (which resets the connection).
+     */
+    private suspend fun assertOrderlyCloseNotHeldBehindUnreadBody(
+        head: String,
+        call: suspend (io.ktor.client.HttpClient, String) -> Unit,
+    ) {
+        val clean = CompletableDeferred<Boolean>()
+        val took = CompletableDeferred<kotlin.time.Duration>()
+        val sent = CompletableDeferred<Boolean>()
+        val size = 16 shl 20
+        tlsH1WithSilentUdp(silentUdp = false, handler = { _, input, output ->
+            readRequest(input)
+            launch { clean.complete(input.endsCleanly()) }
+            sent.complete(
+                runCatching {
+                    output.writeStringUtf8(head)
+                    val chunk = ByteArray(64 * 1024)
+                    repeat(size / chunk.size) { output.writeFully(chunk) }
+                    output.flush()
+                }.isSuccess,
+            )
+            withTimeoutOrNull(60.seconds) { clean.await() } // then the server's close_notify
+        }) { port ->
+            testClient().use { c ->
+                engine(c).h1.orderlyCloseTimeoutForTest = 30.seconds
+                engine(c).h1.orderlyCloseTookForTest = { took.complete(it) }
+                call(c, "https://127.0.0.1:$port/")
+                val t = withTimeout(60.seconds) { took.await() }
+                assertTrue(t < 10.seconds, "the orderly close took $t behind a response nobody reads")
+                assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
+                assertTrue(withTimeout(10.seconds) { sent.await() }, "the server's writes went through, not cut by a reset")
+            }
+        }
+    }
+
+    /**
+     * A response the application leaves halfway ends the connection in order without waiting behind the rest of the body.
+     * The abandoned body's channel cancels the connection's input; the TLS session then reads on and drops what still
+     * comes until the server's close_notify. Before, it stopped reading there: the close did not wait for the server's
+     * close_notify and closed under the rest of the body, so the kernel reset the connection (the server's writes failed,
+     * and the reset could erase the client's close_notify before the server read it).
+     */
+    @Test fun negative_anAbandonedResponseDoesNotHoldTheOrderlyClose() =
+        clientTest {
+            assertOrderlyCloseNotHeldBehindUnreadBody("HTTP/1.1 200 OK\r\nContent-Length: ${16 shl 20}\r\n\r\n") { c, url ->
+                c.prepareGet(url).execute { r ->
+                    val ch = r.bodyAsChannel()
+                    val buf = ByteArray(16 * 1024)
+                    var read = 0
+                    while (read < 64 * 1024) read += ch.readAvailable(buf, 0, buf.size).also { check(it >= 0) }
+                } // the rest is abandoned
+            }
+        }
+
+    /**
+     * A response the client refuses after its head (an invalid Content-Length, RFC 9112 section 6.3 item 5) while the server
+     * goes on sending: the exchange failed after the whole request went out, so the connection ends in order (RFC 9846
+     * section 6.1), and nothing reads what still comes. The client reads and drops it, so the server's writes go through
+     * and its close_notify ends the wait. Before, the session waited for room in a channel nobody read, the server's
+     * writes waited behind it, and every such close ran to its bound (1 s, stretched to 30 s here).
+     */
+    @Test fun negative_aRefusedResponseDoesNotHoldTheOrderlyClose() =
+        clientTest {
+            assertOrderlyCloseNotHeldBehindUnreadBody("HTTP/1.1 200 OK\r\nContent-Length: 1, 2\r\n\r\n") { c, url ->
+                assertTrue(runCatching { c.get(url) }.isFailure, "the invalid Content-Length was refused")
             }
         }
 

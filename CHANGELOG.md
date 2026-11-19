@@ -1414,6 +1414,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   bound (a client that closed without reading the rest of a response). From `close()` on, what the peer still sends is
   read and dropped, so its close_notify ends the wait as soon as it comes. Closing only the write channel (a half-close)
   still delivers the rest (`TlsSocketCloseTest`; found by the leak sentinel's slow-close report).
+- Ktor client, HTTP/1.1 over TLS: the orderly close of a connection whose response nobody would read any more waited
+  behind it in the same way. A response refused after its head (an invalid `Content-Length`) while the server went on
+  sending held its close_notify wait to the 1 s bound; a response the application abandoned went the other way, its
+  session stopped reading at once and the connection closed under the rest of the body, so the kernel reset it, which
+  can erase the client's close_notify before the server reads it. Both now read and drop what still comes until the
+  server's close_notify (`TlsConnection.cancelInput`, internal), and a session ticket that comes meanwhile is still taken
+  (`ClientOrderlyCloseTest.negative_aRefusedResponseDoesNotHoldTheOrderlyClose`,
+  `negative_anAbandonedResponseDoesNotHoldTheOrderlyClose`).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

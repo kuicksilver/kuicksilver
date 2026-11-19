@@ -85,6 +85,9 @@ public class TlsConnection private constructor(
 
     private val inputChannel = ByteChannel(autoFlush = true)
     private val inputView = DeliverThenFail(inputChannel)
+
+    /** Set by [cancelInput]: the application reads no more, and the reader pump reads on and drops what it decrypts. */
+    @Volatile private var droppingInput = false
     private val outputChannel = ByteChannel(autoFlush = true)
     private val verification = Verification(config)
     private var presented: List<Certificate> = emptyList()
@@ -564,7 +567,15 @@ public class TlsConnection private constructor(
         suspend fun deliver() {
             rememberSession()
             if (have == 0) return
-            inputChannel.writeFully(plain, 0, have)
+            if (!droppingInput) {
+                try {
+                    inputChannel.writeFully(plain, 0, have)
+                } catch (e: Throwable) {
+                    // [cancelInput] woke this write: what the application will not read is dropped from now on
+                    if (!droppingInput) throw e
+                    currentCoroutineContext().ensureActive()
+                }
+            }
             have = 0
         }
 
@@ -605,7 +616,12 @@ public class TlsConnection private constructor(
                     r == -KslConst.EOF -> {
                         deliver()
                         drainRequests.trySend(Unit)
-                        inputChannel.flushAndClose()
+                        try {
+                            inputChannel.flushAndClose()
+                        } catch (e: Throwable) {
+                            if (!droppingInput) throw e // cancelled by [cancelInput]: nothing more to end
+                            currentCoroutineContext().ensureActive()
+                        }
                         return false
                     }
 
@@ -954,6 +970,19 @@ public class TlsConnection private constructor(
             withTimeoutOrNull(SHUTDOWN_TIMEOUT) { awaitPeer() }
         }
         close()
+    }
+
+    /**
+     * The application reads no more: [input] is cancelled with [cause] (a read waiting on it wakes with it), while the
+     * session goes on reading the transport and drops what it decrypts. The peer's `close_notify` (or the end of the
+     * transport) still reaches [shutdown]'s wait, and a session ticket is still taken, instead of the session ending its
+     * reads at once: closing under the peer's unread input would make the kernel reset the connection, which can erase our
+     * `close_notify` before the peer reads it. [close] ends the reading as before.
+     */
+    @InternalKuicksilverApi
+    public fun cancelInput(cause: Throwable?) {
+        droppingInput = true
+        inputView.cancel(cause)
     }
 
     /**
