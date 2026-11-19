@@ -228,6 +228,11 @@ public class TlsSocket private constructor(
      * stopped reading holds the flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the
      * TLS session is freed and the raw socket is aborted as by [abort], which releases its descriptor. On a server ([Socket.tlsServer]) the close
      * waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.
+     * The application reads nothing after the close: what the peer still sends is read and dropped from then on, so the
+     * wait for its `close_notify` lasts while the peer sends, not while nobody reads (RFC 8446 section 6.1 lets either side
+     * close its read side without waiting; reading on avoids resetting the connection under the peer's unread input). To
+     * keep reading after the request, close only the write channel ([openWriteChannel]'s `flushAndClose`): `close_notify`
+     * is sent and the read channel delivers the rest until the peer's.
      */
     override fun close() {
         if (closing) return
@@ -242,6 +247,13 @@ public class TlsSocket private constructor(
         }
         launch {
             try {
+                // the application reads no more: what is still coming is dropped, so the peer's close_notify is not held
+                // behind it (and the peer's writes behind that) until the bound
+                attachedReader?.job?.let {
+                    it.cancel()
+                    it.join()
+                }
+                tls.discardInput()
                 attachedWriter?.let { rj ->
                     runCatching { attachedChannel?.closeFromSocketClose() ?: rj.channel.flushAndClose() }
                     rj.job.join()
@@ -261,7 +273,6 @@ public class TlsSocket private constructor(
                 tls.close()
                 runCatching { rawOut.flushAndClose() } // everything handed to the socket's write channel reaches the wire before FIN
                 raw.close()
-                attachedReader?.job?.cancel() // the application stopped reading: nothing more reaches it
             }
         }
     }

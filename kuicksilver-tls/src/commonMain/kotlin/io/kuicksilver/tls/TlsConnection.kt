@@ -14,6 +14,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.availableForRead
 import io.ktor.utils.io.cancel
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -943,6 +944,17 @@ public class TlsConnection private constructor(
             withTimeoutOrNull(SHUTDOWN_TIMEOUT) { awaitPeer() }
         }
         close()
+    }
+
+    /**
+     * The application reads no more: what the peer still sends is decrypted and dropped, so that its `close_notify` (or the
+     * end of the transport) reaches [shutdown]'s wait instead of queuing behind input nobody will read, while the peer's
+     * writes behind it wait for room. Only once nothing reads [input] any more (it is read here).
+     */
+    @InternalKuicksilverApi
+    public fun discardInput() {
+        if (closed) return
+        scope.launch { runCatching { inputChannel.discard() } }
     }
 
     /**

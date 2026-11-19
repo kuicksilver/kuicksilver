@@ -1297,6 +1297,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`TlsSocketReleaseTest`; found by the leak sentinel). A behaviour change: once `close()` has closed the session and
   the raw socket, the application's read channel gets nothing more; a read still waiting on it ends with a cancellation,
   and plaintext the session had not handed to that channel yet is dropped (read what you need before you close).
+- TLS over TCP: a closing socket waited for the peer's close_notify behind input the application would never read: the
+  session waited for room in the read channel, the peer's writes waited behind it, and a client's close ran to its 3 s
+  bound (a client that closed without reading the rest of a response). From `close()` on, what the peer still sends is
+  read and dropped, so its close_notify ends the wait as soon as it comes. Closing only the write channel (a half-close)
+  still delivers the rest (`TlsSocketCloseTest`; found by the leak sentinel's slow-close report).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the
