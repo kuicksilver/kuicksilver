@@ -495,7 +495,9 @@ internal class ServerRequestImpl(
 
     /**
      * The connection is gone and the request was still registered (its handler never answered, or its end was lost with
-     * the session's coroutines): it ends here. Session dispatcher only.
+     * the session's coroutines): it ends here. A handler that still runs is not stopped: its answer fails with the
+     * connection's error, and the body and trailers it reads are untouched ([done] does not close them). Session
+     * dispatcher only.
      */
     fun connectionEnded() {
         endedWithConnection = true
