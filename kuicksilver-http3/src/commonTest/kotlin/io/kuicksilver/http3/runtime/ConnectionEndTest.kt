@@ -619,8 +619,8 @@ class ConnectionEndTest {
                         w.finish()
                     }
                 withTimeoutOrNull(20.seconds) { atEnd.await() } ?: fail("the pump did not reach the end of the content")
-                // the client has the response's head before the abandon: a reset can discard a HEADERS frame not yet sent
-                // (RFC 9000 section 3.1), and then the request itself fails, as it may (a slow device, API 24 in CI)
+                // the client has the response's head before the abandon: after a reset, STREAM data not yet received is never sent
+                // again (RFC 9000 sections 13.3 and 19.4): a lost HEADERS frame fails the request, as it may (API 24 in CI)
                 val r = withTimeout(5.seconds) { response.await() }
                 handler.cancel()
                 handler.join()
