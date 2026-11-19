@@ -92,6 +92,12 @@ class KtorDatagramIoTest {
      * settled after the first round: a selector loop that was still to run then (the regression this test is for) would
      * close its pipe during the second round and hide one of that round's. Linux and macOS count descriptors only, no
      * thread: there the second round's count is held against the one from before the first round too.
+     *
+     * On Windows the 2026-11-19 VM run left about one Event handle per refused bind of the measured round (54 and 37 for 40,
+     * there 5 s later as well), no thread, while every selector of those binds had ended (`refusedSelectorsRunning`). Three
+     * measured rounds tell a cache from a leak: round A with binds, the control C holding the threads without binds, round B
+     * with binds again, each counted after a GC. A cache of the runtime fills in the first rounds and stays, so round B adds
+     * nothing; a leak of the binds adds as much in B as in A, and only B decides on Windows.
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
@@ -102,22 +108,20 @@ class KtorDatagramIoTest {
                 val diag = HandleDiagnostics("refused binds under busy dispatchers")
                 val initial = settledDescriptors()
                 diag.mark("initial")
-                refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured round holds
-                val before = settledDescriptors()
-                diag.mark("before (after the first round, settled)")
-                var whileHeld: Int? = null
-                refusedBindsWhileThreadsAreHeld(taken) {
-                    whileHeld = openDescriptors()
-                    diag.mark("while held (the binds returned before the threads were let go)")
-                    // a bind returned while no selector loop could run: its own must have ended all the same
-                    assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
-                }
-                val after = whileHeld ?: settledDescriptors()
-                if (whileHeld == null) diag.mark("after (the binds waited for the threads, settled)")
-                assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
-                diag.report(after - before < 10) { "40 refused binds left ${after - before} descriptors open" }
-                if (!handlesCountThreads) {
-                    assertTrue(after - initial < 10, "80 refused binds left ${after - initial} descriptors open")
+                refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured rounds hold
+                val before = settledDescriptors(collect = true)
+                diag.mark("before (after the first round, settled, after a GC)")
+                val a = measuredRound(taken, binds = true, diag, "round A, 40 binds")
+                val c = measuredRound(taken, binds = false, diag, "round C, no binds (the control)")
+                val b = measuredRound(taken, binds = true, diag, "round B, 40 binds")
+                val rounds = "round A ${a - before}, the control ${c - a}, round B ${b - c}"
+                if (handlesCountThreads) {
+                    // every handle of the process counts: a cache of the runtime fills in the first rounds and stays (round
+                    // B adds nothing), a leak of the binds grows with every round of binds (round B adds as much as round A)
+                    diag.report(b - c < 10) { "40 refused binds left ${b - c} handles open in the last round ($rounds)" }
+                } else {
+                    diag.report(a - before < 10 && b - c < 10) { "40 refused binds left descriptors open: $rounds" }
+                    assertTrue(b - initial < 10, "120 refused binds left ${b - initial} descriptors open")
                 }
             } finally {
                 held.close()
@@ -126,6 +130,34 @@ class KtorDatagramIoTest {
 
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private fun refusedSelectorsRunning(): Int = KtorDatagramIo.refusedSelectorsRunning.load()
+
+    /**
+     * One measured round: the threads held, 40 refused binds made (none with [binds] false: the control, which holds the
+     * threads alone), every selector of them ended by the time the binds returned. Returns the count while the threads were
+     * still held when the binds returned by then (a bind that returned without waiting for its loop shows here), else the
+     * settled count after a GC (what a finalizer still holds is not a leak of the binds).
+     */
+    private suspend fun measuredRound(
+        taken: InetSocketAddress,
+        binds: Boolean,
+        diag: HandleDiagnostics,
+        label: String,
+    ): Int {
+        var whileHeld: Int? = null
+        refusedBindsWhileThreadsAreHeld(taken, binds) {
+            if (!binds) return@refusedBindsWhileThreadsAreHeld // the control is measured as the rounds of binds are
+            whileHeld = openDescriptors()
+            diag.mark("$label, while held (the binds returned before the threads were let go)")
+            // a bind returned while no selector loop could run: its own must have ended all the same
+            assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+        }
+        assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+        whileHeld?.let { return it }
+        diag.mark("$label, settled")
+        val n = settledDescriptors(collect = true)
+        diag.mark("$label, settled after a GC")
+        return n
+    }
 
     /**
      * What the handle count was made of at each [mark], by kind ([handleBreakdown]): on Windows, where the count is every
@@ -170,10 +202,15 @@ class KtorDatagramIoTest {
 
     /**
      * The count once it has stopped moving: read every 50 ms until five reads in a row agree, at most for 10 s (then the
-     * last read). The selector loops of binds that already returned close their pipes when a thread takes them, and
+     * last read); with [collect], after a full GC, so what only a finalizer still holds is gone. The selector loops of binds that already returned close their pipes when a thread takes them, and
      * nothing signals that; the count is what is measured.
      */
-    private suspend fun settledDescriptors(): Int {
+    @OptIn(kotlin.native.runtime.NativeRuntimeApi::class)
+    private suspend fun settledDescriptors(collect: Boolean = false): Int {
+        if (collect) {
+            kotlin.native.runtime.GC
+                .collect()
+        }
         var last = openDescriptors()
         var same = 0
         val start =
@@ -189,12 +226,13 @@ class KtorDatagramIoTest {
     }
 
     /**
-     * Makes 40 refused binds of [taken] while more tasks than `Dispatchers.Default` and `Dispatchers.IO` have threads hold
-     * every one of them, and returns once the binds and the holders ended. [whileHeld] runs while the threads are still held,
-     * and only if the binds already returned by then.
+     * Makes 40 refused binds of [taken] (none without [binds]) while more tasks than `Dispatchers.Default` and
+     * `Dispatchers.IO` have threads hold every one of them, and returns once the binds and the holders ended. [whileHeld]
+     * runs while the threads are still held, and only if the binds already returned by then.
      */
     private suspend fun refusedBindsWhileThreadsAreHeld(
         taken: InetSocketAddress,
+        binds: Boolean = true,
         whileHeld: () -> Unit,
     ) = coroutineScope {
         val go = CompletableDeferred<Unit>()
@@ -206,6 +244,7 @@ class KtorDatagramIoTest {
                 }
             val binds =
                 async(start = CoroutineStart.UNDISPATCHED) {
+                    if (!binds) return@async
                     repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
                     repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
                 }
