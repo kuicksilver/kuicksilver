@@ -47,7 +47,7 @@ public enum class ProxyTransport {
     Dgram,
 }
 
-/** One TLV of a version 2 header: its [type] (0..255) and value. */
+/** One TLV of a version 2 header: its [ProxyTlv.type] (0..255) and value. */
 @ExperimentalKuicksilverApi
 public class ProxyTlv internal constructor(
     /** The type byte (`PP2_TYPE_*`), 0..255. */
@@ -105,7 +105,7 @@ public class ProxySsl internal constructor(
     /** For logs. */
     override fun toString(): String = "SSL(client=0x${client.toString(16)}, verify=$verify, ${subTlvs.size} sub-TLVs)"
 
-    /** The bits of [client]. */
+    /** The bits of [ProxySsl.client]. */
     public companion object {
         /** `PP2_CLIENT_SSL`: the client connected over SSL/TLS. */
         public const val PP2_CLIENT_SSL: Int = 0x01
@@ -119,11 +119,11 @@ public class ProxySsl internal constructor(
 }
 
 /**
- * The PROXY protocol header a connection began with ([ProxyProtocolConfig]). [sourceAddress] and [destinationAddress] are
- * the client's address and the one it connected to on the proxy: IP literals (a dotted quad, or IPv6 as RFC 5952
- * recommends) for [ProxyFamily.Inet] and [ProxyFamily.Inet6], the socket path for [ProxyFamily.Unix] (an abstract one as
- * `@` and its name), null for a [ProxyCommand.Local] header and for [ProxyFamily.Unspecified]. The ports are null where
- * the family has none.
+ * The PROXY protocol header a connection began with ([ProxyProtocolConfig]). [ProxyHeader.sourceAddress] and
+ * [ProxyHeader.destinationAddress] are the client's address and the one it connected to on the proxy: IP literals (a dotted quad, or
+ * IPv6 as RFC 5952 recommends) for [ProxyFamily.Inet] and [ProxyFamily.Inet6], the socket path for [ProxyFamily.Unix] (an abstract one
+ * as `@` and its name), null for a [ProxyCommand.Local] header and for [ProxyFamily.Unspecified]. The ports are null where the family
+ * has none.
  */
 @ExperimentalKuicksilverApi
 public class ProxyHeader internal constructor(

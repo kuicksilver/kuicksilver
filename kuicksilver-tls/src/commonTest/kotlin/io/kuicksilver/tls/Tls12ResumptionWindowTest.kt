@@ -91,7 +91,8 @@ class Tls12ResumptionWindowTest {
             if (session != 0L) Ksl.sessionFree(session)
             assertTrue(resumptions > 0, "control: the renewed ticket resumed at first")
             assertNotNull(refusedAt, "the renewed TLS 1.2 tickets kept resuming for 8 s")
-            assertTrue(refusedAt <= 3.seconds, "the chain outlived the first ticket's 2 s lifetime: $refusedAt")
+            // the first refusal comes about 2 s in (plus up to 250 ms and a handshake); a chain renewed for ever resumes until 8 s
+            assertTrue(refusedAt <= 5.seconds, "the chain outlived the first ticket's 2 s lifetime: $refusedAt")
         }
 
     /** A raw `ksl` client capped at TLS 1.2 (TlsConfig cannot cap a client there), resuming [session] when not 0. */

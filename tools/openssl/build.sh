@@ -19,17 +19,27 @@
 # of --print-target, so -Pkuicksilver.openssl.prebuilt reuses a build only with the flags it was made with. CXXFLAGS and
 # LDLIBS are not used (no C++, no program is linked). A release and the reproducibility checks build with them unset
 # (docs/guide/building.md).
-# Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256, the target
+# Next to the archives: configure-flags.txt, configure-target.txt and provenance.txt (the pinned tarball SHA-256s, the target
 # line and the SHA-256 of libcrypto.a and libssl.a), which -Pkuicksilver.openssl.prebuilt compares before reusing a build.
 # The carried patches (ADR-0019): the pin profile names them in a fixed order, patch / patch_sha256 first, then patch_2 /
 # patch_2_sha256 up to patch_9 / patch_9_sha256, each only with all the ones before it. Each file must have its pinned
 # SHA-256, and tools/openssl/apply-patch.pl applies them, in that order and exactly, to the copy of the verified tree the
 # build runs in; their hashes are part of the cache key, of the target line (tokens patch-sha256=<first 16 hex>,
 # patch-2-sha256=<...>, ...) and of provenance.txt (patch-sha256 <hash>, patch-2-sha256 <hash>, ...).
+# zlib and brotli (gradle/compression-libs.toml, verified by fetch.sh) are compiled with libcrypto's compiler and flags and
+# appended to libcrypto.a (tools/openssl/compression.mk): OpenSSL's certificate compression (RFC 8879) needs them, and as
+# members of libcrypto.a they are linked, symbol-prefixed and export-checked exactly like OpenSSL. Android and iOS get brotli's
+# decoder only (ksl-brotli-encoder=0 in the target line; ADR-0025).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 print_only=0; [ "${1:-}" = "--print-target" ] && { print_only=1; shift; }
 target="${1:?target}"
+# brotli's encoder: not on the client-mostly targets, where it was most of the 0.8 MB the libraries grew by (ADR-0025)
+# KSL_BROTLI_ENCODER=0: the same for any target (the decoder-only C test variant on a host, tools/c-test.sh); it is part of
+# the target line, so such a build is cached and reused apart from the target's usual one
+case "$target" in android-*|ios-*) brotli_encoder=0 ;; *) brotli_encoder=1 ;; esac
+case "${KSL_BROTLI_ENCODER:-}" in "") ;; 0) brotli_encoder=0 ;; *) echo "KSL_BROTLI_ENCODER: 0 or unset" >&2; exit 2 ;; esac
+ksl_tag=""; [ "$brotli_encoder" = 1 ] || ksl_tag="ksl-brotli-encoder=0"
 root="$here/../.."; out="${KSL_OPENSSL_WORK:-$root/build/openssl-work}"
 # KSL_OPENSSL_PIN: another pin profile, a path from the repository root (gradle/openssl-next.toml: the CI job openssl-next)
 pin="${KSL_OPENSSL_PIN:-gradle/openssl.toml}"; case "$pin" in /*) toml="$pin" ;; *) toml="$root/$pin" ;; esac
@@ -57,6 +67,18 @@ for n in "" _2 _3 _4 _5 _6 _7 _8 _9; do
   patch_files+=("$root/$pf")
 done
 [ "$print_only" = 1 ] || [ -d "$src" ] || { echo "run fetch.sh first" >&2; exit 1; }
+ctoml="$root/gradle/compression-libs.toml"
+tv() { # <table> <key>: the string value of key in [table] of gradle/compression-libs.toml
+  awk -v t="[$1]" -v k="$2" '$0 == t { f = 1; next } /^\[/ { f = 0 } f && $1 == k && $2 == "=" { v = $0; sub(/^[^"]*"/, "", v); sub(/".*$/, "", v); print v; exit }' "$ctoml"
+}
+zlib_src="$out/src/zlib-$(tv zlib version)"; brotli_src="$out/src/brotli-$(tv brotli version)"
+zlib_sha=$(tv zlib sha256); brotli_sha=$(tv brotli sha256)
+# fetch.sh writes the marker only after the tarball's checks passed: a tree without it (or of another tarball) is refused
+if [ "$print_only" != 1 ]; then
+  for d in "$zlib_src:$zlib_sha" "$brotli_src:$brotli_sha"; do
+    [ "$(cat "${d%%:*}/.ksl-unpacked-sha256" 2>/dev/null || true)" = "${d##*:}" ] || { echo "${d%%:*} is not the verified tree of the pinned tarball: run fetch.sh first" >&2; exit 1; }
+  done
+fi
 OPT="${OPT:--Os}"
 # the builder's flags, word by word into an array (never glob-expanded), refused where Configure would read a word as
 # something other than a compiler flag: its own options, -no-<feature> (Configure rewrites it to no-<feature>, which would
@@ -136,16 +158,17 @@ esac
 
 # the configure line without path tokens: what must match between the machine that built an archive and the one reusing it
 portable() { tr ' ' '\n' | grep -v '/' | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'; }
-if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $patch_id" | portable; echo; exit 0; fi
+if [ "$print_only" = 1 ]; then echo "$cfg $OPT $extra $user_flags $user_id $patch_id $ksl_tag" | portable; echo; exit 0; fi
 flags=$(grep -v '^#' "$here/configure-flags.txt" | tr '\n' ' ')
 # Cache key: the compiler that will actually run (Configure resolves it per target), this script, the flags, the source.
 case "$cfg" in android-*) realcc=$(command -v clang) ;; ios*) realcc=$(xcrun -f clang 2>/dev/null || echo clang) ;; mingw64) realcc=$(command -v x86_64-w64-mingw32-gcc || echo unknown) ;; *) realcc=${CC:-cc} ;; esac
-ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)"
+ccid="$realcc|$("$realcc" --version 2>/dev/null | head -1 || echo unknown)|$(shasum -a 256 < "$0" | cut -c1-16)|$(shasum -a 256 < "$here/compression.mk" | cut -c1-16)|$(cat "$here"/brotli/*.c | shasum -a 256 | cut -c1-16)|$zlib_sha|$brotli_sha|$brotli_encoder"
 key=$(printf '%s|%s|%s|%s|%s|%s%s' "$(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")" "$(shasum -a 256 < "$here/configure-flags.txt" | cut -c1-16)" "$target" "$ccid" "$OPT" "$extra" "${user_id:+|$user_id}${patch_id:+|$patch_id}" | shasum -a 256 | cut -c1-16)
 cache="$out/cache/$key"
 dest="${KSL_OPENSSL_OUT:-$root/build/openssl}/$target"
 provenance() { # <dir>: what was built from what, checked by -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts)
-  { echo "tarball-sha256 $(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")"; echo "target $(portable < "$1/configure-target.txt")"
+  { echo "tarball-sha256 $(sed -n 's/^sha256 = "\(.*\)"/\1/p' "$toml")"; echo "zlib-tarball-sha256 $zlib_sha"; echo "brotli-tarball-sha256 $brotli_sha"
+    echo "target $(portable < "$1/configure-target.txt")"
     for a in libcrypto.a libssl.a; do echo "$a $(shasum -a 256 < "$1/lib/$a" | cut -d' ' -f1)"; done
     printf %s "$prov_patches"; } > "$1/provenance.txt"
 }
@@ -156,11 +179,15 @@ fi
 
 work="$out/build/$target"
 rm -rf "$work" "$cache"; mkdir -p "$work"; cp -R "$src/." "$work/"
+mkdir -p "$work/ksl-zlib" "$work/ksl-brotli"; cp -R "$zlib_src/." "$work/ksl-zlib/"; cp -R "$brotli_src/." "$work/ksl-brotli/"
+cp "$here"/brotli/ksl_static_init.c "$here"/brotli/ksl_encoder_stub.c "$here"/brotli/ksl_compress.c "$work/ksl-brotli/c/enc/"
+cp "$here"/brotli/ksl_decompress.c "$work/ksl-brotli/c/dec/"
 cd "$work"
 [ ${#patch_files[@]} -eq 0 ] || perl "$here/apply-patch.pl" "$work" "${patch_files[@]}" >"$out/build/$target.patch.log" 2>&1 \
   || { cat "$out/build/$target.patch.log" >&2; echo "FAILED: the carried patches do not apply to OpenSSL $version" >&2; exit 1; }
+# the compression libraries' headers, relative to the tree (compression.mk compiles their sources from the same copies)
 # shellcheck disable=SC2086
-./Configure "$cfg" $flags --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
+./Configure "$cfg" $flags --with-zlib-include=ksl-zlib --with-brotli-include=ksl-brotli/c/include --prefix=/nonexistent --openssldir=/nonexistent $OPT -ffunction-sections -fdata-sections -fvisibility=hidden -fno-common $extra ${user_args[@]+"${user_args[@]}"} ${CC:+CC=$CC} >"$out/build/$target.configure.log" 2>&1
 # The "compiler:" line of OpenSSL_version(OPENSSL_CFLAGS) is compiled into libcrypto.a (crypto/buildinf.h, from the
 # compiler command and its flags): kept without the tokens that hold a path (the compiler's, a sysroot, a toolchain), so
 # no directory of the machine that built an archive ends up in it. make leaves the rewritten header alone, as it is newer
@@ -181,10 +208,11 @@ KSL_V="$version" perl -0777 -ne '
 rm -f crypto/buildinf.h   # OpenSSL 4 generates it read-only (util/file-from-stdout.pl); rewritten below
 perl util/mkbuildinf.pl "$(sed -n 1p "$out/build/$target.buildinf.txt")" "$(sed -n 2p "$out/build/$target.buildinf.txt")" > crypto/buildinf.h
 make -j"$JOBS" build_libs >>"$out/build/$target.make.log" 2>&1
+make -j"$JOBS" -f Makefile -f "$here/compression.mk" KSL_BROTLI_ENCODER="$brotli_encoder" ksl-compression >>"$out/build/$target.make.log" 2>&1
 mkdir -p "$cache/lib" "$cache/include"
 cp libcrypto.a libssl.a "$cache/lib/"
 cp -R include/openssl "$cache/include/"
 chmod -R u+w "$cache/include"   # OpenSSL 4 generates some headers read-only (util/file-from-stdout.pl); copies must stay replaceable
-cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}${patch_id:+ $patch_id}" > "$cache/configure-target.txt"; provenance "$cache"
+cp "$here/configure-flags.txt" "$cache/configure-flags.txt"; echo "$cfg $OPT $extra${user_flags:+ $user_flags}${user_id:+ $user_id}${patch_id:+ $patch_id}${ksl_tag:+ $ksl_tag}" > "$cache/configure-target.txt"; provenance "$cache"
 rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; cp -R "$cache" "$dest"
 echo "built $target -> $dest (cache $key)"

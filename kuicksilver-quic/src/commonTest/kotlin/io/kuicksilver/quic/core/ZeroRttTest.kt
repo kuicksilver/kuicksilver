@@ -522,7 +522,10 @@ class ZeroRttTest {
                     CoreFixtures.server(
                         chain =
                             listOf(io.kuicksilver.quic.TestCerts.server) + List(4) { io.kuicksilver.quic.TestCerts.testCa },
-                    ),
+                    ) {
+                        // the repeated certificates compress to one datagram (RFC 8879): the flight must stay split
+                        certificateCompression = false
+                    },
                 clientSetup = { c ->
                     assertTrue(c.useTicket(ticket()))
                     id = c.openStream(bidi = false)

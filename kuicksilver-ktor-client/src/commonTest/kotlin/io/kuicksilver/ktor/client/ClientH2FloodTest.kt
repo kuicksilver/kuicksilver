@@ -85,10 +85,10 @@ class ClientH2FloodTest {
                 runCatching {
                     var i = 0
                     while (i < count) {
-                        val batch = ArrayList<ByteArray>()
-                        repeat(minOf(1_000, count - i)) { batch += flood(i++) }
-                        for (b in batch) output.writeFully(b)
+                        val n = minOf(1_000, count - i)
+                        output.writeFully(batchOf(i, n, flood))
                         output.flush()
+                        i += n
                     }
                 }
                 var code: Long? = null
@@ -109,6 +109,32 @@ class ClientH2FloodTest {
             }
         }
         return failure!! to withTimeout(30.seconds) { goAway.await() }
+    }
+
+    /**
+     * The frames [flood] makes for [from] until [from] + [n], one after another.
+     *
+     * Built here, outside the suspending handler of [flooded], whose loop makes no call whose target can change. ART 7.0
+     * (API 24) aborted in the GC ("Tried to mark 0xebadde09 not contained by any spaces", run 44453449060, in
+     * negative_priorityAndUnknownFloodFromTheServer) while that loop called [flood] itself: as in ktor-server's
+     * ServerH2FloodTest.flood, the JIT-compiled loop was deoptimized at the call of the lambda it had not seen, the
+     * deoptimization filled the registers the compiled code had found dead with 0xEBADDE09 (kDeadValue), and the
+     * coroutine state machine's move-object copies, run by the interpreter that went on, put one into the frame's references.
+     */
+    private fun batchOf(
+        from: Int,
+        n: Int,
+        flood: (Int) -> ByteArray,
+    ): ByteArray {
+        val frames = ArrayList<ByteArray>(n)
+        for (i in from until from + n) frames += flood(i)
+        val all = ByteArray(frames.sumOf { it.size })
+        var at = 0
+        for (f in frames) {
+            f.copyInto(all, at)
+            at += f.size
+        }
+        return all
     }
 
     private fun assertCalm(r: Pair<Http2Exception.ConnectionClosed, Long?>) {

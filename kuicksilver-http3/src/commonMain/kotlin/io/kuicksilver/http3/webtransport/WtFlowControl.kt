@@ -215,6 +215,13 @@ internal class WtSessionFlow(
      */
     val creditIdleForTest: Boolean get() = senders.isEmpty() && reservedTotal == 0L && openers.all { it.isEmpty() }
 
+    /**
+     * When a test set it (before the streams open, on the session's dispatcher): all credit ever handed to each stream, by
+     * its place in the order ([Sender.order]), kept after the stream ended, a sticky record, so a test asks whether a stream
+     * ever got credit, not what it holds at one instant. Null otherwise: nothing is recorded.
+     */
+    var grantedByOrderForTest: HashMap<Long, Long>? = null
+
     /** The places held, in order, as `order:need/reserved` (a test hook). */
     val sendersForTest: List<String> get() = senders.map { "${it.order}:${it.need}/${it.reserved}" }
 
@@ -335,6 +342,7 @@ internal class WtSessionFlow(
     ) {
         s.reserved += g
         s.grantedForTest += g
+        grantedByOrderForTest?.let { it[s.order] = (it[s.order] ?: 0L) + g }
         reservedTotal += g
         s.waiter?.complete(Unit)
     }

@@ -48,7 +48,8 @@ bad or missing signature, a missing file, a build that failed). It exits 1 on an
    the step is `SKIPPED`. No answer from GitHub (as opposed to a 404) is a `FAIL` for any version. When the provenance's
    own signature fails, its subjects are not read.
 3. **Rebuild.** The verified tag's `tools`, `gradle` and `kuicksilver-native/src` are exported with `git archive`, the
-   pinned OpenSSL tarball is downloaded and checked (signature and SHA-256, `tools/openssl/fetch.sh` of the tag), the
+   pinned OpenSSL tarball is downloaded and checked (signature and SHA-256, `tools/openssl/fetch.sh` of the tag; from
+   0.3.0 also the zlib and brotli tarballs of `gradle/compression-libs.toml`, built into OpenSSL's libcrypto), the
    patches the tag carries on it, if any, are checked against their pinned SHA-256 and applied exactly, in order
    (`tools/openssl/apply-patch.pl`; [ADR-0019](adr/0019-openssl-4-and-ech.md)), and the libraries of [the table below](#which-native-libraries-are-reproducible) are built with the tag's own scripts and
    the pinned NDK's LLVM tools (`LLVM_OBJCOPY` and the like are ignored), and compared with the copies inside the

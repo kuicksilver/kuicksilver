@@ -32,6 +32,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.quic.KuicksilverLogger
@@ -76,10 +77,12 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
         assertTrue("guide:ktor:proxy" in guide, "marker proxy")
+        assertTrue("guide:ktor:connect-udp-client" in guide, "marker connect-udp-client")
         assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
         assertTrue("guide:ktor:client-diagnostics" in guide, "marker client-diagnostics")
         assertTrue("guide:ktor:http3-switch" in guide, "marker http3-switch")
         assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
+        assertTrue("guide:ktor:h2c-client" in guide, "marker h2c-client")
         assertTrue("guide:ktor:mtls-client" in guide, "marker mtls-client")
         assertTrue("guide:ktor:protocol-log" in guide, "marker protocol-log")
     }
@@ -261,6 +264,28 @@ class GuideSamplesTest {
             }
         }
 
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun connectUdpProxySample() {
+        val password = "secret"
+        // guide:ktor:connect-udp-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    connectUdpProxy =
+                        ConnectUdpProxy(
+                            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+                            ProxyCredentials("user", password),
+                        ) { url -> !url.host.endsWith(".internal.test") } // these go the usual way
+                }
+            }
+        client.use {
+            val p = (it.engine as KuicksilverEngine).config.connectUdpProxy!!
+            assertEquals(false, p.applies(io.ktor.http.Url("https://a.internal.test/"))) // ClientConnectUdpProxyTest runs one
+            assertEquals("masque.example", p.template.authority)
+        }
+    }
+
     @Test fun proxySample() =
         clientTest {
             // guide:ktor:proxy
@@ -287,6 +312,18 @@ class GuideSamplesTest {
                             }
                     }
                 }
+            // an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+            val overTls =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+                        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+                    }
+                }
+            overTls.use {
+                val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
+                assertEquals("https://proxy.corp.test:443", resolver.proxyFor(io.ktor.http.Url("https://example.test/")).toString())
+            }
             viaProxy.close()
             perHost.use {
                 val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
@@ -364,6 +401,24 @@ class GuideSamplesTest {
             assertTrue(config.http2.enabled)
             assertEquals(30.seconds, config.http2.pingInterval)
             assertEquals(1 shl 20, config.http2.settings.initialStreamWindow)
+        }
+    }
+
+    @Test
+    fun h2cClientSample() {
+        // guide:ktor:h2c-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    http2 {
+                        // these http:// origins speak HTTP/2 over cleartext TCP (h2c, prior knowledge); every other stays HTTP/1.1
+                        priorKnowledge = setOf(HostPort("backend.internal", 8080))
+                    }
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertEquals(setOf(HostPort("backend.internal", 8080)), config.http2.priorKnowledge) // ClientH2cTest serves it
         }
     }
 

@@ -54,7 +54,8 @@ The C shim `ksl` (`src/c/ksl_*.c`, one header `ksl.h`), its JNI binding (`src/jn
 (`src/nativeInterop/cinterop/ksl.def`) and the Kotlin facade `Ksl` (`src/commonMain/.../native/Ksl.kt`, with `actual`s
 per platform). Also `PacketBuffer` (a native-memory buffer: direct `ByteBuffer` on the JVM, `nativeHeap` on Native),
 `KslLoader` and the opt-in annotations (`io.kuicksilver.annotations`). OpenSSL is built from a pinned, signature-checked
-tarball by `tools/openssl` and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
+tarball by `tools/openssl`, with zlib and brotli compiled into its libcrypto for TLS certificate compression (ADR-0025),
+and its symbols are prefixed on Kotlin/Native (`tools/prefix`, ADR-0007).
 
 **Architecture Invariant:** no upcalls from C into Kotlin. When OpenSSL needs a decision (a certificate verdict), `ksl`
 pauses the handshake and returns; Kotlin resumes it later (ADR-0012). Packet keys and the endpoint's Retry and reset keys
@@ -144,14 +145,17 @@ disclosure).
 
 HTTP/3 and QPACK (`io.kuicksilver.http3`). `frame` holds the sans-IO frame and SETTINGS codecs, `qpack` the encoder and
 decoder with the dynamic table (blocked streams, Section Acknowledgment and Stream Cancellation, Insert Count
-Increment), `message` the field and pseudo-header rules (RFC 9114 section 4) and the `Priority` field, `runtime` the
+Increment), `message` the field and pseudo-header rules (RFC 9114 section 4), the `Priority` field, the Capsule parser and the
+CONNECT-UDP template, target syntax and address classes (RFC 9298), `connectudp` the CONNECT-UDP proxy and client tunnel
+(`UdpProxyImpl.kt`, `UdpTunnelImpl.kt`; ADR-0024), `runtime` the
 connection (`H3Session`: control and QPACK streams, GOAWAY, PRIORITY_UPDATE, datagram demultiplexing; its extension
 files are `H3Session.control.kt`, `H3Session.critical.kt` and `H3Session.shutdown.kt`) and the request
 streams (HEADERS/DATA/trailers with backpressure, 1xx, Extended CONNECT: `ServerRequestStream.kt` reads requests and
 writes responses, `ClientRequestStream.kt` writes requests and reads responses, `RequestStream.kt` holds the body pump
 both share). The public API is
 `Http3Endpoint`, `Http3Connection`, `Http3Request`/`Http3Response`, `Http3ServerRequest`, `Http3Stream`, `Http3Settings`
-and `Http3Exception`. Every HTTP/3 resource bound (field section size, blocked streams, buffered PRIORITY_UPDATEs, frame
+and `Http3Exception`, and for CONNECT-UDP `UdpProxy`, `UdpProxyConfig`, `UdpProxyTemplate`, `UdpTunnel` and
+`Http3Connection.connectUdp`. Every HTTP/3 resource bound (field section size, blocked streams, buffered PRIORITY_UPDATEs, frame
 length never pre-allocated) lives here.
 
 ### `kuicksilver-http2`

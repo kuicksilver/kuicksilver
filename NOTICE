@@ -3,6 +3,9 @@ Copyright 2026 The Kuicksilver Authors
 
 This product is statically linked against OpenSSL 4.1.x (https://openssl-library.org),
 licensed under the Apache License 2.0; see licenses/LICENSE.openssl.txt.
+Its libcrypto contains zlib (https://zlib.net, Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler,
+zlib License; see licenses/LICENSE.zlib.txt) and brotli (https://github.com/google/brotli, Copyright (c) 2009, 2010,
+2013-2016 by the Brotli Authors, MIT License; see licenses/LICENSE.brotli.txt), used for TLS certificate compression.
 
 kuicksilver-ktor-network, kuicksilver-ktor-client and kuicksilver-ktor-server, including their test sources, contain
 files adapted from Ktor 3.6.0 (https://github.com/ktorio/ktor, Copyright 2014-2025 JetBrains

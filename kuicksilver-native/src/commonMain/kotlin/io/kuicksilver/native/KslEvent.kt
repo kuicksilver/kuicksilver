@@ -67,6 +67,12 @@ public object KslConst {
      */
     public const val OPT_ALPN_POLICY: Int = 13
 
+    /**
+     * Both roles: 1 (the default) offers and accepts TLS certificate compression (RFC 8879; brotli, then zlib) and compresses
+     * a server's chain at [Ksl.ctxFreeze], 0 turns it off (ABI 7, additive).
+     */
+    public const val OPT_CERT_COMPRESSION: Int = 14
+
     /** A ClientHello without ALPN completes without it: the default. */
     public const val ALPN_POLICY_OPEN: Int = 0
 
@@ -158,6 +164,17 @@ public object KslConst {
      */
     public const val GET_GROUP: Int = 13
 
+    /**
+     * 2 bytes big-endian: the algorithm (1 zlib, 2 brotli) of the CompressedCertificate the peer sent its certificate in (RFC
+     * 8879), 0 for a plain Certificate or none (additive in ABI 7).
+     */
+    public const val GET_CERT_COMPRESSION: Int = 14
+
+    /**
+     * 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with, bit 0 zlib, bit 1 brotli
+     * (RFC 8879; the bundled OpenSSL of Android and iOS: zlib only, ADR-0025). Additive in ABI 7.
+     */
+    public const val GET_CERT_COMPRESSORS: Int = 18
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3
@@ -248,10 +265,22 @@ public object KslConst {
     public const val UDP_GET_LOCAL: Int = 3
     public const val UDP_GET_ERROR: Int = 4
     public const val UDP_GET_STATS: Int = 5
+
+    /** `ksl_udp_get`: the waits a receive began for a datagram (4 bytes BE), counted before each one on every platform (ABI 7). */
+    public const val UDP_GET_WAITS: Int = 6
     public const val UDP_MAX_BATCH: Int = 64
+
+    /** The largest ICMP Packet Too Big `ksl_icmp_ptb_build` writes (`KSL_ICMP_PTB_MAX`, ABI 7, additive). */
+    public const val ICMP_PTB_MAX: Int = 1240
 
     /** Bytes of the quoted datagram a Packet Too Big keeps (`KSL_UDP_PTB_QUOTE`, ABI 7). */
     public const val UDP_PTB_QUOTE: Int = 64
+
+    /** An ICMP port unreachable (`KSL_UNREACH_PORT`, `ksl_udp_take_unreachable`). */
+    public const val UNREACH_PORT: Int = 1
+
+    /** An ICMP host (ICMPv6 address) unreachable (`KSL_UNREACH_HOST`, `ksl_udp_take_unreachable`). */
+    public const val UNREACH_HOST: Int = 2
     public const val E_TRUNCATED: Int = 0xff0009
     public const val E_TOO_LATE: Int = 0xff000a
 

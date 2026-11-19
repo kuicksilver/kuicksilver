@@ -465,15 +465,36 @@ internal class KuicksilverEngine(
         if (disabled && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed; Http3DiscoveryMode.H3Only never uses TCP")
         }
+        // a CONNECT-UDP proxy carries the https requests it applies to over HTTP/3 only: no TCP path, which would leave it out
+        config.connectUdpProxy?.takeIf { url.protocol.isSecure() && it.applies(url) }?.let { udp ->
+            if (config.http3.discovery == Http3DiscoveryMode.H1Only) {
+                throw UnsupportedOperationException(
+                    "connectUdpProxy carries HTTP/3 only, which http3 { discovery = H1Only } turns off; exempt ${url.host} with " +
+                        "its applies, or use another discovery mode",
+                )
+            }
+            if (disabled) {
+                throw UnsupportedOperationException("HTTP/3 is disabled by http3Allowed, and connectUdpProxy never uses TCP")
+            }
+            selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.Proxy, d)
+            return try {
+                h3.execute(H3Target(url.host, url.host, url.port, udpProxy = udp), data, callContext)
+            } catch (e: H3NotSent) {
+                throw e.cause ?: e
+            }
+        }
         val proxy = proxyFor(url) // explicit, else the resolver's: a proxy the engine cannot use fails here, never bypassed
-        if (proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+        // a proxy that cannot carry HTTP/3 (today every one: ResolvedProxy.carriesHttp3, the seam for CONNECT-UDP) keeps
+        // the request on TCP through it, an https:// proxy included
+        val tcpOnlyProxy = proxy != null && !proxy.carriesHttp3
+        if (tcpOnlyProxy && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(
-                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the proxy for ${url.host} (UDP through an HTTP CONNECT or " +
-                    "SOCKS5 proxy is not supported); remove the proxy or use another discovery mode",
+                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the proxy for ${url.host} (UDP through an HTTP CONNECT, " +
+                    "plain or over TLS, or a SOCKS5 proxy is not supported); remove the proxy or use another discovery mode",
             )
         }
-        // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
-        if (!url.protocol.isSecure() || proxy != null ||
+        // HTTP/3 needs TLS and no proxy (through a proxy only TCP)
+        if (!url.protocol.isSecure() || tcpOnlyProxy ||
             config.http3.discovery == Http3DiscoveryMode.H1Only || disabled
         ) {
             val reason =
@@ -492,6 +513,9 @@ internal class KuicksilverEngine(
             }
             return r
         }
+        // the HTTP/3 paths below connect directly: a proxy that carries HTTP/3 (CONNECT-UDP) needs a path through it first,
+        // so until then such a proxy fails the request rather than being gone around
+        if (proxy != null) throw UnsupportedOperationException("HTTP/3 through the proxy $proxy is not supported")
         val target = H3Target(url.host, url.host, url.port)
         val webSocket = data.attributes.contains(WEBSOCKETS_KEY)
         val network = checkNetwork()

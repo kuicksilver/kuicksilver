@@ -628,3 +628,28 @@ a resumption's re-verification under ECH too:
 ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
 remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
 the DNS query itself unless DNS is protected, stay visible.
+## Certificate compression
+
+Both roles compress certificate chains with TLS certificate compression (RFC 8879) by default, over QUIC and TCP alike,
+TLS 1.3 only: a client offers brotli, then zlib, and a server sends its chain compressed with the first of the client's
+algorithms; a server that asks for a client certificate offers the same two, and the client compresses its certificate.
+A peer without it sends and gets plain certificates. Over QUIC a smaller chain keeps more of a server's first flight
+inside the amplification limit before the client's address is validated (RFC 9000 section 8.1): measured with the test
+chains, a 13.7 KB leaf and its intermediate shrink the server's first flight from 15,523 to 2,689 bytes, and a
+WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes of Certificate message).
+
+- A server compresses its chain once, when the context for its identity is built; a chain neither algorithm makes
+  smaller goes out uncompressed. A session that staples an OCSP response sends its Certificate uncompressed: over TLS
+  1.3 the response is part of the message, and the chain compressed beforehand has none.
+- What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an announced uncompressed
+  length above it, data that does not decompress to exactly that length, or a decompression that runs past it ends the
+  handshake with `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47).
+- `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell which
+  algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).
+- `certificateCompression = false` (experimental) turns it off for a configuration: no offer, and a compressed
+  certificate from the peer is an `unexpected_message` (10).
+
+The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
+([ADR-0025](../adr/0025-zlib-and-brotli-in-libcrypto.md)). On Android and iOS only brotli's decoder is built, to keep the
+library small (about 230 KB added, against about 510 KB with the encoder elsewhere): there a server compresses its chain with
+zlib, and a client sends its own certificate uncompressed; both still take brotli and zlib from the peer.

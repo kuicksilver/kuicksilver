@@ -10,6 +10,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -57,13 +59,19 @@ class KtorDatagramIoTest {
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val diag = HandleDiagnostics("refused binds")
                 val before = openDescriptors()
+                diag.mark("before")
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                assertEquals(0, refusedSelectorsRunning(), "a refused portable bind returned before its selector ended")
+                diag.mark("after 20 portable")
                 // the default (accelerated, then portable) path, which the HTTP/3 server binds with
                 repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+                diag.mark("after 20 default")
                 // a refused bind returns once its selector's loop has ended and closed its pipe (KtorDatagramIo.open)
                 val leaked = openDescriptors() - before
-                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+                diag.report(leaked < 10) { "40 refused binds left $leaked descriptors open" }
             } finally {
                 held.close()
             }
@@ -75,36 +83,180 @@ class KtorDatagramIoTest {
      * waits for the loop. The binds start on the test's own thread while the threads are held; a bind that returns there
      * at once (the previous code: 40 refused binds left 78 descriptors open at that point) is counted before the threads
      * are let go, one that waits is counted once they were and it returned.
+     *
+     * The measured round is the second. Kotlin/Native's dispatchers start a thread when a task finds none free and keep it,
+     * so the first round starts every thread the second holds. On Windows the count is the process's handles
+     * (`GetProcessHandleCount`), threads and their events among them; counted from before the first hold, the threads it
+     * started read as leaks whenever no earlier test had grown `Dispatchers.IO` to its 64 threads (run 44453449060: "40
+     * refused binds left 281 descriptors open", the same on main 8f76f749f, 279). The baseline is taken once the count has
+     * settled after the first round: a selector loop that was still to run then (the regression this test is for) would
+     * close its pipe during the second round and hide one of that round's. Linux and macOS count descriptors only, no
+     * thread: there the second round's count is held against the one from before the first round too.
+     *
+     * On Windows the 2026-11-19 VM run left about one Event handle per refused bind of the measured round (54 and 37 for 40,
+     * there 5 s later as well), no thread, while every selector of those binds had ended (`refusedSelectorsRunning`). Three
+     * measured rounds tell a cache from a leak: round A with binds, the control C holding the threads without binds, round B
+     * with binds again, each counted after a GC. A cache of the runtime fills in the first rounds and stays, so round B adds
+     * nothing; a leak of the binds adds as much in B as in A, and only B decides on Windows. The next run (7c92d0695) showed a
+     * cache: Event +55 in round A, +6 in the control, +2 in round B, threads and semaphores flat, the same before and after
+     * the GC. The first busy round of refused binds fills a one-time cache of about 55 events, which then stays.
      */
     @Test fun negative_refusedBindsReleaseTheirSelectorsUnderBusyDispatchers() =
         runBlocking {
             val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
-            val go = CompletableDeferred<Unit>()
             try {
                 val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
                 assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
-                val before = openDescriptors()
-                // more tasks than either dispatcher has threads, each holding its thread until the binds were made
-                val holding =
-                    List(512) { i ->
-                        launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { runBlocking { go.await() } }
-                    }
-                val binds =
-                    async(start = CoroutineStart.UNDISPATCHED) {
-                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
-                        repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
-                    }
-                val leakedWhileHeld = if (binds.isCompleted) openDescriptors() - before else null
-                go.complete(Unit)
-                binds.await()
-                holding.joinAll()
-                val leaked = leakedWhileHeld ?: (openDescriptors() - before)
-                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+                val diag = HandleDiagnostics("refused binds under busy dispatchers")
+                val initial = settledDescriptors()
+                diag.mark("initial")
+                refusedBindsWhileThreadsAreHeld(taken) {} // starts the threads the measured rounds hold
+                val before = settledDescriptors(collect = true)
+                diag.mark("before (after the first round, settled, after a GC)")
+                val a = measuredRound(taken, binds = true, diag, "round A, 40 binds")
+                val c = measuredRound(taken, binds = false, diag, "round C, no binds (the control)")
+                val b = measuredRound(taken, binds = true, diag, "round B, 40 binds")
+                val rounds = "round A ${a - before}, the control ${c - a}, round B ${b - c}"
+                if (handlesCountThreads) {
+                    // every handle of the process counts: a cache of the runtime fills in the first rounds and stays (round
+                    // B adds nothing), a leak of the binds grows with every round of binds (round B adds as much as round A)
+                    diag.report(b - c < 10) { "40 refused binds left ${b - c} handles open in the last round ($rounds)" }
+                } else {
+                    diag.report(a - before < 10 && b - c < 10) { "40 refused binds left descriptors open: $rounds" }
+                    assertTrue(b - initial < 10, "120 refused binds left ${b - initial} descriptors open")
+                }
             } finally {
-                go.complete(Unit)
                 held.close()
             }
         }
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun refusedSelectorsRunning(): Int = KtorDatagramIo.refusedSelectorsRunning.load()
+
+    /**
+     * One measured round: the threads held, 40 refused binds made (none with [binds] false: the control, which holds the
+     * threads alone), every selector of them ended by the time the binds returned. Returns the count while the threads were
+     * still held when the binds returned by then (a bind that returned without waiting for its loop shows here), else the
+     * settled count after a GC (what a finalizer still holds is not a leak of the binds).
+     */
+    private suspend fun measuredRound(
+        taken: InetSocketAddress,
+        binds: Boolean,
+        diag: HandleDiagnostics,
+        label: String,
+    ): Int {
+        var whileHeld: Int? = null
+        refusedBindsWhileThreadsAreHeld(taken, binds) {
+            if (!binds) return@refusedBindsWhileThreadsAreHeld // the control is measured as the rounds of binds are
+            whileHeld = openDescriptors()
+            diag.mark("$label, while held (the binds returned before the threads were let go)")
+            // a bind returned while no selector loop could run: its own must have ended all the same
+            assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+        }
+        assertEquals(0, refusedSelectorsRunning(), "a refused bind returned before its selector ended")
+        whileHeld?.let { return it }
+        diag.mark("$label, settled")
+        val n = settledDescriptors(collect = true)
+        diag.mark("$label, settled after a GC")
+        return n
+    }
+
+    /**
+     * What the handle count was made of at each [mark], by kind ([handleBreakdown]): on Windows, where the count is every
+     * handle of the process, a failure says which object types grew (threads and their events, or the sockets and events of a
+     * selector) and what is left after a further 5 s.
+     */
+    private class HandleDiagnostics(
+        private val what: String,
+    ) {
+        private val marks = ArrayList<Pair<String, Map<String, Int>>>()
+
+        fun mark(label: String) {
+            marks += label to handleBreakdown()
+        }
+
+        suspend fun report(
+            ok: Boolean,
+            message: () -> String,
+        ) {
+            if (!ok) {
+                delay(5_000) // a late end: what settles only after the binds' own wait is not theirs
+                mark("5 s later")
+            }
+            val text = describe()
+            assertTrue(ok, "${message()}\n$text")
+        }
+
+        private fun describe(): String {
+            val first = marks.first().second
+            return marks.joinToString("\n") { (label, m) ->
+                val kinds = (first.keys + m.keys).sorted()
+                val change =
+                    kinds.mapNotNull { k ->
+                        val d = (m[k] ?: 0) - (first[k] ?: 0)
+                        if (d != 0) "$k ${if (d > 0) "+" else ""}$d" else null
+                    }
+                "  $label: total ${m.values.sum()}; vs ${marks.first().first}: ${change.joinToString().ifEmpty { "no change" }}"
+            }
+        }
+    }
+
+    /**
+     * The count once it has stopped moving: read every 50 ms until five reads in a row agree, at most for 10 s (then the
+     * last read); with [collect], after a full GC, so what only a finalizer still holds is gone. The selector loops of binds that already returned close their pipes when a thread takes them, and
+     * nothing signals that; the count is what is measured.
+     */
+    @OptIn(kotlin.native.runtime.NativeRuntimeApi::class)
+    private suspend fun settledDescriptors(collect: Boolean = false): Int {
+        if (collect) {
+            kotlin.native.runtime.GC
+                .collect()
+        }
+        var last = openDescriptors()
+        var same = 0
+        val start =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        while (same < 5 && start.elapsedNow() < 10.seconds) {
+            delay(50)
+            val n = openDescriptors()
+            if (n == last) same++ else same = 0
+            last = n
+        }
+        return last
+    }
+
+    /**
+     * Makes 40 refused binds of [taken] (none without [binds]) while more tasks than `Dispatchers.Default` and
+     * `Dispatchers.IO` have threads hold every one of them, and returns once the binds and the holders ended. [whileHeld]
+     * runs while the threads are still held, and only if the binds already returned by then.
+     */
+    private suspend fun refusedBindsWhileThreadsAreHeld(
+        taken: InetSocketAddress,
+        binds: Boolean = true,
+        whileHeld: () -> Unit,
+    ) = coroutineScope {
+        val go = CompletableDeferred<Unit>()
+        try {
+            // more tasks than either dispatcher has threads, each holding its thread until the binds were made
+            val holding =
+                List(512) { i ->
+                    launch(if (i % 2 == 0) Dispatchers.Default else Dispatchers.IO) { runBlocking { go.await() } }
+                }
+            val binds =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    if (!binds) return@async
+                    repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                    repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                }
+            if (binds.isCompleted) whileHeld()
+            go.complete(Unit)
+            binds.await()
+            holding.joinAll()
+        } finally {
+            go.complete(Unit)
+        }
+    }
 
     /**
      * The portable socket does not use ktor-network for a specific IPv6 address (Ktor issue KTOR-10017, security, under
@@ -143,3 +295,7 @@ class KtorDatagramIoTest {
 
     private fun openDescriptors(): Int = openHandleCount()
 }
+
+/** Whether [openHandleCount] counts every handle of the process, threads among them (Windows), not descriptors alone. */
+@OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+private val handlesCountThreads: Boolean = kotlin.native.Platform.osFamily == kotlin.native.OsFamily.WINDOWS

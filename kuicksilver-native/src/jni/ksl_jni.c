@@ -853,6 +853,72 @@ static jboolean j_udp_take_ptb(JNIEnv *e, jclass c, jlong h, jbyteArray quote, j
     (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
     return JNI_TRUE;
 }
+/* ksl_icmp_ptb_build: the message into out, from payload[0, len); 0 for bad arguments */
+static jint j_icmp_ptb_build(JNIEnv *e, jclass c, jbyteArray out, jbyteArray target, jbyteArray local,
+                             jbyteArray payload, jint len, jint mtu) {
+    (void)c;
+    if (!out || !target || !local || !payload || len < 0 || len > (*e)->GetArrayLength(e, payload) ||
+        (*e)->GetArrayLength(e, target) < KSL_UDP_ADDR_LEN || (*e)->GetArrayLength(e, local) < KSL_UDP_ADDR_LEN ||
+        (*e)->GetArrayLength(e, out) < KSL_ICMP_PTB_MAX || mtu < 0)
+        return 0;
+    uint8_t t[KSL_UDP_ADDR_LEN], l[KSL_UDP_ADDR_LEN], m[KSL_ICMP_PTB_MAX];
+    (*e)->GetByteArrayRegion(e, target, 0, KSL_UDP_ADDR_LEN, (jbyte *)t);
+    (*e)->GetByteArrayRegion(e, local, 0, KSL_UDP_ADDR_LEN, (jbyte *)l);
+    jbyte *p = (*e)->GetPrimitiveArrayCritical(e, payload, NULL);
+    if (!p)
+        return 0;
+    uint32_t n = ksl_icmp_ptb_build(m, sizeof m, t, l, (const uint8_t *)p, (uint32_t)len, (uint32_t)mtu);
+    (*e)->ReleasePrimitiveArrayCritical(e, payload, p, JNI_ABORT);
+    if (n)
+        (*e)->SetByteArrayRegion(e, out, 0, (jsize)n, (const jbyte *)m);
+    return (jint)n;
+}
+/* ksl_icmp_open: the descriptor, or -1 with err[0] set */
+static jint j_icmp_open(JNIEnv *e, jclass c, jint family, jintArray err) {
+    (void)c;
+    int x = 0;
+    int fd = ksl_icmp_open(family, &x);
+    if (err && (*e)->GetArrayLength(e, err) >= 1) {
+        jint v = (jint)x;
+        (*e)->SetIntArrayRegion(e, err, 0, 1, &v);
+    }
+    return fd;
+}
+static jboolean j_icmp_send(JNIEnv *e, jclass c, jint fd, jbyteArray msg, jint len, jbyteArray target,
+                            jbyteArray local) {
+    (void)c;
+    if (!msg || !target || !local || len <= 0 || len > KSL_ICMP_PTB_MAX || len > (*e)->GetArrayLength(e, msg) ||
+        (*e)->GetArrayLength(e, target) < KSL_UDP_ADDR_LEN || (*e)->GetArrayLength(e, local) < KSL_UDP_ADDR_LEN)
+        return JNI_FALSE;
+    uint8_t m[KSL_ICMP_PTB_MAX], t[KSL_UDP_ADDR_LEN], l[KSL_UDP_ADDR_LEN];
+    (*e)->GetByteArrayRegion(e, msg, 0, len, (jbyte *)m);
+    (*e)->GetByteArrayRegion(e, target, 0, KSL_UDP_ADDR_LEN, (jbyte *)t);
+    (*e)->GetByteArrayRegion(e, local, 0, KSL_UDP_ADDR_LEN, (jbyte *)l);
+    return ksl_icmp_send(fd, m, (uint32_t)len, t, l) ? JNI_TRUE : JNI_FALSE;
+}
+static void j_icmp_close(JNIEnv *e, jclass c, jint fd) {
+    (void)e;
+    (void)c;
+    ksl_icmp_close(fd);
+}
+/* ksl_udp_take_unreachable: dst (KSL_UDP_ADDR_LEN bytes) the destination, quote (KSL_UDP_PTB_QUOTE bytes) the quoted payload,
+   info[0] its length and info[1] the kind, when an entry was queued */
+static jboolean j_udp_take_unreachable(JNIEnv *e, jclass c, jlong h, jbyteArray dst, jbyteArray quote, jintArray info) {
+    (void)c;
+    if (!dst || !quote || !info || (*e)->GetArrayLength(e, dst) < KSL_UDP_ADDR_LEN ||
+        (*e)->GetArrayLength(e, quote) < KSL_UDP_PTB_QUOTE || (*e)->GetArrayLength(e, info) < 2)
+        return JNI_FALSE;
+    uint8_t d[KSL_UDP_ADDR_LEN], q[KSL_UDP_PTB_QUOTE];
+    uint32_t ql = 0, kind = 0;
+    if (!ksl_udp_take_unreachable(P(ksl_udp, h), d, q, sizeof q, &ql, &kind))
+        return JNI_FALSE;
+    jint i[2] = {(jint)ql, (jint)kind};
+    (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
+    if (ql)
+        (*e)->SetByteArrayRegion(e, quote, 0, (jsize)ql, (const jbyte *)q);
+    (*e)->SetIntArrayRegion(e, info, 0, 2, i);
+    return JNI_TRUE;
+}
 static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
     (void)c;
     uint32_t l = 0;
@@ -1055,6 +1121,11 @@ static const JNINativeMethod methods[] = {
     {"udpShutdown", "(J)V", (void *)j_udp_shutdown},
     {"udpClose", "(J)V", (void *)j_udp_close},
     {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb},
+    {"udpTakeUnreachable", "(J[B[B[I)Z", (void *)j_udp_take_unreachable},
+    {"icmpPtbBuild", "([B[B[B[BII)I", (void *)j_icmp_ptb_build},
+    {"icmpOpen", "(I[I)I", (void *)j_icmp_open},
+    {"icmpSend", "(I[BI[B[B)Z", (void *)j_icmp_send},
+    {"icmpClose", "(I)V", (void *)j_icmp_close},
     {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},
     {"dnsQuery", "(" S_STR "I[BI)[B", (void *)j_dns_query},

@@ -385,6 +385,12 @@ static int server_status(SSL *ssl, ksl_ssl *s) {
         ERR_clear_error();
         return SSL_TLSEXT_ERR_NOACK;
     }
+    /* RFC 8879 section 4: a CompressedCertificate holds "the encoded Certificate message that would have been sent", which over TLS
+       1.3 carries this response in the leaf's CertificateEntry (RFC 9846 section 4.4.2.1). An OpenSSL server sends only a chain
+       compressed beforehand (ksl_ctx_freeze), which has no session's response in it: sent to a client that offered compression,
+       the response would be gone, a revoked status included. A session that staples sends its Certificate uncompressed (this
+       callback runs while the ClientHello is processed, before OpenSSL chooses at EncryptedExtensions). */
+    SSL_set_options(ssl, SSL_OP_NO_TX_CERTIFICATE_COMPRESSION);
     return SSL_TLSEXT_ERR_OK;
 }
 

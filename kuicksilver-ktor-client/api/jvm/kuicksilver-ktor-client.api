@@ -42,6 +42,15 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 	public static fun values ()[Lio/kuicksilver/ktor/client/AlternativeSource;
 }
 
+public final class io/kuicksilver/ktor/client/ConnectUdpProxy {
+	public fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lio/kuicksilver/http3/UdpProxyTemplate;Lio/kuicksilver/ktor/client/ProxyCredentials;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getApplies ()Lkotlin/jvm/functions/Function1;
+	public final fun getCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
+	public final fun getTemplate ()Lio/kuicksilver/http3/UdpProxyTemplate;
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/kuicksilver/ktor/client/Dns {
 	public static final field Companion Lio/kuicksilver/ktor/client/Dns$Companion;
 	public static final field MAX_ADDRESSES_PER_FAMILY I
@@ -133,9 +142,11 @@ public final class io/kuicksilver/ktor/client/Http2ClientConfig {
 	public fun <init> ()V
 	public final fun getEnabled ()Z
 	public final fun getPingInterval-UwyO8pc ()J
+	public final fun getPriorKnowledge ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http2/Http2Settings;
 	public final fun setEnabled (Z)V
 	public final fun setPingInterval-LRDsOJo (J)V
+	public final fun setPriorKnowledge (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http2/Http2Settings;)V
 }
 
@@ -158,6 +169,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getWebTransportIgnoresConnectUdpProxy ()Z
 	public final fun getWebTransportIgnoresProxy ()Z
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
@@ -176,6 +188,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setWebTransportIgnoresConnectUdpProxy (Z)V
 	public final fun setWebTransportIgnoresProxy (Z)V
 }
 
@@ -278,6 +291,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public fun <init> ()V
 	public final fun getAssumeHttp11 ()Z
 	public final fun getConnectTimeout-UwyO8pc ()J
+	public final fun getConnectUdpProxy ()Lio/kuicksilver/ktor/client/ConnectUdpProxy;
 	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getDns ()Lio/kuicksilver/ktor/client/Dns;
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
@@ -294,6 +308,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getPacFullWebSocketUrl ()Z
 	public final fun getProxyCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
 	public final fun getProxyResolver ()Lio/kuicksilver/ktor/client/ProxyResolver;
+	public final fun getProxyTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
@@ -302,6 +317,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setAssumeHttp11 (Z)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setConnectUdpProxy (Lio/kuicksilver/ktor/client/ConnectUdpProxy;)V
 	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
 	public final fun setDns (Lio/kuicksilver/ktor/client/Dns;)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
@@ -316,6 +332,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setPacFullWebSocketUrl (Z)V
 	public final fun setProxyCredentials (Lio/kuicksilver/ktor/client/ProxyCredentials;)V
 	public final fun setProxyResolver (Lio/kuicksilver/ktor/client/ProxyResolver;)V
+	public final fun setProxyTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
@@ -405,8 +422,9 @@ public final class io/kuicksilver/ktor/client/ProxyCredentials {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class io/kuicksilver/ktor/client/ProxyException : java/io/IOException {
-	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
+public class io/kuicksilver/ktor/client/ProxyException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Integer;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getReplyCode ()Ljava/lang/Integer;
 }
 
@@ -421,6 +439,10 @@ public final class io/kuicksilver/ktor/client/ProxyResolvers {
 	public final fun getSystem ()Lio/kuicksilver/ktor/client/ProxyResolver;
 }
 
+public final class io/kuicksilver/ktor/client/ProxyTlsException : io/kuicksilver/ktor/client/ProxyException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+}
+
 public final class io/kuicksilver/ktor/client/ResolvedProxy {
 	public static final field Companion Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;
 	public fun equals (Ljava/lang/Object;)Z
@@ -428,6 +450,7 @@ public final class io/kuicksilver/ktor/client/ResolvedProxy {
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPort ()I
 	public final fun getRemoteDns ()Z
+	public final fun getTls ()Z
 	public final fun getType ()Lio/ktor/client/engine/ProxyType;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -436,6 +459,8 @@ public final class io/kuicksilver/ktor/client/ResolvedProxy {
 public final class io/kuicksilver/ktor/client/ResolvedProxy$Companion {
 	public final fun http (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;)Lio/kuicksilver/ktor/client/ResolvedProxy;
 	public static synthetic fun http$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
+	public final fun https (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;)Lio/kuicksilver/ktor/client/ResolvedProxy;
+	public static synthetic fun https$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
 	public final fun socks5 (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;Z)Lio/kuicksilver/ktor/client/ResolvedProxy;
 	public static synthetic fun socks5$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ZILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
 }

@@ -22,8 +22,11 @@ Documents and identifiers are in English.
 | [0014](0014-ktor-engines-via-http3-endpoint.md) | The Ktor engines see the transport only through `Http3Endpoint` | accepted |
 | [0015](0015-0rtt-implementation.md) | 0-RTT in 0.2.0: ksl ABI 6 early data, a per-server replay register keyed by ticket, configuration-bound tickets, HTTP/3 gating | accepted |
 | [0017](0017-http2.md) | HTTP/2 in 0.3.0: a sans-IO `kuicksilver-http2` module next to `kuicksilver-http3`, no h2c, no server push | accepted; h2c and coalescing superseded by 0018 |
-| [0018](0018-h2c-and-coalescing-in-030.md) | h2c (prior knowledge, opt-in) and connection coalescing across origins in 0.3.0 | accepted, not implemented yet |
+| [0018](0018-h2c-and-coalescing-in-030.md) | h2c (prior knowledge, opt-in) and connection coalescing across origins in 0.3.0 | accepted; h2c implemented, coalescing not yet |
 | [0019](0019-openssl-4-and-ech.md) | OpenSSL 4.1.x, then 4.2 LTS, for Encrypted Client Hello in 0.3.0 | accepted; the move to 4.1.0 implemented |
 | [0020](0020-pluggable-dns.md) | A pluggable name resolver for the Ktor client engine (`dns`), after OkHttp's `Dns`, sorted and raced by the engine | accepted |
 | [0021](0021-qlog-http3-events.md) | qlog HTTP/3 events: the qlog 0.3 family (h3-events-04), one trace per connection written by the loop, field values redacted by default | accepted |
 | [0022](0022-proxy-protocol.md) | The PROXY protocol on the server's TCP connectors: trusted sources only, the header first, the client in `origin` | accepted; implemented in 0.3.0 (experimental) |
+| [0023](0023-https-proxy.md) | HTTPS proxies in the client engine: TLS to the proxy, HTTP/1.1 only, the proxy's own name and trust | accepted; implemented in 0.3.0 (experimental) |
+| [0024](0024-connect-udp-over-http3.md) | CONNECT-UDP (RFC 9298) over HTTP/3 only, in `kuicksilver-http3`, with proxied QUIC through `DatagramIo` | proposed |
+| [0025](0025-zlib-and-brotli-in-libcrypto.md) | zlib and brotli, pinned and verified, compiled into libcrypto for TLS certificate compression | accepted |

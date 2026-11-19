@@ -74,12 +74,14 @@ kotlin {
 
 // Apple reads a framework's privacy manifest from the framework bundle (the root of a shallow iOS bundle). The licences
 // travel with the framework into every app that embeds it: Kuicksilver's LICENSE and NOTICE, and the licence of the
-// OpenSSL linked into it, at the path NOTICE names (licenses/LICENSE.openssl.txt).
+// OpenSSL linked into it and of the zlib and brotli inside OpenSSL, at the paths NOTICE names (licenses/LICENSE.*.txt).
 val privacyManifest = rootProject.file("../../kuicksilver-native/apple/PrivacyInfo.xcprivacy")
 val licenceFiles = mapOf(
     "LICENSE" to rootProject.file("../../LICENSE"),
     "NOTICE" to rootProject.file("../../NOTICE"),
     "licenses/LICENSE.openssl.txt" to rootProject.file("../../licenses/LICENSE.openssl.txt"),
+    "licenses/LICENSE.zlib.txt" to rootProject.file("../../licenses/LICENSE.zlib.txt"),
+    "licenses/LICENSE.brotli.txt" to rootProject.file("../../licenses/LICENSE.brotli.txt"),
 )
 tasks.matching { it.name.startsWith("assembleKuicksilver") && it.name.endsWith("XCFramework") }.configureEach {
     inputs.file(privacyManifest)

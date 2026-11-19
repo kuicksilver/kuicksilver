@@ -29,8 +29,14 @@ cp -R "$O" "$work/a/build/openssl/"
 if [ "$skip_openssl" = 1 ]; then
   cp -R "$O" "$work/b/build/openssl/"
 else
-  [ -d "$root/build/openssl-work/src/openssl-$version" ] || { echo "FAIL: run tools/openssl/fetch.sh first" >&2; exit 2; }
-  mkdir -p "$work/b/build/openssl-work/src"; cp -R "$root/build/openssl-work/src/openssl-$version" "$work/b/build/openssl-work/src/"
+  # the copy gets the downloaded tarballs, not the unpacked trees: its own fetch.sh verifies them against the pins (PGP
+  # signatures by the pinned fingerprints, SHA-256, brotli's tag commit) and unpacks them, as a first build would, offline
+  zv=$(awk '$0 == "[zlib]" { f = 1; next } /^\[/ { f = 0 } f && $1 == "version" { gsub(/"/, "", $3); print $3; exit }' "$root/gradle/compression-libs.toml")
+  bv=$(awk '$0 == "[brotli]" { f = 1; next } /^\[/ { f = 0 } f && $1 == "version" { gsub(/"/, "", $3); print $3; exit }' "$root/gradle/compression-libs.toml")
+  s="$root/build/openssl-work/src"; tarballs="openssl-$version.tar.gz openssl-$version.tar.gz.asc zlib-$zv.tar.gz zlib-$zv.tar.gz.asc brotli-$bv.tar.gz"
+  for t in $tarballs; do [ -f "$s/$t" ] || { echo "FAIL: $s/$t missing: run tools/openssl/fetch.sh first" >&2; exit 2; }; done
+  mkdir -p "$work/b/build/openssl-work/src"; for t in $tarballs; do cp "$s/$t" "$work/b/build/openssl-work/src/"; done
+  bash "$work/b/tools/openssl/fetch.sh"
   bash "$work/b/tools/openssl/build.sh" "$target"
   for a in libcrypto.a libssl.a; do same "openssl $target $a" "$O/lib/$a" "$work/b/build/openssl/$target/lib/$a"; done
   # the second build must also be what the first one was configured from (build.sh copies these next to the archives)

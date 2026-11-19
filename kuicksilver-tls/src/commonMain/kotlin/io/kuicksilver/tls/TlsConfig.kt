@@ -187,6 +187,8 @@ public class TlsConfig private constructor(
     @property:ExperimentalKuicksilverApi public val alpnFallback: String? = null,
     /** The key-exchange groups and a client's key shares; see [Builder.keyExchangeGroups]. */
     @property:ExperimentalKuicksilverApi public val keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default,
+    /** Whether TLS certificate compression (RFC 8879) is offered and used; see [Builder.certificateCompression]. */
+    @property:ExperimentalKuicksilverApi public val certificateCompression: Boolean = true,
     /** Client: the Encrypted Client Hello configurations offered; see [Builder.echConfigList]. */
     @property:ExperimentalKuicksilverApi public val echConfigList: EchConfigList? = null,
     /** Client: GREASE ECH where no configuration is offered; see [Builder.echGrease]. */
@@ -224,6 +226,7 @@ public class TlsConfig private constructor(
             o.ocspStapling,
             alpnFallback,
             groups,
+            certificateCompression,
             echConfigList,
             echGrease,
             echKeys,
@@ -401,6 +404,22 @@ public class TlsConfig private constructor(
         public var keyExchangeGroups: KeyExchangeGroups = KeyExchangeGroups.Default
 
         /**
+         * TLS certificate compression (RFC 8879), over TCP and QUIC; default true. A client offers brotli, then zlib, in its
+         * ClientHello and accepts the server's chain compressed with either; a server sends its chain compressed with the first
+         * of the client's algorithms it shares (compressed once per identity, when its context is built; a chain neither makes
+         * smaller goes out uncompressed) and offers the same two for client certificates when it asks for one. A peer without
+         * it gets and sends plain certificates. Over QUIC a smaller chain keeps more of the server's first flight inside the
+         * amplification limit before the client's address is validated (RFC 9000 section 8.1). TLS 1.3 only: a TLS 1.2
+         * handshake ignores it. What a peer sends is held to the certificate list bound of 100 KiB: an announced length above
+         * it, data that does not decompress to exactly the announced length, or a decompression past it ends the handshake with
+         * `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47). False: no extension, and a
+         * compressed certificate from the peer is an `unexpected_message` (10). The algorithm the peer's chain came in:
+         * [TlsConnection.peerCertificateCompression].
+         */
+        @ExperimentalKuicksilverApi
+        public var certificateCompression: Boolean = true
+
+        /**
          * Client: the Encrypted Client Hello configurations to offer (RFC 9849), from the origin's HTTPS record (RFC 9848) or
          * given out of band; default none. With a usable list the ClientHello the path sees names the configuration's
          * `public_name`, and the real [serverName] travels encrypted; when the server rejects it the handshake fails with
@@ -482,6 +501,7 @@ public class TlsConfig private constructor(
                 ocspStapling,
                 fallback,
                 keyExchangeGroups,
+                certificateCompression,
                 echConfigList,
                 echGrease,
                 echKeys,

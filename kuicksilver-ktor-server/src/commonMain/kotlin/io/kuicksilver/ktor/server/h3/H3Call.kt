@@ -34,6 +34,8 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.network.DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE
+import io.kuicksilver.ktor.server.ConnectUdpRequestKey
+import io.kuicksilver.ktor.server.ConnectUdpUpgrade
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
@@ -66,6 +68,8 @@ internal class H3Call(
     altSvc: () -> String? = { null },
     /** The engine's `webSocketMaxMessageSize`, for an Extended CONNECT for `websocket`. */
     webSocketMaxMessageSize: Long = DEFAULT_WEBSOCKET_MAX_MESSAGE_SIZE,
+    /** A CONNECT-UDP request (RFC 9298) on an engine with `connectUdp`: a CONNECT call marked for `connectUdp(proxy)` routes. */
+    connectUdp: Boolean = false,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -79,6 +83,8 @@ internal class H3Call(
     override val response: H3Response =
         if (webTransport) {
             H3WebTransportResponse(this, h3, beforeUpgradeForTest)
+        } else if (connectUdp) {
+            H3ConnectUdpResponse(this, h3)
         } else if (webSocket) {
             H3UpgradeResponse(
                 this,
@@ -95,6 +101,7 @@ internal class H3Call(
     init {
         putResponseAttribute()
         if (webTransport) attributes.put(WebTransportRequestKey, h3)
+        if (connectUdp) attributes.put(ConnectUdpRequestKey, h3)
         attributes.put(PeerCertificatesKey, peerCertificates)
         attributes.put(RequestPriorityKey, h3.priority)
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -108,7 +115,7 @@ internal class H3Call(
         val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         if (h3.receivedEarly || gatewayMarked) attributes.put(ReceivedEarlyKey, true)
-        if (!webSocket && !webTransport) answerExpectation()
+        if (!webSocket && !webTransport && !connectUdp) answerExpectation()
     }
 
     /**
@@ -370,6 +377,31 @@ internal class H3WebTransportResponse(
      * A 2xx that does not come from a `webTransport` route (another route on the path answered the CONNECT) would tell
      * the client a session exists that nobody accepted: it is answered 501 instead. Errors pass as they are. Mapped in
      * status(), not setStatus(), so that `call.response.status()` reports the 501 that goes out.
+     */
+    override fun status(value: HttpStatusCode) {
+        super.status(if (value.value in 200..299) HttpStatusCode.NotImplemented else value)
+    }
+}
+
+/** The response of a CONNECT-UDP call: the route's [ConnectUdpUpgrade] hands the request to its proxy. */
+internal class H3ConnectUdpResponse(
+    call: PipelineCall,
+    h3: Http3ServerRequest,
+) : H3Response(call, h3) {
+    override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+        if (upgrade !is ConnectUdpUpgrade) return super.respondUpgrade(upgrade)
+        // answered once the proxy answered (the tunnel's 200, or its refusal): an exception before that leaves the stream to
+        // the engine's reset. The call reports the upgrade's 101 for an open tunnel (Ktor's model of it, carried as a 2xx)
+        // and the refusal's status otherwise
+        upgrade.serve(h3) { sent ->
+            if (sent != 200) status(HttpStatusCode.fromValue(sent))
+            answered = true
+        }
+    }
+
+    /**
+     * A 2xx that does not come from a `connectUdp` route would tell the client a tunnel exists that nobody opened: it is
+     * answered 501 instead (RFC 9220 section 3). Errors pass as they are; mapped in status(), as for WebTransport.
      */
     override fun status(value: HttpStatusCode) {
         super.status(if (value.value in 200..299) HttpStatusCode.NotImplemented else value)

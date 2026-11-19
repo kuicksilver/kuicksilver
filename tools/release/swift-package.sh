@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The next commit of the Swift package repository kuicksilver/kuicksilver-swift (docs/release.md, "SwiftPM: the
 # kuicksilver-swift repository"): a fresh clone in <out> with Package.swift and README.md rendered from
-# tools/release/swift-package/*.in and the main repository's LICENSE, NOTICE and licenses/LICENSE.openssl.txt.
+# tools/release/swift-package/*.in and the main repository's LICENSE, NOTICE and licenses/LICENSE.{openssl,zlib,brotli}.txt.
 #
 #   prepare  everything that can fail before the release builds anything: the clone, the version not tagged there yet,
 #            the files rendered (with a stand-in checksum) and read back by `swift package dump-package`.
@@ -115,7 +115,7 @@ render() {
 }
 render tools/release/swift-package/Package.swift.in "$out/Package.swift"
 render tools/release/swift-package/README.md.in "$out/README.md"
-mkdir -p "$out/licenses"; cp LICENSE NOTICE "$out/"; cp licenses/LICENSE.openssl.txt "$out/licenses/"
+mkdir -p "$out/licenses"; cp LICENSE NOTICE "$out/"; cp licenses/LICENSE.openssl.txt licenses/LICENSE.zlib.txt licenses/LICENSE.brotli.txt "$out/licenses/"
 if grep -n '@[A-Z_]*@' "$out/Package.swift" "$out/README.md"; then echo "FAIL: a placeholder is left" >&2; exit 1; fi
 have_url=$(sed -n 's/^ *url: "\(.*\)",$/\1/p' "$out/Package.swift"); have_sum=$(sed -n 's/^ *checksum: "\([^"]*\)"$/\1/p' "$out/Package.swift")
 if [ "$have_url" != "$url" ] || [ "$have_sum" != "$sum" ]; then echo "FAIL: Package.swift names '$have_url' '$have_sum'" >&2; exit 1; fi

@@ -169,20 +169,22 @@ what the peers really do, and is delivered whole or not at all.
   it).
 - h2c (HTTP/2 with prior knowledge over cleartext TCP), opt-in on the client and the server, for deployments behind
   TLS-terminating proxies, service meshes and gRPC; it supersedes ADR-0017's "no h2c" ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md))
-  ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)).
+  ([RFC 9113 §3.1, §3.3](spec/rfc/9113.md#s3-1-h2c)). Done (2026-11-18).
 - Connection coalescing across origins for HTTP/2 and HTTP/3, off by default and opt-in ([ADR-0018](adr/0018-h2c-and-coalescing-in-030.md)): the address matches and the certificate covers the name,
   with a retry on 421 ([RFC 9113 §9.1.1](spec/rfc/9113.md#s9-1-1-connection-reuse)).
 - CONNECT-UDP (RFC 9298), client and server, over the capsules, datagrams and extended CONNECT already in place:
-  HTTP/3 through a MASQUE proxy.
+  HTTP/3 through a MASQUE proxy. Done in `kuicksilver-http3` over HTTP/3 (client tunnel, proxy, proxied QUIC;
+  [RFC 9298](spec/rfc/9298.md#s2-uri-template), ADR-0024); the Ktor engines use it (the client's `connectUdpProxy`, the
+  server's `connectUdp(proxy)` route).
 - PROXY protocol v1 and v2 on the TCP connectors, with a list of trusted sources: implemented, experimental
   ([ADR-0022](adr/0022-proxy-protocol.md), [details](spec/rfc/spec-haproxy-proxy-protocol.md#receiver)).
 - A pluggable DNS resolver in the Ktor client, used by TCP, QUIC and Happy Eyeballs alike.
-- HTTPS proxies (TLS to the proxy).
+- HTTPS proxies (TLS to the proxy): implemented, experimental ([ADR-0023](adr/0023-https-proxy.md),
+  [details](spec/rfc/9110.md#https-proxy)).
 - ACK frequency (draft-ietf-quic-ack-frequency), experimental and off by default.
 - TLS certificate compression (RFC 8879) through OpenSSL, which keeps a server's first flight within QUIC's
-  amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)). Prerequisite: OpenSSL is built `no-comp`
-  and without zlib, brotli or zstd, and RFC 8879 needs at least one compression algorithm, so the item starts with the
-  decision which library to bundle (brotli, zlib or both), its pin and supply-chain checks, and dropping `no-comp`.
+  amplification limit ([RFC 8879](spec/rfc/8879.md#certificate-compression)) (done: on by default on both sides, brotli
+  then zlib, built into libcrypto from pinned and verified releases, [ADR-0025](adr/0025-zlib-and-brotli-in-libcrypto.md)).
 - qlog: HTTP/3 events, checked against qvis. The events are in place ([ADR-0021](adr/0021-qlog-http3-events.md)) and
   the traces are checked offline against the draft's definitions; opening them in qvis is still to do.
 - h3spec and the Autobahn WebSocket suite in the gate.

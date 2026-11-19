@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Negative controls of -Pkuicksilver.openssl.prebuilt (openssl.gradle.kts; security review 2026-10-14, finding 3): the current
 # build/openssl/<target> is reused; one whose configure-target.txt names other options (a sanitizer build), whose archive no
-# longer matches provenance.txt, or that has no provenance.txt is refused. Each case edits a copy of the metadata and puts the
+# longer matches provenance.txt, that was built from another zlib or brotli tarball than gradle/compression-libs.toml pins,
+# or that has no provenance.txt is refused. Each case edits a copy of the metadata and puts the
 # original back. Usage: tools/openssl/prebuilt-test.sh [target] (default macos-arm64); KSL_GRADLE as in local-release.sh.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
@@ -25,6 +26,10 @@ expect 1 "negative: a build with other options is refused" "configure-target.txt
 restore; bak=$(mktemp -d); cp "$d/configure-target.txt" "$d/provenance.txt" "$bak/"
 awk '$1 == "libcrypto.a" { $2 = "0000000000000000000000000000000000000000000000000000000000000000" } { print }' "$bak/provenance.txt" > "$d/provenance.txt"
 expect 1 "negative: an archive changed after its build is refused" "changed after it was built"
+for lib in zlib brotli; do
+  awk -v k="$lib-tarball-sha256" '$1 == k { $2 = "1111111111111111111111111111111111111111111111111111111111111111" } { print }' "$bak/provenance.txt" > "$d/provenance.txt"
+  expect 1 "negative: a build from another $lib tarball is refused" "names $lib tarball"
+done
 rm "$d/provenance.txt"
 expect 1 "negative: a build without provenance.txt is refused" "no provenance.txt"
 exit $rc

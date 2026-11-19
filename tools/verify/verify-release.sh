@@ -34,7 +34,8 @@
 #                     with the .asc and, when present, .sha1 files; build/release/m2 of a signed release run is one: it has
 #                     no .sha1, and offline their absence is not reported) and <dir>/github/ holds the GitHub release files
 #                     (from 0.3.0 <dir>/swift/Package.swift the Swift package's manifest at its tag).
-#                     For a rebuild, openssl-<v>.tar.gz and its .asc in <dir>/openssl/ keep that offline too, and the tag
+#                     For a rebuild, openssl-<v>.tar.gz and its .asc, zlib-<v>.tar.gz and its .asc and brotli-<v>.tar.gz
+#                     in <dir>/openssl/ keep that offline too, and the tag
 #                     must already be in this clone.
 #   --no-rebuild      steps 0 to 2 only.
 #   --rebuilt <dir>   compare against libraries built elsewhere instead of building them: <dir>/jni/<classifier>/<lib>,
@@ -420,9 +421,14 @@ elif [ "$tag_ok" = 1 ]; then
   if [ -n "$offline" ] && [ -f "$offline/openssl/openssl-$ossl.tar.gz" ]; then
     mkdir -p "$src/build/openssl-work/src"; cp "$offline/openssl/openssl-$ossl.tar.gz"* "$src/build/openssl-work/src/"
   fi
+  # zlib and brotli (gradle/compression-libs.toml of the tag), compiled into libcrypto: fetch.sh verifies them as well
+  if [ -n "$offline" ] && [ -d "$offline/openssl" ]; then
+    mkdir -p "$src/build/openssl-work/src"
+    for f in "$offline"/openssl/zlib-*.tar.gz* "$offline"/openssl/brotli-*.tar.gz; do [ -f "$f" ] && cp "$f" "$src/build/openssl-work/src/"; done
+  fi
   if ! bash "$src/tools/openssl/fetch.sh" > "$work/logs/openssl-fetch.log" 2>&1; then
     res FAIL rebuild "OpenSSL $ossl" "fetch or verification failed, see $work/logs/openssl-fetch.log"; all_targets=""
-  else res OK openssl "openssl-$ossl.tar.gz" "signature and SHA-256 of gradle/openssl.toml (tools/openssl/fetch.sh of the tag)"; fi
+  else res OK openssl "openssl-$ossl.tar.gz, zlib and brotli" "signatures and SHA-256 of gradle/openssl.toml and gradle/compression-libs.toml (tools/openssl/fetch.sh of the tag)"; fi
   out="$work/rebuilt"; rm -rf "$out"; mkdir -p "$out"
   for t in $all_targets; do
     [ -n "$(products "$t")" ] || { res FAIL rebuild "$t" "not a target this script rebuilds"; continue; }

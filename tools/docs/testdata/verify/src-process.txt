@@ -1,0 +1,5 @@
+# How a change is checked
+
+## 1. A test that fails before the fix
+
+## 6. Hosted CI

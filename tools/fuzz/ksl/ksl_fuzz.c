@@ -26,6 +26,13 @@
         ksl_ech_config_list_check: what it keeps parses again to itself, and is never longer than the input
      0xfb  (the whole byte) a ClientHello to a server session with the ECH key of testdata/ech/ech-a.pem (and the SNI pause):
         OpenSSL's ECH decryption and inner ClientHello checks, reached through ksl's server, on an attacker's outer ClientHello
+     0xfa  (the whole byte, as 0xfe; 0xfc and 0xfb are ECH's) a server's Handshake-level CRYPTO (EncryptedExtensions, a Certificate or a
+        CompressedCertificate of RFC 8879, CertificateVerify, Finished) to a client whose ClientHello a real server answered
+        at the Initial level: the client offers certificate compression (brotli, zlib) and verifies nothing, so a
+        CompressedCertificate reaches OpenSSL's checks of its algorithm and lengths, the zlib or brotli decoder and the
+        certificate parser (the transcript is the real server's, so CertificateVerify fails after that)
+     0xf9  (the whole byte, as 0xfe) `[flags][mtu:2][cap:2][ports:4][target 16][local 16][payload]` to ksl_icmp_ptb_build
+        (RFC 9298 section 6.1): the length bound, the ICMP checksum and the quote checked on every message built
    Every session is driven until it wants more input; every event is drained and every key freed. */
 #define _POSIX_C_SOURCE 200809L /* open, fdopen, O_NOFOLLOW under -std=c11 with glibc */
 #define _DARWIN_C_SOURCE        /* O_NOFOLLOW, which _POSIX_C_SOURCE hides on macOS */
@@ -59,6 +66,7 @@ static const uint8_t SERVER_TP[] = {0x01, 0x02, 0x67, 0x10, 0x11, 0x0c, 0, 0, 0,
 static const uint8_t CLIENT_TP[] = {0x01, 0x02, 0x67, 0x10, 0x11, 0x08, 0, 0, 0, 1, 0, 0, 0, 1};
 static uint8_t TICKET_KEYS[80];
 
+static ksl_ctx *server_comp_ctx; /* mode 0xfa: a server that compresses its chain (frozen) */
 static ksl_ctx *server_ctx, *server_sni_ctx, *server_early_ctx, *client_ctx, *server_registered_ctx, *server_default_ctx;
 static ksl_ctx *server_ech_ctx; /* mode 0xfb */
 /* mode 0xfd: TCP servers by [policy][pause][P-384 only], the SNI overrides by policy, and a TCP client for the seeds */
@@ -124,6 +132,7 @@ static void init(void) {
     ksl_ech_keys *ek = ksl_ech_keys_new(keys, el + 5, NULL, 0);
     if (!ek || ksl_ctx_set_ech_keys(server_ech_ctx, ek) != KSL_OK) abort();
     ksl_ech_keys_free(ek); free(keys); free(pem);
+    server_comp_ctx = new_server(0, 0); ksl_ctx_freeze(server_comp_ctx);
 }
 /* Mode 0xfc: the kept ECHConfigs parse again to themselves, and never exceed the input */
 static void ech_list(const uint8_t *p, size_t n) {
@@ -162,6 +171,41 @@ static void serve_tcp(uint8_t cfg, const uint8_t *p, size_t n) {
     uint8_t buf[64]; size_t l; ksl_ssl_get(s, KSL_GET_ALPN, buf, sizeof buf, &l);
     if (debug) { uint32_t code; int al; char m[256]; ksl_ssl_last_error(s, &code, &al, m, sizeof m); fprintf(stderr, "tcp served: alert %d %s\n", al, m); }
     ksl_ssl_free(s);
+}
+
+static void drain(ksl_ssl *s, int level, uint8_t **out, size_t *len);
+static uint8_t *client_hello(const uint8_t *tp, size_t tp_len, size_t *len, ksl_ssl **keep);
+
+/* A client that sent its ClientHello and read a real server's ServerHello: it holds the Handshake keys and waits for the server's
+   Handshake flight. The server's own flight is returned (*flight, for the seeds) or dropped. */
+static ksl_ssl *client_after_server_hello(ksl_ctx *sctx, uint8_t **flight, size_t *flight_len) {
+    ksl_ssl *c = NULL; size_t hl; uint8_t *hello = client_hello(CLIENT_TP, sizeof CLIENT_TP, &hl, &c);
+    if (!c) { free(hello); return NULL; }
+    ksl_ssl *s = ksl_ssl_new(sctx, KSL_MODE_QUIC); ksl_quic_set_transport_params(s, SERVER_TP, sizeof SERVER_TP);
+    ksl_quic_provide(s, KSL_LEVEL_INITIAL, hello, hl); ksl_drive(s);
+    uint8_t *sh = NULL; size_t shl = 0; ksl_event ev;
+    if (flight) { *flight = NULL; *flight_len = 0; }
+    while (ksl_quic_next_event(s, &ev)) {
+        if (ev.type == KSL_EV_KEY) ksl_key_free(ev.key);
+        else if (ev.type == KSL_EV_CRYPTO_SEND && ev.level == KSL_LEVEL_INITIAL) {
+            sh = realloc(sh, shl + ev.len + 1); memcpy(sh + shl, ev.buf, ev.len); shl += ev.len;
+        } else if (ev.type == KSL_EV_CRYPTO_SEND && ev.level == KSL_LEVEL_HANDSHAKE && flight) {
+            *flight = realloc(*flight, *flight_len + ev.len + 1); memcpy(*flight + *flight_len, ev.buf, ev.len); *flight_len += ev.len;
+        }
+    }
+    ksl_quic_provide(c, KSL_LEVEL_INITIAL, sh, shl); ksl_drive(c); drain(c, -1, NULL, NULL);
+    free(sh); free(hello); ksl_ssl_free(s);
+    return c;
+}
+
+/* Mode 0xfa: the bytes as the server's Handshake-level CRYPTO to such a client, driven until it wants more input or fails. */
+static void serve_handshake_flight(const uint8_t *p, size_t n) {
+    ksl_ssl *c = client_after_server_hello(server_comp_ctx, NULL, NULL); if (!c) return;
+    ksl_quic_provide(c, KSL_LEVEL_HANDSHAKE, p, n);
+    for (int round = 0; round < 3; round++) { int rc = ksl_drive(c); drain(c, -1, NULL, NULL); if (rc != KSL_OK) break; }
+    uint8_t alg[2]; size_t l; ksl_ssl_get(c, KSL_GET_CERT_COMPRESSION, alg, sizeof alg, &l);
+    if (debug) { uint32_t code; int al; char m[256]; ksl_ssl_last_error(c, &code, &al, m, sizeof m); fprintf(stderr, "flight: alert %d %s\n", al, m); }
+    ksl_ssl_free(c);
 }
 
 /* Drains every event; returns the CRYPTO bytes of [level] (malloc'ed, *len) when out is non-NULL. */
@@ -283,6 +327,40 @@ static void ticket_program(const uint8_t *p, size_t n) {
     fake_now = 1000000;   /* the generated keys of mode 7 stay valid: every input starts at the same clock */
 }
 
+/* mode 0xf9: ksl_icmp_ptb_build (RFC 9298 section 6.1) on [flags][mtu:2][cap:2][target port:2][local port:2][target 16]
+   [local 16][payload]: flags bit 0 picks IPv6. A message is no longer than cap and KSL_ICMP_PTB_MAX, its ICMP checksum is
+   right (RFC 1071; over the ICMPv6 pseudo-header, RFC 4443 section 2.3) and it quotes the payload's start unchanged. */
+static uint32_t fz_sum(uint32_t s, const uint8_t *p, size_t n) {
+    for (size_t i = 0; i + 1 < n; i += 2) s += (uint32_t)p[i] << 8 | p[i + 1];
+    if (n & 1) s += (uint32_t)p[n - 1] << 8;
+    return s;
+}
+static void icmp_ptb(const uint8_t *p, size_t n) {
+    if (n < 41) return;
+    int v6 = p[0] & 1;
+    uint32_t mtu = (uint32_t)p[1] << 8 | p[2], cap = (uint32_t)p[3] << 8 | p[4];
+    if (cap > KSL_ICMP_PTB_MAX) cap = KSL_ICMP_PTB_MAX;
+    uint8_t t[KSL_UDP_ADDR_LEN] = {0}, l[KSL_UDP_ADDR_LEN] = {0};
+    t[0] = l[0] = v6 ? 6 : 4;
+    memcpy(t + 1, p + 5, 2); memcpy(l + 1, p + 7, 2);
+    memcpy(t + 3, p + 9, v6 ? 16 : 4); memcpy(l + 3, p + 25, v6 ? 16 : 4);
+    const uint8_t *pl = p + 41; size_t pn = n - 41;
+    uint8_t *payload = malloc(pn ? pn : 1); memcpy(payload, pl, pn); /* its own allocation: ASan sees a read past pn */
+    uint8_t *out = malloc(cap ? cap : 1);
+    uint32_t m = ksl_icmp_ptb_build(out, cap, t, l, payload, (uint32_t)pn, mtu);
+    if (m > cap || m > KSL_ICMP_PTB_MAX) abort();
+    if (m) {
+        uint32_t s = fz_sum(0, out, m);
+        if (v6) { s = fz_sum(s, l + 3, 16); s = fz_sum(s, t + 3, 16); s += 58; s += m >> 16; s += m & 0xffff; }
+        while (s >> 16) s = (s & 0xffff) + (s >> 16);
+        if (s != 0xffff) abort();
+        if (out[0] != (v6 ? 2 : 3)) abort();
+        uint32_t hdr = 8 + (v6 ? 40 : 20) + 8; /* ICMP, the quoted IP and UDP headers */
+        if (m > hdr && memcmp(out + hdr, payload, m - hdr) != 0) abort();
+    }
+    free(out); free(payload);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     init();
     if (size < 1) return 0;
@@ -293,12 +371,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (r != 0 && r != 1) abort();
         return 0;
     }
+    if (data[0] == 0xf9) {
+        icmp_ptb(rest, n);
+        return 0;
+    }
     if (data[0] == 0xfd) {
         if (n >= 1) serve_tcp(rest[0], rest + 1, n - 1);
         return 0;
     }
     if (data[0] == 0xfc) { ech_list(rest, n); return 0; }
     if (data[0] == 0xfb) { serve(server_ech_ctx, rest, n, 0); return 0; }
+    if (data[0] == 0xfa) {
+        serve_handshake_flight(rest, n);
+        return 0;
+    }
     switch (data[0] % 8) {
     case 0: {
         size_t hl; uint8_t *hello = client_hello(rest, n, &hl, NULL);
@@ -409,6 +495,16 @@ int ksl_fuzz_write_seeds(const char *dir) {
     static const uint8_t NST[] = {4, 0, 0, 0x1a, 0, 0, 0x1c, 0x20, 1, 2, 3, 4, 2, 0xaa, 0xbb, 0, 3, 1, 2, 3, 0, 8,
                                   0x00, 0x2a, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff};
     PUT("new-session-ticket", 0xfe, NST, sizeof NST);
+    {   /* ksl_icmp_ptb_build: an IPv4 and an IPv6 message, each from a 1400-byte payload */
+        uint8_t ptb[41 + 1400]; memset(ptb, 0, sizeof ptb); memset(ptb + 41, 0x42, 1400);
+        ptb[1] = 0x05; ptb[2] = 0x00; ptb[3] = 0x04; ptb[4] = 0xd8; /* mtu 1280, cap 1240 */
+        ptb[5] = 0x13; ptb[6] = 0x88; ptb[7] = 0x01; ptb[8] = 0xbb; /* ports 5000, 443 */
+        ptb[9] = 192; ptb[10] = 0; ptb[11] = 2; ptb[12] = 50; ptb[25] = 10; ptb[28] = 2;
+        PUT("icmp-ptb-v4", 0xf9, ptb, sizeof ptb);
+        ptb[0] = 1; ptb[9] = 0x20; ptb[10] = 0x01; ptb[11] = 0x0d; ptb[12] = 0xb8; ptb[24] = 1;
+        ptb[25] = 0x20; ptb[26] = 0x01; ptb[27] = 0x0d; ptb[28] = 0xb8; ptb[40] = 2;
+        PUT("icmp-ptb-v6", 0xf9, ptb, sizeof ptb);
+    }
     /* mode 0xfd: a TCP client's first records offering x1 or no ALPN, under each policy (with an override: cfg 3..), and the
        records of a client that went through a HelloRetryRequest (its first ClientHello, then the second) */
     for (int alpn = 0; alpn < 2; alpn++) {
@@ -435,6 +531,37 @@ int ksl_fuzz_write_seeds(const char *dir) {
             ksl_ssl_free(tc); ksl_ssl_free(ts);
         }
         if (!alpn) ksl_ctx_free(cc);
+    }
+    /* mode 0xfa: a compressing server's Handshake flight (its CompressedCertificate in brotli), the same server's flight without
+       compression, and the brotli one with uncompressed_length one too large, with the algorithm zlib, and with its data replaced
+       by 14 bytes of brotli that expand to 1 MiB of zeros */
+    {
+        ksl_ctx *plain = new_server(0, 0); ksl_ctx_set_option(plain, KSL_OPT_CERT_COMPRESSION, 0); ksl_ctx_freeze(plain);
+        ksl_ctx *ctxs[2] = {server_comp_ctx, plain};
+        for (int k = 0; k < 2; k++) {
+            uint8_t *fl = NULL; size_t fll = 0; ksl_ssl *cc = client_after_server_hello(ctxs[k], &fl, &fll);
+            if (!cc || !fl) { fprintf(stderr, "no server flight\n"); return 1; }
+            PUT(k ? "server-flight-plain" : "server-flight-brotli", 0xfa, fl, fll);
+            if (k == 0) {
+                /* the CompressedCertificate (type 25) after EncryptedExtensions: [25][len3][alg2][ulen3][clen3][data] */
+                size_t q = 0;
+                while (q + 4 <= fll && fl[q] != 25) q += 4 + (size_t)(fl[q + 1] << 16 | fl[q + 2] << 8 | fl[q + 3]);
+                if (q + 12 > fll) { fprintf(stderr, "no CompressedCertificate in the flight\n"); return 1; }
+                uint8_t *v = malloc(fll + 64);
+                memcpy(v, fl, fll); v[q + 8] = (uint8_t)(v[q + 8] + 1); PUT("server-flight-length-off", 0xfa, v, fll);
+                memcpy(v, fl, fll); v[q + 5] = 1; PUT("server-flight-zlib-label", 0xfa, v, fll);
+                static const uint8_t BOMB[] = {0x59, 0xff, 0xff, 0x8f, 0x7f, 0x02, 0x20, 0x1e, 0x0b, 0x04, 0x72, 0xef, 0x1f, 0x00};
+                size_t mlen = 4 + (size_t)(fl[q + 1] << 16 | fl[q + 2] << 8 | fl[q + 3]), bl = 2 + 3 + 3 + sizeof BOMB;
+                memcpy(v, fl, q + 9); memcpy(v + q + 12, BOMB, sizeof BOMB);
+                v[q + 1] = 0; v[q + 2] = (uint8_t)(bl >> 8); v[q + 3] = (uint8_t)bl;
+                v[q + 9] = 0; v[q + 10] = 0; v[q + 11] = sizeof BOMB;
+                memcpy(v + q + 4 + bl, fl + q + mlen, fll - q - mlen);
+                PUT("server-flight-bomb", 0xfa, v, q + 4 + bl + fll - q - mlen);
+                free(v);
+            }
+            free(fl); ksl_ssl_free(cc);
+        }
+        ksl_ctx_free(plain);
     }
     /* mode 0xfd: a client that offers x1 in its first ClientHello and drops ALPN from the second, after the HelloRetryRequest of a
        P-384-only server (RFC 9846 section 4.2.2 forbids it; KSL_OPT_ALPN_POLICY judges the second on its own) */

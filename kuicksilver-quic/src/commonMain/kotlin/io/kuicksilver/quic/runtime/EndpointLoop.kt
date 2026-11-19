@@ -171,6 +171,13 @@ internal class EndpointLoop private constructor(
 
     /** Test hook: runs on the loop for each held connection once its timers ran again (the drain's verdict is its state). */
     internal var onIdleReleasedForTest: ((ConnectionCore) -> Unit)? = null
+
+    /**
+     * How long a connection stays held for a drain at most ([IDLE_HOLD_LIMIT]; a test hook: a test that opens the drain
+     * round itself stretches it, so a slow host cannot end the hold before the test's step).
+     */
+    @Volatile internal var idleHoldLimitForTest: Duration = IDLE_HOLD_LIMIT
+
     internal val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
     internal val timers = TimerHeap()

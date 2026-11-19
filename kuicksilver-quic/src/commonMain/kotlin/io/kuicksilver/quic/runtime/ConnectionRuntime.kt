@@ -35,6 +35,7 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.CertificateCompression
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
@@ -90,11 +91,17 @@ internal class ConnectionRuntime(
     private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
-    /** Server: handed to the accept queue (at 0-RTT acceptance or at handshake completion). Loop dispatcher only. */
+    /**
+     * Server: decided for the accept queue (at 0-RTT acceptance or at handshake completion): handed to it, or refused with
+     * CONNECTION_REFUSED because it was full. Loop dispatcher only.
+     */
     internal var handedOff = false
 
     @Volatile private var earlyAccepted: Boolean? = null
     override val earlyDataAccepted: Boolean? get() = earlyAccepted
+
+    @Volatile private var certificateCompression: CertificateCompression? = null
+    override val peerCertificateCompression: CertificateCompression? get() = certificateCompression
 
     override suspend fun awaitHandshake() {
         handshake.await()
@@ -594,6 +601,7 @@ internal class ConnectionRuntime(
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
                     earlyAccepted = core.earlyDataAccepted
+                    certificateCompression = core.peerCertificateCompression // read once, on the loop, like the certificates
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     ownCertificates = core.localCertificates
                     group = core.keyExchangeGroup

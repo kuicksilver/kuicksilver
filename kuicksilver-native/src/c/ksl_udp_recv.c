@@ -71,6 +71,20 @@ static void drain_errqueue(ksl_udp *u) {
             memcpy(&ee, CMSG_DATA(c), sizeof ee);
             int ptb = (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && ee.ee_code == 4) ||
                       (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 2);
+            /* port or host unreachable (ICMP type 3 code 3 or 1; ICMPv6 type 1 code 4 or 3): the kernel matched the quoted
+               headers to this socket; the destination is in msg_name and the quoted payload (none when only the headers were
+               quoted) in data, which the caller checks against what it sent (RFC 8085 section 5.2; RFC 9298 section 3.1) */
+            int port = (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && ee.ee_code == 3) ||
+                       (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 1 && ee.ee_code == 4);
+            int host = (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && ee.ee_code == 1) ||
+                       (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 1 && ee.ee_code == 3);
+            if ((port || host) && m.msg_namelen != 0) {
+                uint8_t udst[KSL_UDP_ADDR_LEN];
+                from_sockaddr(&ss, udst);
+                ksl_udp_note_unreachable(u, udst, data, (uint32_t)r < sizeof data ? (uint32_t)r : (uint32_t)sizeof data,
+                                         port ? KSL_UNREACH_PORT : KSL_UNREACH_HOST);
+                continue;
+            }
             if (!ptb || ee.ee_info < 68 || ee.ee_info > 65535 || m.msg_namelen == 0)
                 continue;
             uint8_t dst[KSL_UDP_ADDR_LEN];
@@ -282,6 +296,7 @@ int ksl_udp_recv_dst(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uin
                 wait = (int)((left + 999999) / 1000000);
             }
             struct pollfd pf[2] = {{u->fd, POLLIN, 0}, {u->wake[0], POLLIN, 0}};
+            KSL_COUNT(u->waits);
             int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait);
             KSL_COUNT(u->polls);
             if (pr == 0) {

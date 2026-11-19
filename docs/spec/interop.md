@@ -151,7 +151,9 @@ Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-ht
 `tools/interop/h2spec.sh` runs `summerwind/h2spec:2.6.0` (`-t -k`, TLS with ALPN `h2`, 5 s per case) against the Ktor
 server engine with `http2 = true` and default `Http2Settings` (`tools/interop/h2-server.sh`, `H2specServer.kt` in
 `kuicksilver-soak`). Every case must pass and none may be skipped; the script records the number of cases (146) so that a
-new image is noticed. The first run had one failure, http2/5.1/12 ("closed: Sends a HEADERS frame": the server answered
+new image is noticed. The image is pinned by its registry digest in the script, and since 0.3.0 hosted CI runs it too
+(`build.yml`, job `linux-native`, the linuxX64 server); its counts appear on the documentation site's conformance page.
+The first run had one failure, http2/5.1/12 ("closed: Sends a HEADERS frame": the server answered
 with RST_STREAM STREAM_CLOSED, h2spec expects a connection error of that type, which RFC 9113 section 5.1 allows and RFC
 7540 section 5.1 required); it is fixed (`core.StreamStateTest.negative_headersOnAClosedStreamIsAConnectionError`).
 
@@ -232,6 +234,7 @@ applicable to the pair):
 | Ktor Java → Kuicksilver, HTTP/2 | ✓ | ✓ | ✓ | ✓ | ✓ᴾ (6) | ✓ | |
 | OkHttp → Kuicksilver | | | | | | | ALPN `h2` / `http/1.1` both ways ✓, WebSocket permessage-deflate ✓, close codes ✓ |
 | JDK HttpClient → Kuicksilver | | | | | | | ALPN ✓, HTTP/2 multiplexing (20 requests on one connection) ✓, WebSocket fragments, Ping/Pong, close codes ✓ |
+| h2c (`H2cInteropTest`, 2026-11-18) | | | | | | | OkHttp `H2_PRIOR_KNOWLEDGE` → Kuicksilver (`Only` and `WithHttp11`) ✓, Ktor OkHttp engine with it ✓, JDK HttpClient (`HTTP_2` sends `Upgrade: h2c`, no prior knowledge) → `WithHttp11` served HTTP/1.1 ✓ and → `Only` refused ✓, Kuicksilver → plain Netty h2c (trailers, reuse) ✓, Kuicksilver → Ktor Netty `enableH2c` ✓; by hand: curl 8.7.1 `--http2-prior-knowledge` → the h2spec server's h2c connector ✓ |
 | Netty HTTP/3 → Kuicksilver | GET, 1 MiB POST, 204, 100 fields, UTF-8 target, 10 concurrent streams, HEAD (Content-Length without content) ✓ | | | | | | |
 
 | WebSocket client → server | text, binary | client fragments | server fragments | Ping → Pong | close codes | permessage-deflate |

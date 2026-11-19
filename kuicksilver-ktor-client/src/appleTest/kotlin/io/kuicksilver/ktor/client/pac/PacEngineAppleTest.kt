@@ -104,6 +104,7 @@ class PacEngineAppleTest {
             PacHost.setForTest(null)
             PacScripts.nowForTest = null
             PacRunner.nowForTest = null
+            PacRunner.preparedForTest = null
         }
 
     /** Echoes what the script gets: the URL and host, made a host name. */
@@ -215,6 +216,25 @@ class PacEngineAppleTest {
             }
         }
 
+    /** A script's `HTTPS host:port` is TLS to that proxy (Chromium's extension of the PAC grammar), not refused. */
+    @Test fun httpsAnswerIsTlsToTheProxy() =
+        runBlocking {
+            val entry =
+                CfProxy(
+                    CfProxy.Type.AutoConfiguration,
+                    null,
+                    null,
+                    pacScript = "function FindProxyForURL(url, host) { return 'HTTPS tls.test; SOCKS4 s4.test:1080'; }",
+                )
+            val warnings = ArrayList<String>()
+            assertEquals(
+                io.kuicksilver.ktor.client.ResolvedProxy
+                    .https("tls.test", 443),
+                pickCfProxyWithPac(listOf(entry), { evaluatePac(it, "https://x.test:443/", "x.test") }) { warnings += it },
+            )
+            assertEquals(emptyList(), warnings)
+        }
+
     /** An answer with only proxies the engine cannot use fails closed: never a direct connection. */
     @Test fun negative_unsupportedOnlyAnswerFailsClosed() =
         runBlocking {
@@ -223,7 +243,7 @@ class PacEngineAppleTest {
                     CfProxy.Type.AutoConfiguration,
                     null,
                     null,
-                    pacScript = "function FindProxyForURL(url, host) { return 'HTTPS tls.test:443; SOCKS4 s4.test:1080'; }",
+                    pacScript = "function FindProxyForURL(url, host) { return 'SOCKS4 s4.test:1080; SOCKS4 s5.test:1081'; }",
                 )
             val warnings = ArrayList<String>()
             assertFailsWith<ProxyException> {
@@ -434,6 +454,117 @@ class PacEngineAppleTest {
         }
 
     /**
+     * A run's limit bounds the script, not the engine's own preparation of the script's text (its size checked, the text
+     * handed to JavaScriptCore): no script code runs then, and the 1 MiB cap bounds that work. A device slow at it (a
+     * script of the largest size on an old phone or a busy machine) still gets the script's answer. Here the preparation
+     * is held past the run's limit (a lower bound only: correct code passes however long that is); then the script
+     * answers and no thread is abandoned. Before, the preparation counted against the limit and such a script failed.
+     */
+    @Test fun negative_slowPreparationIsNotARunaway() =
+        runBlocking {
+            val prepared = CompletableDeferred<Unit>()
+            val go = CompletableDeferred<Unit>()
+            PacRunner.preparedForTest = {
+                prepared.complete(Unit)
+                runBlocking { go.await() }
+            }
+            try {
+                withTimeout(30.seconds) {
+                    val run = async(Dispatchers.Default) { PacRunner.findProxy("prep", ok, "https://x.test:443/", "x.test", 1_000) }
+                    prepared.await()
+                    assertNull(withTimeoutOrNull(1_200) { run.join() }, "the caller waits for the preparation, past the run's limit")
+                    go.complete(Unit)
+                    assertEquals("PROXY ok.test:1", run.await())
+                }
+                assertEquals(0, PacRunner.abandonedThreads.value)
+            } finally {
+                go.complete(Unit)
+            }
+        }
+
+    /**
+     * A caller that gives up while its script's text is prepared leaves no run behind: the script never runs, no thread
+     * is abandoned, and the next lookup runs at once.
+     */
+    @Test fun negative_aCallerGoneDuringPreparationLeavesNoRun() =
+        runBlocking {
+            val prepared = CompletableDeferred<Unit>()
+            val go = CompletableDeferred<Unit>()
+            PacRunner.preparedForTest = {
+                prepared.complete(Unit)
+                runBlocking { go.await() }
+            }
+            try {
+                withTimeout(30.seconds) {
+                    val asks = "function FindProxyForURL(url, host) { myIpAddressEx(); return 'DIRECT'; }"
+                    val gone = async(Dispatchers.Default) { PacRunner.findProxy("gone", asks, "https://x.test:443/", "x.test", 2_000) }
+                    prepared.await()
+                    gone.cancel()
+                    gone.join()
+                    PacRunner.preparedForTest = null
+                    go.complete(Unit)
+                    // one thread, in order: once this answers, the given-up run would have run before it
+                    assertEquals("PROXY ok.test:1", PacRunner.findProxy("ok", ok, "https://x.test:443/", "x.test", 2_000))
+                    assertTrue(!host.entered.isCompleted, "the script of the caller that gave up never ran")
+                }
+                assertEquals(0, PacRunner.abandonedThreads.value)
+            } finally {
+                go.complete(Unit)
+            }
+        }
+
+    /** A script whose context is held is not prepared again: the preparation is paid once per script, not per lookup. */
+    @Test fun aHeldScriptIsPreparedOnce() =
+        runBlocking {
+            val preparations = AtomicInt(0)
+            PacRunner.preparedForTest = { preparations.incrementAndGet() }
+            try {
+                repeat(3) { assertEquals("PROXY ok.test:1", PacRunner.findProxy("once", ok, "https://x.test:443/", "x.test", 2_000)) }
+                assertEquals(1, preparations.value)
+                val other = "function FindProxyForURL(url, host) { return 'DIRECT'; }"
+                assertEquals("DIRECT", PacRunner.findProxy("once", other, "https://x.test:443/", "x.test", 2_000))
+                assertEquals(2, preparations.value, "a changed script under the same key is prepared")
+            } finally {
+                PacRunner.preparedForTest = null
+            }
+        }
+
+    /**
+     * A NUL in a script is a character of it, as in every other engine: the text is handed to JavaScriptCore whole.
+     * Before, it went through a C string and ended at the NUL, so the engine ran another script than the one it was
+     * given (here: only a comment, so no `FindProxyForURL`).
+     */
+    @Test fun negative_aNulDoesNotEndTheScript() =
+        runBlocking {
+            val script = "// a\u0000b\nfunction FindProxyForURL(url, host) { return 'PROXY nul.test:1'; }"
+            assertEquals("PROXY nul.test:1", PacRunner.findProxy("nul", script, "https://x.test:443/", "x.test", 2_000))
+        }
+
+    /**
+     * A NUL inside an answer fails the run: the answer is read back whole (UTF-16), not up to the NUL, so
+     * `PROXY a.test:1<NUL>junk` is not taken for `PROXY a.test:1`. Before, the copy through a C string cut it there and
+     * the cut answer was used.
+     */
+    @Test fun negative_aNulInTheAnswerFailsTheRun() =
+        runBlocking {
+            val script = "function FindProxyForURL(url, host) { return 'PROXY a.test:1\\u0000junk'; }"
+            assertNull(PacRunner.findProxy("nul-answer", script, "https://x.test:443/", "x.test", 2_000))
+        }
+
+    /**
+     * A name with a NUL resolves to nothing and never reaches the resolver: `dnsResolve('a.test<NUL>x')` is not a lookup
+     * of `a.test` (nor is `isResolvable`'s). Before, the argument was read up to the NUL and `a.test` was resolved.
+     */
+    @Test fun negative_aNulInADnsNameResolvesNothing() =
+        runBlocking {
+            val script =
+                "function FindProxyForURL(url, host) { var n = 'a.test\\u0000x'; " +
+                    "return dnsResolve(n) === null && dnsResolveEx(n) === '' && !isResolvable(n) ? 'PROXY nul.test:1' : 'DIRECT'; }"
+            assertEquals("PROXY nul.test:1", PacRunner.findProxy("nul-dns", script, "https://x.test:443/", "x.test", 2_000))
+            assertEquals(0, host.resolveCalls.value)
+        }
+
+    /**
      * A run that overruns gives no answer and its thread is abandoned; while [PacRunner.MAX_ABANDONED] are, no script
      * runs; once they end, their threads go and scripts run again.
      */
@@ -631,7 +762,7 @@ class PacEngineAppleTest {
                 CfProxy.Type.Http,
                 CfProxy.Type.Socks,
                 CfProxy.Type.Socks,
-                CfProxy.Type.Unsupported,
+                CfProxy.Type.TlsHttp,
                 CfProxy.Type.Unsupported,
                 CfProxy.Type.None,
                 CfProxy.Type.Http,

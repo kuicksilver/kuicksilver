@@ -26,6 +26,13 @@ internal class CapsuleParser(
     private val maxDatagramLength: Long = 65_536,
     private val known: Set<Long> = setOf(DATAGRAM),
     private val terminal: Set<Long> = emptySet(),
+    /**
+     * Judges each DATAGRAM capsule by the Context ID at the start of its value (RFC 9298 sections 4 and 5) once that
+     * varint is in, before the rest is buffered: [DatagramVerdict.Skip] drops it as its bytes arrive,
+     * [DatagramVerdict.Abort] is H3_DATAGRAM_ERROR. A value too short for a Context ID is dropped without a call. Null:
+     * every DATAGRAM capsule up to [maxDatagramLength] is delivered.
+     */
+    private val filter: DatagramFilter? = null,
 ) {
     /** A capsule of a [terminal] type was delivered: nothing may follow it. */
     private var ended = false
@@ -37,6 +44,11 @@ internal class CapsuleParser(
     private var skipping = false
     private var payload: ByteArray? = null
     private var filled = 0
+
+    /** Reading the Context ID of a DATAGRAM capsule for [filter], into [peek]. */
+    private var peeking = false
+    private val peek = ByteArray(8)
+    private var peekLen = 0
 
     /** Largest buffer held at once (tests check that unknown and oversized capsules are not buffered). */
     var maxBuffered: Int = 0
@@ -86,12 +98,24 @@ internal class CapsuleParser(
                 val l = VarInt.read(header, tn, headerLen)
                 if (l < 0) continue
                 headerLen = 0
+                peekLen = 0
                 type = t
                 remaining = l
+                peeking = t == DATAGRAM && filter != null && t in known
                 skipping =
                     when {
                         t !in known -> {
                             true
+                        }
+
+                        peeking -> {
+                            // nothing to read a Context ID from: a datagram that cannot be parsed is dropped
+                            (l == 0L).also {
+                                if (it) {
+                                    peeking = false
+                                    skippedDatagrams++
+                                }
+                            }
                         }
 
                         t == DATAGRAM -> {
@@ -106,10 +130,25 @@ internal class CapsuleParser(
                             false
                         }
                     }
-                if (!skipping) {
+                if (!skipping && !peeking) {
                     payload = ByteArray(l.toInt())
                     filled = 0
                     maxBuffered = maxOf(maxBuffered, l.toInt())
+                }
+                if (remaining == 0L && finish(out) && stopAfterOne) return p - off
+                continue
+            }
+            if (peeking) {
+                peek[peekLen++] = bytes[p++]
+                remaining--
+                val ctx = VarInt.read(peek, 0, peekLen)
+                if (ctx >= 0) {
+                    peeking = false
+                    judge(ctx)
+                } else if (remaining == 0L) {
+                    peeking = false // the value ended inside its Context ID
+                    skipping = true
+                    skippedDatagrams++
                 }
                 if (remaining == 0L && finish(out) && stopAfterOne) return p - off
                 continue
@@ -124,6 +163,31 @@ internal class CapsuleParser(
             if (remaining == 0L && finish(out) && stopAfterOne) return p - off
         }
         return p - off
+    }
+
+    /** [filter]'s verdict on the DATAGRAM capsule whose Context ID [ctx] was just read; [remaining] bytes of payload follow. */
+    private fun judge(ctx: Long) {
+        when (filter!!.verdict(ctx, remaining)) {
+            DatagramVerdict.Deliver -> {
+                val total = peekLen + remaining
+                if (total > maxDatagramLength) {
+                    skipping = true
+                    skippedDatagrams++
+                    return
+                }
+                payload = ByteArray(total.toInt()).also { peek.copyInto(it, 0, 0, peekLen) }
+                filled = peekLen
+                maxBuffered = maxOf(maxBuffered, total.toInt())
+            }
+
+            DatagramVerdict.Skip -> {
+                skipping = true
+            }
+
+            DatagramVerdict.Abort -> {
+                throw H3ProtocolError(Http3ErrorCode.DATAGRAM_ERROR, "HTTP datagram of context $ctx refused: $remaining bytes")
+            }
+        }
     }
 
     /** The stream's FIN: throws H3_MESSAGE_ERROR when it cut a capsule (RFC 9297 section 3.3); a boundary is a clean end. */
@@ -146,4 +210,24 @@ internal class CapsuleParser(
     companion object {
         const val DATAGRAM: Long = 0x00
     }
+}
+
+/** What a DATAGRAM capsule's or an HTTP datagram's Context ID makes of it (RFC 9298 sections 4 and 5). */
+internal enum class DatagramVerdict {
+    /** Buffer and hand it on. */
+    Deliver,
+
+    /** Drop it, without buffering the rest of a capsule. */
+    Skip,
+
+    /** Abort the stream with H3_DATAGRAM_ERROR. */
+    Abort,
+}
+
+/** Judges an HTTP datagram by its Context ID and the length of the payload after it. */
+internal fun interface DatagramFilter {
+    fun verdict(
+        contextId: Long,
+        payloadLength: Long,
+    ): DatagramVerdict
 }

@@ -16,6 +16,9 @@ import kotlin.time.Duration.Companion.seconds
 /** `SO_RCVBUF` of [fd] as the system reports it. */
 internal expect fun receiveBufferOf(fd: Int): Int
 
+/** `SO_SNDBUF` of [fd] as the system reports it. */
+internal expect fun sendBufferOf(fd: Int): Int
+
 /**
  * [connectTcp]'s receiveBufferSize reaches the connecting socket (tests of slow readers use it). The size asked for, 1 MiB,
  * is above every platform's default; what a connected socket reports differs by system (Linux doubles the value and caps

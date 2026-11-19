@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="1.0" timestamp="2026-11-18T10:00:00" hostname="localhost">
+  <testsuite name="io.kuicksilver.quic.AndroidServerTest" tests="2" failures="0" errors="0" skipped="0" time="1.0" timestamp="2026-11-18T10:00:00" hostname="localhost">
+    <properties><property name="device" value="fixture-private-device" /></properties>
+    <testcase name="serverOnDeviceServesLoopbackClient" classname="io.kuicksilver.quic.AndroidServerTest" time="0.5" />
+    <testcase name="clientOnDevice" classname="io.kuicksilver.quic.AndroidServerTest" time="0.5" />
+  </testsuite>
+</testsuites>

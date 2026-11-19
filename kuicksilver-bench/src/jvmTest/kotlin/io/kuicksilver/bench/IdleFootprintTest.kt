@@ -33,8 +33,10 @@ class IdleFootprintTest {
     }
 
     private companion object {
-        // 83.4 K measured (2026-11-16, JVM 21; 89.4 K while a critical stream's reader kept its cancelled header deadline, a
-        // job with its cancellation's stack trace, for the connection's life). 82.1-82.8 K measured (2026-11-15, JVM 21, 4
+        // 83.5-84.4 K measured (2026-11-19, JVM 21; 84.7-85.4 K, 86.8 K on the macOS runner, while each request's STOP_SENDING
+        // watch, started for the reset budget, waited for its stream's end and held the request until then; it ends with the
+        // complete response now). 83.4 K measured (2026-11-16, JVM 21; 89.4 K while a critical stream's reader kept its
+        // cancelled header deadline, a job with its cancellation's stack trace, for the connection's life). 82.1-82.8 K measured (2026-11-15, JVM 21, 4
         // runs; 80.7-81.1 K before the streams' final sizes and stop watch and WebTransport flow control, 88.5 K with their
         // objects made up front: a Deferred and a flow pair per stream, an exception with its stack trace for the half a
         // unidirectional stream lacks, the WebTransport queues and limiter per connection; now made by their first user).

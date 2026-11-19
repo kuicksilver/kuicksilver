@@ -23,7 +23,7 @@ case "$cls" in
 esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built" >&2; exit 2; }
 lib="libksl_${abi}_${os}_${arch}.${ext}"; dir="$out/$cls"; mkdir -p "$dir" "$out/resources/META-INF/native"
-src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/c/ksl_tickets.c $root/kuicksilver-native/src/c/ksl_trust_cache.c $root/kuicksilver-native/src/c/ksl_dns.c $root/kuicksilver-native/src/c/ksl_net.c $root/kuicksilver-native/src/c/ksl_ocsp.c $root/kuicksilver-native/src/c/ksl_ech.c $root/kuicksilver-native/src/jni/ksl_jni.c"
+src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/c/ksl_tickets.c $root/kuicksilver-native/src/c/ksl_trust_cache.c $root/kuicksilver-native/src/c/ksl_dns.c $root/kuicksilver-native/src/c/ksl_net.c $root/kuicksilver-native/src/c/ksl_ocsp.c $root/kuicksilver-native/src/c/ksl_icmp.c $root/kuicksilver-native/src/c/ksl_ech.c $root/kuicksilver-native/src/jni/ksl_jni.c"
 read -r -a user_cflags <<< "${CPPFLAGS:-} ${CFLAGS:-}"; read -r -a user_ldflags <<< "${LDFLAGS:-}"   # word by word, never glob-expanded
 case "${CC:-}" in *[*?[]*) echo "CC='$CC': a glob character is refused (CC is split into words, not quoted)" >&2; exit 2 ;; esac
 cflags="-std=c11 -O2 -ffile-prefix-map=$root=. -fvisibility=hidden -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-misleading-indentation -I$O/include -I$root/kuicksilver-native/src/c"
@@ -36,7 +36,7 @@ case "$os" in
   linux)
     JH="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$dir/exports.map"
     ${CC:-gcc} $cflags -fPIC -I"$JH/include" -I"$JH/include/linux" ${user_cflags[@]+"${user_cflags[@]}"} -shared -Wl,--version-script="$dir/exports.map" -Wl,--exclude-libs,ALL -Wl,--no-undefined -Wl,-z,noexecstack -Wl,--gc-sections \
-      ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -o "$dir/$lib"
+      ${user_ldflags[@]+"${user_ldflags[@]}"} $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lresolv -lpthread -ldl -lm -o "$dir/$lib"
     [ "${KSL_KEEP_DEBUG:-0}" = 1 ] || strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"

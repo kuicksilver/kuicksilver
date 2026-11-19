@@ -40,7 +40,7 @@ public enum class Http3DiscoveryMode {
 }
 
 /**
- * A host and port, for [Http3ClientConfig.quicHints] and [KuicksilverEngineConfig.http11Hints].
+ * A host and port, for [Http3ClientConfig.quicHints], [Http2ClientConfig.priorKnowledge] and [KuicksilverEngineConfig.http11Hints].
  *
  * @property host the host exactly as in request URLs (compared as is, no case folding or resolution).
  * @property port the port, the scheme's default (443 for `https`, 80 for `http`) for URLs without one.
@@ -176,6 +176,15 @@ public class Http3ClientConfig {
     public var webTransportIgnoresProxy: Boolean = false
 
     /**
+     * WebTransport (`HttpClient.webTransport`) to a URL `connectUdpProxy` applies to connects directly instead of being
+     * refused; false by default. WebTransport sessions do not go through the CONNECT-UDP tunnel, so this exposes the
+     * client's address to the origin, which the proxy otherwise hides. Separate from [webTransportIgnoresProxy], which is
+     * about HTTP and SOCKS proxies only.
+     */
+    @ExperimentalKuicksilverApi
+    public var webTransportIgnoresConnectUdpProxy: Boolean = false
+
+    /**
      * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, over all its connections (they
      * share the pooled ones, up to `settings.webTransportMaxSessions` a connection); one more fails at once with
      * IllegalStateException, nothing waits. 64 by default, at least 1 (draft-ietf-webtrans-http3-16 section 8: "a
@@ -230,7 +239,8 @@ public class Http3ClientConfig {
 /**
  * HTTP/2 on the TCP path (RFC 9113; docs/guide/ktor.md, "HTTP/2"): every `https://` connection over TCP offers `h2` and
  * `http/1.1` in ALPN, and a server that picks `h2` gets one multiplexed connection per route instead of up to
- * `maxConnectionsPerRoute` HTTP/1.1 connections. Never for `http://` (no cleartext HTTP/2, h2c). A `wss://` WebSocket goes
+ * `maxConnectionsPerRoute` HTTP/1.1 connections. An `http://` request uses HTTP/1.1, unless its origin is listed in
+ * [priorKnowledge] (h2c, HTTP/2 over cleartext TCP). A `wss://` WebSocket goes
  * over HTTP/2 (RFC 8441, Extended CONNECT) on a connection to its origin that is there already and whose server allows it
  * (SETTINGS_ENABLE_CONNECT_PROTOCOL); otherwise it opens a connection of its own that offers `http/1.1` only, as in 0.2
  * (docs/guide/ktor.md, "WebSockets over HTTP/2"). HTTP/3 is unaffected, and so is its kill switch
@@ -260,6 +270,28 @@ public class Http2ClientConfig {
      * next (OkHttp's `pingInterval`); its calls fail. [Duration.INFINITE] (the default) sends none. At least 100 ms.
      */
     public var pingInterval: Duration = Duration.INFINITE
+
+    /**
+     * The `http://` origins (host and port, as in request URLs) whose server is known to speak HTTP/2 over cleartext TCP:
+     * their requests go over h2c with prior knowledge (RFC 9113 section 3.3), the client connection preface right after
+     * the TCP connect, without TLS, without ALPN and without `Upgrade: h2c` (deprecated by section 3.1, never sent). Empty
+     * by default: every other `http://` request stays HTTP/1.1, and nothing is learned (a server that once spoke h2c is not
+     * assumed to again, section 3.3). The list is per origin on purpose (OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a
+     * whole client to h2c): h2c is cleartext (CWE-319), so name only servers on a trusted network or behind a sidecar that
+     * protects the hop, as a TLS-terminating proxy, a service mesh or a gRPC back end are (docs/guide/ktor.md, "h2c").
+     *
+     * No fallback: a listed server that does not speak h2c fails the call with the connection error (an HTTP/1.1-only
+     * server's answer is no SETTINGS frame), and a TLS port fails its TLS handshake the same way; only a server that ends
+     * the connection with HTTP_1_1_REQUIRED gets HTTP/1.1 from then on, as over TLS. An `https://` URL never uses this
+     * (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), nor HTTP/3 (an `http://` origin never learns
+     * an alternative, `Alt-Svc` field or ALTSVC frame). Through an HTTP proxy the connection goes in a CONNECT tunnel
+     * (absolute-form requests are HTTP/1.1; CONNECT to port 80, which many proxies refuse), through SOCKS5 as any other. A
+     * `ws://` WebSocket to a listed origin goes as an Extended CONNECT (RFC 8441, `:scheme http`) on the origin's h2c
+     * connection, which it opens itself when there is none (pooled, waiting for its SETTINGS at most 1 s); a server whose
+     * SETTINGS do not allow Extended CONNECT gets an HTTP/1.1 Upgrade instead, on a connection of its own. On
+     * Android the app's cleartext policy applies as to any `http://` request. Ignored when [enabled] is false.
+     */
+    public var priorKnowledge: Set<HostPort> = emptySet()
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */
@@ -368,8 +400,13 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * when it picks that method, or `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests,
      * sent with the first request (no 407 round trip) unless the request sets its own `Proxy-Authorization`. Off the JVM
      * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
-     * in clear to the proxy (RFC 1929 section 5, RFC 7617 section 4), never to the origin, and never into the engine's
-     * logs or events. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
+     * in clear to an `http://` or SOCKS5 proxy (RFC 1929 section 5, RFC 7617 section 4) and only inside TLS to an
+     * `https://` one (after its certificate verified), never to the origin, and never into the engine's logs or events.
+     * On the JVM and Android the `proxy` is a `java.net.Proxy`, which has no scheme: `ProxyBuilder.http(Url("https://..."))`
+     * there makes an HTTP proxy on port 443, which the engine refuses (every request fails with
+     * UnsupportedOperationException) rather than send the CONNECT and these credentials in clear to it; name an `https://`
+     * proxy with a [proxyResolver] (`ResolvedProxy.https`) or the environment, and a plain proxy on port 443 with a
+     * resolver's `ResolvedProxy.http`. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
      * [IllegalArgumentException]: RFC 1929 section 2 gives the password 1 to 255 octets (curl and Go send an empty one
      * anyway, outside the protocol).
      */
@@ -377,14 +414,42 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var proxyCredentials: ProxyCredentials? = null
 
     /**
+     * The TLS settings of connections to an `https://` proxy ([ResolvedProxy.https]: TLS to the proxy itself), separate
+     * from the origin's. Null (the default) takes the origin's: the [tls] block over [trust], then that trust without
+     * what names the origin (a `TrustConfig.ExpectedName` gives way to its base, a `TrustConfig.Pinned` to its base: the
+     * proxy has another name and another key), and no client certificate ([identity] is the origin's and is not shown to
+     * the proxy). A block starts from that same trust and no identity and may set anything (`trust`, `identity` for a
+     * proxy that wants a client certificate, `versions`...). Whatever it says, the server name, which is both SNI and
+     * the name the certificate is verified against (RFC 9525), is the proxy's host and ALPN offers `http/1.1` only; set
+     * after the block. The origin's TLS inside the proxy's tunnel keeps [trust], [identity] and [tls], as without a
+     * proxy. docs/guide/ktor.md, "Proxies".
+     */
+    @ExperimentalKuicksilverApi
+    public var proxyTls: (TlsConfig.Builder.() -> Unit)? = null
+
+    /**
      * Where the proxy for a request comes from when `proxy` is not set (an explicit `proxy` always wins):
      * [ProxyResolvers.System] (the default: the platform's proxy settings), [ProxyResolvers.Environment]
      * (`https_proxy`, `no_proxy`...), [ProxyResolvers.None] for direct connections, or your own [ProxyResolver]. A
-     * request through a proxy uses HTTP/1.1 only and neither uses nor learns `Alt-Svc`; `localhost` and loopback
+     * request through a proxy uses TCP only (HTTP/1.1, or HTTP/2 with the origin inside a tunnel) and neither uses nor
+     * learns `Alt-Svc`; `localhost` and loopback
      * addresses always connect directly with the built-in resolvers. docs/guide/ktor.md, "Proxies".
      */
     @ExperimentalKuicksilverApi
     public var proxyResolver: ProxyResolver = ProxyResolvers.System
+
+    /**
+     * A CONNECT-UDP proxy (RFC 9298, MASQUE) for HTTP/3, or null (the default) for none. An `https` request it applies to
+     * goes over HTTP/3 inside a UDP tunnel through it, whatever `proxy` or `proxyResolver` say (they keep deciding for the
+     * requests it does not apply to): never over HTTP/1.1 or HTTP/2, and never directly, since either would leave the proxy
+     * out. So such a request fails, with the reason, when the origin has no HTTP/3, when the proxy refuses the tunnel
+     * (`Http3Exception.ConnectRejected` with its `proxy-status`), under `http3 { discovery = H1Only }` or while
+     * `http3Allowed` says no (UnsupportedOperationException). `Alt-Svc` is neither used nor learned for it, and the origin's
+     * name is resolved by the proxy, not here. WebTransport refuses such URLs unless `http3 { webTransportIgnoresConnectUdpProxy }`.
+     * docs/guide/ktor.md, "HTTP/3 through a CONNECT-UDP proxy".
+     */
+    @ExperimentalKuicksilverApi
+    public var connectUdpProxy: ConnectUdpProxy? = null
 
     /**
      * The largest WebSocket message, and so frame, the client takes from a server, in bytes (RFC 6455 section 10.4: an

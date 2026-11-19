@@ -1,0 +1,9 @@
+# http3.udpDatagrams: <input> <SHA-256 of its bytes> <SHA-256 of the operations its program decodes> (16 hex digits each);
+# written by CommittedCorpusReplayTest with KUICKSILVER_FUZZ_FORMATS=record (docs/process.md)
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/above-link-limit	bc692eb35410e57c	025d33e54b9988b0
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/context-two-skipped	fe547264ae3a487f	05a8dc3411471841
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/context-zero	9826d47432c0203e	a33851c2fc963d84
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/eight-byte-context	d980021adeeeaabd	6704223a817eb661
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/other-capsule-type	09bded3f7e30b554	a33851c2fc963d84
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/oversized-announced	5540894a49bb2280	52945570ce89d4e4
+kuicksilver-http3/src/jvmTest/resources/io/kuicksilver/http3/fuzz/ConnectUdpFuzzTestInputs/udpDatagrams/truncated-context	bc064be1eded262a	19beb32cfd88528e

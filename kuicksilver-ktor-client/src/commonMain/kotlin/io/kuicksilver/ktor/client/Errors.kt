@@ -11,6 +11,7 @@ import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.availableForRead
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Source
@@ -51,6 +52,50 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
         echConfigList = ech?.list?.takeIf { versions == io.kuicksilver.tls.TlsVersions.Tls13 }
         echGrease = this@tlsConfigFor.ech.grease
     }
+
+/**
+ * The trust an `https://` proxy gets by default: the origin's base trust without what names the origin. An
+ * [TrustConfig.ExpectedName] replaces the origin's reference identifier, so on the proxy hop it would accept the
+ * origin's certificate from whoever sits there (RFC 9525 section 6.1: the reference identifier is the name of the
+ * service connected to, here the proxy's); a [TrustConfig.Pinned] lists the origin's keys, which the proxy does not
+ * hold (curl's `--pinnedpubkey` is not applied to its proxy either). Both are taken off, recursively; the CA set, the
+ * platform's store, a custom verifier and TOFU stay as configured.
+ */
+internal fun proxyTrustOf(trust: TrustConfig): TrustConfig =
+    when (trust) {
+        is TrustConfig.ExpectedName -> proxyTrustOf(trust.base)
+        is TrustConfig.Pinned -> proxyTrustOf(trust.base)
+        else -> trust
+    }
+
+/**
+ * The TLS configuration of a connection to the `https://` proxy at [host] (ADR-0023). With
+ * [KuicksilverEngineConfig.proxyTls] null: the engine's [KuicksilverEngineConfig.tls] block (versions, groups and the
+ * like) over its [KuicksilverEngineConfig.trust], then the resulting trust through [proxyTrustOf], and no client
+ * certificate (the origin's identity is not shown to the proxy). With a `proxyTls` block: the trust through
+ * [proxyTrustOf] and no identity, then that block, which may replace both. Either way SNI and the reference identifier are
+ * the proxy's host and ALPN is `http/1.1` alone, set last.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun KuicksilverEngineConfig.proxyTlsConfigFor(host: String): TlsConfig =
+    tlsConfig(TlsRole.Client) {
+        val own = this@proxyTlsConfigFor.proxyTls
+        if (own == null) {
+            trust = this@proxyTlsConfigFor.trust
+            tls()
+            trust = proxyTrustOf(trust)
+            identity = null
+        } else {
+            trust = proxyTrustOf(this@proxyTlsConfigFor.trust)
+            identity = null
+            own()
+        }
+        // HTTP/1.1 to the proxy (CONNECT over HTTP/2, RFC 9113 section 8.5, is not offered: ADR-0023)
+        alpn = listOf(PROXY_ALPN)
+        serverName = host
+    }
+
+internal const val PROXY_ALPN: String = "http/1.1"
 
 /**
  * [delegate] with the request's socket timeout on every wait for data (as the CIO engine's socket timeout): a body that

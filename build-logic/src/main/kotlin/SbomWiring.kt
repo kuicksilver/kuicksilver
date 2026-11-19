@@ -43,6 +43,14 @@ fun Project.registerCyclonedxSbom(description: String, platformConstraints: List
         opensslConfigureFlags.set(providers.fileContents(root.file("tools/openssl/configure-flags.txt")).asText.map { t ->
             t.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         })
+        compressionLibs.set(providers.fileContents(root.file("gradle/compression-libs.toml")).asText.map { t ->
+            listOf("zlib", "brotli").map { lib ->
+                val table = Regex("(?ms)^\\[$lib]\\s*\\n([^\\[]*)").find(t)?.groupValues?.get(1) ?: error("[$lib] missing in gradle/compression-libs.toml")
+                fun value(key: String) = Regex("^$key = \"(.*)\"", RegexOption.MULTILINE).find(table)?.groupValues?.get(1)
+                    ?: error("$key missing in [$lib] of gradle/compression-libs.toml")
+                listOf(lib, value("version"), value("sha256"), value("url"))
+            }
+        })
         kslAbi.set(providers.fileContents(rootProject.project(":kuicksilver-native").layout.projectDirectory.file("src/c/ksl.h")).asText.map {
             Regex("#define KSL_ABI_VERSION (\\d+)u").find(it)?.groupValues?.get(1) ?: error("KSL_ABI_VERSION missing in ksl.h")
         })

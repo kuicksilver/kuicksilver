@@ -28,14 +28,15 @@ class KslUdpSocketCloseTest {
         val socket = KslUdpSocket.open(KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0), 0)
         assertTrue(socket.enterForTest())
         runBlocking {
+            // the clock starts before the caller's stay does: a correct close then measures at least the 300 ms
+            val started = TimeSource.Monotonic.markNow()
             val leaving =
                 launch(Dispatchers.Default) {
                     delay(300)
                     socket.leaveForTest()
                 }
-            val started = TimeSource.Monotonic.markNow()
             socket.close()
-            assertTrue(started.elapsedNow() >= 250.milliseconds, "the close did not wait for the caller inside")
+            assertTrue(started.elapsedNow() >= 300.milliseconds, "the close did not wait for the caller inside")
             leaving.join()
         }
         // about one look per millisecond once it sleeps; a spin made millions

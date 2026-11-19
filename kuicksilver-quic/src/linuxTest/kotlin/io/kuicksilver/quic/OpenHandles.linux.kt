@@ -8,3 +8,5 @@ import platform.posix.fcntl
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun openHandleCount(): Int = (0 until 4096).count { fcntl(it, F_GETFD) != -1 }
+
+internal actual fun handleBreakdown(): Map<String, Int> = mapOf("descriptors" to openHandleCount())

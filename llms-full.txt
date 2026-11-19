@@ -1926,6 +1926,31 @@ a resumption's re-verification under ECH too:
 ECH protects the name only when the configuration came from an authenticated source: over plain DNS an attacker can
 remove the `ech` parameter (the client then connects without ECH) or replace it. The destination address, and the name in
 the DNS query itself unless DNS is protected, stay visible.
+### Certificate compression
+
+Both roles compress certificate chains with TLS certificate compression (RFC 8879) by default, over QUIC and TCP alike,
+TLS 1.3 only: a client offers brotli, then zlib, and a server sends its chain compressed with the first of the client's
+algorithms; a server that asks for a client certificate offers the same two, and the client compresses its certificate.
+A peer without it sends and gets plain certificates. Over QUIC a smaller chain keeps more of a server's first flight
+inside the amplification limit before the client's address is validated (RFC 9000 section 8.1): measured with the test
+chains, a 13.7 KB leaf and its intermediate shrink the server's first flight from 15,523 to 2,689 bytes, and a
+WebPKI-like RSA-2048 leaf and intermediate about a quarter (2,464 to 1,876 bytes of Certificate message).
+
+- A server compresses its chain once, when the context for its identity is built; a chain neither algorithm makes
+  smaller goes out uncompressed. A session that staples an OCSP response sends its Certificate uncompressed: over TLS
+  1.3 the response is part of the message, and the chain compressed beforehand has none.
+- What a peer sends is held to the certificate list bound of 100 KiB, compressed or not: an announced uncompressed
+  length above it, data that does not decompress to exactly that length, or a decompression that runs past it ends the
+  handshake with `bad_certificate` (42); an algorithm that was not offered with `illegal_parameter` (47).
+- `TlsConnection.peerCertificateCompression` and `QuicConnection.peerCertificateCompression` (experimental) tell which
+  algorithm the peer's chain came in, null for a plain one or none (a resumption carries no certificate).
+- `certificateCompression = false` (experimental) turns it off for a configuration: no offer, and a compressed
+  certificate from the peer is an `unexpected_message` (10).
+
+The algorithms are built into the bundled OpenSSL from pinned, verified releases of zlib and brotli
+([ADR-0025](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0025-zlib-and-brotli-in-libcrypto.md)). On Android and iOS only brotli's decoder is built, to keep the
+library small (about 230 KB added, against about 510 KB with the encoder elsewhere): there a server compresses its chain with
+zlib, and a client sends its own certificate uncompressed; both still take brotli and zlib from the peer.
 
 ## HTTP/3 with Kuicksilver
 
@@ -1959,16 +1984,22 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.ConnectUdp
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.UdpProxy
+import io.kuicksilver.http3.UdpProxyConfig
+import io.kuicksilver.http3.UdpProxyTemplate
 import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.capsuleConfig
+import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.io.readString
@@ -2309,7 +2340,100 @@ so collect `capsules` even when only datagrams matter, or list no `knownTypes`. 
 `sendDatagram` have no deadline of their own while the peer withholds flow-control credit; cancelling `close()` leaves
 the writer running in the connection, so bound them with `withTimeout` and `reset` the stream when it expires. Options:
 [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
-HTTP/1.1 and HTTP/2 upgrades are not supported.
+HTTP/1.1 and HTTP/2 upgrades are not supported. CONNECT-UDP builds on it: [CONNECT-UDP](#connect-udp-experimental).
+
+### CONNECT-UDP (experimental)
+
+CONNECT-UDP (RFC 9298, "Proxying UDP in HTTP", the UDP part of MASQUE) tunnels UDP through an HTTP/3 proxy: the client
+sends an Extended CONNECT with `:protocol` `connect-udp` whose path names the target, and from then on UDP payloads
+travel as HTTP datagrams with Context ID 0 (section 5), QUIC DATAGRAM frames when both sides negotiated HTTP/3 datagrams
+and DATAGRAM capsules otherwise. Both sides are here, over HTTP/3 only: HTTP/1.1 (`Upgrade: connect-udp`, section 3.2)
+and HTTP/2 (sections 3.4, 3.5) are not supported, as the Capsule Protocol is not on those versions here (ADR-0024), and the
+Ktor engines do not offer CONNECT-UDP yet.
+
+A server serves it with a `UdpProxy`; the HTTP/3 settings need `enableConnectProtocol` (and `h3Datagram`, on by
+default). Authenticate the client before `serve`: "HTTP servers that support UDP proxying ought to restrict its use to
+authenticated users" (section 7).
+
+```kotlin
+val proxy = UdpProxy(UdpProxyConfig())   // public targets only; the template /.well-known/masque/udp/{target_host}/{target_port}/
+// guide:http3:connect-udp (proxy)
+val request = connection.acceptRequest()
+if (ConnectUdp.isConnectUdp(request)) proxy.serve(request) else request.respond(404).finish()
+```
+
+`serve` returns when the tunnel ended. It reads `target_host` and `target_port` from the request's path with
+`UdpProxyConfig.pathTemplate` (a path of another shape is answered 404, an invalid value 400: an empty one, a port outside
+1..65535, an IPv6 literal whose colons are not percent-encoded or that carries a zone ID) and wants `capsule-protocol:
+?1` (400 without it; `requireCapsuleProtocolField = false` accepts clients that leave it out, which the RFC allows). A
+DNS name is resolved before the answer, as section 3.1 requires: a failure is 502 with `proxy-status: proxy;
+error=dns_error`, a timeout (`resolveTimeout`, 5 s) 504 with `dns_timeout`. Then `targetFilter` decides
+(`UdpTargetFilter.PublicOnly` by default): loopback, private, link-local, multicast, broadcast and the other special-purpose
+addresses are refused with 403 and `destination_ip_prohibited` before any socket exists, an IPv4-mapped, NAT64 or 6to4
+address is judged by its IPv4 address, and the socket sends to the very address the filter allowed, so a later DNS answer
+cannot move it. The proxy's own addresses are refused as well (`refuseOwnAddresses`: the address the request's
+connection reached, the listener's own); other addresses of the host (NAT aliases) go to `and UdpTargetFilter.excluding(...)`;
+`UdpTargetFilter.addresses`, `hosts` and `ports` build allow-lists. Only then the socket is opened (`socketFactory`, on a
+wildcard address of the target's family) and the request answered 200 with `capsule-protocol: ?1`; nothing goes to the
+target before that answer.
+
+While the tunnel lasts, datagrams with another Context ID are dropped (section 4), one whose UDP payload exceeds 65527
+bytes aborts the stream with `H3_DATAGRAM_ERROR` (section 5), a payload above what the link carries unfragmented
+(`linkMtu` 1500 less 28 for IPv4, 48 for IPv6) is dropped, a DATAGRAM capsule without being buffered, and only datagrams
+from the target's address and port are taken from the socket (section 3.1). Packets to the target are marked Not-ECT
+(section 6.2). A target payload too large for the client's QUIC DATAGRAM frames is dropped rather than sent as a capsule
+(section 6.1), and answered with an ICMP Packet Too Big where the process may open a raw ICMP socket (Linux and Android
+with `CAP_NET_RAW`; `packetTooBig`, on by default; at most 10 a second per target and 100 over the proxy); `stats.packetTooBig` says whether it
+does (`Unavailable` without the privilege and on Apple platforms and Windows, where the payload is only dropped). The
+message leaves from the address the target sent to: the default sockets (wildcard, accelerated) report it per datagram,
+and a `socketFactory` binding one address answers from it; a wildcard portable socket cannot, so it sends none
+(`stats.packetTooBigNoSource`); one the raw socket does not send (no socket for the family opened, the kernel refused
+it, or the sender ruled out its addresses) is counted in `stats.packetTooBigFailed`. Against floods (section 7, CWE-400): `packetRate` (20 000 a second, a burst of `packetBurst` 2000) per
+tunnel and `clientPacketRate` (50 000, burst 5000) per client over all its tunnels, a client being its IPv4 address or
+its IPv6 /64 (`clientIpv6Prefix`); `unansweredLimit` (256 payloads a client sends to a target that has not answered yet,
+across its tunnels); `maxTunnels` (4096; one more is 503) and `maxTunnelsPerClient` (64; one more is 429), both with
+`connection_limit_reached`. A target datagram above `linkMtu` bytes is dropped whole, never forwarded cut; an ICMP port
+unreachable for the target that quotes a payload the tunnel sent closes the tunnel (Linux and Android; a forged or host
+unreachable is ignored and counted in `stats.ignoredUnreachable`). The system resolver runs 16 lookups at once at most,
+4 of one client (a lookup the caller gave up on keeps its thread until it returns); one more is answered 503. The tunnel ends,
+with its socket, when the client ends the stream (our side ends too), resets it or its connection is gone; when the
+socket fails (the stream is reset and stopped with `H3_CONNECT_ERROR`); or after `idleTimeout` without traffic (two
+minutes, the floor section 3.1 sets; FIN and `STOP_SENDING H3_NO_ERROR`). `activeTunnels` and `stats` show what it does.
+Options: [configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md#udpproxyconfig-experimental).
+
+A client opens a tunnel with `connectUdp` on a connection to the proxy. The template is checked against section 2 when
+it is parsed and the target against section 3 before anything is sent (`IllegalArgumentException`); an answer other than
+a 2xx fails with `Http3Exception.ConnectRejected`, whose `headers` carry the proxy's `proxy-status`.
+
+```kotlin
+// guide:http3:connect-udp (client)
+val template = UdpProxyTemplate.parse("https://proxy.example/.well-known/masque/udp/{target_host}/{target_port}/")
+val tunnel = connection.connectUdp(template, "192.0.2.10", 443)   // an IPv6 target goes as 2001%3Adb8%3A%3A1
+tunnel.send("hello".encodeToByteArray())                           // one UDP payload, at most 65527 bytes
+val reply = tunnel.payloads.first()                                 // the target's answers, as they come
+tunnel.close()                                                      // FIN; the proxy closes its socket
+```
+
+`UdpProxyTemplate.wellKnown("proxy.example:4443")` is the default template for a proxy known only by host and port.
+
+**Proxied QUIC.** `tunnel.asDatagramIo()` is the tunnel as a UDP socket for a QUIC endpoint, so a QUIC or HTTP/3
+connection runs end to end through the proxy (TLS to the target, the proxy sees only UDP):
+
+```kotlin
+// guide:http3:connect-udp (proxied QUIC)
+val tunnel = connection.connectUdp(template, "example.com", 443)    // the proxy resolves the name
+val inner = Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), QuicEndpointConfig.Builder().apply { io = { tunnel.asDatagramIo() } }.build())
+val h3 = inner.connect(tunnel.remoteAddress, tls)                   // tls names example.com
+val response = h3.request(http3Request("GET", "example.com", "/"))
+```
+
+Every datagram the inner endpoint sends goes to the tunnel's one target, and every one it receives is reported from
+`tunnel.remoteAddress` (the target's literal, or 192.0.2.1 for a name, which the client never resolves). The socket has
+no ECN, GSO or Don't Fragment, so the inner connection keeps to 1200-byte datagrams; those must fit the HTTP datagrams of
+the connection to the proxy, which needs that connection's path MTU above about 1250 bytes: the accelerated socket sets
+Don't Fragment and DPLPMTUD finds it within a few round trips, while over a 1200-byte path the inner handshake times out
+(RFC 9000 section 14 needs 1200-byte datagrams end to end). A server's preferred address is unreachable through a tunnel;
+closing the inner endpoint closes its tunnel.
 
 ### WebTransport (experimental)
 
@@ -2544,11 +2668,13 @@ import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
 import io.kuicksilver.http3.Http3EarlyDataPolicy
+import io.kuicksilver.http3.UdpProxy
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.ktor.server.Http3Advertising
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverServerEventListener
+import io.kuicksilver.ktor.server.connectUdp
 import io.kuicksilver.ktor.server.peerCertificates
 import io.kuicksilver.ktor.server.priority
 import io.kuicksilver.ktor.server.receivedEarly
@@ -2591,6 +2717,8 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.http3.UdpProxyTemplate
+import io.kuicksilver.ktor.client.ConnectUdpProxy
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
@@ -2869,8 +2997,9 @@ keys.rotate(listOf(EchKey(ech2.readBytes()), EchKey(ech1.readBytes(), inRetryCon
 
 `http2 = true` (experimental; off by default in 0.3.0; `EngineMain` key `kuicksilver.http2`) makes every TLS connector
 offer `h2` before `http/1.1` in ALPN, so a client that offers both gets HTTP/2 (RFC 9113) and one that offers only
-`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors never serve HTTP/2: there
-is no h2c, and a client's `PRI * HTTP/2.0` preface is refused with `505 HTTP Version Not Supported`. HTTP/2 runs over
+`http/1.1` (WebSockets included) gets HTTP/1.1 on the same port, as before. Plain connectors serve HTTP/2 only with
+their own opt-in ([h2c on the server](#h2c-on-the-server)); without it a client's `PRI * HTTP/2.0` preface is refused with
+`505 HTTP Version Not Supported`. HTTP/2 runs over
 TLS 1.3, and over TLS 1.2 on a connector that allows it ([TLS 1.2 on the server](#tls-12-on-the-server); RFC 9113
 section 9.2).
 
@@ -2944,7 +3073,63 @@ the source address). Never behind a NAT, CGNAT, an L4 load balancer or Kubernete
 addresses (`externalTrafficPolicy: Cluster`) or a TCP proxy such as HAProxy in TCP mode: every client there shares one
 address, and one flooder would lock them all out.
 
-The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+The server passes h2spec 2.6.0 (all 146 cases, `tools/interop/h2spec.sh`, over TLS and over h2c). HTTP/2 on the server is still experimental and off by default in 0.3.0.
+
+#### h2c on the server
+
+HTTP/2 over cleartext TCP with prior knowledge (h2c, RFC 9113 section 3.3; experimental, off by default; [ADR-0018](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0018-h2c-and-coalescing-in-030.md))
+is for a server behind a TLS-terminating proxy or load balancer, inside a service mesh whose sidecar does the TLS, and
+for gRPC between services: the hop from the proxy to the server keeps HTTP/2's multiplexing instead of falling back to
+HTTP/1.1. It is turned on per plain connector:
+
+```kotlin
+// guide:ktor:h2c-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    plainConnector {
+        port = 8080
+        h2c = H2cMode.WithHttp11      // HTTP/1.1 and h2c (prior knowledge) on this cleartext port; H2cMode.Only: h2c alone
+    }
+}, module = Application::module)
+```
+
+`EngineMain` takes `kuicksilver.h2c = off | withHttp11 | only` for the cleartext deployment port (not together with the
+`kuicksilver.tls.*` identity files: a TLS port negotiates `h2` by ALPN, `kuicksilver.http2`). A connector that the
+configuration's `identity` turns into a TLS one refuses h2c at the start (IllegalArgumentException).
+
+- **One port or two.** `WithHttp11` tells the two apart by the client connection preface (`PRI * HTTP/2.0
+
+SM
+
+`,
+  RFC 9113 section 3.4), as Go's `golang.org/x/net/http2/h2c` handler and Netty's `CleartextHttp2ServerUpgradeHandler`
+  do: the first octets are looked at as they arrive, none is consumed, and the first one that differs from the preface
+  hands the connection to HTTP/1.1 at once, so a request shorter than the 24 octets is never held back. The wait is part
+  of the first request head's deadline (`requestHeaderTimeoutSeconds`): a client that sends part of the preface and
+  stops is closed then, as a slow HTTP/1.1 head is. When the server stops during that wait, a connection
+  that has sent nothing is closed at once, and one that has started is treated as a request head that started on
+  HTTP/1.1: waited for within the request-head deadline and the stop's grace period. A whole preface is HTTP/2, which
+  serves the requests that came with it and ends with the graceful two-step GOAWAY (RFC 9113 section 6.8); the first
+  octet that differs hands the connection to HTTP/1.1, which answers that request with `Connection: close`; a client
+  that stops part way is closed at the deadline with HTTP/1.1's 408. "Arrived" means read by the server from the socket:
+  bytes still in the kernel's buffer, or a TLS record not yet decrypted, when the stop begins are not seen, and such a
+  connection counts as one that has sent nothing. `Only` (a gRPC port) skips the check: a client that sends anything
+  else, an HTTP/1.1 request included, gets the connection error of an invalid preface (GOAWAY with PROTOCOL_ERROR, then
+  the close), never an HTTP/1.1 answer. A dedicated port per protocol is two connectors.
+- **`Upgrade: h2c` is not taken.** RFC 9113 section 3.1 deprecates the HTTP/1.1 upgrade to h2c; a request that offers
+  it is served as HTTP/1.1, as any `Upgrade` the server does not take (RFC 9110 section 7.8), never answered 101.
+- **Everything else is HTTP/2 on the server, unchanged**: `http2Settings`, the deadlines, the flood defences and
+  `http2RepeatOffenderPenalty`, RFC 9218 priorities, WebSockets over HTTP/2 (`ws://`, RFC 8441, with
+  `webSocketsOverHttp2`), the two-step GOAWAY at a stop, `maxTcpConnections`, the event listener and the probe. The
+  call's `request.local.scheme` is `http`. No `Alt-Svc` and no ALTSVC frame: HTTP/3 is for `https` origins.
+- **`:scheme https` over h2c** (a proxy that terminated TLS and forwards the original scheme) is a misdirected request
+  on a plain connection (RFC 9110 section 7.4): 421, unless the connector's clients are trusted gateways
+  (`trustedGateway = true`, [Misdirected requests](#misdirected-requests)).
+
+**Cleartext.** Nothing authenticates the client or protects the bytes (CWE-319): serve h2c only behind a trusted network
+or proxy (a loopback hop, a private network, a sidecar that does mTLS), never on a port the internet reaches. When the
+front is an HTTP/1.1 proxy that turns requests into h2c, the server's HTTP/2 message checks (connection-specific fields,
+`content-length` against the content) reject what would smuggle a second request ([threat model 3.23.1](https://github.com/kuicksilver/kuicksilver/blob/main/docs/spec/threat-model.md#3-23-1-h2c)).
 
 #### Turning HTTP/3 off on the server
 
@@ -3149,6 +3334,33 @@ wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :k
 dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
 `docs/spec/interop.md`, "Interop WebTransport".
+
+#### CONNECT-UDP over HTTP/3 (experimental)
+
+With `connectUdp = true` the HTTP/3 listener takes CONNECT-UDP requests (RFC 9298, MASQUE: an Extended CONNECT with
+`:protocol` `connect-udp`) into Ktor's pipeline, and a `connectUdp(proxy)` route serves them with a `UdpProxy` of
+`kuicksilver-http3` ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)): the proxy reads the target from the path
+with its `pathTemplate`, checks it with its `targetFilter` (`UdpTargetFilter.PublicOnly` by default: loopback, private,
+link-local, multicast and broadcast targets are refused with 403) and its limits, answers and relays the tunnel; the call
+ends with the tunnel. The route matches only such a request, at any path, over HTTP/3; HTTP/1.1 and HTTP/2 do not carry
+CONNECT-UDP (ADR-0024). Without `connectUdp = true` the engine answers CONNECT-UDP with 501; a CONNECT-UDP request no route
+takes gets Ktor's 404, and one another route answers with a 2xx gets 501, since no tunnel was opened. Give the route one
+`UdpProxy` (its limits count the tunnels of every request) and put it behind authentication: "HTTP servers that support
+UDP proxying ought to restrict its use to authenticated users" (RFC 9298 section 7); a 401 or 407 from a check in front
+of it goes out as it is. The proxy's configuration is code (a filter, a resolver), so it has no configuration-file key.
+
+```kotlin
+// guide:ktor:connect-udp-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val proxyServer = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    connectUdp = true
+}) {
+    routing {
+        connectUdp(UdpProxy())                     // behind your authentication; public targets only by default
+    }
+}
+```
 
 #### Misdirected requests
 
@@ -3434,6 +3646,7 @@ takes client certificates from its `trustStore` instead, and the start is refuse
 | `kuicksilver.tls.echKeys` | Encrypted Client Hello keys of the deployment port: a list of PEM files, each what `openssl ech -public_name <name>` writes (the private key and its ECHConfigList; every one is sent in retry configurations), or one comma-separated string; read once at startup (rotate in code with `EchServerKeys.rotate`); needs the identity files, and is refused next to `-sslPort`; see [Encrypted Client Hello on the server](#encrypted-client-hello-on-the-server) |
 | `kuicksilver.http3` | serve HTTP/3 (`true`) |
 | `kuicksilver.http2` | serve HTTP/2 on TLS connectors (`false`); see [HTTP/2 on the server](#http2-on-the-server) |
+| `kuicksilver.h2c` | HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port: `off` (unset), `withHttp11` (both on one port, told apart by the preface) or `only`; refused with the identity files; see [h2c on the server](#h2c-on-the-server) |
 | `kuicksilver.http2RepeatOffenderPenalty` | refuse an address that keeps flooding HTTP/2 for this long (`0`, off; e.g. `30s`); see [HTTP/2 on the server](#http2-on-the-server) |
 | `kuicksilver.maxTcpConnections` | TCP connections a connector holds at once (`10000`); see [Connection limits](#connection-limits) |
 | `kuicksilver.maxTcpConnectionsPerIp` | TCP connections of one client address on a connector (`0` or unset: off; e.g. `256` for a server that faces clients directly); see [Connection limits](#connection-limits) |
@@ -3491,7 +3704,16 @@ val client = HttpClient(Kuicksilver) {
   HTTP/1.1 otherwise ([HTTP/2 on the client](#http2-on-the-client)). `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
   the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
   is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
-  "CLEARTEXT communication to <host> not permitted by network security policy".
+  "CLEARTEXT communication to <host> not permitted by network security policy". The policy matches strings, so it is
+  asked about one spelling per address, and `<host>` in that message is this spelling: an IPv4 address in any form
+  inet_aton reads alike on every platform (`127.1`, `2130706433`) as its dotted quad (`127.0.0.1`); an IPv6 literal in
+  the text RFC 5952 recommends (`[0:0:0:0:0:0:0:1]` as `::1`), without its zone, so a rule for `fe80::1` holds on every
+  link and a `<domain>` written with a zone never matches; an IPv4-mapped literal (`[::ffff:192.0.2.1]`) as its dotted
+  quad (`192.0.2.1`), the address the connection goes to; and a name as it is. Write `<domain>` entries in these
+  spellings. A host that can be in none of them fails before the policy is asked, with an `IOException` of its own: an
+  IP literal that is no IPv6 address ("not an IP address"), an IPv4 form that platforms read differently (`010.0.0.1`),
+  a host beginning with a dot, and a name with non-ASCII characters: the engine does not map an internationalised name
+  to its A-label, so the URL must carry the A-label (`xn--...`), as the `<domain>` entry does.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
@@ -3564,7 +3786,7 @@ This holds directly, through an HTTP CONNECT tunnel and through SOCKS5 (ALPN is 
 as with OkHttp), in every `http3 { discovery }` mode but `H3Only`, and whatever `http3Allowed` says: the HTTP/3 kill
 switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1.1`, as in 0.2.
 
-- **Not HTTP/2.** `http://` (no cleartext HTTP/2, h2c). A WebSocket opens no HTTP/2 connection of its own: see
+- **Not HTTP/2.** `http://`, unless its origin is listed for h2c ([h2c on the client](#h2c-on-the-client)). A WebSocket opens no HTTP/2 connection of its own: see
   WebSockets below. No server push (the client sends SETTINGS_ENABLE_PUSH = 0; a PUSH_PROMISE
   ends the connection), and no connection coalescing across origins. `priority(...)` goes as the end-to-end `priority`
   field, with an RFC 7540 weight in the HEADERS until the server says it ignores those (RFC 9218 section 2.1.1).
@@ -3633,6 +3855,48 @@ switch does not turn HTTP/2 off. `http2 { enabled = false }` offers only `http/1
   was cancelled once the session was open closes it with a Close (1001 Going Away, or the application's own code) as one
   cancelled after its Close does (see [HTTP/3 on the client](#http3-on-the-client)). As over HTTP/1.1, one WebSocket per remote host
   is in its handshake at a time (RFC 6455 section 4.1).
+
+#### h2c on the client
+
+```kotlin
+// guide:ktor:h2c-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        http2 {
+            // these http:// origins speak HTTP/2 over cleartext TCP (h2c, prior knowledge); every other stays HTTP/1.1
+            priorKnowledge = setOf(HostPort("backend.internal", 8080))
+        }
+    }
+}
+```
+
+An `http://` request whose origin (host and port as in the URL) is in `http2 { priorKnowledge }` goes over HTTP/2 on
+cleartext TCP (RFC 9113 section 3.3, experimental; [ADR-0018](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0018-h2c-and-coalescing-in-030.md)): the client
+connection preface right after the TCP connect, no TLS, no ALPN, never `Upgrade: h2c` (deprecated by section 3.1). The
+list is per origin, where OkHttp's `Protocol.H2_PRIOR_KNOWLEDGE` turns a whole client to h2c: the application names the
+servers it knows, and every other `http://` request stays HTTP/1.1. Nothing is learned (section 3.3: a server that once
+spoke h2c may not again), and a listed origin does not have to be on loopback; the per-origin opt-in is the gate, as
+grpc-go's `insecure.NewCredentials()` is per channel.
+
+- **No fallback.** A listed server that speaks HTTP/1.1 only, or a TLS port, fails the call (its answer is no SETTINGS
+  frame); only a server that ends the connection with HTTP_1_1_REQUIRED gets HTTP/1.1, as over TLS.
+- **Never for `https://`** (section 3.3: HTTP/2 over TLS "MUST use protocol negotiation in TLS"), and never HTTP/3: an
+  `http://` origin learns no alternative, neither from `Alt-Svc` fields nor from ALTSVC frames on an h2c connection.
+  With `http3 { httpsRecords }` an HTTPS record still upgrades the request to `https://` first (RFC 9460 section 9.5).
+- **Proxies.** Through an HTTP proxy the h2c connection goes in a CONNECT tunnel (an absolute-form request would be
+  HTTP/1.1), as OkHttp does; through SOCKS5 as any other connection. The tunnel is a CONNECT to the origin's cleartext
+  port (80, say), which many proxies refuse (squid's default `SSL_ports` allows CONNECT to 443 only): such a proxy fails
+  the call with its answer to the CONNECT. `Proxy-Authorization` goes on the CONNECT only, never on the HTTP/2 stream. The pool keeps h2c connections per route (origin
+  and proxy), apart from the `https://` ones of the same host.
+- **The rest is HTTP/2 on the client**: one multiplexed connection per route, repeats, deadlines (the server's SETTINGS
+  within the connect timeout), `pingInterval`, `settings` and diagnostics (`HTTP_2_0`; `fallback` says `NotSecure`,
+  why not HTTP/3). A `ws://` WebSocket to a listed origin goes as an Extended CONNECT (`:scheme http`, RFC 8441 section
+  5) on the origin's h2c connection; with none open, the WebSocket opens it (pooled for the requests after it) and waits
+  for its SETTINGS (at most 1 s): an h2c-only server has no HTTP/1.1 Upgrade to offer. A server whose SETTINGS do not
+  allow Extended CONNECT (section 3) gets the HTTP/1.1 Upgrade on a connection of its own, as over TLS.
+- **Cleartext** (CWE-319): list only servers on a trusted network or behind a sidecar that protects the hop. On Android
+  the app's cleartext policy applies as to any `http://` request.
 
 #### Connection pool
 
@@ -4248,10 +4512,10 @@ Where a request's proxy comes from:
 
 | Target | `ProxyResolvers.System` | PAC / WPAD |
 |---|---|---|
-| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
+| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings; its HTTP proxies (`https.proxyHost`/`https.proxyPort` included: the `https` names the URLs it serves) are always plain HTTP proxies, as on Android, since a `java.net.Proxy` has no scheme; TLS to a proxy needs `proxyResolver = ProxyResolver { ResolvedProxy.https(..) }` | as the JDK does |
 | Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
-| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer with only proxies the engine cannot use (`HTTPS`, `SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
-| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list; the settings' "HTTPS" proxy is the plain proxy for `https` URLs) | run by the engine on JavaScriptCore: the PAC URL or script of the settings, or WPAD when they say "auto discover" (DHCP option 252 on macOS, `http`/`https` only; `wpad.<domain>` for each DNS search domain exactly, never a parent domain, though a search domain is used as given; then `http://wpad/wpad.dat` for the resolver to complete, the only candidate on iOS); scripts fetched directly (`http`, `https`, `file`, at most 1 MiB read, kept 30 min), each run limited to 2 s; a script that fails within 5 s: the next setting, else direct, and one warning; an answer entry `HTTPS host:port` (Chrome's extension) is an `https://` proxy, port 443 by default; an answer with only proxies the engine cannot use (`SOCKS4`): the next setting, else the request fails; no WPAD script found: logged once at Info |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`; an entry whose value starts with `https://` is an `https://` proxy, as Chrome reads it, while `https=host:port` is the plain proxy for `https` URLs) | run by WinHTTP (`WinHttpGetProxyForUrl`, WPAD by DHCP and DNS, then the PAC URL), waited for at most 5 s; a script that fails or takes longer: the fixed proxy next to it, else direct, and one warning; no WPAD script found: the same, logged once at Info, and detection again after 5 minutes |
 | Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
 
 What a PAC script sees. A PAC script is code from the network: whoever answers WPAD on the local network, or serves a
@@ -4279,8 +4543,11 @@ exactly; a URL written differently (case, a trailing slash) gets the origin only
 (`file://srv/share/p.pac`, `file:////srv/share/p.pac`) is fetched over SMB from that host and counts as remote: origin
 only. Turn it on only when that script is
 yours.
-On Apple platforms the engine's own runner also bounds the script: 2 s per run, 20 distinct lookups per run in total (as
-Chrome; a name looked up by both `dnsResolve` and `dnsResolveEx` counts twice), an answer of at most 64 KiB of ASCII, a script of at most 1 MiB; an answer entry it cannot read is skipped,
+On Apple platforms the engine's own runner also bounds the script: 2 s per run (creating the script's context, evaluating
+the PAC utility functions and the script, and its `FindProxyForURL` call; preparing a new script's text comes before),
+20 distinct lookups per run in total (as
+Chrome; a name looked up by both `dnsResolve` and `dnsResolveEx` counts twice; a name with a NUL resolves to nothing),
+an answer of at most 64 KiB of ASCII without a NUL, a script of at most 1 MiB; an answer entry it cannot read is skipped,
 and an answer with none left counts as a failed script. JavaScriptCore's public API has no memory limit: a script that
 allocates without end is stopped only by the time limit (its thread is given up, threat model 3.20.3).
 
@@ -4290,30 +4557,62 @@ names with their subdomains (`example.com` covers `a.example.com`, not `badexamp
 an entry with a port (`example.com:8080`, `[2001:db8::1]:443`) exempts that port only, as Go does. On Windows
 environment names are case-insensitive, so there an `HTTP_PROXY` variable is read as `http_proxy` (curl has the same
 caveat).
-A value is `http://host:port`, `socks5://` (names resolved by the client), `socks5h://` (by the proxy) or a bare
-`host:port`; user info in it becomes the credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
+A value is `http://host:port`, `https://host[:port]` (TLS to the proxy; port 443 by default, as curl (despite its manual's 1080), Chrome and Go), `socks5://`
+(names resolved by the client), `socks5h://` (by the proxy) or a bare `host:port`; user info in it becomes the
+credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
 `proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
 `*.localhost` and loopback addresses directly whatever the settings say.
 
-A proxy the engine cannot use (`socks4://`, an `https://` proxy, an unknown type) fails the request with
-`UnsupportedOperationException`: it is never bypassed.
+A proxy the engine cannot use (`socks4://`, an unknown type) fails the request with `UnsupportedOperationException`: it
+is never bypassed.
 
 How a proxy is used. An HTTP proxy gets `CONNECT` tunnels for `https` and for WebSockets, `ws://` included (RFC 6455
 section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS proxy is SOCKS5 (RFC 1928, CONNECT only;
 no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
 Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
 that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
-its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+its own. A request's own `Proxy-Authorization` goes only on a hop to a proxy, never to an origin (directly or in a
+tunnel, over HTTP/1.1, HTTP/2 and HTTP/3 alike). `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
 `http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
-clear to the proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+clear to an `http://` or SOCKS5 proxy (RFC 7617 section 4, RFC 1929 section 5; anyone on the path to the proxy reads
+them, as with curl, Go and OkHttp) and only inside TLS to an `https://` proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
 resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
 `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
-`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
+`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried, so a proxy that keeps
+answering 407 costs one CONNECT per request, never a loop; a plain `http` request gets the proxy's 407 as its response).
 
-**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
-RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+**`https://` proxies** (*experimental*, 0.3.0). `ResolvedProxy.https(host, port, credentials)`, an `https://` value in
+the environment, an `https://` entry of Windows' settings, a PAC answer's `HTTPS host:port`, or, off the JVM,
+`ProxyBuilder.http(Url("https://proxy:443"))` (a `java.net.Proxy` has no scheme, so on the JVM name it with a resolver;
+there an HTTP `proxy` on port 443, which is what that URL becomes, fails every request with `UnsupportedOperationException`
+rather than speak plain HTTP to what may be an `https://` proxy: use `ResolvedProxy.https` for TLS to it, or
+`ResolvedProxy.http(host, 443)` from a resolver for a plain proxy on that port)
+makes the engine speak TLS to the proxy itself, as curl's HTTPS proxy and Chrome do, before anything else: the CONNECT
+or the absolute-form request, its `Proxy-Authorization` and the CONNECT's target travel inside that TLS session
+([ADR-0023](https://github.com/kuicksilver/kuicksilver/blob/main/docs/adr/0023-https-proxy.md)).
+
+- The proxy's certificate is verified against the proxy's host as configured (a DNS name, or an IP address as an IP-ID;
+  RFC 9525), which is also its SNI unless it is an IP address (RFC 6066 section 3); the name goes through the engine's
+  `dns`. A failed handshake (a certificate that does not verify, an alert, a proxy that closes) fails the request with
+  `ProxyTlsException`, a `ProxyException` whose `cause` is the TLS layer's error; a failure of the origin's TLS inside
+  the tunnel stays the origin's `TlsException`.
+- Trust: `proxyTls = { ... }` (*experimental*) configures that connection on its own. By default it takes the origin's
+  `tls` block and `trust` without what names the origin (an `ExpectedName` gives way to its base, a `Pinned` to its base:
+  the proxy has another name and another key, as curl's `--pinnedpubkey` is not applied to its proxy) and without the
+  client certificate. Whatever the block sets, the server name is the proxy's host and ALPN `http/1.1` alone.
+- Inside the tunnel the origin's TLS runs as without a proxy (TLS in TLS): its own SNI, certificate check, pins, ALPN
+  (`h2` included). Plain `http` goes in the absolute form inside TLS to the proxy, and that connection is pooled per proxy
+  (an `https://` and an `http://` proxy at the same address are different routes).
+- HTTP/2 to the proxy itself (CONNECT over HTTP/2, RFC 9113 section 8.5, several tunnels on one connection) is not
+  offered: one TLS connection to the proxy carries one tunnel, as with curl's default and OkHttp. A new connection to the
+  proxy resumes an earlier TLS session from a cache that holds proxy tickets only.
+
+**Through an HTTP, HTTPS or SOCKS5 proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT (to an `http://` or an
+`https://` proxy) nor SOCKS5 CONNECT carries (SOCKS5 UDP ASSOCIATE is not supported), as with Chrome and curl. HTTP/3 goes
+through a CONNECT-UDP proxy instead: [HTTP/3 through a CONNECT-UDP proxy](#http3-through-a-connect-udp-proxy-experimental).
+A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
 `Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
 without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
 HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
@@ -4337,6 +4636,55 @@ val perHost = HttpClient(Kuicksilver) {
             if (url.host.endsWith(".internal.test")) null // direct
             else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
         }
+    }
+}
+// an https:// proxy: TLS to the proxy itself, the CONNECT and the credentials inside it
+val overTls = HttpClient(Kuicksilver) {
+    engine {
+        proxyResolver = ProxyResolver { ResolvedProxy.https("proxy.corp.test", 443, ProxyCredentials("user", password)) }
+        proxyTls = { trust = TrustConfig.Platform } // the proxy's own trust (default: the origin's, without pins)
+    }
+}
+```
+
+#### HTTP/3 through a CONNECT-UDP proxy (experimental)
+
+`connectUdpProxy` sends the engine's HTTP/3 through a CONNECT-UDP proxy (RFC 9298, MASQUE): each HTTP/3 connection to an
+origin it applies to runs inside a UDP tunnel through the proxy, with TLS end to end to the origin, so the proxy sees the
+origin's name, port and UDP, never the requests ([HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental)). The proxy is
+reached directly over HTTP/3 with the engine's trust (its template's authority, port 443 when it names none); each
+tunnelled connection has its own connection to the proxy, closed with it. The origin's name goes to the proxy, which
+resolves it: the engine does not look it up.
+
+What it changes, for the `https` URLs its `applies` admits (all of them by default):
+
+- They go over HTTP/3 through the tunnel only, whatever the discovery mode (H3Only, Auto, Preferred): never over HTTP/1.1
+  or HTTP/2 and never directly, since both would leave the proxy out. An origin without HTTP/3, a refused tunnel
+  (`Http3Exception.ConnectRejected`, its `proxy-status` in `headers`) or a failed handshake fails the request instead of
+  falling back. `http3 { discovery = H1Only }` and an `http3Allowed` that says no fail it with UnsupportedOperationException.
+- `Alt-Svc` and HTTPS records are neither used nor learned for them: the tunnel goes to the URL's host and port.
+- `proxy` and `proxyResolver` (HTTP and SOCKS5 proxies, which carry TCP) keep deciding for every other request: `http://`
+  URLs and the URLs `applies` turns away. A deployment that must send everything through proxies sets both.
+- WebTransport refuses such URLs (its sessions do not go through the tunnel) unless
+  `http3 { webTransportIgnoresConnectUdpProxy = true }`, which connects them directly; `webTransportIgnoresProxy` is about
+  HTTP and SOCKS proxies only.
+- Tunnelled connections keep their session tickets apart from direct connections', one cache per proxy route, so the
+  origin cannot link a proxied connection to the client's own address by the ticket it resumes.
+
+`credentials` go to the proxy as `proxy-authorization: Basic ...` on each tunnel's CONNECT. The connection to the proxy
+must carry the inner connection's 1200-byte datagrams in its own: the engine's sockets set Don't Fragment, so DPLPMTUD
+finds a path MTU above about 1250 bytes within a few round trips; over a path that does not carry that, the handshake
+through the tunnel times out.
+
+```kotlin
+// guide:ktor:connect-udp-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        connectUdpProxy = ConnectUdpProxy(
+            UdpProxyTemplate.parse("https://masque.example/.well-known/masque/udp/{target_host}/{target_port}/"),
+            ProxyCredentials("user", password),
+        ) { url -> !url.host.endsWith(".internal.test") }   // these go the usual way
     }
 }
 ```
@@ -4763,7 +5111,11 @@ once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same gr
 CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
 connection gets GOAWAY at once, and the calls in flight finish. An HTTP/1.1 connection reads no further request: one
 idle between requests (keep-alive) closes at once, one with a request in flight (or whose request head has started to
-arrive) closes after that response, which says `Connection: close`. An HTTP/2 connection gets GOAWAY in two steps (RFC 9113
+arrive) closes after that response, which says `Connection: close`. A connection that has received nothing yet is new,
+not idle: its first request may be on its way, and a client whose new connection closes without an answer cannot tell
+whether a non-idempotent request was processed (RFC 9112 section 9.3.1). Its first byte is waited for until 2 s after the
+connection was accepted (within the request-head deadline and the grace period; Go's `Server.Shutdown` waits 5 s), so a
+silent new connection can hold the stop that long. An HTTP/2 connection gets GOAWAY in two steps (RFC 9113
 section 6.8: first with the largest stream identifier and a PING, then with the last stream it took, once the PING comes
 back) and closes when those requests are done; streams the client opens after that are not processed. The stop returns
 as soon as they have: each HTTP/3
@@ -5869,6 +6221,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `genericAlerts` | `Boolean` | `false` |  | 0.2.0 | send `handshake_failure` instead of the specific alert; a failed stapled OCSP check is still sent as `bad_certificate_status_response` (113) |
 | `revocation` (*experimental*) | `RevocationPolicy` | `StapledIfPresent` | clients; `RequireStapled` only with a trust `ksl` verifies (`AnchoredCa`, `Platform` on Linux Native) | 0.3.0 | how the OCSP response the server staples is checked: `Off`, `StapledIfPresent` (soft-fail without one), `RequireStapled`; a must-staple certificate needs one under every policy but `Off`. Alerts: 113 for every failed staple check (also with `genericAlerts`); a configured CRL gives 44 (revoked), 45 (expired CRL), 42 (CRL not valid yet, bad time field, undecryptable signature), 51 (CRL signature does not verify), 48 (no usable CRL or CRL issuer) or 46 (another scope, no cRLSign, unknown critical extension) ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `alpnFallback` (*experimental*) | `String?` | `null` | servers, TLS over TCP (QUIC ignores it); 1..255 UTF-8 bytes, not `h3` | 0.3.0 | the protocol a client without ALPN speaks (`http/1.1` for HTTP, RFC 9113 section 3.3); such a client is refused with `no_application_protocol` (120) where the protocols in effect (`alpn` or the `sniSelector` answer's, non-empty, without `h3`) leave it out, at every ClientHello (also after a HelloRetryRequest); a malformed ALPN extension gets `decode_error` (50); null: it completes without ALPN ([TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#configuration)) |
+| `certificateCompression` (*experimental*) | `Boolean` | `true` | TLS 1.3 only (QUIC and TCP) | 0.3.0 | TLS certificate compression (RFC 8879): offers brotli, then zlib, and sends the chain compressed when the peer offers one of them; a session that staples OCSP sends it uncompressed; `false`: no offer, and a compressed certificate from the peer is `unexpected_message` ([Certificate compression](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-compression)) |
 | `ocspStapling` (*experimental*) | `OcspStapling?` | `null` | servers | 0.3.0 | the OCSP response stapled when the client asks and it is for the leaf sent and fresh; `update` replaces it at run time ([Certificate revocation](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#certificate-revocation)) |
 | `keyExchangeGroups` (*experimental*) | `KeyExchangeGroups` | `KeyExchangeGroups.Default` (X25519MLKEM768, X25519, P-256, X448, P-384, P-521; client shares for the first two) | 1 to 8 groups of the 8 supported, no duplicates, 1 to 4 key shares from the list (clients only); with `Tls12And13` at least one elliptic curve | 0.3.0 | key-exchange groups, most preferred first; a server picks by its own order, a group the client sent a share for first, else a HelloRetryRequest, `handshake_failure` with none in common; in TLS 1.2 the list also limits the curves of the peer's ECDSA certificate (without `secp256r1`, a P-256 certificate is refused) ([Key exchange groups](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#key-exchange-groups)) |
 | `echConfigList` (*experimental*) | `EchConfigList?` | `null` | clients only; not with `versions` `Tls12And13` | 0.3.0 | Encrypted Client Hello configurations offered (RFC 9849; an HTTPS record's `ech` parameter, RFC 9848); unusable ECHConfigs are ignored one by one; a rejection fails with `TlsException.EchRejected` and its `retryConfigs` ([Encrypted Client Hello](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md#encrypted-client-hello)) |
@@ -5970,6 +6323,34 @@ How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) 
 | `sendQueue` | `Int` | 32 | 1..4096 | 0.3.0 | capsules waiting to be written; when full, `send` suspends and a fallback `trySendDatagram` answers `QueueFull` |
 | `terminalTypes` | `Set<Long>` | empty | among `knownTypes`, not DATAGRAM | 0.3.0 | a capsule of such a type must be the stream's last: it is delivered, and any byte after it resets the stream with `H3_MESSAGE_ERROR` (WebTransport's WT_CLOSE_SESSION) |
 
+#### UdpProxyConfig (*experimental*)
+
+`UdpProxyConfig(...)` (constructor parameters, immutable): how a `UdpProxy` serves CONNECT-UDP (RFC 9298); a bad value
+throws `IllegalArgumentException` when the object is built. Guide: [HTTP/3, CONNECT-UDP](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md#connect-udp-experimental);
+threats and limits: threat model 3.29.
+
+| Option | Type | Default | Range | Since | What it does |
+|---|---|---|---|---|---|
+| `pathTemplate` | `String` | `ConnectUdp.WELL_KNOWN_PATH` | a path and query URI Template with `target_host` and `target_port` once each, readable back | 0.3.0 | the path a request must have; another shape is answered 404, an invalid value 400 |
+| `targetFilter` | `UdpTargetFilter` | `UdpTargetFilter.PublicOnly` |  | 0.3.0 | which resolved addresses and ports may be reached; a refusal is 403 with `destination_ip_prohibited`, before a socket is opened |
+| `resolver` | `UdpProxyResolver` | `UdpProxyResolver.System` |  | 0.3.0 | resolves a `target_host` that is a DNS name, before the answer |
+| `resolveTimeout` | `Duration` | 5 s | positive | 0.3.0 | a resolution that takes longer is answered 504 with `dns_timeout` |
+| `idleTimeout` | `Duration` | 2 min | at least 2 min | 0.3.0 | a tunnel without a datagram either way is closed, socket and stream (RFC 9298 section 3.1 sets the two-minute floor) |
+| `linkMtu` | `Int` (bytes) | 1500 | 1280..65 535 | 0.3.0 | UDP payloads above `linkMtu - 28` (IPv4) or `- 48` (IPv6) are dropped rather than sent fragmented |
+| `maxTunnels` | `Int` | 4096 | at least 1 | 0.3.0 | tunnels at once; one more is answered 503 with `connection_limit_reached` |
+| `maxTunnelsPerClient` | `Int` | 64 | at least 1 | 0.3.0 | tunnels at once per client (an IPv4 address or an IPv6 `clientIpv6Prefix`); one more is answered 429 |
+| `clientIpv6Prefix` | `Int` | 64 | 1..128 | 0.3.0 | the prefix an IPv6 client is known by for its limits (a /64 is one client); IPv4 and IPv4-mapped clients are their address |
+| `clientPacketRate` | `Int` | 50000 | at least 1 | 0.3.0 | UDP payloads per second all of a client's tunnels together send to targets, on top of each tunnel's `packetRate` |
+| `clientPacketBurst` | `Int` | 5000 | at least 1 | 0.3.0 | the client bucket's size |
+| `packetRate` | `Int` | 20000 | at least 1 | 0.3.0 | UDP payloads per second a tunnel sends to its target; more are dropped |
+| `packetBurst` | `Int` | 2000 | at least 1 | 0.3.0 | payloads a tunnel may send at once (the token bucket's size) |
+| `unansweredLimit` | `Int` | 256 | at least 0 | 0.3.0 | payloads a client sends to a target before it answers once, counted across the client's tunnels; later ones are dropped until it does; 0 turns it off |
+| `refuseOwnAddresses` | `Boolean` | `true` |  | 0.3.0 | refuse the proxy's own addresses as targets (the one the request's connection reached, the listener's own); 403 with `destination_ip_prohibited` |
+| `requireCapsuleProtocolField` | `Boolean` | `true` |  | 0.3.0 | a request without `capsule-protocol: ?1` is answered 400 |
+| `proxyName` | `String` | `"proxy"` | a Structured Field token | 0.3.0 | the proxy's name in the `proxy-status` of its refusals (RFC 9209) |
+| `packetTooBig` | `Boolean` | `true` |  | 0.3.0 | answer a target payload too large for the client's DATAGRAM frames with an ICMP Packet Too Big (RFC 9298 section 6.1) where the process may open a raw ICMP socket (Linux and Android with `CAP_NET_RAW`), at most 10 a second per target and 100 over the proxy, from the address the target sent to (`stats.packetTooBigNoSource` when a wildcard socket cannot tell it, `stats.packetTooBigFailed` when the raw socket does not send it); without the privilege the payload is only dropped (`stats.packetTooBig`) |
+| `socketFactory` | `suspend (InetSocketAddress) -> DatagramIo` | `{ DatagramIo.open(it) }` |  | 0.3.0 | opens a tunnel's UDP socket on a wildcard address of the target's family |
+
 ### Http2Settings
 
 `Http2Settings(...)` (*experimental*, constructor parameters, immutable). Used by the Ktor client (`http2 { settings = … }`) and
@@ -6020,10 +6401,12 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `webSocketMaxMessageSize` (*experimental*) | `Long` (bytes) | 16 777 216 (16 MiB) | at least 1 | 0.3.0 | the largest WebSocket frame, and message once reassembled, the client takes (RFC 6455 section 10.4); an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and `PerMessageDeflate`'s `maxInflatedMessageSize` (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value ([Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#client)) |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (keeps `http3.endpoint.logger`) |  | 0.2.0 | the engine's and its QUIC endpoint's diagnostics |
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` |  | 0.2.0 | call, protocol, race, Alt-Svc, DNS and pool events ([Ktor: Observability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#observability-experimental)) |
-| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | 0.2.0 | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
+| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP and SOCKS5 proxies; off the JVM an `https://` proxy URL is TLS to the proxy (since 0.3.0; a `java.net.Proxy` has no scheme, so on the JVM an `https://` proxy comes from `proxyResolver`); other types fail each request with `UnsupportedOperationException` | 0.2.0 | TCP through the proxy (HTTP/1.1, or HTTP/2 inside the tunnel) (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
 | `proxyResolver` (*experimental*) | `ProxyResolver` | `ProxyResolvers.System` | `System`, `Environment`, `None` or your own | 0.3.0 | the proxy for requests `proxy` does not cover, per scheme, host and port (kept 30 s); each lookup is bounded by the engine's `connectTimeout` (not a per-request `HttpTimeout`) and fails the request with `ProxyException` beyond it; loopback is always direct with the built-ins; docs/guide/ktor.md, "Proxies" |
+| `connectUdpProxy` (*experimental*) | `ConnectUdpProxy?` | `null` | a template that passes RFC 9298 section 2 | 0.3.0 | a CONNECT-UDP proxy (MASQUE) for HTTP/3: the `https` requests its `applies` admits go over HTTP/3 inside a UDP tunnel through it, never over TCP or directly, and neither use nor learn `Alt-Svc`; `proxy` and `proxyResolver` keep deciding for the others ([HTTP/3 through a CONNECT-UDP proxy](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http3-through-a-connect-udp-proxy-experimental)) |
 | `pacFullWebSocketUrl` (*experimental*) | `Boolean` | `false` | — | 0.3.0 | with `ProxyResolvers.System` on Apple platforms and Windows: the PAC script the system settings name (inline, or by an `https://` or local `file:///` URL; never one WPAD found or one over plain `http://`) gets a `wss://` URI whole, path and query included (RFC 6455 section 4.1); off, every script gets `wss://host[:port]/` only, as browsers give it (CVE-2016-3763, CVE-2016-5134); docs/guide/ktor.md, "Proxies" |
-| `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | 0.3.0 | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins |
+| `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | 0.3.0 | for the explicit `proxy` only (a resolver's proxy carries its own `ResolvedProxy.credentials`); SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins; in clear to an `http://` or SOCKS5 proxy, only inside TLS to an `https://` one |
+| `proxyTls` (*experimental*) | `(TlsConfig.Builder.() -> Unit)?` | `null` | — | 0.3.0 | the TLS of connections to an `https://` proxy (`ResolvedProxy.https`); null: the `tls` block over `trust`, then that trust without an `ExpectedName` or `Pinned` (the origin's name and keys), no client certificate; a block starts from that trust and may set anything; SNI and the verified name are the proxy's host and ALPN `http/1.1`, whatever it sets ([Ktor: Proxies](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxies)) |
 
 `pipelining` (from Ktor's `HttpClientEngineConfig`) is not used.
 
@@ -6036,6 +6419,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `enabled` | `Boolean` | `true` | 0.3.0 | offer `h2` and `http/1.1` in ALPN on every `https://` connection over TCP (not WebSockets), over TLS 1.3 and, when `tls` allows it, TLS 1.2 (a server's renegotiation request then ends the connection with PROTOCOL_ERROR, RFC 9113 section 9.2.1); `false` offers only `http/1.1`, as in 0.2 |
 | `settings` | `Http2Settings` | `Http2Settings()` | 0.3.0 | our SETTINGS, windows (512 KiB per stream growing to 6 MiB, 768 KiB per connection growing to 15 MiB) and the limits held against the server (64 KiB field sections, 10 s for our SETTINGS to be acknowledged, the flood limits; threat model 3.23) |
 | `pingInterval` | `Duration` | `Duration.INFINITE` | 0.3.0 | a PING this often on every HTTP/2 connection; one still unanswered at the next ends the connection and fails its calls; at least 100 ms, else the engine's creation fails with `IllegalArgumentException` |
+| `priorKnowledge` | `Set<HostPort>` | empty | 0.3.0 | the `http://` origins (host and port as in the URL) whose requests go over h2c, HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): the preface at once, no fallback to HTTP/1.1, never for `https://`, through an HTTP proxy in a CONNECT tunnel; cleartext, so only servers on a trusted network ([h2c on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#h2c-on-the-client)) |
 
 #### ECH client options
 
@@ -6067,6 +6451,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | 0.2.0 | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | 0.2.0 | lifecycle of every QUIC connection |
 | `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-on-the-client-experimental)) |
+| `webTransportIgnoresConnectUdpProxy` (*experimental*) | `Boolean` | `false` | 0.3.0 | `webTransport` to a URL `connectUdpProxy` applies to connects directly instead of being refused (its sessions do not go through the tunnel) |
 | `maxWebTransportSessions` (*experimental*) | `Int` | 64 | 0.3.0 | WebTransport sessions open at once on the client, over all its connections (they share the pooled ones); at least 1; one more fails at once with `IllegalStateException` |
 | `http3Allowed` (*experimental*) | `() -> Boolean` | `{ true }` | 0.3.0 | kill switch read once per `https://` request and `webTransport` call (not with `H1Only`): false sends a request over TCP, HTTP/2 included (`H3Only` requests and `webTransport` fail with `UnsupportedOperationException`); a switch that throws an exception allows HTTP/3 and is logged at most once per 5 minutes ([Turning HTTP/3 off remotely](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#turning-http3-off-remotely)) |
 | `diagnosticsLogLevel` (*experimental*) | `LogLevel?` | `Info` | 0.3.0 | level of the engine logger's line for a call HTTP/3 could have served but did not; calls over HTTP/3 or never meant for it are logged at `Debug`; `null` writes none ([Why did this request not use HTTP/3?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#why-did-this-request-not-use-http3)) |
@@ -6087,7 +6472,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `maxTcpConnections` (*experimental*) | `Int` | 10,000 | 0.3.0 | at least 1; TCP connections (HTTP/1.1 and HTTP/2, TLS handshakes included) each connector holds at once; at the limit it stops accepting and the OS backlog holds new clients; keep it below `ulimit -n` ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)) |
 | `maxTcpConnectionsPerIp` (*experimental*) | `Int?` | `null` (off) | 0.3.0 | at least 1, or `null`; TCP connections of one client address (its bytes; IPv6 whole, so a /64 holder gets around it; IPv4-mapped as IPv4) on a connector; one over it is reset at accept, before TLS (a proxy in front answers 502/503), and reported to `connectionRefused`; behind a proxy, load balancer, SNAT or NAT every client shares one address: enable it (e.g. 256) only when the server faces clients directly ([Connection limits](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connection-limits)); on a connector with `proxyProtocol` the address is the proxy's, so it limits each proxy |
 | `http3` | `Boolean` | `true` | 0.2.0 | serve HTTP/3 on every TLS connector |
-| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; no h2c on plain connectors) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
+| `http2` (*experimental*) | `Boolean` | `false` | 0.3.0 | offer `h2` before `http/1.1` in the ALPN of every TLS connector and serve HTTP/2 to clients that pick it (TLS 1.3, and TLS 1.2 on a connector with `versions = TlsVersions.Tls12And13`; plain connectors serve h2c only with their own `h2c`) ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
 | `webSocketsOverHttp2` (*experimental*) | `Boolean` | `true` | 0.3.0 | with `http2`: advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` and serve RFC 8441 WebSockets (Extended CONNECT) to `webSocket {}` routes; `false` leaves WebSockets on HTTP/1.1 ([WebSockets over HTTP/2](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#websockets-over-http2)) |
 | `http2Settings` (*experimental*) | `Http2Settings` | `Http2Settings()` | 0.3.0 | windows, SETTINGS and flood limits of every HTTP/2 connection; its `maxHeaderBlockTime` is bounded by `requestHeaderTimeoutSeconds` |
 | `http2RepeatOffenderPenalty` (*experimental*) | `Duration` | `Duration.ZERO` (off) | 0.3.0 | not negative; an address whose HTTP/2 connections end in a flood limit three times within a minute has its TCP connections closed at accept for this long (IPv6 by its /56); only for a server that sees real client addresses, never behind a NAT or a source-rewriting load balancer ([HTTP/2 on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#http2-on-the-server)) |
@@ -6104,6 +6489,7 @@ Guide: [Ktor: Client](https://github.com/kuicksilver/kuicksilver/blob/main/docs/
 | `webSocketsOverHttp3` | `Boolean` | `true` | 0.2.0 | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on); with `false` a WebSocket CONNECT gets 501 |
 | `webSocketMaxMessageSize` (*experimental*) | `Long` (bytes) | 16 777 216 (16 MiB) | 0.3.0 | at least 1; the largest WebSocket frame, and message once reassembled, the server takes from a client (RFC 6455 section 10.4), over HTTP/1.1, HTTP/2 and HTTP/3; an uncompressed frame whose header claims more, or that takes its message past it, closes the connection with 1009 before its payload is read; a compressed message (permessage-deflate, whichever extension) is held to the smaller of this and `PerMessageDeflate`'s `maxInflatedMessageSize` (when that extension is installed) counted as it inflates, and its compressed frames to 8 times that plus 64 KiB, from their headers; larger messages need a larger value ([Ktor: Server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#server)) |
 | `webTransport` (*experimental*) | `Boolean` | `false` | 0.3.0 | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#webtransport-over-http3-experimental)) |
+| `connectUdp` (*experimental*) | `Boolean` | `false` | 0.3.0 | take CONNECT-UDP requests (RFC 9298) into the pipeline for `connectUdp(proxy)` routes (turns `enableConnectProtocol` on); without it they are answered 501; no configuration-file key ([CONNECT-UDP over HTTP/3](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#connect-udp-over-http3-experimental)) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | 0.2.0 | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | 0.2.0 | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | 0.2.0 | added to `quic` |
@@ -6146,7 +6532,8 @@ of them separated by `:` or `,`),
 `kuicksilver.tls.ocspStapling` (a DER OCSP response file, read again with `kuicksilver.tls.reloadInterval`), `kuicksilver.tls.trustedGateway` (`true`/`false`),
 `kuicksilver.tls.echKeys` (a list of ECH key PEM files, or one comma-separated string; read at startup),
 `kuicksilver.tls.reloadInterval` (how often those files are checked for a renewed certificate or CA bundle; off by default),
-`kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.http2RepeatOffenderPenalty`,
+`kuicksilver.http3`, `kuicksilver.http2`, `kuicksilver.webSocketsOverHttp2` (`true`/`false`), `kuicksilver.h2c` (`off`, `withHttp11` or
+`only`: h2c on the cleartext deployment port; refused with the identity files), `kuicksilver.http2RepeatOffenderPenalty`,
 `kuicksilver.maxTcpConnections`, `kuicksilver.maxTcpConnectionsPerIp` (`0` or absent is off),
 `kuicksilver.quicMaxConnections`, `kuicksilver.quicMaxConnectionsPerIp` (`0` is off), `kuicksilver.quicAcceptQueue`, `kuicksilver.altSvc`, `kuicksilver.webSocketsOverHttp3` (`true`/`false`), `kuicksilver.udpSocketCount`,
 `kuicksilver.proxyProtocol.trustedSources` (a list, or one comma-separated string; turns the PROXY protocol on for the
@@ -6155,7 +6542,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 
 #### Plain connector
 
-`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with one more option:
+`plainConnector { … }` (`KuicksilverPlainConnector.Builder`, experimental) is Ktor's `connector { }` with two more options:
 
 | Option | Type | Default | Range | Since | What it does |
 |---|---|---|---|---|---|
@@ -6163,6 +6550,7 @@ deployment port), `kuicksilver.proxyProtocol.headerTimeout` (a duration), `kuick
 | `port` | `Int` | 80 | 0..65 535 | 0.3.0 | TCP port; 0 picks a free one (`resolvedConnectors()`) |
 | `trustedGateway` | `Boolean` | `false` |  | 0.3.0 | true serves absolute-form `https://` targets, which a plain connection otherwise answers `421 Misdirected Request` (RFC 9110 section 7.4); only for connectors whose every client is a trusted gateway ([Misdirected requests](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#misdirected-requests)) |
 | `proxyProtocol` (*experimental*) | `ProxyProtocolConfig?` | `null` (off) | at least one trusted source | 0.3.0 | every connection must start with a PROXY protocol header (v1 or v2) from one of the trusted sources; its client becomes `call.request.origin`; `maxTcpConnectionsPerIp` then counts the proxy ([PROXY protocol](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#proxy-protocol)) |
+| `h2c` | `H2cMode` | `H2cMode.Off` |  | 0.3.0 | HTTP/2 over cleartext TCP with prior knowledge (RFC 9113 section 3.3): `WithHttp11` serves HTTP/1.1 and h2c on the port, told apart by the client preface within the request-head deadline; `Only` serves h2c alone (anything else is a PROTOCOL_ERROR); `Upgrade: h2c` is never taken; cleartext, so only behind a trusted network or proxy; a connector the configuration's `identity` makes TLS refuses it at start ([h2c on the server](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#h2c-on-the-server)) |
 
 #### PROXY protocol
 
@@ -6797,9 +7185,19 @@ script, the engine logs that once at Info level instead ("detect the proxy autom
 auto-configuration script was found"), as detection is on by default there: those requests use the fixed proxy setting,
 if any, else connect directly, and detection runs again after 5 minutes.
 Set `proxy` or a `proxyResolver` of your own to decide the route yourself.
-A request that fails with `UnsupportedOperationException` ("the proxy URL's scheme is not supported", or the message
-for an `https://` proxy) has a proxy setting the engine cannot use, such as `socks4://`; it is never bypassed. The
-message does not name the scheme a proxy URL from the environment gave: a user name before `://` reads as one.
+A request that fails with `UnsupportedOperationException` ("the proxy URL's scheme is not supported") has a proxy
+setting the engine cannot use, such as `socks4://`; it is never bypassed. The message does not name the scheme a proxy
+URL from the environment gave: a user name before `://` reads as one.
+
+#### Requests through an `https://` proxy fail with `ProxyTlsException`
+
+The TLS handshake with the proxy itself failed; nothing of the request was sent. Its `cause` says why: a
+`TlsException.Verify` whose `reason` is `HostnameMismatch` means the proxy's certificate does not name the proxy's host
+as configured (an address where the certificate names a host, or the reverse; the origin's `ExpectedName` and pins do
+not apply to the proxy), another reason that its chain is not trusted: the proxy's trust is the engine's `trust`
+without pins unless `proxyTls = { trust = ... }` says otherwise, so a proxy under a corporate CA needs that CA there.
+An alert or a closed connection usually means the proxy does not speak TLS on that port (an `http://` proxy named as
+`https://`). A failure of the origin's TLS behind the proxy is a `TlsException`, not a `ProxyTlsException`.
 
 #### `H3Only` requests time out
 
@@ -7514,7 +7912,7 @@ Gradle builds the Kotlin code; the native code is built by scripts that the Grad
 | `libksl.a` for each Kotlin/Native target | `tools/build-ksl-a.sh` | `:kuicksilver-native:buildKslA<Target>` |
 
 To publish a build into the local Maven repository, run `./gradlew --max-workers=2 publishToMavenLocal` (every target),
-or the JVM-only variant in the [README](https://github.com/kuicksilver/kuicksilver/blob/main/README.md#install).
+or the JVM-only variant in [Install](https://github.com/kuicksilver/kuicksilver/blob/main/docs/install.md#versions).
 
 ### Your compiler and flags
 

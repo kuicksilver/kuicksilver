@@ -36,6 +36,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.io.readByteArray
@@ -838,14 +839,20 @@ class ServerH3Test {
             }
         }
 
-    /** `stop(grace, timeout)` is honoured for HTTP/3 too — in-flight calls finish, the client sees GOAWAY. */
+    /**
+     * `stop(grace, timeout)` is honoured for HTTP/3 too: the call in flight (held until the client saw GOAWAY) finishes,
+     * and the stop returns once it is done, within 10 s of its end against a grace period of 30 s.
+     */
     @Test fun stopWaitsForInFlightH3Call() =
         h3ServerTest {
+            val arrived = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
             val (server, port) =
                 tlsServer {
                     routing {
                         get("/slow") {
-                            kotlinx.coroutines.delay(1500)
+                            arrived.complete(Unit)
+                            release.await()
                             call.respondText("done")
                         }
                     }
@@ -856,28 +863,20 @@ class ServerH3Test {
                 try {
                     coroutineScope {
                         val response = async { c.request(get("/slow")) }
-                        kotlinx.coroutines.delay(300)
-                        val t0 =
-                            kotlin.time.TimeSource.Monotonic
-                                .markNow()
-                        server.stopSuspend(5000, 10000)
-                        val stopTook = t0.elapsedNow()
+                        kotlinx.coroutines.withTimeout(10.seconds) { arrived.await() }
+                        val stop = async { server.stopSuspend(30_000, 40_000) }
+                        // the stop began: the client got GOAWAY, and the stop cannot have returned with the call held
+                        kotlinx.coroutines.withTimeout(10.seconds) { c.goAwayReceived.first { it != null } }
+                        assertFalse(stop.isCompleted, "the stop returned with a call in flight")
+                        release.complete(Unit)
                         val r = response.await()
                         assertEquals(200, r.status)
                         assertEquals("done", r.body.readFullBody().decodeToString())
-                        assertTrue(stopTook < 4.seconds && stopTook > 500.milliseconds, "stop waited for the call: $stopTook")
-                        assertEquals(
-                            true,
-                            kotlinx.coroutines.withTimeoutOrNull(3.seconds) {
-                                while (c.goAwayReceived.value ==
-                                    null
-                                ) {
-                                    kotlinx.coroutines.delay(20)
-                                }
-                                true
-                            },
-                            "the client received GOAWAY",
-                        )
+                        val t0 =
+                            kotlin.time.TimeSource.Monotonic
+                                .markNow()
+                        kotlinx.coroutines.withTimeout(40.seconds) { stop.await() }
+                        assertTrue(t0.elapsedNow() < 10.seconds, "the stop returned ${t0.elapsedNow()} after the call's end")
                     }
                 } finally {
                     c.close()
@@ -891,6 +890,7 @@ class ServerH3Test {
     /** GOAWAY reaches every connection at once, not one per 2×RTT; the in-flight calls all finish within the grace period. */
     @Test fun stopSendsGoAwayToAllConnectionsAtOnce() =
         h3ServerTest {
+            val clients = 100
             val arrived = kotlin.concurrent.atomics.AtomicInt(0)
             val (server, port) =
                 tlsServer {
@@ -905,7 +905,7 @@ class ServerH3Test {
             val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
             val conns = ArrayList<Http3Connection>()
             try {
-                repeat(50) { conns += ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3"))) }
+                repeat(clients) { conns += ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3"))) }
                 coroutineScope {
                     val responses =
                         conns.map { c ->
@@ -916,7 +916,7 @@ class ServerH3Test {
                                 }
                             }
                         }
-                    kotlinx.coroutines.withTimeout(5.seconds) { while (arrived.load() < 50) kotlinx.coroutines.delay(10) }
+                    kotlinx.coroutines.withTimeout(20.seconds) { while (arrived.load() < clients) kotlinx.coroutines.delay(10) }
                     val t0 =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
@@ -925,14 +925,14 @@ class ServerH3Test {
                     // macOS host, every run), and the deadline then cuts responses still in flight
                     val stop = async(kotlinx.coroutines.Dispatchers.Default) { server.stop(5000, 8000) }
                     kotlinx.coroutines.withTimeout(
-                        5.seconds,
+                        20.seconds,
                     ) { while (conns.any { it.goAwayReceived.value == null }) kotlinx.coroutines.delay(5) }
                     val allSawGoAway = t0.elapsedNow()
-                    assertEquals(List(50) { 200 to "done" }, responses.awaitAll())
+                    assertEquals(List(clients) { 200 to "done" }, responses.awaitAll())
                     stop.await()
                     // at once is one round of the server's 50 ms wait between its two GOAWAYs (~200 ms on a coarse timer, up to
-                    // 406 ms seen); one connection after another would be 50 such rounds, 2.5 s even on an idle host
-                    assertTrue(allSawGoAway < 1.seconds, "every client saw GOAWAY after $allSawGoAway")
+                    // 406 ms seen); one connection after another would be 100 such rounds, 5 s even on an idle host
+                    assertTrue(allSawGoAway < 2_500.milliseconds, "every client saw GOAWAY after $allSawGoAway")
                 }
             } finally {
                 conns.forEach { it.close() }

@@ -11,5 +11,5 @@ internal actual fun ProxyConfig.platformProxyCredentials(): ProxyCredentials? = 
 
 internal actual fun ProxyConfig.platformProxyIsDirect(): Boolean = type() == java.net.Proxy.Type.DIRECT
 
-/** A `java.net.Proxy` has no scheme: an HTTP one is always reached in plain TCP. */
-internal actual fun ProxyConfig.platformProxyUsesTls(): Boolean = false
+/** A `java.net.Proxy` has no scheme: unknown (an HTTP one on port 443 is refused, `JVM_PROXY_ON_443`). */
+internal actual fun ProxyConfig.platformProxyUsesTls(): Boolean? = null

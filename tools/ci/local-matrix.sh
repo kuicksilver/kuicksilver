@@ -171,14 +171,15 @@ interop_jvm_image() { # tools/interop/build-image.sh packs the Linux libksl.so i
   fi
   bash tools/interop/build-image.sh
 }
-export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
+export SIZE_LIMIT="${SIZE_LIMIT:-3200000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 steps() { # the step list; step() above says what a walk of it does
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: C formatting (pinned clang-format)" bash tools/check/clang-format.sh
 # step 3 runs every check and fails if one did, so one run lists all findings: the documentation references, tests that can
 # never run, the test-count floor, the sleep ratchet, name-service calls in library code, the tests behind ✅ RFC rows, the
-# record of every fuzz reproducer, the recorded decoding of the committed fuzz inputs, the judged deadlines, the reset of
+# record of every fuzz reproducer, the recorded decoding of the committed fuzz inputs, the judged deadlines, the judged
+# selects that race started work, the race tests that force their order, the numbers behind wall-clock bounds, the reset of
 # global test hooks, the commit hashes of the tracked files, the loopback binds of test sockets, and the conventional type of every commit of the branch and
 # the commit hashes its messages cite (docs/process.md, "Repository checks")
 step "lint: doc refs, test gates, commit types" bash -c 'rc=0
@@ -188,18 +189,24 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/rfc-tests.py || rc=1; python3 -I tools/check/reproducers.py || rc=1
   python3 -I tools/check/fuzz-formats.py || rc=1
   python3 -I tools/check/deadline-sites.py || rc=1; python3 -I tools/check/test-hooks.py || rc=1
+  python3 -I tools/check/select-races.py || rc=1; python3 -I tools/check/race-tests.py || rc=1
+  python3 -I tools/check/wall-bounds.py || rc=1
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
+# with the base CI's lint job exports to all its later steps (KSL_FUZZ_FORMATS_BASE, build.yml), so a control that reads it
+# unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
-  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks tracked-hashes wildcard-binds; do
+  KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
+  for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
     bash "tools/check/$t-test.sh" || rc=1
   done
+  bash tools/ci/race-repeat-test.sh || rc=1
   exit $rc'
 step "lint: fuzz (campaign.sh stubs, FuzzCase.kt copies)" bash -c 'bash tools/fuzz/campaign-test.sh && bash tools/check/fuzz-case-sync.sh && bash tools/check/fuzz-case-sync-test.sh'
 step "lint: interop peer images (stubs)"        bash tools/interop/peer-images-test.sh
 step "lint: interop environment rules (fixtures)" bash tools/interop/environment-test.sh
-step "lint: reliability report (fixtures)"      bash tools/report/reliability-test.sh
+step "lint: reliability report and verification pages (fixtures)" bash -c 'bash tools/report/reliability-test.sh && bash tools/docs/verify-test.sh'
 step "lint: RFC compliance summary table"      bash -c 'bash tools/check/rfc-table.sh && bash tools/check/rfc-table-test.sh'
 step "lint: HPACK tables and vectors"           python3 tools/http/gen-tables.py --check
 step "lint: shared HTTP field vectors"         python3 tools/http/gen-field-vectors.py --check
@@ -223,6 +230,7 @@ step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/
 step --pre macos "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step --pre macos "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 step --pre macos "c-tests: macos-arm64 (TSan)"             env KSL_TSAN=1 bash tools/c-test.sh macos-arm64   # ~5 s; any data race fails
+step --pre macos "c-tests: macos-arm64 (decoder-only)"     bash tools/c-test.sh --decoder-only macos-arm64   # brotli's decoder only, as on Android and iOS (ADR-0025)
 # shellcheck disable=SC2086
 # the compiled test classes of every module are read for test methods no runner calls (tools/check/test-bytecode.py: a
 # value-returning, static or private test, one with parameters, in an object, a local or private class, an abstract class
@@ -249,7 +257,7 @@ step --needs "android: AAR" "android: 16 KiB pages"                    bash tool
 step --needs "android: AAR" "android: consumer keep rules (R8)"        env KSL_R8_REQUIRED=1 bash tools/check/android-keep-rules.sh "$aar"   # a minified app must still load libksl (0.2.1 review)
 step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-client:jvmJar :kuicksilver-ktor-client:bundleAndroidMainAar"' && env KSL_R8_REQUIRED=1 bash tools/check/service-keep-rules.sh "$(ls -t kuicksilver-ktor-client/build/libs/kuicksilver-ktor-client-jvm-*.jar | head -1)" kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar'   # HttpClient() must still find the engine in a shrunk app
 step --needs "android: AAR" "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
-step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh'
+step "check: native-release and build-path negative controls" bash -c 'bash tools/check/native-release-test.sh && bash tools/check/build-paths-test.sh && bash tools/prefix/check-no-unprefixed-test.sh'
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
 step "check: local-matrix step selection"        bash tools/ci/local-matrix-test.sh   # --dry-run only: the refusals of --only/--from
 step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
@@ -267,9 +275,12 @@ step "native: iosSimulatorArm64 tests"          $G $KSL_IOS_SIM_TESTS
 step "native: compile iosArm64 (device)"        $G $KSL_IOS_COMPILE
 # shellcheck disable=SC2046,SC2086
 step "native: link linux/mingw tests"           $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
+# CI's linux-native step, built only (no Windows host): a POSIX-only helper a shared test calls fails here. After the
+# link, which provisions the konan LLVM and mingw sysroot it compiles with (tools/c-test.sh also provisions them alone)
+step --pre mingw "c-tests: mingw-x64 (cross-built, -Werror)" bash tools/c-test.sh mingw-x64
 step --needs "native: link linux/mingw tests" "native: glibc floors"                     bash -c 'bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25'
 step "native: prefix whitelist (linux/mingw)"   bash -c "$G :kuicksilver-native:buildKslALinuxX64 :kuicksilver-native:buildKslALinuxArm64 :kuicksilver-native:buildKslAMingwX64"' && for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done'
-step --pre macos "repro: double build (macos-arm64)"        bash -c 'bash tools/check/double-build.sh macos-arm64 && bash tools/check/native-flags-test.sh'   # the second: the builder's flags (docs/guide/building.md)
+step --pre macos "repro: double build (macos-arm64)"        bash -c 'bash tools/check/double-build.sh macos-arm64 && bash tools/check/native-flags-test.sh && bash tools/openssl/fetch-test.sh && bash tools/openssl/brotli-pin-check-test.sh'   # the second: the builder's flags; then zlib and brotli verification (docs/guide/building.md)
 if [ "$skip_docker" = 0 ]; then
 [ "$mode" = list ] || [ "$dry" = 1 ] || rm -f build/ci/recverr-ran-*   # the markers of this run only
 step --pre linux-x64 "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
@@ -282,12 +293,12 @@ step --needs "native: link linux/mingw tests" "docker: test.kexe linux-arm64 (al
 step --pre linux-x64 --pre deps "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step --pre linux-arm64 --pre deps "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
-step --pre linux-x64 "docker: h2spec (HTTP/2 server, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0), never pulls it itself
+step --pre linux-x64 "docker: h2spec (HTTP/2 server over TLS and h2c, JVM and linux-x64)" env KSL_GRADLE="$G" bash tools/interop/h2spec.sh jvm linux-x64   # all 146 cases of h2spec 2.6.0 per transport, one container at a time; needs the image pulled (docker pull summerwind/h2spec:2.6.0@sha256:5f4a65c30cae8569558ced048b4bfe0dcf01a221e36767ae504ccd8348a7aeb0, the pin of tools/interop/h2spec.sh), never pulls it itself
 step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
 # against this dll (-Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost); there is no Windows host
-# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; tools/c-test.sh mingw-x64
+# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; the step "c-tests: mingw-x64"
 # cross-builds it here).
 fi
 if [ "$with_interop" = 1 ]; then
@@ -425,6 +436,25 @@ if wants deps; then
     fi
   fi
 fi
+# Before step 1 of a full run: the race tests the branch added or changed since its last passed gate (else since main) run
+# 10 times under load (tools/ci/race-repeat.sh; docs/process.md, "Repository checks"), so a test that passes only in the
+# order a quiet machine picks fails here, not after the gate; a few minutes for a branch's own changes. A selection
+# (--only, --from) leaves it out
+race_repeat=no
+if [ -z "$selection" ]; then
+  if [ "$dry" = 1 ]; then
+    echo "preflight: race tests changed since the last passed gate, 10 runs under load (dry run):"
+    bash tools/ci/race-repeat.sh --list 2>&1 | sed 's/^/  /'
+  else
+    mkdir -p build/ci; printf 'preflight: race tests changed since the last passed gate, 10 runs under load ... '
+    if FLAKE_HUNT_GRADLE_ARGS="--max-workers=${KSL_GATE_WORKERS:-2} -Pkotlin.incremental=false" \
+      bash tools/ci/race-repeat.sh > build/ci/race-repeat.log 2>&1; then echo ok; race_repeat=ran
+    else
+      echo "FAIL (see build/ci/race-repeat.log)"; tail -15 build/ci/race-repeat.log | sed 's/^/     | /'
+      echo "local matrix: refused before step 1: a race test failed under load; reproduce with tools/ci/race-repeat.sh" >&2; exit 1
+    fi
+  fi
+fi
 mode=run; n=0; steps   # the run walk: the selected steps, in order
 if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes a partial record, never the stamp
   head1=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty1=$(git status --porcelain 2>/dev/null | head -5)
@@ -437,7 +467,7 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header); a selection writes
   mkdir -p build/ci/gate
   { echo "commit=$head0"; echo "result=$result"; echo "selection=${selection:-all}"
     [ -z "$selection" ] || echo "selected=$(picked_ranges)"
-    echo "tree=$tree"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "tree=$tree"; echo "race-repeat=$race_repeat"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
     echo "with_windows=$with_windows"; echo "with_browser=$with_browser"; echo "steps=$n"; echo "ran=$ran"; echo "failed=$failed"; printf '%s' "$results"; } > "$record"
   if [ -z "$selection" ]; then echo "gate record: $record (result=$result, tree $tree)"

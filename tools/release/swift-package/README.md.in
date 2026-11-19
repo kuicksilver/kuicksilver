@@ -46,4 +46,5 @@ repository's `Package.swift`. This repository's tags and commits are signed with
 ## License
 
 Apache License 2.0, like Kuicksilver: [LICENSE](LICENSE) and [NOTICE](NOTICE). The framework links OpenSSL statically
-(Apache License 2.0, [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt)).
+(Apache License 2.0, [licenses/LICENSE.openssl.txt](licenses/LICENSE.openssl.txt)), and OpenSSL's libcrypto contains zlib
+([licenses/LICENSE.zlib.txt](licenses/LICENSE.zlib.txt)) and brotli ([licenses/LICENSE.brotli.txt](licenses/LICENSE.brotli.txt)).

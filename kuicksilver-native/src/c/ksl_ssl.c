@@ -58,8 +58,9 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
         free(s);
         return NULL;
     }
-    /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data) */
-    if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) {
+    /* for the session's life: TCP (KeyUpdate accounting), a client (its ServerHello, and every NewSessionTicket's early_data), a
+       server that asks for a client certificate (the CompressedCertificate it may get, KSL_GET_CERT_COMPRESSION) */
+    if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT || c->client_cert_mode != KSL_CLIENT_CERT_NONE) {
         SSL_set_msg_callback(s->ssl, ksl_msg_cb);
         SSL_set_msg_callback_arg(s->ssl, s);
     }
@@ -405,6 +406,14 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_VERIFY_NAME: {
         const char *n = s->verify_ip ? s->verify_ip : ksl_verify_host(s);
         return copy_out(out, cap, len, (const uint8_t *)n, n ? strlen(n) : 0);
+    }
+    case KSL_GET_CERT_COMPRESSORS: {
+        uint8_t b = (uint8_t)ksl_cert_compressors();
+        return copy_out(out, cap, len, &b, 1);
+    }
+    case KSL_GET_CERT_COMPRESSION: {
+        uint8_t b[2] = {(uint8_t)(s->peer_cert_comp >> 8), (uint8_t)s->peer_cert_comp};
+        return copy_out(out, cap, len, b, 2);
     }
     default:
         ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter");
@@ -861,6 +870,11 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         s->early_session && SSL_get_session(ssl) == s->early_session &&
         memcmp(m + 6, hrr_random, sizeof hrr_random) == 0)
         (void)SSL_SESSION_set_max_early_data(s->early_session, 0);
+    /* RFC 8879 section 4: the peer's certificate came as a CompressedCertificate; its algorithm (2 bytes after the 4-byte message
+       header) is noted before OpenSSL processes it, and a message OpenSSL refuses ends the session (KSL_GET_CERT_COMPRESSION is
+       not read on a failed one) */
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_COMPRESSED_CERTIFICATE)
+        s->peer_cert_comp = (uint16_t)((m[4] << 8) | m[5]);
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO &&
         s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

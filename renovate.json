@@ -3,7 +3,7 @@
   "description": [
     "Copyright 2026 The Kuicksilver Authors",
     "SPDX-License-Identifier: Apache-2.0",
-    "Gradle dependencies, GitHub Actions pinned by digest, and the OpenSSL pin in gradle/openssl.toml. Nothing is auto-merged."
+    "Gradle dependencies, GitHub Actions pinned by digest, the OpenSSL pin in gradle/openssl.toml and the zlib and brotli pins in gradle/compression-libs.toml. Nothing is auto-merged."
   ],
   "extends": [
     "config:recommended",
@@ -50,6 +50,17 @@
       "prBodyNotes": [
         "**OpenSSL pin update.** Renovate changes only `version` in `gradle/openssl.toml`. Before merging, a maintainer must: (1) download `openssl-<version>.tar.gz` and its `.asc` from the GitHub release, (2) verify the signature against `tools/openssl/openssl-release-key.asc` / `pgp_fingerprint` (update both only if OpenSSL rotated its key, after checking openssl-library.org), (3) put the tarball's SHA-256 into `sha256`, (4) check whether the release fixes the bug of each carried patch (`patch`, `patch_2` and on to `patch_9` in `gradle/openssl.toml`, ADR-0019): for a fixed one remove its two lines and its file and renumber the ones after it, so the numbers stay consecutive from `patch`; for the others make the patch apply to the release and pin its new SHA-256, (5) run `tools/openssl/fetch.sh` and the full matrix. Until `sha256` is updated, `fetch.sh` fails on purpose."
       ]
+    },
+    {
+      "description": "zlib and brotli, compiled into OpenSSL's libcrypto for TLS certificate compression: never auto-merge, open the PR immediately.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["madler/zlib", "google/brotli"],
+      "schedule": ["at any time"],
+      "automerge": false,
+      "labels": ["dependencies", "openssl", "security-review"],
+      "prBodyNotes": [
+        "**Compression library pin update.** Renovate changes only `version` in `gradle/compression-libs.toml`. Before merging, a maintainer must update the table's `url` to the new release and: for zlib, download the tarball and its `.asc`, verify the signature against `tools/openssl/zlib-release-key.asc` / `pgp_fingerprint`, and put the tarball's SHA-256 into `sha256`; for brotli (no signed releases), put the SHA-256 of the tag's archive into `sha256` and the tag's commit into `commit`, cross-checked against a second source. Then run `tools/openssl/fetch.sh` and the full matrix. Until `sha256` is updated, `fetch.sh` fails on purpose."
+      ]
     }
   ],
   "customManagers": [
@@ -61,6 +72,26 @@
       "depNameTemplate": "openssl/openssl",
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^openssl-(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "zlib pinned in gradle/compression-libs.toml (version line; url, sha256 by a maintainer, see prBodyNotes).",
+      "managerFilePatterns": ["/^gradle/compression-libs\\.toml$/"],
+      "matchStrings": ["\\[zlib\\]\\s*\\nversion = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "madler/zlib",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "brotli pinned in gradle/compression-libs.toml (version line; url, sha256 and commit by a maintainer, see prBodyNotes).",
+      "managerFilePatterns": ["/^gradle/compression-libs\\.toml$/"],
+      "matchStrings": ["\\[brotli\\]\\s*\\nversion = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "google/brotli",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
       "versioningTemplate": "semver"
     }
   ]

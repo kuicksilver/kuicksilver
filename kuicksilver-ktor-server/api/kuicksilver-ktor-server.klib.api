@@ -6,6 +6,18 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-server>
+final enum class io.kuicksilver.ktor.server/H2cMode : kotlin/Enum<io.kuicksilver.ktor.server/H2cMode> { // io.kuicksilver.ktor.server/H2cMode|null[0]
+    enum entry Off // io.kuicksilver.ktor.server/H2cMode.Off|null[0]
+    enum entry Only // io.kuicksilver.ktor.server/H2cMode.Only|null[0]
+    enum entry WithHttp11 // io.kuicksilver.ktor.server/H2cMode.WithHttp11|null[0]
+
+    final val entries // io.kuicksilver.ktor.server/H2cMode.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.server/H2cMode> // io.kuicksilver.ktor.server/H2cMode.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/H2cMode.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.server/H2cMode> // io.kuicksilver.ktor.server/H2cMode.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.ktor.server/Http3Advertising : kotlin/Enum<io.kuicksilver.ktor.server/Http3Advertising> { // io.kuicksilver.ktor.server/Http3Advertising|null[0]
     enum entry Clear // io.kuicksilver.ktor.server/Http3Advertising.Clear|null[0]
     enum entry Drain // io.kuicksilver.ktor.server/Http3Advertising.Drain|null[0]
@@ -89,6 +101,9 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var altSvc // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc|{}altSvc[0]
             final fun <get-altSvc>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc.<get-altSvc>|<get-altSvc>(){}[0]
             final fun <set-altSvc>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc.<set-altSvc>|<set-altSvc>(kotlin.Boolean){}[0]
+        final var connectUdp // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectUdp|{}connectUdp[0]
+            final fun <get-connectUdp>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectUdp.<get-connectUdp>|<get-connectUdp>(){}[0]
+            final fun <set-connectUdp>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectUdp.<set-connectUdp>|<set-connectUdp>(kotlin.Boolean){}[0]
         final var connectionIdleTimeoutSeconds // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds|{}connectionIdleTimeoutSeconds[0]
             final fun <get-connectionIdleTimeoutSeconds>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<get-connectionIdleTimeoutSeconds>|<get-connectionIdleTimeoutSeconds>(){}[0]
             final fun <set-connectionIdleTimeoutSeconds>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<set-connectionIdleTimeoutSeconds>|<set-connectionIdleTimeoutSeconds>(kotlin.Int){}[0]
@@ -180,6 +195,8 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
 }
 
 final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.server.engine/EngineConnectorConfig { // io.kuicksilver.ktor.server/KuicksilverPlainConnector|null[0]
+    final val h2c // io.kuicksilver.ktor.server/KuicksilverPlainConnector.h2c|{}h2c[0]
+        final fun <get-h2c>(): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/KuicksilverPlainConnector.h2c.<get-h2c>|<get-h2c>(){}[0]
     final val host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host|{}host[0]
         final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.host.<get-host>|<get-host>(){}[0]
     final val port // io.kuicksilver.ktor.server/KuicksilverPlainConnector.port|{}port[0]
@@ -197,6 +214,9 @@ final class io.kuicksilver.ktor.server/KuicksilverPlainConnector : io.ktor.serve
     final class Builder { // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder|null[0]
         constructor <init>() // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.<init>|<init>(){}[0]
 
+        final var h2c // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c|{}h2c[0]
+            final fun <get-h2c>(): io.kuicksilver.ktor.server/H2cMode // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c.<get-h2c>|<get-h2c>(){}[0]
+            final fun <set-h2c>(io.kuicksilver.ktor.server/H2cMode) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.h2c.<set-h2c>|<set-h2c>(io.kuicksilver.ktor.server.H2cMode){}[0]
         final var host // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host|{}host[0]
             final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<get-host>|<get-host>(){}[0]
             final fun <set-host>(kotlin/String) // io.kuicksilver.ktor.server/KuicksilverPlainConnector.Builder.host.<set-host>|<set-host>(kotlin.String){}[0]
@@ -441,5 +461,6 @@ final val io.kuicksilver.ktor.server/receivedEarly // io.kuicksilver.ktor.server
 
 final fun (io.ktor.server.response/ApplicationResponse).io.kuicksilver.ktor.server/neverIndex(kotlin/Array<out kotlin/String>...) // io.kuicksilver.ktor.server/neverIndex|neverIndex@io.ktor.server.response.ApplicationResponse(kotlin.Array<out|kotlin.String>...){}[0]
 final fun (io.ktor.server.response/ApplicationResponse).io.kuicksilver.ktor.server/priority(kotlin/Int? = ..., kotlin/Boolean? = ...) // io.kuicksilver.ktor.server/priority|priority@io.ktor.server.response.ApplicationResponse(kotlin.Int?;kotlin.Boolean?){}[0]
+final fun (io.ktor.server.routing/Route).io.kuicksilver.ktor.server/connectUdp(io.kuicksilver.http3/UdpProxy = ...): io.ktor.server.routing/Route // io.kuicksilver.ktor.server/connectUdp|connectUdp@io.ktor.server.routing.Route(io.kuicksilver.http3.UdpProxy){}[0]
 final fun (io.ktor.server.routing/Route).io.kuicksilver.ktor.server/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., kotlin/Function2<kotlin/String?, io.ktor.server.application/ApplicationCall, kotlin/Boolean> = ..., kotlin.coroutines/SuspendFunction1<io.kuicksilver.http3/WebTransportSession, kotlin/Unit>): io.ktor.server.routing/Route // io.kuicksilver.ktor.server/webTransport|webTransport@io.ktor.server.routing.Route(kotlin.String;kotlin.collections.List<kotlin.String>;kotlin.Function2<kotlin.String?,io.ktor.server.application.ApplicationCall,kotlin.Boolean>;kotlin.coroutines.SuspendFunction1<io.kuicksilver.http3.WebTransportSession,kotlin.Unit>){}[0]
 final fun io.kuicksilver.ktor.server/sameHostOrigin(kotlin/String?, io.ktor.server.application/ApplicationCall): kotlin/Boolean // io.kuicksilver.ktor.server/sameHostOrigin|sameHostOrigin(kotlin.String?;io.ktor.server.application.ApplicationCall){}[0]

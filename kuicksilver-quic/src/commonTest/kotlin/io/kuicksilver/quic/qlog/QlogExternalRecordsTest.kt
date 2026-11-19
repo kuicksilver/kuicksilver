@@ -204,7 +204,7 @@ class QlogExternalRecordsTest {
         val seen = HashSet<Pair<Int, Int>>()
         val re =
             Regex(
-                "^\u001e\\{\"time\":0\\.000,\"name\":\"http:frame_parsed\",\"data\":\\{\"stream_id\":(\\d+),\"n\":(\\d+),\"pad\":\"x*\"}}\n$",
+                "^\u001e\\{\"time\":0\\.000,\"name\":\"http:frame_parsed\",\"data\":\\{\"stream_id\":(\\d+),\"n\":(\\d+),\"pad\":\"x*\"\\}\\}\n$",
             )
         for (r in events) {
             val m = re.matchEntire(r) ?: error("corrupt record: $r")

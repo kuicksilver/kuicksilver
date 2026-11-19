@@ -28,7 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.io.IOException
 
 /**
- * An IP address, as a [Dns] answers: IPv4 (4 bytes) or IPv6 (16 bytes, with the [scopeId] of a link-local address).
+ * An IP address, as a [Dns] answers: IPv4 (4 bytes) or IPv6 (16 bytes, with the [IpAddress.scopeId] of a link-local address).
  * Equal when the bytes and the scope are.
  */
 @ExperimentalKuicksilverApi

@@ -14,8 +14,6 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.async
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -24,7 +22,6 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -71,20 +68,8 @@ class IdleSelectorCloseTest {
                 client.abort()
             } else if (writer == Writer.Blocked) {
                 val out = client.openWriteChannel()
-                val progress = Channel<Unit>(Channel.CONFLATED)
-                val writing =
-                    async {
-                        runCatching {
-                            val chunk = ByteArray(64 * 1024)
-                            while (true) {
-                                out.writeFully(chunk)
-                                out.flush()
-                                progress.trySend(Unit)
-                            }
-                        }
-                    }
-                // until the writer is stuck: no chunk for 300 ms (the peer reads nothing)
-                while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                // until the writer is stuck on a full connection (the peer reads nothing)
+                val writing = fillUntilStuck(out) { kernelBufferBytes(client, peer) }
                 kotlinx.coroutines.delay(2.seconds) // the scenario, not a synchronization: the selector goes idle
                 client.abort()
                 writing.await()

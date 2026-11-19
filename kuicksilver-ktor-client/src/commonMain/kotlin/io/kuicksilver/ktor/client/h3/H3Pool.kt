@@ -35,6 +35,7 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.awaitWebTransportExchangeEnd
+import io.kuicksilver.http3.connectUdp
 import io.kuicksilver.http3.contentHandedToTransport
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.webTransport
@@ -112,8 +113,12 @@ internal class H3Target(
     val port: Int,
     /** The ECH of an HTTPS record's endpoint (RFC 9848), shared with its TCP side; null: the origin's. Not in [key]. */
     val ech: EchRoute? = null,
+    /** The CONNECT-UDP proxy the connection runs through ([H3Pool.connectThroughUdpProxy]), or null for a direct one. */
+    @property:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val udpProxy: io.kuicksilver.ktor.client.ConnectUdpProxy? = null,
 ) {
-    val key: String get() = "$originHost|$host:$port"
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val key: String get() = "$originHost|$host:$port" + (udpProxy?.let { "|" + it.routeKey } ?: "")
 }
 
 /** The origin host of an [H3Target.key]. */
@@ -851,7 +856,26 @@ internal class H3Pool(
     }
 
     /** Drops the pool's session tickets: the engine's cleanup calls it after [close]. */
-    suspend fun closeSessions() = tickets.close()
+    suspend fun closeSessions() {
+        tickets.close()
+        lock.withLock { tunnelTickets.values.toList().also { tunnelTickets.clear() } }.forEach { it.close() }
+    }
+
+    /**
+     * The session tickets of tunnelled connections, one cache per CONNECT-UDP proxy route (`ConnectUdpProxy.routeKey`),
+     * never shared with direct connections: a ticket a direct connection got would let the origin link the proxied
+     * connection that resumes it to the client's own address (RFC 8446 section C.4; RFC 9298 section 7 hides it).
+     */
+    private val tunnelTickets = HashMap<String, io.kuicksilver.tls.SessionCache>()
+
+    /** Tests: the cache of a proxy route, null before its first tunnel; and the direct connections'. */
+    internal suspend fun tunnelTicketsForTest(route: String): io.kuicksilver.tls.SessionCache? = lock.withLock { tunnelTickets[route] }
+
+    internal val directTicketsForTest: io.kuicksilver.tls.SessionCache get() = tickets
+
+    /** Tests: the session cache the latest tunnelled endpoint was built with. */
+    @kotlin.concurrent.Volatile
+    internal var tunnelTicketsUsedForTest: io.kuicksilver.tls.SessionCache? = null
 
     fun close() {
         refusingWebTransport = true
@@ -1126,7 +1150,8 @@ internal class H3Pool(
     ): Pair<H3Entry, Http3Connection> {
         ensureOpen()
         val route = t.ech ?: dns.echRoute(t.originHost) { config.ech.configLists[it] }
-        shareSameAddress(t, dns, wt)
+        // a tunnelled connection is never shared by address: its origin's name is the proxy's to resolve, not resolved here
+        if (t.udpProxy == null) shareSameAddress(t, dns, wt)
         val (e, connect) =
             lock.withLock {
                 val existing = connections[t.key]
@@ -1164,30 +1189,34 @@ internal class H3Pool(
                     // look up again
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
-                        raceQuic(t.host, t.port, dns, failures, { won, a ->
-                            attempts.update { it + (won to Destination.of(a)) }
-                        }) { destination ->
-                            val (ep, remote) = endpointFor(destination)
-                            // ECH (RFC 9849): the endpoint's configuration (RFC 9848) or the origin's; a rejection is
-                            // retried once on a new connection to the same address with the retry configurations, or
-                            // without ECH when the server sent none (section 6.1.6)
-                            withEchRetry(route) { offer ->
-                                val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
-                                if (wt) {
-                                    // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
-                                    ep.connect(remote, tls, quic, wtSettings)
-                                } else if (config.http3.earlyData) {
-                                    // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
-                                    // the handshake timer (a request sent early then fails, and falls back, at that time).
-                                    // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
-                                    // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
-                                    // handshake fails with the rejection after this returned: the request's next connection
-                                    // (its fallback, or a retry) then offers the retry configurations
-                                    ep
-                                        .connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
-                                        .also { c -> noteLateEchRejection(c, route, offer) }
-                                } else {
-                                    ep.connect(remote, tls, quic, config.http3.settings)
+                        if (t.udpProxy != null) {
+                            connectThroughUdpProxy(t, dns, failures, route)
+                        } else {
+                            raceQuic(t.host, t.port, dns, failures, { won, a ->
+                                attempts.update { it + (won to Destination.of(a)) }
+                            }) { destination ->
+                                val (ep, remote) = endpointFor(destination)
+                                // ECH (RFC 9849): the endpoint's configuration (RFC 9848) or the origin's; a rejection is
+                                // retried once on a new connection to the same address with the retry configurations, or
+                                // without ECH when the server sent none (section 6.1.6)
+                                withEchRetry(route) { offer ->
+                                    val tls = config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer)
+                                    if (wt) {
+                                        // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
+                                        ep.connect(remote, tls, quic, wtSettings)
+                                    } else if (config.http3.earlyData) {
+                                        // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
+                                        // the handshake timer (a request sent early then fails, and falls back, at that time).
+                                        // With ECH the early data goes under the inner ClientHello's PSK; a server that rejects
+                                        // ECH ignores it (RFC 9849 section 6.1, rule 7; RFC 8446 section 4.2.10) and the
+                                        // handshake fails with the rejection after this returned: the request's next connection
+                                        // (its fallback, or a retry) then offers the retry configurations
+                                        ep
+                                            .connectEarly(remote, tls, quicWithin(data.connectTimeoutMillis(config)), config.http3.settings)
+                                            .also { c -> noteLateEchRejection(c, route, offer) }
+                                    } else {
+                                        ep.connect(remote, tls, quic, config.http3.settings)
+                                    }
                                 }
                             }
                         }
@@ -1218,8 +1247,11 @@ internal class H3Pool(
                     withContext(NonCancellable) { runCatching { c.close() } }
                     return e to kept
                 }
-                followNetwork(c, data)
-                followPreferredAddress(e, c)
+                // a tunnel has one target and no network of its own: no preferred address to follow, no migration
+                if (t.udpProxy == null) {
+                    followNetwork(c, data)
+                    followPreferredAddress(e, c)
+                }
             } catch (
                 x: SetupTimedOut,
             ) {
@@ -1242,6 +1274,71 @@ internal class H3Pool(
             setupWaitersForTest.addAndFetch(1)
         }
         return e to d.await()
+    }
+
+    /**
+     * An HTTP/3 connection to [t]'s origin through its CONNECT-UDP proxy (RFC 9298): a connection to the proxy (raced over
+     * the proxy's addresses as any direct connection, from the pool's endpoints), a UDP tunnel on it to the origin's name
+     * and port (the proxy resolves the name; `proxy-authorization` from the proxy's credentials), and an endpoint of its own
+     * whose socket is the tunnel (`UdpTunnel.asDatagramIo`), connected with the origin's TLS configuration. The connection
+     * to the proxy carries this one tunnel and lives as long as the tunnelled connection: when that one closes, its endpoint
+     * (and so the tunnel) and the proxy connection are closed too. The inner connection never follows a preferred address.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectThroughUdpProxy(
+        t: H3Target,
+        dns: RequestDns,
+        failures: MutableList<Throwable>,
+        route: EchRoute,
+    ): Http3Connection {
+        val p = t.udpProxy!!
+        val outer =
+            raceQuic(p.host, p.port, dns, failures) { destination ->
+                val (ep, remote) = endpointFor(destination)
+                ep.connect(remote, config.tlsConfigFor(p.host, listOf(Http3Endpoint.H3)), quic, config.http3.settings)
+            }
+        var inner: Http3Endpoint? = null
+        try {
+            val headers = p.authorization?.let { Http3Headers(listOf("proxy-authorization" to it)) } ?: Http3Headers.Empty
+            val tunnel = outer.connectUdp(p.template, t.host, t.port, headers)
+            val cache = lock.withLock { tunnelTickets.getOrPut(p.routeKey) { io.kuicksilver.tls.SessionCache() } }
+            val tunnelConfig =
+                endpointConfig
+                    .toBuilder()
+                    .apply {
+                        io = { tunnel.asDatagramIo() }
+                        sessionCache = cache // never the direct connections' tickets
+                    }.build()
+            tunnelTicketsUsedForTest = tunnelConfig.sessionCache
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("0.0.0.0", 0), // handed to the factory, which gives the tunnel: nothing is bound
+                    tunnelConfig,
+                    config.http3.settings,
+                )
+            inner = ep
+            val tunnelled = quic.toBuilder().apply { followPreferredAddress = false }.build()
+            // ECH (RFC 9849) as on a direct connection: the proxy relays the inner connection's ClientHello, so it is the
+            // origin's configuration that hides the name from it; a rejection is retried once through the same tunnel
+            val c =
+                withEchRetry(route) { offer ->
+                    ep.connect(
+                        tunnel.remoteAddress,
+                        config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3), offer),
+                        tunnelled,
+                        config.http3.settings,
+                    )
+                }
+            c.closed.invokeOnCompletion {
+                ep.close()
+                outer.close()
+            }
+            return c
+        } catch (e: Throwable) {
+            inner?.close()
+            outer.close()
+            throw e
+        }
     }
 
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
@@ -1916,8 +2013,14 @@ internal class H3Pool(
         /** How long a connection stays in use after a WebTransport session on it closed, for its CONNECT exchange to end. */
         val EXCHANGE_END_TIMEOUT = 5.seconds
 
-        /** Connection-specific fields (RFC 9114 section 4.2) and HTTP/1.1 WebSocket handshake fields RFC 9220 drops. */
-        val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te")
+        /**
+         * Connection-specific fields (RFC 9114 section 4.2, RFC 9113 section 8.2.2), and `proxy-authorization`: HTTP/2 and
+         * HTTP/3 requests go to the origin only (directly, or inside a proxy's tunnel, the CONNECT having carried the
+         * field), and the field is for the proxy that asked for it (RFC 9110 section 11.7.2), as HTTP/1.1 drops it inside a
+         * tunnel. [WS_HOP_BY_HOP]: HTTP/1.1 WebSocket handshake fields RFC 9220 drops.
+         */
+        val HOP_BY_HOP =
+            setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te", "proxy-authorization")
         val WS_HOP_BY_HOP = setOf("sec-websocket-key", "sec-websocket-accept")
 
         fun io.ktor.http.Url.authority(): String = if (port == protocol.defaultPort) host else hostWithPort

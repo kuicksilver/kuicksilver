@@ -150,7 +150,9 @@ static void observe(int write_p, int version, int content_type, const void *buf,
             w->bad = 1;
             return;
         }
-        read_group_list(find_ext(exts, el, 10, &gl), gl, w->groups, 16, &w->ngroups, &w->bad);
+        /* found first: C leaves the order of a call's arguments open, and gcc reads gl before find_ext sets it */
+        const uint8_t *sg = find_ext(exts, el, 10, &gl);
+        read_group_list(sg, gl, w->groups, 16, &w->ngroups, &w->bad);
         const uint8_t *ks = find_ext(exts, el, 51, &kl);
         w->nshares = 0;
         if (!ks || kl < 2 || (size_t)u16(ks) != kl - 2) {
@@ -646,8 +648,33 @@ static void test_tls12_resumption_reports_no_group(void) {
     END();
 }
 
+/* ksl_append_group, which builds the group lists: a part that does not fit is refused whole and the length used stays where it was,
+   so the next append's room (cap - used) cannot wrap below zero; a truncating snprintf returns the full length, and adding that
+   unchecked (CodeQL cpp/overflowing-snprintf) moved the offset past the buffer. The guard bytes past cap stay untouched. */
+static void test_negative_group_append_bounds(void) {
+    SECTION("negative_group_append_bounds");
+    char buf[16];
+    memset(buf, '#', sizeof buf);
+    const size_t cap = 8; /* buf[8..15] are guard bytes */
+    size_t out = 0;
+    CHECK(ksl_append_group(buf, cap, &out, "", "*", "X448") == 1 && out == 5 && !strcmp(buf, "*X448"),
+          "a part that fits");
+    CHECK(ksl_append_group(buf, cap, &out, ":", "", "X25519") == 0 && out == 5 && !strcmp(buf, "*X448"),
+          "negative: a part that does not fit is refused whole, the length stays");
+    CHECK(ksl_append_group(buf, cap, &out, ":", "", "a") == 1 && out == cap - 1 && !strcmp(buf, "*X448:a"),
+          "the last byte stays for the terminator");
+    CHECK(ksl_append_group(buf, cap, &out, "", "", "c") == 0 && out == cap - 1 && !strcmp(buf, "*X448:a"),
+          "negative: a full buffer takes nothing more");
+    int intact = 1;
+    for (size_t i = cap; i < sizeof buf; i++)
+        intact &= buf[i] == '#';
+    CHECK(intact, "negative: nothing is written past the capacity");
+    END();
+}
+
 void run_groups(void) {
     test_negative_key_share_scan();
+    test_negative_group_append_bounds();
     test_negative_group_list_checks();
     test_default_groups();
     test_client_hello_groups();

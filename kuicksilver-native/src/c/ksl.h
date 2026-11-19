@@ -40,10 +40,13 @@ extern "C" {
    section 9.2.1); ksl_resolve, ksl_addr_info and ksl_nat64_synthesize (Happy Eyeballs, RFC 8305 sections 3, 4 and 7);
    certificate revocation (RFC 9325 section 7.5): KSL_OPT_REVOCATION, KSL_SET_OCSP_RESPONSE, KSL_GET_OCSP_STATUS,
    ksl_ocsp_check, ksl_ctx_set_crls; KSL_OPT_ALPN_POLICY (a TLS-over-TCP server's ALPN requirements, RFC 7301 section 3.2);
-   ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8); Encrypted Client Hello
-   (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE, KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS,
-   KSL_GET_VERIFY_NAME, ksl_ech_config_list_check, ksl_ech_keys_new, ksl_ech_keys_free and ksl_ctx_set_ech_keys (numbered from 15 so that other additions of 0.3.0
-   keep the numbers below) */
+   ksl_ctx_set_groups and KSL_GET_GROUP (the key-exchange groups, RFC 9846 sections 4.3.7 and 4.3.8);
+   KSL_OPT_CERT_COMPRESSION, KSL_GET_CERT_COMPRESSION and KSL_GET_CERT_COMPRESSORS (TLS certificate compression, RFC 8879;
+   14 and 18, after the 13 of KSL_GET_GROUP and the 15 to 17 of ECH);
+   ksl_icmp_ptb_build, ksl_icmp_open, ksl_icmp_send and ksl_icmp_close (a CONNECT-UDP proxy's ICMP Packet Too Big, RFC 9298
+   section 6.1; new functions, no KSL_OPT or KSL_GET number); Encrypted Client Hello (RFC 9849, ADR-0019): KSL_OPT_ECH_GREASE,
+   KSL_SET_ECH_CONFIG_LIST, KSL_GET_ECH_STATUS, KSL_GET_ECH_RETRY_CONFIGS, KSL_GET_VERIFY_NAME, ksl_ech_config_list_check,
+   ksl_ech_keys_new, ksl_ech_keys_free and ksl_ctx_set_ech_keys (15 to 17) */
 
 /* return codes */
 #define KSL_OK 0
@@ -103,6 +106,20 @@ extern "C" {
                                       A present ALPN extension is validated first, in both modes (RFC 7301 section 3.1: a non-empty
                                       list of non-empty names, lengths exact), else decode_error (50). KSL_E_BAD_ARG on a client
                                       context */
+#define KSL_OPT_CERT_COMPRESSION 14 /* both roles (ABI 7, additive): 1 (the default) = TLS certificate compression (RFC 8879): the
+                                      compress_certificate extension offers brotli, then zlib (a client in its ClientHello, a server
+                                      in its CertificateRequest), a peer's CompressedCertificate in one of them is accepted, and our
+                                      Certificate goes out compressed with the first of the peer's algorithms that is also ours; a
+                                      server's chain is compressed once, at ksl_ctx_freeze (a chain no algorithm makes smaller goes out
+                                      uncompressed), a client's certificate per handshake. TLS 1.3 only: a TLS 1.2 handshake ignores
+                                      the extension. What a peer sends is held to OpenSSL's certificate list bound (100 KiB): an
+                                      uncompressed_length above it (before anything is decompressed), an output of another length
+                                      than uncompressed_length, or data that does not decompress: bad_certificate (42); brotli's
+                                      decoder allocates at most 3 x uncompressed_length + 256 KiB; an algorithm we did not offer:
+                                      illegal_parameter (47). brotli compresses at quality 9 at most. 0 = no extension, and a CompressedCertificate from the peer is an unexpected_message (10).
+                                      Where brotli only decompresses (the bundled OpenSSL of Android and iOS, ADR-0025; probed once),
+                                      a server's chain is compressed with zlib and a client's certificate is sent uncompressed.
+                                      KSL_E_BAD_ARG for any other value */
 #define KSL_OPT_ECH_GREASE 15 /* client (ABI 7, additive): 1 = a session without an ECH configuration sends a GREASE
                                       encrypted_client_hello extension in its ClientHello (RFC 9849 section 6.2.1: a random config_id,
                                       payload and enc of plausible sizes, a cipher suite drawn per handshake from those ksl offers with
@@ -142,6 +159,9 @@ extern "C" {
                                       4.3.7), once the ServerHello is sent or read; 0 bytes before, and for a handshake without key
                                       exchange: a TLS 1.2 abbreviated (resumed) handshake, a TLS 1.3 psk_ke resumption (which ksl
                                       never allows). Additive in ABI 7 */
+#define KSL_GET_CERT_COMPRESSION 14 /* 2 bytes big-endian: the algorithm of the CompressedCertificate (RFC 8879) the peer sent its
+                                      certificate in (1 zlib, 2 brotli), 0 when it came as a plain Certificate or has not come (a
+                                      server: no client certificate). Additive in ABI 7 */
 #define KSL_GET_ECH_STATUS 15 /* 1 byte, KSL_ECH_*: the session's Encrypted Client Hello outcome (RFC 9849); readable after the
                                       handshake failed too. Additive in ABI 7 */
 #define KSL_GET_ECH_RETRY_CONFIGS 16 /* client: the ECHConfigList the server sent in retry_configs when it rejected this session's ECH
@@ -152,6 +172,9 @@ extern "C" {
                                       verify name, or once the server rejected ECH, the ECHConfig's public_name (RFC 9849 section
                                       6.1.7). The paused path (KSL_WANT_VERIFY) checks this name, never the configured one. Additive
                                       in ABI 7 */
+#define KSL_GET_CERT_COMPRESSORS 18 /* 1 byte, the same for every session: the algorithms this OpenSSL compresses certificates with,
+                                      bit 0 zlib, bit 1 brotli (RFC 8879). A build with either decompresses both; the bundled
+                                      OpenSSL of Android and iOS compresses with zlib only (ADR-0025). Additive in ABI 7 */
 /* clang-format on */
 /* KSL_GET_ECH_STATUS values */
 #define KSL_ECH_NONE                                                                                                   \
@@ -529,11 +552,14 @@ int ksl_key_ecb16(
                                         Never granted on a specific address, where the socket's address is the source anyway. Additive in ABI 7 */
 /* clang-format on */
 #define KSL_UDP_ADDR_LEN 20
-#define KSL_UDP_GET_FD 1     /* 4 bytes BE */
-#define KSL_UDP_GET_CAPS 2   /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
-#define KSL_UDP_GET_LOCAL 3  /* KSL_UDP_ADDR_LEN bytes */
-#define KSL_UDP_GET_ERROR 4  /* errno:4 BE | message */
-#define KSL_UDP_GET_STATS 5  /* 12 bytes: send syscalls:4 BE | recv syscalls:4 BE | gso fallbacks:4 BE */
+#define KSL_UDP_GET_FD 1    /* 4 bytes BE */
+#define KSL_UDP_GET_CAPS 2  /* 8 bytes: granted flags:4 BE | gso max segments:2 BE | batch:2 BE */
+#define KSL_UDP_GET_LOCAL 3 /* KSL_UDP_ADDR_LEN bytes */
+#define KSL_UDP_GET_ERROR 4 /* errno:4 BE | message */
+#define KSL_UDP_GET_STATS 5 /* 12 bytes: send syscalls:4 BE | recv syscalls:4 BE | gso fallbacks:4 BE */
+#define KSL_UDP_GET_WAITS                                                                                              \
+    6 /* 4 bytes BE: waits a receive began for a datagram (each poll / WSAPoll, counted before it blocks);
+                                the same on every platform. Additive in ABI 7 */
 #define KSL_UDP_MAX_BATCH 64 /* slots per ksl_udp_send / ksl_udp_recv call */
 typedef struct ksl_udp ksl_udp;
 ksl_udp *ksl_udp_open(
@@ -565,8 +591,37 @@ int ksl_udp_recv_dst(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint
             share their train's. Additive in ABI 7 */
 int ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 #define KSL_UDP_PTB_QUOTE 64 /* bytes of the quoted datagram kept per Packet Too Big */
+/* Additive under 7 (RFC 9298 section 3.1): 1 and the oldest entry of a ring of 8 when an ICMP port or host unreachable (ICMPv6
+   port or address unreachable) for a datagram this socket sent is queued, else 0. dst: that datagram's destination; quote:
+   the start of its payload as the message quoted it (at most KSL_UDP_PTB_QUOTE and cap bytes; quote_len 0 when the message
+   quoted the headers only), for the RFC 8085 section 5.2 check against what was sent; kind: KSL_UNREACH_PORT or
+   KSL_UNREACH_HOST. Linux and Android with KSL_UDP_DF only (the error queue), 0 elsewhere */
+#define KSL_UNREACH_PORT 1u
+#define KSL_UNREACH_HOST 2u
+int ksl_udp_take_unreachable(ksl_udp *, uint8_t dst[KSL_UDP_ADDR_LEN], uint8_t *quote, uint32_t cap,
+                             uint32_t *quote_len, uint32_t *kind);
 int ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN],
                      uint32_t *mtu);
+
+/* ---- ICMP Packet Too Big for a CONNECT-UDP proxy (RFC 9298 section 6.1; additive in ABI 7) ----
+ * ksl_icmp_ptb_build writes into out (cap bytes) the message for a UDP datagram the proxy received from target (its source)
+ * at local (the proxy's address it arrived on), carrying payload_len bytes, which cannot go on within mtu: IPv4, ICMP type 3
+ * code 4 with the Next-Hop MTU (RFC 792, RFC 1191 section 4) quoting the datagram's reconstructed IPv4 and UDP headers and
+ * payload within a 576-byte IP datagram (RFC 1812 section 4.3.2.3); IPv6, ICMPv6 type 2 with the MTU (RFC 4443 section
+ * 3.2) quoting within 1280 bytes (section 2.4 (c)); checksums computed. Returns the length, 0 for bad arguments: addresses
+ * of different families, an MTU below 68 (IPv4) or 1280 (IPv6) or not below the datagram's size, a payload above UDP's
+ * limit, too little room (KSL_ICMP_PTB_MAX always suffices).
+ * ksl_icmp_open: a raw ICMP (family 4) or ICMPv6 (6) socket that only sends (every type filtered on receive); -1 without
+ * the privilege (Linux and Android: CAP_NET_RAW; *err = errno, EPERM) and elsewhere (*err = KSL_E_NOT_SUPPORTED).
+ * ksl_icmp_send sends msg to target from local (IP_PKTINFO / IPV6_PKTINFO); 1 when the kernel took it whole. */
+#define KSL_ICMP_PTB_MAX 1240
+uint32_t ksl_icmp_ptb_build(uint8_t *out, uint32_t cap, const uint8_t target[KSL_UDP_ADDR_LEN],
+                            const uint8_t local[KSL_UDP_ADDR_LEN], const uint8_t *payload, uint32_t payload_len,
+                            uint32_t mtu);
+int ksl_icmp_open(int family, int *err);
+int ksl_icmp_send(int fd, const uint8_t *msg, uint32_t len, const uint8_t target[KSL_UDP_ADDR_LEN],
+                  const uint8_t local[KSL_UDP_ADDR_LEN]);
+void ksl_icmp_close(int fd);
 /* 1: the oldest queued ICMP Packet Too Big (IPv4 type 3 code 4, ICMPv6 type 2; Linux and Android only, from the error queue IP_RECVERR /
             IPV6_RECVERR fills with DF on), else 0. quote: the start of our datagram the ICMP message quoted (UDP payload, at most
             KSL_UDP_PTB_QUOTE and cap bytes); dst: where that datagram went; mtu: the MTU the message reports (IP packet size). A ring of

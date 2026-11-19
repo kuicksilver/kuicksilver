@@ -20,7 +20,12 @@ no-quic
 no-sock
 no-sctp
 no-srtp
-no-comp
+# comp stays on for TLS certificate compression (RFC 8879) with zlib and brotli, which build.sh compiles into libcrypto.a
+# (gradle/compression-libs.toml); not their -dynamic variants, which need the DSO loader (no-dso). TLS record compression
+# stays off: ksl sets SSL_OP_NO_COMPRESSION on every context (RFC 9325 section 3.3).
+enable-zlib
+enable-brotli
+no-zstd
 no-srp
 no-psk
 no-nextprotoneg

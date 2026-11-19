@@ -30,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -176,6 +177,56 @@ class EngineMainTest {
         assertEquals(true, http2("-P:kuicksilver.http2=true"))
         assertFailsWith<IllegalArgumentException> { http2("-P:kuicksilver.http2=yes") }
     }
+
+    /**
+     * `kuicksilver.h2c` serves HTTP/2 over cleartext TCP with prior knowledge on the plain deployment port (RFC 9113 section
+     * 3.3); off by default, and refused next to the TLS identity files (h2c needs the cleartext port).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun h2cKey() =
+        serverTest {
+            fun mode(vararg extra: String): H2cMode {
+                val server = EngineMain.createServer(arrayOf("-host=127.0.0.1", "-port=0", *extra))
+                return server.engine.configuration.h2cDeploymentPort
+            }
+            assertEquals(H2cMode.Off, mode())
+            assertEquals(H2cMode.WithHttp11, mode("-P:kuicksilver.h2c=withHttp11"))
+            assertEquals(H2cMode.Only, mode("-P:kuicksilver.h2c=only"))
+            assertEquals(H2cMode.Off, mode("-P:kuicksilver.h2c=off"))
+            assertFailsWith<IllegalArgumentException> { mode("-P:kuicksilver.h2c=yes") }
+            assertFailsWith<IllegalArgumentException> { EngineMain.createServer(clientCaArgs("-P:kuicksilver.h2c=only")).engine }
+            // the deployment port serves h2c and HTTP/1.1
+            val server =
+                EngineMain.createServer(
+                    arrayOf(
+                        "-host=127.0.0.1",
+                        "-port=0",
+                        "-P:ktor.application.modules.size=1",
+                        "-P:ktor.application.modules.0=$module",
+                        "-P:kuicksilver.http3=false",
+                        "-P:kuicksilver.h2c=withHttp11",
+                    ),
+                )
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                RawH2Client.connectPlain(port).use { raw ->
+                    raw.preface()
+                    raw.headers(1, listOf(":method" to "GET", ":scheme" to "http", ":authority" to "server.test", ":path" to "/"))
+                    val f = assertNotNull(raw.await { it.stream == 1 && it.type == RawFrame.HEADERS }, "a response on stream 1")
+                    assertEquals(RawFrame.HEADERS, f.type)
+                }
+                val r = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n", tls = null)
+                assertTrue(r.startsWith("HTTP/1.1 200"), r)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 
     /** `kuicksilver.webSocketsOverHttp2` turns WebSockets over HTTP/2 (RFC 8441) off; on by default, as over HTTP/3. */
     @Test fun webSocketsOverHttp2Key() {
@@ -766,7 +817,38 @@ class EngineMainTest {
             assertTrue("certificateChain" in e.message.orEmpty(), e.message)
         }
 
-    /** A TLS 1.3 handshake of the JDK's client offering only [group] (its named groups) with the server on [port]; null when it worked. */
+    /**
+     * A TLS 1.3 handshake of a client offering only [group] with the server on [port]; null when it worked. The JDK's client
+     * where it can name its groups per socket (SSLParameters.setNamedGroups, JDK 20), else (the JDK 17 run of CI's
+     * jdk-compat job) Kuicksilver's own TCP client with that group alone.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun handshakeFails(
+        port: Int,
+        group: String,
+    ): Throwable? {
+        if (Runtime.version().feature() >= 20) return jdkHandshakeFails(port, group)
+        val selector = SelectorManager(Dispatchers.IO)
+        try {
+            return runCatching {
+                val config =
+                    io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Client) {
+                        alpn = listOf("http/1.1")
+                        serverName = "server.test"
+                        trust = TrustConfig.AnchoredCa(listOf(ServerFixtures.testCa))
+                        keyExchangeGroups = io.kuicksilver.tls.KeyExchangeGroups(listOf(group))
+                    }
+                io.kuicksilver.ktor.network
+                    .connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    .tls(config)
+                    .close()
+            }.exceptionOrNull()
+        } finally {
+            selector.close()
+        }
+    }
+
+    /** [handshakeFails] with the JDK's client, which offers only [group] (its named groups; JDK 20 and later). */
     private suspend fun jdkHandshakeFails(
         port: Int,
         group: String,
@@ -809,8 +891,18 @@ class EngineMainTest {
                         .resolvedConnectors()
                         .first()
                         .port
-                assertEquals(null, jdkHandshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
-                assertTrue(jdkHandshakeFails(port, "x25519") is javax.net.ssl.SSLException, "a client of x25519 alone is refused")
+                assertEquals(null, handshakeFails(port, "secp384r1"), "a client of secp384r1 is served")
+                val refused = handshakeFails(port, "x25519")
+                if (Runtime.version().feature() >= 20) {
+                    assertTrue(refused is javax.net.ssl.SSLException, "a client of x25519 alone is refused: $refused")
+                } else {
+                    // Kuicksilver's client: the server's handshake_failure (40) alert, found along the causes
+                    val alert =
+                        generateSequence(refused) { it.cause }
+                            .filterIsInstance<io.kuicksilver.tls.TlsException.AlertReceived>()
+                            .firstOrNull()
+                    assertEquals(40, alert?.code, "a client of x25519 alone is refused with handshake_failure: $refused")
+                }
             } finally {
                 server.stop(100, 500)
             }
