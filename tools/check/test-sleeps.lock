@@ -95,6 +95,7 @@ kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/KslDatagramIoTest.kt	1
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/KslReceiveSlicesTest.kt	3
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/RealUdpMigrationTest.kt	1
 kuicksilver-quic/src/jvmTest/kotlin/io/kuicksilver/quic/UncaughtExceptionTest.kt	4
+kuicksilver-quic/src/nativeTest/kotlin/io/kuicksilver/quic/KtorDatagramIoTest.kt	8
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/KslUdpSocketCloseTest.kt	1
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/TicketKeysTest.kt	1
 kuicksilver-tls/src/commonTest/kotlin/io/kuicksilver/tls/Tls12ResumptionWindowTest.kt	1

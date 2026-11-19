@@ -2707,6 +2707,18 @@ QUIC loss recovery and congestion control (RFC 9002 review):
 
 ### Security
 
+- HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
+  only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
+  cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client
+  sent after our own STOP_SENDING was not counted either, so floods of either kind went on at full speed without end. A
+  request the client abandons before our complete response, by RESET_STREAM or by STOP_SENDING, now spends one token of
+  the budget, once per request whichever came first; a flood ends with `H3_EXCESSIVE_LOAD`. A request the server resets
+  because the client made it malformed (MadeYouReset, CVE-2025-8671: a head without its pseudo-header fields, content
+  that does not match its content-length, trailers too large) now spends a glitch token, as on HTTP/2; trailers cancelled
+  at their deadline do not. The Ktor engine also ends a request whose handler it cancelled before the handler began its
+  work (STOP_SENDING and a reset with `H3_REQUEST_CANCELLED`); before, such a request stayed open with its receive half
+  for the connection's life and held off the GOAWAY idle close. Released 0.2.1 has no limit on HTTP/3 request resets at
+  all (see the Rapid Reset entry below).
 - Ktor client on Android: the Network Security Configuration was asked about the host of an `http://` or `ws://` URL
   as written, and it matches strings, so a rule for an address was passed by another spelling of it (`127.1` or
   `2130706433` for `127.0.0.1`, `[0:0:0:0:0:0:0:1]` for `::1`, `[::ffff:192.168.1.1]` for `192.168.1.1`). It is now

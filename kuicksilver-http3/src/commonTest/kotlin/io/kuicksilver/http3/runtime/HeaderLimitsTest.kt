@@ -727,6 +727,50 @@ class HeaderLimitsTest {
         }
 
     /**
+     * Trailers that miss their deadline are cancelled by our own clock, not by anything the client sent wrong (a lossy link
+     * delays them as well), so the cancellation spends no glitch token, unlike a malformed request: with the glitch bucket
+     * emptied by 1000 unknown control frames (its clock frozen), one more glitch would end the connection, and the
+     * cancelled request leaves it open.
+     */
+    @Test fun trailersPastTheirDeadlineSpendNoGlitchToken() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, fastDeadline)
+                server.session.glitchClock = { 0L }
+                val raw = RawPeer(c)
+                raw.openControl()
+                val unknown = raw.frame(0x2f, ByteArray(0)) // reserved for no extension we know, and no GREASE value
+                raw.control.output.writeFully(
+                    ByteArray(unknown.size * 1000).also {
+                        for (i in 0 until 1000) {
+                            unknown.copyInto(
+                                it,
+                                i * unknown.size,
+                            )
+                        }
+                    },
+                )
+                raw.control.output.flush()
+                // a request answered after the control frames went: the bucket is empty, the connection still open
+                val first = c.openBidi()
+                first.output.writeFully(raw.headers(first.id, GET))
+                first.output.flushAndClose()
+                val answered = launch { runCatching { withTimeout(5.seconds) { server.acceptRequest() }.respond(200).finish() } }
+                assertTrue(withTimeout(5.seconds) { first.input.readAllBytes() }.isNotEmpty())
+                answered.join()
+                assertFalse(server.closed.isCompleted, "closed by the 1000 control frames")
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, POST) + raw.data(byteArrayOf(1, 2)) + headersHeader(100) + byteArrayOf(0))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                assertTrue(runCatching { r.body.readBuffer() }.isFailure, "the body fails with the cancellation")
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, withTimeout(5.seconds) { resetCode(st) })
+                assertFalse(server.closed.isCompleted, "the connection ended with the cancelled trailers")
+            }
+        }
+
+    /**
      * [count] copies of [frame] in one request's body (a POST whose body is read whole) against a bucket whose clock stands
      * still (1000 tokens): true when the connection is still open once the request was read.
      */

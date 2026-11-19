@@ -259,6 +259,8 @@ private suspend fun H3Session.handleArmedRequestStream(
             ) {
                 headSettled()
                 abort(st, Http3ErrorCode.MESSAGE_ERROR)
+                // a reset the client made us send (RFC 9114 section 10.5; MadeYouReset, CVE-2025-8671), as on HTTP/2
+                glitch("a malformed request")
                 return
             }
         pendingHeaders.remove(st.id)
@@ -324,6 +326,22 @@ private suspend fun H3Session.handleArmedRequestStream(
             return
         }
         onDelivered() // the application holds it now: it gives the stream's credit back
+        // a stop of the response before it is complete abandons the request as a reset does, and spends the same token
+        scope.launch {
+            val code =
+                try {
+                    st.awaitSendStopped()
+                } catch (_: QuicException) {
+                    null
+                }
+            if (code != null) {
+                try {
+                    countClientStop(req)
+                } catch (e: H3ProtocolError) {
+                    fail(e.code, e.message ?: "")
+                }
+            }
+        }
         // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
         // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
         val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
@@ -335,6 +353,7 @@ private suspend fun H3Session.handleArmedRequestStream(
             bodyLimit,
             tunnel = { req.tunnel },
             responseComplete = { req.respondedInFull },
+            abandoned = req,
         ) { f ->
             // the 431 claims the response on this dispatcher first: an application's respond() meanwhile finds it taken
             if (f.error is Http3Exception.FieldSectionTooLarge && req.claimResponseFor431()) reject431(st, f.code) else abort(st, f.code)
@@ -521,6 +540,9 @@ internal class ServerRequestImpl(
 
     /** Set by an engine that reports its handler's end ([handlerEnded]): only that gives the stream's credit back then. */
     @Volatile var engineManaged = false
+
+    /** The client's abandonment of this request (its STOP_SENDING or reset) was counted ([H3Session.countClientStop]). Session dispatcher only. */
+    var abandonmentCounted = false
 
     /**
      * The application is done with this request: its response ended (complete or abandoned), it reset the request, or a
@@ -940,7 +962,20 @@ internal class ServerRequestImpl(
         }
     }
 
+    /** The application reset the request ([reset]). */
+    @Volatile private var resetByApplication = false
+
+    /**
+     * An engine's handler is over, whether or not it ran: a request it never answered nor reset is reset with [code] here,
+     * so it ends (STOP_SENDING and RESET_STREAM, [done]) also when its handler was cancelled before it started its work.
+     * Any thread.
+     */
+    fun resetIfUnanswered(code: Long) {
+        if (!responseStarted && !resetByApplication) reset(code)
+    }
+
     override fun reset(code: Long) {
+        resetByApplication = true
         st.reset(code)
         st.stopSending(code)
         // on the session's dispatcher, in afterEnd: a launch into the session's scope after the connection ended never runs,

@@ -86,9 +86,9 @@ class H2ServerFloodTest {
                 toServer.writeFully(FrameEncoder.settingsAck())
                 var i = 0
                 while (i < count) {
-                    val frames = ArrayList<ByteArray>()
-                    repeat(minOf(batch, count - i)) { frames += request(c, i++) }
-                    for (b in frames) toServer.writeFully(b)
+                    val n = minOf(batch, count - i)
+                    toServer.writeFully(batchOf(c, i, n, request))
+                    i += n
                     toServer.flush()
                     // a client that reads: the next batch goes once the server answered this one, so no queue of ours fills
                     c.answers.first { it >= i }
@@ -98,6 +98,28 @@ class H2ServerFloodTest {
         }
         c.readToEnd()
         return c
+    }
+
+    /**
+     * The requests [request] makes for [from] until [from] + [n], one after another. Built outside the suspending loop of
+     * [flood], which then calls nothing whose target changes from test to test: ART 7.0 (API 24) aborts in the GC when such a
+     * loop is deoptimized at a lambda it had not seen (ktor-client's ClientH2FloodTest.batchOf says how).
+     */
+    private fun batchOf(
+        c: Client,
+        from: Int,
+        n: Int,
+        request: (Client, Int) -> ByteArray,
+    ): ByteArray {
+        val frames = ArrayList<ByteArray>(n)
+        for (i in from until from + n) frames += request(c, i)
+        val all = ByteArray(frames.sumOf { it.size })
+        var at = 0
+        for (f in frames) {
+            f.copyInto(all, at)
+            at += f.size
+        }
+        return all
     }
 
     private fun Client.calm(): Frame.GoAway? = frames.filterIsInstance<Frame.GoAway>().lastOrNull()

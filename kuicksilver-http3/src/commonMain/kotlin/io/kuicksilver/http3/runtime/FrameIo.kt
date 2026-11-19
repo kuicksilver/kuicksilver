@@ -296,6 +296,7 @@ internal class RequestFrames(
                     streamId,
                     "a HEADERS frame on stream $streamId did not arrive within $deadline",
                 ),
+                byPeer = false, // our deadline, no fault the peer's frames show
             )
     }
 
