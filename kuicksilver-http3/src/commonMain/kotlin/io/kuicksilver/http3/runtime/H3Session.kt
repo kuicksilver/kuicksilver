@@ -271,6 +271,9 @@ internal class H3Session(
     /** Test hook: runs on a server's request stream once the response HEADERS frame was written, before the flush after it. */
     internal var afterResponseHeadersForTest: (suspend (QuicStream) -> Unit)? = null
 
+    /** Test hook: runs in a response writer's pump once it read the end of the application's content, before it acts on it. */
+    internal var atResponseContentEndForTest: (suspend (QuicStream) -> Unit)? = null
+
     /** Test hook: runs on a server's request stream once the HEADERS frame of a 431 was written, before its flush and FIN. */
     internal var afterReject431HeadersForTest: (suspend (QuicStream) -> Unit)? = null
 

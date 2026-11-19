@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -36,6 +37,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
@@ -589,6 +591,43 @@ class ConnectionEndTest {
                 withTimeout(5.seconds) { p.server.closed.await() }
                 awaitCoroutinesCancelled(s)
                 awaitNothingRegistered(s)
+            }
+        }
+
+    /**
+     * A handler cancelled inside finish, while the writer's pump still hands its content over, on a live connection: the
+     * response is abandoned, reset with H3_REQUEST_CANCELLED (RFC 9114 section 4.1.1), and the request ends. The pump saw
+     * that finish would end the stream and left it to finish, which its cancelled caller never did: no FIN, no reset, the
+     * client's body read waited for good and the request stayed registered (counted against the GOAWAY idle close).
+     */
+    @Test fun finishCancelledWhileThePumpHandsOverAbandonsTheResponse() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val s = p.server.session
+                val atEnd = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                s.atResponseContentEndForTest = {
+                    atEnd.complete(Unit)
+                    release.await()
+                }
+                val response = async { p.client.request(get()) }
+                val req = withTimeout(5.seconds) { p.server.acceptRequest() }
+                val handler =
+                    launch {
+                        val w = req.respond(200)
+                        w.output.writeFully("partial".encodeToByteArray())
+                        w.finish()
+                    }
+                withTimeoutOrNull(20.seconds) { atEnd.await() } ?: fail("the pump did not reach the end of the content")
+                handler.cancel()
+                handler.join()
+                release.complete(Unit)
+                val r = withTimeout(5.seconds) { response.await() }
+                val body = withTimeoutOrNull(20.seconds) { runCatching { r.body.readAllBytes() } }
+                assertTrue(body != null, "the client's body read never ended: neither FIN nor reset was sent")
+                assertTrue(body.isFailure, "the abandoned response reads as failed, not complete: $body")
+                awaitNothingRegistered(s)
+                assertFalse(p.server.closed.isCompleted, "the connection lives on")
             }
         }
 

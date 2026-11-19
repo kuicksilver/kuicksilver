@@ -47,6 +47,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -988,6 +989,7 @@ internal class ResponseWriterImpl(
                         handedToTransport = sent
                     }
                 }
+                session.atResponseContentEndForTest?.invoke(st)
                 channel.closedCause?.let { throw it }
                 if (declaredLength != null && sent != declaredLength) throw ContentLengthMismatch(declaredLength, sent, more = false)
                 if (!finishing) {
@@ -1036,6 +1038,35 @@ internal class ResponseWriterImpl(
 
     private suspend fun finishInternal(trailers: Http3Headers?) {
         finishing = true
+        // the pump leaves the stream's end to this call from here: a caller cancelled before the FIN went out abandons the
+        // response, or the stream would be left without FIN or reset and the request registered for good
+        var finSent = false
+        try {
+            finishStream(trailers) { finSent = true }
+        } catch (e: CancellationException) {
+            if (!finSent) abandonCancelledFinish(e)
+            throw e
+        }
+    }
+
+    /**
+     * [finish]'s caller was cancelled before the FIN went out: the response is abandoned after partial processing, "it
+     * SHOULD abort its response stream with the error code H3_REQUEST_CANCELLED" (RFC 9114 section 4.1.1), and the
+     * exchange ends. Runs to its end whatever the caller's state.
+     */
+    private suspend fun abandonCancelledFinish(e: CancellationException) {
+        withContext(NonCancellable + session.dispatcher) {
+            channel.cancel(e) // a pump still waiting for content ends too
+            runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+            if (request != null) runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) } // as abortInternal
+            request?.done()
+        }
+    }
+
+    private suspend fun finishStream(
+        trailers: Http3Headers?,
+        onFinSent: () -> Unit,
+    ) {
         channel.flushAndClose()
         pump.join()
         abandoned?.let { throw it }
@@ -1065,6 +1096,7 @@ internal class ResponseWriterImpl(
                     session.writeHeadersFrame(st, trailers.fields, trailers.neverIndexNames())
                 }
                 st.output.flushAndClose()
+                onFinSent()
             } catch (
                 e: CancellationException,
             ) {

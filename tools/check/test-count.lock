@@ -588,6 +588,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.neg
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectGapTest.negative_oversizedPriorityUpdateIsExcessiveLoad
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.bodyThenFinThenCloseReadsWhole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.drainerLaunchedAfterTheEndRuns
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.finishCancelledWhileThePumpHandsOverAbandonsTheResponse
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyThenFinThenCloseReadsWhole
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestBodyWriteAfterTheConnectionEndedFails
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.runtime.ConnectionEndTest.requestNeverAnsweredEndsWithTheConnection
