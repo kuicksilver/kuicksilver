@@ -319,13 +319,14 @@ if "${py[@]}" keep --new "$kp/missing" --old "$kp/fresh" 2> /dev/null; then fail
 else pass "negative: keep without new pages fails"; fi
 
 # h2spec.sh clears its manifest and old reports before anything can stop it (here: no h2spec image)
-hs="$tmp/h2specrepo"; mkdir -p "$hs/tools/interop" "$hs/build/h2spec/linux-x64" "$hs/bin"
+hs="$tmp/h2specrepo"; mkdir -p "$hs/tools/interop" "$hs/build/h2spec/linux-x64" "$hs/build/h2spec/linux-x64-h2c" "$hs/bin"
 cp tools/interop/h2spec.sh "$hs/tools/interop/"
 printf 'jvm tls build/h2spec/jvm\nlinux-x64 h2c build/h2spec/linux-x64-h2c\n' > "$hs/build/h2spec/variants.txt"
-printf '146 tests, 146 passed, 0 skipped, 0 failed\n' > "$hs/build/h2spec/linux-x64/h2spec.txt"
+printf '146 tests, 146 passed, 0 skipped, 0 failed\n' | tee "$hs/build/h2spec/linux-x64/h2spec.txt" > "$hs/build/h2spec/linux-x64-h2c/h2spec.txt"
 printf '#!/bin/sh\nexit 1\n' > "$hs/bin/docker"; chmod +x "$hs/bin/docker"
 if ! PATH="$hs/bin:$PATH" bash "$hs/tools/interop/h2spec.sh" --no-build linux-x64 > /dev/null 2>&1 \
-  && [ "$(cat "$hs/build/h2spec/variants.txt")" = "linux-x64 tls build/h2spec/linux-x64" ] && [ ! -e "$hs/build/h2spec/linux-x64/h2spec.txt" ]; then
+  && [ "$(cat "$hs/build/h2spec/variants.txt")" = "$(printf 'linux-x64 tls build/h2spec/linux-x64\nlinux-x64 h2c build/h2spec/linux-x64-h2c')" ] \
+  && [ ! -e "$hs/build/h2spec/linux-x64/h2spec.txt" ] && [ ! -e "$hs/build/h2spec/linux-x64-h2c/h2spec.txt" ]; then
   pass "negative: h2spec.sh without its image leaves a fresh manifest and no old report"
 else fail "negative: h2spec.sh without its image leaves a fresh manifest and no old report"; fi
 

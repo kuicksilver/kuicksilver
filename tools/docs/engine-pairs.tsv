@@ -25,3 +25,8 @@ RawClientsToServerTest	^okHttpWebSocket	OkHttp	Kuicksilver	wss
 RawClientsToServerTest	^okHttp	OkHttp	Kuicksilver	h2
 RawClientsToServerTest	^jdkWebSocket	JDK HttpClient	Kuicksilver	wss
 RawClientsToServerTest	^jdk	JDK HttpClient	Kuicksilver	h2
+H2cInteropTest	^okHttpPriorKnowledge	OkHttp	Kuicksilver	h2c
+H2cInteropTest	^ktorOkHttpEngine	Ktor OkHttp	Kuicksilver	h2c
+H2cInteropTest	^jdkHttpClient	JDK HttpClient	Kuicksilver	h1/clear (Upgrade: h2c not taken)
+H2cInteropTest	^ourClientToPlainNetty	Kuicksilver	Netty	h2c
+H2cInteropTest	^ourClientToKtorNetty	Kuicksilver	Ktor Netty	h2c
