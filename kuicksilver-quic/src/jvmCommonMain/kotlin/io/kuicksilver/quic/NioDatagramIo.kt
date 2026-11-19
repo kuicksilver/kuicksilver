@@ -273,24 +273,21 @@ internal class NioDatagramIo private constructor(
                 "this socket has no DF for ${family.label} (no ksl, the system refused both DF modes on that half, or an AF_INET socket)",
             )
 
-        /** [localizedEmsgsizeText], read once. */
-        private val emsgsizeText: String? by lazy { localizedEmsgsizeText() }
+        /** [localizedEmsgsizeText], read once ([systemEmsgsizeText]). */
+        private val emsgsizeText: String? get() = systemEmsgsizeText()
 
         /**
          * EMSGSIZE / WSAEMSGSIZE as the JDK reports a send's: the system's `strerror(EMSGSIZE)` under the process's locale
          * ([localized], through `ksl`; the JDK formats errno under `setlocale(LC_ALL, "")`), its English text "Message too
          * long" (Linux and Apple in the C locale; Android adds "EMSGSIZE"), and on Windows the JDK's own text for WSAEMSGSIZE
          * (net_util_md.c: "The message is larger than the maximum supported by the underlying transport"). Without `ksl` under
-         * a non-English locale a Linux refusal is not recognized: its datagrams are lost until the idle timeout.
+         * a non-English locale a Linux refusal is not recognized: its datagrams are lost until the idle timeout. The texts are
+         * [namesEmsgsize]'s, which [isRefusedAsTooLarge] (the CONNECT-UDP proxy's) reads too.
          */
         internal fun isMessageTooLong(
             e: java.net.SocketException,
             localized: String? = null,
-        ): Boolean {
-            val m = e.message ?: return false
-            return (!localized.isNullOrEmpty() && m.contains(localized)) || m.contains("Message too long", ignoreCase = true) ||
-                m.contains("EMSGSIZE") || m.contains("larger than the maximum supported by the underlying transport", ignoreCase = true)
-        }
+        ): Boolean = e.message?.let { namesEmsgsize(it, localized) } == true
 
         /**
          * One datagram of [len] bytes to [to] through [send]. A refusal as too large of a datagram of at most 1200 bytes is a

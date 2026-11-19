@@ -369,8 +369,9 @@ public class UdpProxyConfig(
  * @property droppedUnknownContext HTTP datagrams from clients with a Context ID other than 0, or none (RFC 9298 section 4).
  * @property droppedTooLargeForLink UDP payloads above what [UdpProxyConfig.linkMtu] carries unfragmented (section 5).
  * @property droppedRefusedAsTooLarge UDP payloads within [UdpProxyConfig.linkMtu] that the tunnel's socket refused as too
- *   large for the path or link (EMSGSIZE: the kernel knows a smaller MTU toward the target); each is dropped and the tunnel
- *   stays open (section 5 carries "the unmodified payload", never a fragment of it).
+ *   large for the path or link (EMSGSIZE: a smaller MTU toward the target), as the accelerated socket reports them or as a
+ *   send failure says; each is dropped (section 5 carries "the unmodified payload", never a fragment of it) and the tunnel
+ *   stays open. A failure not recognized as such a refusal ends the tunnel instead (`docs/spec/rfc/9298.md`, section 3.1).
  * @property droppedRateLimited UDP payloads beyond [UdpProxyConfig.packetRate] or [UdpProxyConfig.clientPacketRate].
  * @property droppedUnanswered UDP payloads beyond [UdpProxyConfig.unansweredLimit] to a target that never answered.
  * @property droppedForeignSource datagrams from an address other than the tunnel's target (section 3.1: "Packets that do not match MUST be discarded").

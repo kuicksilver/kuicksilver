@@ -388,6 +388,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.largestPayloadWithALongContextIdIsDelivered
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aClientsTunnelsShareOneRate
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aPacketTooBigTheSenderRefusesIsCounted
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aRefusalTheAcceleratedSocketReportsIsNotCountedAsSent
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_anUnreachableQuotingARefusedPayloadIsIgnored
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_anotherSendFailureStillClosesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientRefusesBeforeSending
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientResetFreesTheTunnel
@@ -404,6 +406,8 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadAboveTheLinkMtuIsDropped
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_rateLimitDropsBeyondTheBurst
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_refusedPayloadsDoNotCountTowardTheUnansweredLimit
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_refusedPayloadsDoNotKeepATunnelAlive
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_reopeningATunnelDoesNotResetTheUnansweredLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_socketFailureClosesTheRequestStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_targetPayloadTooLargeForTheClientIsDropped
@@ -421,7 +425,6 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromAnIpv4MappedBindIsSentAsIpv4
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigToAnIpv4MappedTargetIsIpv4
-kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.refusedAsTooLargeClassification
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
@@ -1250,7 +1253,6 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.udpEcho
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.alpnWithoutH3Rejected
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.closingAnEndpointClosesItsConnectionsWithH3NoError
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.loopbackGet
-kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.connectudp.RefusedAsTooLargeJvmTest.jdkSocketExceptionsForEmsgsize
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aCorpusInputNamedByTheSha1OfItsBytesPasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aWellFormedTablePasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negative_aCorpusInputWhoseBytesChangedUnderItsNameFails
@@ -3815,6 +3817,10 @@ kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.frameTypeI
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.QuicExceptionTest.isKotlinxIoException
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ReleaserTest.nothingFailedNothingThrown
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.ReleaserTest.theFirstFailureWinsAndEveryStepRuns
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.localizedText
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.negative_causeLoopEnds
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.pathMtuRefusalAndCauses
+kuicksilver-quic/src/commonTest	io.kuicksilver.quic.SendRefusalTest.refusalTexts
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.TimeMarkTest.comparesByNanos
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.TimeMarkTest.plusMinusRoundTrip
 kuicksilver-quic/src/commonTest	io.kuicksilver.quic.TimeMarkTest.plusSaturatesInsteadOfWrapping
@@ -5590,6 +5596,9 @@ kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.QueuedReceiveTest.portableQueue
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpLoopbackTest.nioServerClientTenMiB
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpMigrationTest.closeAfterMigrationReachesTheServer
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.RealUdpMigrationTest.nioClientMigratesBetweenTwoSockets
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SendRefusalJvmTest.jdkSocketExceptions
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SendRefusalJvmTest.sameTextsAsTheNioSocket
+kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SendRefusalJvmTest.systemTextIsRecognized
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SharedPerKeyTest.anUpstreamFailureReachesTheCollectorsAndIsNotCached
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SharedPerKeyTest.manyCollectorsShareOneRegistration
 kuicksilver-quic/src/jvmTest	io.kuicksilver.quic.SocketConfigureHookTest.kslHookSeesTheSocketDescriptor
@@ -5716,6 +5725,7 @@ kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.NativeServerGuardTest.native
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.NativeServerLoopbackTest.nativeServerServes10MiB
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.QueuedReceiveNativeTest.acceleratedQueuedAndInterrupted
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.QueuedReceiveNativeTest.portableQueuedAndInterrupted
+kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.SendRefusalNativeTest.posixEmsgsize
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipBytesNeverResolvesHostnames
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipv4LiteralsAreParsed
 kuicksilver-quic/src/nativeTest	io.kuicksilver.quic.core.AddressClassNativeTest.ipv6SpellingsOfOneAddressGiveTheSameBytes

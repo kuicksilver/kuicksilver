@@ -1062,9 +1062,12 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   `unansweredLimit` (256 payloads a client sends to a target that never answered, across its tunnels), `idleTimeout`
   (two minutes), 16 blocking name lookups at once and 4 per client (one more is refused, an abandoned one keeps its
   thread, and counts, until it returns); a target datagram above the link MTU is dropped whole, never forwarded cut; a
-  client payload the socket refuses as too large for the path (EMSGSIZE, also after a forged Packet Too Big lowered the
-  kernel's path MTU toward the target) is dropped and counted (`droppedRefusedAsTooLarge`), it does not close the
-  tunnel, so neither a client's large payload nor a forged Packet Too Big ends a tunnel through a send failure; an
+  client payload the socket refuses as too large for the path (EMSGSIZE: a smaller link or route MTU, or on a socket in
+  DO mode a Packet Too Big, possibly forged, that lowered the cached path MTU) is dropped and counted
+  (`droppedRefusedAsTooLarge`, reported by the accelerated socket or recognized by `isRefusedAsTooLarge`); it does not
+  close the tunnel, keep it from its idle timeout or count toward `unansweredLimit`, so neither a client's large payload
+  nor a forged Packet Too Big ends a tunnel through a send failure (a refusal the classifier misses, a localized JDK
+  text without `ksl`, still does, failing closed); an
   ICMP port unreachable for the target closes the tunnel (Linux and Android) only when it quotes the start of a payload
   the tunnel sent lately, 8 bytes of it at least or all of a shorter one (RFC 8085 §5.2): host unreachable and reports quoting the headers only or another payload are
   ignored, so an off-path forger who sprays port unreachables over the proxy's ephemeral ports closes nothing without
@@ -1100,7 +1103,8 @@ Tests: `ServerH2cTest.negative_http11OnAnH2cOnlyConnectorIsRefused`, `.negative_
   `negative_oversizedUdpPayloadAbortsTheStream`, `negative_rateLimitDropsBeyondTheBurst`,
   `negative_unansweredTargetIsNotFlooded`, `negative_tunnelLimitsAreEnforced`, `negative_clientThatDisappearsFreesTheTunnel`,
   `negative_datagramFromAnotherSourceIsDiscarded`, `negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays`,
-  `negative_anotherSendFailureStillClosesTheTunnel` (`connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`), the
+  `negative_anotherSendFailureStillClosesTheTunnel`, `negative_aRefusalTheAcceleratedSocketReportsIsNotCountedAsSent`,
+  `negative_refusedPayloadsDoNotKeepATunnelAlive`, `negative_anUnreachableQuotingARefusedPayloadIsIgnored` (`connectudp.ConnectUdpTest`, `connectudp.UdpTargetFilterTest`), the
   Jazzer targets `ConnectUdpFuzzTest.udpTemplate` and `.udpDatagrams`.
 
 ### 3.30 TLS certificate compression (RFC 8879)

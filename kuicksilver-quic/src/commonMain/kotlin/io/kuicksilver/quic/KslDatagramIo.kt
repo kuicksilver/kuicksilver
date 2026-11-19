@@ -35,6 +35,7 @@ internal class KslDatagramIo private constructor(
     DirectReceive,
     QueuedReceive,
     NonSuspendingSend,
+    EmsgsizeReports,
     PacketTooBigSource {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
     private val caps = MutableStateFlow(capsOf())
@@ -302,7 +303,8 @@ internal class KslDatagramIo private constructor(
 
     /**
      * The length of the latest datagram the kernel refused as too large (EMSGSIZE) since the previous call, or 0 (every accelerated
-     * socket). The loop asks after each connection's send, so the refusal belongs to that connection. The loop's thread only.
+     * socket). The loop asks after each connection's send, so the refusal belongs to that connection; a CONNECT-UDP tunnel asks
+     * after each payload ([EmsgsizeReports]). The sender's thread only.
      */
     override fun takeEmsgsize(): Int {
         val n = socket.emsgsize(emsgLast)
