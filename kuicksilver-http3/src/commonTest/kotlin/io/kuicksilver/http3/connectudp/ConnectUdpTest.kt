@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.IOException
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -692,6 +693,55 @@ class ConnectUdpTest {
             }
         }
 
+    /**
+     * Section 5 carries "the unmodified payload", never a fragment: one the target's socket refuses as too large for the
+     * path or link (EMSGSIZE, "Message too long": the kernel knows a smaller MTU toward the target) is dropped and counted,
+     * and the tunnel stays open; the socket is still usable, so section 3.1's "no longer usable" does not apply.
+     */
+    @Test fun negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                val got = rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                val refused = kotlin.concurrent.atomics.AtomicBoolean(false)
+                rig.sockets.single().onSend = {
+                    if (refused.compareAndSet(expectedValue = false, newValue = true)) throw IOException("Message too long")
+                }
+                t.send("too big for the path".encodeToByteArray())
+                withTimeout(5.seconds) {
+                    rig.proxy.impl.changes
+                        .first { rig.proxy.stats.droppedRefusedAsTooLarge == 1L }
+                }
+                t.send("next".encodeToByteArray())
+                assertContentEquals("next".encodeToByteArray(), withTimeout(5.seconds) { got.receive() })
+                assertContentEquals("echo:next".encodeToByteArray(), withTimeout(5.seconds) { t.payloads.first() })
+                assertEquals(1, rig.proxy.stats.droppedRefusedAsTooLarge)
+                assertEquals(1, rig.proxy.stats.toTargets)
+                assertEquals(1, rig.proxy.activeTunnels.value)
+                assertTrue(rig.socketsClosed.tryReceive().isFailure, "the tunnel's socket stays open")
+                t.close()
+                withTimeout(5.seconds) { rig.socketsClosed.receive() }
+            }
+        }
+
+    /** Any other send failure on the target's socket still ends the tunnel (section 3.1), and is not counted as a refusal. */
+    @Test fun negative_anotherSendFailureStillClosesTheTunnel() =
+        h3Test {
+            rig().use { rig ->
+                val p = rig.pair
+                rig.echo(echoAt)
+                val t = p.client.connectUdp(template, "192.0.2.50", 5000)
+                rig.sockets.single().onSend = { throw IOException("Network is unreachable") }
+                t.send("x".encodeToByteArray())
+                val e = assertFailsWith<Throwable> { withTimeout(5.seconds) { t.stream.capsules.toList() } }
+                assertEquals(Http3ErrorCode.CONNECT_ERROR, h3Code(e), "$e")
+                withTimeout(5.seconds) { rig.socketsClosed.receive() }
+                withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
+                assertEquals(0, rig.proxy.stats.droppedRefusedAsTooLarge)
+            }
+        }
+
     /** A client that resets its request stream ends the tunnel too. */
     @Test fun negative_clientResetFreesTheTunnel() =
         h3Test {
@@ -1256,6 +1306,34 @@ class ConnectUdpTest {
                 withTimeout(5.seconds) { rig.proxy.activeTunnels.first { it == 0 } }
             }
         }
+
+    /** Which send failures are a datagram refused as too large (dropped, the tunnel stays) and which end the tunnel. */
+    @Test fun refusedAsTooLargeClassification() {
+        assertTrue(isRefusedAsTooLarge(IOException("Message too long")))
+        assertTrue(isRefusedAsTooLarge(IOException("sendto failed: EMSGSIZE (Message too long)")))
+        assertTrue(isRefusedAsTooLarge(IOException("The message is larger than the maximum supported by the underlying transport: sendto")))
+        assertTrue(isRefusedAsTooLarge(IOException("WSAEMSGSIZE")))
+        assertTrue(isRefusedAsTooLarge(IOException("A message sent on a datagram socket was larger than the internal message buffer")))
+        // a wrapper whose cause is the refusal
+        assertTrue(isRefusedAsTooLarge(IllegalStateException("send failed", IOException("Message too long"))))
+        assertTrue(isRefusedAsTooLarge(IOException("path MTU refused 1200 bytes", IOException("Message too long"))))
+        assertFalse(isRefusedAsTooLarge(IOException("Network is unreachable")))
+        assertFalse(isRefusedAsTooLarge(IOException("Connection refused")))
+        assertFalse(isRefusedAsTooLarge(IOException()))
+        // not an I/O failure, whatever its text: a bug is not a dropped payload
+        assertFalse(isRefusedAsTooLarge(IllegalStateException("Message too long")))
+        // a cause chain that loops ends
+        val a = LoopingCause("a")
+        a.next = IOException("b", a)
+        assertFalse(isRefusedAsTooLarge(a))
+    }
+
+    private class LoopingCause(
+        message: String,
+    ) : IOException(message) {
+        var next: Throwable? = null
+        override val cause: Throwable? get() = next
+    }
 
     /** The prefixes a tunnel keeps: the latest 16 payloads, 64 bytes of each. */
     @Test fun sentPrefixes() {

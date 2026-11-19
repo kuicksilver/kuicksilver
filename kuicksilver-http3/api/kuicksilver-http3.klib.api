@@ -609,6 +609,8 @@ final class io.kuicksilver.http3/UdpProxyStats { // io.kuicksilver.http3/UdpProx
         final fun <get-droppedForeignSource>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedForeignSource.<get-droppedForeignSource>|<get-droppedForeignSource>(){}[0]
     final val droppedRateLimited // io.kuicksilver.http3/UdpProxyStats.droppedRateLimited|{}droppedRateLimited[0]
         final fun <get-droppedRateLimited>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedRateLimited.<get-droppedRateLimited>|<get-droppedRateLimited>(){}[0]
+    final val droppedRefusedAsTooLarge // io.kuicksilver.http3/UdpProxyStats.droppedRefusedAsTooLarge|{}droppedRefusedAsTooLarge[0]
+        final fun <get-droppedRefusedAsTooLarge>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedRefusedAsTooLarge.<get-droppedRefusedAsTooLarge>|<get-droppedRefusedAsTooLarge>(){}[0]
     final val droppedTooLargeForClient // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForClient|{}droppedTooLargeForClient[0]
         final fun <get-droppedTooLargeForClient>(): kotlin/Long // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForClient.<get-droppedTooLargeForClient>|<get-droppedTooLargeForClient>(){}[0]
     final val droppedTooLargeForLink // io.kuicksilver.http3/UdpProxyStats.droppedTooLargeForLink|{}droppedTooLargeForLink[0]

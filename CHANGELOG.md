@@ -1392,6 +1392,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- CONNECT-UDP proxy: a payload the tunnel's socket refused as too large for the path or link (EMSGSIZE or WSAEMSGSIZE:
+  "Message too long", or the Windows JDK's "larger than the maximum supported by the underlying transport", for
+  instance after an ICMP Packet Too Big, genuine or forged, lowered the kernel's path MTU toward the target) ended the
+  whole tunnel as a failed socket (reset and STOP_SENDING `H3_CONNECT_ERROR`). RFC 9298 section 5 carries "the
+  unmodified payload" and such a payload cannot be forwarded whole, but the socket is still usable: the payload is now
+  dropped and counted in the new `UdpProxyStats.droppedRefusedAsTooLarge`, and the tunnel goes on forwarding the next
+  ones. Any other send failure still ends the tunnel (section 3.1)
+  (`ConnectUdpTest.negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays`,
+  `.negative_anotherSendFailureStillClosesTheTunnel`, `.refusedAsTooLargeClassification`).
 - HTTP/3 server: requests could stay registered on a connection (for as long as its object lived) or leave their stream
   open, which on a live connection also held off the GOAWAY idle close:
   - a response open when the connection was lost, its writer waiting for content: the writer, cancelled with the

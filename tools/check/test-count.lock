@@ -388,6 +388,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.largestPayloadWithALongContextIdIsDelivered
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aClientsTunnelsShareOneRate
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_aPacketTooBigTheSenderRefusesIsCounted
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_anotherSendFailureStillClosesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientRefusesBeforeSending
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientResetFreesTheTunnel
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_clientThatDisappearsFreesTheTunnel
@@ -401,6 +402,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_oversizedUdpPayloadAbortsTheStream
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_packetTooBigLimitsArePerTargetAndProxyWide
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadAboveTheLinkMtuIsDropped
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_payloadTheSocketRefusesAsTooLargeIsDroppedAndTheTunnelStays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_rateLimitDropsBeyondTheBurst
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_reopeningATunnelDoesNotResetTheUnansweredLimit
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.negative_socketFailureClosesTheRequestStream
@@ -419,6 +421,7 @@ kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigFromAnIpv4MappedBindIsSentAsIpv4
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigOffNeverProbes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.packetTooBigToAnIpv4MappedTargetIsIpv4
+kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.refusedAsTooLargeClassification
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.sentPrefixes
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.tunnelCarriesPayloadsBothWays
 kuicksilver-http3/src/commonTest	io.kuicksilver.http3.connectudp.ConnectUdpTest.withThePrivilegeEachDropIsAnsweredWithinTheRateLimit
@@ -1247,6 +1250,7 @@ kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpConnectUdpTest.udpEcho
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.alpnWithoutH3Rejected
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.closingAnEndpointClosesItsConnectionsWithH3NoError
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.RealUdpH3Test.loopbackGet
+kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.connectudp.RefusedAsTooLargeJvmTest.jdkSocketExceptionsForEmsgsize
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aCorpusInputNamedByTheSha1OfItsBytesPasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.aWellFormedTablePasses
 kuicksilver-http3/src/jvmTest	io.kuicksilver.http3.fuzz.CampaignTableTest.negative_aCorpusInputWhoseBytesChangedUnderItsNameFails

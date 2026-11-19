@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.io.IOException
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
@@ -124,6 +125,7 @@ internal class UdpProxyImpl(
     internal val fromTargets = AtomicLong(0)
     internal val unknownContext = AtomicLong(0)
     internal val tooLargeForLink = AtomicLong(0)
+    internal val refusedAsTooLarge = AtomicLong(0)
     internal val rateLimited = AtomicLong(0)
     internal val unanswered = AtomicLong(0)
     internal val foreignSource = AtomicLong(0)
@@ -220,6 +222,7 @@ internal class UdpProxyImpl(
             fromTargets.load(),
             unknownContext.load(),
             tooLargeForLink.load(),
+            refusedAsTooLarge.load(),
             rateLimited.load(),
             unanswered.load(),
             foreignSource.load(),
@@ -665,7 +668,21 @@ private class ProxyTunnel(
         sendBatch.setAddress(0, target)
         sendBatch.setEcn(0, Ecn.NotEct)
         sent?.record(d, n, len)
-        if (io.io.send(sendBatch) == 1) proxy.count(proxy.toTargets)
+        // the batch holds this one payload: a refusal drops it alone, and the next HTTP datagram is a send of its own
+        val forwarded =
+            try {
+                io.io.send(sendBatch) == 1
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // section 5 carries "the unmodified payload": one the path or link cannot carry whole is dropped, not
+                // fragmented, and the socket stays usable; any other failure ends the tunnel (section 3.1)
+                if (!isRefusedAsTooLarge(e)) throw e
+                proxy.count(proxy.refusedAsTooLarge)
+                touch()
+                return
+            }
+        if (forwarded) proxy.count(proxy.toTargets)
         answer.sent.incrementAndFetch()
         touch()
     }
@@ -747,6 +764,35 @@ private class ProxyTunnel(
         }
     }
 }
+
+/**
+ * Whether [e], thrown by a send on a tunnel's socket, is the OS refusing the datagram as larger than the path or link
+ * carries (EMSGSIZE, WSAEMSGSIZE) rather than a socket that is no longer usable: an IOException in [e]'s cause chain whose
+ * message is one the platforms give for it. "Message too long" is `strerror(EMSGSIZE)` on Linux, Android and Apple
+ * platforms (the JDK's NIO channel reports it so); the Windows JDK's `NET_ThrowNew` says "The message is larger than the
+ * maximum supported by the underlying transport" for WSAEMSGSIZE, and Windows' own text for 10040 begins "A message sent
+ * on a datagram socket was larger than the internal message buffer"; a message that names the error (`EMSGSIZE`,
+ * `WSAEMSGSIZE`) counts too. A wrapper (a send failure whose cause is the refusal) is looked through. The accelerated
+ * socket throws none of these: it skips such a datagram itself (`KslUdpSocket.send`).
+ */
+internal fun isRefusedAsTooLarge(e: Throwable): Boolean {
+    var c: Throwable? = e
+    var depth = 0
+    while (c != null && depth++ < MAX_CAUSE_DEPTH) {
+        if (c is IOException && c.message?.let(::namesMessageTooLong) == true) return true
+        c = c.cause?.takeIf { it !== c }
+    }
+    return false
+}
+
+/** Causes [isRefusedAsTooLarge] follows at most (a cycle longer than one link ends there). */
+private const val MAX_CAUSE_DEPTH = 8
+
+private fun namesMessageTooLong(m: String): Boolean =
+    m.contains("Message too long", ignoreCase = true) ||
+        m.contains("EMSGSIZE") ||
+        m.contains("larger than the maximum supported by the underlying transport", ignoreCase = true) ||
+        m.contains("larger than the internal message buffer", ignoreCase = true)
 
 /**
  * The address a target's datagram was sent to, the source of the Packet Too Big that answers it: [local], the destination
