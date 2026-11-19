@@ -14,6 +14,29 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: the connection IDs on each path (experimental, `docs/guide/quic.md`, "Observability"). `ConnectionInfo.paths`
+  lists the connection's paths, the active one first, as `PathInfo`: the path's id, local and remote address, state,
+  and our and the peer's connection IDs on it with their sequence numbers; `ConnectionInfo.pathChanges` counts the moves
+  to another path. `ConnectionListener.onPathsUpdated` hears each new list (an ID rotated, a path added, validated,
+  closed or made active, an address changed), and `QuicConnection.info` returns the connection's `ConnectionInfo`. The
+  list is rebuilt on the loop only when it changed and read from any thread without a lock; a client notes which of its
+  IDs the server's packets carry with one comparison per 1-RTT packet. Connection IDs are linkable identifiers: the
+  library never logs them and `PathInfo.toString()` leaves them out.
+- Ktor client: which connection served a call (experimental, `docs/guide/ktor.md`, "Which connection served this
+  call?"). `ProtocolDiagnostics.connection` is a `QuicConnectionSnapshot` (the `ConnectionInfo` handle the
+  `connectionListener` hears, the active path with its connection IDs, every path, the smoothed and minimum RTT and their
+  variation, and the path changes during the call) or a `TcpConnectionSnapshot` (protocol, addresses, ALPN, proxy, reuse);
+  an HTTP/3 call's is taken at the response head and again when the call ends. `ProtocolDiagnostics.transport` says
+  `Quic` or `Tcp`.
+- Ktor client: which transport a failed call came from (experimental, `docs/guide/ktor.md`, "Why did this call fail?").
+  `Throwable.kuicksilverDiagnostics` returns the failed call's `ProtocolDiagnostics` (on the exception or a cause): its
+  `transport`, HTTP/3's failure when TCP came after it (`h3Failure`, now also when both setups failed), the connection the
+  failure came from, and `connectFailures`, every connection setup that failed (`ConnectFailure`: transport, stage
+  `TcpConnect`, `ProxyHandshake`, `TlsHandshake` or `QuicHandshake`, address, cause). The new
+  `KuicksilverEventListener.connectFailed` reports each one as it happens, so a TCP or TLS handshake that fails — a
+  `protocol_version` alert from a TLS 1.2-only server, say — is reported with its address although `protocolSelected`
+  never comes for it.
+
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
@@ -851,6 +874,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   "Prereleases on GitHub only").
 
 ### Changed
+
+- Ktor client: a failed call's `ProtocolDiagnostics` stay in the request's attributes until `callFailed` returned (they
+  were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`, whose
+  message is the diagnostics' text without the URL); code that reads `suppressedExceptions` of a failed call sees it
+  after the HTTP/3 failure. A copy coroutines make of a `QuicException` (the stack of the receiving side) keeps the
+  original's suppressed exceptions.
 
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ

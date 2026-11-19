@@ -64,6 +64,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
@@ -288,6 +290,74 @@ class ClientMigrationTest {
                 server.stop(100, 500)
             }
         }
+
+    /**
+     * A download that a migration moves to another network (docs/guide/ktor.md, "Which connection served this call?"): the
+     * snapshot at the response head shows the first path and no change; the one at the response's end the new path, with
+     * its own connection IDs, and one change; a later call on the connection counts from its own start.
+     */
+    @Test fun aMigrationDuringADownloadShowsInItsDiagnostics() =
+        h3Test {
+            val g = Gates()
+            val (server, port) = server(g)
+            val cut = CompletableDeferred<CuttableIo>()
+            val nets = Networks()
+            val heard = Heard(onMigrated = { cut.getCompleted().gone = true })
+            try {
+                client(cut, heard, nets.hook).use { c ->
+                    coroutineScope {
+                        val atHead = CompletableDeferred<QuicConnectionSnapshot>()
+                        val download =
+                            async {
+                                c.prepareGet("https://127.0.0.1:$port/big").execute { r ->
+                                    val d = assertNotNull(r.kuicksilverDiagnostics)
+                                    atHead.complete(assertIs<QuicConnectionSnapshot>(d.connection))
+                                    assertEquals(MIB_8.toLong(), drain(r.bodyAsChannel()))
+                                    d
+                                }
+                            }
+                        g.atTwo.await()
+                        val migrator = withTimeout(10.seconds) { nets.made.receive() }
+                        withTimeout(10.seconds) { migrator.network.first { it == 1 } }
+                        nets.current.value = 2
+                        assertIs<MigrationEvent.Migrated<*>>(withTimeout(10.seconds) { heard.migrations.receive() }.second)
+                        g.resume.complete(Unit)
+                        val d = withTimeout(30.seconds) { download.await() }
+                        val head = atHead.await()
+                        assertEquals(0, head.pathChanges)
+                        // the call's end replaces the head's snapshot (its job completes as execute returns)
+                        val end = withTimeout(10.seconds) { replaced(d, head) }
+                        assertEquals(1, end.pathChanges)
+                        assertSame(head.info, end.info, "the same connection")
+                        assertNotEquals(head.path?.id, end.path?.id)
+                        assertNotEquals(head.localAddress, end.localAddress)
+                        assertNotEquals(head.path?.remoteConnectionId, end.path?.remoteConnectionId, "a new path, a new ID (RFC 9000 9.5)")
+                        assertEquals(1, end.info?.pathChanges)
+                        // the next call on the connection: no change of its own
+                        val next =
+                            assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/small").kuicksilverDiagnostics?.connection)
+                        assertTrue(next.reused)
+                        assertEquals(0, next.pathChanges)
+                        assertEquals(end.path?.id, next.path?.id)
+                    }
+                }
+            } finally {
+                g.resume.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    /** [d]'s connection once it is another snapshot than [head]. */
+    private suspend fun replaced(
+        d: ProtocolDiagnostics,
+        head: QuicConnectionSnapshot,
+    ): QuicConnectionSnapshot {
+        while (true) {
+            val now = d.connection
+            if (now !== head) return assertIs<QuicConnectionSnapshot>(now)
+            kotlinx.coroutines.yield()
+        }
+    }
 
     /** Without `connectionMigration` (0.2's behaviour) the connection dies with its network; a GET in flight falls back to HTTP/1.1. */
     @Test fun negative_noMigrationWithoutConfig() =

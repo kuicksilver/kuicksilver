@@ -19,25 +19,79 @@ import kotlin.time.Duration.Companion.nanoseconds
 
 /**
  * Which protocol served a call and, when it was not HTTP/3, why (docs/guide/ktor.md, "Why did this request not use
- * HTTP/3?"). The engine attaches one to every response it returns: read it with [HttpResponse.kuicksilverDiagnostics]. A
- * call that fails has no response and so none; its exception says what happened (when the HTTP/3 and HTTP/1.1 setups both
- * failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`).
+ * HTTP/3?"); which connection served it ([connection]); and for a call that failed, which transport the failure came from
+ * ([transport]) and which connection setups failed ([connectFailures]). The engine attaches one to every response it
+ * returns: read it with [HttpResponse.kuicksilverDiagnostics]. A call that fails has no response: its exception carries
+ * the diagnostics instead ([Throwable.kuicksilverDiagnostics], docs/guide/ktor.md, "Why did this call fail?"); when the
+ * HTTP/3 and HTTP/1.1 setups both failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`, and
+ * [h3Failure] is that HTTP/3 one.
  *
  * It lives as long as the response (it is one of the call's attributes) and holds the HTTP/3 failure, if any, by
  * reference; the engine keeps no copy of it.
  *
  * The engine puts a new one into the request's attributes when the call reaches it, fills it while the call runs (code
- * that reads [KuicksilverDiagnosticsKey] from the request before the response, a listener say, sees it incomplete) and
- * removes it when the call fails. Read it from the response: a request built from an earlier one (Ktor's redirect copies
- * the attributes with `takeFrom`) carries the earlier response's diagnostics until the engine replaces them, so a plugin
- * that runs before the engine sees stale ones; and when an interceptor sends one request builder through the engine
- * twice, each engine call gets its own object and the attributes keep the last.
+ * that reads [KuicksilverDiagnosticsKey] from the request before the response, a listener say, sees it incomplete) and,
+ * when the call fails, removes it once [KuicksilverEventListener.callFailed] returned (in that callback the request's
+ * attributes still hold the failed call's). Read it from the response: a request built from an earlier one (Ktor's
+ * redirect copies the attributes with `takeFrom`) carries the earlier response's diagnostics until the engine replaces
+ * them, so a plugin that runs before the engine sees stale ones; and when an interceptor sends one request builder
+ * through the engine twice, each engine call gets its own object and the attributes keep the last.
+ *
+ * The fields the engine fills while the call runs ([connection], [transport], [connectFailures]) are safe to read from
+ * any thread; the others are final once the response or the failure is out.
  */
 @ExperimentalKuicksilverApi
 public class ProtocolDiagnostics internal constructor() {
-    /** The protocol the response came over: `HTTP_3_0`, `HTTP_2_0` or `HTTP_1_1`. */
+    /**
+     * The protocol the response came over: `HTTP_3_0`, `HTTP_2_0` or `HTTP_1_1`. For a failed call, the protocol of the
+     * attempt that failed last: `HTTP_3_0` over QUIC, else the TCP connection's (`HTTP_1_1` when it failed before one was
+     * agreed).
+     */
     public var protocol: HttpProtocolVersion = HttpProtocolVersion.HTTP_1_1
         internal set
+
+    /**
+     * The transport the response (or, for a failed call, the thrown failure) came over: [Transport.Quic] for HTTP/3,
+     * [Transport.Tcp] for HTTP/1.1 and HTTP/2. A failed call over TCP after HTTP/3 had failed has [h3Failure] too. Null only
+     * for a call that failed before it tried either (a configuration the request cannot use, such as an `http://` URL in
+     * `Http3DiscoveryMode.H3Only`). While the call runs it follows the attempt in progress.
+     */
+    @kotlin.concurrent.Volatile
+    public var transport: Transport? = null
+        internal set
+
+    /**
+     * The connection behind the call ([QuicConnectionSnapshot] or [TcpConnectionSnapshot]), on the [transport] the call
+     * ended on: the one that served the response, or the one the failure came from when a connection was in hand (a TCP
+     * connection whose TLS handshake failed included); null for a failure before any connection (every address refused, a
+     * QUIC handshake that never completed: see [connectFailures]). An HTTP/3 call's is replaced once its response ended.
+     */
+    @kotlin.concurrent.Volatile
+    public var connection: ConnectionSnapshot? = null
+        internal set
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val failures = kotlin.concurrent.atomics.AtomicReference(emptyList<ConnectFailure>())
+
+    /**
+     * Every connection setup that failed for this call, in the order the failures came, at most 16
+     * ([KuicksilverEventListener.connectFailed] hears the same): TCP connects to single addresses, proxy and TLS handshakes,
+     * QUIC handshakes. Present on a call that succeeded another way too (a refused IPv6 address before the IPv4 one worked).
+     */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    public val connectFailures: List<ConnectFailure> get() = failures.load()
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal fun connectFailed(f: ConnectFailure) {
+        while (true) {
+            val now = failures.load()
+            if (now.size >= MAX_CONNECT_FAILURES) return
+            if (failures.compareAndSet(now, now + f)) return
+        }
+    }
+
+    /** The call failed (for the log line and the text of the exception's carrier). */
+    internal var failed: Boolean = false
 
     /** Why the engine chose [protocol] for the last attempt: the reason [KuicksilverEventListener.protocolSelected] heard. */
     public var reason: ProtocolReason = ProtocolReason.Configuration
@@ -161,6 +215,7 @@ public class ProtocolDiagnostics internal constructor() {
             b.append(if (first) " (" else ", ").append(s)
             first = false
         }
+        if (failed) item(if (transport == null) "failed" else "failed over $transport")
         fallback?.let { item("fallback=$it") }
         h3Fallback?.let { item("h3Fallback=$it") }
         alternative?.let {

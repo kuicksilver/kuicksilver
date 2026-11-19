@@ -1336,6 +1336,14 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTe
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.networkChangeForgetsNonPersistentAlternativesByDefault
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.plainHttpAltSvcIgnored
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientAltSvcTest.srttMapBounded
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.aTcpFailureOfALostRaceDoesNotBecomeTheConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.aTcpResponseCarriesItsTcpConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.anHttp3ResponseCarriesItsQuicConnection
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.concurrentCallsOnOneConnectionEachNameIt
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.negative_aQuicHandshakeTimeoutFailsOverQuic
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.negative_aSharedOrCancellingExceptionCarriesNoDiagnostics
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.negative_aTlsAlertOverTcpIsReportedWithItsAddress
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientConnectionDiagnosticsTest.negative_bothTransportsFailedSaysTcpWithTheQuicFailure
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_bombFromServerClosesWith1009H3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.negative_deflateAcceptedWithAnotherRsv1ExtensionFailsHandshake
@@ -1344,7 +1352,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateT
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.roundTripOverH1
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.roundTripOverH3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDeflateTest.wireFormatAgainstARawServer
-kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.diagnosticsOnFailedCallNotAttached
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.diagnosticsOnFailedCallInCallFailedAndOnTheException
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.h1OnlyIsConfiguration
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.h3WinnerHasNoFallback
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientDiagnosticsTest.httpIsNotSecure
@@ -1650,6 +1658,7 @@ kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwit
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webSocketWhileDisabledIsHttp3Disabled
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webTransportConnectingWhenClosedFails
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientKillSwitchTest.webTransportSessionTrackedAfterCloseIsDrained
+kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.aMigrationDuringADownloadShowsInItsDiagnostics
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.downloadSurvivesNetworkSwitch
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.hookNotCalledWithoutHttp3
 kuicksilver-ktor-client/src/commonTest	io.kuicksilver.ktor.client.ClientMigrationTest.migratorClosedByCloseHttp3Connections
@@ -2346,8 +2355,10 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.FileAltSvcStoreNo
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.FileAltSvcStoreNoNioTest.persistsWhenAtomicMoveIsUnsupported
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.altSvcStoreFileSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.clientSample
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.connectionSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.diagnosticsSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.dnsSample
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.failureSample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.guideHasEveryMarker
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.http2Sample
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.GuideSamplesTest.http3SwitchSample
@@ -2364,6 +2375,7 @@ kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.can
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.closingTheEngineSendsGoAwayAndCloseNotify
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.getAndPostAndParallel
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.largeFieldAndGzipPassThrough
+kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.negative_tls12OnlyServerAlertIsReportedWithItsAddress
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.negative_tls12RenegotiationIsAProtocolError
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H2InteropTest.tls12ServerGetsH2
 kuicksilver-ktor-client/src/jvmTest	io.kuicksilver.ktor.client.H3WebSocketConnectRaceTest.negative_aConnectAnsweredAsTheTimeoutFiresIsUsed

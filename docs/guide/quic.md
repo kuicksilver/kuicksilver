@@ -1198,6 +1198,21 @@ loop that owns the connection, in order, exactly once each for opened and closed
 out of one, a `CancellationException` included, is logged and counted in `listenerFailures`, and the connection goes on. `ConnectionInfo.id` is the original destination connection ID in
 hex, the same name the connection's qlog trace has.
 
+**Paths and connection IDs** (0.3.0). `ConnectionInfo.paths` lists the connection's paths, the active one first, each a
+`PathInfo`: its `id`, `localAddress` and `remoteAddress`, validation `state`, whether it is `active`, and the connection
+IDs on it with their sequence numbers (RFC 9000 section 5.1): `localConnectionId`, ours, as the peer's packets on the
+path carry it, and `remoteConnectionId`, the peer's, which our packets carry. `ConnectionInfo.pathChanges` counts the
+moves to another path so far (the difference of two readings counts the moves between them). The list is built on the
+loop only when something on it changed — an ID rotated (by us every 10 000 packets, by the peer as it likes), a path
+was added, validated, failed, closed or became active, an address changed — and published as a whole, so reading it
+from any thread costs nothing and never sees half a change; after the connection closed it keeps the last one. The
+listener's `onPathsUpdated(connection, paths)` hears each new list (never before `onOpened`), and
+`QuicConnection.info` is the same `ConnectionInfo` for code that holds the connection rather than a listener callback.
+Connection IDs are linkable identifiers: anyone who sees one on the network can tie the packets that carry it to one
+connection, which is why a migration takes new ones (RFC 9000 section 9.5). Showing them in your own app is fine;
+sending them anywhere else (analytics, crash reports, a server) links the user's networks to each other. The library
+never logs these IDs, and `PathInfo.toString()` leaves them out.
+
 ```kotlin
 // guide:quic:observability
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)

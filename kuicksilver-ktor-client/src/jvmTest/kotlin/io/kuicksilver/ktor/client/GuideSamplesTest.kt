@@ -81,7 +81,73 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:http2-client" in guide, "marker http2-client")
         assertTrue("guide:ktor:mtls-client" in guide, "marker mtls-client")
         assertTrue("guide:ktor:protocol-log" in guide, "marker protocol-log")
+        assertTrue("guide:ktor:client-connection" in guide, "marker client-connection")
+        assertTrue("guide:ktor:client-failure" in guide, "marker client-failure")
     }
+
+    @Test fun connectionSample() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            val url = "https://127.0.0.1:$port/"
+            try {
+                HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                    // guide:ktor:client-connection
+                    val d =
+                        client.prepareGet(url).execute { response ->
+                            response.bodyAsChannel().discard()
+                            response.kuicksilverDiagnostics
+                        }
+                    val c = d?.connection
+                    if (c is QuicConnectionSnapshot) {
+                        println(
+                            "HTTP/3 ${c.info?.id}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves",
+                        )
+                    } else if (c is TcpConnectionSnapshot) {
+                        println("${c.protocol} to ${c.remoteAddress} (${c.alpn}), reused=${c.reused}")
+                    }
+
+                    assertIs<TcpConnectionSnapshot>(d?.connection) // Auto: the first call goes over TCP
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    @Test fun failureSample() =
+        clientTest {
+            // nothing listens there: the TCP connect is refused
+            val port =
+                io.ktor.network.selector.SelectorManager().use { sm ->
+                    io.kuicksilver.ktor.network
+                        .bindTcp(
+                            sm,
+                            "127.0.0.1",
+                            0,
+                        ).use { (it.localAddress as io.ktor.network.sockets.InetSocketAddress).port }
+                }
+            val url = "https://127.0.0.1:$port/"
+            HttpClient(Kuicksilver) { engine { trust = ClientFixtures.trust } }.use { client ->
+                var seen: ProtocolDiagnostics? = null
+                // guide:ktor:client-failure
+                try {
+                    client.get(url)
+                } catch (e: Exception) {
+                    val d = e.kuicksilverDiagnostics
+                    val over =
+                        when (d?.transport) {
+                            Transport.Quic -> "QUIC"
+                            Transport.Tcp -> "TCP"
+                            null -> "no transport"
+                        }
+                    println("failed over $over: $e; HTTP/3 before it: ${d?.h3Failure}")
+                    d?.connectFailures?.forEach { f: ConnectFailure -> println("  ${f.stage} to ${f.address}: ${f.cause}") }
+                    seen = d
+                }
+
+                assertEquals(Transport.Tcp, seen?.transport)
+                assertEquals(ConnectStage.TcpConnect, seen?.connectFailures?.single()?.stage)
+            }
+        }
 
     @Test fun diagnosticsSample() =
         clientTest {

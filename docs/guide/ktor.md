@@ -124,13 +124,17 @@ import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http2.Http2Settings
+import io.kuicksilver.ktor.client.ConnectFailure
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEventListener
 import io.kuicksilver.ktor.client.ProtocolReason
 import io.kuicksilver.ktor.client.ProxyCredentials
 import io.kuicksilver.ktor.client.ProxyResolver
+import io.kuicksilver.ktor.client.QuicConnectionSnapshot
 import io.kuicksilver.ktor.client.ResolvedProxy
+import io.kuicksilver.ktor.client.TcpConnectionSnapshot
+import io.kuicksilver.ktor.client.Transport
 import io.kuicksilver.ktor.client.closeHttp3Connections
 import io.kuicksilver.ktor.client.kuicksilverDiagnostics
 import io.kuicksilver.ktor.client.priority
@@ -2066,7 +2070,9 @@ followed the network, [Connection migration](#connection-migration)); `webSocket
 session failed; it can come after `callEnd`, since a session may outlive its call while it writes its own Close);
 `dnsStart` and `dnsEnd` (since 0.3.0, as OkHttp's: one pair per name lookup, per address family for the system's resolver
 and a `FamilyDns`, once for both with a plain `Dns`; the end carries the addresses the engine may connect to, or the
-failure; no lookup and no event for an address literal, [Name resolution](#name-resolution-experimental)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+failure; no lookup and no event for an address literal, [Name resolution](#name-resolution-experimental)); `connectFailed`
+(since 0.3.0: a connection setup that failed, a TCP connect to one address, a proxy or TLS handshake over TCP, or a QUIC
+handshake, with its address; [Why did this call fail?](#why-did-this-call-fail)). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin
@@ -2188,13 +2194,95 @@ The first call to a new origin in `Auto` mode logs `https://example.com/ -> HTTP
 h3Failure=null)`; a later one over HTTP/3 `-> HTTP/3 (...)` with `fallback=null`. `response.call.request.url` carries
 the query: log `encodedPath` instead when queries hold tokens.
 
-A call that fails has no response and so no diagnostics: its exception says what happened. When both the HTTP/3 and the
-HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown with the HTTP/3 one in `suppressed`. The diagnostics live as long
-as the response (they are one of its call's attributes); the engine keeps no copy of the HTTP/3 failure, and a broken
-mark remembers only its `FallbackReason`. Read them from the response: the engine puts a new object into the request's
-attributes when the call reaches it and fills it as the call goes, so code that looks at the request earlier (a listener
-during the call, a plugin running after a redirect copied the previous request's attributes) sees incomplete or stale
-ones; when an interceptor sends one request builder through the engine twice, each engine call gets its own object.
+A call that fails has no response: its exception carries the diagnostics instead ([Why did this call
+fail?](#why-did-this-call-fail)). When both the HTTP/3 and the HTTP/1.1 setups failed, the HTTP/1.1 failure is thrown
+with the HTTP/3 one in `suppressed`. The diagnostics live as long as the response (they are one of its call's
+attributes); the engine keeps no copy of the HTTP/3 failure, and a broken mark remembers only its `FallbackReason`. Read
+them from the response: the engine puts a new object into the request's attributes when the call reaches it and fills it
+as the call goes, so code that looks at the request earlier (a listener during the call, a plugin running after a
+redirect copied the previous request's attributes) sees incomplete or stale ones; when an interceptor sends one request
+builder through the engine twice, each engine call gets its own object.
+
+### Which connection served this call?
+
+Since 0.3.0 the diagnostics also name the connection (experimental): `connection` is a `QuicConnectionSnapshot` for a
+call over HTTP/3 and a `TcpConnectionSnapshot` for HTTP/2 and HTTP/1.1, both with the `transport`, the `protocol`, the
+`localAddress` and `remoteAddress` (the proxy's through one) and whether the call `reused` a connection that was open
+before it. `transport` on the diagnostics themselves says `Quic` or `Tcp`.
+
+- `QuicConnectionSnapshot` has the connection's handle `info`, the same `ConnectionInfo` the `http3 { connectionListener }`
+  hears (its `id` names the connection for its whole life, its `paths` and `connection.stats` stay live); the active
+  `path` and all `paths` with the connection IDs on each ([QUIC: Observability](quic.md#observability)); `smoothedRtt`,
+  `minRtt` and `rttVariation`; and `pathChanges`, the moves to another path (migrations, NAT rebindings, the server's
+  preferred address) between the moment this call took the connection and the snapshot. It is taken when the response
+  head arrives and again when the call ends — when its body was read or the response released, which is after
+  `execute { }` returned or `bodyAsText()` read it all — so a call read afterwards shows the RTT of its end and every
+  move during its download. Calls that share a connection share its moves: one during two calls counts for both.
+- `TcpConnectionSnapshot` has the `alpn` the server chose, whether the connection is `secure` and goes `viaProxy`.
+
+```kotlin
+// guide:ktor:client-connection
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val d =
+    client.prepareGet(url).execute { response ->
+        response.bodyAsChannel().discard()
+        response.kuicksilverDiagnostics
+    }
+val c = d?.connection
+if (c is QuicConnectionSnapshot) {
+    println("HTTP/3 ${c.info?.id}: path #${c.path?.id?.value} ${c.localAddress}, srtt ${c.smoothedRtt}, ${c.pathChanges} moves")
+} else if (c is TcpConnectionSnapshot) {
+    println("${c.protocol} to ${c.remoteAddress} (${c.alpn}), reused=${c.reused}")
+}
+```
+
+The snapshots cost one object each when they are taken (and, for HTTP/3, one statistics read), nothing per packet. The
+connection IDs in `path` are linkable identifiers: show them in your own app's diagnostic screens, but do not send them
+elsewhere (see `PathInfo`); the snapshots' `toString()` leaves them out, and the engine never logs them.
+
+### Why did this call fail?
+
+The exception of a failed call carries its diagnostics (experimental, since 0.3.0): `e.kuicksilverDiagnostics` (on the
+exception or one of its causes) is the call's `ProtocolDiagnostics`, which the request's attributes held while it ran.
+
+- `transport` is the transport the thrown failure came from: `Quic` (an HTTP/3 failure: `H3Only`, or a request HTTP/3
+  had sent and could not fall back) or `Tcp` (HTTP/1.1 or HTTP/2, after a fallback or a lost race too); null only when
+  the call failed before it tried either (a configuration the request cannot use).
+- `h3Failure` is HTTP/3's failure when TCP came after it, whether TCP then failed or not; `fallback` classifies it.
+- `connection` is the connection the failure came from, when one was up: a `TcpConnectionSnapshot` with a null
+  `protocol` when its TLS handshake failed.
+- `connectFailures` lists every connection setup that failed for the call, in order: each a `ConnectFailure` with the
+  `transport`, the `stage` (`TcpConnect`, `ProxyHandshake`, `TlsHandshake`, `QuicHandshake`), the `address` tried and the
+  `cause`. A TLS 1.2-only server's answer to this client's TLS 1.3 ClientHello, for example, is a `TlsHandshake` failure
+  whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. Attempts the engine cancelled
+  (a race another attempt won, the connect timeout) are not failures: a connect timeout is the call's own
+  `ConnectTimeoutException`.
+
+```kotlin
+// guide:ktor:client-failure
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+try {
+    client.get(url)
+} catch (e: Exception) {
+    val d = e.kuicksilverDiagnostics
+    val over =
+        when (d?.transport) {
+            Transport.Quic -> "QUIC"
+            Transport.Tcp -> "TCP"
+            null -> "no transport"
+        }
+    println("failed over $over: $e; HTTP/3 before it: ${d?.h3Failure}")
+    d?.connectFailures?.forEach { f: ConnectFailure -> println("  ${f.stage} to ${f.address}: ${f.cause}") }
+}
+```
+
+The event listener hears the same as it happens: `connectFailed(request, failure)` once per failed setup (also for a
+call that then succeeded another way), and in `callFailed(request, cause)` the request's attributes still hold the
+call's diagnostics (`request.attributes[KuicksilverDiagnosticsKey]`; the engine removes them once `callFailed` returned).
+The engine attaches the diagnostics to the exception as a suppressed one whose message is the diagnostics' text, so a
+printed stack trace shows them too (never with the URL or a connection ID). A cancellation carries none. One exception
+can end several calls at once — a QUIC connection's failure reaches every request on it — and then names none of them
+(`kuicksilverDiagnostics` is null): read the request's diagnostics in `callFailed` for those.
 
 ### Graceful stop
 
