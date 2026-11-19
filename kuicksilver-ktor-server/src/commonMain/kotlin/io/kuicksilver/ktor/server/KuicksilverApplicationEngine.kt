@@ -16,6 +16,7 @@ import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
 import io.ktor.utils.io.ByteReadChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h1.installH1CallHandling
@@ -999,6 +1000,9 @@ public class KuicksilverApplicationEngine(
 
     /** Test hook: runs in the HTTP/3 accept loop after each accepted connection, before it is served. */
     internal var afterH3AcceptForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: sees each accepted HTTP/3 connection, after [afterH3AcceptForTest] and before it is served. */
+    internal var h3ConnectionForTest: ((Http3Connection) -> Unit)? = null
 
     /** Test hook: runs when an HTTP/3 connection accepts no more requests, while the requests it accepted may still run. */
     internal var afterH3RequestsAcceptedForTest: (() -> Unit)? = null

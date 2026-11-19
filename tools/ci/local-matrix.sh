@@ -194,7 +194,10 @@ step "lint: doc refs, test gates, commit types" bash -c 'rc=0
   python3 -I tools/check/tracked-hashes.py || rc=1; python3 -I tools/check/wildcard-binds.py || rc=1
   bash tools/check/commit-msg.sh --range main..HEAD || rc=1
   exit $rc'
+# with the base CI's lint job exports to all its later steps (KSL_FUZZ_FORMATS_BASE, build.yml), so a control that reads it
+# unasked fails here as there
 step "lint: doc refs and test gates, negatives" bash -c 'rc=0
+  KSL_FUZZ_FORMATS_BASE=$(git merge-base HEAD main 2>/dev/null || true); export KSL_FUZZ_FORMATS_BASE
   for t in doc-refs code-refs test-discovery test-bytecode test-count test-sleeps env-apis rfc-tests reproducers fuzz-formats commit-msg deadline-sites test-hooks select-races race-tests wall-bounds tracked-hashes wildcard-binds; do
     bash "tools/check/$t-test.sh" || rc=1
   done
@@ -272,6 +275,9 @@ step "native: iosSimulatorArm64 tests"          $G $KSL_IOS_SIM_TESTS
 step "native: compile iosArm64 (device)"        $G $KSL_IOS_COMPILE
 # shellcheck disable=SC2046,SC2086
 step "native: link linux/mingw tests"           $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
+# CI's linux-native step, built only (no Windows host): a POSIX-only helper a shared test calls fails here. After the
+# link, which provisions the konan LLVM and mingw sysroot it compiles with (tools/c-test.sh also provisions them alone)
+step --pre mingw "c-tests: mingw-x64 (cross-built, -Werror)" bash tools/c-test.sh mingw-x64
 step --needs "native: link linux/mingw tests" "native: glibc floors"                     bash -c 'bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25'
 step "native: prefix whitelist (linux/mingw)"   bash -c "$G :kuicksilver-native:buildKslALinuxX64 :kuicksilver-native:buildKslALinuxArm64 :kuicksilver-native:buildKslAMingwX64"' && for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done'
 step --pre macos "repro: double build (macos-arm64)"        bash -c 'bash tools/check/double-build.sh macos-arm64 && bash tools/check/native-flags-test.sh && bash tools/openssl/fetch-test.sh && bash tools/openssl/brotli-pin-check-test.sh'   # the second: the builder's flags; then zlib and brotli verification (docs/guide/building.md)
@@ -292,7 +298,7 @@ step --pre mingw "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-
 step "docker: deployment guide commands"         env KSL_GRADLE="$G" bash tools/check/deployment-guide.sh   # docs/guide/deployment.md "Checking a deployment": curl --http3-only and tcpdump against the engine, one container of the host's architecture
 # CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
 # against this dll (-Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost); there is no Windows host
-# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; tools/c-test.sh mingw-x64
+# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; the step "c-tests: mingw-x64"
 # cross-builds it here).
 fi
 if [ "$with_interop" = 1 ]; then

@@ -91,8 +91,8 @@ cherry-picked from `main` to `release/<X.Y>.x` ([release.md](release.md#releasin
 
 The gate is [`tools/ci/local-matrix.sh`](../tools/ci/local-matrix.sh), run on the maintainer's Mac with Docker (Linux
 and mingw), a running Android emulator and a Windows 11 VM. `tools/ci/local-matrix.sh --dry-run` lists its steps. By
-default it has **72 steps**; a release needs `--with-interop --with-windows`, which makes **77** (and `--with-browser`
-adds a Chrome WebTransport run, 78). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
+default it has **73 steps**; a release needs `--with-interop --with-windows`, which makes **78** (and `--with-browser`
+adds a Chrome WebTransport run, 79). Before step 1 it builds any missing OpenSSL, resolves every dependency and runs the
 race tests the branch added or changed 10 times under load ([Race tests repeated under load](#repository-checks)), and it
 refuses to start if any of them fails. What the steps cover:
 
@@ -107,7 +107,7 @@ refuses to start if any of them fails. What the steps cover:
 | Native macOS and iOS | `macosArm64` tests, `iosSimulatorArm64` tests on the simulator, `iosArm64` compiled, OpenSSL symbol prefix |
 | Native Linux | the `linuxX64` and `linuxArm64` test executables of every module, run in Docker; glibc floors; symbol prefix; the deployment guide's commands in a container (`tools/check/deployment-guide.sh`: `curl --http3-only` and `tcpdump` against the engine's Linux executable) |
 | Native Windows | the `mingwX64` test executables are linked here, not run: they run in the hosted CI's `windows` job (stage 6) |
-| C | the `ksl` C tests under ASan and UBSan on macOS, again against an OpenSSL with brotli's decoder only, as Android and iOS ship it (`tools/c-test.sh --decoder-only`); on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
+| C | the `ksl` C tests under ASan and UBSan on macOS, again against an OpenSSL with brotli's decoder only, as Android and iOS ship it (`tools/c-test.sh --decoder-only`); for mingw-x64 cross-built with `-Werror`, not run; on Linux x64 and arm64 in Docker without sanitizers, with the ICMP error-queue tests required to have run |
 | Fuzzing | the committed fuzz inputs of the Jazzer targets as regression tests |
 | Simulation | `MonteCarloTest`: 200 seeded QUIC transfers through the network simulator on random links (delay, loss, reordering, MTU), each required to finish without violating the simulator's invariants |
 | Performance | the allocation gate of `kuicksilver-bench` |

@@ -179,6 +179,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             break
                         }
                     afterH3AcceptForTest?.invoke()
+                    h3ConnectionForTest?.invoke(conn)
                     listener.add(conn)
                     // after add(): a stop or a switch to Drain that began meanwhile either saw this connection in live() or is seen
                     // here (RFC 9114 5.2)

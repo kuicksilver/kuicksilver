@@ -10,6 +10,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CapturingLogger
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.KuicksilverLogger
@@ -37,6 +38,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
@@ -525,16 +527,29 @@ class LoopGroupTest {
     private class HoldIo(
         private val inner: MemoryDatagramIo,
         private val held: Int,
+        /** Also held until this is true: the other loop's Initials arrived too (both loops admit theirs at once). */
+        private val alsoUntil: () -> Boolean = { true },
     ) : DatagramIo by inner {
         private var released = false
 
         override suspend fun receive(into: PacketBatch): Int {
             if (released) return inner.receive(into)
-            while (inner.received < held) delay(5)
+            while (inner.received < held || !alsoUntil()) delay(5)
             released = true
             var n = 0
             repeat(held) { n += inner.receive(into) }
             return n
+        }
+    }
+
+    /** Each receive waits [by] first: a client that reads what the server sent later than the server's own state shows it. */
+    private class SlowIo(
+        private val inner: DatagramIo,
+        private val by: kotlin.time.Duration,
+    ) : DatagramIo by inner {
+        override suspend fun receive(into: PacketBatch): Int {
+            delay(by)
+            return inner.receive(into)
         }
     }
 
@@ -547,6 +562,8 @@ class LoopGroupTest {
     private suspend fun burst(
         acceptQueue: Int,
         perLoop: Int,
+        clientReceiveDelay: kotlin.time.Duration = kotlin.time.Duration.ZERO,
+        releaseTogether: Boolean = false,
         afterBurst: suspend (LoopGroup, MemoryNetwork) -> Unit = { _, _ -> },
     ): Pair<List<Any?>, Int> =
         kotlinx.coroutines.coroutineScope {
@@ -560,11 +577,14 @@ class LoopGroupTest {
                         loops = 2
                         this.acceptQueue = acceptQueue
                     }.build()
-            val group = LoopGroup.create(cfg, listOf(HoldIo(net.open(serverAddr), perLoop), HoldIo(net.open(otherAddr), perLoop)))
+            val sockets = listOf(net.open(serverAddr), net.open(otherAddr))
+            val together = { !releaseTogether || sockets.all { it.received >= perLoop } }
+            val group = LoopGroup.create(cfg, sockets.map { HoldIo(it, perLoop, together) })
             val clients =
                 (1..2 * perLoop).map { i ->
                     val io = net.open(InetSocketAddress("10.0.1.$i", 1000 + i))
-                    QuicEndpoint.bind(io.localAddress, client(io))
+                    val read = if (clientReceiveDelay > kotlin.time.Duration.ZERO) SlowIo(io, clientReceiveDelay) else io
+                    QuicEndpoint.bind(io.localAddress, client(read))
                 }
             try {
                 val connects =
@@ -580,17 +600,20 @@ class LoopGroupTest {
                         }.awaitAll()
                 // states that stay, never an instant, counted once per client: a client is decided when it ended on its own
                 // side (its connect failed, or its connection closed: refused at its Initial or at its handshake's completion)
-                // or when a server connection from its address was handed to the accept queue. Refusals are not counted on
-                // the server's side: a client refused at its Initial may retransmit it and be refused again. A slow host
-                // only takes longer to get there
+                // or when a server connection from its address was handed to the accept queue and lives there (handedOff is
+                // also set on one refused at completion because the queue was full: that one closes, and its client is
+                // decided once it learnt the refusal). Refusals are not counted on the server's side: a client refused at
+                // its Initial may retransmit it and be refused again. A slow host only takes longer to get there
                 val loops = (0..1).map { group.loopForTest(it) }
 
                 suspend fun handedOffFrom(): Set<InetSocketAddress> =
                     loops.flatMapTo(HashSet()) { l ->
                         kotlinx.coroutines.withContext(l.dispatcher) {
                             l.runtimes.values
-                                .filter { it.handedOff }
-                                .map { it.core.remoteAddress }
+                                .filter {
+                                    it.handedOff &&
+                                        (it.core.state == ConnectionState.Established || it.core.state == ConnectionState.Confirmed)
+                                }.map { it.core.remoteAddress }
                         }
                     }
 
@@ -627,6 +650,30 @@ class LoopGroupTest {
                 assertEquals(4, waiting, "connections waiting for accept() across both loops")
                 assertEquals(4, refused.size, "outcomes: $outcomes")
                 assertTrue(refused.all { it.code == TransportError.CONNECTION_REFUSED }, "refusals: $refused")
+            }
+        }
+
+    /**
+     * The same burst with clients that read 100 ms late: a connection refused at its handshake's completion was marked
+     * handed off on the server (the accept queue was full) before its client learnt the refusal, and the burst read the
+     * outcomes then, with that client still open (an iosSimulatorArm64 run on the hosted macOS runner: 3 of 4 refused).
+     * Both loops admit all their Initials before any handshake can complete (the clients answer 100 ms late), so the excess
+     * is refused at completion, the path in question, never only statelessly at the Initial.
+     */
+    @Test fun burstWithLateReadingClientsCountsEveryRefusal() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                var overflows = -1L
+                val (outcomes, waiting) =
+                    burst(acceptQueue = 4, perLoop = 4, clientReceiveDelay = 100.milliseconds, releaseTogether = true) { g, _ ->
+                        overflows = (0..1).sumOf { i -> g.loopForTest(i).let { l -> withContext(l.dispatcher) { l.acceptOverflows } } }
+                    }
+                val refused = outcomes.filterIsInstance<QuicException.ConnectionLost.TransportClosed>()
+                assertEquals(4, waiting, "connections waiting for accept() across both loops")
+                assertEquals(4, refused.size, "outcomes: $outcomes")
+                assertTrue(refused.all { it.code == TransportError.CONNECTION_REFUSED }, "refusals: $refused")
+                // the path this test is about: refusals at the handshake's completion, not only stateless ones at the Initial
+                assertTrue(overflows > 0, "refusals at completion, both loops: $overflows")
             }
         }
 

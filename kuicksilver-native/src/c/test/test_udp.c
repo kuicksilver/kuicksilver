@@ -1157,9 +1157,9 @@ static void udp_sender_cases(void) {
         ksl_udp_close(peer);
     }
 }
-#endif
 /* udp_waits_are_counted_before_the_wait: KSL_UDP_GET_WAITS counts each wait a receive begins for a datagram, before it blocks:
-   none for a receive that does not wait (timeout 0), at least one for one that waits out its timeout; the same on Windows */
+   none for a receive that does not wait (timeout 0), at least one for one that waits out its timeout; Windows has its own
+   (udp_win_waits_are_counted_before_the_wait, test_udp_win.c) */
 static void udp_waits_are_counted_before_the_wait(void) {
     uint8_t l[KSL_UDP_ADDR_LEN], st[4];
     size_t n = 0;
@@ -1180,7 +1180,6 @@ static void udp_waits_are_counted_before_the_wait(void) {
     ksl_udp_close(u);
 }
 
-#if defined(__linux__) || defined(__APPLE__)
 /* udp_close_waits_for_a_slow_receiver: ksl_udp_close waits for a receiver inside the socket however long it takes to leave; it
    waited 1 s at most and then freed the socket under it (a use after free, which ASan reports) */
 extern void (*ksl_test_udp_recv_entered)(void); /* ksl_udp_recv.c, test builds */
