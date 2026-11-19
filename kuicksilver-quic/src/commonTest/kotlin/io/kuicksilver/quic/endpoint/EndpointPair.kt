@@ -402,6 +402,8 @@ internal class EndpointPair(
         batch.close()
         client.close()
         server.close()
+        // the clients own the tickets their events handed out; a consumed or closed one is closed already (idempotent)
+        for (list in events.values) for (e in list) if (e is ConnectionEvent.SessionTicket) e.ticket.close()
         val live = leaks.live
         if (live.isNotEmpty()) throw AssertionError("native objects left open after the endpoints closed: $live")
         BufferWatch.closed("EndpointPair", buffers)

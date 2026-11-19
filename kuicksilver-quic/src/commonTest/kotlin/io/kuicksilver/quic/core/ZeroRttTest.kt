@@ -36,6 +36,7 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsRole
 import kotlin.random.Random
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -55,6 +56,13 @@ class ZeroRttTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val register = ZeroRttReplayRegister(Random(5))
+
+    /** Server cores a test made on their own (no pair closes them): released after it, with their TLS sessions and keys. */
+    private val made = ArrayList<ConnectionCore>()
+
+    @AfterTest fun releaseCores() {
+        for (c in made) c.release()
+    }
 
     private fun early(
         quic: QuicConfig = QuicConfig.Default,
@@ -82,7 +90,8 @@ class ZeroRttTest {
         )
         assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
         val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
-        tickets.drop(1).forEach { it.close() }
+        tickets.dropLast(1).forEach { it.close() }
+        p.keep(tickets.last())
         p.close()
         return tickets.last().also { assertNotNull(it.remembered, "the server's transport parameters travel with the ticket") }
     }
@@ -928,19 +937,21 @@ class ZeroRttTest {
         // an attacker replays the client's first flight to the same server: a new connection, the same ClientHello and 0-RTT packets
         val first = PacketBuffer.of(captured[0])
         val replay =
-            ConnectionCore.serverWithKeys(
-                QuicConfig.Default,
-                CoreFixtures.server(),
-                ksl,
-                CoreFixtures.clientAddr,
-                Random(7),
-                p.now,
-                first,
-                captured[0].size,
-                null,
-                null,
-                early = early(),
-            )!!
+            ConnectionCore
+                .serverWithKeys(
+                    QuicConfig.Default,
+                    CoreFixtures.server(),
+                    ksl,
+                    CoreFixtures.clientAddr,
+                    Random(7),
+                    p.now,
+                    first,
+                    captured[0].size,
+                    null,
+                    null,
+                    early = early(),
+                )!!
+                .also { made += it }
         first.close()
         val events = ArrayList<ConnectionEvent>()
         for (b in captured.take(4)) {
@@ -1286,6 +1297,7 @@ class ZeroRttTest {
             buf.close()
             while (true) events += s.nextEvent() ?: break
         }
+        made += s
         return s to events
     }
 

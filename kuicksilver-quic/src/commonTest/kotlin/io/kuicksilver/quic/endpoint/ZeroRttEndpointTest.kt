@@ -36,27 +36,29 @@ class ZeroRttEndpointTest {
 
     @Test fun zeroRttBeforeInitialIsBuffered() {
         val p = EndpointPair(crypto = ksl, serverEarlyData = true)
-        val t = ticket(p)
-        // the whole first flight (Initial datagrams, then 0-RTT ones) reaches the server before it admits the Initial
-        val c = p.client.connect(cfg, p.serverAddr, p.now, t)
-        val id = c.openStream(bidi = true)
-        val req = "x".repeat(3000).encodeToByteArray() // more than one datagram of 0-RTT
-        assertEquals(req.size, c.writeStream(id, req, 0, req.size, fin = true))
-        var server: io.kuicksilver.quic.ConnectionCore? = null
-        p.onServerCreated = { server = it }
-        p.step()
-        val s = server!!
-        assertTrue(s.state == ConnectionState.Handshaking)
-        assertEquals(true, s.earlyDataAccepted)
-        assertTrue(s.streamReceivedEarly(id), "the 0-RTT datagrams that came with or before the Initial were read early")
-        val buf = ByteArray(4096)
-        var n = 0
-        while (true) {
-            val r = s.readStream(id, buf, 0, buf.size)
-            if (r <= 0) break
-            n += r
+        p.use { _ ->
+            val t = ticket(p)
+            // the whole first flight (Initial datagrams, then 0-RTT ones) reaches the server before it admits the Initial
+            val c = p.client.connect(cfg, p.serverAddr, p.now, t)
+            val id = c.openStream(bidi = true)
+            val req = "x".repeat(3000).encodeToByteArray() // more than one datagram of 0-RTT
+            assertEquals(req.size, c.writeStream(id, req, 0, req.size, fin = true))
+            var server: io.kuicksilver.quic.ConnectionCore? = null
+            p.onServerCreated = { server = it }
+            p.step()
+            val s = server!!
+            assertTrue(s.state == ConnectionState.Handshaking)
+            assertEquals(true, s.earlyDataAccepted)
+            assertTrue(s.streamReceivedEarly(id), "the 0-RTT datagrams that came with or before the Initial were read early")
+            val buf = ByteArray(4096)
+            var n = 0
+            while (true) {
+                val r = s.readStream(id, buf, 0, buf.size)
+                if (r <= 0) break
+                n += r
+            }
+            assertEquals(req.size, n, "all of the early request is readable before the handshake completes")
         }
-        assertEquals(req.size, n, "all of the early request is readable before the handshake completes")
     }
 
     /** The client's first flight of a 0-RTT connection to [p]'s server, captured on the wire; the server accepted its early data. */

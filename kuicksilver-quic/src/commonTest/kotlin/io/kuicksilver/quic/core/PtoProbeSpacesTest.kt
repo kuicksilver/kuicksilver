@@ -103,7 +103,7 @@ class PtoProbeSpacesTest {
             assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
             val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
             tickets.dropLast(1).forEach { it.close() }
-            return tickets.last()
+            return p.keep(tickets.last())
         }
     }
 

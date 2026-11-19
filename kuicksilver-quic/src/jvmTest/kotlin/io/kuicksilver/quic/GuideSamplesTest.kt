@@ -330,6 +330,12 @@ class GuideSamplesTest {
         } finally {
             out.close()
         }
+        // the sample's loop stops mid-handshake: the connection is closed and run to its end, which frees its TLS session and keys
+        core.close(0, "sample done", now)
+        while (core.state != ConnectionState.Closed) {
+            now = core.nextTimeoutOrNever()
+            core.onTimeout(now)
+        }
         assertTrue(sent.isNotEmpty() && sent.all { it >= 1200 }, "client Initial datagrams are padded: $sent")
     }
 
@@ -388,12 +394,14 @@ class GuideSamplesTest {
                     loadBalancer = lb // 1 + 3 + 4 = 8 bytes: the default connectionIdLength
                 }
             val endpoint = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), behindLb)
+            val laterKeys = ArrayList<AutoCloseable>()
             try {
                 // guide:quic:load-balancer-update
                 val nextKey = KslQuicCrypto.newLoadBalancerKey(nextKeyBytes)
                 val next = QuicLbConfig(configId = 2, serverId = byteArrayOf(0x31, 0x44, 0x1a), nonceLength = 4, key = nextKey)
                 endpoint.updateLoadBalancer(next)
 
+                laterKeys += nextKey // closed once the endpoint is gone, as the first one
                 endpoint.updateLoadBalancer(null) // unroutable IDs
                 val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
                 try {
@@ -406,7 +414,8 @@ class GuideSamplesTest {
                 }
             } finally {
                 endpoint.closeAndJoin()
-                lbKey.close() // the second key is left to the process: a sample
+                lbKey.close()
+                for (k in laterKeys) k.close()
             }
         }
 

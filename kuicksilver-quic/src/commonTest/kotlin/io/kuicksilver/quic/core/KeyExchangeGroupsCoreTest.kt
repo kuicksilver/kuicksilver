@@ -87,7 +87,8 @@ class KeyExchangeGroupsCoreTest {
         assertTrue(p.handshake())
         assertTrue(p.runUntil(limit = 2.seconds) { p.clientEvents.any { it is ConnectionEvent.SessionTicket } })
         val tickets = p.clientEvents.filterIsInstance<ConnectionEvent.SessionTicket>().map { it.ticket }
-        tickets.drop(1).forEach { it.close() }
+        tickets.dropLast(1).forEach { it.close() }
+        p.keep(tickets.last())
         p.close()
         return tickets.last()
     }
