@@ -22,11 +22,13 @@ import io.kuicksilver.ktor.client.applePacTarget
 import io.kuicksilver.ktor.client.pickCfProxyWithPac
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.testing.sentinel.LeakSentinel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -53,6 +55,11 @@ import kotlin.time.TimeSource
 /** The engine's own PAC engine on Apple platforms: scripts from files and plain-http URLs, the URI the script gets, limits. */
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 class PacEngineAppleTest {
+    /** The scripts' download client lives for the process, made by whichever test downloads first: no test's leak. */
+    @BeforeTest fun keepThePacClientForTheProcess() {
+        LeakSentinel.shared { PacScripts.clientForTest }
+    }
+
     /** What the scripts' native calls get: blocking ones wait for [release]. */
     private class FakeHost : PacHost {
         val release = CompletableDeferred<Unit>()
@@ -328,11 +335,13 @@ class PacEngineAppleTest {
         runBlocking {
             val selector = SelectorManager(Dispatchers.IO)
             val listener = bindTcp(selector, "127.0.0.1", 0)
-            val accepted = launch { while (true) listener.accept() } // accepts, never answers
+            val sockets = ArrayList<io.ktor.network.sockets.Socket>()
+            val accepted = launch { while (true) sockets += listener.accept() } // accepts, never answers
             try {
                 withTimeout(30.seconds) { block("http://127.0.0.1:${(listener.localAddress as InetSocketAddress).port}/proxy.pac") }
             } finally {
-                accepted.cancel()
+                accepted.cancelAndJoin()
+                for (s in sockets) s.close()
                 listener.close()
                 selector.close()
             }
