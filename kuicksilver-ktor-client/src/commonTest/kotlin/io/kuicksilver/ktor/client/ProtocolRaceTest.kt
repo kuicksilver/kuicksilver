@@ -273,6 +273,38 @@ class BrokenAltSvcTest {
         assertFalse(broken.isBroken("o", "a"))
     }
 
+    /**
+     * Review finding 4: a stall's backoff walks back down. Each connection that carried a whole exchange without a stall
+     * takes one level off an expired stall mark, and at level 0 the mark goes.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun stallBackoffWalksBackDown() {
+        repeat(3) {
+            broken.markBroken("o", "a", FallbackReason.QuicStalled)
+            now += 1_000_000_000L // past any mark
+        }
+        broken.decayStall("o", "a") // level 2 -> 1
+        broken.markBroken("o", "a", FallbackReason.QuicStalled) // level 2: 20 minutes
+        now += 15.minutes.inWholeMilliseconds
+        assertTrue(broken.isBroken("o", "a"))
+        now += 1_000_000_000L
+        repeat(3) { broken.decayStall("o", "a") } // 2 -> 1 -> 0 -> gone
+        assertNull(broken.brokenReason("o", "a"))
+        broken.markBroken("o", "a", FallbackReason.QuicStalled)
+        now += 5.minutes.inWholeMilliseconds
+        assertFalse(broken.isBroken("o", "a"), "back at 5 minutes")
+    }
+
+    /** A live stall mark is not decayed: nothing went over HTTP/3 to that alternative meanwhile. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_aLiveStallMarkDoesNotDecay() {
+        broken.markBroken("o", "a", FallbackReason.QuicStalled)
+        broken.decayStall("o", "a")
+        assertTrue(broken.isBroken("o", "a"))
+    }
+
     /** A live stall mark is not lifted by a handshake that completed (the race's background attempt, say). */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test

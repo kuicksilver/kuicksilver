@@ -159,6 +159,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getStallAbandonAfter-UwyO8pc ()J
 	public final fun getStallDetection ()Z
 	public final fun getStallMinSilence-UwyO8pc ()J
 	public final fun getStallProbeTimeouts ()I
@@ -180,6 +181,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setStallAbandonAfter-LRDsOJo (J)V
 	public final fun setStallDetection (Z)V
 	public final fun setStallMinSilence-LRDsOJo (J)V
 	public final fun setStallProbeTimeouts (I)V

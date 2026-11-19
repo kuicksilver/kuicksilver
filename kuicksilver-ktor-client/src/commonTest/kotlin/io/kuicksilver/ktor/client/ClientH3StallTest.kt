@@ -19,10 +19,9 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.io.readByteArray
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
-import io.kuicksilver.quic.DatagramIo
-import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
@@ -31,10 +30,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.update
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,6 +45,7 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -58,65 +57,6 @@ import kotlin.time.TimeSource
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
 class ClientH3StallTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
-
-    /** The engine endpoints' sockets: once [cut], [n] more datagrams pass each way, then nothing. */
-    private class FaultyIo(
-        private val d: DatagramIo,
-    ) : DatagramIo by d {
-        private val sendLeft = AtomicInt(Int.MAX_VALUE)
-        private val receiveLeft = AtomicInt(Int.MAX_VALUE)
-
-        fun cut(n: Int) {
-            sendLeft.store(n)
-            receiveLeft.store(n)
-        }
-
-        private fun pass(
-            left: AtomicInt,
-            count: Int,
-        ): Boolean {
-            while (true) {
-                val l = left.load()
-                if (l == Int.MAX_VALUE) return true
-                if (l < count) {
-                    left.store(0)
-                    return false
-                }
-                if (left.compareAndSet(l, l - count)) return true
-            }
-        }
-
-        override suspend fun send(batch: PacketBatch): Int = if (pass(sendLeft, batch.count)) d.send(batch) else batch.count
-
-        override fun trySend(batch: PacketBatch): Int = if (pass(sendLeft, batch.count)) d.trySend(batch) else batch.count
-
-        override suspend fun receive(into: PacketBatch): Int {
-            while (true) {
-                val before = into.count
-                val n = d.receive(into)
-                if (n <= 0 || pass(receiveLeft, n)) return n
-                into.count = before // dropped on the way
-            }
-        }
-    }
-
-    private class Ios {
-        val opened = AtomicReference(emptyList<FaultyIo>())
-
-        /** Applies to the sockets opened so far and to those opened later (an endpoint bound at the first HTTP/3 attempt). */
-        @kotlin.concurrent.Volatile var cutAt: Int? = null
-
-        fun cut(n: Int = 0) {
-            cutAt = n
-            opened.load().forEach { it.cut(n) }
-        }
-
-        suspend fun open(local: io.ktor.network.sockets.InetSocketAddress): DatagramIo =
-            FaultyIo(DatagramIo.open(local)).also { f ->
-                cutAt?.let { f.cut(it) }
-                opened.update { it + f }
-            }
-    }
 
     private class Heard : KuicksilverEventListener() {
         val fallbacks = Channel<Throwable>(Channel.UNLIMITED)
@@ -143,17 +83,30 @@ class ClientH3StallTest {
         val gets: AtomicInt,
         val partials: AtomicInt,
         val posts: AtomicInt,
+        val fullSent: CompletableDeferred<Unit>,
         val stop: suspend () -> Unit,
     )
 
-    private suspend fun server(): Server {
+    /** [idle]: the server's QUIC idle timeout (the client's PINGs must come at least every half of it). */
+    private suspend fun server(idle: Duration? = null): Server {
         val gate = CompletableDeferred<Unit>()
         val gets = AtomicInt(0)
         val partials = AtomicInt(0)
         val posts = AtomicInt(0)
+        val fullSent = CompletableDeferred<Unit>()
         val (s, port) =
-            testServer {
+            testServer(configure = { idle?.let { quic = quicConfig { maxIdleTimeout = it } } }) {
                 routing {
+                    // a whole response, sent at once
+                    get("/full") {
+                        call.respondText("firstrest")
+                        fullSent.complete(Unit)
+                    }
+                    // the server holds the request for 6 s, then answers (three times its own 2 s idle timeout in one test)
+                    get("/hold") {
+                        delay(6.seconds)
+                        call.respondText("held")
+                    }
                     get("/") {
                         gets.addAndFetch(1)
                         call.respondText(call.request.local.version)
@@ -188,7 +141,7 @@ class ClientH3StallTest {
                     }
                 }
             }
-        return Server(port, gate, gets, partials, posts) {
+        return Server(port, gate, gets, partials, posts, fullSent) {
             gate.complete(Unit)
             s.stop(100, 500)
         }
@@ -196,11 +149,13 @@ class ClientH3StallTest {
 
     /** Auto mode, HTTP/3 first once its alternative is known (`hardDelay = INFINITE`): every test starts on a warm HTTP/3 connection. */
     private fun client(
-        ios: Ios,
+        ios: FaultyIos,
         heard: Heard,
         detection: Boolean = true,
         idle: Duration = 15.seconds,
         hardDelay: Duration? = Duration.INFINITE,
+        minSilence: Duration = 500.milliseconds,
+        abandonAfter: Duration = 2.seconds,
     ): HttpClient =
         testClient(Http3DiscoveryMode.Auto, engine = {
             quic = quicConfig { maxIdleTimeout = idle }
@@ -208,7 +163,8 @@ class ClientH3StallTest {
             http3 {
                 this.hardDelay = hardDelay
                 stallDetection = detection
-                stallMinSilence = 500.milliseconds
+                stallMinSilence = minSilence
+                stallAbandonAfter = abandonAfter
                 endpoint =
                     QuicEndpointConfig
                         .Builder()
@@ -239,7 +195,7 @@ class ClientH3StallTest {
     @Test fun stalledGetRetriesOverTcpAndMarksBroken() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -278,7 +234,7 @@ class ClientH3StallTest {
         h3Test {
             for (n in listOf(1, 2, 3)) {
                 val s = server()
-                val ios = Ios()
+                val ios = FaultyIos()
                 val heard = Heard()
                 try {
                     client(ios, heard).use { c ->
@@ -307,11 +263,14 @@ class ClientH3StallTest {
             }
         }
 
-    /** RFC 9110 section 9.2.2: a POST is not repeated; it fails at once with the stall, not at the 15 s idle timeout. */
+    /**
+     * RFC 9110 section 9.2.2: a POST is not repeated. The path stays cut past `stallAbandonAfter` (2 s here): the POST
+     * fails with the stall, not at the 15 s idle timeout.
+     */
     @Test fun nonIdempotentRequestFailsFastWithoutRetry() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -340,7 +299,7 @@ class ClientH3StallTest {
     @Test fun partialResponseFailsFastWithoutRetry() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -376,7 +335,7 @@ class ClientH3StallTest {
     @Test fun slowServerIsNoStall() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -402,7 +361,7 @@ class ClientH3StallTest {
     @Test fun idleLongLivedResponseIsNoStall() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -426,7 +385,7 @@ class ClientH3StallTest {
     @Test fun udpDroppedFromTheStartLosesTheRaceAtOnce() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard, hardDelay = null).use { c ->
@@ -448,7 +407,7 @@ class ClientH3StallTest {
     @Test fun concurrentRequestsMarkBrokenOnce() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard).use { c ->
@@ -468,7 +427,7 @@ class ClientH3StallTest {
     @Test fun negative_offWaitsForTheIdleTimeout() =
         h3Test {
             val s = server()
-            val ios = Ios()
+            val ios = FaultyIos()
             val heard = Heard()
             try {
                 client(ios, heard, detection = false, idle = 3.seconds).use { c ->
@@ -480,6 +439,217 @@ class ClientH3StallTest {
                     assertNotEquals(HttpProtocolVersion.HTTP_3_0, r.version)
                     assertTrue(t0.elapsedNow() >= 2.seconds, "${t0.elapsedNow()}")
                     assertEquals(FallbackReason.Http3Error, r.kuicksilverDiagnostics?.fallback)
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 1: a response that arrived whole (its FIN) needs the network no more. While the application reads it
+     * slowly the watch is over (no wake-up, no PING), and when the path is cut and another request stalls the
+     * connection, nothing holds the drained connection: it is closed at once, and the rest of the first body is still read.
+     */
+    @Test fun aResponseThatArrivedWholeSurvivesAStall() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val conn = engine.h3.connectionsForTest().single()
+                    val arrived = CompletableDeferred<Unit>()
+                    engine.h3.receivedForTest = { arrived.complete(Unit) }
+                    c.prepareGet("${url}full").execute { r ->
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        val ch = r.bodyAsChannel()
+                        val first = ByteArray(5)
+                        var got = 0
+                        while (got < 5) {
+                            val n = ch.readAvailable(first, got, 5 - got)
+                            if (n < 0) fail("the body ended after $got bytes")
+                            got += n
+                        }
+                        assertEquals("first", first.decodeToString())
+                        withTimeout(10.seconds) { arrived.await() }
+                        delay(100.milliseconds) // the watch's last wake-up
+                        val polls = engine.h3.stallPollsForTest.load()
+                        delay(1.seconds) // a slow reader
+                        assertEquals(polls, engine.h3.stallPollsForTest.load(), "the whole response arrived: nothing to watch")
+                        ios.cut()
+                        assertNotEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version, "the other request stalls and goes over TCP")
+                        // abandoned at once (stallAbandonAfter is 2 s): nothing on it needs the network any more
+                        withTimeout(1.seconds) { conn.quic.closed.await() }
+                        assertEquals("rest", ch.readBuffer().readByteArray().decodeToString())
+                    }
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 2: a stall drains the connection. A POST (not repeatable) waits on it, and a 3 s outage (a handover
+     * between radio networks) ends before `stallAbandonAfter` (8 s here): the POST completes over HTTP/3.
+     */
+    @Test fun nonRepeatableRequestSurvivesAShortOutage() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, abandonAfter = 8.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val stalled = CompletableDeferred<Unit>()
+                    engineOf(c).h3.stalledForTest = { stalled.complete(Unit) }
+                    ios.cut()
+                    val t0 = TimeSource.Monotonic.markNow()
+                    coroutineScope {
+                        val post = async { c.post(url) { setBody("x") } }
+                        withTimeout(10.seconds) { stalled.await() }
+                        delay(3.seconds - t0.elapsedNow()) // the outage lasts 3 s
+                        ios.heal()
+                        val r = post.await()
+                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals("posted", r.bodyAsText())
+                    }
+                    assertEquals(1, s.posts.load())
+                    assertEquals(1, heard.marked.load(), "the stall marked the alternative broken all the same")
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /** Review finding 9: the RTT grows by 700 ms after the handshake (an ACK delayed that long): no stall at the default 2 s. */
+    @Test fun aLongerRttAfterTheHandshakeIsNoStall() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard, minSilence = 2.seconds).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    ios.delayReceived(700.milliseconds)
+                    val r = c.get(url)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                    assertNull(heard.fallbacks.tryReceive().getOrNull())
+                    assertEquals(0, heard.marked.load())
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 5: the server's idle timeout is 2 s and it holds the request for 6 s. The watched connection's PINGs
+     * come at most every half of the idle timeout in force (1 s), so the connection outlives the wait (RFC 9114
+     * section 5.1); PINGs that doubled to 2 s and more let the server's idle timeout end it.
+     */
+    @Test fun pingsComeWithinHalfThePeersIdleTimeout() =
+        h3Test {
+            val s = server(idle = 2.seconds)
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val r = c.get("${url}hold")
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
+                    assertEquals("held", r.bodyAsText())
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /** Review finding 6: with no request on the connection the monitor neither wakes up nor sends a PING. */
+    @Test fun noWatcherMeansNoPollsAndNoPings() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val conn = engine.h3.connectionsForTest().single()
+                    delay(500.milliseconds) // the last wake-up of the finished watch
+                    val polls = engine.h3.stallPollsForTest.load()
+                    val sent = conn.quic.stats.packetsSent
+                    delay(2.seconds)
+                    assertEquals(polls, engine.h3.stallPollsForTest.load(), "no wake-up without a watcher")
+                    assertEquals(sent, conn.quic.stats.packetsSent, "no PING without a watcher")
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 6: a watched quiet connection sleeps until its next PING is due instead of polling every 62 ms:
+     * a 3 s idle response costs a handful of wake-ups (48 at the poll interval).
+     */
+    @Test fun aQuietWatchedConnectionWakesUpOnlyForItsPings() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val polls = engine.h3.stallPollsForTest.load()
+                    assertEquals("ab", c.get("${url}events").bodyAsText())
+                    val woke = engine.h3.stallPollsForTest.load() - polls
+                    assertTrue(woke <= 24, "$woke wake-ups in 3 s")
+                }
+            } finally {
+                s.stop()
+            }
+        }
+
+    /**
+     * Review finding 8: a POST looked the connection up just before it stalled (held between the lookup and the count).
+     * It was not sent, so it goes over TCP instead of onto the stalled connection.
+     */
+    @Test fun aRequestHandedTheConnectionAsItStallsGoesOverTcp() =
+        h3Test {
+            val s = server()
+            val ios = FaultyIos()
+            val heard = Heard()
+            try {
+                client(ios, heard).use { c ->
+                    val url = "https://127.0.0.1:${s.port}/"
+                    warm(c, url)
+                    val engine = engineOf(c)
+                    val stalled = CompletableDeferred<Unit>()
+                    val held = CompletableDeferred<Unit>()
+                    engine.h3.stalledForTest = { stalled.complete(Unit) }
+                    engine.h3.beforeCountForTest = {
+                        if (held.complete(Unit)) stalled.await() // the first caller (the POST) waits for the stall
+                    }
+                    ios.cut()
+                    coroutineScope {
+                        val post = async { c.post(url) { setBody("x") } }
+                        withTimeout(10.seconds) { held.await() }
+                        val get = async { c.get(url) } // runs into the dead path and stalls the connection
+                        val t0 = TimeSource.Monotonic.markNow()
+                        val r = post.await()
+                        assertNotEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                        assertEquals("posted", r.bodyAsText())
+                        assertTrue(t0.elapsedNow() < 6.seconds, "${t0.elapsedNow()}")
+                        assertNotEquals(HttpProtocolVersion.HTTP_3_0, get.await().version)
+                    }
+                    assertEquals(1, s.posts.load())
                 }
             } finally {
                 s.stop()
@@ -498,6 +668,12 @@ class ClientH3StallTest {
         }
         assertFailsWith<IllegalArgumentException> {
             testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallMinSilence = 61.seconds } }).close()
+        }
+        assertFailsWith<IllegalArgumentException> {
+            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 99.milliseconds } }).close()
+        }
+        assertFailsWith<IllegalArgumentException> {
+            testClient(Http3DiscoveryMode.Auto, engine = { http3 { stallAbandonAfter = 11.minutes } }).close()
         }
     }
 }

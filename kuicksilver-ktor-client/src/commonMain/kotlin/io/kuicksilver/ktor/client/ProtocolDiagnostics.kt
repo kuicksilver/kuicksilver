@@ -285,7 +285,7 @@ public enum class FallbackReason {
     /**
      * The HTTP/3 connection stalled under the request (`http3 { stallDetection }`): probe timeouts in a row went unanswered
      * and nothing came back from the server (or, on a 0-RTT connection, nothing at all), as on a network that cuts UDP
-     * flows. The connection was closed, the alternative marked broken (RFC 7838 section 2.4), and the request, which could
+     * flows. The connection was drained, the alternative marked broken (RFC 7838 section 2.4), and the request, which could
      * be repeated (RFC 9110 section 9.2.2), went over TCP; one that could not failed with `QuicStalledException`. Since 0.3.0.
      */
     QuicStalled,

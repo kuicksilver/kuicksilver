@@ -316,6 +316,7 @@ public abstract interface class io/kuicksilver/http3/Http3Response {
 	public static synthetic fun cancel$default (Lio/kuicksilver/http3/Http3Response;JILjava/lang/Object;)V
 	public abstract fun getBody ()Lio/ktor/utils/io/ByteReadChannel;
 	public abstract fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
+	public fun getReceived ()Lkotlinx/coroutines/Deferred;
 	public abstract fun getStatus ()I
 	public abstract fun getStreamId ()J
 	public abstract fun getTrailers ()Lkotlinx/coroutines/Deferred;
@@ -324,6 +325,7 @@ public abstract interface class io/kuicksilver/http3/Http3Response {
 
 public final class io/kuicksilver/http3/Http3Response$DefaultImpls {
 	public static synthetic fun cancel$default (Lio/kuicksilver/http3/Http3Response;JILjava/lang/Object;)V
+	public static fun getReceived (Lio/kuicksilver/http3/Http3Response;)Lkotlinx/coroutines/Deferred;
 }
 
 public abstract interface class io/kuicksilver/http3/Http3ResponseWriter {

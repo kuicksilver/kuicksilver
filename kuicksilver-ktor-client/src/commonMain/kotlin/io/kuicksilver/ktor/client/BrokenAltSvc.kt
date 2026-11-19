@@ -79,6 +79,21 @@ internal class BrokenAltSvc(
         marks.remove(key(origin, alt))
     }
 
+    /**
+     * A connection through [alt] carried a whole exchange and never stalled: an expired stall mark ([markWorking] keeps
+     * them) goes one backoff level down, and the mark at level 0 goes, so a network that stopped cutting UDP flows walks
+     * back to the 5-minute backoff and then to none. A live mark is left alone (nothing goes there while it lives).
+     */
+    fun decayStall(
+        origin: String,
+        alt: String,
+    ) {
+        val k = key(origin, alt)
+        val m = marks[k] ?: return
+        if (m.reason != FallbackReason.QuicStalled || live(m)) return
+        if (m.level == 0) marks.remove(k) else marks[k] = Mark(m.until, m.untilWall, m.level - 1, m.reason)
+    }
+
     fun onNetworkChanged() {
         marks.clear()
         confirmed.clear()

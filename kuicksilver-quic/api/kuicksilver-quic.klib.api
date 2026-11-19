@@ -836,6 +836,8 @@ final class io.kuicksilver.quic/ConnectionStats { // io.kuicksilver.quic/Connect
         final fun <get-ecnState>(): io.kuicksilver.quic/EcnState // io.kuicksilver.quic/ConnectionStats.ecnState.<get-ecnState>|<get-ecnState>(){}[0]
     final val glitchTokensSpent // io.kuicksilver.quic/ConnectionStats.glitchTokensSpent|{}glitchTokensSpent[0]
         final fun <get-glitchTokensSpent>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.glitchTokensSpent.<get-glitchTokensSpent>|<get-glitchTokensSpent>(){}[0]
+    final val idleTimeout // io.kuicksilver.quic/ConnectionStats.idleTimeout|{}idleTimeout[0]
+        final fun <get-idleTimeout>(): kotlin.time/Duration // io.kuicksilver.quic/ConnectionStats.idleTimeout.<get-idleTimeout>|<get-idleTimeout>(){}[0]
     final val invalidResets // io.kuicksilver.quic/ConnectionStats.invalidResets|{}invalidResets[0]
         final fun <get-invalidResets>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.invalidResets.<get-invalidResets>|<get-invalidResets>(){}[0]
     final val keyUpdates // io.kuicksilver.quic/ConnectionStats.keyUpdates|{}keyUpdates[0]

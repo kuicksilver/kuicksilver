@@ -276,6 +276,7 @@ public final class io/kuicksilver/quic/ConnectionState : java/lang/Enum {
 }
 
 public final class io/kuicksilver/quic/ConnectionStats {
+	public synthetic fun <init> (JJJJJJIIIJJJJJJJIIIJJJJJJLio/kuicksilver/quic/EcnState;JJJJJILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getAckRanges ()I
 	public final fun getAuthenticationFailures ()J
 	public final fun getBytesInFlight ()J
@@ -291,6 +292,7 @@ public final class io/kuicksilver/quic/ConnectionStats {
 	public final fun getEcnCeReceived ()J
 	public final fun getEcnState ()Lio/kuicksilver/quic/EcnState;
 	public final fun getGlitchTokensSpent ()J
+	public final fun getIdleTimeout-UwyO8pc ()J
 	public final fun getInvalidResets ()J
 	public final fun getKeyUpdates ()J
 	public final fun getLostPackets ()J

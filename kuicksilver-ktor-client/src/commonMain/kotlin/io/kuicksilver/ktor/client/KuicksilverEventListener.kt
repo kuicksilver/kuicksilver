@@ -85,7 +85,7 @@ public abstract class KuicksilverEventListener {
 
     /**
      * The engine marked [alternative] of [origin] broken (RFC 7838 section 2.4): HTTP/3 failed there while HTTP/1.1 worked,
-     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stall).
+     * or an HTTP/3 connection to it stalled (`FallbackReason.QuicStalled`, once per stalled connection).
      */
     public open fun altSvcMarkedBroken(
         origin: String,

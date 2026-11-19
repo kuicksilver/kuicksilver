@@ -15,19 +15,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 
 - Ktor client: stall detection on HTTP/3 connections (experimental `http3 { stallDetection }`, on by default, with
-  `stallProbeTimeouts`, 3, and `stallMinSilence`, 2 s; `docs/guide/ktor.md`, "Stalled HTTP/3 connections"), after a
-  field report from a network that cuts UDP flows: a request on an HTTP/3 connection the engine chose over TCP (`Auto`,
-  `Preferred`, `quicHints`) waited for the QUIC idle timeout (30 s) when the flow was cut after the handshake, and a 0-RTT
-  request into a path that drops UDP waited for the connect timeout (10 s). Now a connection whose probe timeouts go
-  unanswered (3 in a row, RFC 9002 section 6.2) with no packet from the server for 2 s, or, before the handshake, with no
-  answer at all for 2 s, is closed, its alternative marked broken (RFC 7838 section 2.4; the backoff of a stall carries
-  over the handshakes that work between stalls), and the request goes over TCP when it may be repeated (idempotent,
-  RFC 9110 section 9.2.2, a replayable body, no response yet: `FallbackReason.QuicStalled`), else fails at once with
-  `QuicStalledException`, as does a response body being read. A quiet watched connection sends a PING now and then
-  (RFC 9000 section 10.1.2) so that a slow server or an idle long-lived response (which acknowledge it) is never taken
-  for a stall while a path cut with nothing in flight still shows. `H3Only`, WebSockets and WebTransport are not watched.
+  `stallProbeTimeouts`, 3, `stallMinSilence`, 2 s, and `stallAbandonAfter`, 10 s; `docs/guide/ktor.md`, "Stalled HTTP/3
+  connections"), after a field report from a network that cuts UDP flows: a request on an HTTP/3 connection the engine
+  chose over TCP (`Auto`, `Preferred`, `quicHints`) waited for the QUIC idle timeout (30 s) when the flow was cut after
+  the handshake, and a 0-RTT request into a path that drops UDP waited for the connect timeout (10 s). Now a connection
+  whose probe timeouts go unanswered (3 in a row, RFC 9002 section 6.2) with no packet from the server for 2 s, or,
+  before the handshake, with no answer at all for 2 s and two probe timeouts, is drained: it takes no new request, its
+  alternative is marked broken (RFC 7838 section 2.4), and a request that may be repeated (idempotent, RFC 9110
+  section 9.2.2, a replayable body, no response yet, or never sent) goes over TCP at once
+  (`FallbackReason.QuicStalled`). Other work (a POST, a response body being read) waits up to `stallAbandonAfter` for
+  the path to come back (a handover, Wi-Fi roaming) and then fails with `QuicStalledException`; a response that arrived
+  whole is never touched. A quiet watched connection sends a PING now and then (RFC 9000 section 10.1.2; at most every
+  half of the idle timeout in force) so that a slow server or an idle long-lived response (which acknowledge it) is never
+  taken for a stall while a path cut with nothing in flight still shows. `H3Only`, WebSockets and WebTransport are not
+  watched.
 - QUIC: `QuicConnection.ping()` (experimental) sends one PING to test the path for liveness (RFC 9000 section 10.1.2);
   on a dead path it leads to probe timeouts (`stats.ptoCount`) where a quiet connection shows none.
+  `ConnectionStats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides'.
+- HTTP/3: `Http3Response.received` (experimental) completes once the whole response arrived (its FIN), before the
+  application read it.
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
   socket while its receive is in the native wait on every platform.
@@ -866,6 +872,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: a request that waits for its response on an HTTP/3 connection the engine chose over TCP keeps that
+  connection open past the QUIC `maxIdleTimeout`: stall detection sends a PING when the connection is quiet, at most
+  every half of the idle timeout in force, as RFC 9114 section 5.1 expects of a client with responses outstanding.
+  Before 0.3.0 a long poll that the server held longer than the idle timeout ended there. `http3 { stallDetection =
+  false }` sends no PING.
+- Ktor client: a completed QUIC handshake no longer lifts a broken mark the alternative got for a stall
+  (`FallbackReason.QuicStalled`), so the backoff of a network that lets handshakes through and cuts the flows after
+  them keeps doubling; each later connection that carries a whole exchange without a stall takes it one level down.
+- Ktor client: a POST or another request that may not be repeated, on an HTTP/3 connection that stalls, now waits up to
+  `stallAbandonAfter` (10 s) for the path and then fails with `QuicStalledException`, where it failed at the QUIC idle
+  timeout (30 s) with `QuicException.ConnectionLost.Timeout` before 0.3.0.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.

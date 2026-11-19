@@ -584,14 +584,16 @@ back needs no warm-up ([Ktor: Turning HTTP/3 off remotely](ktor.md#turning-http3
 The HTTP/3 connection under the call stopped carrying packets in both directions: its probe timeouts went unanswered and
 nothing came back from the server for `stallMinSilence` (2 s), or a 0-RTT request got no answer at all ([Ktor: Stalled
 HTTP/3 connections](ktor.md#stalled-http3-connections)). Networks that cut UDP flows do this: a firewall or NAT that
-drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine closed the
+drops a UDP flow after its first packets or after a few seconds, a VPN, a captive portal. The engine drained the
 connection and marked the alternative broken (5 minutes, doubling at each new stall on this network). An idempotent
-request without a response yet went over TCP (`fallback = QuicStalled`); a POST, a streamed body, or a response body
-under way failed with `QuicStalledException`, which the application may retry (the next call goes over TCP).
+request without a response yet went over TCP at once (`fallback = QuicStalled`); a POST, a streamed body, or a response
+body under way waited `stallAbandonAfter` (10 s) for the path to come back and then failed with `QuicStalledException`,
+which the application may retry (the next call goes over TCP).
 
 - One stall now and then is the detection working. Many on one network: QUIC does not work there; the broken mark
   already keeps the calls on TCP, and `networkId` makes a new network start afresh.
-- On a path with very long RTTs or long loss bursts, raise `stallMinSilence` or `stallProbeTimeouts`.
+- On a path with very long RTTs or long loss bursts, raise `stallMinSilence` or `stallProbeTimeouts`; for outages
+  longer than 10 s that should not fail a POST (a slow handover), raise `stallAbandonAfter`.
 - A qlog trace (`http3 { qlog }`) shows the probe timeouts (`pto_count`) and the silence.
 - `http3 { stallDetection = false }` waits for the QUIC idle timeout instead, as before 0.3.0.
 

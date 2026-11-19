@@ -625,7 +625,18 @@ internal class ResponseImpl(
         }
     }
 
+    private val receivedDeferred = CompletableDeferred<Unit>()
+
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    override val received: Deferred<Unit> get() = receivedDeferred
+
     init {
+        // the pump ends at the FIN (its last bytes in the body channel) or with the body's failure
+        pump.invokeOnCompletion { cause ->
+            // a pump that ended the body with a failure (a reset, a lost connection) returns normally: the body tells
+            val failure = cause ?: bodyChannel.closedCause
+            if (failure == null) receivedDeferred.complete(Unit) else receivedDeferred.completeExceptionally(failure)
+        }
         // a pump cancelled before it ran (launched after the connection ended) still ends the body: its reader never hangs
         session.onCancelled(pump) { e ->
             bodyChannel.cancel(e)

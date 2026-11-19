@@ -228,6 +228,16 @@ class LifecycleTest {
         }
     }
 
+    /** `stats.idleTimeout`: the smaller of both sides' `max_idle_timeout` once the peer's arrived (RFC 9000 section 10.1). */
+    @Test fun statsTellTheIdleTimeoutInForce() {
+        val p = CorePair(serverQuic = quicConfig { maxIdleTimeout = 10.seconds })
+        p.use { _ ->
+            assertEquals(30.seconds, p.client.stats.idleTimeout, "ours until the server's parameters arrive")
+            assertTrue(p.handshake())
+            assertEquals(10.seconds, p.client.stats.idleTimeout)
+        }
+    }
+
     @Test fun negative_noPingBeforeTheHandshakeCompleted() {
         val p = CorePair()
         p.use { _ ->

@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -141,6 +142,46 @@ class ClientEarlyDataTest {
                 assertEquals("h1", r.bodyAsText())
                 assertTrue(took < 5.seconds, "fell back after $took")
                 assertEquals(FallbackReason.QuicStalled, r.kuicksilverDiagnostics?.fallback)
+            }
+        }
+
+    /**
+     * Review finding 3: the stall rule before the handshake scales with the RTT. A 0-RTT GET on a path whose replies take
+     * 1.5 s: the first PTO (from the 333 ms initial RTT) fires before any reply, but the rule waits for two of them, and
+     * the reply comes first. The request stays on HTTP/3.
+     */
+    @Test fun aSlowHandshakeOnA0RttConnectionIsNoStall() =
+        h3Test {
+            val (server, port) =
+                testServer(configure = { quicEarlyData = true }) {
+                    routing { get("/") { call.respondText("ok") } }
+                }
+            val ios = FaultyIos()
+            try {
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    http3 {
+                        earlyData = true
+                        hardDelay = kotlin.time.Duration.INFINITE
+                        stallMinSilence = 1.seconds
+                        endpoint =
+                            io.kuicksilver.quic.QuicEndpointConfig
+                                .Builder()
+                                .apply { io = { local -> ios.open(local) } }
+                                .build()
+                    }
+                }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    val url = "https://127.0.0.1:$port/"
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, c.get(url).version) // the ticket arrived meanwhile
+                    engine.h3.dropConnectionsForTest().forEach { it.close() }
+                    ios.delayReceived(1500.milliseconds)
+                    val r = c.get(url)
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version, "${r.kuicksilverDiagnostics}")
+                    assertEquals("ok", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
             }
         }
 

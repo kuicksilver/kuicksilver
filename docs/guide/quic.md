@@ -1153,7 +1153,8 @@ A quiet connection shows nothing of a path that stopped carrying packets: with n
 (RFC 9002 section 6.2) until the idle timeout ends it. `ping()` (experimental) sends one PING to test the path (RFC 9000
 section 10.1.2): a live peer acknowledges it, and on a dead path it leads to probe timeouts that `stats.ptoCount` counts.
 It answers false before the handshake completed (the handshake's own probes test the path then) and once the connection
-is closing. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](ktor.md#stalled-http3-connections));
+is closing. `stats.idleTimeout` (experimental) is the idle timeout in force, the smaller of both sides' once the peer's
+transport parameters arrived: a PING at least every half of it keeps the connection open. The Ktor client's stall detection uses it ([Ktor: Stalled HTTP/3 connections](ktor.md#stalled-http3-connections));
 `QuicConfig.keepAlive` sends PINGs on a timer instead.
 
 ## Observability

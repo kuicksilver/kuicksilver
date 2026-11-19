@@ -162,6 +162,14 @@ public interface Http3Response {
     /** Completes once [body] was read to the end: the trailers, or null when the server sent none. */
     public val trailers: Deferred<Http3Headers?>
 
+    /**
+     * Completes once the whole response arrived from the server (its FIN, after the last DATA and the trailers) and was
+     * handed to [body], whether or not the application read it yet: from then on the exchange needs nothing more from the
+     * network. Completes exceptionally when the body failed first. Null for implementations outside this library.
+     */
+    @ExperimentalKuicksilverApi
+    public val received: Deferred<Unit>? get() = null
+
     /** Sends a new priority signal for this request (PRIORITY_UPDATE, RFC 9218 section 7) and applies it to our own sending. */
     public suspend fun updatePriority(priority: StreamPriority)
 

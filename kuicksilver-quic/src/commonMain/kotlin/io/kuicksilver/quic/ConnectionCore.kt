@@ -974,6 +974,7 @@ public class ConnectionCore internal constructor(
             ecnCeEvents,
             datagramsDroppedSend,
             datagramsDroppedSocket,
+            timers.effectiveIdle(config.maxIdleTimeout, peerIdleMs, pto()),
         )
 
     /** Test hook: thrown out of the next [handleDatagram] to exercise the endpoint's per-connection isolation. */

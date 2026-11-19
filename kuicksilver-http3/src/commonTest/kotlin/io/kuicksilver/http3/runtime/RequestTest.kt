@@ -4,6 +4,7 @@ package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.H3Pair
@@ -104,6 +105,53 @@ class RequestTest {
                 assertEquals("text/plain", resp.headers["content-type"])
                 assertEquals("hello", resp.body.readAllBytes().decodeToString())
                 assertNull(resp.trailers.await())
+            }
+        }
+
+    /** `Http3Response.received`: the whole response arrived (its FIN), before the application read any of it. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun receivedCompletesAtTheFinBeforeTheBodyIsRead() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                launch {
+                    val w = p.server.acceptRequest().respond(200)
+                    w.output.writeStringUtf8("hello")
+                    w.finish()
+                }
+                val resp = p.client.request(get("/hello"))
+                val received = assertNotNull(resp.received)
+                withTimeout(10.seconds) { received.await() }
+                assertEquals("hello", resp.body.readAllBytes().decodeToString(), "the body is still all there")
+            }
+        }
+
+    /** `received` fails with the body when the stream is reset before its end. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_receivedFailsWithAResetBody() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val partRead = CompletableDeferred<Unit>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    val w = r.respond(200)
+                    w.output.writeStringUtf8("he")
+                    w.output.flush()
+                    partRead.await() // the response head is in: the reset fails the body, not the request
+                    r.reset(Http3ErrorCode.INTERNAL_ERROR)
+                }
+                val resp = p.client.request(get("/hello"))
+                val two = ByteArray(2)
+                var got = 0
+                while (got < 2) {
+                    val r = resp.body.readAvailable(two, got, 2 - got)
+                    assertTrue(r >= 0, "the body ended early")
+                    got += r
+                }
+                partRead.complete(Unit)
+                val received = assertNotNull(resp.received)
+                assertFailsWith<Throwable> { withTimeout(10.seconds) { received.await() } }
             }
         }
 

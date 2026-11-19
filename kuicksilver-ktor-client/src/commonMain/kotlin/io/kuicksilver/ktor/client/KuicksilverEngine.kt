@@ -96,6 +96,11 @@ internal class KuicksilverEngine(
         require(stallSilence >= MIN_STALL_SILENCE && stallSilence <= MAX_STALL_SILENCE) {
             "stallMinSilence must be 100 ms..60 s, was $stallSilence"
         }
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val abandon = config.http3.stallAbandonAfter
+        require(abandon >= MIN_STALL_SILENCE && abandon <= MAX_STALL_ABANDON) {
+            "stallAbandonAfter must be 100 ms..10 min, was $abandon"
+        }
     }
 
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
@@ -197,6 +202,10 @@ internal class KuicksilverEngine(
         // a stall marks the alternatives of the requests on the connection, also one found while a response body was read
         h3.stallMarker = { stall, keys ->
             for (k in keys) markStalled(stall, k.substringBefore('|'), k.substringAfter('|'))
+        }
+        // a connection that carried a whole exchange and never stalled walks a stall's backoff one level down
+        h3.exchangeCompleted = { k ->
+            engineScope.launch { altSvcLock.withLock { brokenAltSvc.decayStall(k.substringBefore('|'), k.substringAfter('|')) } }
         }
     }
     private val altSvcLock = Mutex()
@@ -1496,7 +1505,7 @@ internal class KuicksilverEngine(
         } // a streamed body HTTP/3 consumed is never replayed
 
     /**
-     * The connection under [data] stalled ([QuicStalledException]): the alternative is marked broken, once per stall and
+     * The connection under [data] stalled ([QuicStalledException]): the alternative is marked broken, once per stalled connection and
      * (origin, alternative) however many requests the stall failed, so its backoff doubles once (RFC 7838 section 2.4).
      */
     private suspend fun markStalled(
@@ -1606,6 +1615,9 @@ internal val MIN_STALL_SILENCE = kotlin.time.Duration.parse("100ms")
 
 /** The longest `stallMinSilence` allowed. */
 internal val MAX_STALL_SILENCE = 60.seconds
+
+/** The longest `stallAbandonAfter` allowed. */
+internal val MAX_STALL_ABANDON = 10.minutes
 
 /** The longest an HTTPS record lookup runs, whatever the connect timeout. */
 internal val MAX_HTTPS_RECORD_QUERY = 30.seconds
