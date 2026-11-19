@@ -2604,7 +2604,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   and a later Initial of the original version (from anyone who saw the client's first Initial) switched it back. A packet
   of another version now switches the keys only if it decrypts under them, and the version is fixed by the first such
   packet ("the first long header Version field that differs from the original version") or by a CRYPTO frame from the
-  server; server Initials of any other version are dropped from then on (`core.ClientVersionLatchTest`).
+  server; server Initials of any other version are dropped from then on (`core.ClientVersionLatchTest`). A Handshake
+  packet of another version that comes before the server's first Initial switches nothing and waits for the Handshake
+  keys, as before. One forged ACK-only Initial of another configured version from someone who saw the client's first
+  Initial now fixes that version, as RFC 9369 section 4.1 reads (threat model 3.9).
 - HTTP/3 server, Rapid Reset by STOP_SENDING (CVE-2023-44487; RFC 9114 section 10.5): the request-reset budget counted
   only the client's RESET_STREAM. A complete request whose response the client stopped at once with STOP_SENDING
   cancelled its handler in the Ktor engine and gave its stream back without spending anything, and a reset the client

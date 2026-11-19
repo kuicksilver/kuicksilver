@@ -285,11 +285,16 @@ internal class PacketReceiver(
         if (type != PacketType.OneRtt && hv.version != c.version.version) {
             val profile = VersionProfile.of(hv.version) ?: return false
             if (c.role == TlsRole.Client) {
-                // RFC 9369 section 4.1: only an Initial can show the negotiated version (Handshake packets use it from the start)
-                if (type != PacketType.Initial) return false
-                val prev = c.version
-                if (!c.switchClientVersion(profile)) return false
-                switchedFrom = prev
+                // RFC 9369 section 4.1: only an Initial shows the negotiated version (Handshake packets use it from the start). A
+                // Handshake packet that comes before the server's first Initial (reordered) switches nothing and waits below for
+                // the Handshake keys, as any early packet; replayed then, it is taken in the negotiated version or dropped
+                if (type == PacketType.Initial) {
+                    val prev = c.version
+                    if (!c.switchClientVersion(profile)) return false
+                    switchedFrom = prev
+                } else if (type != PacketType.Handshake || c.readKeys[2] != null) {
+                    return false
+                }
             } else if (!((type == PacketType.Initial || type == PacketType.ZeroRtt) && hv.version == c.originalVersion.version)) {
                 return false
             }
