@@ -1201,7 +1201,10 @@ hex, the same name the connection's qlog trace has.
 `PathInfo`: its `id`, `localAddress` and `remoteAddress`, validation `state`, whether it is `active`, and the connection
 IDs on it with their sequence numbers (RFC 9000 section 5.1): `localConnectionId`, ours, as the peer's packets on the
 path carry it, and `remoteConnectionId`, the peer's, which our packets carry. `ConnectionInfo.pathChanges` counts the
-moves to another path so far (the difference of two readings counts the moves between them). The list is built on the
+moves to another path so far (the difference of two readings counts the moves between them). The list is there from
+the connection's creation, before `onOpened`, with the handshake's IDs: a client sends to the random ID it chose
+(`remoteConnectionIdSequence` -1) until the server's first Initial gives the server's own, and shows its handshake ID
+(sequence 0) until the server's first 1-RTT packet shows which of its IDs the server uses. The list is built on the
 loop only when something on it changed — an ID rotated (by us every 10 000 packets, by the peer as it likes), a path
 was added, validated, failed, closed or became active, an address changed — and published as a whole, so reading it
 from any thread costs nothing and never sees half a change; after the connection closed it keeps the last one. The
@@ -4659,9 +4662,13 @@ exception or one of its causes) is the call's `ProtocolDiagnostics`, which the r
 - `connectFailures` lists every connection setup that failed for the call, in order: each a `ConnectFailure` with the
   `transport`, the `stage` (`TcpConnect`, `ProxyHandshake`, `TlsHandshake`, `QuicHandshake`), the `address` tried and the
   `cause`. A TLS 1.2-only server's answer to this client's TLS 1.3 ClientHello, for example, is a `TlsHandshake` failure
-  whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. Attempts the engine cancelled
-  (a race another attempt won, the connect timeout) are not failures: a connect timeout is the call's own
-  `ConnectTimeoutException`.
+  whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. A QUIC failure says how far the
+  handshake got (`quicProgress`: `NoPacketReceived` — UDP blocked or the server silent — or `HandshakeStarted`). The
+  connect timeout is a failure too: one per attempt it cut short, at the step it was in (`TcpConnect`, `TlsHandshake`,
+  `QuicHandshake`...), with the call's `ConnectTimeoutException` as the cause, or one without an address when the name
+  lookup or the wait for a pooled connection used the time. Attempts the engine cancelled because another won (the
+  address race, the HTTP/3 and TCP race) are not failures. With `earlyData`, a handshake that fails after the request
+  went out in 0-RTT is reported when it fails, which may be after the call ended.
 
 ```kotlin
 // guide:ktor:client-failure
@@ -4684,10 +4691,14 @@ try {
 The event listener hears the same as it happens: `connectFailed(request, failure)` once per failed setup (also for a
 call that then succeeded another way), and in `callFailed(request, cause)` the request's attributes still hold the
 call's diagnostics (`request.attributes[KuicksilverDiagnosticsKey]`; the engine removes them once `callFailed` returned).
-The engine attaches the diagnostics to the exception as a suppressed one whose message is the diagnostics' text, so a
-printed stack trace shows them too (never with the URL or a connection ID). A cancellation carries none. One exception
-can end several calls at once — a QUIC connection's failure reaches every request on it — and then names none of them
-(`kuicksilverDiagnostics` is null): read the request's diagnostics in `callFailed` for those.
+The engine attaches the diagnostics to the exception as a suppressed `FailureDiagnostics` whose message is one line —
+`kuicksilver: failed over TCP; HTTP/3 failed first: Timeout (HandshakeTimeout); setups failed: QuicHandshake,
+TlsHandshake` — with types and stages only, never a URL, host, address or connection ID; on the JVM and Android it has no
+stack of its own, so a printed stack trace gains that one line. Ktor's request timeout (`HttpTimeout`) cancels the call
+with its `HttpRequestTimeoutException`, the exception Ktor then throws, and that one carries the diagnostics. A call the
+application cancels carries none, and one exception can end several calls at once — a QUIC connection's failure reaches
+every request on it — and then names none of them (`kuicksilverDiagnostics` is null): `callFailed` has the request's own
+diagnostics in both cases.
 
 #### Graceful stop
 
@@ -6725,7 +6736,9 @@ message does not name the scheme a proxy URL from the environment gave: a user n
 
 `e.kuicksilverDiagnostics` on the exception says it ([Ktor: Why did this call fail?](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md#why-did-this-call-fail)):
 `transport` is `Quic` or `Tcp`, `h3Failure` is HTTP/3's failure when TCP came after it, and `connectFailures` names each
-setup that failed with its stage and address: a `TlsHandshake` failure with `TlsException.AlertReceived`
+setup that failed with its stage and address (a QUIC one also with `quicProgress`: `NoPacketReceived` is UDP blocked or
+a silent server, `HandshakeStarted` a server that answered and then stopped), and a connect timeout as one failure per
+attempt it cut short: a `TlsHandshake` failure with `TlsException.AlertReceived`
 (`protocol_version`) is a server without TLS 1.3 (allow TLS 1.2 on the client with `tls = { versions =
 TlsVersions.Tls12And13 }` if you must reach it); `TcpConnect` failures for every address mean nothing listens there or a
 firewall rejects it; a `QuicHandshake` timeout is UDP blocked ([handshake timeout](#connect-fails-with-handshake-timeout-after-10s)).

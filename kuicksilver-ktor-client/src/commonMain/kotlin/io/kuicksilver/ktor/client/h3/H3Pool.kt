@@ -190,6 +190,12 @@ internal class H3Entry(
     /** Requests and WebTransport sessions using the connection. */
     val active = kotlin.concurrent.atomics.AtomicInt(0)
 
+    /** 1 while the connection this entry's setup made has not served a call yet; 0 for one it took over (RFC 9114 section 3.3). */
+    val newConnection = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /** True for exactly one call: the first to use the connection this entry's setup made (`connectionAcquired`'s `reused`). */
+    fun claimNew(): Boolean = newConnection.compareAndSet(1, 0)
+
     /** WebTransport sessions open on it. */
     val wtSessions = kotlin.concurrent.atomics.AtomicInt(0)
 
@@ -308,6 +314,76 @@ internal class H3Pool(
      */
     private val tickets = io.kuicksilver.tls.SessionCache()
 
+    /** The QUIC attempts of setups in progress, each waiting for the connection its endpoint opens ([AttemptListener]). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val attemptsInFlight = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun inFlight(
+        a: QuicAttemptProgress,
+        add: Boolean,
+    ) {
+        while (true) {
+            val now = attemptsInFlight.load()
+            if (attemptsInFlight.compareAndSet(now, if (add) now + a else now - a)) return
+        }
+    }
+
+    /**
+     * The engine's endpoint listener: the application's `connectionListener` (every callback goes to it as it is), and
+     * before it, at each client connection's [io.kuicksilver.quic.ConnectionListener.onOpened], the setup attempt that
+     * connection belongs to learns its handle, so a failed or timed-out handshake can say how far it got. One lookup per
+     * connection opened, nothing per packet.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private inner class AttemptListener(
+        private val user: io.kuicksilver.quic.ConnectionListener?,
+    ) : io.kuicksilver.quic.ConnectionListener {
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        override fun onOpened(connection: io.kuicksilver.quic.ConnectionInfo) {
+            if (connection.role == io.kuicksilver.tls.TlsRole.Client) {
+                val r = connection.remoteAddress
+                for (a in attemptsInFlight.load()) {
+                    val to = a.remote ?: continue
+                    if ((to === r || to == r) && a.info.compareAndSet(null, connection)) break
+                }
+            }
+            user?.onOpened(connection)
+        }
+
+        override fun onHandshakeCompleted(connection: io.kuicksilver.quic.ConnectionInfo) {
+            user?.onHandshakeCompleted(connection)
+        }
+
+        override fun onZeroRtt(
+            connection: io.kuicksilver.quic.ConnectionInfo,
+            outcome: io.kuicksilver.quic.ZeroRttOutcome,
+        ) {
+            user?.onZeroRtt(connection, outcome)
+        }
+
+        override fun onPathChanged(
+            connection: io.kuicksilver.quic.ConnectionInfo,
+            change: io.kuicksilver.quic.PathEvent.Changed,
+        ) {
+            user?.onPathChanged(connection, change)
+        }
+
+        override fun onPathsUpdated(
+            connection: io.kuicksilver.quic.ConnectionInfo,
+            paths: List<io.kuicksilver.quic.PathInfo>,
+        ) {
+            user?.onPathsUpdated(connection, paths)
+        }
+
+        override fun onClosed(
+            connection: io.kuicksilver.quic.ConnectionInfo,
+            reason: io.kuicksilver.quic.QuicException.ConnectionLost,
+        ) {
+            user?.onClosed(connection, reason)
+        }
+    }
+
     /** The engine's endpoint with its logger, connection listener, [connectionIdLength] and the pool's [tickets]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
@@ -315,7 +391,7 @@ internal class H3Pool(
             .toBuilder()
             .apply {
                 config.logger?.let { logger = it }
-                config.http3.connectionListener?.let { listener = it }
+                listener = AttemptListener(config.http3.connectionListener ?: config.http3.endpoint.listener)
                 connectionIdLength = this@H3Pool.connectionIdLength
                 sessionCache = tickets
             }.build()
@@ -396,9 +472,6 @@ internal class H3Pool(
 
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val maxLifetimeMillis = config.maxConnectionLifetime.toMillisOrMax()
-
-    /** Connections set up and not yet used by an exchange: the first one to use it reports it as new (under [lock]). */
-    private val fresh = HashSet<Http3Connection>()
 
     /** Set by [close]: nothing binds a new endpoint after it (a request or session after the client closed). */
     @kotlin.concurrent.Volatile
@@ -851,7 +924,6 @@ internal class H3Pool(
         loopback4 = null
         loopback6?.close()
         loopback6 = null
-        fresh.clear()
     }
 
     /**
@@ -1139,6 +1211,8 @@ internal class H3Pool(
             val failures = ArrayList<Throwable>()
             // the connections the race's attempts made, with the literal each went to: the winner's is kept on the entry
             val attempts = kotlin.concurrent.atomics.AtomicReference(emptyList<Pair<Http3Connection, Destination>>())
+            // every attempt the race started, for the report of a connect timeout (those it cancelled)
+            val started = kotlin.concurrent.atomics.AtomicReference(emptyList<QuicAttemptProgress>())
             try {
                 beforeSetupForTest?.invoke()
                 // a connection the race made as the connect timeout fires is the connection: made is set as the race
@@ -1151,20 +1225,16 @@ internal class H3Pool(
                         raceQuic(t.host, t.port, dns, failures, { won, a ->
                             attempts.update { it + (won to Destination.of(a)) }
                         }) { destination ->
+                            val a = QuicAttemptProgress(destination)
+                            started.update { it + a }
                             try {
-                                quicAttempt(t, destination, data, wt)
+                                quicAttempt(t, a, data, wt).also { c -> if (!wt) reportEarlyHandshake(c, a, data) }
+                            } catch (x: CancellationException) {
+                                a.cancelled = true // a lost race or the connect timeout; only the timeout is reported (below)
+                                throw x
                             } catch (x: Throwable) {
-                                // each address whose handshake failed, as it failed (a cancelled attempt is none)
-                                events.connectFailed(
-                                    data,
-                                    io.kuicksilver.ktor.client.ConnectFailure(
-                                        io.kuicksilver.ktor.client.Transport.Quic,
-                                        io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
-                                        destination,
-                                        false,
-                                        x,
-                                    ),
-                                )
+                                // each address whose handshake failed, as it failed
+                                events.connectFailed(data, a.failure(x))
                                 throw x
                             }
                         }
@@ -1183,8 +1253,7 @@ internal class H3Pool(
                                 d.complete(k)
                             } else {
                                 // a new connection: the first call on it is not on a reused one (diagnostics and events)
-                                fresh.removeAll { it.ended() } // closed before any exchange used them
-                                fresh += c
+                                e.newConnection.store(1)
                                 d.complete(c)
                             }
                         }
@@ -1199,7 +1268,23 @@ internal class H3Pool(
             } catch (
                 x: SetupTimedOut,
             ) {
-                d.completeExceptionally(ConnectTimeoutException(data, x).withAttempts(failures))
+                val timeout = ConnectTimeoutException(data, x).withAttempts(failures)
+                // the attempts the timeout cancelled, with how far each got (none started: one report without an address)
+                val cut = started.load().filter { it.cancelled }
+                if (cut.isEmpty()) {
+                    events.connectFailed(
+                        data,
+                        io.kuicksilver.ktor.client.ConnectFailure(
+                            io.kuicksilver.ktor.client.Transport.Quic,
+                            io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
+                            null,
+                            false,
+                            timeout,
+                        ),
+                    )
+                }
+                for (a in cut) events.connectFailed(data, a.failure(timeout))
+                d.completeExceptionally(timeout)
                 forget(t, e)
             } catch (
                 x: CancellationException,
@@ -1220,16 +1305,55 @@ internal class H3Pool(
         return e to d.await()
     }
 
-    /** One QUIC attempt of [t]'s setup race, to [destination]: a WebTransport-capable connection when [wt]. */
+    /**
+     * With `earlyData` a connection is handed out before its handshake completed: a handshake that fails after that (0-RTT
+     * already started) is reported as a failed setup of [data] too, when it fails. Watched in the pool's scope, which the
+     * engine's close cancels; nothing for a connection whose handshake is done.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun reportEarlyHandshake(
+        c: Http3Connection,
+        a: QuicAttemptProgress,
+        data: HttpRequestData,
+    ) {
+        if (c.quic.isHandshakeComplete) return
+        (migrationScope ?: CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
+            val failure = runCatching { c.quic.awaitHandshake() }.exceptionOrNull() ?: return@launch
+            if (failure !is CancellationException) events.connectFailed(data, a.failure(failure))
+        }
+    }
+
+    /** Tests: [block] under the pool's lock (a request that needs the lock waits for it). */
+    internal suspend fun <T> withLockForTest(block: suspend () -> T): T = lock.withLock { block() }
+
+    /** One QUIC attempt of [t]'s setup race, to [a]'s destination: a WebTransport-capable connection when [wt]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private suspend fun quicAttempt(
         t: H3Target,
-        destination: InetSocketAddress,
+        a: QuicAttemptProgress,
         data: HttpRequestData,
         wt: Boolean,
     ): Http3Connection {
-        val (ep, remote) = endpointFor(destination)
-        return if (wt) {
+        val (ep, remote) = endpointFor(a.destination)
+        // known before the endpoint opens the connection: its listener's onOpened finds the attempt by this address
+        a.remote = remote
+        inFlight(a, add = true)
+        try {
+            return connectAttempt(t, ep, remote, data, wt)
+        } finally {
+            inFlight(a, add = false)
+        }
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectAttempt(
+        t: H3Target,
+        ep: Http3Endpoint,
+        remote: InetSocketAddress,
+        data: HttpRequestData,
+        wt: Boolean,
+    ): Http3Connection =
+        if (wt) {
             // never 0-RTT: a WebTransport CONNECT does not go early (draft-16 section 3.2)
             ep.connect(remote, config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)), quic, wtSettings)
         } else if (config.http3.earlyData) {
@@ -1249,7 +1373,6 @@ internal class H3Pool(
                 config.http3.settings,
             )
         }
-    }
 
     /** Test hook: preferred-address moves [followPreferredAddress] recorded. */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
@@ -1563,7 +1686,8 @@ internal class H3Pool(
                     }
                 }
                 // inside the try: a cancellation while taking the lock must still release the entry's count
-                reused = lock.withLock { !fresh.remove(conn) }
+                // lock-free: the first call to take a connection this pool set up claims it as new
+                reused = !entry.claimNew()
                 if (events.enabled) {
                     events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
                     reported = true
@@ -2060,3 +2184,39 @@ internal fun h3WebSocketStreamEnd(
         drained = drained,
         cutByCloseWait = cutByCloseWait,
     )
+
+/**
+ * One QUIC attempt of a setup race ([H3Pool]): where it goes ([destination], then the literal the endpoint sends to,
+ * [remote]), the connection its endpoint opened for it once the listener heard of it ([info]), and whether it was cancelled.
+ */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class QuicAttemptProgress(
+    val destination: InetSocketAddress,
+) {
+    @kotlin.concurrent.Volatile var remote: InetSocketAddress? = null
+
+    val info = kotlin.concurrent.atomics.AtomicReference<io.kuicksilver.quic.ConnectionInfo?>(null)
+
+    @kotlin.concurrent.Volatile var cancelled = false
+
+    /** How far the handshake got: a packet decrypted from the server or not; null when no connection was opened. */
+    fun progress(): io.kuicksilver.ktor.client.QuicHandshakeProgress? =
+        info.load()?.let {
+            if (it.connection.stats.packetsReceived > 0) {
+                io.kuicksilver.ktor.client.QuicHandshakeProgress.HandshakeStarted
+            } else {
+                io.kuicksilver.ktor.client.QuicHandshakeProgress.NoPacketReceived
+            }
+        }
+
+    /** This attempt's handshake failed with [cause]. */
+    fun failure(cause: Throwable): io.kuicksilver.ktor.client.ConnectFailure =
+        io.kuicksilver.ktor.client.ConnectFailure(
+            io.kuicksilver.ktor.client.Transport.Quic,
+            io.kuicksilver.ktor.client.ConnectStage.QuicHandshake,
+            destination,
+            false,
+            cause,
+            progress(),
+        )
+}

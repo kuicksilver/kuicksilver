@@ -125,18 +125,34 @@ public enum class ConnectStage {
     QuicHandshake,
 }
 
+/** How far a QUIC handshake that failed or timed out got ([ConnectFailure.quicProgress]). */
+@ExperimentalKuicksilverApi
+public enum class QuicHandshakeProgress {
+    /** Not one packet came back from the server: UDP blocked on the way, a server that is down or silent on this port. */
+    NoPacketReceived,
+
+    /** The server answered (its Initial packets were received and decrypted), but the handshake did not complete. */
+    HandshakeStarted,
+}
+
 /**
  * One connection setup that failed for a call ([KuicksilverEventListener.connectFailed], [ProtocolDiagnostics.connectFailures]),
  * whether or not the call then succeeded another way (another address, the other transport). An attempt the engine
- * cancelled (a race another one won, the connect timeout) is no failure and is not reported.
+ * cancelled because another one won (the address race, the HTTP/3 and TCP race) is no failure and is not reported. The
+ * connect timeout ending a setup is one: reported with the call's `ConnectTimeoutException` as [cause], once per attempt
+ * still running then (or once, with a null [address], when none had started: the name lookup or the wait for a pooled
+ * connection used the time).
  *
  * @property transport [Transport.Tcp] or [Transport.Quic].
- * @property stage Where it failed.
+ * @property stage Where it failed (for a timeout: the step the attempt was in).
  * @property address The address the attempt went to: the proxy's through a proxy; null when the failure came before one
  *   was known.
  * @property viaProxy Whether the attempt went through a proxy.
  * @property cause What failed: for a TLS alert from the server an [io.kuicksilver.tls.TlsException.AlertReceived] (its
- *   `description`, e.g. `protocol_version`), possibly as the cause of another exception.
+ *   `description`, e.g. `protocol_version`), possibly as the cause of another exception; for the connect timeout the
+ *   call's `ConnectTimeoutException`; for a QUIC handshake that timed out on its own a `QuicException.ConnectionLost.Timeout`.
+ * @property quicProgress For a [ConnectStage.QuicHandshake] failure, how far the handshake got: no packet from the server,
+ *   or started; null for TCP, and when the connection was never opened (the endpoint could not be bound).
  */
 @ExperimentalKuicksilverApi
 public class ConnectFailure internal constructor(
@@ -145,10 +161,12 @@ public class ConnectFailure internal constructor(
     public val address: InetSocketAddress?,
     public val viaProxy: Boolean,
     public val cause: Throwable,
+    public val quicProgress: QuicHandshakeProgress? = null,
 ) {
     /** For logs: `TlsHandshake to 192.0.2.1:443 failed: AlertReceived: ...`. */
     override fun toString(): String =
-        "$stage to ${address ?: "?"}${if (viaProxy) " (proxy)" else ""} failed: ${cause::class.simpleName}: ${cause.message}"
+        "$stage to ${address ?: "?"}${if (viaProxy) " (proxy)" else ""}${quicProgress?.let { " ($it)" } ?: ""} failed: " +
+            "${cause::class.simpleName}: ${cause.message}"
 }
 
 /** At most this many [ConnectFailure]s are kept per call: an endpoint with many addresses must not grow it without end. */
@@ -162,8 +180,16 @@ internal const val MAX_CONNECT_FAILURES = 16
  * that ended several calls at once (one connection's failure shared by its requests: the engine cannot tell whose it would
  * be, so none says; read the request's diagnostics in [KuicksilverEventListener.callFailed] then).
  *
- * The engine attaches it as a suppressed exception whose text is the diagnostics' line without the request (it shows in a
- * printed stack trace, never with the URL or a connection ID).
+ * The engine attaches it as a suppressed exception (`FailureDiagnostics`) whose message is one line: the transport that
+ * failed, HTTP/3's failure by its type and reason, the stages of the setups that failed, the attempts — never a URL, a
+ * host, an address or a connection ID, so a printed stack trace shows no more of the call than the exception itself does.
+ * On the JVM and Android it carries no stack of its own (one line in a printed trace); on Kotlin/Native its stack, the
+ * engine's, is printed under it.
+ *
+ * A request timeout of Ktor's `HttpTimeout` (`HttpRequestTimeoutException`) reaches the engine as the cancellation of the
+ * call: the engine attaches the diagnostics to that exception, which is the one Ktor throws. With coroutine stack-trace
+ * recovery on (a debug build: assertions enabled) Ktor may throw a copy of it without them. A cancellation of the call by
+ * the application carries none. In both cases [KuicksilverEventListener.callFailed] has them in the request's attributes.
  */
 @ExperimentalKuicksilverApi
 public val Throwable.kuicksilverDiagnostics: ProtocolDiagnostics?
@@ -182,10 +208,17 @@ public val Throwable.kuicksilverDiagnostics: ProtocolDiagnostics?
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class FailureDiagnostics(
     val diagnostics: ProtocolDiagnostics,
-) : Exception("kuicksilver diagnostics: $diagnostics") {
+) : Exception(diagnostics.failureLine()) {
+    init {
+        dropStackTrace(this) // one line in a printed stack trace (JVM and Android)
+    }
+
     /** Another call failed with the same exception: neither call's diagnostics can be told from it. */
     @kotlin.concurrent.Volatile var shared = false
 }
+
+/** Empties [t]'s stack where the platform allows it (JVM and Android); a no-op on Kotlin/Native. */
+internal expect fun dropStackTrace(t: Throwable)
 
 /**
  * Attaches [d] to [e] for [kuicksilverDiagnostics]; an exception that carries another call's already is marked shared.
@@ -196,7 +229,7 @@ internal fun attachDiagnostics(
     e: Throwable,
     d: ProtocolDiagnostics,
 ) {
-    if (e is CancellationException) return
+    if (e is CancellationException) return // the caller looks for the cause Ktor throws (failedDiagnostics)
     withCarrierLock {
         val existing = e.suppressedExceptions.firstNotNullOfOrNull { it as? FailureDiagnostics }
         when {

@@ -4,6 +4,9 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -31,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -213,6 +217,7 @@ class ClientConnectionDiagnosticsTest {
                     assertEquals(Transport.Quic, f.transport)
                     assertEquals(ConnectStage.QuicHandshake, f.stage)
                     assertEquals(port, f.address?.port)
+                    assertEquals(QuicHandshakeProgress.NoPacketReceived, f.quicProgress, "nothing came back")
                     // the same failure (the exception thrown may be a copy coroutines made on the way, with this one's stack)
                     assertIs<QuicException.ConnectionLost.Timeout>(f.cause)
                     assertEquals(listOf(f), heard.connectFailures.load())
@@ -297,6 +302,18 @@ class ClientConnectionDiagnosticsTest {
                         )
                         // HTTP/3's failure is in the thrown one too (suppressed), as before
                         assertTrue(e.suppressedExceptions.any { it === d.h3Failure }, "${e.suppressedExceptions}")
+                        // the carrier's text: one line, transports, types and stages, no address or port
+                        val carrier = e.suppressedExceptions.filterIsInstance<FailureDiagnostics>().single()
+                        val text = carrier.toString()
+                        assertFalse('\n' in text, text)
+                        assertFalse("127.0.0.1" in text || "$port" in text, text)
+                        assertTrue(
+                            text.endsWith(
+                                "kuicksilver: failed over TCP; HTTP/3 failed first: Timeout (HandshakeTimeout); " +
+                                    "setups failed: QuicHandshake, TlsHandshake",
+                            ),
+                            text,
+                        )
                     }
                     udp.close()
                     alerting?.close()
@@ -359,6 +376,222 @@ class ClientConnectionDiagnosticsTest {
                         val q = assertIs<QuicConnectionSnapshot>(d!!.connection)
                         assertSame(first.info, q.info)
                         assertTrue(q.reused)
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** A TCP server that accepts and never answers: the TLS handshake runs into the connect timeout, reported at its address. */
+    @Test fun negative_aTlsHandshakeThatNeverEndsIsATimeoutAtItsAddress() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val heard = Heard()
+            try {
+                coroutineScope {
+                    val (listener, port) = tcpOn(selector, 0)
+                    val accepted = launch { runCatching { while (true) listener.accept() } } // kept open, silent
+                    testClient(Http3DiscoveryMode.H1Only, engine = {
+                        connectTimeout = 500.milliseconds
+                        eventListener = heard
+                    }).use { c ->
+                        val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                        val d = assertNotNull(e.kuicksilverDiagnostics)
+                        assertEquals(Transport.Tcp, d.transport)
+                        val f = d.connectFailures.single()
+                        assertEquals(ConnectStage.TlsHandshake, f.stage)
+                        assertEquals(port, f.address?.port)
+                        assertIs<ConnectTimeoutException>(f.cause)
+                        assertNull(f.quicProgress)
+                        assertEquals(listOf(f), heard.connectFailures.load())
+                    }
+                    accepted.cancel()
+                    listener.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /** A name lookup that never answers uses the whole connect timeout: one TcpConnect failure without an address. */
+    @Test fun negative_aLookupThatNeverAnswersIsATimeoutWithoutAnAddress() =
+        clientTest {
+            testClient(Http3DiscoveryMode.H1Only, engine = {
+                connectTimeout = 300.milliseconds
+                dns = Dns { awaitCancellation() }
+            }).use { c ->
+                val e = assertFailsWith<ConnectTimeoutException> { c.get("https://never.test/") }
+                val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
+                assertEquals(ConnectStage.TcpConnect, f.stage)
+                assertNull(f.address)
+                assertIs<ConnectTimeoutException>(f.cause)
+            }
+        }
+
+    /** The connect timeout ends a QUIC handshake that got no answer: QuicHandshake, NoPacketReceived, the timeout as cause. */
+    @Test fun negative_aQuicConnectTimeoutWithoutAnswerSaysNoPacketReceived() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.IO)
+            val (udp, port) = udpOn(selector, 0)
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    connectTimeout = 500.milliseconds
+                    quic = quicConfig { handshakeTimeout = 30.seconds }
+                }).use { c ->
+                    val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                    val d = assertNotNull(e.kuicksilverDiagnostics)
+                    assertEquals(Transport.Quic, d.transport)
+                    val f = d.connectFailures.single()
+                    assertEquals(ConnectStage.QuicHandshake, f.stage)
+                    assertEquals(port, f.address?.port)
+                    assertEquals(QuicHandshakeProgress.NoPacketReceived, f.quicProgress)
+                    assertIs<ConnectTimeoutException>(f.cause)
+                }
+            } finally {
+                udp.close()
+                selector.close()
+            }
+        }
+
+    /** The server's first datagram arrives, then nothing: the connect timeout reports a handshake that started. */
+    @Test fun negative_aQuicConnectTimeoutAfterAnAnswerSaysHandshakeStarted() =
+        h3Test {
+            coroutineScope {
+                val ep = h3Origin()
+                try {
+                    udpRelay(ep.localAddress.port) { port, relay ->
+                        relay.serverDatagramsLeft = 1
+                        testClient(Http3DiscoveryMode.H3Only, engine = {
+                            connectTimeout = 1.seconds
+                            quic = quicConfig { handshakeTimeout = 30.seconds }
+                        }).use { c ->
+                            val e = assertFailsWith<ConnectTimeoutException> { c.get("https://127.0.0.1:$port/") }
+                            val f = assertNotNull(e.kuicksilverDiagnostics).connectFailures.single()
+                            assertEquals(ConnectStage.QuicHandshake, f.stage)
+                            assertEquals(QuicHandshakeProgress.HandshakeStarted, f.quicProgress)
+                        }
+                    }
+                } finally {
+                    ep.close()
+                }
+            }
+        }
+
+    /**
+     * Ktor's request timeout cancels the call with its HttpRequestTimeoutException, the exception Ktor then throws: it
+     * carries the diagnostics, with the connection in use, and `callFailed` has them too.
+     */
+    @Test fun aRequestTimeoutCarriesTheDiagnostics() =
+        clientTest {
+            val release = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(module = {
+                    routing {
+                        get("/slow") {
+                            release.await()
+                            call.respondText("late")
+                        }
+                    }
+                })
+            val heard = Heard()
+            try {
+                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = heard }) {
+                    install(HttpTimeout) { requestTimeoutMillis = 300 }
+                }.use { c ->
+                    val e = assertFailsWith<HttpRequestTimeoutException> { c.get("https://127.0.0.1:$port/slow") }
+                    val (cause, inCallback) = assertNotNull(heard.failed.load())
+                    val d = assertNotNull(inCallback, "callFailed has the diagnostics")
+                    assertEquals(Transport.Tcp, d.transport)
+                    assertIs<TcpConnectionSnapshot>(d.connection)
+                    assertIs<CancellationException>(cause)
+                    val carried = generateSequence(cause as Throwable) { it.cause }.firstOrNull { it is HttpRequestTimeoutException }
+                    assertSame(d, assertNotNull(carried, "the cancellation's cause").kuicksilverDiagnostics)
+                    // the exception Ktor throws is that one
+                    assertSame(carried, e)
+                    assertSame(d, e.kuicksilverDiagnostics)
+                }
+            } finally {
+                release.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    /** A call the application cancels carries nothing on its exception; `callFailed` has its diagnostics. */
+    @Test fun aCancelledCallHasItsDiagnosticsInCallFailedOnly() =
+        clientTest {
+            val reached = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(module = {
+                    routing {
+                        get("/slow") {
+                            reached.complete(Unit)
+                            release.await()
+                            call.respondText("late")
+                        }
+                    }
+                })
+            val heard = Heard()
+            try {
+                testClient(Http3DiscoveryMode.H1Only, engine = { eventListener = heard }).use { c ->
+                    coroutineScope {
+                        val call = async { c.get("https://127.0.0.1:$port/slow") }
+                        withTimeout(10.seconds) { reached.await() }
+                        call.cancel()
+                        val e = assertFailsWith<CancellationException> { call.await() }
+                        assertNull(e.kuicksilverDiagnostics)
+                    }
+                    val (cause, d) = withTimeout(10.seconds) { heardFailure(heard) }
+                    assertIs<CancellationException>(cause)
+                    assertEquals(Transport.Tcp, assertNotNull(d).transport)
+                    assertTrue(cause.suppressedExceptions.none { it is FailureDiagnostics })
+                }
+            } finally {
+                release.complete(Unit)
+                server.stop(100, 500)
+            }
+        }
+
+    private suspend fun heardFailure(heard: Heard): Pair<Throwable, ProtocolDiagnostics?> {
+        while (true) {
+            heard.failed.load()?.let { return it }
+            kotlinx.coroutines.yield()
+        }
+    }
+
+    /**
+     * Attack on the lock-free `reused`: while a test holds the HTTP/3 pool's lock right after the request acquired its
+     * connection, the request still completes (it takes the lock no more after acquiring, as before the diagnostics), and
+     * `reused` stays right: one call on a new connection, every later one reused.
+     */
+    @Test fun anHttp3RequestTakesNoPoolLockAfterAcquiring() =
+        h3Test {
+            val (server, port) = testServer(module = okServer())
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    val first = assertIs<QuicConnectionSnapshot>(c.get("https://127.0.0.1:$port/").kuicksilverDiagnostics?.connection)
+                    assertFalse(first.reused)
+                    val engine = c.engine as KuicksilverEngine
+                    coroutineScope {
+                        val held = CompletableDeferred<Unit>()
+                        val done = CompletableDeferred<Unit>()
+                        engine.h3.afterAcquireForTest = {
+                            launch {
+                                engine.h3.withLockForTest {
+                                    held.complete(Unit)
+                                    done.await()
+                                }
+                            }
+                            held.await()
+                        }
+                        try {
+                            val r = withTimeout(10.seconds) { c.get("https://127.0.0.1:$port/") }
+                            assertTrue(assertIs<QuicConnectionSnapshot>(r.kuicksilverDiagnostics?.connection).reused)
+                        } finally {
+                            engine.h3.afterAcquireForTest = null
+                            done.complete(Unit)
+                        }
                     }
                 }
             } finally {

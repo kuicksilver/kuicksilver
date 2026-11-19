@@ -76,6 +76,7 @@ class ClientEarlyDataTest {
         connectTimeout: kotlin.time.Duration,
         networkId: () -> String?,
         onBlocked: () -> Unit = {},
+        listener: KuicksilverEventListener? = null,
         phase2: suspend (String, io.ktor.client.HttpClient, KuicksilverEngine) -> Unit,
     ) = kotlinx.coroutines.coroutineScope {
         val ep = h3Origin(earlyData = true)
@@ -85,6 +86,7 @@ class ClientEarlyDataTest {
                 testClient(Http3DiscoveryMode.Preferred, engine = {
                     this.connectTimeout = connectTimeout
                     quic = io.kuicksilver.quic.quicConfig { handshakeTimeout = 30.seconds }
+                    listener?.let { eventListener = it }
                     http3 {
                         earlyData = true
                         this.networkId = networkId
@@ -120,6 +122,31 @@ class ClientEarlyDataTest {
                 assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                 assertEquals("h1", r.bodyAsText())
                 assertTrue(t0.elapsedNow() < 15.seconds, "fell back after ${t0.elapsedNow()}")
+            }
+        }
+
+    /**
+     * A 0-RTT start whose handshake then fails (QUIC blocked after the ticket): the connection was handed out before its
+     * handshake, and the failure is still reported as a failed QUIC setup of the call that started it, with how far it got.
+     */
+    @Test fun aHandshakeThatFailsAfterA0RttStartIsReported() =
+        h3Test {
+            val failed = kotlinx.coroutines.CompletableDeferred<ConnectFailure>()
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun connectFailed(
+                        request: io.ktor.client.request.HttpRequestData,
+                        failure: ConnectFailure,
+                    ) {
+                        if (failure.transport == Transport.Quic) failed.complete(failure)
+                    }
+                }
+            ticketThenUdpBlocked(3.seconds, { null }, listener = listener) { url, c, _ ->
+                assertEquals(HttpProtocolVersion.HTTP_1_1, c.get(url).version)
+                val f = kotlinx.coroutines.withTimeout(15.seconds) { failed.await() }
+                assertEquals(ConnectStage.QuicHandshake, f.stage)
+                assertEquals(QuicHandshakeProgress.NoPacketReceived, f.quicProgress)
+                assertTrue(f.cause is io.kuicksilver.quic.QuicException.ConnectionLost.Timeout, "${f.cause}")
             }
         }
 

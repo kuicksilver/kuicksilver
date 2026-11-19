@@ -45,6 +45,7 @@ public final class io/kuicksilver/ktor/client/AlternativeSource : java/lang/Enum
 public final class io/kuicksilver/ktor/client/ConnectFailure {
 	public final fun getAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getQuicProgress ()Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
 	public final fun getStage ()Lio/kuicksilver/ktor/client/ConnectStage;
 	public final fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
 	public final fun getViaProxy ()Z
@@ -478,6 +479,14 @@ public final class io/kuicksilver/ktor/client/QuicConnectionSnapshot : io/kuicks
 	public final fun getSmoothedRtt-UwyO8pc ()J
 	public fun getTransport ()Lio/kuicksilver/ktor/client/Transport;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/QuicHandshakeProgress : java/lang/Enum {
+	public static final field HandshakeStarted Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static final field NoPacketReceived Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
+	public static fun values ()[Lio/kuicksilver/ktor/client/QuicHandshakeProgress;
 }
 
 public final class io/kuicksilver/ktor/client/ResolvedProxy {

@@ -383,6 +383,16 @@ class H2InteropTest {
                     kotlin.test.assertNull(t.protocol)
                     assertEquals(n.port, t.remoteAddress?.port)
                     assertEquals(listOf(f), d.connectFailures)
+                    // the carrier is one line in a printed stack trace: no stack of its own, no address
+                    val carrier = e.suppressedExceptions.filterIsInstance<FailureDiagnostics>().single()
+                    assertTrue(carrier.stackTrace.isEmpty())
+                    val printed = e.stackTraceToString().lines().filter { "FailureDiagnostics" in it }
+                    assertEquals(
+                        listOf(
+                            "\tSuppressed: io.kuicksilver.ktor.client.FailureDiagnostics: kuicksilver: failed over TCP; setups failed: TlsHandshake",
+                        ),
+                        printed,
+                    )
                 }
             }
         }

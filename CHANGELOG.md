@@ -19,7 +19,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and our and the peer's connection IDs on it with their sequence numbers; `ConnectionInfo.pathChanges` counts the moves
   to another path. `ConnectionListener.onPathsUpdated` hears each new list (an ID rotated, a path added, validated,
   closed or made active, an address changed), and `QuicConnection.info` returns the connection's `ConnectionInfo`. The
-  list is rebuilt on the loop only when it changed and read from any thread without a lock; a client notes which of its
+  list is there from the connection's creation (the handshake's IDs first), is rebuilt on the loop only when it changed
+  and read from any thread without a lock; a client notes which of its
   IDs the server's packets carry with one comparison per 1-RTT packet. Connection IDs are linkable identifiers: the
   library never logs them and `PathInfo.toString()` leaves them out.
 - Ktor client: which connection served a call (experimental, `docs/guide/ktor.md`, "Which connection served this
@@ -35,7 +36,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `TcpConnect`, `ProxyHandshake`, `TlsHandshake` or `QuicHandshake`, address, cause). The new
   `KuicksilverEventListener.connectFailed` reports each one as it happens, so a TCP or TLS handshake that fails — a
   `protocol_version` alert from a TLS 1.2-only server, say — is reported with its address although `protocolSelected`
-  never comes for it.
+  never comes for it. The connect timeout is reported too, per attempt it cut short and at the step it was in; a QUIC
+  failure says how far the handshake got (`QuicHandshakeProgress`: no packet from the server, or started); a handshake
+  that fails after a 0-RTT start and a SOCKS5 refusal that moves on to the next address are reported as well. Ktor's
+  `HttpRequestTimeoutException` carries the diagnostics like any other failure.
 
 - Native layer: `ksl_udp_get` answers `KSL_UDP_GET_WAITS` (`KslConst.UDP_GET_WAITS`), the waits a receive began for a
   datagram, counted before each `poll` (POSIX) or `WSAPoll` (Windows) alike; additive in ABI 7. A test uses it to close a
@@ -876,9 +880,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - Ktor client: a failed call's `ProtocolDiagnostics` stay in the request's attributes until `callFailed` returned (they
-  were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`, whose
-  message is the diagnostics' text without the URL); code that reads `suppressedExceptions` of a failed call sees it
-  after the HTTP/3 failure. A copy coroutines make of a `QuicException` (the stack of the receiving side) keeps the
+  were removed before it), and the thrown exception carries them as a suppressed exception (`FailureDiagnostics`: a
+  one-line message without URL, host, address or connection ID, and on the JVM and Android no stack of its own); code
+  that reads `suppressedExceptions` of a failed call sees it after the HTTP/3 failure. A copy coroutines make of a `QuicException` (the stack of the receiving side) keeps the
   original's suppressed exceptions.
 
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole

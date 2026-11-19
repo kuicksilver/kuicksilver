@@ -95,6 +95,17 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     final fun values(): kotlin/Array<io.kuicksilver.ktor.client/ProtocolReason> // io.kuicksilver.ktor.client/ProtocolReason.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.ktor.client/QuicHandshakeProgress : kotlin/Enum<io.kuicksilver.ktor.client/QuicHandshakeProgress> { // io.kuicksilver.ktor.client/QuicHandshakeProgress|null[0]
+    enum entry HandshakeStarted // io.kuicksilver.ktor.client/QuicHandshakeProgress.HandshakeStarted|null[0]
+    enum entry NoPacketReceived // io.kuicksilver.ktor.client/QuicHandshakeProgress.NoPacketReceived|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/QuicHandshakeProgress.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/QuicHandshakeProgress> // io.kuicksilver.ktor.client/QuicHandshakeProgress.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/QuicHandshakeProgress // io.kuicksilver.ktor.client/QuicHandshakeProgress.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/QuicHandshakeProgress> // io.kuicksilver.ktor.client/QuicHandshakeProgress.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.ktor.client/Transport : kotlin/Enum<io.kuicksilver.ktor.client/Transport> { // io.kuicksilver.ktor.client/Transport|null[0]
     enum entry Quic // io.kuicksilver.ktor.client/Transport.Quic|null[0]
     enum entry Tcp // io.kuicksilver.ktor.client/Transport.Tcp|null[0]
@@ -228,6 +239,8 @@ final class io.kuicksilver.ktor.client/ConnectFailure { // io.kuicksilver.ktor.c
         final fun <get-address>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.ktor.client/ConnectFailure.address.<get-address>|<get-address>(){}[0]
     final val cause // io.kuicksilver.ktor.client/ConnectFailure.cause|{}cause[0]
         final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.ktor.client/ConnectFailure.cause.<get-cause>|<get-cause>(){}[0]
+    final val quicProgress // io.kuicksilver.ktor.client/ConnectFailure.quicProgress|{}quicProgress[0]
+        final fun <get-quicProgress>(): io.kuicksilver.ktor.client/QuicHandshakeProgress? // io.kuicksilver.ktor.client/ConnectFailure.quicProgress.<get-quicProgress>|<get-quicProgress>(){}[0]
     final val stage // io.kuicksilver.ktor.client/ConnectFailure.stage|{}stage[0]
         final fun <get-stage>(): io.kuicksilver.ktor.client/ConnectStage // io.kuicksilver.ktor.client/ConnectFailure.stage.<get-stage>|<get-stage>(){}[0]
     final val transport // io.kuicksilver.ktor.client/ConnectFailure.transport|{}transport[0]

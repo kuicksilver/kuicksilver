@@ -1202,7 +1202,10 @@ hex, the same name the connection's qlog trace has.
 `PathInfo`: its `id`, `localAddress` and `remoteAddress`, validation `state`, whether it is `active`, and the connection
 IDs on it with their sequence numbers (RFC 9000 section 5.1): `localConnectionId`, ours, as the peer's packets on the
 path carry it, and `remoteConnectionId`, the peer's, which our packets carry. `ConnectionInfo.pathChanges` counts the
-moves to another path so far (the difference of two readings counts the moves between them). The list is built on the
+moves to another path so far (the difference of two readings counts the moves between them). The list is there from
+the connection's creation, before `onOpened`, with the handshake's IDs: a client sends to the random ID it chose
+(`remoteConnectionIdSequence` -1) until the server's first Initial gives the server's own, and shows its handshake ID
+(sequence 0) until the server's first 1-RTT packet shows which of its IDs the server uses. The list is built on the
 loop only when something on it changed — an ID rotated (by us every 10 000 packets, by the peer as it likes), a path
 was added, validated, failed, closed or became active, an address changed — and published as a whole, so reading it
 from any thread costs nothing and never sees half a change; after the connection closed it keeps the last one. The

@@ -338,7 +338,17 @@ internal class KuicksilverEngine(
         d: ProtocolDiagnostics,
         e: Throwable,
     ) {
-        if (e is CancellationException) return
+        // a cancellation carries nothing; Ktor's request timeout cancels the call with its HttpRequestTimeoutException as
+        // the cause, the exception Ktor then throws: that one carries the diagnostics
+        val carrier =
+            if (e is CancellationException) {
+                generateSequence(e.cause) {
+                    it.cause
+                }.take(8).firstOrNull { it !is CancellationException }
+            } else {
+                e
+            }
+        if (carrier == null) return
         d.failed = true
         val t = d.transport
         val c = d.connection
@@ -349,7 +359,7 @@ internal class KuicksilverEngine(
                 Transport.Tcp -> d.connection?.protocol ?: HttpProtocolVersion.HTTP_1_1
                 null -> d.protocol
             }
-        attachDiagnostics(e, d)
+        attachDiagnostics(carrier, d)
     }
 
     /**

@@ -183,6 +183,33 @@ public class ProtocolDiagnostics internal constructor() {
     }
 
     /**
+     * The one line a failed call's exception carries ([FailureDiagnostics]): `kuicksilver: failed over TCP; HTTP/3 failed
+     * first: Timeout (HandshakeTimeout); setups failed: QuicHandshake, TlsHandshake x2; attempts=2`. Types, reasons and
+     * stages only: no URL, host, address, reason phrase or connection ID.
+     */
+    internal fun failureLine(): String =
+        StringBuilder("kuicksilver: failed")
+            .apply {
+                append(
+                    when (transport) {
+                        Transport.Quic -> " over QUIC"
+                        Transport.Tcp -> " over TCP"
+                        null -> " before a transport was tried"
+                    },
+                )
+                h3Failure?.takeIf { transport == Transport.Tcp }?.let { f ->
+                    append("; HTTP/3 failed first: ").append(f::class.simpleName)
+                    fallback?.let { append(" (").append(it).append(')') }
+                }
+                val stages = connectFailures.groupingBy { it.stage }.eachCount()
+                if (stages.isNotEmpty()) {
+                    append("; setups failed: ")
+                    append(stages.entries.joinToString { (stage, n) -> if (n == 1) "$stage" else "$stage x$n" })
+                }
+                if (attempts > 1) append("; attempts=").append(attempts)
+            }.toString()
+
+    /**
      * The details of `line` without the request: `HTTP/1.1 (fallback=HandshakeTimeout, alt=example.com:443 via AltSvc,
      * raced, headStart=10ms)`.
      */

@@ -2254,9 +2254,13 @@ exception or one of its causes) is the call's `ProtocolDiagnostics`, which the r
 - `connectFailures` lists every connection setup that failed for the call, in order: each a `ConnectFailure` with the
   `transport`, the `stage` (`TcpConnect`, `ProxyHandshake`, `TlsHandshake`, `QuicHandshake`), the `address` tried and the
   `cause`. A TLS 1.2-only server's answer to this client's TLS 1.3 ClientHello, for example, is a `TlsHandshake` failure
-  whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. Attempts the engine cancelled
-  (a race another attempt won, the connect timeout) are not failures: a connect timeout is the call's own
-  `ConnectTimeoutException`.
+  whose cause is a `TlsException.AlertReceived` with `description = "protocol_version"`. A QUIC failure says how far the
+  handshake got (`quicProgress`: `NoPacketReceived` — UDP blocked or the server silent — or `HandshakeStarted`). The
+  connect timeout is a failure too: one per attempt it cut short, at the step it was in (`TcpConnect`, `TlsHandshake`,
+  `QuicHandshake`...), with the call's `ConnectTimeoutException` as the cause, or one without an address when the name
+  lookup or the wait for a pooled connection used the time. Attempts the engine cancelled because another won (the
+  address race, the HTTP/3 and TCP race) are not failures. With `earlyData`, a handshake that fails after the request
+  went out in 0-RTT is reported when it fails, which may be after the call ended.
 
 ```kotlin
 // guide:ktor:client-failure
@@ -2279,10 +2283,14 @@ try {
 The event listener hears the same as it happens: `connectFailed(request, failure)` once per failed setup (also for a
 call that then succeeded another way), and in `callFailed(request, cause)` the request's attributes still hold the
 call's diagnostics (`request.attributes[KuicksilverDiagnosticsKey]`; the engine removes them once `callFailed` returned).
-The engine attaches the diagnostics to the exception as a suppressed one whose message is the diagnostics' text, so a
-printed stack trace shows them too (never with the URL or a connection ID). A cancellation carries none. One exception
-can end several calls at once — a QUIC connection's failure reaches every request on it — and then names none of them
-(`kuicksilverDiagnostics` is null): read the request's diagnostics in `callFailed` for those.
+The engine attaches the diagnostics to the exception as a suppressed `FailureDiagnostics` whose message is one line —
+`kuicksilver: failed over TCP; HTTP/3 failed first: Timeout (HandshakeTimeout); setups failed: QuicHandshake,
+TlsHandshake` — with types and stages only, never a URL, host, address or connection ID; on the JVM and Android it has no
+stack of its own, so a printed stack trace gains that one line. Ktor's request timeout (`HttpTimeout`) cancels the call
+with its `HttpRequestTimeoutException`, the exception Ktor then throws, and that one carries the diagnostics. A call the
+application cancels carries none, and one exception can end several calls at once — a QUIC connection's failure reaches
+every request on it — and then names none of them (`kuicksilverDiagnostics` is null): `callFailed` has the request's own
+diagnostics in both cases.
 
 ### Graceful stop
 
