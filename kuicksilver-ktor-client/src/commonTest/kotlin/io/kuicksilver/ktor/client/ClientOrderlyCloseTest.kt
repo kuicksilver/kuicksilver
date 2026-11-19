@@ -10,6 +10,8 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
@@ -20,6 +22,7 @@ import io.kuicksilver.http2.Http2ErrorCode
 import io.kuicksilver.http2.runtime.Http2Exception
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -173,6 +176,89 @@ class ClientOrderlyCloseTest {
                     assertTrue(withTimeout(10.seconds) { clean.await() }, "the server saw the client's close_notify")
                 }
                 release.complete(Unit)
+            }
+        }
+
+    /**
+     * The class of curl #23551 (a shutdown that waits on a silent peer with no timer armed): a server that keeps reading but
+     * never answers the client's close_notify, and never closes, holds the client's connection for the orderly close's bound
+     * (1 s) at most: the FIN follows the close_notify within it, armed when the close starts and not by anything the peer does
+     * (here the close a `Connection: close` response starts, with the engine still open).
+     * The server's TLS session reads a copy of the socket's input, so the FIN is seen under it.
+     */
+    @Test fun negative_aServerThatNeverAnswersCloseNotifyHoldsTheConnectionForTheBoundOnly() =
+        clientTest {
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.IO)
+            val listener =
+                io.kuicksilver.ktor.network
+                    .bindTcp(selector, "127.0.0.1", 0)
+            val closeNotify = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
+            val fin = CompletableDeferred<kotlin.time.TimeSource.Monotonic.ValueTimeMark>()
+            val hold = CompletableDeferred<Unit>()
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    val server =
+                        launch {
+                            val socket = listener.accept()
+                            val socketIn = socket.openReadChannel()
+                            val socketOut = socket.openWriteChannel(autoFlush = true)
+                            val fed =
+                                io.ktor.utils.io
+                                    .ByteChannel()
+                            launch {
+                                val buf = ByteArray(16_384)
+                                while (true) {
+                                    val n = runCatching { socketIn.readAvailable(buf, 0, buf.size) }.getOrDefault(-1)
+                                    if (n < 0) break
+                                    runCatching {
+                                        fed.writeFully(buf, 0, n)
+                                        fed.flush()
+                                    }
+                                }
+                                fin.complete(
+                                    kotlin.time.TimeSource.Monotonic
+                                        .markNow(),
+                                )
+                                fed.flushAndClose()
+                            }
+                            val session =
+                                io.kuicksilver.tls.TlsConnection.server(
+                                    fed,
+                                    socketOut,
+                                    io.kuicksilver.tls.tlsConfig(io.kuicksilver.tls.TlsRole.Server) {
+                                        identity = ClientFixtures.identity()
+                                        alpn = listOf("http/1.1")
+                                    },
+                                    coroutineContext,
+                                )
+                            readRequest(session.input)
+                            session.output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                            session.output.flush()
+                            if (session.input.endsCleanly()) {
+                                closeNotify.complete(
+                                    kotlin.time.TimeSource.Monotonic
+                                        .markNow(),
+                                )
+                            }
+                            hold.await() // never answers the close_notify, never closes
+                        }
+                    val port = (listener.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+                    // the engine stays open: its close (which cuts every orderly close after 2 s) is not what ends this one
+                    testClient().use { c ->
+                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
+                        val notified = withTimeout(10.seconds) { closeNotify.await() }
+                        val finAt = withTimeout(10.seconds) { fin.await() }
+                        val held = finAt - notified
+                        assertTrue(held < 5.seconds, "the client's FIN came $held after its close_notify to a server that never answered")
+                    }
+                    hold.complete(Unit)
+                    server.cancel()
+                }
+            } finally {
+                listener.close()
+                selector.close()
             }
         }
 
