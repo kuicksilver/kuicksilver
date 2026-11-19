@@ -1299,7 +1299,8 @@ public class SessionCache(
         public val Default: SessionCache = SessionCache()
 
         init {
-            // the process's own cache: the leak sentinel empties it before it counts a test's native sessions (off in production)
+            // the process's own cache: the leak sentinel empties it before it counts a test's native sessions (one registration
+            // per process; nothing calls it in production)
             io.kuicksilver.native.LeakRegistry
                 .processCache { Default.clear() }
         }

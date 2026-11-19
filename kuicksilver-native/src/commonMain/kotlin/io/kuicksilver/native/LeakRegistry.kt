@@ -76,10 +76,10 @@ public object LeakRegistry {
     /**
      * A cache that lives for the whole process ([clear] empties it) holds native objects on behalf of no one in particular
      * (the default TLS session cache): the sentinel empties it before it counts, so what a test's connections left there
-     * is not taken for the test's leak. Does nothing while tracking is off.
+     * is not taken for the test's leak. Registered whether tracking is on or not, so a cache made before [enable] (a class
+     * initialized early) is not missed: one list entry per such cache, made once per process.
      */
     public fun processCache(clear: suspend () -> Unit) {
-        if (!on) return
         while (true) {
             val l = caches.load()
             if (caches.compareAndSet(l, l + clear)) return
