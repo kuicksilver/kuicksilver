@@ -49,9 +49,9 @@ internal fun ConnectionCore.sizesForTest(): Map<String, Long> {
 }
 
 // the receive term is what the reassembly buffers may hold allocated (RangeBudget): the connection window unread, as much again
-// kept after reads, the doubling slack on what is unread, and the smallest buffer of each stream the peer may open
+// kept after reads, the doubling slack on what is unread, and twice the smallest buffer of each stream the peer may open
 internal fun ConnectionCore.memoryCeiling(): Long =
-    3L * config.maxConnectionWindow + Reassembler.MIN_WINDOW.toLong() * (config.maxBidiStreams + config.maxUniStreams) +
+    3L * config.maxConnectionWindow + 2L * Reassembler.MIN_WINDOW * (config.maxBidiStreams + config.maxUniStreams) +
         config.maxSendBuffer +
         3L * config.limits.cryptoOutOfOrderPerLevel + config.limits.cryptoPostHandshake +
         config.limits.undecryptablePackets.toLong() * path.mtu + config.limits.qlogBytes

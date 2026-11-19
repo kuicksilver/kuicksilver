@@ -853,9 +853,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Changed
 
 - QUIC: `ConnectionStats.memoryCeiling` counts the allocation of the stream reassembly buffers as its receive part,
-  `3 x maxConnectionWindow` plus 512 bytes for each stream the peer may open (`maxBidiStreams + maxUniStreams`), where it
+  `3 x maxConnectionWindow` plus 1 KiB for each stream the peer may open (`maxBidiStreams + maxUniStreams`), where it
   counted `maxConnectionWindow`, the unread bytes alone; the allocation is now bounded by that (see Security). With the
-  defaults the value grows by about 30 MiB.
+  defaults the value grows by about 30 MiB. Streams the application opens add up to 1 KiB each, which the value leaves out.
 - Testing (`kuicksilver-testing`, the unpublished test module): `SimResult.traceHash` is an FNV-1a-style mix of whole
   values, now starting from the standard offset basis (14695981039346656037; it was one digit short), so its values differ
   from earlier versions; the same seed still gives the same hash in every run.
@@ -2581,9 +2581,10 @@ QUIC loss recovery and congestion control (RFC 9002 review):
   through each of its `max_streams` streams (one byte at the end of the window, then the rest) left the connection
   holding the sum of its stream windows: 50 MiB with the defaults against a 15 MiB connection window, and up to
   `max_streams` x 6 MiB with windows the auto-tuning grew. The bytes the reassembly buffers hold allocated are now
-  counted per connection; above `maxConnectionWindow` a read leaves its stream's buffer no larger than what it still
-  holds and lets a drained one go, and a finished stream gives its buffer back. The allocation stays within the
-  connection window plus twice what the streams hold unread (`stream.ReassemblyRetainedCapacityTest`); below that bound
+  counted per connection; above `maxConnectionWindow` a read leaves its stream's buffer no larger than twice what it
+  still holds (twice, so that a stream read a little behind its window does not shrink and regrow on every read) and
+  lets a drained one go, and a finished stream gives its buffer back. The allocation stays within the connection window
+  plus twice what the streams hold unread (`stream.ReassemblyRetainedCapacityTest`); below that bound
   nothing changes. The fuzz invariant of every stream manager checks the count and the bound.
 - TLS, `TrustConfig.Tofu` (the class of curl #23475, host verification where peer verification is off): Tofu validates
   no chain and the shared matcher refused a certificate for another name, but the key was stored for the host before

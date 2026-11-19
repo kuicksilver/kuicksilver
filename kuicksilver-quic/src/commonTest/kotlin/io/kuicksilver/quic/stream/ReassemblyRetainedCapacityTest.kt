@@ -91,7 +91,7 @@ class ReassemblyRetainedCapacityTest {
         }
         val held = m.receiveCapacityForTest()
         assertTrue(
-            held <= config.maxConnectionWindow + 100L * Reassembler.MIN_WINDOW,
+            held <= config.maxConnectionWindow + 100L * 2 * Reassembler.MIN_WINDOW,
             "${held / 1024} KiB of reassembly buffers held by 100 streams with 2 bytes buffered each, above the " +
                 "${config.maxConnectionWindow / 1024} KiB connection window",
         )
@@ -125,5 +125,38 @@ class ReassemblyRetainedCapacityTest {
         send(m, 4L * 400 + 2, 0, 200_000)
         assertEquals(200_000L, drain(m, 4L * 400 + 2))
         assertTrue(m.receiveCapacityForTest() >= 200_000, "the budget leaked: ${m.receiveCapacityForTest()}")
+    }
+
+    /**
+     * Review k10: over the budget a read shrank its stream's buffer to exactly what it still held, and the next frame doubled it
+     * again, so a bulk stream read a little behind its window copied its whole backlog on every read (two streams 5 MB behind:
+     * 200 MB delivered, tens of GB copied). Shrinking only to twice what is held keeps the copies linear in the bytes delivered.
+     */
+    @Test fun negative_laggingStreamsOverTheBudgetDoNotCopyTheirBacklogOnEveryRead() {
+        val budget = RangeBudget(4096, 1L shl 20)
+        val streams = List(2) { Reassembler(256, budget) }
+        val lag = 800_000
+        val pkt = 1200
+        val chunk = 16_384
+        val total = 20_000_000L
+        val offsets = LongArray(streams.size)
+        val buf = PacketBuffer.allocate(pkt)
+        val out = ByteArray(chunk)
+        var delivered = 0L
+        try {
+            while (delivered < total) {
+                for ((k, r) in streams.withIndex()) {
+                    assertTrue(r.insert(offsets[k], buf, 0, pkt))
+                    offsets[k] += pkt
+                    delivered += pkt
+                    if (r.readable >= lag + chunk) assertEquals(chunk, r.read(out, 0, chunk))
+                }
+            }
+        } finally {
+            buf.close()
+        }
+        val moved = streams.sumOf { it.bytesMovedForTest }
+        assertTrue(moved <= 3 * delivered, "${moved / 1_000_000} MB copied for ${delivered / 1_000_000} MB delivered")
+        assertTrue(budget.bytes <= 4L * (lag + chunk + pkt) * streams.size, "allocation ${budget.bytes}")
     }
 }

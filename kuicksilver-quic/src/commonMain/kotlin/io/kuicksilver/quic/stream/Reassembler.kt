@@ -15,9 +15,9 @@ internal object ReassemblyFull : RuntimeException("too many reassembly ranges")
 /**
  * Connection-wide count of reassembly ranges (4096 per connection), and of the bytes the reassembly buffers hold allocated,
  * read or not ([bytes]). Flow control bounds the bytes that are unread at any one time, not what stays allocated once they were
- * read (picoquic #2333 class): above [maxBytes] (the connection window) a read leaves its stream's buffer no larger than what is
- * still buffered in it, and a drained one is let go. The allocation is then at most [maxBytes] plus twice the span each stream
- * still buffers (a buffer grows by doubling) plus [Reassembler.MIN_WINDOW] per stream.
+ * read (picoquic #2333 class): above [maxBytes] (the connection window) a read leaves its stream's buffer no larger than twice
+ * what is still buffered in it, and a drained one is let go. The allocation is then at most [maxBytes] plus, per stream, twice
+ * the span it still buffers or twice [Reassembler.MIN_WINDOW], whichever is more (a buffer grows by doubling).
  */
 internal class RangeBudget(
     val max: Int,
@@ -140,10 +140,15 @@ internal class Reassembler(
         window = w
     }
 
-    /** Over the connection's allocation budget: shrinks the buffer to what it still holds (gaps included), as one copy. */
+    /**
+     * Over the connection's allocation budget: shrinks the buffer to twice what it still holds (gaps included), as one copy, and
+     * only when it is larger than that. Twice, not exactly: a stream read a little behind its window would otherwise shrink on
+     * every read and double on the next frame, copying its whole backlog each time; with the factor a shrink or a growth needs
+     * the held bytes to halve or double first, so the copies stay linear in the bytes delivered.
+     */
     private fun shrinkToFit() {
         val buffered = bufferedBytes
-        val target = maxOf(buffered, MIN_WINDOW)
+        val target = 2 * maxOf(buffered, MIN_WINDOW)
         if (window.size <= target) return
         val w = ByteArray(target)
         window.copyInto(w, 0, head, head + buffered)

@@ -375,7 +375,7 @@ internal class StreamManager(
         for (e in streams.values) {
             val r = e.recv ?: continue
             allocated += r.capacityForTest
-            allowed += maxOf(2L * r.bufferedSpanForTest, Reassembler.MIN_WINDOW.toLong())
+            allowed += 2L * maxOf(r.bufferedSpanForTest, Reassembler.MIN_WINDOW).toLong()
         }
         if (allocated != budget.bytes) return "reassembly buffers hold $allocated bytes, counted ${budget.bytes}"
         if (allocated > allowed) return "reassembly buffers hold $allocated bytes, above $allowed"
